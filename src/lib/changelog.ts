@@ -14,6 +14,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Appen starter øjeblikkeligt med dine data fra sidst og opdaterer stille i baggrunden, hvis noget er ændret på drevet siden',
       'Kollegers ændringer bliver synlige hurtigere (drevet tjekkes hvert 2. sekund i stedet for hvert 5.)',
       'Gemninger fejler ikke længere med "Kunne ikke gemme ændringen — prøv igen om lidt" når mange bruger appen samtidig — appen prøver nu selv igen i baggrunden og genopretter automatisk',
+      'Rettet en kritisk fejl: en enkelt nedbrudt klient kunne efterlade en laas, der blokerede login for ALLE 40 brugere permanent, indtil nogen manuelt ryddede den — laasen retter nu sig selv',
     ],
   },
   {

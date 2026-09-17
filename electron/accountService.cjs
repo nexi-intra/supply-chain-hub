@@ -47,11 +47,17 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
     return { ...journal, state: progress.state, applied: progress.applied }
   }
   const globalLock = () => path.join(getRoot(), '_registry', 'account-operation.lock')
-  const withAccountLock = callback => withFileLock(globalLock(), callback, { attempts: 1 })
+  // Uden staleMs blokerede en enkelt crashet/dræbt klient permanent ALLE
+  // fremtidige konto-operationer (herunder login) for ALLE klienter, indtil
+  // nogen manuelt slettede laasefilen. 60s er langt over enhver legitim
+  // holdetid for disse operationer (typisk under et sekund, selv med flere
+  // teams paa langsomt SMB), saa en live konkurrerende klient stjaeles aldrig.
+  const ACCOUNT_LOCK_STALE_MS = 60000
+  const withAccountLock = callback => withFileLock(globalLock(), callback, { attempts: 1, staleMs: ACCOUNT_LOCK_STALE_MS })
   // Login/resume: faa korte gen-forsoeg i stedet for att fejle straks - to
   // klienter der logger ind samtidigt gav ellers falske "Kunne ikke oprette
   // forbindelse"-fejl. Brugeren venter allerede ved en spinner her.
-  const withAuthenticationLock = callback => withFileLock(globalLock(), callback, { attempts: 6, delayMs: 120 })
+  const withAuthenticationLock = callback => withFileLock(globalLock(), callback, { attempts: 6, delayMs: 120, staleMs: ACCOUNT_LOCK_STALE_MS })
   function assertReady() { if (!terminal(readControl())) fail('ACCOUNT_MIGRATION_PENDING') }
   function synchronous(callback) {
     if (typeof callback !== 'function' || require('node:util').types.isAsyncFunction(callback)) fail('KV_INVALID_OPERATION')

@@ -4,7 +4,7 @@ const crypto = require('node:crypto')
 
 // A slow live client on another PC may still own a lock. Do not steal it
 // solely because a wall-clock timeout has elapsed.
-function acquireFileLock(target, { attempts = 50, delayMs = 100, createParent = true } = {}) {
+function acquireFileLock(target, { attempts = 50, delayMs = 100, createParent = true, staleMs = 0 } = {}) {
   const startedAt = Date.now()
   if (createParent) fs.mkdirSync(path.dirname(target), { recursive: true })
   const owner = `${process.pid}:${crypto.randomUUID()}`
@@ -19,6 +19,20 @@ function acquireFileLock(target, { attempts = 50, delayMs = 100, createParent = 
       break
     } catch (error) {
       if (error.code !== 'EEXIST') throw error
+      // Selv-heling (samme model som acquireFileLockAsync): en laas efterladt af
+      // en crashet/dræbt klient ville ellers blokere ALLE fremtidige forsøg
+      // permanent (fx kontolåsen — attempts:1/6 giver ingen reel ventetid). Kun
+      // laase hvis alder ligger LANGT over enhver legitim holdetid fjernes.
+      if (staleMs > 0) {
+        try {
+          const stat = fs.statSync(target)
+          if (Date.now() - stat.mtimeMs > staleMs) {
+            console.warn(`KV: fjerner forladt laas (${Math.round((Date.now() - stat.mtimeMs) / 1000)}s gammel): ${target}`)
+            try { fs.unlinkSync(target) } catch { /* ignoreres */ }
+            continue
+          }
+        } catch { /* laasen forsvandt netop - proev igen */ }
+      }
       if (attempt + 1 >= attempts) {
         if (process.env.TCD_HUB_DEBUG) console.warn(`KV TIMING: lock-failed ${Date.now() - startedAt}ms attempts=${attempts} target=${target}`)
         const busy = new Error('KV_LOCK_BUSY: Lageret er optaget af en anden klient. Prøv igen.')

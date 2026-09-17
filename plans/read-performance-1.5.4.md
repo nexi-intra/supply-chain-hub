@@ -106,3 +106,26 @@ Kun vaerd at overveje hvis latensen stadig er et problem efter fase 1-3:
 **Anbefaling: start med Fase 1.** Det er 4 smaa, maalbare aendringer i to filer,
 uden nogen aendring af data paa M:, og det fjerner den konkrete regression fra
 1.4.3. Fase 2 bygger ovenpaa og goer appen oejeblikkelig.
+
+## Kritisk sidefund under test af 1.5.4 (17/9): forladt konto-laas blokerede ALT login
+
+Ved foerste rigtige login-forsoeg paa 1.5.4-testbuilden fejlede login for ALLE
+brugere med "Lageret er optaget af en anden klient". Aarsag: en 24 min. gammel
+forladt `_registry/account-operation.lock` fra en doed proces (bekraeftet: PID
+koerte ikke laengere). `withAccountLock` (attempts:1) og `withAuthenticationLock`
+(attempts:6) i accountService.cjs havde INGEN selvhelbredelse (staleMs) — i
+modsaetning til de almindelige KV-data-laase, der allerede blev fikset i
+aaret. En enkelt klient der crasher mens den holder denne laas blokerer derfor
+ALT login for ALLE 40 brugere PERMANENT, indtil nogen manuelt sletter filen.
+
+Fix:
+- [x] `fileLock.cjs`: `acquireFileLock` (sync) fik samme staleMs-selvhelbredelse
+      som den async udgave allerede havde
+- [x] `accountService.cjs`: `withAccountLock`/`withAuthenticationLock` faar
+      `staleMs: 60000` — en live konkurrerende klient stjaeles aldrig (kun
+      beviseligt forladte laase >60s), men en doed klients laas heler sig selv
+      indenfor et minut i stedet for at kraeve manuel oprydning
+- [x] Akut: de 2 forladte laase paa M: (`_registry/account-operation.lock` +
+      `TRR/client-versions.json.lock`, begge fra doed PID) fjernet manuelt
+- [x] 3 nye tests (fileLock.test.cjs x2, accountService.test.cjs x1)
+- [x] Fuld suite: 356/356 electron-tests, tsc ren

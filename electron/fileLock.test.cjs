@@ -41,6 +41,22 @@ test('a slow owner is never evicted because its lock looks old', t => {
   assert.equal(called, false)
   assert.equal(fs.readFileSync(target, 'utf8'), 'other-machine-owner')
 })
+test('with staleMs set, a provably abandoned lock is reclaimed instead of blocking forever', t => {
+  const target = fixture(t)
+  fs.writeFileSync(target, 'crashed-process-owner')
+  const old = new Date(Date.now() - 61000)
+  fs.utimesSync(target, old, old)
+  assert.equal(withFileLock(target, () => 42, { attempts: 1, staleMs: 60000 }), 42)
+  assert.ok(!fs.existsSync(target))
+})
+test('with staleMs set, a recent lock from a live client is still respected', t => {
+  const target = fixture(t)
+  fs.writeFileSync(target, 'live-other-client')
+  let called = false
+  assert.throws(() => withFileLock(target, () => { called = true }, { attempts: 1, staleMs: 60000 }), { code: 'KV_LOCK_BUSY' })
+  assert.equal(called, false)
+  assert.equal(fs.readFileSync(target, 'utf8'), 'live-other-client')
+})
 test('release does not remove a lock now owned by another writer', t => {
   const target = fixture(t)
   withFileLock(target, () => fs.writeFileSync(target, 'replacement-owner'))
