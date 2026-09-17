@@ -5,6 +5,9 @@ const normalize = value => String(value || '').trim().toLowerCase()
 function fail(code = 'AUTH_FORBIDDEN') { const error = new Error(code); error.code = code; throw error }
 const OVERVIEW_KEYS = new Set(['users', 'vacation-entries', 'sick-leave-entries', 'home-office-patterns', 'home-office-exceptions'])
 const LEADERBOARDS = new Set(['brickbreak-global-leaderboard', 'endless-dodger-global-leaderboard', 'neon-snake-global-leaderboard', 'nexi-flyer-global-leaderboard', 'tetris-global-leaderboard'])
+// Kun version/platform/tidsstempel pr. e-mail - ingen personfoelsomme data -
+// bruges af Creator Panelets cross-hub "brugernes app-versioner"-overblik.
+const CLIENT_VERSION_KEYS = new Set(['client-versions'])
 const VIEW_KEYS = new Set([...OVERVIEW_KEYS, 'shift-roles', 'shift-assignments', 'employee-birthdays', 'guides'])
 const FILE_KEY = /^(file_[a-zA-Z0-9_-]+)_(?:meta|chunk_\d+)$/
 const pick = (value, fields) => Object.fromEntries(fields.filter(field => Object.hasOwn(value, field)).map(field => [field, value[field]]))
@@ -57,6 +60,7 @@ function createTeamReader({ getRoot, listTeams, listViews, openStore, now = Date
     // svaerhedsgrad, genaabning af Game Corner) oejeblikkelige i stedet for
     // altid at ramme M: forfra.
     if (LEADERBOARDS.has(key)) return store.getAsync(key)
+    if (CLIENT_VERSION_KEYS.has(key)) return store.getAsync(key)
     if (key === 'guide-access-requests') return requests(store, actor)
     if (key === 'guides') return guides(store, actor)
     const file = typeof key === 'string' && key.match(FILE_KEY)

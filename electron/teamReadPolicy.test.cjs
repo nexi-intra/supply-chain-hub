@@ -96,6 +96,10 @@ test('existing Supply Chain leaderboard reads remain available', async t => {
   const f = fixture(t); f.other.set('neon-snake-global-leaderboard', { easy: [{ email: 'other@example.test', score: 42 }] })
   assert.equal((await f.reader.readTeam(f.actor, 'B', 'neon-snake-global-leaderboard')).easy[0].score, 42)
 })
+test('client app versions can be read cross-team for the Creator Panel version overview', async t => {
+  const f = fixture(t); f.other.set('client-versions', { 'other@example.test': { version: '1.5.2', platform: 'win32', lastSeen: 1 } })
+  assert.equal((await f.reader.readTeam(f.actor, 'B', 'client-versions'))['other@example.test'].version, '1.5.2')
+})
 test('combined hub reads require the currently selected assigned view', async t => {
   const f = fixture(t)
   await assert.rejects(f.reader.readView(f.actor, 'both', 'b', 'guides'), code('AUTH_FORBIDDEN'))
