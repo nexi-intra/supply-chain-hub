@@ -5,6 +5,7 @@ const { extraDates } = require('./assistantDates.cjs')
 const { createKnowledge, validatePlan, moduleCatalog } = require('./assistantKnowledge.cjs')
 const { continueQuestion, validateConversation } = require('./assistantConversation.cjs')
 const { indexGuide } = require('./assistantGuideIndex.cjs')
+const { detectActionIntent } = require('./assistantActions.cjs')
 const normalize = value => String(value || '').trim().toLowerCase()
 const dateString = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 const addDays = (date, days) => { const copy = new Date(date); copy.setDate(copy.getDate() + days); return copy }
@@ -239,6 +240,16 @@ function createAssistantContext({ listTeams, lookupTeam, listViews, creatorEmail
     const t = TEXT[language] || TEXT.da
     const q = normalize(question)
     const extra = EXTRA_TEXT[language] || EXTRA_TEXT.da
+    // Handlings-hensigter ("opret en ferieanmodning", "lav en to-do") koerer
+    // FOERST og udenom alt andet: REN genkendelse/udtraekning her, ingen
+    // skrivning. Selve skrivningen sker foerst i renderer'en efter eksplicit
+    // brugerbekraeftelse, via de samme delte funktioner som de manuelle
+    // formularer bruger (se src/components/HubAssistant.tsx).
+    if (!plan && !image) {
+      const action = detectActionIntent(question, language)
+      if (action?.type === 'unresolved') return { mode: 'action-proposal', text: action.message, sources: [], contextQuestion: question }
+      if (action) return { mode: 'action-proposal', text: action.summary, sources: [], contextQuestion: question, actionProposal: { type: action.type, params: action.params, summary: action.summary } }
+    }
     const scoreQ = scoreQuestion(q, previousQuestion, listTeams()) || (plan?.modules.includes('highscores') ? `highscore oversigt ${q}` : null)
     if (scoreQ) {
       let games = GAMES.filter(game => game.pattern.test(scoreQ))

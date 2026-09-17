@@ -17,6 +17,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useLanguage } from '@/contexts/LanguageContext'
 import { newId } from '@/lib/utils'
 import { appendToKvArray, updateKvArrayItem, removeFromKvArray } from '@/lib/kvArrays'
+import { createPersonalTodo, personalTodosKey, type PersonalTodo } from '@/lib/personalTodos'
 import { isAnyModalOpen } from '@/lib/modalStack'
 import { consumeNavigationParams } from '@/lib/appNavigation'
 import { format } from 'date-fns'
@@ -48,15 +49,7 @@ export interface Project {
 }
 
 // Personlig to-do-liste pr. bruger (todos-personal-<email>) - kun ejeren kan skrive.
-interface PersonalTodo {
-  id: string
-  title: string
-  description?: string
-  status: ProjectStatus
-  createdAt: string
-  completedAt?: string
-  done?: boolean
-}
+// (PersonalTodo-typen er delt via src/lib/personalTodos.ts - se dens brug i HubAssistant.tsx)
 
 export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
   const { t, language } = useLanguage()
@@ -74,7 +67,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
   const [sortBy, setSortBy] = useState<'newest' | 'oldest'>('newest')
   const [currentUserName, setCurrentUserName] = useState('')
   // Personlige to-do's ligger under en per-bruger-noegle, adskilt fra team-to-do's.
-  const personalKey = `todos-personal-${userEmail}`
+  const personalKey = personalTodosKey(userEmail)
   const [personalTodos] = useKV<PersonalTodo[]>(personalKey, [])
   const [newTodoTitle, setNewTodoTitle] = useState('')
   const [newTodoDescription, setNewTodoDescription] = useState('')
@@ -234,7 +227,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
       return
     }
     try {
-      await appendToKvArray<PersonalTodo>(personalKey, [{ id: newId('todo'), title, description: newTodoDescription.trim(), status: 'open', createdAt: new Date().toISOString() }])
+      await createPersonalTodo(userEmail, title, newTodoDescription)
       setNewTodoTitle('')
       setNewTodoDescription('')
       setIsPersonalCreateOpen(false)

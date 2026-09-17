@@ -1,6 +1,5 @@
 import { useState, useMemo } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
-import { vacationRequestEmail, vacationRequestConfirmationEmail } from '@/lib/emailTemplates'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
@@ -9,11 +8,9 @@ import { PaperPlaneTilt, Plus } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { useLanguage } from '@/contexts/LanguageContext'
 import { useUnsavedChanges } from '@/hooks/useUnsavedChanges'
-import { newId } from '@/lib/utils'
-import { appendToKvArray } from '@/lib/kvArrays'
+import { submitVacationRequest } from '@/lib/vacationRequests'
 import { format } from 'date-fns'
 import { da } from 'date-fns/locale'
-import type { VacationEntry } from '@/lib/types'
 
 interface VacationRequestDialogProps {
   userEmail: string
@@ -58,87 +55,7 @@ export function VacationRequestDialog({ userEmail }: VacationRequestDialogProps)
     setIsSubmitting(true)
 
     try {
-      const startDateStr = startDate
-      const endDateStr = endDate
-
-      const newVacation: VacationEntry = {
-        id: newId('vacation'),
-        userId: userEmail,
-        userEmail,
-        startDate: startDateStr,
-        endDate: endDateStr,
-        notes: notes.trim() || undefined,
-        status: 'pending'
-      }
-
-      await appendToKvArray('vacation-entries', [newVacation])
-
-      const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; isManager: boolean }>>('users')
-      const managers = Object.values(usersData || {}).filter(user => user.isManager)
-      const requesterName = usersData?.[userEmail]?.fullName || userEmail
-
-      try {
-        const emailContent = vacationRequestEmail(requesterName, startDate, endDate, notes.trim() || undefined)
-
-        // Saml alle manager-mails/notifikationer og skriv én atomar append pr. nøgle.
-        const managerEmailItems = managers.map((manager) => ({
-          id: newId('email'),
-          from: userEmail,
-          to: manager.email,
-          subject: emailContent.subject,
-          message: emailContent.body,
-          timestamp: Date.now(),
-          read: false,
-          type: 'vacation-request',
-          actionLink: { view: 'manager', tab: 'vacation-requests', label: 'Gå til ferieanmodninger' }
-        }))
-
-        const managerNotifications = managers.map((manager) => ({
-          id: newId('notif'),
-          to: manager.email,
-          subject: emailContent.subject,
-          body: emailContent.body,
-          timestamp: new Date().toISOString(),
-          type: 'vacation-request' as const,
-          read: false
-        }))
-
-        await appendToKvArray('emails', managerEmailItems)
-        await appendToKvArray('email-notifications', managerNotifications)
-      } catch (emailError) {
-        console.error('Error sending vacation request email to manager:', emailError)
-      }
-
-      try {
-        const confirmEmail = vacationRequestConfirmationEmail(startDate, endDate, notes.trim() || undefined)
-
-        const confirmationEmail = {
-          id: newId('email'),
-          from: 'system@nexigroup.com',
-          to: userEmail,
-          subject: confirmEmail.subject,
-          message: confirmEmail.body,
-          timestamp: Date.now(),
-          read: false,
-          type: 'vacation-confirmation'
-        }
-
-        await appendToKvArray('emails', [confirmationEmail])
-
-        const confirmNotification = {
-          id: newId('notif'),
-          to: userEmail,
-          subject: confirmEmail.subject,
-          body: confirmEmail.body,
-          timestamp: new Date().toISOString(),
-          type: 'vacation-request' as const,
-          read: false
-        }
-
-        await appendToKvArray('email-notifications', [confirmNotification])
-      } catch (error) {
-        console.error('Error sending confirmation email:', error)
-      }
+      await submitVacationRequest({ userEmail, startDate, endDate, notes })
 
       toast.success(t.vacationRequestDialog.requestSent)
       setStartDate('')

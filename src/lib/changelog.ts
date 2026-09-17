@@ -19,6 +19,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       'To Do: både fælles og personlige to-do’er kan nu redigeres (titel og beskrivelse) via en ny blyant-knap',
       'Guide-editoren gemmer nu automatisk en kladde undervejs — lukker computeren eller crasher appen midt i en guide, tilbydes kladden genskabt næste gang',
       'Vagtplan: nye "Gentagne vagter" — tildel en opgave der automatisk gentages hver uge, hver anden, tredje eller fjerde uge fremover',
+      'Hubert kan nu også UDFØRE ting, ikke kun svare: sig "opret en ferieanmodning fra ... til ..." eller "opret en to-do: ..." — Hubert viser altid et bekræftelseskort, og intet skrives før du selv trykker Bekræft',
       'Highscores i Spilhjørnet hentes markant hurtigere paa tvaers af teams (ingen unoedvendig genindlaesning fra drevet, og laesninger koerer nu parallelt i stedet for én ad gangen)',
       'Brick Break føles meget mere responsivt: fjernet unoedvendige gen-tegninger 60 gange i sekundet, der konkurrerede med tastatur/mus-input',
     ],

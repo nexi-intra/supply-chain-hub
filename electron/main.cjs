@@ -655,7 +655,7 @@ app.whenReady().then(() => {
       const evidence = await resolveAssistantAnswer(assistant, localAI, request)
       const resolvedRequest = { ...request, question: evidence.contextQuestion || request.question }
       const answer = conciseGuideFact(evidence, resolvedRequest) || evidence
-      if (answer.mode === 'data' || answer.mode === 'unsupported') {
+      if (answer.mode === 'data' || answer.mode === 'unsupported' || answer.mode === 'action-proposal') {
         if (fingerprint(await assistant.revalidateSources(request, answer)) !== scope) throw new Error('Hubben eller adgangen blev ændret under opslaget')
         return answer
       }

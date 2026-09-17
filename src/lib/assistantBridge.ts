@@ -14,8 +14,13 @@ export interface AssistantSource {
   moduleId?: string
   recordId?: string
 }
+export interface AssistantActionProposal {
+  type: 'vacation-request' | 'personal-todo'
+  params: Record<string, string>
+  summary: string
+}
 export interface AssistantAnswer {
-  mode: 'data' | 'retrieval' | 'ai' | 'unsupported' | 'knowledge'
+  mode: 'data' | 'retrieval' | 'ai' | 'unsupported' | 'knowledge' | 'action-proposal'
   text: string
   sources: AssistantSource[]
   personChoices?: Array<{ id: string; label: string }>
@@ -26,6 +31,8 @@ export interface AssistantAnswer {
   warning?: string
   usedImage?: boolean
   metrics?: { totalMs: number; loadMs: number; tokens?: number }
+  /** Kun ved mode 'action-proposal' med en genkendt handling — se HubAssistant.tsx. */
+  actionProposal?: AssistantActionProposal
 }
 export interface AssistantStatus { installed: boolean; running: boolean; busy: boolean; vision: boolean; freeGiB: number; minimumFreeGiB?: number; model: string; sharedAvailable?: boolean; provisioning?: boolean; provisionProgress?: number }
 export interface AssistantProvisionProgress { copied: number; total: number; ratio: number }
