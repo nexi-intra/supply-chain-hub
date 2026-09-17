@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Bell, Envelope, Umbrella, Books, Gift, NotePencil, X } from '@phosphor-icons/react'
+import { Bell, Envelope, Umbrella, Books, Gift, NotePencil, CalendarBlank, X } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -9,6 +9,9 @@ import { useLanguage } from '@/contexts/LanguageContext'
 import { navigateTo } from '@/lib/appNavigation'
 import { getReviewStatus, type Guide, type GuideReviewRequest } from '@/lib/guideTypes'
 import type { Email, VacationEntry, SickLeaveEntry, BirthdayEntry } from '@/lib/types'
+import type { PersonalTodo } from '@/lib/personalTodos'
+import type { Project } from '@/views/ProjectBoard'
+import { todoDueStatus } from '@/lib/todoDueDates'
 
 interface NotebookNotification {
   id: string
@@ -45,10 +48,14 @@ interface NotificationCenterProps {
   // Ferieanmodninger denne manager allerede har set inde i Manager Panel — skal
   // ikke blive ved med at poppe op her, selvom de stadig afventer godkendelse.
   seenVacationRequestIds: string[] | undefined
+  // Til forfaldsdato-notifikationer: personlige to-do's er allerede scoped til
+  // brugeren; team-to-do's filtreres her til dem brugeren er tildelt/har oprettet.
+  personalTodos: PersonalTodo[] | undefined
+  projects: Project[] | undefined
 }
 
 /** Samlet klokke-ikon på Hub: aggregerer alle "kræver din opmærksomhed"-kilder på tværs af moduler. */
-export function NotificationCenter({ userEmail, isAdminOrManager, emails, vacations, sickLeave, guides, guideReviewRequests, isGuideReviewer, seenVacationRequestIds }: NotificationCenterProps) {
+export function NotificationCenter({ userEmail, isAdminOrManager, emails, vacations, sickLeave, guides, guideReviewRequests, isGuideReviewer, seenVacationRequestIds, personalTodos, projects }: NotificationCenterProps) {
   const { language } = useLanguage()
   const [open, setOpen] = useState(false)
   const [notebookNotifications] = useKV<NotebookNotification[]>('notebook-notifications', [])
@@ -154,8 +161,51 @@ export function NotificationCenter({ userEmail, isAdminOrManager, emails, vacati
       })
     })
 
+    // Forfaldsdato-notifikationer: kun to-do's der reelt er ens egne (personlig,
+    // eller team-to-do man er tildelt/har oprettet) - aldrig andres to-do's.
+    const duePersonalTodos = (personalTodos || []).filter(todo => {
+      const completed = (todo.status ?? (todo.done ? 'completed' : 'open')) === 'completed'
+      const status = todoDueStatus(todo.dueDate, completed, new Date(now))
+      return status === 'overdue' || status === 'today'
+    })
+    duePersonalTodos.forEach(todo => {
+      const overdue = todoDueStatus(todo.dueDate, false, new Date(now)) === 'overdue'
+      result.push({
+        id: `todo-personal-${todo.id}`,
+        icon: CalendarBlank,
+        iconColor: overdue ? 'text-destructive' : 'text-amber-600',
+        title: todo.title,
+        subtitle: overdue
+          ? (language === 'da' ? 'To-do er overskredet' : language === 'fi' ? 'To-do on myöhässä' : 'To-do is overdue')
+          : (language === 'da' ? 'To-do forfalder i dag' : language === 'fi' ? 'To-don määräaika on tänään' : 'To-do is due today'),
+        timestamp: new Date(todo.dueDate!).getTime() || now,
+        onOpen: () => navigateTo('projects', { tab: 'personal' }),
+      })
+    })
+
+    const dueProjects = (projects || []).filter(project => {
+      const isRelevant = project.createdBy === userEmail || (project.teamMembers || []).some(m => m.email === userEmail)
+      if (!isRelevant) return false
+      const status = todoDueStatus(project.dueDate, project.status === 'completed', new Date(now))
+      return status === 'overdue' || status === 'today'
+    })
+    dueProjects.forEach(project => {
+      const overdue = todoDueStatus(project.dueDate, false, new Date(now)) === 'overdue'
+      result.push({
+        id: `todo-team-${project.id}`,
+        icon: CalendarBlank,
+        iconColor: overdue ? 'text-destructive' : 'text-amber-600',
+        title: project.title,
+        subtitle: overdue
+          ? (language === 'da' ? 'Team to-do er overskredet' : language === 'fi' ? 'Tiimin to-do on myöhässä' : 'Team to-do is overdue')
+          : (language === 'da' ? 'Team to-do forfalder i dag' : language === 'fi' ? 'Tiimin to-don määräaika on tänään' : 'Team to-do is due today'),
+        timestamp: new Date(project.dueDate!).getTime() || now,
+        onOpen: () => navigateTo('projects', { tab: 'team' }),
+      })
+    })
+
     return result.sort((a, b) => b.timestamp - a.timestamp)
-  }, [emails, notebookNotifications, vacations, sickLeave, guides, guideReviewRequests, birthdays, userEmail, isAdminOrManager, isGuideReviewer, language, seenVacationRequestIds])
+  }, [emails, notebookNotifications, vacations, sickLeave, guides, guideReviewRequests, birthdays, userEmail, isAdminOrManager, isGuideReviewer, language, seenVacationRequestIds, personalTodos, projects])
 
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set())
   useEffect(() => {

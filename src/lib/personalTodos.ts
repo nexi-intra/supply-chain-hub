@@ -17,6 +17,8 @@ export interface PersonalTodo {
   createdAt: string
   completedAt?: string
   done?: boolean
+  /** Valgfri forfaldsdato (YYYY-MM-DD) - naar opgaven skal vaere lavet. */
+  dueDate?: string
 }
 
 export function personalTodosKey(userEmail: string): string {
@@ -24,7 +26,7 @@ export function personalTodosKey(userEmail: string): string {
 }
 
 /** Kaster hvis titlen er tom. */
-export async function createPersonalTodo(userEmail: string, title: string, description?: string): Promise<PersonalTodo> {
+export async function createPersonalTodo(userEmail: string, title: string, description?: string, dueDate?: string): Promise<PersonalTodo> {
   const trimmedTitle = title.trim()
   if (!trimmedTitle) throw new Error('MISSING_TITLE')
 
@@ -34,6 +36,7 @@ export async function createPersonalTodo(userEmail: string, title: string, descr
     description: description?.trim() || undefined,
     status: 'open',
     createdAt: new Date().toISOString(),
+    dueDate: dueDate?.trim() || undefined,
   }
   await appendToKvArray<PersonalTodo>(personalTodosKey(userEmail), [todo])
   return todo

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowLeft, Plus, User, CheckCircle, Circle, Clock, FolderOpen, MagnifyingGlass, Funnel, Trash, X, UserPlus, PencilSimple } from '@phosphor-icons/react'
+import { ArrowLeft, Plus, User, CheckCircle, Circle, Clock, FolderOpen, MagnifyingGlass, Funnel, Trash, X, UserPlus, PencilSimple, CalendarBlank } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -18,6 +18,7 @@ import { useLanguage } from '@/contexts/LanguageContext'
 import { newId } from '@/lib/utils'
 import { appendToKvArray, updateKvArrayItem, removeFromKvArray } from '@/lib/kvArrays'
 import { createPersonalTodo, personalTodosKey, type PersonalTodo } from '@/lib/personalTodos'
+import { todoDueStatus } from '@/lib/todoDueDates'
 import { isAnyModalOpen } from '@/lib/modalStack'
 import { consumeNavigationParams } from '@/lib/appNavigation'
 import { format } from 'date-fns'
@@ -46,6 +47,8 @@ export interface Project {
   status: ProjectStatus
   teamMembers?: TeamMember[]
   completedAt?: string
+  /** Valgfri forfaldsdato (YYYY-MM-DD) - naar opgaven skal vaere lavet. */
+  dueDate?: string
 }
 
 // Personlig to-do-liste pr. bruger (todos-personal-<email>) - kun ejeren kan skrive.
@@ -58,11 +61,15 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
   const [newTitle, setNewTitle] = useState('')
   const [newDescription, setNewDescription] = useState('')
+  const [newDueDate, setNewDueDate] = useState('')
   const [editingProject, setEditingProject] = useState<Project | null>(null)
   const [editProjectTitle, setEditProjectTitle] = useState('')
   const [editProjectDescription, setEditProjectDescription] = useState('')
+  const [editProjectDueDate, setEditProjectDueDate] = useState('')
   const [isEditProjectOpen, setIsEditProjectOpen] = useState(false)
-  const [searchQuery, setSearchQuery] = useState(() => consumeNavigationParams()?.search ?? '')
+  const [initialNavParams] = useState(() => consumeNavigationParams())
+  const [activeTab, setActiveTab] = useState<'team' | 'personal'>(() => initialNavParams?.tab === 'personal' ? 'personal' : 'team')
+  const [searchQuery, setSearchQuery] = useState(() => initialNavParams?.search ?? '')
   const [filterUser, setFilterUser] = useState<'all' | 'my' | 'unassigned'>('all')
   const [sortBy, setSortBy] = useState<'newest' | 'oldest'>('newest')
   const [currentUserName, setCurrentUserName] = useState('')
@@ -71,10 +78,12 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
   const [personalTodos] = useKV<PersonalTodo[]>(personalKey, [])
   const [newTodoTitle, setNewTodoTitle] = useState('')
   const [newTodoDescription, setNewTodoDescription] = useState('')
+  const [newTodoDueDate, setNewTodoDueDate] = useState('')
   const [isPersonalCreateOpen, setIsPersonalCreateOpen] = useState(false)
   const [editingTodo, setEditingTodo] = useState<PersonalTodo | null>(null)
   const [editTodoTitle, setEditTodoTitle] = useState('')
   const [editTodoDescription, setEditTodoDescription] = useState('')
+  const [editTodoDueDate, setEditTodoDueDate] = useState('')
   const [isEditTodoOpen, setIsEditTodoOpen] = useState(false)
 
   useEffect(() => {
@@ -115,12 +124,14 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
       createdAt: new Date().toISOString(),
       status: 'open',
       teamMembers: [],
+      dueDate: newDueDate.trim() || undefined,
     }
 
     await appendToKvArray('projects', [newProject])
 
     setNewTitle('')
     setNewDescription('')
+    setNewDueDate('')
     setIsCreateDialogOpen(false)
     toast.success(language === 'da' ? 'To-do oprettet' : language === 'fi' ? 'To-do luotu' : 'To-do created')
   }
@@ -169,6 +180,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
     setEditingProject(project)
     setEditProjectTitle(project.title)
     setEditProjectDescription(project.description)
+    setEditProjectDueDate(project.dueDate || '')
     setIsEditProjectOpen(true)
   }
 
@@ -182,6 +194,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
       ...p,
       title: editProjectTitle.trim(),
       description: editProjectDescription.trim(),
+      dueDate: editProjectDueDate.trim() || undefined,
     }))
     setIsEditProjectOpen(false)
     setEditingProject(null)
@@ -227,9 +240,10 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
       return
     }
     try {
-      await createPersonalTodo(userEmail, title, newTodoDescription)
+      await createPersonalTodo(userEmail, title, newTodoDescription, newTodoDueDate)
       setNewTodoTitle('')
       setNewTodoDescription('')
+      setNewTodoDueDate('')
       setIsPersonalCreateOpen(false)
       toast.success(language === 'da' ? 'To-do oprettet' : language === 'fi' ? 'To-do luotu' : 'To-do created')
     } catch { toast.error(language === 'da' ? 'Kunne ikke tilføje to-do' : language === 'fi' ? 'Lisäys epäonnistui' : 'Could not add to-do') }
@@ -253,6 +267,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
     setEditingTodo(todo)
     setEditTodoTitle(todo.title)
     setEditTodoDescription(todo.description || '')
+    setEditTodoDueDate(todo.dueDate || '')
     setIsEditTodoOpen(true)
   }
   const handleEditTodo = async () => {
@@ -265,6 +280,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
       ...todo,
       title: editTodoTitle.trim(),
       description: editTodoDescription.trim(),
+      dueDate: editTodoDueDate.trim() || undefined,
     }))
     setIsEditTodoOpen(false)
     setEditingTodo(null)
@@ -338,6 +354,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                 {language === 'da' ? 'Oprettet' : language === 'fi' ? 'Luotu' : 'Created'}: {formatDate(todo.createdAt)}
               </span>
             </div>
+            {renderDueDate(todo.dueDate, status === 'completed')}
             {todo.completedAt && (
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <CheckCircle size={14} weight="duotone" />
@@ -430,6 +447,15 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                     rows={4}
                   />
                 </div>
+                <div className="space-y-2">
+                  <Label htmlFor="todo-due-date">{language === 'da' ? 'Forfaldsdato (valgfri)' : language === 'fi' ? 'Määräaika (valinnainen)' : 'Due date (optional)'}</Label>
+                  <Input
+                    id="todo-due-date"
+                    type="date"
+                    value={newTodoDueDate}
+                    onChange={(e) => setNewTodoDueDate(e.target.value)}
+                  />
+                </div>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsPersonalCreateOpen(false)}>
@@ -469,6 +495,15 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                     value={editTodoDescription}
                     onChange={(e) => setEditTodoDescription(e.target.value)}
                     rows={4}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-todo-due-date">{language === 'da' ? 'Forfaldsdato (valgfri)' : language === 'fi' ? 'Määräaika (valinnainen)' : 'Due date (optional)'}</Label>
+                  <Input
+                    id="edit-todo-due-date"
+                    type="date"
+                    value={editTodoDueDate}
+                    onChange={(e) => setEditTodoDueDate(e.target.value)}
                   />
                 </div>
               </div>
@@ -573,6 +608,21 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
   const formatDate = (dateString: string) => {
     const date = new Date(dateString)
     return format(date, 'dd MMM yyyy, HH:mm', { locale: language === 'da' ? da : language === 'fi' ? fi : enUS })
+  }
+
+  const renderDueDate = (dueDate: string | undefined, isCompleted: boolean) => {
+    if (!dueDate) return null
+    const status = todoDueStatus(dueDate, isCompleted)
+    const colorClass = status === 'overdue' ? 'text-destructive' : status === 'today' ? 'text-amber-600' : 'text-muted-foreground'
+    const statusText = status === 'overdue'
+      ? (language === 'da' ? ' (overskredet)' : language === 'fi' ? ' (myöhässä)' : ' (overdue)')
+      : status === 'today' ? (language === 'da' ? ' (i dag)' : language === 'fi' ? ' (tänään)' : ' (today)') : ''
+    return (
+      <div className={`flex items-center gap-2 text-xs ${colorClass}`}>
+        <CalendarBlank size={14} weight="duotone" />
+        <span>{language === 'da' ? 'Forfalder' : language === 'fi' ? 'Määräaika' : 'Due'}: {dueDate}{statusText}</span>
+      </div>
+    )
   }
 
   const renderProjectCard = (project: Project) => {
@@ -694,6 +744,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                 {language === 'da' ? 'Oprettet' : language === 'fi' ? 'Luotu' : 'Created'}: {formatDate(project.createdAt)}
               </span>
             </div>
+            {renderDueDate(project.dueDate, project.status === 'completed')}
 
             {project.completedAt && (
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -759,7 +810,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
       </div>
 
       <div className="container mx-auto px-4 sm:px-6 py-10">
-        <Tabs defaultValue="team">
+        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'team' | 'personal')}>
           <TabsList className="mb-6">
             <TabsTrigger value="team">{language === 'da' ? "Team-to-do's" : language === 'fi' ? "Tiimin to-do't" : "Team to-do's"}</TabsTrigger>
             <TabsTrigger value="personal">{language === 'da' ? "Personlige to-do's" : language === 'fi' ? "Omat to-do't" : "Personal to-do's"}</TabsTrigger>
@@ -802,6 +853,15 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                     rows={4}
                   />
                 </div>
+                <div className="space-y-2">
+                  <Label htmlFor="due-date">{language === 'da' ? 'Forfaldsdato (valgfri)' : language === 'fi' ? 'Määräaika (valinnainen)' : 'Due date (optional)'}</Label>
+                  <Input
+                    id="due-date"
+                    type="date"
+                    value={newDueDate}
+                    onChange={(e) => setNewDueDate(e.target.value)}
+                  />
+                </div>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
@@ -840,6 +900,15 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                     value={editProjectDescription}
                     onChange={(e) => setEditProjectDescription(e.target.value)}
                     rows={4}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-due-date">{language === 'da' ? 'Forfaldsdato (valgfri)' : language === 'fi' ? 'Määräaika (valinnainen)' : 'Due date (optional)'}</Label>
+                  <Input
+                    id="edit-due-date"
+                    type="date"
+                    value={editProjectDueDate}
+                    onChange={(e) => setEditProjectDueDate(e.target.value)}
                   />
                 </div>
               </div>

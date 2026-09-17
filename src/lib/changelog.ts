@@ -21,6 +21,8 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Vagtplan: nye "Gentagne vagter" — tildel en opgave der automatisk gentages hver uge, hver anden, tredje eller fjerde uge fremover',
       'Hubert kan nu også UDFØRE ting, ikke kun svare: sig "opret en ferieanmodning fra ... til ..." eller "opret en to-do: ..." — Hubert viser altid et bekræftelseskort, og intet skrives før du selv trykker Bekræft',
       'Hubert kan nu følge op på et ufuldstændigt handlingsforslag ("hvilke datoer?" → dit næste svar med bare datoerne bliver forstået), og hvert svar kan nu bedømmes med tommel op/ned',
+      'To Do: både team- og personlige to-do\'er kan nu få en forfaldsdato — du får en notifikation i klokken, når den falder i dag eller er overskredet',
+      'Creator: Arcade-highscores og brugerlisten kan nu ses samlet på tværs af ALLE hubs, uden at skulle skifte aktivt hub først',
       'Highscores i Spilhjørnet hentes markant hurtigere paa tvaers af teams (ingen unoedvendig genindlaesning fra drevet, og laesninger koerer nu parallelt i stedet for én ad gangen)',
       'Brick Break føles meget mere responsivt: fjernet unoedvendige gen-tegninger 60 gange i sekundet, der konkurrerede med tastatur/mus-input',
     ],

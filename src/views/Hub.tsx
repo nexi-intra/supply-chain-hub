@@ -32,6 +32,8 @@ import { getEmployeeColorByEmail, EMPLOYEE_COLOR_OVERRIDES_KEY, type EmployeeCol
 import type { Guide, GuideReviewRequest } from '@/lib/guideTypes'
 import type { RegisteredTeam } from '@/lib/electronRegistryBridge'
 import { getHomeOfficeUsersForDate } from '@/lib/homeOffice'
+import { personalTodosKey, type PersonalTodo } from '@/lib/personalTodos'
+import type { Project } from '@/views/ProjectBoard'
 
 interface HubModule {
   id: string
@@ -129,6 +131,10 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
   // Ferieanmodninger manageren allerede har set inde i Manager Panel — bruges til
   // at fjerne Hub-advarslen/notifikationen uden at røre selve godkendelses-status.
   const [seenVacationRequestIds] = useKV<string[]>(`seen-vacation-requests-${userEmail}`, [])
+  // Til forfaldsdato-notifikationer i NotificationCenter (samme begrundelse: én
+  // fælles KV-lytter her i stedet for at ProjectBoard og Hub abonnerer separat).
+  const [projectsForAlerts] = useKV<Project[]>('projects', [])
+  const [personalTodosForAlerts] = useKV<PersonalTodo[]>(personalTodosKey(userEmail), [])
   const [dashboardPreferences, setDashboardPreferences] = useKV<DashboardPreferences>(`hub-dashboard-${userEmail}`, DEFAULT_DASHBOARD_PREFERENCES)
   // Til "Team status"-widgeten: faste brugere + manager-farveoverstyringer.
   const [usersForStatus] = useKV<Record<string, { fullName: string }>>('users', {})
@@ -1183,6 +1189,8 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
               guideReviewRequests={guideReviewRequests}
               isGuideReviewer={isGuideReviewer}
               seenVacationRequestIds={seenVacationRequestIds}
+              personalTodos={personalTodosForAlerts}
+              projects={projectsForAlerts}
             />
           </motion.div>
           <motion.div
