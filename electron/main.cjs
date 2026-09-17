@@ -8,6 +8,7 @@ const { app, BrowserWindow, shell, ipcMain: nativeIpcMain, dialog, nativeImage }
 const { pathToFileURL } = require('node:url')
 const path = require('path')
 const fs = require('fs')
+const crypto = require('crypto')
 const { createStore } = require('./store.cjs')
 const { createResilientStore } = require('./offlineSync.cjs')
 const { createAuthService, loadDeviceSecret } = require('./authService.cjs')
@@ -25,6 +26,7 @@ const { resolveAssistantAnswer, fingerprint } = require('./assistantPlanner.cjs'
 const { conciseGuideFact, conciseGuideFallback } = require('./assistantAnswers.cjs')
 const { buildHubertSystemPrompt } = require('./assistantPersona.cjs')
 const { detectQuestionLanguage } = require('./assistantContext.cjs')
+const { buildUnansweredLogEntry } = require('./assistantUnansweredLog.cjs')
 let localAI = null
 let assistantBackend = null
 let authService = null
@@ -657,6 +659,10 @@ app.whenReady().then(() => {
       const answer = conciseGuideFact(evidence, resolvedRequest) || evidence
       if (answer.mode === 'data' || answer.mode === 'unsupported' || answer.mode === 'action-proposal') {
         if (fingerprint(await assistant.revalidateSources(request, answer)) !== scope) throw new Error('Hubben eller adgangen blev ændret under opslaget')
+        // Best-effort log af ubesvarede spoergsmaal til senere at forbedre
+        // Hubert-daekningen - maa ALDRIG braekke selve svaret til brugeren.
+        const unansweredEntry = buildUnansweredLogEntry(resolvedRequest, answer)
+        if (unansweredEntry) store.updateAsync('hubert-unanswered-questions', { op: 'append', items: [{ id: crypto.randomUUID(), ...unansweredEntry }] }).catch(() => {})
         return answer
       }
       // Insufficient evidence never becomes an AI-generated invented answer.

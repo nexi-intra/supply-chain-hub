@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { PaperPlaneRight, Stop, Image as ImageIcon, ArrowSquareOut, X } from '@phosphor-icons/react'
+import { PaperPlaneRight, Stop, Image as ImageIcon, ArrowSquareOut, X, ThumbsUp, ThumbsDown } from '@phosphor-icons/react'
 import { HubertIcon } from './HubertIcon'
 import { AssistantChatWindow, type ChatWidth } from '@/components/AssistantChatWindow'
 import { Button } from '@/components/ui/button'
@@ -11,6 +11,7 @@ import type { AssistantScope, AssistantSource, AssistantAnswer, AssistantStatus 
 import type { Guide } from '@/lib/guideTypes'
 import { submitVacationRequest } from '@/lib/vacationRequests'
 import { createPersonalTodo } from '@/lib/personalTodos'
+import { submitHubertFeedback } from '@/lib/hubertFeedback'
 const KNOWLEDGE_LABEL = { da: 'Søgning i hubdata', en: 'Hub data search', fi: 'Hub-tietojen haku' }
 const MORE_LABEL = { da: 'Vis flere resultater', en: 'Show more results', fi: 'Näytä lisää tuloksia' }
 const PREPARE_LABEL = {
@@ -31,6 +32,13 @@ const ACTION_TEXT = {
   en: { confirm: 'Confirm', cancel: 'Cancel', cancelled: 'Cancelled — nothing was written.', vacationSuccess: 'The vacation request was created and sent for approval.', todoSuccess: 'The to-do was created.', failed: 'Could not complete the action. Try again from the relevant page in the app.' },
   fi: { confirm: 'Vahvista', cancel: 'Peruuta', cancelled: 'Peruttu — mitään ei tallennettu.', vacationSuccess: 'Loma-anomus luotiin ja lähetettiin hyväksyttäväksi.', todoSuccess: 'To-do luotiin.', failed: 'Toimintoa ei voitu suorittaa. Yritä uudelleen sovelluksen asianomaiselta sivulta.' },
 }
+// "Var dette svar nyttigt?"-feedback vises kun paa almindelige svar (ikke
+// handlings-forslag, der allerede har deres eget bekraeft/annuller-flow).
+const FEEDBACK_TEXT = {
+  da: { question: 'Var dette svar nyttigt?', thanks: 'Tak for din feedback!' },
+  en: { question: 'Was this answer helpful?', thanks: 'Thanks for your feedback!' },
+  fi: { question: 'Oliko tästä vastauksesta apua?', thanks: 'Kiitos palautteestasi!' },
+}
 const AI_LABELS = {
   da: { activate: 'Aktivér AI-svar', hint: 'AI-sammenfatning er ikke aktiveret på denne pc. Hent modellen fra det delte drev (engangs, ca. 6 GB).', downloading: 'Henter AI-model', retry: 'Prøv igen' },
   en: { activate: 'Enable AI answers', hint: 'AI summaries are not enabled on this PC. Fetch the model from the shared drive (one-time, ~6 GB).', downloading: 'Downloading AI model', retry: 'Retry' },
@@ -50,7 +58,7 @@ export function HubAssistant({ token, viewId }: AssistantScope) {
   const [open, setOpen] = useState(false)
   const [minimized, setMinimized] = useState(false)
   const [input, setInput] = useState('')
-  const [messages, setMessages] = useState<Array<{ id: number; question: string; answer?: AssistantAnswer; error?: string; actionOutcome?: 'confirmed' | 'cancelled' | 'success' | 'failed'; actionOutcomeMessage?: string }>>([])
+  const [messages, setMessages] = useState<Array<{ id: number; question: string; answer?: AssistantAnswer; error?: string; actionOutcome?: 'confirmed' | 'cancelled' | 'success' | 'failed'; actionOutcomeMessage?: string; feedback?: 'helpful' | 'unhelpful' }>>([])
   const [busy, setBusy] = useState(false)
   const [preparation, setPreparation] = useState<'loading' | 'ready' | 'failed'>('loading')
   const [prepareAttempt, setPrepareAttempt] = useState(0)
@@ -185,6 +193,16 @@ export function HubAssistant({ token, viewId }: AssistantScope) {
       setMessages(current => current.map(message => message.id === messageId ? { ...message, actionOutcome: 'failed', actionOutcomeMessage: text.failed } : message))
     }
   }
+  // Best-effort feedback-logning - paavirker aldrig selve svaret, og et klik
+  // laaser knapperne saa der ikke sendes dobbelt feedback for samme svar.
+  const submitFeedback = async (messageId: number, message: { question: string; answer?: AssistantAnswer }, helpful: boolean) => {
+    setMessages(current => current.map(item => item.id === messageId ? { ...item, feedback: helpful ? 'helpful' : 'unhelpful' } : item))
+    try {
+      if (userEmail && message.answer) await submitHubertFeedback({ userEmail, question: message.answer.contextQuestion || message.question, mode: message.answer.mode, helpful })
+    } catch (failure) {
+      console.error('Hubert feedback failed:', failure)
+    }
+  }
   const openSource = async (source: AssistantSource) => {
     if (!api) return
     const requestId = sequence.current
@@ -266,6 +284,17 @@ export function HubAssistant({ token, viewId }: AssistantScope) {
               {message.answer.nextPage !== undefined && <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void send(message.answer!.contextQuestion || message.question, undefined, message.answer!.nextPage)}>{MORE_LABEL[language]}</Button>}
               {message.answer.warning && <details className="text-xs text-amber-600"><summary className="cursor-pointer">{t.ai}</summary><p className="mt-1 whitespace-pre-wrap break-words">{message.answer.warning}</p></details>}
               {!!message.answer.sources.length && <details className="border-t border-border/50 pt-2"><summary className="cursor-pointer text-xs text-muted-foreground">{t.sources} · {message.answer.sources.length}</summary><div className="mt-2 space-y-2">{message.answer.sources.map((source, sourceIndex) => source.kind === 'guide' || source.kind === 'module' ? <button key={sourceIndex} onClick={() => void openSource(source)} className="flex items-start gap-1.5 text-primary text-left text-xs hover:underline"><span>[{sourceIndex + 1}] {source.title}</span><ArrowSquareOut size={14} className="mt-0.5 shrink-0" /></button> : <p key={sourceIndex} className="text-xs">{source.title}</p>)}</div></details>}
+              {!message.answer.actionProposal && (
+                message.feedback ? (
+                  <p className="text-xs text-muted-foreground">{FEEDBACK_TEXT[language].thanks}</p>
+                ) : (
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <span className="text-xs">{FEEDBACK_TEXT[language].question}</span>
+                    <button type="button" aria-label={FEEDBACK_TEXT[language].thanks} title={FEEDBACK_TEXT[language].question} className="rounded-full p-1 hover:bg-muted hover:text-foreground" onClick={() => void submitFeedback(message.id, message, true)}><ThumbsUp size={14} /></button>
+                    <button type="button" aria-label={FEEDBACK_TEXT[language].thanks} title={FEEDBACK_TEXT[language].question} className="rounded-full p-1 hover:bg-muted hover:text-foreground" onClick={() => void submitFeedback(message.id, message, false)}><ThumbsDown size={14} /></button>
+                  </div>
+                )
+              )}
             </div>}
             {message.error && <p className="rounded-xl bg-destructive/10 p-3 text-xs text-destructive whitespace-pre-wrap break-words" role="alert">{message.error}</p>}
           </div>)}

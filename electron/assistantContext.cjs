@@ -246,7 +246,7 @@ function createAssistantContext({ listTeams, lookupTeam, listViews, creatorEmail
     // brugerbekraeftelse, via de samme delte funktioner som de manuelle
     // formularer bruger (se src/components/HubAssistant.tsx).
     if (!plan && !image) {
-      const action = detectActionIntent(question, language)
+      const action = detectActionIntent(question, language, previousQuestion)
       if (action?.type === 'unresolved') return { mode: 'action-proposal', text: action.message, sources: [], contextQuestion: question }
       if (action) return { mode: 'action-proposal', text: action.summary, sources: [], contextQuestion: question, actionProposal: { type: action.type, params: action.params, summary: action.summary } }
     }

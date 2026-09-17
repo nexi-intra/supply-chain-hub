@@ -11,6 +11,10 @@
 const VACATION_TRIGGERS = /(?:opret|lav|anmod om|book)\w*\s+(?:en\s+)?ferie(?:anmodning\w*)?\b|(?:create|submit|make|request)\w*\s+(?:a\s+)?vacation(?:\s+request)?\b|(?:tee|luo|j[äa]t[äa])\w*\s+loma(?:-anomu\w*)?\b/iu
 const LOOKUP_MARKERS = /hvor mange|afventer|status|hvornår|hvem|godkendt|how many|pending|when|who|approved|montako|odottaa|milloin|kuka|hyväksy/iu
 const TODO_TRIGGERS = /(?:opret|lav|tilf[øo]j)\w*\s+(?:en\s+)?to-?do|(?:create|add|make)\w*\s+(?:a\s+)?to-?do|(?:luo|lis[äa]{2})\w*\s+to-?do/iu
+// Et kort svar, der ligner et NYT spoergsmaal (spoergsmaalstegn eller et
+// hvem/hvad/hvornaar-ord), skal ALDRIG tolkes som svar paa en tidligere
+// ufuldstaendig handling - saa faar den nye samtale lov at starte forfra.
+const QUESTION_MARKERS = /[?]|(?:^|\s)(?:hvem|hvad|hvornår|hvor|hvilken|hvilke|who|what|when|where|which|kuka|mikä|mitä|milloin|missä)(?=\s|$)/iu
 
 const TEXT = {
   da: {
@@ -56,18 +60,29 @@ function extractTodoTitle(question) {
 /**
  * Returnerer null (ingen handlings-hensigt), { type: 'unresolved', message }
  * (hensigt genkendt, men manglende parametre), eller { type, params, summary }.
+ * `previousQuestion` bruges KUN til aet genkende en direkte opfoelgning paa et
+ * tidligere ufuldstaendigt handlings-forslag (fx et svar med blot datoer efter
+ * "opret en ferieanmodning") - aldrig til at afgoere adgang eller data.
  */
-function detectActionIntent(question, language) {
+function detectActionIntent(question, language, previousQuestion) {
   const q = typeof question === 'string' ? question.trim() : ''
   if (!q) return null
   if (LOOKUP_MARKERS.test(q)) return null
   const text = TEXT[language] || TEXT.da
-  if (VACATION_TRIGGERS.test(q)) {
+  const prev = typeof previousQuestion === 'string' ? previousQuestion.trim() : ''
+  // En opfoelgning taeller kun med hvis det FORRIGE spoergsmaal reelt manglede
+  // parameteren (udsagnsord til stede, men ingen udtraekkelig dato/titel) -
+  // ellers ville en efterfoelgende "tak" fejlagtigt genstarte et allerede
+  // afsluttet forslag. Desuden ikke hvis nogen af de to ligner et opslag.
+  const canContinue = !!prev && !LOOKUP_MARKERS.test(prev) && !QUESTION_MARKERS.test(q)
+  const continuingVacation = canContinue && VACATION_TRIGGERS.test(prev) && !extractDateRange(prev)
+  if (VACATION_TRIGGERS.test(q) || continuingVacation) {
     const range = extractDateRange(q)
     if (!range) return { type: 'unresolved', message: text.vacationNoDates }
     return { type: 'vacation-request', params: { startDate: range.start, endDate: range.end }, summary: text.vacationSummary(range.start, range.end) }
   }
-  if (TODO_TRIGGERS.test(q)) {
+  const continuingTodo = canContinue && TODO_TRIGGERS.test(prev) && !extractTodoTitle(prev)
+  if (TODO_TRIGGERS.test(q) || continuingTodo) {
     const title = extractTodoTitle(q)
     if (!title) return { type: 'unresolved', message: text.todoNoTitle }
     return { type: 'personal-todo', params: { title }, summary: text.todoSummary(title) }

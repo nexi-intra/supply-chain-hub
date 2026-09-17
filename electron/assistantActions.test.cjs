@@ -64,9 +64,34 @@ test('ordinary lookup questions are never mistaken for an action intent', () => 
     'who is on vacation next week?',
     'what tasks do I have next week?',
     'onko minulla huomenna vapaata?',
+    'hvor mange ferieanmodninger afventer?',
+    'how many vacation requests are pending?',
+    'montako loma-anomusta odottaa hyväksyntää?',
   ]) {
     assert.equal(detectActionIntent(question, 'da'), null, question)
   }
+})
+
+test('a bare date-only reply completes a previously unresolved vacation request', () => {
+  const result = detectActionIntent('fra 2026-10-05 til 2026-10-10', 'da', 'opret en ferieanmodning')
+  assert.equal(result.type, 'vacation-request')
+  assert.deepEqual(result.params, { startDate: '2026-10-05', endDate: '2026-10-10' })
+})
+
+test('a bare title reply completes a previously unresolved to-do', () => {
+  const result = detectActionIntent('ring til IT om printeren', 'da', 'opret en to-do')
+  assert.equal(result.type, 'personal-todo')
+  assert.equal(result.params.title, 'ring til IT om printeren')
+})
+
+test('an unrelated question is never swallowed by a pending action follow-up', () => {
+  assert.equal(detectActionIntent('hvem har flest opgaver denne uge?', 'da', 'opret en ferieanmodning'), null)
+  assert.equal(detectActionIntent('hvad skal jeg lave i morgen?', 'da', 'opret en to-do'), null)
+})
+
+test('a follow-up is ignored once the previous action was already fully resolved', () => {
+  assert.equal(detectActionIntent('tak', 'da', 'opret ferie fra 2026-10-05 til 2026-10-10'), null)
+  assert.equal(detectActionIntent('super', 'da', 'opret en to-do: ring til IT'), null)
 })
 
 test('extractDateRange finds two ISO dates regardless of surrounding text', () => {
