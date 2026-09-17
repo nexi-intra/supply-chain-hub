@@ -1,5 +1,6 @@
 // Assistant-specific allowlist. Never send generic KV contents to the model.
 const { isTaskQuestion, selectTaskPeople } = require('./assistantPeople.cjs')
+const { insightAnswer } = require('./assistantInsights.cjs')
 const { extraDates } = require('./assistantDates.cjs')
 const { createKnowledge, validatePlan, moduleCatalog } = require('./assistantKnowledge.cjs')
 const { continueQuestion, validateConversation } = require('./assistantConversation.cjs')
@@ -289,9 +290,12 @@ function createAssistantContext({ listTeams, lookupTeam, listViews, creatorEmail
     const taskQuery = !homeQuery && (isTaskQuestion(q) || plan?.modules.includes('shifts'))
     const vacationQuery = (/ferie|vacation|holiday|loma/.test(q) || plan?.modules.includes('vacation')) && !/guide|vejledning|manual|opas|oppaa|anmodning|afventer|pending|request/.test(q)
     let teams = principal.teams
-    // Only the already visible Supply Chain home-office OVERVIEW crosses teams.
-    // No other teams' tasks, protected guides, notes or health details are read.
-    const supplyOverview = homeQuery && /supply\s*chain|alle teams|all teams|kaikki tiimit/.test(q)
+    // Hjemmearbejde-OVERSIGTEN er allerede synlig for alle paa forsiden paa
+    // tvaers af teams (supplyHomeOffice-widgetten, kun navn+dato). Et
+    // hjemmearbejde-spoergsmaal daekker derfor hele Supply Chain som standard;
+    // navngivne teams indsnaevrer stadig, og observer-hubs holder sig til deres
+    // tildelte teams. Ingen andre teams' opgaver, guides eller noter laeses.
+    const supplyOverview = homeQuery
     if (supplyOverview) teams = viewId ? principal.teams : listTeams()
     const namedTeams = listTeams().filter(team => [team.teamId, team.abbreviation, team.name].filter(Boolean).some(name => new RegExp(`(?:^|[^\\p{L}\\p{N}])${String(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:$|[^\\p{L}\\p{N}])`, 'iu').test(q)))
     // The public people directory (name + role) crosses teams, exactly like the
@@ -308,6 +312,11 @@ function createAssistantContext({ listTeams, lookupTeam, listViews, creatorEmail
       }
       teams = teams.filter(team => namedTeams.some(named => named.teamId === team.teamId))
     }
+    // Kryds-modul-indsigter (hvor-er, ledige, tilbage, flest opgaver, konflikter)
+    // kombinerer personer x ferie x sygdom x hjemmearbejde x vagter deterministisk.
+    // Koerer FOER enkelt-modul-sporene, men kun paa praecise intents.
+    const insight = insightAnswer({ question, principal, teams, readTeam, creatorEmail: creatorEmail(), language, resolveDates, selectedPerson, now })
+    if (insight) return insight
     const sources = []
     // Extended modules share one permission-projected search layer. Prefer explicit
     // module requests before the old narrowly defined planning intent detectors.

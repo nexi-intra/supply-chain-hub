@@ -39,3 +39,7 @@ release/
 # Behold kun det originale Windows-appikon i build-mappen.
 build/*
 !build/icon.ico
+
+# Portable build-artefakter kopieret til mappe-roden
+*.exe
+*.zip

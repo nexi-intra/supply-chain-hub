@@ -8,6 +8,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.5.3',
+    items: [
+      'Appen svarer hurtigere: gemninger blokerer ikke længere appen, og hakken/frysninger ved langsomt netværksdrev er fjernet',
+      'Hubert er blevet markant klogere: spørg fx "Hvor er Anne i dag?", "Hvem er på arbejde i morgen?", "Hvornår er Bo tilbage?" eller "Hvem har flest opgaver i næste uge?"',
+      'Hubert forstår opfølgninger som "og Bo?" eller "og fredag?" og finder hjemmearbejde på tværs af alle teams',
+      'Ny fælles guide: "Supply Chain Hub — den komplette håndbog" med alt fra login til spil (ligger i guide-biblioteket i alle hubs)',
+      'Guide-review: fastlåste anmodninger kan ikke længere opstå, og åbne anmodninger kan kasseres helt',
+      'Team status i dag: kommentar-blyanten virker nu også for kolleger uden opgave',
+      'Spillene reagerer øjeblikkeligt på input igen — også Cube Basher (fast tast efter fokusskift er fixet)',
+    ],
+  },
+  {
     version: '1.5.2',
     items: [
       'Hubert AI-assistent er nu med i appen og svarer på dansk, engelsk og finsk ud fra spørgsmålets sprog',

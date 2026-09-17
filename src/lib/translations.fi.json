@@ -25,6 +25,7 @@
       "passwordsMismatch": "Salasanat eivät täsmää",
       "emailExists": "Käyttäjä tällä sähköpostilla on jo olemassa",
       "connectionFailed": "Ei voitu yhdistää. Yritä uudestaan.",
+      "storageBusy": "Tallennustila on toisen asiakkaan käytössä — odota hetki ja yritä uudelleen.",
       "wrongCredentials": "Virheellinen sähköposti/käyttäjätunnus tai salasana",
       "pendingApproval": "Tilisi odottaa johtajan hyväksyntää.",
       "rejected": "Pääsypyyntönne on hylätty. Ota yhteyttä johtajaan.",

@@ -33,7 +33,7 @@ test('asynchronous reads cannot return data across a completed account migration
 })
 test('ordinary writes and directory assignments execute inside the account gate and check retired identities', async () => {
   let gated = false, checked = 0
-  const accounts = { context: () => null, runWrite(callback) { gated = true; try { return callback() } finally { gated = false } }, assertAvailable() { assert.ok(gated); checked++ }, assertReferences() { assert.ok(gated); checked++ } }
+  const accounts = { context: () => null, async runWriteAsync(callback) { gated = true; try { return await callback() } finally { gated = false } }, assertAvailable() { assert.ok(gated); checked++ }, assertReferences() { assert.ok(gated); checked++ } }
   const f = fixture(accounts); f.actor({ role: 'manager' })
   assert.equal(await f.register('kv:update', () => { assert.ok(gated); return 'ok' })('users', { op: 'setField', field: 'new@example.test' }), 'ok')
   assert.equal(await f.register('registry:assign-user', () => { assert.ok(gated); return 'ok' })('new@example.test', 'a'), 'ok')

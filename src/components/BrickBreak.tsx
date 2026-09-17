@@ -970,7 +970,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
         radius: BALL_RADIUS
       }
       ballsRef.current = [attachedBall]
-      setBalls([attachedBall])
       return
     }
 
@@ -1317,7 +1316,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
     })
 
     lasersRef.current = updatedLasers
-    setLasers(updatedLasers)
 
     if (laserScoreIncrease > 0) {
       scoreRef.current += laserScoreIncrease
@@ -1328,9 +1326,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
 
     ballsRef.current = newBalls
     bricksRef.current = newBricks
-    
-    setBalls(newBalls)
-    setBricks(newBricks)
 
     if (newBalls.length === 0 && currentBalls.length > 0) {
       if (hasShieldRef.current) {
@@ -1466,6 +1461,19 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
     const currentBalls = ballsRef.current
     const currentPaddle = paddleRef.current
 
+    // Genbrug én lodret glans-gradient til alle bricks (samme hoejde) i stedet for
+    // at allokere en ny pr. brick pr. frame, og drop shadowBlur pr. brick. Begge
+    // dele er tunge nok til at tabe FPS ved en fuld mur, hvilket faar den
+    // muse-styrede paddle til at halte selvom bolden ser glat ud.
+    const brickGlowH = currentBricks.length > 0 ? currentBricks[0].height : 0
+    let brickGlow: CanvasGradient | null = null
+    if (brickGlowH > 0) {
+      brickGlow = ctx.createLinearGradient(0, 0, 0, brickGlowH)
+      brickGlow.addColorStop(0, 'rgba(255, 255, 255, 0.45)')
+      brickGlow.addColorStop(0.4, 'rgba(255, 255, 255, 0.05)')
+      brickGlow.addColorStop(1, 'rgba(0, 0, 0, 0.25)')
+    }
+
     currentBricks.forEach(brick => {
       const hitsRemaining = brick.maxHits - brick.hits
       
@@ -1484,19 +1492,17 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
         displayColor = '#FF6B9D'
       }
       
-      ctx.shadowBlur = 12
-      ctx.shadowColor = displayColor
       ctx.fillStyle = displayColor
       ctx.globalAlpha = 1
       ctx.fillRect(brick.x, brick.y, brick.width, brick.height)
-      ctx.shadowBlur = 0
 
-      const brickGlow = ctx.createLinearGradient(brick.x, brick.y, brick.x, brick.y + brick.height)
-      brickGlow.addColorStop(0, 'rgba(255, 255, 255, 0.45)')
-      brickGlow.addColorStop(0.4, 'rgba(255, 255, 255, 0.05)')
-      brickGlow.addColorStop(1, 'rgba(0, 0, 0, 0.25)')
-      ctx.fillStyle = brickGlow
-      ctx.fillRect(brick.x, brick.y, brick.width, brick.height)
+      if (brickGlow) {
+        ctx.save()
+        ctx.translate(brick.x, brick.y)
+        ctx.fillStyle = brickGlow
+        ctx.fillRect(0, 0, brick.width, brick.height)
+        ctx.restore()
+      }
 
       ctx.fillStyle = 'rgba(255, 255, 255, 0.55)'
       ctx.fillRect(brick.x + 2, brick.y + 2, brick.width - 4, Math.max(2, brick.height * 0.22))

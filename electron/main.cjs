@@ -492,7 +492,17 @@ app.whenReady().then(() => {
 
   // Platform-delt store (Fase 9.1) — oprettes én gang, uafhængig af hvilket team der er aktivt.
   sharedStore = createResilientStore(createStore(path.join(platformRoot, '_shared')), createStore(localCacheDir('_shared')), { onSyncResult: handleSyncResult, guardReplay: guardAccountReplay })
-  if (!accountService.pending()) accountService.runWrite(migrateSharedMealPlanIfNeeded)
+  // KRITISK: runWrite() er synkron og kaster STRAKS (attempts:1) hvis kontolaasen
+  // er kortvarigt optaget (fx to klienter der starter appen i samme sekund). Uden
+  // try/catch stopper en kastet fejl her HELE resten af denne .then()-callback —
+  // inklusiv createWindow() nedenfor — saa appen bliver en usynlig zombie-proces
+  // uden vindue og uden crash. Denne étgangs-migrering maa ALDRIG kunne blokere
+  // vinduet i at aabne; fejl her logges blot og proeves igen ved naeste opstart.
+  try {
+    if (!accountService.pending()) accountService.runWrite(migrateSharedMealPlanIfNeeded)
+  } catch (err) {
+    console.error('TCD Hub: madplan-migreringstjek fejlede (proeves igen ved naeste opstart):', err)
+  }
   startSharedWatcher()
 
   guestStore = createStore(path.join(app.getPath('userData'), 'guest-preferences'))
@@ -522,18 +532,25 @@ app.whenReady().then(() => {
   })
   const kvTarget = key => ['app-language-guest', 'user-theme-guest'].includes(key) ? guestStore : SHARED_KV_KEYS.has(key) ? sharedStore : store
 
-  ipcMain.handle('kv:get', (_event, key) => key === 'users' ? createStore(store.dataDir).getAsync(key, { skipCache: true }).then(publicUsers) : kvTarget(key).getAsync(key, { skipCache: true }))
-  ipcMain.handle('kv:get-many', (_event, keys) => Promise.all(keys.map(key => key === 'users' ? createStore(store.dataDir).getAsync(key, { skipCache: true }).then(publicUsers) : kvTarget(key).getAsync(key, { skipCache: true }))))
-  ipcMain.handle('kv:set', (_event, key, value) => kvTarget(key).set(key, value))
-  ipcMain.handle('kv:delete', (_event, key) => kvTarget(key).delete(key))
-  ipcMain.handle('kv:keys', () => store.keys().filter(key => !key.startsWith('__') && !key.startsWith('account-') && key !== 'active-sessions'))
+  // Direkte (ikke-offline-spejlet) users-laesning: cache store-instansen pr.
+  // datamappe — createStore laver ellers en synkron mkdirSync mod M: pr. kald.
+  let directUsersStore = { dir: null, store: null }
+  const usersStore = () => {
+    if (directUsersStore.dir !== store.dataDir) directUsersStore = { dir: store.dataDir, store: createStore(store.dataDir) }
+    return directUsersStore.store
+  }
+  ipcMain.handle('kv:get', (_event, key) => key === 'users' ? usersStore().getAsync(key, { skipCache: true }).then(publicUsers) : kvTarget(key).getAsync(key))
+  ipcMain.handle('kv:get-many', (_event, keys) => Promise.all(keys.map(key => key === 'users' ? usersStore().getAsync(key, { skipCache: true }).then(publicUsers) : kvTarget(key).getAsync(key))))
+  ipcMain.handle('kv:set', (_event, key, value) => kvTarget(key).setAsync(key, value))
+  ipcMain.handle('kv:delete', (_event, key) => kvTarget(key).deleteAsync(key))
+  ipcMain.handle('kv:keys', async () => (await store.keysAsync()).filter(key => !key.startsWith('__') && !key.startsWith('account-') && key !== 'active-sessions'))
   ipcMain.handle('backup:export', () => exportBackup(createStore(store.dataDir)))
   // Atomar array-opdatering under fil-lås; broadcast med det samme så dette
   // vindues useKV-abonnenter opdaterer uden at vente på 2s-polleren.
-  ipcMain.handle('kv:update', (_event, key, operation) => {
+  ipcMain.handle('kv:update', async (_event, key, operation) => {
     const emailRename = key === 'users' && operation?.op === 'renameField' && operation.field !== operation.newField
     if (emailRename && path.resolve(store.dataDir) !== path.resolve(registeredTeamDir(platformRoot, registry.listTeams(platformRoot), currentTeamFolder).directory)) throw new Error('ACCOUNT_STORAGE_SCOPE_MISMATCH')
-    const result = emailRename ? accountService.rename(authService.current(_event.sender.id), currentTeamFolder, operation) : key === 'users' ? updateUsers(createStore(store.dataDir), operation, authService.current(_event.sender.id), registry.getCreatorEmail(platformRoot)) : kvTarget(key).update(key, operation)
+    const result = emailRename ? accountService.rename(authService.current(_event.sender.id), currentTeamFolder, operation) : key === 'users' ? updateUsers(usersStore(), operation, authService.current(_event.sender.id), registry.getCreatorEmail(platformRoot)) : await kvTarget(key).updateAsync(key, operation)
     if (emailRename) accountDataChanged()
     broadcast('kv:changed', [key])
     return result

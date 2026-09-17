@@ -200,6 +200,14 @@ test('home office overview crosses teams but does not read protected team data',
   assert.ok(!reads.includes('TRR:shift-assignments'))
   assert.ok(!JSON.stringify(answer).includes('PASSWORD'))
 })
+test('a plain work-from-home question crosses teams like the public dashboard widget', () => {
+  const { api, reads } = fixture()
+  const answer = api.query(request('hvem er hjemmefra på torsdag?'), now)
+  assert.match(answer.text, /TRR: Other User/)
+  assert.ok(!reads.includes('TRR:guides'))
+  assert.ok(!reads.includes('TRR:shift-assignments'))
+  assert.ok(!JSON.stringify(answer).includes('PASSWORD'))
+})
 test('team-explicit task question cannot read another team', () => {
   const { api, reads } = fixture()
   assert.throws(() => api.query(request('opgaver i TRR næste uge'), now), /ikke adgang/)

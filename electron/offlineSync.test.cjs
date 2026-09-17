@@ -251,6 +251,37 @@ test('update() mirrors the resulting array to the local cache when online', asyn
   assert.deepEqual(local.get('notes'), [{ id: 'n1' }])
 })
 
+test('async twins mirror online writes and queue offline writes exactly like the sync path', async (t) => {
+  const local = temporaryLocalStore(t)
+  let written
+  const network = fakeNetworkStore({
+    setAsync: async (_key, value) => { written = value },
+    updateAsync: async (_key, op) => op.items,
+    deleteAsync: async () => {},
+    keysAsync: async () => ['emails'],
+  })
+  const resilient = createResilientStore(network, local)
+
+  await resilient.setAsync('vacation-entries', [{ id: 'v1' }])
+  assert.deepEqual(written, [{ id: 'v1' }])
+  assert.deepEqual(await resilient.updateAsync('notes', { op: 'append', items: [{ id: 'n1' }] }), [{ id: 'n1' }])
+  assert.deepEqual(await resilient.keysAsync(), ['emails'])
+  await flushMicrotasks()
+  assert.deepEqual(local.get('vacation-entries'), [{ id: 'v1' }])
+
+  // Offline: samme lokale anvendelse + kø som den synkrone vej
+  const offline = createResilientStore(fakeNetworkStore({ isConnected: () => false, setAsync: async () => { throw new Error('must not be called') }, updateAsync: async () => { throw new Error('must not be called') } }), temporaryLocalStore(t))
+  await offline.setAsync('projects', [{ id: 'p1' }])
+  const merged = await offline.updateAsync('projects', { op: 'upsert', items: [{ id: 'p2' }] })
+  assert.deepEqual(merged.map(item => item.id), ['p1', 'p2'])
+  assert.equal(offline.getPendingSyncCount(), 2)
+
+  // Semantiske fejl (fx KV_CONFLICT) kastes videre — de må aldrig ende i køen
+  const conflicting = createResilientStore(fakeNetworkStore({ updateAsync: async () => { const error = new Error('KV_CONFLICT: test'); error.code = 'KV_CONFLICT'; throw error } }), temporaryLocalStore(t))
+  await assert.rejects(conflicting.updateAsync('notes', { op: 'append', items: [{ id: 'n1' }] }), { code: 'KV_CONFLICT' })
+  assert.equal(conflicting.getPendingSyncCount(), 0)
+})
+
 test('keys() falls back to local cache when disconnected, hiding the internal queue key', (t) => {
   const local = temporaryLocalStore(t)
   local.set('shift-roles', [{ id: 'r1' }])

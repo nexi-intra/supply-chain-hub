@@ -180,6 +180,67 @@ function createResilientStore(networkStore, localStore, options = {}) {
     enqueue({ kind: 'set', key, value })
   }
 
+  // Async-tvillinger til IPC-vejen: samme offline-koe og fejlsemantik, men
+  // netvaerksskrivningen blokerer aldrig main-event-loopet.
+  async function setAsync(key, value) {
+    touch(key)
+    if (!queued(key) && networkStore.isConnected()) {
+      try {
+        await networkStore.setAsync(key, value)
+        mirrorToLocal(key, value)
+        return
+      } catch (err) {
+        if (semanticError(err)) throw err
+        console.error(`TCD Hub: skrivning af "${key}" fejlede, gemmer lokalt og synkroniserer senere:`, err)
+      }
+    }
+    localStore.set(key, value)
+    enqueue({ kind: 'set', key, value })
+  }
+
+  async function deleteAsync(key) {
+    touch(key)
+    if (!queued(key) && networkStore.isConnected()) {
+      try {
+        await networkStore.deleteAsync(key)
+        mirrorDeleteToLocal(key)
+        return
+      } catch (err) {
+        if (semanticError(err)) throw err
+        console.error(`TCD Hub: sletning af "${key}" fejlede, gemmer lokalt og synkroniserer senere:`, err)
+      }
+    }
+    localStore.delete(key)
+    enqueue({ kind: 'delete', key })
+  }
+
+  async function updateAsync(key, operation) {
+    touch(key)
+    if (!queued(key) && networkStore.isConnected()) {
+      try {
+        const result = await networkStore.updateAsync(key, operation)
+        mirrorToLocal(key, result)
+        return result
+      } catch (err) {
+        if (semanticError(err)) throw err
+        console.error(`TCD Hub: opdatering af "${key}" fejlede, gemmer lokalt og synkroniserer senere:`, err)
+      }
+    }
+    const result = localStore.update(key, operation)
+    enqueue({ kind: 'update', key, operation })
+    return result
+  }
+
+  async function keysAsync() {
+    if (!networkStore.isConnected()) return localStore.keys().filter((k) => k !== QUEUE_KEY)
+    try {
+      return await networkStore.keysAsync()
+    } catch (err) {
+      console.error('TCD Hub: kunne ikke liste nøgler fra delt lager, bruger lokal cache:', err)
+      return localStore.keys().filter((k) => k !== QUEUE_KEY)
+    }
+  }
+
   function del(key) {
     touch(key)
     if (!queued(key) && networkStore.isConnected()) {
@@ -251,9 +312,13 @@ function createResilientStore(networkStore, localStore, options = {}) {
     get,
     getAsync,
     set,
+    setAsync,
     delete: del,
+    deleteAsync,
     keys,
+    keysAsync,
     update,
+    updateAsync,
     watch,
     isConnected,
     dumpAll,

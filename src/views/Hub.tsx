@@ -133,6 +133,9 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
   // Til "Team status"-widgeten: faste brugere + manager-farveoverstyringer.
   const [usersForStatus] = useKV<Record<string, { fullName: string }>>('users', {})
   const [colorOverrides] = useKV<EmployeeColorOverrides>(EMPLOYEE_COLOR_OVERRIDES_KEY, {})
+  // Kommentarer til brugere UDEN dagens opgave gemmes her (noeglet paa dato|email),
+  // da de ikke har en vagtplan-tildeling at haenge kommentaren paa.
+  const [teamStatusNotes, setTeamStatusNotes] = useKV<Record<string, string>>('team-status-notes', {})
 
   const dashboardWidget = (id: DashboardWidgetId) => dashboardPreferences?.[id] || DEFAULT_DASHBOARD_PREFERENCES[id]
   const dashboardSizeClass = (id: DashboardWidgetId) => {
@@ -209,7 +212,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
   const [widgetAssignRoleId, setWidgetAssignRoleId] = useState('')
   
   const [showCommentDialog, setShowCommentDialog] = useState(false)
-  const [selectedUserForComment, setSelectedUserForComment] = useState<{ name: string; roleId: string; currentComment?: string } | null>(null)
+  const [selectedUserForComment, setSelectedUserForComment] = useState<{ name: string; roleId: string; currentComment?: string; email?: string } | null>(null)
   const [newComment, setNewComment] = useState('')
   const [appVersion, setAppVersion] = useState<string>('')
   const [teamName, setTeamName] = useState<string>('Supply Chain Hub')
@@ -608,6 +611,25 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
     if (!selectedUserForComment) return
 
     const today = format(new Date(), 'yyyy-MM-dd')
+
+    // Bruger uden opgave: kommentaren hoerer ikke til en vagtplan-tildeling,
+    // saa den gemmes i det daglige bruger-note-lager i stedet.
+    if (!selectedUserForComment.roleId && selectedUserForComment.email) {
+      const noteKey = `${today}|${selectedUserForComment.email}`
+      const text = newComment.trim()
+      setTeamStatusNotes((current) => {
+        const next = { ...(current || {}) }
+        if (text) next[noteKey] = text
+        else delete next[noteKey]
+        return next
+      })
+      toast.success(language === 'da' ? 'Kommentar opdateret' : language === 'fi' ? 'Kommentti päivitetty' : 'Comment updated')
+      setShowCommentDialog(false)
+      setSelectedUserForComment(null)
+      setNewComment('')
+      return
+    }
+
     const assignments = (await window.kv.get<ShiftAssignment[]>('shift-assignments')) || []
     
     const updatedAssignments = assignments.map(a => {
@@ -1438,6 +1460,8 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                 {teamStatusRows.map((row) => {
                   const color = getEmployeeColorByEmail(row.email, colorOverrides)
                   const comments = row.tasks.filter((tk) => tk.comment && tk.comment.trim())
+                  const todayStr = format(new Date(), 'yyyy-MM-dd')
+                  const userNote = row.status === 'available' ? (teamStatusNotes?.[`${todayStr}|${row.email}`] || '') : ''
                   return (
                     <motion.div
                       key={row.email}
@@ -1482,9 +1506,24 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                           </Badge>
                         )}
                         {row.status === 'available' && (
-                          <Badge variant="secondary" className="text-[10px]">
-                            {language === 'da' ? 'Ingen opgave' : language === 'fi' ? 'Ei tehtävää' : 'No task'}
-                          </Badge>
+                          <>
+                            <Badge variant="secondary" className="text-[10px]">
+                              {language === 'da' ? 'Ingen opgave' : language === 'fi' ? 'Ei tehtävää' : 'No task'}
+                            </Badge>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-6 w-6 p-0 flex-shrink-0 hover:bg-primary/20 hover:text-primary"
+                              title={language === 'da' ? 'Tilføj/rediger kommentar' : language === 'fi' ? 'Lisää/muokkaa kommenttia' : 'Add/edit comment'}
+                              onClick={() => {
+                                setSelectedUserForComment({ name: row.name, roleId: '', currentComment: userNote, email: row.email })
+                                setNewComment(userNote)
+                                setShowCommentDialog(true)
+                              }}
+                            >
+                              <PencilSimple size={14} weight="bold" />
+                            </Button>
+                          </>
                         )}
                       </div>
                       {row.status === 'working' && row.tasks.length > 0 && (
@@ -1502,6 +1541,12 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                           <span className="break-words">{tk.comment}</span>
                         </div>
                       ))}
+                      {userNote && (
+                        <div className="flex items-start gap-1.5 px-2 py-1 rounded bg-muted text-xs text-muted-foreground italic">
+                          <ChatText size={13} weight="fill" className="text-primary flex-shrink-0 mt-0.5" />
+                          <span className="break-words">{userNote}</span>
+                        </div>
+                      )}
                       {(row.status === 'working' || row.status === 'available') && (
                         <Button
                           size="sm"

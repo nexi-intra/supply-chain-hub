@@ -9,7 +9,7 @@
 const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
-const { withFileLock, withFileLocks } = require('./fileLock.cjs')
+const { withFileLock, withFileLocks, withFileLockAsync } = require('./fileLock.cjs')
 
 const FILE_EXT = '.json'
 const READ_ATTEMPTS = 5
@@ -213,6 +213,71 @@ function createStore(dataDir) {
     return withFileLock(filePath(key) + '.lock', () => setUnlocked(key, value), { createParent: false })
   }
 
+  // Asynkrone tvillinger til IPC-vejen: identisk semantik og samme laasefiler,
+  // men skrivning/rename/retry-ventetid blokerer aldrig main-event-loopet.
+  async function setUnlockedAsync(key, value) {
+    let json
+    try { json = JSON.stringify(value) } catch {
+      const error = new Error('KV_INVALID_OPERATION: Værdien kan ikke gemmes som JSON')
+      error.code = 'KV_INVALID_OPERATION'
+      throw error
+    }
+    if (json === undefined) {
+      const error = new Error('KV_INVALID_OPERATION: Værdien mangler')
+      error.code = 'KV_INVALID_OPERATION'
+      throw error
+    }
+    const target = filePath(key)
+    const tmp = `${target}.${process.pid}.${Date.now()}.${crypto.randomBytes(4).toString('hex')}.tmp`
+    await fs.promises.writeFile(tmp, encryptPayload(json))
+    let lastError
+    for (let attempt = 1; attempt <= WRITE_ATTEMPTS; attempt++) {
+      try {
+        await fs.promises.rename(tmp, target)
+        readCache.set(key, { value, at: Date.now() })
+        return
+      } catch (err) {
+        lastError = err
+        if (!['EPERM', 'EBUSY', 'EACCES'].includes(err.code) || attempt === WRITE_ATTEMPTS) break
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS))
+      }
+    }
+    try { await fs.promises.unlink(tmp) } catch {}
+    throw lastError
+  }
+
+  // In-proces serialisering pr. noegle: to samtidige async-skrivninger til
+  // SAMME noegle maa ikke slaas om fil-laasen (sync-vejen var implicit
+  // serialiseret ved at blokere). Forskellige noegler koerer stadig parallelt.
+  const pendingWrites = new Map()
+  function serializeWrite(key, task) {
+    const previous = pendingWrites.get(key) || Promise.resolve()
+    const run = previous.catch(() => {}).then(task)
+    const tracked = run.catch(() => {}).finally(() => { if (pendingWrites.get(key) === tracked) pendingWrites.delete(key) })
+    pendingWrites.set(key, tracked)
+    return run
+  }
+
+  function setAsync(key, value) {
+    return serializeWrite(key, () => withFileLockAsync(filePath(key) + '.lock', () => setUnlockedAsync(key, value), { createParent: false, staleMs: 120000 }))
+  }
+
+  function deleteAsync(key) {
+    return serializeWrite(key, () => withFileLockAsync(filePath(key) + '.lock', async () => {
+      try { await fs.promises.unlink(filePath(key)) } catch (err) { if (err.code !== 'ENOENT') throw err }
+      readCache.delete(key)
+    }, { createParent: false, staleMs: 120000 }))
+  }
+
+  async function keysAsync() {
+    const startedAt = Date.now()
+    const result = (await fs.promises.readdir(dataDir))
+      .filter((name) => name.endsWith(FILE_EXT))
+      .map(filenameToKey)
+    logSlow('keys', dataDir, startedAt)
+    return result
+  }
+
   function del(key) {
     return withFileLock(filePath(key) + '.lock', () => {
       try { fs.unlinkSync(filePath(key)) } catch (err) { if (err.code !== 'ENOENT') throw err }
@@ -257,8 +322,27 @@ function createStore(dataDir) {
    * har den forventede type (array for array-ops, objekt for felt-ops).
    */
   function update(key, operation) {
+    validateOperation(operation)
+    return withFileLock(lockPath(key), () => {
+      const outcome = computeUpdate(key, operation, get(key, { skipCache: true }))
+      if (outcome.write) setUnlocked(key, outcome.value)
+      return outcome.result
+    }, { createParent: false })
+  }
+
+  // Asynkron tvilling til IPC-vejen: samme laas, samme computeUpdate, men al
+  // netvaerks-I/O er await-baseret saa main-event-loopet aldrig blokeres.
+  async function updateAsync(key, operation) {
+    validateOperation(operation)
+    return serializeWrite(key, () => withFileLockAsync(lockPath(key), async () => {
+      const outcome = computeUpdate(key, operation, await getAsync(key, { skipCache: true }))
+      if (outcome.write) await setUnlockedAsync(key, outcome.value)
+      return outcome.result
+    }, { createParent: false, staleMs: 120000 }))
+  }
+
+  function validateOperation(operation) {
     const invalid = message => { const error = new Error(`KV_INVALID_OPERATION: ${message}`); error.code = 'KV_INVALID_OPERATION'; throw error }
-    const conflict = () => { const error = new Error('KV_CONFLICT: Data blev ændret af en anden klient. Genindlæs og prøv igen.'); error.code = 'KV_CONFLICT'; throw error }
     if (!operation || typeof operation !== 'object') invalid('Ugyldig operation')
     if (!['compareAndSet', 'replaceItem', 'renameField', 'setField', 'deleteField', 'append', 'upsert', 'remove'].includes(operation.op)) invalid('Ukendt operation')
     const unsafe = new Set(['__proto__', 'constructor', 'prototype'])
@@ -269,106 +353,99 @@ function createStore(dataDir) {
     if (['renameField', 'setField', 'compareAndSet'].includes(operation.op) && JSON.stringify(operation.value) === undefined) invalid('Værdien kan ikke gemmes')
     if (['append', 'upsert'].includes(operation.op) && (!Array.isArray(operation.items) || operation.items.some(item => !item || typeof item.id !== 'string' || !item.id))) invalid('Ugyldige elementer')
     if (operation.op === 'remove' && (!Array.isArray(operation.ids) || operation.ids.some(id => typeof id !== 'string'))) invalid('Ugyldige id’er')
-    return withFileLock(lockPath(key), () => {
-      if (operation.op === 'compareAndSet') {
-        const current = get(key, { skipCache: true })
-        if (JSON.stringify(current) !== JSON.stringify(operation.expected)) {
-          if (JSON.stringify(current) === JSON.stringify(operation.value)) return current
-          conflict()
-        }
-        if (JSON.stringify(operation.value) === undefined) invalid('Værdien kan ikke gemmes')
-        setUnlocked(key, operation.value)
-        return operation.value
-      }
-      if (operation.op === 'replaceItem') {
-        const current = get(key, { skipCache: true }) || []
-        if (!Array.isArray(current) || !operation.item || operation.item.id !== operation.id) invalid('Ugyldigt element')
-        const index = current.findIndex(item => item?.id === operation.id)
-        if (index === -1 || JSON.stringify(current[index]) !== JSON.stringify(operation.expected)) conflict()
-        const next = [...current]
-        next[index] = operation.item
-        setUnlocked(key, next)
-        return next
-      }
-      if (operation.op === 'renameField') {
-        const current = get(key, { skipCache: true })
-        if (!current || typeof current !== 'object' || Array.isArray(current)) invalid('Flytning kræver et objekt')
-        if (!Object.hasOwn(current, operation.field) || JSON.stringify(current[operation.field]) !== JSON.stringify(operation.expected)) conflict()
-        if (operation.newField !== operation.field && Object.hasOwn(current, operation.newField)) conflict()
-        const next = { ...current }
-        delete next[operation.field]
-        next[operation.newField] = operation.value
-        setUnlocked(key, next)
-        return next
-      }
-      if (operation.op === 'setField' || operation.op === 'deleteField') {
-        const current = get(key, { skipCache: true })
-        if (current !== undefined && (!current || typeof current !== 'object' || Array.isArray(current))) invalid('Feltoperation kræver et objekt')
-        const root = current && typeof current === 'object' && !Array.isArray(current) ? structuredClone(current) : {}
-        if (operation.op === 'setField') root[operation.field] = operation.value
-        else delete root[operation.field]
-        setUnlocked(key, root)
-        return root
-      }
+  }
 
-      const current = get(key, { skipCache: true })
-      const path = operation.path && operation.path.length > 0 ? operation.path : null
-      let root
-      let list
-      if (path) {
-        if (current !== undefined && (!current || typeof current !== 'object' || Array.isArray(current))) invalid('Stien kræver et objekt')
-        root = current && typeof current === 'object' && !Array.isArray(current) ? structuredClone(current) : {}
-        let parent = root
-        for (let i = 0; i < path.length - 1; i++) {
-          const segment = path[i]
-          if (parent[segment] !== undefined && (!parent[segment] || typeof parent[segment] !== 'object' || Array.isArray(parent[segment]))) invalid('Stien kræver et objekt')
-          if (!parent[segment] || typeof parent[segment] !== 'object' || Array.isArray(parent[segment])) {
-            parent[segment] = {}
-          }
-          parent = parent[segment]
-        }
-        const lastSegment = path[path.length - 1]
-        if (parent[lastSegment] !== undefined && !Array.isArray(parent[lastSegment])) invalid('Stien kræver et array')
-        list = Array.isArray(parent[lastSegment]) ? parent[lastSegment] : []
-      } else {
-        list = current === undefined ? [] : current
-        if (!Array.isArray(list)) {
-          invalid(`kv:update kræver et array i "${key}"`)
-        }
+  /** Ren beregning af en valideret update mod den friske vaerdi — deles af sync/async vej. */
+  function computeUpdate(key, operation, current) {
+    const invalid = message => { const error = new Error(`KV_INVALID_OPERATION: ${message}`); error.code = 'KV_INVALID_OPERATION'; throw error }
+    const conflict = () => { const error = new Error('KV_CONFLICT: Data blev ændret af en anden klient. Genindlæs og prøv igen.'); error.code = 'KV_CONFLICT'; throw error }
+    if (operation.op === 'compareAndSet') {
+      if (JSON.stringify(current) !== JSON.stringify(operation.expected)) {
+        if (JSON.stringify(current) === JSON.stringify(operation.value)) return { write: false, result: current }
+        conflict()
       }
-      let next
-      if (operation.op === 'append') {
-        next = [...list]
-        for (const item of operation.items) {
-          const existing = next.find(entry => entry?.id === item.id)
-          // A queue replay may repeat a write that reached the share before
-          // the connection failed. Identical IDs/content are already applied.
-          if (existing) { if (JSON.stringify(existing) !== JSON.stringify(item)) conflict() }
-          else next.push(item)
+      return { write: true, value: operation.value, result: operation.value }
+    }
+    if (operation.op === 'replaceItem') {
+      const list = current || []
+      if (!Array.isArray(list) || !operation.item || operation.item.id !== operation.id) invalid('Ugyldigt element')
+      const index = list.findIndex(item => item?.id === operation.id)
+      if (index === -1 || JSON.stringify(list[index]) !== JSON.stringify(operation.expected)) conflict()
+      const next = [...list]
+      next[index] = operation.item
+      return { write: true, value: next, result: next }
+    }
+    if (operation.op === 'renameField') {
+      if (!current || typeof current !== 'object' || Array.isArray(current)) invalid('Flytning kræver et objekt')
+      if (!Object.hasOwn(current, operation.field) || JSON.stringify(current[operation.field]) !== JSON.stringify(operation.expected)) conflict()
+      if (operation.newField !== operation.field && Object.hasOwn(current, operation.newField)) conflict()
+      const next = { ...current }
+      delete next[operation.field]
+      next[operation.newField] = operation.value
+      return { write: true, value: next, result: next }
+    }
+    if (operation.op === 'setField' || operation.op === 'deleteField') {
+      if (current !== undefined && (!current || typeof current !== 'object' || Array.isArray(current))) invalid('Feltoperation kræver et objekt')
+      const root = current && typeof current === 'object' && !Array.isArray(current) ? structuredClone(current) : {}
+      if (operation.op === 'setField') root[operation.field] = operation.value
+      else delete root[operation.field]
+      return { write: true, value: root, result: root }
+    }
+
+    const opPath = operation.path && operation.path.length > 0 ? operation.path : null
+    let root
+    let list
+    if (opPath) {
+      if (current !== undefined && (!current || typeof current !== 'object' || Array.isArray(current))) invalid('Stien kræver et objekt')
+      root = current && typeof current === 'object' && !Array.isArray(current) ? structuredClone(current) : {}
+      let parent = root
+      for (let i = 0; i < opPath.length - 1; i++) {
+        const segment = opPath[i]
+        if (parent[segment] !== undefined && (!parent[segment] || typeof parent[segment] !== 'object' || Array.isArray(parent[segment]))) invalid('Stien kræver et objekt')
+        if (!parent[segment] || typeof parent[segment] !== 'object' || Array.isArray(parent[segment])) {
+          parent[segment] = {}
         }
-      } else if (operation.op === 'upsert') {
-        next = [...list]
-        for (const item of operation.items) {
-          const index = next.findIndex((entry) => entry && entry.id === item.id)
-          if (index !== -1) next[index] = item
-          else next.push(item)
-        }
-      } else if (operation.op === 'remove') {
-        const ids = new Set(operation.ids)
-        next = list.filter((entry) => !entry || !ids.has(entry.id))
-      } else {
-        throw new Error(`Ukendt kv:update-operation: ${operation.op}`)
+        parent = parent[segment]
       }
-      if (path) {
-        let parent = root
-        for (let i = 0; i < path.length - 1; i++) parent = parent[path[i]]
-        parent[path[path.length - 1]] = next
-        setUnlocked(key, root)
-      } else {
-        setUnlocked(key, next)
+      const lastSegment = opPath[opPath.length - 1]
+      if (parent[lastSegment] !== undefined && !Array.isArray(parent[lastSegment])) invalid('Stien kræver et array')
+      list = Array.isArray(parent[lastSegment]) ? parent[lastSegment] : []
+    } else {
+      list = current === undefined ? [] : current
+      if (!Array.isArray(list)) {
+        invalid(`kv:update kræver et array i "${key}"`)
       }
-      return next
-    }, { createParent: false })
+    }
+    let next
+    if (operation.op === 'append') {
+      next = [...list]
+      for (const item of operation.items) {
+        const existing = next.find(entry => entry?.id === item.id)
+        // A queue replay may repeat a write that reached the share before
+        // the connection failed. Identical IDs/content are already applied.
+        if (existing) { if (JSON.stringify(existing) !== JSON.stringify(item)) conflict() }
+        else next.push(item)
+      }
+    } else if (operation.op === 'upsert') {
+      next = [...list]
+      for (const item of operation.items) {
+        const index = next.findIndex((entry) => entry && entry.id === item.id)
+        if (index !== -1) next[index] = item
+        else next.push(item)
+      }
+    } else if (operation.op === 'remove') {
+      const ids = new Set(operation.ids)
+      next = list.filter((entry) => !entry || !ids.has(entry.id))
+    } else {
+      throw new Error(`Ukendt kv:update-operation: ${operation.op}`)
+    }
+    if (opPath) {
+      let parent = root
+      for (let i = 0; i < opPath.length - 1; i++) parent = parent[opPath[i]]
+      parent[opPath[opPath.length - 1]] = next
+      return { write: true, value: root, result: next }
+    }
+    return { write: true, value: next, result: next }
   }
 
   // Trusted Node callers only (not exposed through preload/IPC). The callback
@@ -531,7 +608,7 @@ function createStore(dataDir) {
     return connected
   }
 
-  return { get, getAsync, set, delete: del, keys, watch, update, mutate, withLockedKeys, invalidate: () => readCache.clear(), dumpAll, dataDir, isConnected, scanDirectory }
+  return { get, getAsync, set, setAsync, delete: del, deleteAsync, keys, keysAsync, watch, update, updateAsync, mutate, withLockedKeys, invalidate: () => readCache.clear(), dumpAll, dataDir, isConnected, scanDirectory }
 }
 
 module.exports = { createStore, parseFileContents, keyToFilename }
