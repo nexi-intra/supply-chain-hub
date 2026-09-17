@@ -758,7 +758,9 @@
     "notSeenIn24h": "Ei näkyvissä 24h+",
     "pendingSuffix": "vireillä",
     "selectVersion": "Valitse versio",
-    "forcePrefix": "Voima v"
+    "forcePrefix": "Voima v",
+    "allHubsOption": "Kaikki hubit",
+    "crossHubReadOnlyHint": "Vaihda tähän hubiin pakottaaksesi päivityksen"
   },
   "dataStorageManager": {
     "sourceLabels": {

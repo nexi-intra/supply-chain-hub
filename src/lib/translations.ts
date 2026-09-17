@@ -740,7 +740,9 @@ const baseTranslations = {
       notSeenIn24h: "Ikke set i 24t+",
       pendingSuffix: "afventer",
       selectVersion: "Vælg version",
-      forcePrefix: "Tving v"
+      forcePrefix: "Tving v",
+      allHubsOption: "Alle hubs",
+      crossHubReadOnlyHint: "Skift til dette hub for at tvinge en opdatering"
     },
     dataStorageManager: {
       sourceLabels: {
@@ -2398,7 +2400,9 @@ const baseTranslations = {
       notSeenIn24h: "Not seen in 24h+",
       pendingSuffix: "pending",
       selectVersion: "Select version",
-      forcePrefix: "Force v"
+      forcePrefix: "Force v",
+      allHubsOption: "All hubs",
+      crossHubReadOnlyHint: "Switch to this hub to force an update"
     },
     dataStorageManager: {
       sourceLabels: {

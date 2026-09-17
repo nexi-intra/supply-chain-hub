@@ -33,8 +33,6 @@ interface CreatorPanelProps {
   userEmail: string
 }
 
-interface AllHubUser { email: string; fullName: string; role?: string; isManager?: boolean; teamId: string; teamName: string; teamAbbreviation: string }
-
 /** Kun synligt for Creator: team-oprettelse, bruger-oprettelse på tværs af teams, Arcade-highscores, Datalagring. */
 export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPanelProps) {
   const { t, language } = useLanguage()
@@ -68,18 +66,12 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
   const [accessViewTeamIds, setAccessViewTeamIds] = useState<string[]>([])
   const [accessViewUserEmails, setAccessViewUserEmails] = useState<string[]>([])
 
-  // Alle brugere paa tvaers af ALLE hubs - skrivebeskyttet overblik, saa
-  // Creatoren ikke skal skifte aktivt hub for at se rosteret. Genbruger den
-  // samme cross-team laesevej (readTeamsKeys) som listUserOptions allerede
-  // bruger til dette formaal.
-  const [allHubUsers, setAllHubUsers] = useState<AllHubUser[]>([])
-
   useEffect(() => {
     const check = async () => {
       const access = await hasCreatorAccess(userEmail)
       setHasAccess(access)
       if (access) {
-        await Promise.all([loadTeams(), loadUsers(), loadAccessViews(), loadUserOptions(), loadAllHubUsers()])
+        await Promise.all([loadTeams(), loadUsers(), loadAccessViews(), loadUserOptions()])
       }
       setIsLoading(false)
     }
@@ -108,21 +100,6 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
   const loadUsers = async () => {
     const usersData = (await window.kv.get<Record<string, { email: string; fullName: string }>>('users')) || {}
     setUsers(Object.values(usersData))
-  }
-
-  const loadAllHubUsers = async () => {
-    if (!window.electronRegistry) return
-    const allTeams = await window.electronRegistry.listTeams()
-    const results = await window.electronRegistry.readTeamsKeys(allTeams.map(team => ({ folderName: team.folderName, keys: ['users'] })))
-    const merged: AllHubUser[] = []
-    allTeams.forEach((team, index) => {
-      const usersData = (results[index]?.[0] as Record<string, { email: string; fullName: string; role?: string; isManager?: boolean }>) || {}
-      for (const user of Object.values(usersData)) {
-        merged.push({ email: user.email, fullName: user.fullName, role: user.role, isManager: user.isManager, teamId: team.teamId, teamName: team.name, teamAbbreviation: team.abbreviation })
-      }
-    })
-    merged.sort((a, b) => a.teamName.localeCompare(b.teamName) || a.fullName.localeCompare(b.fullName))
-    setAllHubUsers(merged)
   }
 
   const loadAccessViews = async () => {
@@ -548,31 +525,6 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
           </TabsContent>
 
           <TabsContent value="data-storage" className="space-y-6">
-            <Card className="p-6 border-2">
-              <div className="flex items-center gap-2 mb-4">
-                <UsersThree size={24} className="text-primary" weight="duotone" />
-                <h2 className="text-xl font-bold">
-                  {language === 'da' ? `Alle brugere på tværs af alle hubs (${allHubUsers.length})` : language === 'fi' ? `Kaikki käyttäjät kaikissa hubeissa (${allHubUsers.length})` : `All users across all hubs (${allHubUsers.length})`}
-                </h2>
-              </div>
-              <p className="text-sm text-muted-foreground mb-4">
-                {language === 'da' ? 'Skrivebeskyttet overblik — ingen skift af aktivt hub nødvendigt.' : language === 'fi' ? 'Vain luku — ei tarvetta vaihtaa aktiivista hubia.' : 'Read-only overview — no need to switch the active hub.'}
-              </p>
-              <div className="max-h-96 overflow-y-auto space-y-1">
-                {allHubUsers.map(user => (
-                  <div key={`${user.teamId}-${user.email}`} className="flex items-center justify-between gap-3 rounded-lg border p-2 text-sm">
-                    <div className="min-w-0">
-                      <div className="font-medium truncate">{user.fullName}</div>
-                      <div className="text-xs text-muted-foreground truncate">{user.email}</div>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      {user.isManager && <Badge variant="secondary" className="text-xs">{language === 'da' ? 'Leder' : language === 'fi' ? 'Esihenkilö' : 'Manager'}</Badge>}
-                      <Badge variant="outline" className="text-xs">{user.teamAbbreviation || user.teamName}</Badge>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Card>
             <UpdateManager userEmail={userEmail} />
             <ClientVersionManager managerEmail={userEmail} users={users} />
             <DataStorageManager />
