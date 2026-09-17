@@ -133,6 +133,12 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
     return path.join(dataDir, keyToFilename(key))
   }
 
+  /** Frisk cache-vaerdi uden I/O — `undefined` ved miss (lader offlineSync vaelge spejl-foerst). */
+  function peekCache(key) {
+    const cached = readCache.get(key)
+    return cached && isFresh(cached) ? { value: cached.value } : undefined
+  }
+
   function get(key, options) {
     const startedAt = Date.now()
     const skipCache = options && options.skipCache
@@ -642,7 +648,7 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
     return connected
   }
 
-  return { get, getAsync, set, setAsync, delete: del, deleteAsync, keys, keysAsync, watch, update, updateAsync, mutate, withLockedKeys, invalidate: () => readCache.clear(), dumpAll, dataDir, isConnected, scanDirectory }
+  return { get, getAsync, peekCache, set, setAsync, delete: del, deleteAsync, keys, keysAsync, watch, update, updateAsync, mutate, withLockedKeys, invalidate: () => readCache.clear(), dumpAll, dataDir, isConnected, scanDirectory }
 }
 
 module.exports = { createStore, parseFileContents, keyToFilename }

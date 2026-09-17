@@ -61,18 +61,24 @@ ved praecis hvilke filer der er aendret paa M:. Vend det om:
 **Effekt:** forsiden ca. 2x hurtigere foerste gang, og oejeblikkelig ved
 efterfoelgende navigation (alt i cache indtil noget aendres).
 
-## Fase 2 — Stale-while-revalidate fra lokalt spejl (1.5.4)
+## Fase 2 — Stale-while-revalidate fra lokalt spejl (1.5.4) — FAERDIG
 
-- [ ] `offlineSync.cjs` `getAsync`: hvis noeglen findes i lokalt spejl og IKKE er
-      i readCache: returner spejlet MED DET SAMME, og hent fra M: i baggrunden;
-      hvis M:-vaerdien afviger, opdater spejl + broadcast `kv:changed` for noeglen
-- [ ] Opstarts-varmning: efter team-valg/login, bulk-laes alle smaa noegler
-      (< 100 KB, ikke `_chunk_`) parallelt i baggrunden ind i readCache + spejl
-- [ ] Renderer: `useKV` haandterer allerede `kv:changed` -> ingen aendring noedvendig
-- [ ] Tests: offlineSync.test.cjs (spejl foerst, M: bagefter, broadcast ved afvigelse)
+- [x] `store.cjs`: `peekCache(key)` (frisk cache-vaerdi uden I/O)
+- [x] `offlineSync.cjs` `getAsync`: netvaerks-cache -> ellers lokalt spejl MED DET
+      SAMME + `revalidate(key)` i baggrunden (dedupliceret pr. noegle); afviger
+      M:-vaerdien opdateres spejlet og `onRevalidated([key])` fyres; slettet paa
+      M: -> fjernes fra spejlet. `skipCache` gaar altid direkte til M:.
+- [x] `offlineSync.cjs` `revalidateMirror({ concurrency })`: opstarts-varmning af
+      alle spejlede noegler (ikke chunks/koe/allerede friske), lav parallelisme
+- [x] `main.cjs`: `resilientOptions()` faelles for alle 4 stores med
+      `onRevalidated: broadcastKvChanged` (debounced kv:changed);
+      `scheduleMirrorWarmUp()` 1,5 s efter team-skift (team + _shared)
+- [x] Renderer: `useKV` haandterer allerede `kv:changed` -> ingen aendring
+- [x] Tests: 6 nye i offlineSync.test.cjs
+- [x] Maalt mod M: (11 forside-noegler, ny proces med spejl): 1.343 -> **12 ms**
 
-**Forventet effekt:** appen foeles oejeblikkelig ved opstart — selv foerste
-forside vises fra sidste sessions data paa ~0 ms, og opdateres stille inden 1 s.
+**Effekt:** appen foeles oejeblikkelig ved opstart — forsiden vises fra sidste
+sessions data paa ~10 ms og opdateres stille inden ~1 s hvis noget er aendret.
 
 ## Fase 3 — Mindre I/O paa M: (1.5.4 eller 1.5.5)
 

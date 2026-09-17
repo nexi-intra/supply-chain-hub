@@ -11,6 +11,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     version: '1.5.4',
     items: [
       'Appen henter indhold markant hurtigere: forsiden loader op til dobbelt så hurtigt første gang, og efterfølgende navigation er øjeblikkelig — data genhentes kun når noget faktisk er ændret på drevet',
+      'Appen starter øjeblikkeligt med dine data fra sidst og opdaterer stille i baggrunden, hvis noget er ændret på drevet siden',
       'Kollegers ændringer bliver synlige hurtigere (drevet tjekkes hvert 2. sekund i stedet for hvert 5.)',
       'Gemninger fejler ikke længere med "Kunne ikke gemme ændringen — prøv igen om lidt" når mange bruger appen samtidig — appen prøver nu selv igen i baggrunden og genopretter automatisk',
     ],

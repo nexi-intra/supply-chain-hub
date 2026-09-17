@@ -163,6 +163,26 @@ const usersStore = () => {
 let sharedStore = null
 let stopSharedWatcher = null
 const SHARED_KV_KEYS = new Set(['meal-plan-weeks', 'shared-guides', 'active-sessions'])
+// Faelles for alle resiliente stores: naar en baggrundshentning (spejl-foerst,
+// se offlineSync.getAsync) opdager at M: afviger fra det viste spejl, faar
+// vinduerne besked praecis som ved en watcher-aendring.
+const broadcastKvChanged = createDebouncedBroadcast(100)
+const resilientOptions = () => ({ onSyncResult: handleSyncResult, guardReplay: guardAccountReplay, onRevalidated: broadcastKvChanged })
+let mirrorWarmUpTimer = null
+/** Ajourfoer det lokale spejl i baggrunden kort efter opstart/team-skift (lav parallelisme, aldrig foran brugerens egne laesninger). */
+function scheduleMirrorWarmUp() {
+  if (mirrorWarmUpTimer) clearTimeout(mirrorWarmUpTimer)
+  const target = store
+  mirrorWarmUpTimer = setTimeout(() => {
+    mirrorWarmUpTimer = null
+    if (store !== target) return
+    const startedAt = Date.now()
+    Promise.all([target, sharedStore].filter(Boolean).map(s => Promise.resolve(s.revalidateMirror?.({ concurrency: 2 }))))
+      .then(counts => { if (process.env.TCD_HUB_DEBUG) console.log(`KV: spejl-varmning ${counts.reduce((a, b) => a + (b || 0), 0)} noegler paa ${Date.now() - startedAt} ms`) })
+      .catch(err => console.error('TCD Hub: spejl-varmning fejlede', err))
+  }, 1500)
+  mirrorWarmUpTimer.unref?.()
+}
 let updateCheckTimer = null
 let updateInProgress = false
 // Forbindelsesstatus til den delte datamappe — opdateres af store.watch()'s
@@ -367,7 +387,7 @@ function switchDataDir(newDir) {
 
   fs.writeFileSync(userConfigPath(), JSON.stringify({ dataDir: newDir }, null, 2))
 
-  store = createResilientStore(createStore(newDir), createStore(localCacheDir(currentTeamFolder)), { onSyncResult: handleSyncResult, guardReplay: guardAccountReplay })
+  store = createResilientStore(createStore(newDir), createStore(localCacheDir(currentTeamFolder)), resilientOptions())
   dataDirSource = 'user'
   // Netop verificeret tilgængelig ovenfor (mkdirSync+accessSync) — nulstil
   // eventuel "startede offline"-tilstand fra opstart.
@@ -398,13 +418,14 @@ function switchToTeamDir(folderName, newDir) {
   broadcast('assistant:context-changed')
 
   if (stopWatcher) stopWatcher()
-  store = createResilientStore(createStore(newDir), createStore(localCacheDir(folderName)), { onSyncResult: handleSyncResult, guardReplay: guardAccountReplay })
+  store = createResilientStore(createStore(newDir), createStore(localCacheDir(folderName)), resilientOptions())
   currentTeamFolder = folderName
   dataDirSource = 'team'
   storageStartedDisconnected = false
   storageFailedSources = []
   setStorageConnected(true)
   startWatcher()
+  scheduleMirrorWarmUp()
   startAutoBackup()
 
   broadcast('kv:changed', store.keys())
@@ -491,7 +512,7 @@ app.whenReady().then(() => {
   const resolved = resolveDataDir()
   platformRoot = resolved.dir
   accountService = createAccountService({ getRoot: () => platformRoot, registry, openStore: createStore, assertNoPendingSync: assertNoPendingAccountSync })
-  store = createResilientStore(createStore(resolved.dir), createStore(localCacheDir()), { onSyncResult: handleSyncResult, guardReplay: guardAccountReplay })
+  store = createResilientStore(createStore(resolved.dir), createStore(localCacheDir()), resilientOptions())
   dataDirSource = resolved.source
   storageStartedDisconnected = resolved.failedSources.length > 0
   storageFailedSources = resolved.failedSources
@@ -503,7 +524,7 @@ app.whenReady().then(() => {
   }
 
   // Platform-delt store (Fase 9.1) — oprettes én gang, uafhængig af hvilket team der er aktivt.
-  sharedStore = createResilientStore(createStore(path.join(platformRoot, '_shared')), createStore(localCacheDir('_shared')), { onSyncResult: handleSyncResult, guardReplay: guardAccountReplay })
+  sharedStore = createResilientStore(createStore(path.join(platformRoot, '_shared')), createStore(localCacheDir('_shared')), resilientOptions())
   // KRITISK: runWrite() er synkron og kaster STRAKS (attempts:1) hvis kontolaasen
   // er kortvarigt optaget (fx to klienter der starter appen i samme sekund). Uden
   // try/catch stopper en kastet fejl her HELE resten af denne .then()-callback —
