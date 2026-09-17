@@ -84,6 +84,26 @@ export interface GuideVersionEntry {
   snapshot: GuideVersionSnapshot
 }
 
+/**
+ * KV: 'guide-drafts-{guideId-eller-ny-id}' — privat, lokal arbejdskopi der
+ * autogemmes mens en guide redigeres, så et crash/lukket vindue ikke koster
+ * alt arbejde. Helt adskilt fra GuideReviewRequest (som er et REELT forslag
+ * til godkendelse) — en kladde er kun brugerens egen ugemte tekst.
+ */
+export interface GuideDraft {
+  guideId: string
+  title: string
+  category: string
+  tags: string
+  language: 'da' | 'en' | 'fi' | 'auto'
+  sections: GuideSection[]
+  coverImageId?: string
+  reviewInterval: number | null
+  otherTeamCodes: string[]
+  savedBy: string
+  lastAutoSavedAt: number
+}
+
 export type GuideReviewAction = 'create' | 'update' | 'delete' | 'restore'
 export type GuideReviewWorkflowStatus = 'draft' | 'pending' | 'changes_requested' | 'approved' | 'withdrawn'
 

@@ -2,13 +2,31 @@
 // Historik gemmes i separat KV-nøgle pr. guide, så 'guides'-listen forbliver lille.
 
 import { fileStorage } from './fileStorage'
-import type { Guide, GuideVersionEntry } from './guideTypes'
+import type { Guide, GuideVersionEntry, GuideDraft } from './guideTypes'
 import { collectImageIds } from './guideTypes'
 
 const MAX_VERSION_ENTRIES = 50
 
 export function versionsKey(guideId: string): string {
   return `guide-versions-${guideId}`
+}
+
+export function draftKey(guideId: string): string {
+  return `guide-draft-${guideId}`
+}
+
+/** Autogemmer en kladde af den guide der lige nu redigeres (se GuideEditor.tsx). */
+export async function saveDraft(draft: GuideDraft): Promise<void> {
+  await window.kv.set(draftKey(draft.guideId), draft)
+}
+
+export async function getDraft(guideId: string): Promise<GuideDraft | undefined> {
+  return window.kv.get<GuideDraft>(draftKey(guideId))
+}
+
+/** Ryddes ved succesfuldt gem, eller når brugeren aktivt forkaster/annullerer. */
+export async function deleteDraft(guideId: string): Promise<void> {
+  await window.kv.delete(draftKey(guideId))
 }
 
 /** "1.02" -> "1.03". Ugyldige/gamle værdier bliver "1.00". */

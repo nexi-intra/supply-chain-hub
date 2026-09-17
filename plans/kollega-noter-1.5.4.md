@@ -49,7 +49,7 @@ er ikke en bug i eksisterende kode, men en manglende feature.
 
 ---
 
-## Fase 3 - Guide-editor: automatisk kladde ved crash
+## Fase 3 - Guide-editor: automatisk kladde ved crash - FAERDIG
 
 **Rodaarsag (bekraeftet):** `GuideEditor.tsx` holder ALT indhold (titel,
 sektioner, tags osv.) i ren React-state - intet skrives til KV foer brugeren
@@ -57,22 +57,19 @@ trykker eksplicit Gem/Send til review. En ny guide faar kun sit ID genereret
 naar editoren aabner; findes ingen steder i KV foer foerste gem. Lukker
 computeren midt i arbejdet, er ALT tabt.
 
-- [ ] Ny type `GuideDraft` i `src/lib/guideTypes.ts` (kun de redigerbare
+- [x] Ny type `GuideDraft` i `src/lib/guideTypes.ts` (kun de redigerbare
       felter + `lastAutoSavedAt`)
-- [ ] Ny KV-noegle pr. guide: `guide-drafts-<guideId-eller-ny-id>` (adskilt
-      fra `guide-review-requests` - en kladde er en privat arbejdskopi, ikke
-      et review-forslag, og skal IKKE forstyrre godkendelsesflowet)
-- [ ] I `GuideEditor.tsx`: debounced autosave (fx 4-5 sek. efter sidste
-      aendring af titel/sektioner/tags/coverImageId/reviewInterval) skriver
-      kladden til KV
-- [ ] Ved editor-aabning: hvis en kladde findes for dette guide-id (eller en
-      "ny guide" kladde), tilbyd at genskabe den (toast/lille banner: "Der
-      blev fundet en ugemt kladde fra <tid> - Genskab / Forkast")
-- [ ] Slet kladden ved succesfuldt Gem OG ved eksplicit Annuller/luk uden gem
-      (saa gamle kladder ikke ophober sig)
-- [ ] Tests: kladde gemmes efter debounce, genskabes ved genaabning, slettes
-      ved gem, ingen interferens med review-workflowet
-- [ ] `npx tsc --noEmit`, `npx vitest run`
+- [x] Nye hjaelpere i `src/lib/guideStore.ts`: `saveDraft`/`getDraft`/
+      `deleteDraft`, KV-noegle `guide-draft-<guideId-eller-ny-id>` (adskilt
+      fra `guide-review-requests` - en kladde er en privat arbejdskopi)
+- [x] I `GuideEditor.tsx`: debounced autosave (4 sek. efter sidste aendring)
+      af titel/kategori/tags/sprog/sektioner/coverImage/reviewInterval/delte-teams
+- [x] Ved editor-aabning: hvis en kladde findes, vises et banner ("Ugemt
+      kladde fundet" - Genskab/Forkast) - ANVENDES ALDRIG automatisk
+- [x] Kladden slettes ved succesfuldt Gem OG ved eksplicit Annuller/Escape-luk
+- [x] Oversaettelser tilfoejet (da/en/fi)
+- [x] Tests: 5 nye i `guideStore.test.ts` (gem/hent/slet/isolation pr. id)
+- [x] `npx tsc --noEmit` + `npx vitest run` (78/78) groenne
 
 ---
 

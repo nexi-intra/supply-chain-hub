@@ -30,12 +30,12 @@ import { cn } from '@/lib/utils'
 import { fileStorage } from '@/lib/fileStorage'
 import type { RegisteredTeam } from '@/lib/electronRegistryBridge'
 import { useUnsavedChanges } from '@/hooks/useUnsavedChanges'
-import type { Guide, GuideSection, GuideVersionEntry } from '@/lib/guideTypes'
+import type { Guide, GuideSection, GuideVersionEntry, GuideDraft } from '@/lib/guideTypes'
 import {
   REVIEW_INTERVAL_CHOICES, newId, migrateGuide, computeNextReviewAt, guidePlainText,
 } from '@/lib/guideTypes'
 import { detectLanguage, type GuideLanguage } from '@/lib/translator'
-import { bumpVersion, getVersionHistory } from '@/lib/guideStore'
+import { bumpVersion, getVersionHistory, saveDraft, getDraft, deleteDraft } from '@/lib/guideStore'
 import type { GuideImportDraft } from '@/lib/docxImporter'
 import { useLanguage } from '@/contexts/LanguageContext'
 import { GuideViewer } from '@/components/GuideViewer'
@@ -189,9 +189,12 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
   const [allTeams, setAllTeams] = useState<RegisteredTeam[]>([])
   const [currentTeamCode, setCurrentTeamCode] = useState<string | undefined>()
   const [otherTeamCodes, setOtherTeamCodes] = useState<string[]>([])
+  // Fundet ugemt kladde ved åbning — tilbydes til genskabelse, aldrig anvendt automatisk.
+  const [detectedDraft, setDetectedDraft] = useState<GuideDraft | null>(null)
   // Billeder uploadet i denne session — slettes igen hvis brugeren annullerer.
   const sessionImagesRef = useRef<string[]>([])
   const wordInputRef = useRef<HTMLInputElement>(null)
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   useEffect(() => {
     if (!window.electronRegistry) return
@@ -205,9 +208,11 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
   }, [])
 
   const migrated = useMemo(() => (editGuide ? migrateGuide(editGuide) : undefined), [editGuide])
+  const draftId = migrated?.id || newGuideId
 
   useEffect(() => {
     if (!open) return
+    let newId_ = newGuideId
     if (migrated) {
       setTitle(migrated.title)
       setCategory(migrated.category)
@@ -220,7 +225,8 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
       setReviewInterval(migrated.reviewIntervalMonths ?? null)
       getVersionHistory(migrated.id).then(setHistory).catch(() => setHistory([]))
     } else {
-      setNewGuideId(newId('guide'))
+      newId_ = newId('guide')
+      setNewGuideId(newId_)
       setTitle(importDraft?.title || '')
       setCategory(categories[0] || 'General')
       setTags('')
@@ -238,8 +244,14 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
     setIsCreatingCategory(false)
     setNewCategoryName('')
     setOtherTeamCodes((migrated?.sharedWithTeamCodes || []).filter((code) => code !== currentTeamCode))
-    // Billeder fra et importeret dokument uploades allerede før editoren \u00e5bner \u2014
-    // de skal ryddes op p\u00e5 lige fod med session-billeder, hvis brugeren fortryder.
+    setDetectedDraft(null)
+    // En autogemt kladde fra en tidligere afbrudt session (crash/lukket vindue)
+    // tilbydes til genskabelse, men anvendes ALDRIG automatisk — brugeren skal
+    // eksplicit vælge, ellers kunne en kladde overraskende overskrive frisk
+    // indhold der lige er hentet fra den udgivne guide.
+    getDraft(migrated?.id || newId_).then((draft) => { if (draft) setDetectedDraft(draft) }).catch(() => {})
+    // Billeder fra et importeret dokument uploades allerede før editoren åbner —
+    // de skal ryddes op på lige fod med session-billeder, hvis brugeren fortryder.
     sessionImagesRef.current = importDraft ? importDraft.sections.flatMap((s) => s.steps.flatMap((st) => st.imageIds)) : []
   }, [open, migrated, categories, importDraft, currentTeamCode])
 
@@ -269,10 +281,54 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
     sessionImagesRef.current = []
   }, [])
 
+  const discardDraft = useCallback(() => {
+    setDetectedDraft(null)
+    void deleteDraft(draftId)
+  }, [draftId])
+
+  const restoreDraft = () => {
+    if (!detectedDraft) return
+    setTitle(detectedDraft.title)
+    setCategory(detectedDraft.category)
+    setTags(detectedDraft.tags)
+    setLanguage(detectedDraft.language)
+    setSections(detectedDraft.sections)
+    setCoverImageId(detectedDraft.coverImageId)
+    setReviewInterval(detectedDraft.reviewInterval)
+    setOtherTeamCodes(detectedDraft.otherTeamCodes)
+    setDetectedDraft(null)
+  }
+
+  // Autogemmer en kladde et par sekunder efter sidste tastetryk, så et crash/
+  // lukket vindue midt i arbejdet ikke koster alt indhold. Kun én kladde pr.
+  // guide-id ad gangen (overskriver sig selv); ryddes ved gem/annuller/luk.
+  useEffect(() => {
+    if (!open || detectedDraft) return
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
+    autoSaveTimerRef.current = setTimeout(() => {
+      const draft: GuideDraft = {
+        guideId: draftId,
+        title,
+        category,
+        tags,
+        language,
+        sections,
+        coverImageId,
+        reviewInterval,
+        otherTeamCodes,
+        savedBy: userEmail,
+        lastAutoSavedAt: Date.now(),
+      }
+      saveDraft(draft).catch((error) => console.error('Kunne ikke autogemme guide-kladde:', error))
+    }, 4000)
+    return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current) }
+  }, [open, detectedDraft, draftId, title, category, tags, language, sections, coverImageId, reviewInterval, otherTeamCodes, userEmail])
+
   useUnsavedChanges({
     hasUnsavedChanges,
     onConfirmedExit: () => {
       cleanupSessionImages()
+      void deleteDraft(draftId)
       onOpenChange(false)
     },
     enabled: open,
@@ -513,6 +569,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
 
       sessionImagesRef.current = []
       await onSave(guide, changeNote.trim() || undefined)
+      await deleteDraft(draftId)
       onOpenChange(false)
     } catch (error) {
       console.error('Kunne ikke gemme guide:', error)
@@ -547,6 +604,19 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
             )}
           </div>
         </DialogHeader>
+
+        {detectedDraft && (
+          <div className="mx-6 mt-4 flex items-center justify-between gap-4 rounded-xl border-2 border-accent/40 bg-accent/10 p-4 shrink-0">
+            <div>
+              <p className="text-sm font-bold">{t.guideEditor.draftFoundTitle}</p>
+              <p className="text-sm text-muted-foreground mt-0.5">{t.guideEditor.draftFoundBody}</p>
+            </div>
+            <div className="flex gap-2 shrink-0">
+              <Button variant="outline" size="sm" onClick={discardDraft}>{t.guideEditor.draftDiscard}</Button>
+              <Button size="sm" onClick={restoreDraft}>{t.guideEditor.draftRestore}</Button>
+            </div>
+          </div>
+        )}
 
         <ScrollArea className="flex-1 min-h-0">
           <div className="px-6 py-5 space-y-6">
@@ -840,7 +910,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
         </ScrollArea>
 
         <DialogFooter className="px-6 py-4 border-t flex-shrink-0">
-          <Button variant="outline" onClick={() => { cleanupSessionImages(); onOpenChange(false) }} disabled={isSaving}>
+          <Button variant="outline" onClick={() => { cleanupSessionImages(); void deleteDraft(draftId); onOpenChange(false) }} disabled={isSaving}>
             {t.common.cancel}
           </Button>
           <Button variant="outline" onClick={() => setPreviewOpen(true)} disabled={isSaving} className="gap-2">
