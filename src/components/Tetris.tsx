@@ -586,7 +586,9 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
           }
           break
         case 'Space':
-          hardDrop()
+          // e.repeat: OS-tastaturgentagelse ville ellers hard-droppe HVER
+          // NYE brik igen og igen saa laenge tasten holdes nede.
+          if (!e.repeat) hardDrop()
           break
       }
     }
