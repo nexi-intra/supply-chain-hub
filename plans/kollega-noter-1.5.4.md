@@ -28,29 +28,24 @@ indholds-wrapperen, med header/footer udenfor som forbliver synlige.
 
 ---
 
-## Fase 2 - To Do: redigering mangler helt (baade faelles og personlig)
+## Fase 2 - To Do: redigering mangler helt (baade faelles og personlig) - FAERDIG
 
 **Rodaarsag (bekraeftet):** Der findes ingen redigerings-UI overhovedet i
 `src/views/ProjectBoard.tsx` - hverken for team-to-do's (`Project`) eller
 personlige to-do's (`PersonalTodo`). Kun opret/slet/status-skift findes. Det
 er ikke en bug i eksisterende kode, men en manglende feature.
 
-- [ ] Tilfoej redigerings-state: `editingProject`/`editingPersonalTodo` +
-      `editTitle`/`editDescription` + `isEditProjectOpen`/`isEditTodoOpen`
-- [ ] Blyant-ikon (`PencilSimple` fra `@phosphor-icons/react`) paa begge
-      kort, ved siden af slet-knappen
-- [ ] Team-to-do: kun opretteren (`project.createdBy === userEmail`) kan
-      redigere titel/beskrivelse (samme afvejning som `canDelete`, men snaevrere
-      - redigering af INDHOLD er mere folsomt end at forlade/slette)
-- [ ] Personlig to-do: altid redigerbar (kun ejeren ser den overhovedet, da
-      den ligger under `todos-personal-<email>`)
-- [ ] Redigerings-dialog (kopi af opret-dialogens felter, forudfyldt) med
-      Gem/Annuller
-- [ ] `handleEditProject`/`handleEditTodo` via `updateKvArrayItem` (atomar,
-      samme moenster som `handleJoinProject`/`handleStartTodo`)
-- [ ] Anvend SAMME scroll-fix som fase 1 paa disse nye dialoger fra start
-      (lang beskrivelse skal kunne redigeres uden samme knap-problem)
-- [ ] `npx tsc --noEmit`, manuel test af begge lister
+- [x] Redigerings-state: `editingProject`/`editingTodo` +
+      `editProjectTitle/Description`/`editTodoTitle/Description` +
+      `isEditProjectOpen`/`isEditTodoOpen`
+- [x] Blyant-ikon (`PencilSimple`) paa begge kort, ved siden af slet-knappen
+- [x] Team-to-do: kun opretteren (`isCreatedByMe`) ser blyant-knappen
+- [x] Personlig to-do: altid redigerbar (kun ejeren ser den overhovedet)
+- [x] Redigerings-dialoger (samme felter som opret, forudfyldt) med Gem/
+      Annuller, samme scroll-fix som fase 1 fra start
+- [x] `handleEditProject`/`handleEditTodo` via `updateKvArrayItem` (atomar)
+- [x] Escape-haandtering udvidet til de nye dialoger
+- [x] `npx tsc --noEmit` + `npx vitest run` (73/73) groenne
 
 ---
 

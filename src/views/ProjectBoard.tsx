@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowLeft, Plus, User, CheckCircle, Circle, Clock, FolderOpen, MagnifyingGlass, Funnel, Trash, X, UserPlus } from '@phosphor-icons/react'
+import { ArrowLeft, Plus, User, CheckCircle, Circle, Clock, FolderOpen, MagnifyingGlass, Funnel, Trash, X, UserPlus, PencilSimple } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -65,6 +65,10 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
   const [newTitle, setNewTitle] = useState('')
   const [newDescription, setNewDescription] = useState('')
+  const [editingProject, setEditingProject] = useState<Project | null>(null)
+  const [editProjectTitle, setEditProjectTitle] = useState('')
+  const [editProjectDescription, setEditProjectDescription] = useState('')
+  const [isEditProjectOpen, setIsEditProjectOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState(() => consumeNavigationParams()?.search ?? '')
   const [filterUser, setFilterUser] = useState<'all' | 'my' | 'unassigned'>('all')
   const [sortBy, setSortBy] = useState<'newest' | 'oldest'>('newest')
@@ -75,6 +79,10 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
   const [newTodoTitle, setNewTodoTitle] = useState('')
   const [newTodoDescription, setNewTodoDescription] = useState('')
   const [isPersonalCreateOpen, setIsPersonalCreateOpen] = useState(false)
+  const [editingTodo, setEditingTodo] = useState<PersonalTodo | null>(null)
+  const [editTodoTitle, setEditTodoTitle] = useState('')
+  const [editTodoDescription, setEditTodoDescription] = useState('')
+  const [isEditTodoOpen, setIsEditTodoOpen] = useState(false)
 
   useEffect(() => {
     const loadUserName = async () => {
@@ -90,12 +98,14 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
       if (e.key !== 'Escape') return
       if (isCreateDialogOpen) { setIsCreateDialogOpen(false); return }
       if (isPersonalCreateOpen) { setIsPersonalCreateOpen(false); return }
+      if (isEditProjectOpen) { setIsEditProjectOpen(false); return }
+      if (isEditTodoOpen) { setIsEditTodoOpen(false); return }
       if (isAnyModalOpen()) return
       onNavigateBack()
     }
     window.addEventListener('keydown', handleKeyDown, true)
     return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [onNavigateBack, isCreateDialogOpen, isPersonalCreateOpen])
+  }, [onNavigateBack, isCreateDialogOpen, isPersonalCreateOpen, isEditProjectOpen, isEditTodoOpen])
 
   const handleCreateProject = async () => {
     if (!newTitle.trim()) {
@@ -162,6 +172,29 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
     toast.success(language === 'da' ? 'Projekt markeret som færdigt' : language === 'fi' ? 'Projekti merkitty valmiiksi' : 'Project marked as completed')
   }
 
+  const openEditProject = (project: Project) => {
+    setEditingProject(project)
+    setEditProjectTitle(project.title)
+    setEditProjectDescription(project.description)
+    setIsEditProjectOpen(true)
+  }
+
+  const handleEditProject = async () => {
+    if (!editingProject) return
+    if (!editProjectTitle.trim()) {
+      toast.error(language === 'da' ? 'Titel er påkrævet' : language === 'fi' ? 'Otsikko vaaditaan' : 'Title is required')
+      return
+    }
+    await updateKvArrayItem<Project>('projects', editingProject.id, (p) => ({
+      ...p,
+      title: editProjectTitle.trim(),
+      description: editProjectDescription.trim(),
+    }))
+    setIsEditProjectOpen(false)
+    setEditingProject(null)
+    toast.success(language === 'da' ? 'To-do opdateret' : language === 'fi' ? 'To-do päivitetty' : 'To-do updated')
+  }
+
   const getFilteredProjects = () => {
     const projectList = projects || []
     let filtered = [...projectList]
@@ -223,6 +256,27 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
     await removeFromKvArray<PersonalTodo>(personalKey, [id])
     toast.success(language === 'da' ? 'To-do slettet' : language === 'fi' ? 'To-do poistettu' : 'To-do deleted')
   }
+  const openEditTodo = (todo: PersonalTodo) => {
+    setEditingTodo(todo)
+    setEditTodoTitle(todo.title)
+    setEditTodoDescription(todo.description || '')
+    setIsEditTodoOpen(true)
+  }
+  const handleEditTodo = async () => {
+    if (!editingTodo) return
+    if (!editTodoTitle.trim()) {
+      toast.error(language === 'da' ? 'Titel er påkrævet' : language === 'fi' ? 'Otsikko vaaditaan' : 'Title is required')
+      return
+    }
+    await updateKvArrayItem<PersonalTodo>(personalKey, editingTodo.id, (todo) => ({
+      ...todo,
+      title: editTodoTitle.trim(),
+      description: editTodoDescription.trim(),
+    }))
+    setIsEditTodoOpen(false)
+    setEditingTodo(null)
+    toast.success(language === 'da' ? 'To-do opdateret' : language === 'fi' ? 'To-do päivitetty' : 'To-do updated')
+  }
   const renderPersonalTodoCard = (todo: PersonalTodo) => {
     const status = todoStatus(todo)
     return (
@@ -241,7 +295,17 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                 {getStatusLabel(status)}
               </Badge>
             </div>
-            <AlertDialog>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                onClick={() => openEditTodo(todo)}
+                title={language === 'da' ? 'Redigér' : language === 'fi' ? 'Muokkaa' : 'Edit'}
+              >
+                <PencilSimple size={16} weight="duotone" />
+              </Button>
+              <AlertDialog>
               <AlertDialogTrigger asChild>
                 <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10">
                   <Trash size={16} weight="duotone" />
@@ -267,6 +331,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
+            </div>
           </div>
 
           {todo.description && (
@@ -382,6 +447,47 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                   className="bg-gradient-to-r from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)] text-white"
                 >
                   {language === 'da' ? 'Opret' : language === 'fi' ? 'Luo' : 'Create'}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={isEditTodoOpen} onOpenChange={setIsEditTodoOpen}>
+            <DialogContent className="sm:max-w-[500px] max-h-[85vh] flex flex-col">
+              <DialogHeader className="shrink-0">
+                <DialogTitle className="text-2xl font-bold">
+                  {language === 'da' ? 'Redigér to-do' : language === 'fi' ? 'Muokkaa to-do' : 'Edit to-do'}
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4 py-4 overflow-y-auto flex-1 min-h-0 pr-2 -mr-2">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-todo-title">{language === 'da' ? 'Titel' : language === 'fi' ? 'Otsikko' : 'Title'} *</Label>
+                  <Input
+                    id="edit-todo-title"
+                    value={editTodoTitle}
+                    onChange={(e) => setEditTodoTitle(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void handleEditTodo() } }}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-todo-description">{language === 'da' ? 'Beskrivelse' : language === 'fi' ? 'Kuvaus' : 'Description'}</Label>
+                  <Textarea
+                    id="edit-todo-description"
+                    value={editTodoDescription}
+                    onChange={(e) => setEditTodoDescription(e.target.value)}
+                    rows={4}
+                  />
+                </div>
+              </div>
+              <DialogFooter className="shrink-0">
+                <Button variant="outline" onClick={() => setIsEditTodoOpen(false)}>
+                  {language === 'da' ? 'Annuller' : language === 'fi' ? 'Peruuta' : 'Cancel'}
+                </Button>
+                <Button
+                  onClick={() => void handleEditTodo()}
+                  className="bg-gradient-to-r from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)] text-white"
+                >
+                  {language === 'da' ? 'Gem' : language === 'fi' ? 'Tallenna' : 'Save'}
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -507,6 +613,17 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                 <Badge className="bg-gradient-to-r from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)] text-white text-xs font-semibold">
                   {language === 'da' ? 'Dit projekt' : language === 'fi' ? 'Projekti' : 'Your project'}
                 </Badge>
+              )}
+              {isCreatedByMe && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                  onClick={() => openEditProject(project)}
+                  title={language === 'da' ? 'Redigér' : language === 'fi' ? 'Muokkaa' : 'Edit'}
+                >
+                  <PencilSimple size={16} weight="duotone" />
+                </Button>
               )}
               {canDelete && (
                 <AlertDialog>
@@ -702,6 +819,46 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                   className="bg-gradient-to-r from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)] text-white"
                 >
                   {language === 'da' ? 'Opret' : language === 'fi' ? 'Luo' : 'Create'}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={isEditProjectOpen} onOpenChange={setIsEditProjectOpen}>
+            <DialogContent className="sm:max-w-[500px] max-h-[85vh] flex flex-col">
+              <DialogHeader className="shrink-0">
+                <DialogTitle className="text-2xl font-bold">
+                  {language === 'da' ? 'Redigér to-do' : language === 'fi' ? 'Muokkaa to-do' : 'Edit to-do'}
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4 py-4 overflow-y-auto flex-1 min-h-0 pr-2 -mr-2">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-title">{language === 'da' ? 'Titel' : language === 'fi' ? 'Otsikko' : 'Title'} *</Label>
+                  <Input
+                    id="edit-title"
+                    value={editProjectTitle}
+                    onChange={(e) => setEditProjectTitle(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-description">{language === 'da' ? 'Beskrivelse' : language === 'fi' ? 'Kuvaus' : 'Description'}</Label>
+                  <Textarea
+                    id="edit-description"
+                    value={editProjectDescription}
+                    onChange={(e) => setEditProjectDescription(e.target.value)}
+                    rows={4}
+                  />
+                </div>
+              </div>
+              <DialogFooter className="shrink-0">
+                <Button variant="outline" onClick={() => setIsEditProjectOpen(false)}>
+                  {language === 'da' ? 'Annuller' : language === 'fi' ? 'Peruuta' : 'Cancel'}
+                </Button>
+                <Button
+                  onClick={() => void handleEditProject()}
+                  className="bg-gradient-to-r from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)] text-white"
+                >
+                  {language === 'da' ? 'Gem' : language === 'fi' ? 'Tallenna' : 'Save'}
                 </Button>
               </DialogFooter>
             </DialogContent>
