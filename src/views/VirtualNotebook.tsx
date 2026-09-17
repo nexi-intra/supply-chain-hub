@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ArrowLeft, Plus, MagnifyingGlass, PencilSimple, Trash, X, Lock, LockOpen, Eye, Bell, PushPin, Tag } from '@phosphor-icons/react'
+import { ArrowLeft, Plus, MagnifyingGlass, PencilSimple, Trash, X, Lock, LockOpen, Eye, Bell, PushPin, Tag, Notebook } from '@phosphor-icons/react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -17,7 +17,7 @@ import { appendToKvArray, upsertInKvArray, removeFromKvArray } from '@/lib/kvArr
 import { isAnyModalOpen } from '@/lib/modalStack'
 import { consumeNavigationParams } from '@/lib/appNavigation'
 import { format, parseISO, formatDistanceToNow } from 'date-fns'
-import { da, enUS } from 'date-fns/locale'
+import { da, enUS, fi } from 'date-fns/locale'
 import { getUserRole, type UserRole } from '@/lib/userRoles'
 
 interface Note {
@@ -139,7 +139,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
     })
     await window.kv.set('notebook-notifications', updated)
     await loadNotifications()
-    toast.success(language === 'da' ? 'Alle notifikationer markeret som læst' : 'All notifications marked as read')
+    toast.success(language === 'da' ? 'Alle notifikationer markeret som læst' : language === 'fi' ? 'Kaikki tiedoksi merkityt ilmoitukset' : 'All notifications marked as read')
   }
 
   const deleteNotification = async (notificationId: string) => {
@@ -242,7 +242,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
         toast.info(
           language === 'da' 
             ? `${userName} redigerede noten "${updatedNote.title}"` 
-            : `${userName} edited the note "${updatedNote.title}"`
+            : language === 'fi' ? `${userName} muokattu huomautus "${updatedNote.title}"` : `${userName} edited the note "${updatedNote.title}"`
         )
       }
     }
@@ -317,8 +317,8 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
     setNotes(updatedNotes)
     toast.success(
       note.pinned
-        ? (language === 'da' ? 'Note frigjort' : 'Note unpinned')
-        : (language === 'da' ? 'Note fastgjort' : 'Note pinned')
+        ? (language === 'da' ? 'Note frigjort' : language === 'fi' ? 'Muistiinpano ilman pinnoitusta' : 'Note unpinned')
+        : (language === 'da' ? 'Note fastgjort' : language === 'fi' ? 'Huomautus kiinnitetty' : 'Note pinned')
     )
   }
 
@@ -355,7 +355,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
   const formatDate = (dateString: string) => {
     try {
       const date = parseISO(dateString)
-      return format(date, 'PPp', { locale: language === 'da' ? da : enUS })
+      return format(date, 'PPp', { locale: language === 'da' ? da : language === 'fi' ? fi : enUS })
     } catch {
       return dateString
     }
@@ -364,7 +364,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
   const formatShortDate = (dateString: string) => {
     try {
       const date = parseISO(dateString)
-      return format(date, 'PP', { locale: language === 'da' ? da : enUS })
+      return format(date, 'PP', { locale: language === 'da' ? da : language === 'fi' ? fi : enUS })
     } catch {
       return dateString
     }
@@ -408,7 +408,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
         className="relative"
       >
         <Card className={cn(
-          "p-3 h-[280px] flex flex-col hover:shadow-lg transition-all duration-200 hover:scale-[1.02] group",
+          "p-3 h-[280px] flex flex-col border-2 hover:shadow-lg hover:border-primary/40 transition-all duration-200 hover:scale-[1.02] group",
           note.pinned && "border-primary/50 bg-primary/[0.04]"
         )}>
           <div className="flex justify-between items-start mb-1.5 gap-2 flex-shrink-0">
@@ -428,7 +428,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
                   size="icon"
                   className={cn("h-6 w-6", note.pinned && "text-primary")}
                   onClick={() => togglePin(note)}
-                  title={note.pinned ? (language === 'da' ? 'Frigør note' : 'Unpin note') : (language === 'da' ? 'Fastgør note' : 'Pin note')}
+                  title={note.pinned ? (language === 'da' ? 'Frigør note' : language === 'fi' ? 'Avaa viesti' : 'Unpin note') : (language === 'da' ? 'Fastgør note' : language === 'fi' ? 'Pin note' : 'Pin note')}
                 >
                   <PushPin size={12} weight={note.pinned ? 'fill' : 'regular'} />
                 </Button>
@@ -465,7 +465,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
                   onClick={() => openViewDialog(note)}
                 >
                   <Eye size={12} />
-                  {language === 'da' ? 'Læs mere' : 'Read More'}
+                  {language === 'da' ? 'Læs mere' : language === 'fi' ? 'Lue lisää' : 'Read More'}
                 </Button>
               </div>
             )}
@@ -495,17 +495,17 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
               </div>
             )}
             <div className="flex items-center gap-1">
-              <span className="font-medium">{language === 'da' ? 'Oprettet:' : 'Created:'}</span>
+              <span className="font-medium">{language === 'da' ? 'Oprettet:' : language === 'fi' ? 'Luotu:' : 'Created:'}</span>
               <span>{formatShortDate(note.createdAt)}</span>
             </div>
             {note.lastEditedBy && note.createdAt !== note.updatedAt && (
               <div className="flex flex-col gap-0.5">
                 <div className="flex items-center gap-1">
-                  <span className="font-medium">{language === 'da' ? 'Redigeret af:' : 'Edited by:'}</span>
+                  <span className="font-medium">{language === 'da' ? 'Redigeret af:' : language === 'fi' ? 'Muokkaa:' : 'Edited by:'}</span>
                   <span>{note.lastEditedByName || note.lastEditedBy}</span>
                 </div>
                 <div className="flex items-center gap-1">
-                  <span className="font-medium">{language === 'da' ? 'Dato:' : 'Date:'}</span>
+                  <span className="font-medium">{language === 'da' ? 'Dato:' : language === 'fi' ? 'Päiväys:' : 'Date:'}</span>
                   <span>{formatShortDate(note.updatedAt)}</span>
                 </div>
               </div>
@@ -517,69 +517,68 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
   }
 
   return (
-    <div className="min-h-screen p-6 relative z-10">
-      <div className="max-w-7xl mx-auto">
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="flex items-center gap-4 mb-10"
-        >
-          <Button
-            onClick={onNavigateBack}
-            variant="outline"
-            size="icon"
-            className="rounded-full"
-          >
-            <ArrowLeft size={20} />
-          </Button>
-          <div className="flex-1 text-center">
-            <h1 className="text-4xl font-bold leading-normal bg-gradient-to-br from-primary to-accent bg-clip-text text-transparent pb-1">{t.notebook.title}</h1>
-          </div>
-          <Button
-            onClick={() => setShowNotifications(true)}
-            variant="outline"
-            size="icon"
-            className="rounded-full relative"
-          >
-            <Bell size={20} />
-            {unreadCount > 0 && (
-              <Badge 
-                variant="destructive" 
-                className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center p-0 text-xs"
-              >
-                {unreadCount}
-              </Badge>
-            )}
-          </Button>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-        >
-          <Card className="p-6">
-            <Tabs value={activeTab} onValueChange={(val) => setActiveTab(val as 'shared' | 'personal')}>
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-                <TabsList className="grid w-full sm:w-auto grid-cols-2">
-                  <TabsTrigger value="shared" className="gap-2">
-                    <LockOpen size={16} weight="bold" />
-                    {t.notebook.sharedNotes}
-                  </TabsTrigger>
-                  <TabsTrigger value="personal" className="gap-2">
-                    <Lock size={16} weight="bold" />
-                    {t.notebook.personalNotes}
-                  </TabsTrigger>
-                </TabsList>
-
-                <Button
-                  onClick={() => openCreateDialog(activeTab === 'personal')}
-                  className="gap-2"
+    <div className="min-h-screen bg-background">
+      <div className="sticky top-0 z-30 bg-background/95 backdrop-blur-sm border-b border-border shadow-sm">
+        <div className="container mx-auto px-4 sm:px-6 py-6">
+          <div className="flex items-center gap-4">
+            <Button
+              variant="outline"
+              size="lg"
+              onClick={onNavigateBack}
+              className="bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
+            >
+              <ArrowLeft size={20} />
+              {language === 'da' ? 'Tilbage til Hub' : language === 'fi' ? 'Takaisin Hubiin' : 'Back to Hub'}
+            </Button>
+            <div className="flex-1 text-center">
+              <h1 className="text-2xl sm:text-3xl font-bold leading-normal bg-gradient-to-br from-primary to-accent bg-clip-text text-transparent pb-1 flex items-center gap-3 justify-center">
+                <Notebook size={32} weight="duotone" className="text-primary" />
+                {t.notebook.title}
+              </h1>
+            </div>
+            <Button
+              onClick={() => setShowNotifications(true)}
+              variant="outline"
+              size="lg"
+              className="relative shadow-lg"
+            >
+              <Bell size={20} />
+              {unreadCount > 0 && (
+                <Badge
+                  variant="destructive"
+                  className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center p-0 text-xs"
                 >
-                  <Plus size={20} weight="bold" />
-                  {t.notebook.addNote}
-                </Button>
-              </div>
+                  {unreadCount}
+                </Badge>
+              )}
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <div className="container mx-auto px-4 sm:px-6 py-10">
+        <Tabs value={activeTab} onValueChange={(val) => setActiveTab(val as 'shared' | 'personal')}>
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+            <TabsList>
+              <TabsTrigger value="shared" className="gap-2">
+                <LockOpen size={16} weight="bold" />
+                {t.notebook.sharedNotes}
+              </TabsTrigger>
+              <TabsTrigger value="personal" className="gap-2">
+                <Lock size={16} weight="bold" />
+                {t.notebook.personalNotes}
+              </TabsTrigger>
+            </TabsList>
+
+            <Button
+              onClick={() => openCreateDialog(activeTab === 'personal')}
+              size="lg"
+              className="bg-gradient-to-r from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)] hover:from-[oklch(0.38_0.19_272)] hover:to-[oklch(0.48_0.15_264)] text-white shadow-lg gap-2"
+            >
+              <Plus size={20} weight="bold" />
+              {t.notebook.addNote}
+            </Button>
+          </div>
 
               <div className="relative mb-6">
                 <MagnifyingGlass
@@ -626,7 +625,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
                       onClick={() => setActiveTagFilter(null)}
                     >
                       <X size={12} className="mr-1" />
-                      {language === 'da' ? 'Ryd tag-filter' : 'Clear tag filter'}
+                      {language === 'da' ? 'Ryd tag-filter' : language === 'fi' ? 'Tyhjennä tagisuodin' : 'Clear tag filter'}
                     </Button>
                   )}
                 </div>
@@ -656,9 +655,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
                 )}
               </TabsContent>
             </Tabs>
-          </Card>
-        </motion.div>
-      </div>
+        </div>
 
       <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
         <DialogContent className="max-w-2xl">
@@ -687,7 +684,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
             </div>
             <div>
               <Input
-                placeholder={language === 'da' ? 'Tags adskilt med komma — fx procedure, onboarding' : 'Tags separated by comma — e.g. procedure, onboarding'}
+                placeholder={language === 'da' ? 'Tags adskilt med komma — fx procedure, onboarding' : language === 'fi' ? 'Tunnisteet erotettu pilkulla ' : 'Tags separated by comma — e.g. procedure, onboarding'}
                 value={noteTags}
                 onChange={(e) => setNoteTags(e.target.value)}
               />
@@ -728,7 +725,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
             </div>
             <div>
               <Input
-                placeholder={language === 'da' ? 'Tags adskilt med komma — fx procedure, onboarding' : 'Tags separated by comma — e.g. procedure, onboarding'}
+                placeholder={language === 'da' ? 'Tags adskilt med komma — fx procedure, onboarding' : language === 'fi' ? 'Tunnisteet erotettu pilkulla ' : 'Tags separated by comma — e.g. procedure, onboarding'}
                 value={noteTags}
                 onChange={(e) => setNoteTags(e.target.value)}
               />
@@ -770,7 +767,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
           {selectedNote && selectedNote.lastEditedBy && selectedNote.createdAt !== selectedNote.updatedAt && (
             <div className="text-xs text-muted-foreground border-t pt-3">
               <div className="flex items-center gap-2">
-                <span className="font-medium">{language === 'da' ? 'Sidst redigeret af:' : 'Last edited by:'}</span>
+                <span className="font-medium">{language === 'da' ? 'Sidst redigeret af:' : language === 'fi' ? 'Viimeksi muokannut:' : 'Last edited by:'}</span>
                 <span>{selectedNote.lastEditedByName || selectedNote.lastEditedBy}</span>
                 <span>•</span>
                 <span>{formatDate(selectedNote.updatedAt)}</span>
@@ -789,7 +786,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
                   className="gap-2"
                 >
                   <PencilSimple size={16} />
-                  {language === 'da' ? 'Rediger' : 'Edit'}
+                  {language === 'da' ? 'Rediger' : language === 'fi' ? 'Muokkaa' : 'Edit'}
                 </Button>
                 <Button
                   variant="outline"
@@ -800,12 +797,12 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
                   className="gap-2 text-destructive hover:text-destructive"
                 >
                   <Trash size={16} />
-                  {language === 'da' ? 'Slet' : 'Delete'}
+                  {language === 'da' ? 'Slet' : language === 'fi' ? 'Poista' : 'Delete'}
                 </Button>
               </>
             )}
             <Button onClick={() => setShowViewDialog(false)}>
-              {language === 'da' ? 'Luk' : 'Close'}
+              {language === 'da' ? 'Luk' : language === 'fi' ? 'Sulje' : 'Close'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -833,7 +830,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
           <DialogHeader>
             <div className="flex items-center justify-between">
               <DialogTitle>
-                {language === 'da' ? 'Notifikationer' : 'Notifications'}
+                {language === 'da' ? 'Notifikationer' : language === 'fi' ? 'Ilmoitukset' : 'Notifications'}
               </DialogTitle>
               {notifications.length > 0 && (
                 <Button
@@ -842,19 +839,19 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
                   onClick={markAllAsRead}
                   className="text-xs"
                 >
-                  {language === 'da' ? 'Markér alle som læst' : 'Mark all as read'}
+                  {language === 'da' ? 'Markér alle som læst' : language === 'fi' ? 'Merkitse kaikki luetuiksi' : 'Mark all as read'}
                 </Button>
               )}
             </div>
             <DialogDescription>
-              {language === 'da' ? 'Se hvem der har redigeret delte noter' : 'See who has edited shared notes'}
+              {language === 'da' ? 'Se hvem der har redigeret delte noter' : language === 'fi' ? 'Katso kuka on muokannut jaettuja muistiinpanoja' : 'See who has edited shared notes'}
             </DialogDescription>
           </DialogHeader>
           
           <div className="overflow-y-auto max-h-[50vh] space-y-2">
             {notifications.length === 0 ? (
               <div className="text-center py-12 text-muted-foreground">
-                {language === 'da' ? 'Ingen notifikationer' : 'No notifications'}
+                {language === 'da' ? 'Ingen notifikationer' : language === 'fi' ? 'Ei ilmoituksia' : 'No notifications'}
               </div>
             ) : (
               <AnimatePresence>
@@ -879,19 +876,19 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
                               {notification.editedByName}
                             </p>
                             <Badge variant="secondary" className="text-xs">
-                              {language === 'da' ? 'Redigeret' : 'Edited'}
+                              {language === 'da' ? 'Redigeret' : language === 'fi' ? 'Muokattu' : 'Edited'}
                             </Badge>
                           </div>
                           <p className="text-sm text-muted-foreground">
                             {language === 'da' 
                               ? `redigerede noten "${notification.noteTitle}"`
-                              : `edited the note "${notification.noteTitle}"`
+                              : language === 'fi' ? `muokattu huomautus "${notification.noteTitle}"` : `edited the note "${notification.noteTitle}"`
                             }
                           </p>
                           <p className="text-xs text-muted-foreground mt-1">
                             {formatDistanceToNow(parseISO(notification.timestamp), {
                               addSuffix: true,
-                              locale: language === 'da' ? da : enUS
+                              locale: language === 'da' ? da : language === 'fi' ? fi : enUS
                             })}
                           </p>
                         </div>
@@ -916,7 +913,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
 
           <DialogFooter>
             <Button onClick={() => setShowNotifications(false)}>
-              {language === 'da' ? 'Luk' : 'Close'}
+              {language === 'da' ? 'Luk' : language === 'fi' ? 'Sulje' : 'Close'}
             </Button>
           </DialogFooter>
         </DialogContent>

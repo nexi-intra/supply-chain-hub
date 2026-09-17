@@ -15,7 +15,7 @@ import { HomeOfficeDialog } from '@/components/HomeOfficeDialog'
 import { toast } from 'sonner'
 import { AutoText } from '@/components/AutoText'
 import { cn, newId } from '@/lib/utils'
-import { getEmployeeColorByEmail } from '@/lib/employeeColors'
+import { getEmployeeColorByEmail, EMPLOYEE_COLOR_OVERRIDES_KEY, type EmployeeColorOverrides } from '@/lib/employeeColors'
 import { getWeekNumber as getISOWeekNumber, parseLocalDate } from '@/lib/dateUtils'
 import { appendToKvArray, removeFromKvArray } from '@/lib/kvArrays'
 import { isAnyModalOpen } from '@/lib/modalStack'
@@ -32,6 +32,7 @@ interface VacationCalendarProps {
 
 export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUserEmail }: VacationCalendarProps) {
   const [vacations, setVacations] = useKV<VacationEntry[]>('vacation-entries', [])
+  const [colorOverrides] = useKV<EmployeeColorOverrides>(EMPLOYEE_COLOR_OVERRIDES_KEY, {})
   const [homeOfficePatterns] = useKV<Record<string, HomeOfficePattern>>('home-office-patterns', {})
   const [homeOfficeExceptions] = useKV<HomeOfficeException[]>('home-office-exceptions', [])
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth())
@@ -408,8 +409,8 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
         <div
           className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
           style={{ 
-            backgroundColor: getEmployeeColorByEmail(vacation.userEmail).bg,
-            color: getEmployeeColorByEmail(vacation.userEmail).text
+            backgroundColor: getEmployeeColorByEmail(vacation.userEmail, colorOverrides).bg,
+            color: getEmployeeColorByEmail(vacation.userEmail, colorOverrides).text
           }}
         >
           <User size={20} weight="bold" />
@@ -483,7 +484,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
 
   return (
     <div className="min-h-screen relative overflow-hidden">
-      <div className="absolute top-6 right-6 left-6 z-20">
+      <div className="fixed top-6 right-6 left-6 z-30 pointer-events-none">
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pb-16">
           <div className="flex items-center gap-3">
             <motion.div
@@ -495,7 +496,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
                 variant="outline"
                 size="lg"
                 onClick={onNavigateBack}
-                className="bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
+                className="pointer-events-auto bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
               >
                 <ArrowLeft size={20} />
                 {t.common?.back || 'Tilbage'}
@@ -514,7 +515,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
         >
           <div className="flex flex-col items-center gap-4">
             <h1 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold leading-normal bg-gradient-to-br from-primary to-accent bg-clip-text text-transparent pb-1">
-              {language === 'da' ? 'Kalender' : 'Calendar'}
+              {language === 'da' ? 'Kalender' : language === 'fi' ? 'Kalenteri' : 'Calendar'}
             </h1>
             {isManager && (
               <Badge className="bg-gradient-to-r from-primary to-accent text-white text-xs sm:text-sm">
@@ -591,14 +592,14 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
                 <DialogHeader>
                   <DialogTitle>
                     {detailDay !== null && new Date(selectedYear, selectedMonth, detailDay).toLocaleDateString(
-                      language === 'da' ? 'da-DK' : 'en-US',
+                      language === 'da' ? 'da-DK' : language === 'fi' ? 'fi-FI' : 'en-US',
                       { weekday: 'long', day: 'numeric', month: 'long' }
                     )}
                   </DialogTitle>
                 </DialogHeader>
                 <div className="space-y-2 max-h-[60vh] overflow-y-auto">
                   {detailDay !== null && getDayVacations(detailDay).map((vacation) => {
-                    const userColor = getEmployeeColorByEmail(vacation.userEmail)
+                    const userColor = getEmployeeColorByEmail(vacation.userEmail, colorOverrides)
                     return (
                       <div
                         key={vacation.id}
@@ -610,6 +611,16 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
                       </div>
                     )
                   })}
+                  {detailDay !== null && getHomeOfficeMembersForDay(detailDay).map((member) => (
+                    <div
+                      key={`ho-${member.email}`}
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300"
+                    >
+                      <House size={16} weight="fill" className="flex-shrink-0" />
+                      <span className="flex-1">{member.name}</span>
+                      <span className="text-xs opacity-80">{language === 'da' ? 'Hjemmearbejde' : language === 'fi' ? 'Etätyö' : 'Home office'}</span>
+                    </div>
+                  ))}
                 </div>
               </DialogContent>
             </Dialog>
@@ -661,12 +672,12 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
                       return (
                         <div
                           key={day}
-                          onClick={() => dayVacations.length > 0 && setDetailDay(day)}
+                          onClick={() => (dayVacations.length > 0 || dayHomeOffice.length > 0) && setDetailDay(day)}
                           className={cn(
                             "aspect-square border rounded-lg p-1 relative",
                             isToday && "ring-2 ring-primary",
                             isWeekendDay && "bg-muted/50 opacity-60",
-                            dayVacations.length > 0 && "cursor-pointer hover:ring-2 hover:ring-primary/50"
+                            (dayVacations.length > 0 || dayHomeOffice.length > 0) && "cursor-pointer hover:ring-2 hover:ring-primary/50"
                           )}
                         >
                           <div className={cn(
@@ -706,7 +717,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
                             ) : !isWeekendDay && (
                               <>
                                 {dayVacations.slice(0, dayBirthdays.length > 0 ? 2 : 3).map((vacation) => {
-                                  const userColor = getEmployeeColorByEmail(vacation.userEmail)
+                                  const userColor = getEmployeeColorByEmail(vacation.userEmail, colorOverrides)
                                   return (
                                     <div
                                       key={vacation.id}
@@ -723,16 +734,25 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
                                 })}
                                 {dayVacations.length > (dayBirthdays.length > 0 ? 2 : 3) && (
                                   <div className="text-[9px] text-muted-foreground underline">
-                                    +{dayVacations.length - (dayBirthdays.length > 0 ? 2 : 3)} {language === 'da' ? 'se alle' : 'see all'}
+                                    +{dayVacations.length - (dayBirthdays.length > 0 ? 2 : 3)} {language === 'da' ? 'se alle' : language === 'fi' ? 'katso kaikki' : 'see all'}
                                   </div>
                                 )}
-                                {dayHomeOffice.length > 0 && (
+                                {dayHomeOffice.slice(0, 3).map((member) => (
                                   <div
+                                    key={member.email}
                                     className="text-[10px] px-1.5 py-0.5 rounded truncate font-semibold bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300 flex items-center gap-0.5"
-                                    title={dayHomeOffice.map(m => m.name).join(', ')}
+                                    title={`${member.name}${language === 'da' ? ' arbejder hjemme' : language === 'fi' ? ' työskentelee etänä' : ' works from home'}`}
                                   >
                                     <House size={10} weight="fill" className="flex-shrink-0" />
-                                    <span className="truncate">{dayHomeOffice.length}</span>
+                                    <span className="truncate">{getFirstName(member.email)}</span>
+                                  </div>
+                                ))}
+                                {dayHomeOffice.length > 3 && (
+                                  <div
+                                    className="text-[9px] text-sky-700 dark:text-sky-300 underline"
+                                    title={dayHomeOffice.map(m => m.name).join(', ')}
+                                  >
+                                    +{dayHomeOffice.length - 3} {language === 'da' ? 'hjemme' : language === 'fi' ? 'etänä' : 'home'}
                                   </div>
                                 )}
                               </>
@@ -827,8 +847,8 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
                     <div
                       className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold"
                       style={{ 
-                        backgroundColor: getEmployeeColorByEmail(member.email).bg,
-                        color: getEmployeeColorByEmail(member.email).text
+                        backgroundColor: getEmployeeColorByEmail(member.email, colorOverrides).bg,
+                        color: getEmployeeColorByEmail(member.email, colorOverrides).text
                       }}
                     >
                       {member.name.charAt(0).toUpperCase()}

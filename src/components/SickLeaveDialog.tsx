@@ -182,7 +182,7 @@ ${userName} (${selectedUserEmail}) har meldt ${sickLeaveType === 'child' ? 'barn
 Type: ${sickLeaveType === 'child' ? 'Barn syg' : 'Egen sygdom'}
 Dato: ${dateFormatted}
 
-${reason ? `Bemærkninger:\n${reason}\n\n` : ''}Denne notifikation er automatisk genereret fra Terminal Configuration & Dispatch Hub.`
+${reason ? `Bemærkninger:\n${reason}\n\n` : ''}Denne notifikation er automatisk genereret fra Supply Chain Hub.`
         : `Hej Jacob,
 
 ${userName} (${selectedUserEmail}) ${sickLeaveType === 'child' ? 'har fået barn syg registreret' : 'er blevet sygemeldt'} af ${reporterName} (${userEmail}).
@@ -190,7 +190,7 @@ ${userName} (${selectedUserEmail}) ${sickLeaveType === 'child' ? 'har fået barn
 Type: ${sickLeaveType === 'child' ? 'Barn syg' : 'Egen sygdom'}
 Dato: ${dateFormatted}
 
-${reason ? `Bemærkninger:\n${reason}\n\n` : ''}Denne notifikation er automatisk genereret fra Terminal Configuration & Dispatch Hub.`
+${reason ? `Bemærkninger:\n${reason}\n\n` : ''}Denne notifikation er automatisk genereret fra Supply Chain Hub.`
 
       try {
         const emailNotifications = await window.kv.get<Array<{

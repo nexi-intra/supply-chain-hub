@@ -16,6 +16,11 @@ export default defineConfig({
     host: true,
     port: 5000,
     allowedHosts: ['.trycloudflare.com', '.app.github.dev'],
+    // electron-builder writes/locks binaries under release/ (and briefly at the
+    // project root); watching them crashes Vite with EBUSY mid-build.
+    watch: {
+      ignored: ['**/release/**', '**/*.exe', '**/*.zip', '**/*.asar'],
+    },
   },
   plugins: [
     react(),

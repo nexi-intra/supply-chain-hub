@@ -32,7 +32,7 @@ export function useCrossTeamLeaderboard<T = unknown>(leaderboardKey: string) {
           window.electronRegistry!.readTeamKey<T>(team.folderName, leaderboardKey),
           window.electronRegistry!.readTeamKey<Record<string, { fullName: string }>>(team.folderName, 'users'),
         ])
-        return { teamCode: team.folderName, users: users || {}, leaderboard }
+        return { teamCode: team.abbreviation || team.teamId, users: users || {}, leaderboard }
       }))
       if (!cancelled) {
         setOtherTeams(results)

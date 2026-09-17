@@ -1,0 +1,30 @@
+const test = require('node:test')
+const assert = require('node:assert/strict')
+const { continueQuestion, validateConversation } = require('./assistantConversation.cjs')
+const { resolveDates } = require('./assistantContext.cjs')
+const now = new Date(2026, 8, 15, 12)
+test('short opposite/variant guide questions inherit the subject and replace qualifiers', () => {
+  const original = 'Hvad er den nye cloud ip adresse?'
+  const old = continueQuestion('Hvad er den gamle så?', original, now, resolveDates)
+  assert.match(old, /cloud ip adresse/)
+  assert.match(old, /gamle guide historik/)
+  assert.ok(!old.includes('nye'))
+  const testing = continueQuestion('og test?', old, now, resolveDates)
+  assert.match(testing, /cloud ip adresse/)
+  assert.match(testing, /test$/)
+  assert.ok(!/gamle|historik/.test(testing))
+  assert.match(continueQuestion('hvilken guide?', testing, now, resolveDates), /guide kilde$/)
+  assert.match(continueQuestion('what is the old one?', 'what is the new cloud ip address?', now, resolveDates), /old guide historik/)
+  assert.match(continueQuestion('entä vanha?', 'mikä on uusi cloud ip-osoite?', now, resolveDates), /vanha guide historik/)
+})
+test('new explicit subjects do not inherit old facts; calendar context still works', () => {
+  const previous = 'ny cloud ip adresse'
+  for (const question of ['hvad er den gamle printer ip adresse?', 'madplan uge 36', 'hvad skal jeg arbejde med næste uge?']) assert.equal(continueQuestion(question, previous, now, resolveDates), question)
+  assert.match(continueQuestion('og uge 37?', 'madplan uge 36 2026', now, resolveDates), /madplan.*uge 37/)
+  assert.equal(continueQuestion('den gamle?', undefined, now, resolveDates), 'den gamle?')
+})
+test('conversation accepts only six bounded questions, not cached answer bodies or records', () => {
+  assert.deepEqual(validateConversation(undefined), [])
+  assert.deepEqual(validateConversation(['synthetic question']), ['synthetic question'])
+  for (const input of [Array(7).fill('question'), ['x'.repeat(1001)], [{ question: 'q', answer: 'PRIVATE_OLD_BODY' }], [''], 'transcript']) assert.throws(() => validateConversation(input), /6 spørgsmål/)
+})

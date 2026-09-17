@@ -698,7 +698,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
           setLives(livesRef.current)
           toast.success(message)
         } else {
-          const noEffectMsg = language === 'da' ? 'Max 3 liv!' : 'Max 3 lives!'
+          const noEffectMsg = language === 'da' ? 'Max 3 liv!' : language === 'fi' ? 'Max 3 elää!' : 'Max 3 lives!'
           toast.info(noEffectMsg)
         }
         break
@@ -1336,7 +1336,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
       if (hasShieldRef.current) {
         setHasShield(false)
         hasShieldRef.current = false
-        const shieldMsg = language === 'da' ? 'Skjold brugt!' : 'Shield used!'
+        const shieldMsg = language === 'da' ? 'Skjold brugt!' : language === 'fi' ? 'Kilpeä käytettiin!' : 'Shield used!'
         toast.info(shieldMsg)
         
         powerUpsRef.current = []
@@ -1661,7 +1661,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
       ctx.textAlign = 'center'
       ctx.shadowBlur = 10
       ctx.shadowColor = '#4ECFFF'
-      const message = language === 'da' ? 'Klik eller tryk på mellemrum for at skyde' : 'Click or Press Space to Launch'
+      const message = language === 'da' ? 'Klik eller tryk på mellemrum for at skyde' : language === 'fi' ? 'Napsauta tai paina tilaa käynnistääksesi' : 'Click or Press Space to Launch'
       ctx.fillText(message, GAME_WIDTH / 2, GAME_HEIGHT / 2)
       ctx.shadowBlur = 0
       ctx.restore()
@@ -1812,14 +1812,14 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                 <p className="text-sm text-muted-foreground">
                   {language === 'da' 
                     ? 'Ødelæg alle brikker og klar så mange levels som muligt!' 
-                    : 'Destroy all bricks and clear as many levels as possible!'}
+                    : language === 'fi' ? 'Tuhoa kaikki tiilet ja selkeä mahdollisimman monta tasoa!' : 'Destroy all bricks and clear as many levels as possible!'}
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-4">
               <div className="text-center p-4 rounded-lg bg-gradient-to-br from-accent/10 to-primary/10 border border-accent/20">
                 <div className="text-sm text-muted-foreground font-semibold">
-                  {language === 'da' ? 'Højeste score' : 'High Score'}
+                  {language === 'da' ? 'Højeste score' : language === 'fi' ? 'Korkeat tulokset' : 'High Score'}
                 </div>
                 <div className="text-2xl font-bold text-primary flex items-center gap-2 justify-center mt-1">
                   <Trophy size={24} weight="fill" className="text-accent" />
@@ -1833,7 +1833,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
             <div className="space-y-3">
               <div className="text-center">
                 <p className="text-sm font-semibold text-muted-foreground mb-3">
-                  {language === 'da' ? 'Vælg sværhedsgrad' : 'Select Difficulty'}
+                  {language === 'da' ? 'Vælg sværhedsgrad' : language === 'fi' ? 'Valitse vaikeudet' : 'Select Difficulty'}
                 </p>
               </div>
               <div className="flex items-center justify-center gap-4">
@@ -1877,11 +1877,11 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
               <p className="text-sm text-muted-foreground mb-4">
                 {language === 'da' 
                   ? 'Brug musen eller tasterne (pil venstre/højre eller A/D) til at styre paddlen. Ødelæg alle brikker!'
-                  : 'Use your mouse or keys (arrow left/right or A/D) to control the paddle. Destroy all bricks!'}
+                  : language === 'fi' ? 'Käytä hiirtä tai näppäimiä (kavenna vasen/oikea tai A/D) melontaan. Tuhotkaa kaikki tiilet!' : 'Use your mouse or keys (arrow left/right or A/D) to control the paddle. Destroy all bricks!'}
               </p>
               <Button onClick={startGame} size="lg" className="px-8 bg-gradient-to-r from-primary to-accent hover:opacity-90 gap-2">
                 <Play size={20} weight="fill" />
-                {language === 'da' ? 'Start spil' : 'Start Game'}
+                {language === 'da' ? 'Start spil' : language === 'fi' ? 'Käynnistä peli' : 'Start Game'}
               </Button>
             </div>
           </div>
@@ -1894,10 +1894,10 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
             </div>
             <div>
               <h3 className="text-xl font-bold bg-gradient-to-r from-accent to-primary bg-clip-text text-transparent">
-                {language === 'da' ? 'Global resultattavle' : 'Global Leaderboard'}
+                {language === 'da' ? 'Global resultattavle' : language === 'fi' ? 'Maailmanlaajuinen Leaderboard' : 'Global Leaderboard'}
               </h3>
               <p className="text-sm text-muted-foreground">
-                {language === 'da' ? 'Konkurer med andre medarbejdere!' : 'Compete with other employees!'}
+                {language === 'da' ? 'Konkurer med andre medarbejdere!' : language === 'fi' ? 'Kilpaile muiden työntekijöiden kanssa!' : 'Compete with other employees!'}
               </p>
             </div>
           </div>
@@ -1978,7 +1978,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                                   {entry.displayName}{entry.teamCode && <span className="text-muted-foreground font-normal"> ({entry.teamCode})</span>}
                                 </div>
                                 <div className="text-xs text-muted-foreground truncate">
-                                  {language === 'da' ? 'Level' : 'Level'} {entry.level}
+                                  {language === 'da' ? 'Level' : language === 'fi' ? 'Taso' : 'Level'} {entry.level}
                                 </div>
                               </div>
                               <div className={`text-lg font-bold shrink-0 tabular-nums ${
@@ -2006,7 +2006,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                                   {userEntry.displayName}
                                 </div>
                                 <div className="text-xs text-muted-foreground">
-                                  {language === 'da' ? 'Level' : 'Level'} {userEntry.level}
+                                  {language === 'da' ? 'Level' : language === 'fi' ? 'Taso' : 'Level'} {userEntry.level}
                                 </div>
                               </div>
                               <div className="text-lg font-bold text-primary">
@@ -2022,12 +2022,12 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                         <p className="text-sm text-muted-foreground">
                           {language === 'da'
                             ? 'Ingen scores endnu'
-                            : 'No scores yet'}
+                            : language === 'fi' ? 'Ei tuloksia vielä' : 'No scores yet'}
                         </p>
                         <p className="text-xs text-muted-foreground mt-1">
                           {language === 'da'
                             ? 'Vær den første!'
-                            : 'Be the first!'}
+                            : language === 'fi' ? 'Ole ensimmäinen!' : 'Be the first!'}
                         </p>
                       </div>
                     )}
@@ -2040,21 +2040,21 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
 
         <Card className="p-6">
           <h3 className="text-lg font-semibold mb-4">
-            {language === 'da' ? 'Sådan Spiller Du' : 'How to Play'}
+            {language === 'da' ? 'Sådan Spiller Du' : language === 'fi' ? 'Pelaaminen' : 'How to Play'}
           </h3>
           <div className="text-sm space-y-4">
             <div>
-              <h4 className="font-semibold mb-2">{language === 'da' ? 'Kontroller' : 'Controls'}</h4>
+              <h4 className="font-semibold mb-2">{language === 'da' ? 'Kontroller' : language === 'fi' ? 'Tarkastukset' : 'Controls'}</h4>
               <ul className="space-y-1 text-muted-foreground">
-                <li>• {language === 'da' ? 'Bevæg musen eller brug piletasterne/A/D for at styre paddle' : 'Move mouse or use arrow keys/A/D to control paddle'}</li>
-                <li>• {language === 'da' ? 'Ødelæg alle brikker for at klare niveauet' : 'Destroy all bricks to clear the level'}</li>
-                <li>• {language === 'da' ? 'Undgå at miste bolden' : 'Avoid losing the ball'}</li>
-                <li>• {language === 'da' ? 'Du har 3 liv per spil' : 'You have 3 lives per game'}</li>
+                <li>• {language === 'da' ? 'Bevæg musen eller brug piletasterne/A/D for at styre paddle' : language === 'fi' ? 'Siirrä hiirtä tai käytä nuolinäppäimiä/A/D melontaan' : 'Move mouse or use arrow keys/A/D to control paddle'}</li>
+                <li>• {language === 'da' ? 'Ødelæg alle brikker for at klare niveauet' : language === 'fi' ? 'Tuhoa kaikki tiilet puhdistaa tasolle' : 'Destroy all bricks to clear the level'}</li>
+                <li>• {language === 'da' ? 'Undgå at miste bolden' : language === 'fi' ? 'Vältä pallon häviämistä' : 'Avoid losing the ball'}</li>
+                <li>• {language === 'da' ? 'Du har 3 liv per spil' : language === 'fi' ? 'Sinulla on 3 elämää per peli' : 'You have 3 lives per game'}</li>
               </ul>
             </div>
             
             <div>
-              <h4 className="font-semibold mb-3">{language === 'da' ? 'Power-Ups' : 'Power-Ups'}</h4>
+              <h4 className="font-semibold mb-3">{language === 'da' ? 'Power-Ups' : language === 'fi' ? 'Virrankulutus' : 'Power-Ups'}</h4>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div className="flex items-center gap-3 p-2 rounded-lg bg-gradient-to-r from-green-500/10 to-green-600/10 border border-green-500/20">
                   <div className="flex items-center justify-center w-8 h-8 rounded-full bg-green-500/20 text-xl">
@@ -2065,7 +2065,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                       {POWERUP_CONFIG.extraLife.label[language as 'en' | 'da']}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      {language === 'da' ? 'Giver dig et ekstra liv' : 'Gives you an extra life'}
+                      {language === 'da' ? 'Giver dig et ekstra liv' : language === 'fi' ? 'Se antaa sinulle ylimääräisen elämän' : 'Gives you an extra life'}
                     </div>
                   </div>
                 </div>
@@ -2079,7 +2079,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                       {POWERUP_CONFIG.shield.label[language as 'en' | 'da']}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      {language === 'da' ? 'Beskytter dig mod ét tab i 20 sek' : 'Protects from one loss for 20s'}
+                      {language === 'da' ? 'Beskytter dig mod ét tab i 20 sek' : language === 'fi' ? 'Suojaa yhdeltä 20-vuotiaan tappiolta' : 'Protects from one loss for 20s'}
                     </div>
                   </div>
                 </div>
@@ -2093,7 +2093,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                       {POWERUP_CONFIG.fireball.label[language as 'en' | 'da']}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      {language === 'da' ? 'Bolden går gennem brikker i 10 sek' : 'Ball goes through bricks for 10s'}
+                      {language === 'da' ? 'Bolden går gennem brikker i 10 sek' : language === 'fi' ? 'Pallo menee tiilien läpi kymmenelle.' : 'Ball goes through bricks for 10s'}
                     </div>
                   </div>
                 </div>
@@ -2107,7 +2107,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                       {POWERUP_CONFIG.enlargePaddle.label[language as 'en' | 'da']}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      {language === 'da' ? 'Gør paddle større i 10 sek' : 'Makes paddle larger for 10s'}
+                      {language === 'da' ? 'Gør paddle større i 10 sek' : language === 'fi' ? 'Tekee melonnasta suuremman 10-vuotiaille' : 'Makes paddle larger for 10s'}
                     </div>
                   </div>
                 </div>
@@ -2121,7 +2121,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                       {POWERUP_CONFIG.shrinkPaddle.label[language as 'en' | 'da']}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      {language === 'da' ? 'Gør paddle mindre i 10 sek' : 'Makes paddle smaller for 10s'}
+                      {language === 'da' ? 'Gør paddle mindre i 10 sek' : language === 'fi' ? 'Tekee melonnasta pienemmän 10:lle' : 'Makes paddle smaller for 10s'}
                     </div>
                   </div>
                 </div>
@@ -2135,7 +2135,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                       {POWERUP_CONFIG.slowMotion.label[language as 'en' | 'da']}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      {language === 'da' ? 'Sænker boldens hastighed til 0.5x i 8 sek' : 'Slows ball to 0.5x for 8s'}
+                      {language === 'da' ? 'Sænker boldens hastighed til 0.5x i 8 sek' : language === 'fi' ? 'Hidastaa pallon 0.5x 8s' : 'Slows ball to 0.5x for 8s'}
                     </div>
                   </div>
                 </div>
@@ -2149,7 +2149,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                       {POWERUP_CONFIG.speedBoost.label[language as 'en' | 'da']}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      {language === 'da' ? 'Øger boldens hastighed til 1.5x i 8 sek' : 'Increases ball speed to 1.5x for 8s'}
+                      {language === 'da' ? 'Øger boldens hastighed til 1.5x i 8 sek' : language === 'fi' ? 'Nostaa pallon nopeutta 1,5x 8s' : 'Increases ball speed to 1.5x for 8s'}
                     </div>
                   </div>
                 </div>
@@ -2163,7 +2163,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                       {POWERUP_CONFIG.laser.label[language as 'en' | 'da']}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      {language === 'da' ? 'Skyder laser der giver 2x skade i 5 sek' : 'Shoots lasers for 2x damage for 5s'}
+                      {language === 'da' ? 'Skyder laser der giver 2x skade i 5 sek' : language === 'fi' ? 'Ampuu laserit 2x vahinko 5s' : 'Shoots lasers for 2x damage for 5s'}
                     </div>
                   </div>
                 </div>
@@ -2177,7 +2177,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                       {POWERUP_CONFIG.stickyPaddle.label[language as 'en' | 'da']}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      {language === 'da' ? 'Bolden klæber til paddle - sigt og affyr i 10 sek' : 'Ball sticks to paddle - aim and shoot for 10s'}
+                      {language === 'da' ? 'Bolden klæber til paddle - sigt og affyr i 10 sek' : language === 'fi' ? 'Pallo tikkuja meloa - tähdätä ja ampua 10s' : 'Ball sticks to paddle - aim and shoot for 10s'}
                     </div>
                   </div>
                 </div>
@@ -2191,7 +2191,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                       {POWERUP_CONFIG.explosiveBall.label[language as 'en' | 'da']}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      {language === 'da' ? 'Bolden eksploderer ved kollision og ødelægger omgivende brikker i 10 sek' : 'Ball explodes on collision destroying surrounding bricks for 10s'}
+                      {language === 'da' ? 'Bolden eksploderer ved kollision og ødelægger omgivende brikker i 10 sek' : language === 'fi' ? 'Pallo räjähtää törmäys tuhoaa ympäröivät tiilet 10 s' : 'Ball explodes on collision destroying surrounding bricks for 10s'}
                     </div>
                   </div>
                 </div>
@@ -2205,7 +2205,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                       {POWERUP_CONFIG.reverseControls.label[language as 'en' | 'da']}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      {language === 'da' ? 'Vender musestyring om i 5 sek' : 'Reverses mouse controls for 5s'}
+                      {language === 'da' ? 'Vender musestyring om i 5 sek' : language === 'fi' ? 'Kääntää hiiren ohjaimet 5:lle' : 'Reverses mouse controls for 5s'}
                     </div>
                   </div>
                 </div>
@@ -2221,14 +2221,14 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
     return (
       <Card className="p-8 text-center">
         <h2 className="text-3xl font-bold mb-4 text-green-500">
-          {language === 'da' ? 'Level Fuldført!' : 'Level Complete!'}
+          {language === 'da' ? 'Level Fuldført!' : language === 'fi' ? 'Taso valmis!' : 'Level Complete!'}
         </h2>
         <div className="text-5xl font-bold mb-6">{score}</div>
         <div className="text-xl mb-6">
-          {language === 'da' ? 'Level' : 'Level'} {level}
+          {language === 'da' ? 'Level' : language === 'fi' ? 'Taso' : 'Level'} {level}
         </div>
         <Button onClick={nextLevel} size="lg">
-          {language === 'da' ? 'Næste Level' : 'Next Level'}
+          {language === 'da' ? 'Næste Level' : language === 'fi' ? 'Seuraava taso' : 'Next Level'}
         </Button>
       </Card>
     )
@@ -2238,18 +2238,18 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
     return (
       <Card className="p-8 text-center">
         <h2 className="text-3xl font-bold mb-4 text-red-500">
-          {language === 'da' ? 'Spil Slut!' : 'Game Over!'}
+          {language === 'da' ? 'Spil Slut!' : language === 'fi' ? 'Peli loppui!' : 'Game Over!'}
         </h2>
         <div className="text-5xl font-bold mb-2">{score}</div>
         <div className="text-xl text-muted-foreground mb-6">
-          {language === 'da' ? 'Level nået:' : 'Level reached:'} {level}
+          {language === 'da' ? 'Level nået:' : language === 'fi' ? 'Saavutettu taso:' : 'Level reached:'} {level}
         </div>
         <div className="flex gap-4 justify-center">
           <Button onClick={startGame} size="lg">
-            {language === 'da' ? 'Spil Igen' : 'Play Again'}
+            {language === 'da' ? 'Spil Igen' : language === 'fi' ? 'Toista' : 'Play Again'}
           </Button>
           <Button onClick={() => setGameState('menu')} variant="outline" size="lg">
-            {language === 'da' ? 'Menu' : 'Menu'}
+            {language === 'da' ? 'Menu' : language === 'fi' ? 'Valikko' : 'Menu'}
           </Button>
         </div>
       </Card>
@@ -2260,10 +2260,10 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div className="flex gap-6 text-lg font-semibold">
-          <div>{language === 'da' ? 'Score:' : 'Score:'} {score}</div>
-          <div>{language === 'da' ? 'Level:' : 'Level:'} {level}</div>
+          <div>{language === 'da' ? 'Score:' : language === 'fi' ? 'Pistemäärä:' : 'Score:'} {score}</div>
+          <div>{language === 'da' ? 'Level:' : language === 'fi' ? 'Taso:' : 'Level:'} {level}</div>
           <div className="flex items-center gap-2">
-            {language === 'da' ? 'Liv:' : 'Lives:'}
+            {language === 'da' ? 'Liv:' : language === 'fi' ? 'Elämät:' : 'Lives:'}
             {Array.from({ length: lives }).map((_, i) => (
               <span key={i} className="text-red-500">♥</span>
             ))}
@@ -2271,77 +2271,77 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
           {hasShield && (
             <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border-2 border-cyan-500/50 text-cyan-500 animate-pulse">
               <span className="text-xl">🛡</span>
-              <span className="font-bold">{language === 'da' ? 'SKJOLD AKTIV' : 'SHIELD ACTIVE'}</span>
+              <span className="font-bold">{language === 'da' ? 'SKJOLD AKTIV' : language === 'fi' ? 'KIDÄN VAIKUTTAVA' : 'SHIELD ACTIVE'}</span>
               <span className="ml-2 px-2 py-0.5 rounded bg-cyan-500 text-white text-sm font-bold">{shieldTimeLeft}s</span>
             </div>
           )}
           {isFireball && (
             <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-gradient-to-r from-red-500/20 to-orange-500/20 border-2 border-red-500/50 text-red-500 animate-pulse">
               <span className="text-xl">🔥</span>
-              <span className="font-bold">{language === 'da' ? 'ILDKUGLE AKTIV' : 'FIREBALL ACTIVE'}</span>
+              <span className="font-bold">{language === 'da' ? 'ILDKUGLE AKTIV' : language === 'fi' ? 'FIREBALL ACTIVE' : 'FIREBALL ACTIVE'}</span>
               <span className="ml-2 px-2 py-0.5 rounded bg-red-500 text-white text-sm font-bold">{fireballTimeLeft}s</span>
             </div>
           )}
           {enlargePaddleTimeLeft > 0 && (
             <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-purple-500/20 border border-purple-500/50 text-purple-500">
               <span className="text-xl">+</span>
-              <span className="font-bold">{language === 'da' ? 'STOR BAR' : 'LARGE PADDLE'}</span>
+              <span className="font-bold">{language === 'da' ? 'STOR BAR' : language === 'fi' ? 'LARGE PADDLE' : 'LARGE PADDLE'}</span>
               <span className="ml-2 px-2 py-0.5 rounded bg-purple-500 text-white text-sm font-bold">{enlargePaddleTimeLeft}s</span>
             </div>
           )}
           {shrinkPaddleTimeLeft > 0 && (
             <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-yellow-500/20 border border-yellow-500/50 text-yellow-500">
               <span className="text-xl">━</span>
-              <span className="font-bold">{language === 'da' ? 'LILLE BAR' : 'SMALL PADDLE'}</span>
+              <span className="font-bold">{language === 'da' ? 'LILLE BAR' : language === 'fi' ? 'PÄIVITYS' : 'SMALL PADDLE'}</span>
               <span className="ml-2 px-2 py-0.5 rounded bg-yellow-500 text-white text-sm font-bold">{shrinkPaddleTimeLeft}s</span>
             </div>
           )}
           {ballSpeedMultiplier === 0.5 && speedPowerupTimeLeft > 0 && (
             <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-purple-500/20 border border-purple-500/50 text-purple-500">
               <span className="text-xl">⏱</span>
-              <span className="font-bold">{language === 'da' ? 'LANGSOM' : 'SLOW MOTION'}</span>
+              <span className="font-bold">{language === 'da' ? 'LANGSOM' : language === 'fi' ? 'Hidas' : 'SLOW MOTION'}</span>
               <span className="ml-2 px-2 py-0.5 rounded bg-purple-500 text-white text-sm font-bold">{speedPowerupTimeLeft}s</span>
             </div>
           )}
           {ballSpeedMultiplier === 1.5 && speedPowerupTimeLeft > 0 && (
             <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-pink-500/20 border border-pink-500/50 text-pink-500">
               <span className="text-xl">⚡</span>
-              <span className="font-bold">{language === 'da' ? 'FART' : 'SPEED BOOST'}</span>
+              <span className="font-bold">{language === 'da' ? 'FART' : language === 'fi' ? 'NOPEA' : 'SPEED BOOST'}</span>
               <span className="ml-2 px-2 py-0.5 rounded bg-pink-500 text-white text-sm font-bold">{speedPowerupTimeLeft}s</span>
             </div>
           )}
           {hasLaser && (
             <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border-2 border-cyan-500/50 text-cyan-500 animate-pulse">
               <span className="text-xl">⚡</span>
-              <span className="font-bold">{language === 'da' ? 'LASER AKTIV' : 'LASER ACTIVE'}</span>
+              <span className="font-bold">{language === 'da' ? 'LASER AKTIV' : language === 'fi' ? 'LASER ACTIVE' : 'LASER ACTIVE'}</span>
               <span className="ml-2 px-2 py-0.5 rounded bg-cyan-500 text-white text-sm font-bold">{laserTimeLeft}s</span>
             </div>
           )}
           {isExplosiveBall && (
             <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-gradient-to-r from-orange-500/20 to-red-600/20 border-2 border-orange-500/50 text-orange-500 animate-pulse">
               <span className="text-xl">💣</span>
-              <span className="font-bold">{language === 'da' ? 'EKSPLOSIV BOLD AKTIV' : 'EXPLOSIVE BALL ACTIVE'}</span>
+              <span className="font-bold">{language === 'da' ? 'EKSPLOSIV BOLD AKTIV' : language === 'fi' ? 'RÄJÄHDYSKESKUS' : 'EXPLOSIVE BALL ACTIVE'}</span>
               <span className="ml-2 px-2 py-0.5 rounded bg-orange-500 text-white text-sm font-bold">{explosiveBallTimeLeft}s</span>
             </div>
           )}
           {isStickyPaddle && (
             <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-gradient-to-r from-lime-500/20 to-green-500/20 border-2 border-lime-500/50 text-lime-500 animate-pulse">
               <span className="text-xl">🟢</span>
-              <span className="font-bold">{language === 'da' ? 'KLÆBRIG BAR' : 'STICKY PADDLE'}</span>
+              <span className="font-bold">{language === 'da' ? 'KLÆBRIG BAR' : language === 'fi' ? 'Sticky paddle' : 'STICKY PADDLE'}</span>
               <span className="ml-2 px-2 py-0.5 rounded bg-lime-500 text-white text-sm font-bold">{stickyPaddleTimeLeft}s</span>
             </div>
           )}
           {isReverseControls && (
             <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-gradient-to-r from-amber-500/20 to-orange-500/20 border-2 border-amber-500/50 text-amber-500 animate-pulse">
               <span className="text-xl">↔</span>
-              <span className="font-bold">{language === 'da' ? 'OMVENDT KONTROL' : 'REVERSE CONTROLS'}</span>
+              <span className="font-bold">{language === 'da' ? 'OMVENDT KONTROL' : language === 'fi' ? 'PALAUTUKSEN VALVONTA' : 'REVERSE CONTROLS'}</span>
               <span className="ml-2 px-2 py-0.5 rounded bg-amber-500 text-white text-sm font-bold">{reverseControlsTimeLeft}s</span>
             </div>
           )}
         </div>
         <div className="flex gap-2">
           <Button onClick={() => setGameState('menu')} variant="outline" size="sm">
-            {language === 'da' ? 'Menu' : 'Menu'}
+            {language === 'da' ? 'Menu' : language === 'fi' ? 'Valikko' : 'Menu'}
           </Button>
         </div>
       </div>

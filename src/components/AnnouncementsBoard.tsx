@@ -12,7 +12,7 @@ import { useLanguage } from '@/contexts/LanguageContext'
 import { newId } from '@/lib/utils'
 import { appendToKvArray, removeFromKvArray } from '@/lib/kvArrays'
 import { formatDistanceToNow } from 'date-fns'
-import { da, enUS } from 'date-fns/locale'
+import { da, enUS, fi } from 'date-fns/locale'
 
 export interface Announcement {
   id: string
@@ -32,7 +32,7 @@ interface AnnouncementsBoardProps {
 /** Let opslagstavle til firmameddelelser på Hub — adskilt fra email, mere synligt. */
 export function AnnouncementsBoard({ userEmail, userName, canPost }: AnnouncementsBoardProps) {
   const { language } = useLanguage()
-  const [announcements, setAnnouncements] = useKV<Announcement[]>('announcements', [])
+  const [announcements] = useKV<Announcement[]>('announcements', [])
   const [dismissedIds, setDismissedIds] = useKV<string[]>(`announcements-dismissed-${userEmail}`, [])
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [title, setTitle] = useState('')
@@ -44,7 +44,7 @@ export function AnnouncementsBoard({ userEmail, userName, canPost }: Announcemen
 
   const handleCreate = async () => {
     if (!title.trim() || !message.trim()) {
-      toast.error(language === 'da' ? 'Udfyld både titel og besked' : 'Fill in both title and message')
+      toast.error(language === 'da' ? 'Udfyld både titel og besked' : language === 'fi' ? 'Täytä sekä otsikko että viesti' : 'Fill in both title and message')
       return
     }
     const announcement: Announcement = {
@@ -55,17 +55,15 @@ export function AnnouncementsBoard({ userEmail, userName, canPost }: Announcemen
       createdByName: userName,
       createdAt: Date.now(),
     }
-    const updated = await appendToKvArray('announcements', [announcement])
-    setAnnouncements(updated)
+    await appendToKvArray('announcements', [announcement])
     setTitle('')
     setMessage('')
     setShowCreateDialog(false)
-    toast.success(language === 'da' ? 'Opslag oprettet' : 'Announcement posted')
+    toast.success(language === 'da' ? 'Opslag oprettet' : language === 'fi' ? 'Julkaistu ilmoitus' : 'Announcement posted')
   }
 
   const handleDeleteGlobally = async (id: string) => {
-    const updated = await removeFromKvArray<Announcement>('announcements', [id])
-    setAnnouncements(updated)
+    await removeFromKvArray<Announcement>('announcements', [id])
   }
 
   const handleDismiss = (id: string) => {
@@ -100,7 +98,7 @@ export function AnnouncementsBoard({ userEmail, userName, canPost }: Announcemen
                       <div className="flex items-center justify-between gap-2">
                         <h3 className="font-bold">{a.title}</h3>
                         <span className="text-xs text-muted-foreground shrink-0">
-                          {formatDistanceToNow(a.createdAt, { addSuffix: true, locale: language === 'da' ? da : enUS })}
+                          {formatDistanceToNow(a.createdAt, { addSuffix: true, locale: language === 'da' ? da : language === 'fi' ? fi : enUS })}
                         </span>
                       </div>
                       <p className="text-sm text-muted-foreground mt-1 whitespace-pre-wrap">{a.message}</p>
@@ -113,7 +111,7 @@ export function AnnouncementsBoard({ userEmail, userName, canPost }: Announcemen
                           size="icon"
                           className="h-7 w-7 text-destructive hover:text-destructive"
                           onClick={() => handleDeleteGlobally(a.id)}
-                          title={language === 'da' ? 'Slet opslag for alle' : 'Delete for everyone'}
+                          title={language === 'da' ? 'Slet opslag for alle' : language === 'fi' ? 'Poista kaikki' : 'Delete for everyone'}
                         >
                           <Trash size={14} />
                         </Button>
@@ -123,7 +121,7 @@ export function AnnouncementsBoard({ userEmail, userName, canPost }: Announcemen
                         size="icon"
                         className="h-7 w-7"
                         onClick={() => handleDismiss(a.id)}
-                        title={language === 'da' ? 'Skjul for mig' : 'Dismiss for me'}
+                        title={language === 'da' ? 'Skjul for mig' : language === 'fi' ? 'Poistu puolestani.' : 'Dismiss for me'}
                       >
                         <X size={14} />
                       </Button>
@@ -139,7 +137,7 @@ export function AnnouncementsBoard({ userEmail, userName, canPost }: Announcemen
       {canPost && (
         <Button variant="outline" size="sm" className="gap-2" onClick={() => setShowCreateDialog(true)}>
           <Plus size={16} weight="bold" />
-          {language === 'da' ? 'Nyt opslag til alle' : 'New announcement'}
+          {language === 'da' ? 'Nyt opslag til alle' : language === 'fi' ? 'Uusi ilmoitus' : 'New announcement'}
         </Button>
       )}
 
@@ -148,17 +146,17 @@ export function AnnouncementsBoard({ userEmail, userName, canPost }: Announcemen
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Megaphone size={22} weight="fill" className="text-accent" />
-              {language === 'da' ? 'Nyt firmaopslag' : 'New company announcement'}
+              {language === 'da' ? 'Nyt firmaopslag' : language === 'fi' ? 'Uusi yrityksen ilmoitus' : 'New company announcement'}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <Input
-              placeholder={language === 'da' ? 'Titel' : 'Title'}
+              placeholder={language === 'da' ? 'Titel' : language === 'fi' ? 'Osasto' : 'Title'}
               value={title}
               onChange={(e) => setTitle(e.target.value)}
             />
             <Textarea
-              placeholder={language === 'da' ? 'Besked til alle medarbejdere…' : 'Message to all employees…'}
+              placeholder={language === 'da' ? 'Besked til alle medarbejdere…' : language === 'fi' ? 'Viesti kaikille työntekijöille.' : 'Message to all employees…'}
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               rows={5}
@@ -167,11 +165,11 @@ export function AnnouncementsBoard({ userEmail, userName, canPost }: Announcemen
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
-              {language === 'da' ? 'Annuller' : 'Cancel'}
+              {language === 'da' ? 'Annuller' : language === 'fi' ? 'Peruuta' : 'Cancel'}
             </Button>
             <Button onClick={handleCreate} className="gap-2 bg-gradient-to-r from-accent to-primary hover:from-accent/90 hover:to-primary/90">
               <Megaphone size={16} weight="bold" />
-              {language === 'da' ? 'Opslå' : 'Post'}
+              {language === 'da' ? 'Opslå' : language === 'fi' ? 'Posti' : 'Post'}
             </Button>
           </DialogFooter>
         </DialogContent>

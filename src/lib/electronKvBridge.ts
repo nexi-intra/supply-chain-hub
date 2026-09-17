@@ -25,6 +25,7 @@ export interface StorageSyncResult {
 // Raw API exposed by electron/preload.cjs via contextBridge.
 export interface ElectronKvApi {
   get(key: string): Promise<unknown>
+  getMany(keys: string[]): Promise<unknown[]>
   set(key: string, value: unknown): Promise<void>
   delete(key: string): Promise<void>
   keys(): Promise<string[]>
@@ -43,9 +44,31 @@ export interface ElectronKvApi {
 
 /** Adapts the preload bridge to the app's KvStore interface. */
 export function createElectronKv(api: ElectronKvApi): KvStore {
+  let queued = new Map<string, Array<{ resolve: (value: unknown) => void; reject: (error: unknown) => void }>>()
+  let flushScheduled = false
+  const flushReads = async () => {
+    flushScheduled = false
+    const batch = queued
+    queued = new Map()
+    const keys = [...batch.keys()]
+    try {
+      const values = await api.getMany(keys)
+      keys.forEach((key, index) => batch.get(key)?.forEach(request => request.resolve(values[index])))
+    } catch (error) {
+      batch.forEach(requests => requests.forEach(request => request.reject(error)))
+    }
+  }
   return {
     async get<T>(key: string): Promise<T | undefined> {
-      return (await api.get(key)) as T | undefined
+      return new Promise<T | undefined>((resolve, reject) => {
+        const requests = queued.get(key) || []
+        requests.push({ resolve: value => resolve(value as T | undefined), reject })
+        queued.set(key, requests)
+        if (!flushScheduled) {
+          flushScheduled = true
+          queueMicrotask(flushReads)
+        }
+      })
     },
     async set<T>(key: string, value: T): Promise<void> {
       await api.set(key, value)
@@ -61,6 +84,9 @@ export function createElectronKv(api: ElectronKvApi): KvStore {
     },
     async updateField(key: string, operation: KvFieldOperation): Promise<Record<string, unknown>> {
       return (await api.update(key, operation)) as Record<string, unknown>
+    },
+    async compareAndSet<T>(key: string, expected: T | undefined, value: T): Promise<T> {
+      return (await api.update(key, { op: 'compareAndSet', expected, value })) as T
     },
     subscribe(listener) {
       return api.onChanged(listener)

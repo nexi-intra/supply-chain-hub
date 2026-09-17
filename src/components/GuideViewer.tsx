@@ -40,6 +40,10 @@ interface GuideViewerProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   onEdit?: (guide: Guide) => void
+  /** Optional reader for guides opened from another team's read-only storage. */
+  fileLoader?: (fileUrl: string) => Promise<Blob>
+  /** Source reference from the assistant, e.g. 2.3 (same version only). */
+  targetReference?: string
 }
 
 const categoryColors: Record<string, string> = {
@@ -51,18 +55,27 @@ const categoryColors: Record<string, string> = {
 }
 
 /** Billede i preview — loader objekt-URL fra chunked KV. */
-function StepImage({ imageId, className }: { imageId: string; className?: string }) {
+function StepImage({ imageId, className, fileLoader }: { imageId: string; className?: string; fileLoader?: (fileUrl: string) => Promise<Blob> }) {
   const { t } = useLanguage()
   const [url, setUrl] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
 
   useEffect(() => {
     let cancelled = false
-    fileStorage.getImageObjectUrl(imageId)
-      .then((u) => { if (!cancelled) setUrl(u) })
+    let createdUrl: string | null = null
+    const load = fileLoader
+      ? fileLoader(`kv://${imageId}`).then((blob) => URL.createObjectURL(blob))
+      : fileStorage.getImageObjectUrl(imageId)
+    load.then((u) => {
+      if (fileLoader) createdUrl = u
+      if (!cancelled) setUrl(u)
+    })
       .catch(() => { if (!cancelled) setFailed(true) })
-    return () => { cancelled = true }
-  }, [imageId])
+    return () => {
+      cancelled = true
+      if (createdUrl) URL.revokeObjectURL(createdUrl)
+    }
+  }, [imageId, fileLoader])
 
   if (failed) {
     return (
@@ -78,7 +91,7 @@ function StepImage({ imageId, className }: { imageId: string; className?: string
   return <img src={url} alt="" className={cn('max-h-96 rounded border border-gray-200 shadow-sm object-contain mx-auto', className)} />
 }
 
-export function GuideViewer({ guide, open, onOpenChange, onEdit }: GuideViewerProps) {
+export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, targetReference }: GuideViewerProps) {
   const { t, language: appLanguage } = useLanguage()
   const [authorName, setAuthorName] = useState('')
   const [isGenerating, setIsGenerating] = useState(false)
@@ -90,11 +103,24 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit }: GuideViewerPr
   const [viewMode, setViewMode] = useState<'sections' | 'original'>('sections')
   const [originalHtml, setOriginalHtml] = useState<string | null>(null)
   const [isLoadingOriginal, setIsLoadingOriginal] = useState(false)
+  useEffect(() => {
+    if (!open || !targetReference || !/^\d+\.\d+$/.test(targetReference)) return
+    setViewMode('sections')
+    const timer = setTimeout(() => {
+      document.querySelector(`[data-guide-step="${targetReference}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    }, 350)
+    return () => clearTimeout(timer)
+  }, [open, guide?.id, targetReference])
 
   const guideLanguage: GuideLanguage = useMemo(
     () => guide?.language || (guide ? detectLanguage(guidePlainText(guide), 'da') : 'da'),
     [guide]
   )
+  const languageLabel = (language: GuideLanguage) => ({
+    da: t.guideEditor.languageDanish,
+    en: t.guideEditor.languageEnglish,
+    fi: t.guideEditor.languageFinnish,
+  })[language]
 
   useEffect(() => {
     setViewLanguage(null)
@@ -165,7 +191,7 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit }: GuideViewerPr
     try {
       // docx-pakken (~350 KB) hentes først når der faktisk genereres.
       const { generateGuideDocx, guideDocxFileName } = await import('@/lib/docxGenerator')
-      const blob = await generateGuideDocx(model, authorName || model.authorEmail)
+      const blob = await generateGuideDocx(model, authorName || model.authorEmail, fileLoader)
       downloadBlob(blob, guideDocxFileName(model))
       toast.success(t.guideViewer.docxGenerated)
     } catch (error) {
@@ -199,7 +225,7 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit }: GuideViewerPr
   // "Original formatering"-visningen (Fase 2). Kaster hvis intet er vedhæftet.
   const getAttachedWordBlob = async (): Promise<Blob> => {
     if (guide?.fileUrl) {
-      return fileStorage.downloadFile(guide.fileUrl)
+      return fileLoader ? fileLoader(guide.fileUrl) : fileStorage.downloadFile(guide.fileUrl)
     }
     if (guide?.wordFileData) {
       const binaryString = atob(guide.wordFileData)
@@ -302,12 +328,12 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit }: GuideViewerPr
                     {reviewStatus === 'overdue'
                       ? t.guideCard.overdueBadge
                       : guide.nextReviewAt
-                        ? `${t.guideCard.dueSoonPrefix} ${new Date(guide.nextReviewAt).toLocaleDateString(appLanguage === 'en' ? 'en-US' : 'da-DK')}`
+                        ? `${t.guideCard.dueSoonPrefix} ${new Date(guide.nextReviewAt).toLocaleDateString(appLanguage === 'en' ? 'en-US' : appLanguage === 'fi' ? 'fi-FI' : 'da-DK')}`
                         : REVIEW_INTERVAL_CHOICES.find((c) => c.value === guide.reviewIntervalMonths)?.label}
                   </Badge>
                 ) : null}
                 <span className="text-xs text-muted-foreground">
-                  {t.guideViewer.updatedPrefix}: {new Date(guide.updatedAt).toLocaleDateString(appLanguage === 'en' ? 'en-US' : 'da-DK', {
+                  {t.guideViewer.updatedPrefix}: {new Date(guide.updatedAt).toLocaleDateString(appLanguage === 'en' ? 'en-US' : appLanguage === 'fi' ? 'fi-FI' : 'da-DK', {
                     year: 'numeric',
                     month: 'long',
                     day: 'numeric',
@@ -360,23 +386,18 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit }: GuideViewerPr
                 </div>
               )}
               {hasSections && (
-                <div className="flex items-center gap-1 rounded-lg border p-0.5 bg-muted/40 self-stretch sm:self-end">
-                  <Button
-                    variant={!isTranslated ? 'default' : 'ghost'}
-                    size="sm"
-                    className="h-7 px-2.5 text-xs flex-1"
-                    onClick={() => setViewLanguage(null)}
-                  >
-                    {guideLanguage === 'da' ? t.guideEditor.languageDanish : t.guideEditor.languageEnglish} ({t.guideViewer.originalSuffix})
-                  </Button>
-                  <Button
-                    variant={isTranslated ? 'default' : 'ghost'}
-                    size="sm"
-                    className="h-7 px-2.5 text-xs flex-1"
-                    onClick={() => setViewLanguage(guideLanguage === 'da' ? 'en' : 'da')}
-                  >
-                    {guideLanguage === 'da' ? t.guideEditor.languageEnglish : t.guideEditor.languageDanish}
-                  </Button>
+                <div className="flex flex-wrap items-center gap-1 rounded-lg border p-0.5 bg-muted/40 self-stretch sm:self-end">
+                  {(['da', 'en', 'fi'] as GuideLanguage[]).map((targetLanguage) => (
+                    <Button
+                      key={targetLanguage}
+                      variant={targetLanguage === guideLanguage ? (!isTranslated ? 'default' : 'ghost') : (viewLanguage === targetLanguage ? 'default' : 'ghost')}
+                      size="sm"
+                      className="h-7 px-2.5 text-xs flex-1"
+                      onClick={() => setViewLanguage(targetLanguage === guideLanguage ? null : targetLanguage)}
+                    >
+                      {languageLabel(targetLanguage)}{targetLanguage === guideLanguage ? ` (${t.guideViewer.originalSuffix})` : ''}
+                    </Button>
+                  ))}
                 </div>
               )}
               {hasSections && isTranslated && (
@@ -393,8 +414,8 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit }: GuideViewerPr
                   {isTranslating
                     ? t.guideViewer.translating
                     : translationEngine === 'neural'
-                      ? `${t.guideViewer.neuralTranslationPrefix} ${(guideLanguage === 'da' ? t.guideEditor.languageDanish : t.guideEditor.languageEnglish).toLowerCase()}`
-                      : `${t.guideViewer.dictionaryTranslationPrefix} ${(guideLanguage === 'da' ? t.guideEditor.languageDanish : t.guideEditor.languageEnglish).toLowerCase()}`}
+                      ? `${t.guideViewer.neuralTranslationPrefix} ${languageLabel(guideLanguage).toLowerCase()}`
+                      : `${t.guideViewer.dictionaryTranslationPrefix} ${languageLabel(guideLanguage).toLowerCase()}`}
                 </p>
               )}
               {hasSections && (
@@ -408,7 +429,7 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit }: GuideViewerPr
                   {isGenerating ? t.guideViewer.generating : t.guideViewer.downloadDocx}
                 </Button>
               )}
-              {hasSections && isExportAvailable() && (
+              {hasSections && !fileLoader && isExportAvailable() && (
                 <Button
                   variant="outline"
                   size="sm"
@@ -481,7 +502,7 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit }: GuideViewerPr
 
                 {model.coverImageId && (
                   <div className="flex justify-center">
-                    <StepImage imageId={model.coverImageId} className="max-h-[480px]" />
+                    <StepImage imageId={model.coverImageId} className="max-h-[480px]" fileLoader={fileLoader} />
                   </div>
                 )}
 
@@ -499,7 +520,7 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit }: GuideViewerPr
                     </h3>
                     <ol className="space-y-3">
                       {section.steps.map((step) => (
-                        <li key={step.number} className="flex gap-3">
+                        <li key={step.number} data-guide-step={step.number} className={cn('flex gap-3 scroll-mt-6', targetReference === step.number && 'bg-amber-100 ring-2 ring-amber-400 rounded p-2')}>
                           <span className="font-semibold text-sm text-gray-600 shrink-0 w-9 tabular-nums">
                             {step.number}
                           </span>
@@ -510,7 +531,7 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit }: GuideViewerPr
                               </p>
                             )}
                             {step.imageIds.map((imageId) => (
-                              <StepImage key={imageId} imageId={imageId} />
+                              <StepImage key={imageId} imageId={imageId} fileLoader={fileLoader} />
                             ))}
                           </div>
                         </li>

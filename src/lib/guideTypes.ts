@@ -27,7 +27,7 @@ export interface Guide {
   category: string
   tags: string[]
   /** Guidens primære sprog — bruges af oversættelse og chatbot. */
-  language?: 'da' | 'en'
+  language?: 'da' | 'en' | 'fi'
   /** v1-brødtekst; bevares efter migrering som reserve/ekstra noter */
   content: string
   sections?: GuideSection[]
@@ -60,11 +60,19 @@ export interface Guide {
 }
 
 export interface GuideVersionSnapshot {
+  schemaVersion?: 2
   title: string
   category: string
   tags: string[]
   sections: GuideSection[]
   coverImageId?: string
+  language?: 'da' | 'en' | 'fi'
+  content?: string
+  reviewIntervalMonths?: number | null
+  fileUrl?: string
+  wordFileName?: string
+  fileSize?: number
+  sharedWithTeamCodes?: string[]
 }
 
 /** KV: 'guide-versions-{guideId}' — nyeste først. */
@@ -74,6 +82,48 @@ export interface GuideVersionEntry {
   savedBy: string
   changeNote?: string
   snapshot: GuideVersionSnapshot
+}
+
+export type GuideReviewAction = 'create' | 'update' | 'delete' | 'restore'
+export type GuideReviewWorkflowStatus = 'draft' | 'pending' | 'changes_requested' | 'approved' | 'withdrawn'
+
+/**
+ * KV: `guide-review-requests`. Den udgivne guide ændres aldrig, mens denne
+ * revision afventer. `baseGuide` er det låste sammenligningsgrundlag, mens
+ * `proposedGuide` er den kopi, som forfatter og reviewer må redigere.
+ */
+export interface GuideReviewRequest {
+  id: string
+  guideId: string
+  guideTitle: string
+  action: GuideReviewAction
+  status: GuideReviewWorkflowStatus
+  baseVersion?: string
+  baseGuide?: Guide
+  proposedGuide?: Guide
+  submittedBy: string
+  submittedByName?: string
+  submittedAt: number
+  updatedAt: number
+  changeNote?: string
+  reviewerComment?: string
+  claimedBy?: string
+  claimedAt?: number
+  reviewerEditedBy?: string
+  reviewerEditedAt?: number
+  reviewedBy?: string
+  reviewedAt?: number
+}
+
+/** KV: `archived-guides`. Sletning er reversibel og beholder versionshistorikken. */
+export interface ArchivedGuideEntry {
+  id: string
+  guide: Guide
+  archivedAt: number
+  archivedBy: string
+  requestId: string
+  restoredAt?: number
+  restoredBy?: string
 }
 
 export const REVIEW_INTERVAL_CHOICES: Array<{ value: number | null; label: string }> = [

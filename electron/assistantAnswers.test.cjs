@@ -1,0 +1,57 @@
+const test = require('node:test')
+const assert = require('node:assert/strict')
+const { conciseGuideFact, conciseGuideFallback } = require('./assistantAnswers.cjs')
+const source = (text, extra = {}) => ({ kind: 'guide', title: 'Synthetic cloud addresses', guideId: 'synthetic', teamId: 'ONE', version: '1.02', revision: 'synthetic-hash', reference: '1.1', text, ...extra })
+const answer = sources => ({ mode: 'retrieval', text: 'Verbose original evidence', sources, total: sources.length })
+const request = question => ({ question, language: 'da' })
+
+test('current IP is one concise grounded sentence, not a list of test addresses or metadata', () => {
+  const evidence = answer([source('NY CLOUD IP ADRESSE 192.0.2.10 TEST CLOUD IP 192.0.2.20')])
+  const result = conciseGuideFact(evidence, request('hvad er den nye cloud ip adresse'))
+  assert.equal(result.text, 'Den nye IP-adresse er 192.0.2.10. [1]')
+  assert.equal(result.mode, 'data')
+  assert.equal(result.sources, evidence.sources)
+  assert.equal(evidence.text, 'Verbose original evidence')
+})
+test('test address, separate-line values and actual source numbers are preserved', () => {
+  const evidence = answer([source('Cloud setup instructions without an address'), source('NY CLOUD IP ADRESSE\n192.0.2.10\nTEST CLOUD IP\n192.0.2.20')])
+  assert.equal(conciseGuideFact(evidence, request('hvad er test cloud ip adresse')).text, 'Test-IP-adressen er 192.0.2.20. [2]')
+  assert.equal(conciseGuideFact(evidence, request('hvad er den nye cloud ip adresse')).text, 'Den nye IP-adresse er 192.0.2.10. [2]')
+})
+test('duplicate facts collapse, but conflicting addresses require clarification', () => {
+  const evidence = answer([source('NY CLOUD IP 192.0.2.10'), source('NY CLOUD IP 192.0.2.10')])
+  assert.equal(conciseGuideFact(evidence, request('ny cloud ip')).text, 'Den nye IP-adresse er 192.0.2.10. [1]')
+  evidence.sources.push(source('NY CLOUD IP 192.0.2.30'))
+  const result = conciseGuideFact(evidence, request('ny cloud ip'))
+  assert.match(result.text, /Hvilken guide/)
+  assert.ok(!result.text.includes('192.0.2.10'))
+  assert.match(result.text, /\[3\]/)
+})
+test('never substitutes test/unlabelled/invalid/unrelated addresses for an explicit current address', () => {
+  for (const text of ['TEST CLOUD IP 192.0.2.20', 'CLOUD IP 192.0.2.20', 'NY CLOUD IP 999.0.2.10', 'NY CLOUD IP 192.0.2.10example']) {
+    assert.equal(conciseGuideFact(answer([source(text)]), request('ny cloud ip')), null)
+  }
+  assert.equal(conciseGuideFact(answer([source('NY warehouse IP 192.0.2.10', { title: 'Warehouse' })]), request('ny cloud ip')), null)
+})
+test('detailed, image, history, pagination and mixed draft evidence bypass fact extraction', () => {
+  const evidence = answer([source('NY CLOUD IP 192.0.2.10')])
+  for (const question of ['forklar cloud ip', 'alle cloud ip adresser', 'cloud ip historik', 'compare cloud ip addresses']) assert.equal(conciseGuideFact(evidence, request(question)), null)
+  assert.equal(conciseGuideFact(evidence, { ...request('ny cloud ip'), image: 'synthetic' }), null)
+  assert.equal(conciseGuideFact(evidence, { ...request('ny cloud ip'), page: 1 }), null)
+  assert.equal(conciseGuideFact({ ...evidence, total: 9, nextPage: 1 }, request('ny cloud ip')), null)
+  assert.equal(conciseGuideFact(answer([...evidence.sources, { kind: 'module', draft: true }]), request('ny cloud ip')), null)
+})
+test('local fallback marks short excerpts, removes duplicate text and retains citations/full sources', () => {
+  const evidence = answer([source('Installation\nSynthetic cloud endpoint details\nTags unrelated'), source('Installation\nSynthetic cloud endpoint details\nTags unrelated')])
+  const result = conciseGuideFallback(evidence, request('cloud endpoint'))
+  assert.equal(result.text, 'Relevant uddrag:\nSynthetic cloud endpoint details [1]')
+  assert.equal(result.sources, evidence.sources)
+  assert.equal(conciseGuideFallback(evidence, request('hele guiden')), evidence)
+  const mixed = answer([...evidence.sources, { kind: 'module', moduleId: 'meals' }])
+  assert.equal(conciseGuideFallback(mixed, request('cloud endpoint')), mixed)
+})
+test('English and Finnish factual responses stay local and concise', () => {
+  const evidence = answer([source('NEW CLOUD IP 192.0.2.10')])
+  assert.equal(conciseGuideFact(evidence, { question: 'what is the new cloud ip address', language: 'en' }).text, 'The current IP address is 192.0.2.10. [1]')
+  assert.equal(conciseGuideFact(evidence, { question: 'mikä on uusi cloud ip-osoite', language: 'fi' }).text, 'Nykyinen IP-osoite on 192.0.2.10. [1]')
+})

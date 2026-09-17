@@ -31,6 +31,7 @@ export function withErrorToast(store: KvStore): KvStore {
       try {
         return await store.update(key, operation)
       } catch (error) {
+        if (String(error).includes('KV_CONFLICT')) throw error
         console.error(`Kunne ikke opdatere "${key}":`, error)
         toast.error('Kunne ikke gemme ændringen — prøv igen om lidt')
         throw error
@@ -44,6 +45,9 @@ export function withErrorToast(store: KvStore): KvStore {
         toast.error('Kunne ikke gemme ændringen — prøv igen om lidt')
         throw error
       }
+    },
+    async compareAndSet(key, expected, value) {
+      return store.compareAndSet(key, expected, value)
     },
   }
 }

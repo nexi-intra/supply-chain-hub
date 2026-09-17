@@ -40,10 +40,10 @@ export function WhatsNewDialog() {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkle size={22} weight="fill" className="text-accent" />
-            {language === 'da' ? 'Nyheder i Supply Chain Hub' : "What's new in Supply Chain Hub"}
+            {language === 'da' ? 'Nyheder i Supply Chain Hub' : language === 'fi' ? "Mitä uutta Supply Chain Hubissa?" : "What's new in Supply Chain Hub"}
           </DialogTitle>
           <DialogDescription>
-            {language === 'da' ? 'Appen er blevet opdateret. Her er hvad der er nyt.' : 'The app has been updated. Here’s what’s new.'}
+            {language === 'da' ? 'Appen er blevet opdateret. Her er hvad der er nyt.' : language === 'fi' ? 'Sovellus on päivitetty. Täällä se on uutta.' : 'The app has been updated. Here’s what’s new.'}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-2 max-h-[50vh] overflow-y-auto">
@@ -63,7 +63,7 @@ export function WhatsNewDialog() {
         </div>
         <DialogFooter>
           <Button onClick={() => setEntries(null)} className="w-full bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90">
-            {language === 'da' ? 'Fedt, tak!' : 'Great, thanks!'}
+            {language === 'da' ? 'Fedt, tak!' : language === 'fi' ? 'Hienoa, kiitos!' : 'Great, thanks!'}
           </Button>
         </DialogFooter>
       </DialogContent>

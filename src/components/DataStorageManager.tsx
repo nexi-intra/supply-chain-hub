@@ -253,7 +253,7 @@ export function DataStorageManager() {
             <AlertDialogDescription>
               {pendingImport && (
                 <>
-                  {t.dataStorageManager.restoreDialogFromPrefix} {new Date(pendingImport.exportedAt).toLocaleString(language === 'en' ? 'en-US' : 'da-DK')} {t.dataStorageManager.restoreDialogContainsMiddle}{' '}
+                  {t.dataStorageManager.restoreDialogFromPrefix} {new Date(pendingImport.exportedAt).toLocaleString(language === 'en' ? 'en-US' : language === 'fi' ? 'fi-FI' : 'da-DK')} {t.dataStorageManager.restoreDialogContainsMiddle}{' '}
                   {Object.keys(pendingImport.data).length} {t.dataStorageManager.restoreDialogDatasetsMiddle}
                 </>
               )}

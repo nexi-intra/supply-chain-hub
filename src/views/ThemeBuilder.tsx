@@ -301,7 +301,7 @@ export function ThemeBuilder({ onNavigateBack, userEmail }: ThemeBuilderProps) {
               variant="ghost"
               size="icon"
               onClick={onNavigateBack}
-              className="rounded-full"
+              className="fixed top-6 left-4 sm:left-6 z-30 rounded-full bg-background/80 backdrop-blur-sm shadow-lg"
             >
               <ArrowLeft size={24} />
             </Button>

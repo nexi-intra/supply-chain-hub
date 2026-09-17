@@ -633,14 +633,14 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
               <p className="text-sm text-muted-foreground">
                 {language === 'da'
                   ? 'Flyv gennem rørene så langt som muligt!'
-                  : 'Fly through the pipes as far as you can!'}
+                  : language === 'fi' ? 'Lennä putkien läpi niin pitkälle kuin voit!' : 'Fly through the pipes as far as you can!'}
               </p>
             </div>
           </div>
           <div className="flex items-center gap-4">
             <div className="text-center p-4 rounded-lg bg-gradient-to-br from-accent/10 to-primary/10 border border-accent/20">
               <div className="text-sm text-muted-foreground font-semibold">
-                {language === 'da' ? 'Højeste score' : 'High Score'}
+                {language === 'da' ? 'Højeste score' : language === 'fi' ? 'Korkeat tulokset' : 'High Score'}
               </div>
               <div className="text-2xl font-bold text-primary flex items-center gap-2 justify-center mt-1">
                 <Trophy size={24} weight="fill" className="text-accent" />
@@ -655,7 +655,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
             <div className="space-y-3">
               <div className="text-center">
                 <p className="text-sm font-semibold text-muted-foreground mb-3">
-                  {language === 'da' ? 'Vælg sværhedsgrad' : 'Select Difficulty'}
+                  {language === 'da' ? 'Vælg sværhedsgrad' : language === 'fi' ? 'Valitse vaikeudet' : 'Select Difficulty'}
                 </p>
               </div>
               <div className="flex items-center justify-center gap-4 flex-wrap">
@@ -699,10 +699,10 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
               <p className="text-sm text-muted-foreground mb-4">
                 {language === 'da'
                   ? 'Tryk mellemrum, pil op eller klik for at flyve. Undgå rørene!'
-                  : 'Press space, arrow up, or click to flap. Avoid the pipes!'}
+                  : language === 'fi' ? 'Paina tilaa, nuolta ylös tai napsauta läppä. Vältä putkia!' : 'Press space, arrow up, or click to flap. Avoid the pipes!'}
               </p>
               <Button onClick={startGame} size="lg" className="px-8 bg-gradient-to-r from-primary to-accent hover:opacity-90">
-                {language === 'da' ? 'Start spil' : 'Start Game'}
+                {language === 'da' ? 'Start spil' : language === 'fi' ? 'Käynnistä peli' : 'Start Game'}
               </Button>
             </div>
           </div>
@@ -720,7 +720,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
                   <div className="relative px-6 py-3 rounded-xl bg-gradient-to-br from-primary/20 to-accent/30 border-2 border-primary/40 backdrop-blur-sm">
                     <div className="text-[10px] text-primary-foreground/70 uppercase tracking-widest font-bold mb-1 flex items-center gap-1">
                       <Trophy size={12} weight="fill" />
-                      {language === 'da' ? 'Point' : 'Score'}
+                      {language === 'da' ? 'Point' : language === 'fi' ? 'Pistemäärä' : 'Score'}
                     </div>
                     <div className="text-4xl font-black bg-gradient-to-br from-white to-primary-foreground bg-clip-text text-transparent drop-shadow-lg">
                       {score}
@@ -732,7 +732,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
                   <div className="relative px-5 py-3 rounded-xl bg-gradient-to-br from-accent/20 to-yellow-500/20 border-2 border-accent/40 backdrop-blur-sm">
                     <div className="text-[10px] text-accent-foreground/70 uppercase tracking-widest font-bold mb-1 flex items-center gap-1">
                       <Crown size={12} weight="fill" />
-                      {language === 'da' ? 'Bedste' : 'Best'}
+                      {language === 'da' ? 'Bedste' : language === 'fi' ? 'Paras' : 'Best'}
                     </div>
                     <div className="text-4xl font-black text-yellow-400 drop-shadow-lg">
                       {getCurrentHighScore()}
@@ -748,7 +748,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
                 className="shadow-xl hover:shadow-2xl transition-shadow font-bold"
               >
                 <X size={20} weight="bold" className="mr-2" />
-                {language === 'da' ? 'Stop' : 'Quit'}
+                {language === 'da' ? 'Stop' : language === 'fi' ? 'Lopeta' : 'Quit'}
               </Button>
             </div>
           </div>
@@ -770,12 +770,12 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
       {gameState === 'ended' && (
         <Card className="p-6 text-center bg-gradient-to-br from-primary/10 via-accent/10 to-background border-2 border-primary/20">
           <h3 className="text-2xl font-bold mb-2 bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
-            {language === 'da' ? 'Spil slut!' : 'Game Over!'}
+            {language === 'da' ? 'Spil slut!' : language === 'fi' ? 'Peli loppui!' : 'Game Over!'}
           </h3>
           <div className="space-y-4">
             <div>
               <p className="text-muted-foreground">
-                {language === 'da' ? 'Din sidste score' : 'Your final score'}
+                {language === 'da' ? 'Din sidste score' : language === 'fi' ? 'Lopputulos' : 'Your final score'}
               </p>
               <p className="text-4xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
                 {score}
@@ -785,15 +785,15 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
           {score > 0 && score >= getCurrentHighScore() && (
             <p className="text-sm text-accent font-semibold mt-4 flex items-center gap-2 justify-center">
               <Trophy size={20} weight="fill" />
-              {language === 'da' ? '🎉 Ny højeste score!' : '🎉 New high score!'}
+              {language === 'da' ? '🎉 Ny højeste score!' : language === 'fi' ? '- Uusi huipputulos!' : '🎉 New high score!'}
             </p>
           )}
           <div className="flex items-center justify-center gap-3 mt-6">
             <Button onClick={startGame} size="lg" className="bg-gradient-to-r from-primary to-accent hover:opacity-90">
-              {language === 'da' ? 'Prøv igen' : 'Play Again'}
+              {language === 'da' ? 'Prøv igen' : language === 'fi' ? 'Toista' : 'Play Again'}
             </Button>
             <Button onClick={() => setGameState('menu')} variant="outline" size="lg">
-              {language === 'da' ? 'Tilbage til menu' : 'Back to Menu'}
+              {language === 'da' ? 'Tilbage til menu' : language === 'fi' ? 'Takaisin valikkoon' : 'Back to Menu'}
             </Button>
           </div>
         </Card>
@@ -806,10 +806,10 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
           </div>
           <div>
             <h3 className="text-xl font-bold bg-gradient-to-r from-accent to-primary bg-clip-text text-transparent">
-              {language === 'da' ? 'Global resultattavle' : 'Global Leaderboard'}
+              {language === 'da' ? 'Global resultattavle' : language === 'fi' ? 'Maailmanlaajuinen Leaderboard' : 'Global Leaderboard'}
             </h3>
             <p className="text-sm text-muted-foreground">
-              {language === 'da' ? 'Konkurer med andre medarbejdere!' : 'Compete with other employees!'}
+              {language === 'da' ? 'Konkurer med andre medarbejdere!' : language === 'fi' ? 'Kilpaile muiden työntekijöiden kanssa!' : 'Compete with other employees!'}
             </p>
           </div>
         </div>
@@ -905,10 +905,10 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
                     <div className="text-center py-6">
                       <Trophy size={32} className="text-muted-foreground/30 mx-auto mb-2" />
                       <p className="text-sm text-muted-foreground">
-                        {language === 'da' ? 'Ingen scores endnu' : 'No scores yet'}
+                        {language === 'da' ? 'Ingen scores endnu' : language === 'fi' ? 'Ei tuloksia vielä' : 'No scores yet'}
                       </p>
                       <p className="text-xs text-muted-foreground mt-1">
-                        {language === 'da' ? 'Vær den første!' : 'Be the first!'}
+                        {language === 'da' ? 'Vær den første!' : language === 'fi' ? 'Ole ensimmäinen!' : 'Be the first!'}
                       </p>
                     </div>
                   )}

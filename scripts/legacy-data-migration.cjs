@@ -17,14 +17,6 @@ const DEFAULT_OLD_DIR = 'M:\\375750 - Terminal Configurations & Dispatch\\10. Ai
 const DEFAULT_PLATFORM_ROOT = 'M:\\372000 - SC All Employees\\ai Tools\\Supply Chain Hub Storage'
 const DEFAULT_TEAM_FOLDER = 'TCD'
 const SHARED_KEYS = new Set(['meal-plan-weeks', 'shared-guides'])
-const LOCK_ATTEMPTS = 50
-const LOCK_RETRY_MS = 100
-const STALE_LOCK_MS = 10_000
-
-function wait(milliseconds) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds)
-}
-
 function clone(value) {
   return value === undefined ? undefined : structuredClone(value)
 }
@@ -141,31 +133,6 @@ function keyFilename(key) {
   return `${encodeURIComponent(key)}.json`
 }
 
-function acquireKeyLock(directory, key) {
-  const lockPath = path.join(directory, `${keyFilename(key)}.lock`)
-  for (let attempt = 1; attempt <= LOCK_ATTEMPTS; attempt++) {
-    try {
-      const handle = fs.openSync(lockPath, 'wx')
-      fs.writeSync(handle, `legacy-migration:${process.pid}`)
-      fs.closeSync(handle)
-      return lockPath
-    } catch (error) {
-      if (error.code !== 'EEXIST') throw error
-      try {
-        if (Date.now() - fs.statSync(lockPath).mtimeMs > STALE_LOCK_MS) {
-          fs.unlinkSync(lockPath)
-          continue
-        }
-      } catch {
-        continue
-      }
-      if (attempt === LOCK_ATTEMPTS) throw new Error(`Kunne ikke få lås på "${key}"`)
-      wait(LOCK_RETRY_MS)
-    }
-  }
-  throw new Error(`Kunne ikke få lås på "${key}"`)
-}
-
 function backupTargetFile({ targetDirectory, key, backupRoot, scope }) {
   const sourcePath = path.join(targetDirectory, keyFilename(key))
   if (!fs.existsSync(sourcePath)) return false
@@ -233,14 +200,12 @@ function applyMigrationPlan(plan, { backupRoot }) {
     }
 
     const targetStore = stores[entry.scope]
-    const lockPath = acquireKeyLock(entry.targetDirectory, entry.key)
-    try {
+    targetStore.mutate(entry.key, (liveTarget) => {
       // Genlæs efter låsen. Så bevares også Supply-data, der er kommet til
       // siden dry-run/planlægningen begyndte.
-      const liveTarget = targetStore.get(entry.key, { skipCache: true })
       const liveMerge = mergePreservingTarget(entry.sourceValue, liveTarget, entry.key)
       conflicts += liveMerge.conflicts
-      if (!liveMerge.changed) continue
+      if (!liveMerge.changed) return undefined
 
       if (backupTargetFile({
         targetDirectory: entry.targetDirectory,
@@ -249,12 +214,10 @@ function applyMigrationPlan(plan, { backupRoot }) {
         scope: entry.scope,
       })) backedUpFiles++
 
-      targetStore.set(entry.key, liveMerge.value)
       changedKeys++
       added += liveMerge.added
-    } finally {
-      try { fs.unlinkSync(lockPath) } catch {}
-    }
+      return liveMerge.value
+    })
   }
 
   return { changedKeys, added, conflicts, backedUpFiles }

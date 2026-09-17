@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowLeft, Plus, User, CheckCircle, Clock, FolderOpen, MagnifyingGlass, Funnel, Trash, X, UserPlus } from '@phosphor-icons/react'
+import { ArrowLeft, Plus, User, CheckCircle, Circle, Clock, FolderOpen, MagnifyingGlass, Funnel, Trash, X, UserPlus } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -13,13 +13,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner'
 import { AutoText } from '@/components/AutoText'
 import { useKV } from '@/hooks/useKV'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useLanguage } from '@/contexts/LanguageContext'
 import { newId } from '@/lib/utils'
 import { appendToKvArray, updateKvArrayItem, removeFromKvArray } from '@/lib/kvArrays'
 import { isAnyModalOpen } from '@/lib/modalStack'
 import { consumeNavigationParams } from '@/lib/appNavigation'
 import { format } from 'date-fns'
-import { da, enUS } from 'date-fns/locale'
+import { da, enUS, fi } from 'date-fns/locale'
 
 interface ProjectBoardProps {
   onNavigateBack: () => void
@@ -46,6 +47,17 @@ export interface Project {
   completedAt?: string
 }
 
+// Personlig to-do-liste pr. bruger (todos-personal-<email>) - kun ejeren kan skrive.
+interface PersonalTodo {
+  id: string
+  title: string
+  description?: string
+  status: ProjectStatus
+  createdAt: string
+  completedAt?: string
+  done?: boolean
+}
+
 export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
   const { t, language } = useLanguage()
   // Skrivninger sker via atomare kvArrays-helpers; useKV holder listen synkroniseret.
@@ -57,6 +69,12 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
   const [filterUser, setFilterUser] = useState<'all' | 'my' | 'unassigned'>('all')
   const [sortBy, setSortBy] = useState<'newest' | 'oldest'>('newest')
   const [currentUserName, setCurrentUserName] = useState('')
+  // Personlige to-do's ligger under en per-bruger-noegle, adskilt fra team-to-do's.
+  const personalKey = `todos-personal-${userEmail}`
+  const [personalTodos] = useKV<PersonalTodo[]>(personalKey, [])
+  const [newTodoTitle, setNewTodoTitle] = useState('')
+  const [newTodoDescription, setNewTodoDescription] = useState('')
+  const [isPersonalCreateOpen, setIsPersonalCreateOpen] = useState(false)
 
   useEffect(() => {
     const loadUserName = async () => {
@@ -71,16 +89,17 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       if (isCreateDialogOpen) { setIsCreateDialogOpen(false); return }
+      if (isPersonalCreateOpen) { setIsPersonalCreateOpen(false); return }
       if (isAnyModalOpen()) return
       onNavigateBack()
     }
     window.addEventListener('keydown', handleKeyDown, true)
     return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [onNavigateBack, isCreateDialogOpen])
+  }, [onNavigateBack, isCreateDialogOpen, isPersonalCreateOpen])
 
   const handleCreateProject = async () => {
     if (!newTitle.trim()) {
-      toast.error(language === 'da' ? 'Titel er påkrævet' : 'Title is required')
+      toast.error(language === 'da' ? 'Titel er påkrævet' : language === 'fi' ? 'Otsikko vaaditaan' : 'Title is required')
       return
     }
 
@@ -100,7 +119,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
     setNewTitle('')
     setNewDescription('')
     setIsCreateDialogOpen(false)
-    toast.success(language === 'da' ? 'Projekt oprettet' : 'Project created')
+    toast.success(language === 'da' ? 'To-do oprettet' : language === 'fi' ? 'To-do luotu' : 'To-do created')
   }
 
   const handleJoinProject = async (projectId: string) => {
@@ -114,7 +133,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
         teamMembers: [...teamMembers, { email: userEmail, name: currentUserName, assignedAt: new Date().toISOString() }],
       }
     })
-    toast.success(language === 'da' ? 'Du er nu med i projektet' : 'You joined the project')
+    toast.success(language === 'da' ? 'Du er nu med i projektet' : language === 'fi' ? 'Liityit projektiin.' : 'You joined the project')
   }
 
   const handleLeaveProject = async (projectId: string) => {
@@ -126,12 +145,12 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
         status: updatedMembers.length === 0 ? ('open' as ProjectStatus) : p.status,
       }
     })
-    toast.success(language === 'da' ? 'Du har forladt projektet' : 'You left the project')
+    toast.success(language === 'da' ? 'Du har forladt projektet' : language === 'fi' ? 'Lähdit projektista.' : 'You left the project')
   }
 
   const handleRemoveProject = async (projectId: string) => {
     await removeFromKvArray('projects', [projectId])
-    toast.success(language === 'da' ? 'Projekt slettet' : 'Project deleted')
+    toast.success(language === 'da' ? 'Projekt slettet' : language === 'fi' ? 'Projekti poistettu' : 'Project deleted')
   }
 
   const handleCompleteProject = async (projectId: string) => {
@@ -140,7 +159,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
       status: 'completed' as ProjectStatus,
       completedAt: new Date().toISOString(),
     }))
-    toast.success(language === 'da' ? 'Projekt markeret som færdigt' : 'Project marked as completed')
+    toast.success(language === 'da' ? 'Projekt markeret som færdigt' : language === 'fi' ? 'Projekti merkitty valmiiksi' : 'Project marked as completed')
   }
 
   const getFilteredProjects = () => {
@@ -175,6 +194,241 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
   const inProgressProjects = getFilteredProjects().filter((p) => p.status === 'in-progress')
   const completedProjects = getFilteredProjects().filter((p) => p.status === 'completed')
 
+  const handleAddTodo = async () => {
+    const title = newTodoTitle.trim()
+    if (!title) {
+      toast.error(language === 'da' ? 'Titel er påkrævet' : language === 'fi' ? 'Otsikko vaaditaan' : 'Title is required')
+      return
+    }
+    try {
+      await appendToKvArray<PersonalTodo>(personalKey, [{ id: newId('todo'), title, description: newTodoDescription.trim(), status: 'open', createdAt: new Date().toISOString() }])
+      setNewTodoTitle('')
+      setNewTodoDescription('')
+      setIsPersonalCreateOpen(false)
+      toast.success(language === 'da' ? 'To-do oprettet' : language === 'fi' ? 'To-do luotu' : 'To-do created')
+    } catch { toast.error(language === 'da' ? 'Kunne ikke tilføje to-do' : language === 'fi' ? 'Lisäys epäonnistui' : 'Could not add to-do') }
+  }
+  const todoStatus = (todo: PersonalTodo): ProjectStatus => todo.status ?? (todo.done ? 'completed' : 'open')
+  const handleStartTodo = async (id: string) => {
+    await updateKvArrayItem<PersonalTodo>(personalKey, id, (todo) => ({ ...todo, status: 'in-progress', done: false, completedAt: undefined }))
+  }
+  const handleCompleteTodo = async (id: string) => {
+    await updateKvArrayItem<PersonalTodo>(personalKey, id, (todo) => ({ ...todo, status: 'completed', done: true, completedAt: new Date().toISOString() }))
+    toast.success(language === 'da' ? 'To-do markeret som færdig' : language === 'fi' ? 'To-do merkitty valmiiksi' : 'To-do marked as completed')
+  }
+  const handleReopenTodo = async (id: string) => {
+    await updateKvArrayItem<PersonalTodo>(personalKey, id, (todo) => ({ ...todo, status: 'open', done: false, completedAt: undefined }))
+  }
+  const handleDeleteTodo = async (id: string) => {
+    await removeFromKvArray<PersonalTodo>(personalKey, [id])
+    toast.success(language === 'da' ? 'To-do slettet' : language === 'fi' ? 'To-do poistettu' : 'To-do deleted')
+  }
+  const renderPersonalTodoCard = (todo: PersonalTodo) => {
+    const status = todoStatus(todo)
+    return (
+      <motion.div
+        key={todo.id}
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -20 }}
+        transition={{ duration: 0.3 }}
+      >
+        <Card className="p-5 border-2 transition-all duration-300 hover:shadow-lg hover:border-primary/40">
+          <div className="flex items-start justify-between gap-3 mb-3">
+            <div className="flex-1">
+              <h3 className="text-lg font-bold text-foreground mb-2"><AutoText text={todo.title} /></h3>
+              <Badge className={`${getStatusColor(status)} text-xs font-semibold`}>
+                {getStatusLabel(status)}
+              </Badge>
+            </div>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10">
+                  <Trash size={16} weight="duotone" />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>{language === 'da' ? 'Slet to-do?' : language === 'fi' ? 'Poista to-do?' : 'Delete to-do?'}</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    {language === 'da'
+                      ? 'Er du sikker på, at du vil slette denne to-do? Denne handling kan ikke fortrydes.'
+                      : language === 'fi' ? 'Haluatko varmasti poistaa tämän to-do:n? Tätä toimintaa ei voida perua.' : 'Are you sure you want to delete this to-do? This action cannot be undone.'}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>{language === 'da' ? 'Annuller' : language === 'fi' ? 'Peruuta' : 'Cancel'}</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={() => handleDeleteTodo(todo.id)}
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  >
+                    {language === 'da' ? 'Slet' : language === 'fi' ? 'Poista' : 'Delete'}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
+
+          {todo.description && (
+            <p className="text-sm text-muted-foreground mb-4 leading-relaxed"><AutoText text={todo.description} /></p>
+          )}
+
+          <div className="space-y-2 mb-4">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Clock size={14} weight="duotone" />
+              <span>
+                {language === 'da' ? 'Oprettet' : language === 'fi' ? 'Luotu' : 'Created'}: {formatDate(todo.createdAt)}
+              </span>
+            </div>
+            {todo.completedAt && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <CheckCircle size={14} weight="duotone" />
+                <span>
+                  {language === 'da' ? 'Færdiggjort' : language === 'fi' ? 'Valmis' : 'Completed'}: {formatDate(todo.completedAt)}
+                </span>
+              </div>
+            )}
+          </div>
+
+          <div className="flex gap-2">
+            {status === 'open' && (
+              <Button
+                onClick={() => handleStartTodo(todo.id)}
+                className="flex-1 bg-gradient-to-r from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)] hover:from-[oklch(0.38_0.19_272)] hover:to-[oklch(0.48_0.15_264)] text-white"
+                size="sm"
+              >
+                <Clock size={16} weight="duotone" className="mr-2" />
+                {language === 'da' ? 'Start' : language === 'fi' ? 'Aloita' : 'Start'}
+              </Button>
+            )}
+            {status === 'in-progress' && (
+              <Button
+                onClick={() => handleCompleteTodo(todo.id)}
+                className="flex-1 bg-gradient-to-r from-[oklch(0.55_0.13_150)] to-[oklch(0.60_0.11_160)] hover:from-[oklch(0.50_0.13_150)] hover:to-[oklch(0.55_0.11_160)] text-white"
+                size="sm"
+              >
+                <CheckCircle size={16} weight="duotone" className="mr-2" />
+                {language === 'da' ? 'Marker som færdig' : language === 'fi' ? 'Merkitse valmis' : 'Mark as completed'}
+              </Button>
+            )}
+            {status === 'completed' && (
+              <Button
+                onClick={() => handleReopenTodo(todo.id)}
+                variant="outline"
+                className="flex-1"
+                size="sm"
+              >
+                <Circle size={16} weight="duotone" className="mr-2" />
+                {language === 'da' ? 'Genåbn' : language === 'fi' ? 'Avaa uudelleen' : 'Reopen'}
+              </Button>
+            )}
+          </div>
+        </Card>
+      </motion.div>
+    )
+  }
+  const renderPersonalTodos = () => {
+    const sorted = [...(personalTodos || [])].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+    const openTodos = sorted.filter((todo) => todoStatus(todo) === 'open')
+    const inProgressTodos = sorted.filter((todo) => todoStatus(todo) === 'in-progress')
+    const completedTodos = sorted.filter((todo) => todoStatus(todo) === 'completed')
+    return (
+      <div>
+        <div className="mb-6">
+          <Dialog open={isPersonalCreateOpen} onOpenChange={setIsPersonalCreateOpen}>
+            <DialogTrigger asChild>
+              <Button
+                size="lg"
+                className="bg-gradient-to-r from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)] hover:from-[oklch(0.38_0.19_272)] hover:to-[oklch(0.48_0.15_264)] text-white shadow-lg"
+              >
+                <Plus size={20} weight="bold" className="mr-2" />
+                {language === 'da' ? 'Opret to-do' : language === 'fi' ? 'Luo to-do' : 'Create to-do'}
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-[500px]">
+              <DialogHeader>
+                <DialogTitle className="text-2xl font-bold">
+                  {language === 'da' ? 'Opret ny to-do' : language === 'fi' ? 'Luo uusi to-do' : 'Create new to-do'}
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label htmlFor="todo-title">{language === 'da' ? 'Titel' : language === 'fi' ? 'Otsikko' : 'Title'} *</Label>
+                  <Input
+                    id="todo-title"
+                    value={newTodoTitle}
+                    onChange={(e) => setNewTodoTitle(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void handleAddTodo() } }}
+                    placeholder={language === 'da' ? 'Indtast to-do titel' : language === 'fi' ? 'Anna to-do nimi' : 'Enter to-do title'}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="todo-description">{language === 'da' ? 'Beskrivelse' : language === 'fi' ? 'Kuvaus' : 'Description'}</Label>
+                  <Textarea
+                    id="todo-description"
+                    value={newTodoDescription}
+                    onChange={(e) => setNewTodoDescription(e.target.value)}
+                    placeholder={language === 'da' ? 'Indtast to-do beskrivelse' : language === 'fi' ? 'Anna to-do kuvaus' : 'Enter to-do description'}
+                    rows={4}
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setIsPersonalCreateOpen(false)}>
+                  {language === 'da' ? 'Annuller' : language === 'fi' ? 'Peruuta' : 'Cancel'}
+                </Button>
+                <Button
+                  onClick={() => void handleAddTodo()}
+                  className="bg-gradient-to-r from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)] text-white"
+                >
+                  {language === 'da' ? 'Opret' : language === 'fi' ? 'Luo' : 'Create'}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 rounded-lg bg-gradient-to-br from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)]">
+                <FolderOpen size={24} weight="duotone" className="text-white" />
+              </div>
+              <h2 className="text-xl font-bold text-foreground">
+                {language === 'da' ? 'Åbne' : language === 'fi' ? 'Avaa' : 'Open'} ({openTodos.length})
+              </h2>
+            </div>
+            <div className="space-y-4">{openTodos.map((todo) => renderPersonalTodoCard(todo))}</div>
+          </div>
+
+          <div>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 rounded-lg bg-gradient-to-br from-[oklch(0.65_0.13_75)] to-[oklch(0.70_0.11_70)]">
+                <Clock size={24} weight="duotone" className="text-white" />
+              </div>
+              <h2 className="text-xl font-bold text-foreground">
+                {language === 'da' ? 'I gang' : language === 'fi' ? 'Edistyminen' : 'In Progress'} ({inProgressTodos.length})
+              </h2>
+            </div>
+            <div className="space-y-4">{inProgressTodos.map((todo) => renderPersonalTodoCard(todo))}</div>
+          </div>
+
+          <div>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 rounded-lg bg-gradient-to-br from-[oklch(0.55_0.13_150)] to-[oklch(0.60_0.11_160)]">
+                <CheckCircle size={24} weight="duotone" className="text-white" />
+              </div>
+              <h2 className="text-xl font-bold text-foreground">
+                {language === 'da' ? 'Færdige' : language === 'fi' ? 'Valmis' : 'Completed'} ({completedTodos.length})
+              </h2>
+            </div>
+            <div className="space-y-4">{completedTodos.map((todo) => renderPersonalTodoCard(todo))}</div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   const getStatusColor = (status: ProjectStatus) => {
     switch (status) {
       case 'open':
@@ -196,6 +450,15 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
         case 'completed':
           return 'Færdig'
       }
+    } else if (language === 'fi') {
+      switch (status) {
+        case 'open':
+          return 'Avoin'
+        case 'in-progress':
+          return 'Käynnissä'
+        case 'completed':
+          return 'Valmis'
+      }
     } else {
       switch (status) {
         case 'open':
@@ -210,7 +473,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString)
-    return format(date, 'dd MMM yyyy, HH:mm', { locale: language === 'da' ? da : enUS })
+    return format(date, 'dd MMM yyyy, HH:mm', { locale: language === 'da' ? da : language === 'fi' ? fi : enUS })
   }
 
   const renderProjectCard = (project: Project) => {
@@ -242,7 +505,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
             <div className="flex items-center gap-2">
               {isOnTeam && (
                 <Badge className="bg-gradient-to-r from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)] text-white text-xs font-semibold">
-                  {language === 'da' ? 'Dit projekt' : 'Your project'}
+                  {language === 'da' ? 'Dit projekt' : language === 'fi' ? 'Projekti' : 'Your project'}
                 </Badge>
               )}
               {canDelete && (
@@ -254,20 +517,20 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                   </AlertDialogTrigger>
                   <AlertDialogContent>
                     <AlertDialogHeader>
-                      <AlertDialogTitle>{language === 'da' ? 'Slet projekt?' : 'Delete project?'}</AlertDialogTitle>
+                      <AlertDialogTitle>{language === 'da' ? 'Slet projekt?' : language === 'fi' ? 'Poista projekti?' : 'Delete project?'}</AlertDialogTitle>
                       <AlertDialogDescription>
                         {language === 'da' 
                           ? 'Er du sikker på, at du vil slette dette projekt? Denne handling kan ikke fortrydes.'
-                          : 'Are you sure you want to delete this project? This action cannot be undone.'}
+                          : language === 'fi' ? 'Haluatko varmasti poistaa tämän projektin? Tätä toimintaa ei voida perua.' : 'Are you sure you want to delete this project? This action cannot be undone.'}
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
-                      <AlertDialogCancel>{language === 'da' ? 'Annuller' : 'Cancel'}</AlertDialogCancel>
+                      <AlertDialogCancel>{language === 'da' ? 'Annuller' : language === 'fi' ? 'Peruuta' : 'Cancel'}</AlertDialogCancel>
                       <AlertDialogAction
                         onClick={() => handleRemoveProject(project.id)}
                         className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                       >
-                        {language === 'da' ? 'Slet' : 'Delete'}
+                        {language === 'da' ? 'Slet' : language === 'fi' ? 'Poista' : 'Delete'}
                       </AlertDialogAction>
                     </AlertDialogFooter>
                   </AlertDialogContent>
@@ -284,7 +547,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <User size={14} weight="duotone" />
               <span>
-                {language === 'da' ? 'Oprettet af' : 'Created by'}: <strong className="text-foreground">{project.createdByName}</strong>
+                {language === 'da' ? 'Oprettet af' : language === 'fi' ? 'Luonut' : 'Created by'}: <strong className="text-foreground">{project.createdByName}</strong>
               </span>
             </div>
 
@@ -293,7 +556,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <UserPlus size={14} weight="duotone" />
                   <span className="font-semibold">
-                    {language === 'da' ? 'Teammedlemmer' : 'Team Members'} ({teamMembers.length}):
+                    {language === 'da' ? 'Teammedlemmer' : language === 'fi' ? 'Ryhmän jäsenet' : 'Team Members'} ({teamMembers.length}):
                   </span>
                 </div>
                 <div className="flex flex-wrap gap-1 pl-5">
@@ -304,7 +567,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                         <button
                           onClick={() => handleLeaveProject(project.id)}
                           className="ml-1 hover:text-destructive transition-colors"
-                          title={language === 'da' ? 'Forlad projekt' : 'Leave project'}
+                          title={language === 'da' ? 'Forlad projekt' : language === 'fi' ? 'Jätä projekti' : 'Leave project'}
                         >
                           <X size={12} weight="bold" />
                         </button>
@@ -318,7 +581,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Clock size={14} weight="duotone" />
               <span>
-                {language === 'da' ? 'Oprettet' : 'Created'}: {formatDate(project.createdAt)}
+                {language === 'da' ? 'Oprettet' : language === 'fi' ? 'Luotu' : 'Created'}: {formatDate(project.createdAt)}
               </span>
             </div>
 
@@ -326,7 +589,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <CheckCircle size={14} weight="duotone" />
                 <span>
-                  {language === 'da' ? 'Færdiggjort' : 'Completed'}: {formatDate(project.completedAt)}
+                  {language === 'da' ? 'Færdiggjort' : language === 'fi' ? 'Valmis' : 'Completed'}: {formatDate(project.completedAt)}
                 </span>
               </div>
             )}
@@ -340,7 +603,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                 size="sm"
               >
                 <UserPlus size={16} weight="duotone" className="mr-2" />
-                {language === 'da' ? 'Deltag i projekt' : 'Join project'}
+                {language === 'da' ? 'Deltag i projekt' : language === 'fi' ? 'Liity projektiin' : 'Join project'}
               </Button>
             )}
 
@@ -351,7 +614,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                 size="sm"
               >
                 <CheckCircle size={16} weight="duotone" className="mr-2" />
-                {language === 'da' ? 'Marker som færdig' : 'Mark as completed'}
+                {language === 'da' ? 'Marker som færdig' : language === 'fi' ? 'Merkitse valmis' : 'Mark as completed'}
               </Button>
             )}
           </div>
@@ -372,12 +635,12 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
               className="bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
             >
               <ArrowLeft size={20} />
-              {language === 'da' ? 'Tilbage til Hub' : 'Back to Hub'}
+              {language === 'da' ? 'Tilbage til Hub' : language === 'fi' ? 'Takaisin Hubiin' : 'Back to Hub'}
             </Button>
             <div className="flex-1 text-center">
               <h1 className="text-2xl sm:text-3xl font-bold leading-normal bg-gradient-to-br from-primary to-accent bg-clip-text text-transparent pb-1 flex items-center gap-3 justify-center">
                 <FolderOpen size={32} weight="duotone" className="text-primary" />
-                {language === 'da' ? 'Projekt Tavle' : 'Project Board'}
+                To Do
               </h1>
             </div>
             <div className="w-[140px]"></div>
@@ -386,6 +649,12 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
       </div>
 
       <div className="container mx-auto px-4 sm:px-6 py-10">
+        <Tabs defaultValue="team">
+          <TabsList className="mb-6">
+            <TabsTrigger value="team">{language === 'da' ? "Team-to-do's" : language === 'fi' ? "Tiimin to-do't" : "Team to-do's"}</TabsTrigger>
+            <TabsTrigger value="personal">{language === 'da' ? "Personlige to-do's" : language === 'fi' ? "Omat to-do't" : "Personal to-do's"}</TabsTrigger>
+          </TabsList>
+          <TabsContent value="team">
         <div className="mb-6 flex flex-col sm:flex-row gap-4">
           <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
             <DialogTrigger asChild>
@@ -394,45 +663,45 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                 className="bg-gradient-to-r from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)] hover:from-[oklch(0.38_0.19_272)] hover:to-[oklch(0.48_0.15_264)] text-white shadow-lg"
               >
                 <Plus size={20} weight="bold" className="mr-2" />
-                {language === 'da' ? 'Opret projekt' : 'Create project'}
+                {language === 'da' ? 'Opret to-do' : language === 'fi' ? 'Luo to-do' : 'Create to-do'}
               </Button>
             </DialogTrigger>
             <DialogContent className="sm:max-w-[500px]">
               <DialogHeader>
                 <DialogTitle className="text-2xl font-bold">
-                  {language === 'da' ? 'Opret nyt projekt' : 'Create new project'}
+                  {language === 'da' ? 'Opret ny to-do' : language === 'fi' ? 'Luo uusi to-do' : 'Create new to-do'}
                 </DialogTitle>
               </DialogHeader>
               <div className="space-y-4 py-4">
                 <div className="space-y-2">
-                  <Label htmlFor="title">{language === 'da' ? 'Titel' : 'Title'} *</Label>
+                  <Label htmlFor="title">{language === 'da' ? 'Titel' : language === 'fi' ? 'Osasto' : 'Title'} *</Label>
                   <Input
                     id="title"
                     value={newTitle}
                     onChange={(e) => setNewTitle(e.target.value)}
-                    placeholder={language === 'da' ? 'Indtast projekt titel' : 'Enter project title'}
+                    placeholder={language === 'da' ? 'Indtast to-do titel' : language === 'fi' ? 'Anna to-do nimi' : 'Enter to-do title'}
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="description">{language === 'da' ? 'Beskrivelse' : 'Description'}</Label>
+                  <Label htmlFor="description">{language === 'da' ? 'Beskrivelse' : language === 'fi' ? 'Tavaran kuvaus' : 'Description'}</Label>
                   <Textarea
                     id="description"
                     value={newDescription}
                     onChange={(e) => setNewDescription(e.target.value)}
-                    placeholder={language === 'da' ? 'Indtast projekt beskrivelse' : 'Enter project description'}
+                    placeholder={language === 'da' ? 'Indtast to-do beskrivelse' : language === 'fi' ? 'Anna to-do kuvaus' : 'Enter to-do description'}
                     rows={4}
                   />
                 </div>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
-                  {language === 'da' ? 'Annuller' : 'Cancel'}
+                  {language === 'da' ? 'Annuller' : language === 'fi' ? 'Peruuta' : 'Cancel'}
                 </Button>
                 <Button
                   onClick={handleCreateProject}
                   className="bg-gradient-to-r from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)] text-white"
                 >
-                  {language === 'da' ? 'Opret' : 'Create'}
+                  {language === 'da' ? 'Opret' : language === 'fi' ? 'Luo' : 'Create'}
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -447,7 +716,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
               <Input
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder={language === 'da' ? 'Søg projekter...' : 'Search projects...'}
+                placeholder={language === 'da' ? 'Søg projekter...' : language === 'fi' ? 'Etsi hankkeita...' : 'Search projects...'}
                 className="pl-10"
               />
             </div>
@@ -458,9 +727,9 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">{language === 'da' ? 'Alle projekter' : 'All projects'}</SelectItem>
-                <SelectItem value="my">{language === 'da' ? 'Mine projekter' : 'My projects'}</SelectItem>
-                <SelectItem value="unassigned">{language === 'da' ? 'Ikke tildelt' : 'Unassigned'}</SelectItem>
+                <SelectItem value="all">{language === 'da' ? 'Alle projekter' : language === 'fi' ? 'Kaikki hankkeet' : 'All projects'}</SelectItem>
+                <SelectItem value="my">{language === 'da' ? 'Mine projekter' : language === 'fi' ? 'Minun projektini' : 'My projects'}</SelectItem>
+                <SelectItem value="unassigned">{language === 'da' ? 'Ikke tildelt' : language === 'fi' ? 'Määräämättä' : 'Unassigned'}</SelectItem>
               </SelectContent>
             </Select>
 
@@ -469,8 +738,8 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="newest">{language === 'da' ? 'Nyeste' : 'Newest'}</SelectItem>
-                <SelectItem value="oldest">{language === 'da' ? 'Ældste' : 'Oldest'}</SelectItem>
+                <SelectItem value="newest">{language === 'da' ? 'Nyeste' : language === 'fi' ? 'Uusin' : 'Newest'}</SelectItem>
+                <SelectItem value="oldest">{language === 'da' ? 'Ældste' : language === 'fi' ? 'Vanhin' : 'Oldest'}</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -483,7 +752,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                 <FolderOpen size={24} weight="duotone" className="text-white" />
               </div>
               <h2 className="text-xl font-bold text-foreground">
-                {language === 'da' ? 'Åbne' : 'Open'} ({openProjects.length})
+                {language === 'da' ? 'Åbne' : language === 'fi' ? 'Avaa' : 'Open'} ({openProjects.length})
               </h2>
             </div>
             <div className="space-y-4">{openProjects.map((project) => renderProjectCard(project))}</div>
@@ -495,7 +764,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                 <Clock size={24} weight="duotone" className="text-white" />
               </div>
               <h2 className="text-xl font-bold text-foreground">
-                {language === 'da' ? 'I gang' : 'In Progress'} ({inProgressProjects.length})
+                {language === 'da' ? 'I gang' : language === 'fi' ? 'Edistyminen' : 'In Progress'} ({inProgressProjects.length})
               </h2>
             </div>
             <div className="space-y-4">{inProgressProjects.map((project) => renderProjectCard(project))}</div>
@@ -507,12 +776,17 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                 <CheckCircle size={24} weight="duotone" className="text-white" />
               </div>
               <h2 className="text-xl font-bold text-foreground">
-                {language === 'da' ? 'Færdige' : 'Completed'} ({completedProjects.length})
+                {language === 'da' ? 'Færdige' : language === 'fi' ? 'Valmis' : 'Completed'} ({completedProjects.length})
               </h2>
             </div>
             <div className="space-y-4">{completedProjects.map((project) => renderProjectCard(project))}</div>
           </div>
         </div>
+          </TabsContent>
+          <TabsContent value="personal">
+            {renderPersonalTodos()}
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   )

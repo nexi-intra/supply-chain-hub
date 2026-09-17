@@ -4,7 +4,7 @@ En fælles platform for Supply Chain-organisationens teams med guides, feriekale
 
 Appen understøtter tre roller (**Admin**, **Manager**, **Bruger**), to sprog (**Dansk**/**Engelsk**) og både **lyst** og **mørkt** tema.
 
-> **Kompatibilitet:** Det interne pakkenavn (`tcd-hub`), app-id'et (`com.nexigroup.tcdhub`), miljøvariablen `TCD_HUB_DATA_DIR` og filnavnet `tcd-hub.config.json` er bevidst bevaret. Det gør den eksisterende TCD Hub 1.4.3 → Supply Chain Hub 1.5.0-opdatering og lokale brugerdata kompatible.
+> **Kompatibilitet:** Det interne pakkenavn (`tcd-hub`), app-id'et (`com.nexigroup.tcdhub`) og miljøvariablen `TCD_HUB_DATA_DIR` er bevaret for at gøre den eksisterende TCD Hub 1.4.3 → Supply Chain Hub-opdatering og lokale brugerdata kompatible. Fra version 1.5.1 hedder den medfølgende konfigurationsfil `supply-chan-hub.config`; ældre `tcd-hub.config.json` læses fortsat som fallback.
 
 ## 📑 Indhold
 
@@ -69,7 +69,7 @@ Sådan sættes appen op på maskiner, der deler samme platform via et netværksd
 
 1. **Opret en platformrod på det fælles drev**, fx `\\SERVER\Faelles\supply-chain-hub`, og giv brugerne de nødvendige rettigheder. Appen opretter `_registry`, `_shared` og teammapper under denne rod.
 2. **Kopiér den udpakkede app-mappe** (fra ZIP'en) til hver enkelt computer — kør **ikke** .exe'en direkte fra netværksdrevet, det gør opstarten langsom.
-3. **Læg en fil ved navn `tcd-hub.config.json` ved siden af `Supply Chain Hub.exe`** på hver computer med indholdet:
+3. **Læg en fil ved navn `supply-chan-hub.config` ved siden af `Supply Chain Hub.exe`** på hver computer med indholdet:
 
 ```json
 {

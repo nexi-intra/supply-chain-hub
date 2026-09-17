@@ -168,7 +168,7 @@ export function MealPlan({ onNavigateBack }: MealPlanProps) {
 
   return (
     <div className="min-h-screen relative overflow-hidden">
-      <div className="absolute top-6 right-6 left-6 z-20">
+      <div className="fixed top-6 right-6 left-6 z-30 pointer-events-none">
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pb-16">
           <div className="flex items-center gap-3">
             <motion.div
@@ -180,7 +180,7 @@ export function MealPlan({ onNavigateBack }: MealPlanProps) {
                 variant="outline"
                 size="lg"
                 onClick={onNavigateBack}
-                className="bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
+                className="pointer-events-auto bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
               >
                 <ArrowLeft size={20} />
                 {t.common.back}

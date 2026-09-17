@@ -29,6 +29,7 @@ interface GuideCardProps {
   onDelete: (id: string) => void
   onView: (guide: Guide) => void
   onMarkReviewed?: (guide: Guide) => void
+  deleteRequiresReview?: boolean
   /** Bedste søgematch — vises på kortet under søgning. */
   matchSnippet?: { reference: string; text: string; relevance: number }
 }
@@ -41,9 +42,9 @@ const categoryColors: Record<string, string> = {
   General: 'bg-gradient-to-br from-muted to-muted/70 text-foreground border-border shadow-lg shadow-black/5',
 }
 
-export function GuideCard({ guide, authorName, currentTeamCode, onEdit, onDelete, onView, onMarkReviewed, matchSnippet }: GuideCardProps) {
+export function GuideCard({ guide, authorName, currentTeamCode, onEdit, onDelete, onView, onMarkReviewed, deleteRequiresReview = false, matchSnippet }: GuideCardProps) {
   const { t, language } = useLanguage()
-  const dateLocale = language === 'en' ? 'en-US' : 'da-DK'
+  const dateLocale = language === 'en' ? 'en-US' : language === 'fi' ? 'fi-FI' : 'da-DK'
   const [isExpanded, setIsExpanded] = useState(false)
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
   const reviewStatus = getReviewStatus(guide)
@@ -210,7 +211,13 @@ export function GuideCard({ guide, authorName, currentTeamCode, onEdit, onDelete
                   <AlertDialogHeader>
                     <AlertDialogTitle>{t.guideCard.deleteTitle}</AlertDialogTitle>
                     <AlertDialogDescription>
-                      {t.guideCard.deleteConfirmPrefix} <strong>{guide.title}</strong>{t.guideCard.deleteConfirmSuffix}
+                      {deleteRequiresReview
+                        ? (language === 'da'
+                            ? <>Sletningen af <strong>{guide.title}</strong> bliver sendt til review. Guiden forbliver udgivet, indtil en reviewer godkender sletningen.</>
+                            : language === 'fi'
+                              ? <>Oppaan <strong>{guide.title}</strong> poistaminen lähetetään tarkistettavaksi. Opas pysyy julkaistuna, kunnes tarkistaja hyväksyy poistamisen.</>
+                              : <>Deleting <strong>{guide.title}</strong> will be submitted for review. The guide remains published until a reviewer approves the deletion.</>)
+                        : <>{t.guideCard.deleteConfirmPrefix} <strong>{guide.title}</strong>{t.guideCard.deleteConfirmSuffix}</>}
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
@@ -219,7 +226,7 @@ export function GuideCard({ guide, authorName, currentTeamCode, onEdit, onDelete
                       className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                       onClick={() => onDelete(guide.id)}
                     >
-                      {t.guideCard.deleteAction}
+                      {deleteRequiresReview ? (language === 'da' ? 'Send til review' : language === 'fi' ? 'Lähetä tarkistettavaksi' : 'Submit for review') : t.guideCard.deleteAction}
                     </AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>

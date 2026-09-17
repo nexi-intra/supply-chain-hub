@@ -973,14 +973,14 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
               <p className="text-sm text-muted-foreground">
                 {language === 'da'
                   ? 'Skyd invasionen af høns og undgå deres æg!'
-                  : 'Shoot down the chicken invasion and dodge their eggs!'}
+                  : language === 'fi' ? 'Ammu alas kanan hyökkäys ja väistä niiden munat!' : 'Shoot down the chicken invasion and dodge their eggs!'}
               </p>
             </div>
           </div>
           <div className="flex items-center gap-4">
             <div className="text-center p-4 rounded-lg bg-gradient-to-br from-accent/10 to-primary/10 border border-accent/20">
               <div className="text-sm text-muted-foreground font-semibold">
-                {language === 'da' ? 'Højeste score' : 'High Score'}
+                {language === 'da' ? 'Højeste score' : language === 'fi' ? 'Korkeat tulokset' : 'High Score'}
               </div>
               <div className="text-2xl font-bold text-primary flex items-center gap-2 justify-center mt-1">
                 <Trophy size={24} weight="fill" className="text-accent" />
@@ -995,7 +995,7 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
             <div className="space-y-3">
               <div className="text-center">
                 <p className="text-sm font-semibold text-muted-foreground mb-3">
-                  {language === 'da' ? 'Vælg sværhedsgrad' : 'Select Difficulty'}
+                  {language === 'da' ? 'Vælg sværhedsgrad' : language === 'fi' ? 'Valitse vaikeudet' : 'Select Difficulty'}
                 </p>
               </div>
               <div className="flex items-center justify-center gap-4 flex-wrap">
@@ -1039,20 +1039,20 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
               <p className="text-sm text-muted-foreground mb-2">
                 {language === 'da'
                   ? 'Flyt med piletaster/A-D, skyd med mellemrum. Undgå æggene der falder ned!'
-                  : 'Move with arrow keys/A-D, shoot with space. Dodge the falling eggs!'}
+                  : language === 'fi' ? 'Liiku nuolinäppäimillä/A-D, ammu avaruudessa. Väistäkää munia!' : 'Move with arrow keys/A-D, shoot with space. Dodge the falling eggs!'}
               </p>
               <p className="text-xs text-muted-foreground mb-4 flex items-center justify-center gap-3">
                 <span className="flex items-center gap-1">
                   <ShieldCheck size={14} weight="fill" className="text-blue-400" />
-                  {language === 'da' ? 'Skjold blokerer et æg' : 'Shield blocks one egg'}
+                  {language === 'da' ? 'Skjold blokerer et æg' : language === 'fi' ? 'Kilpi salpaa yhden munan' : 'Shield blocks one egg'}
                 </span>
                 <span className="flex items-center gap-1">
                   <RapidFireIcon size={14} weight="fill" className="text-yellow-400" />
-                  {language === 'da' ? 'Hurtigskydning' : 'Rapid Fire'}
+                  {language === 'da' ? 'Hurtigskydning' : language === 'fi' ? 'Nopea tulitus' : 'Rapid Fire'}
                 </span>
               </p>
               <Button onClick={startGame} size="lg" className="px-8 bg-gradient-to-r from-primary to-accent hover:opacity-90">
-                {language === 'da' ? 'Start spil' : 'Start Game'}
+                {language === 'da' ? 'Start spil' : language === 'fi' ? 'Käynnistä peli' : 'Start Game'}
               </Button>
             </div>
           </div>
@@ -1070,7 +1070,7 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
                   <div className="relative px-6 py-3 rounded-xl bg-gradient-to-br from-primary/20 to-accent/30 border-2 border-primary/40 backdrop-blur-sm">
                     <div className="text-[10px] text-primary-foreground/70 uppercase tracking-widest font-bold mb-1 flex items-center gap-1">
                       <Trophy size={12} weight="fill" />
-                      {language === 'da' ? 'Point' : 'Score'}
+                      {language === 'da' ? 'Point' : language === 'fi' ? 'Pistemäärä' : 'Score'}
                     </div>
                     <div className="text-4xl font-black bg-gradient-to-br from-white to-primary-foreground bg-clip-text text-transparent drop-shadow-lg">
                       {score}
@@ -1081,7 +1081,7 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
                 <div className="relative group">
                   <div className="relative px-5 py-3 rounded-xl bg-gradient-to-br from-accent/20 to-yellow-500/20 border-2 border-accent/40 backdrop-blur-sm">
                     <div className="text-[10px] text-accent-foreground/70 uppercase tracking-widest font-bold mb-1">
-                      {language === 'da' ? 'Bølge' : 'Wave'}
+                      {language === 'da' ? 'Bølge' : language === 'fi' ? 'Aalto' : 'Wave'}
                     </div>
                     <div className="text-4xl font-black text-yellow-400 drop-shadow-lg">
                       {wave}
@@ -1092,7 +1092,7 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
                 <div className="relative group">
                   <div className="relative px-5 py-3 rounded-xl bg-gradient-to-br from-destructive/20 to-red-500/20 border-2 border-destructive/40 backdrop-blur-sm">
                     <div className="text-[10px] text-destructive-foreground/70 uppercase tracking-widest font-bold mb-1">
-                      {language === 'da' ? 'Liv' : 'Lives'}
+                      {language === 'da' ? 'Liv' : language === 'fi' ? 'Elämä' : 'Lives'}
                     </div>
                     <div className="flex items-center gap-1 mt-1">
                       {Array.from({ length: STARTING_LIVES }).map((_, i) => (
@@ -1110,13 +1110,13 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
                 {hasShield && (
                   <div className="flex items-center gap-1 px-3 py-2 rounded-lg bg-blue-500/20 border border-blue-400/40 text-blue-300 text-xs font-bold">
                     <ShieldCheck size={16} weight="fill" />
-                    {language === 'da' ? 'Skjold' : 'Shield'}
+                    {language === 'da' ? 'Skjold' : language === 'fi' ? 'Suoja' : 'Shield'}
                   </div>
                 )}
                 {isRapidFire && (
                   <div className="flex items-center gap-1 px-3 py-2 rounded-lg bg-yellow-500/20 border border-yellow-400/40 text-yellow-300 text-xs font-bold">
                     <RapidFireIcon size={16} weight="fill" />
-                    {language === 'da' ? 'Hurtigskydning' : 'Rapid Fire'}
+                    {language === 'da' ? 'Hurtigskydning' : language === 'fi' ? 'Nopea tulitus' : 'Rapid Fire'}
                   </div>
                 )}
               </div>
@@ -1128,7 +1128,7 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
                 className="shadow-xl hover:shadow-2xl transition-shadow font-bold"
               >
                 <X size={20} weight="bold" className="mr-2" />
-                {language === 'da' ? 'Stop' : 'Quit'}
+                {language === 'da' ? 'Stop' : language === 'fi' ? 'Lopeta' : 'Quit'}
               </Button>
             </div>
           </div>
@@ -1192,7 +1192,7 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
                   transition={{ duration: 0.4 }}
                 >
                   <div className="text-5xl font-black bg-gradient-to-r from-yellow-300 via-white to-yellow-300 bg-clip-text text-transparent drop-shadow-lg">
-                    {language === 'da' ? `Bølge ${waveBanner}` : `Wave ${waveBanner}`}
+                    {language === 'da' ? `Bølge ${waveBanner}` : language === 'fi' ? `Aalto ${waveBanner}` : `Wave ${waveBanner}`}
                   </div>
                 </motion.div>
               )}
@@ -1204,33 +1204,33 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
       {gameState === 'ended' && (
         <Card className="p-6 text-center bg-gradient-to-br from-primary/10 via-accent/10 to-background border-2 border-primary/20">
           <h3 className="text-2xl font-bold mb-2 bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
-            {language === 'da' ? 'Spil slut!' : 'Game Over!'}
+            {language === 'da' ? 'Spil slut!' : language === 'fi' ? 'Peli loppui!' : 'Game Over!'}
           </h3>
           <div className="space-y-4">
             <div>
               <p className="text-muted-foreground">
-                {language === 'da' ? 'Din sidste score' : 'Your final score'}
+                {language === 'da' ? 'Din sidste score' : language === 'fi' ? 'Lopputulos' : 'Your final score'}
               </p>
               <p className="text-4xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
                 {score}
               </p>
             </div>
             <p className="text-sm text-muted-foreground">
-              {language === 'da' ? `Du nåede bølge ${wave}` : `You reached wave ${wave}`}
+              {language === 'da' ? `Du nåede bølge ${wave}` : language === 'fi' ? `Saavutit aallon ${wave}` : `You reached wave ${wave}`}
             </p>
           </div>
           {score > 0 && score >= getCurrentHighScore() && (
             <p className="text-sm text-accent font-semibold mt-4 flex items-center gap-2 justify-center">
               <Trophy size={20} weight="fill" />
-              {language === 'da' ? '🎉 Ny højeste score!' : '🎉 New high score!'}
+              {language === 'da' ? '🎉 Ny højeste score!' : language === 'fi' ? '- Uusi huipputulos!' : '🎉 New high score!'}
             </p>
           )}
           <div className="flex items-center justify-center gap-3 mt-6">
             <Button onClick={startGame} size="lg" className="bg-gradient-to-r from-primary to-accent hover:opacity-90">
-              {language === 'da' ? 'Prøv igen' : 'Play Again'}
+              {language === 'da' ? 'Prøv igen' : language === 'fi' ? 'Toista' : 'Play Again'}
             </Button>
             <Button onClick={() => setGameState('menu')} variant="outline" size="lg">
-              {language === 'da' ? 'Tilbage til menu' : 'Back to Menu'}
+              {language === 'da' ? 'Tilbage til menu' : language === 'fi' ? 'Takaisin valikkoon' : 'Back to Menu'}
             </Button>
           </div>
         </Card>
@@ -1243,10 +1243,10 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
           </div>
           <div>
             <h3 className="text-xl font-bold bg-gradient-to-r from-accent to-primary bg-clip-text text-transparent">
-              {language === 'da' ? 'Global resultattavle' : 'Global Leaderboard'}
+              {language === 'da' ? 'Global resultattavle' : language === 'fi' ? 'Maailmanlaajuinen Leaderboard' : 'Global Leaderboard'}
             </h3>
             <p className="text-sm text-muted-foreground">
-              {language === 'da' ? 'Konkurer med andre medarbejdere!' : 'Compete with other employees!'}
+              {language === 'da' ? 'Konkurer med andre medarbejdere!' : language === 'fi' ? 'Kilpaile muiden työntekijöiden kanssa!' : 'Compete with other employees!'}
             </p>
           </div>
         </div>
@@ -1342,10 +1342,10 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
                     <div className="text-center py-6">
                       <Trophy size={32} className="text-muted-foreground/30 mx-auto mb-2" />
                       <p className="text-sm text-muted-foreground">
-                        {language === 'da' ? 'Ingen scores endnu' : 'No scores yet'}
+                        {language === 'da' ? 'Ingen scores endnu' : language === 'fi' ? 'Ei tuloksia vielä' : 'No scores yet'}
                       </p>
                       <p className="text-xs text-muted-foreground mt-1">
-                        {language === 'da' ? 'Vær den første!' : 'Be the first!'}
+                        {language === 'da' ? 'Vær den første!' : language === 'fi' ? 'Ole ensimmäinen!' : 'Be the first!'}
                       </p>
                     </div>
                   )}

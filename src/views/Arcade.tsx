@@ -77,7 +77,7 @@ export function Arcade({ onNavigateBack, userEmail }: ArcadeProps) {
       title: 'Chickeninvasion',
       description: language === 'da' 
         ? 'Skyd bølge efter bølge af høns ned og undgå deres æg. Hvor langt kan du nå?'
-        : 'Blast wave after wave of chickens and dodge their falling eggs. How far can you get?',
+        : language === 'fi' ? 'Räjähdysaalto kanojen aallon jälkeen ja väistää niiden munat. Kuinka pitkälle pääset?' : 'Blast wave after wave of chickens and dodge their falling eggs. How far can you get?',
       icon: <RocketLaunch size={48} weight="duotone" />,
       color: 'oklch(0.50 0.14 275)',
       gradient: 'from-[oklch(0.50_0.14_275)] via-[oklch(0.56_0.12_262)] to-[oklch(0.46_0.15_276)]',
@@ -85,10 +85,10 @@ export function Arcade({ onNavigateBack, userEmail }: ArcadeProps) {
     },
     {
       id: 'brickbreak',
-      title: language === 'da' ? 'Brick Break' : 'Brick Break',
+      title: language === 'da' ? 'Brick Break' : language === 'fi' ? 'Brick Break' : 'Brick Break',
       description: language === 'da' 
         ? 'Ødelæg alle brikkerne og klar så mange levels som muligt!'
-        : 'Destroy all bricks and clear as many levels as possible!',
+        : language === 'fi' ? 'Tuhoa kaikki tiilet ja selkeä mahdollisimman monta tasoa!' : 'Destroy all bricks and clear as many levels as possible!',
       icon: <Cube size={48} weight="duotone" />,
       color: 'oklch(0.52 0.12 330)',
       gradient: 'from-[oklch(0.52_0.12_330)] via-[oklch(0.55_0.11_305)] to-[oklch(0.48_0.12_332)]',
@@ -99,7 +99,7 @@ export function Arcade({ onNavigateBack, userEmail }: ArcadeProps) {
       title: 'Nexi Flyer',
       description: language === 'da'
         ? 'Flyv gennem rørene og sæt ny rekord i dette klassiske arkadespil!'
-        : 'Fly through the pipes and set a new record in this classic arcade game!',
+        : language === 'fi' ? 'Lennä putkien läpi ja aseta uusi ennätys tässä klassinen arcade peli!' : 'Fly through the pipes and set a new record in this classic arcade game!',
       icon: <Bird size={48} weight="duotone" />,
       color: 'oklch(0.68 0.11 80)',
       gradient: 'from-[oklch(0.68_0.11_80)] via-[oklch(0.72_0.10_65)] to-[oklch(0.64_0.11_82)]',
@@ -110,7 +110,7 @@ export function Arcade({ onNavigateBack, userEmail }: ArcadeProps) {
       title: 'Tetris',
       description: language === 'da'
         ? 'Det klassiske klodsespil. Ryd så mange linjer som muligt!'
-        : 'The classic block game. Clear as many lines as possible!',
+        : language === 'fi' ? 'Klassinen korttelipeli. Tyhjennä mahdollisimman monta riviä!' : 'The classic block game. Clear as many lines as possible!',
       icon: <SquaresFour size={48} weight="duotone" />,
       color: 'oklch(0.52 0.13 248)',
       gradient: 'from-[oklch(0.52_0.13_248)] via-[oklch(0.56_0.11_240)] to-[oklch(0.48_0.13_250)]',
@@ -121,7 +121,7 @@ export function Arcade({ onNavigateBack, userEmail }: ArcadeProps) {
       title: 'Neon Snake',
       description: language === 'da'
         ? 'Styr den glødende slange, spis æbler og jagt de gyldne bonusfrugter — uden at bide dig selv!'
-        : 'Steer the glowing snake, eat apples and chase golden bonus fruit — without biting yourself!',
+        : language === 'fi' ? 'Ohjaa hehkuva käärme, syö omenoita ja jahtaa kultainen bonus hedelmiä purematta itseäsi!' : 'Steer the glowing snake, eat apples and chase golden bonus fruit — without biting yourself!',
       icon: <WaveSine size={48} weight="duotone" />,
       color: 'oklch(0.56 0.12 155)',
       gradient: 'from-[oklch(0.56_0.12_155)] via-[oklch(0.60_0.10_170)] to-[oklch(0.52_0.12_157)]',
@@ -228,7 +228,7 @@ export function Arcade({ onNavigateBack, userEmail }: ArcadeProps) {
                     <p className="text-white/90 text-sm sm:text-base">
                       {language === 'da' 
                         ? 'Skyd hønseinvasionen ned og undgå deres æg'
-                        : 'Blast the chicken invasion and dodge their eggs'}
+                        : language === 'fi' ? 'Räjäytä kanan hyökkäys ja väistä niiden munia' : 'Blast the chicken invasion and dodge their eggs'}
                     </p>
                   </div>
                 </div>
@@ -304,7 +304,7 @@ export function Arcade({ onNavigateBack, userEmail }: ArcadeProps) {
                     <p className="text-white/90 text-sm sm:text-base">
                       {language === 'da' 
                         ? 'Ødelæg alle brikker og klar så mange levels som muligt'
-                        : 'Destroy all bricks and clear as many levels as possible'}
+                        : language === 'fi' ? 'Tuhoa kaikki tiilet ja selkeä mahdollisimman monta tasoa' : 'Destroy all bricks and clear as many levels as possible'}
                     </p>
                   </div>
                 </div>
@@ -380,7 +380,7 @@ export function Arcade({ onNavigateBack, userEmail }: ArcadeProps) {
                     <p className="text-white/90 text-sm sm:text-base">
                       {language === 'da'
                         ? 'Flyv gennem rørene så langt som muligt'
-                        : 'Fly through the pipes as far as you can'}
+                        : language === 'fi' ? 'Lennä putkien läpi niin pitkälle kuin voit' : 'Fly through the pipes as far as you can'}
                     </p>
                   </div>
                 </div>
@@ -456,7 +456,7 @@ export function Arcade({ onNavigateBack, userEmail }: ArcadeProps) {
                     <p className="text-white/90 text-sm sm:text-base">
                       {language === 'da'
                         ? 'Ryd så mange linjer som muligt'
-                        : 'Clear as many lines as possible'}
+                        : language === 'fi' ? 'Tyhjennä mahdollisimman monta riviä' : 'Clear as many lines as possible'}
                     </p>
                   </div>
                 </div>
@@ -532,7 +532,7 @@ export function Arcade({ onNavigateBack, userEmail }: ArcadeProps) {
                     <p className="text-white/90 text-sm sm:text-base">
                       {language === 'da'
                         ? 'Spis æbler, voks dig lang og slå rekorden'
-                        : 'Eat apples, grow long and beat the record'}
+                        : language === 'fi' ? 'Syö omenat, kasva pitkäksi ja lyö ennätys' : 'Eat apples, grow long and beat the record'}
                     </p>
                   </div>
                 </div>
@@ -552,7 +552,7 @@ export function Arcade({ onNavigateBack, userEmail }: ArcadeProps) {
 
   return (
     <div className="min-h-screen relative overflow-hidden">
-      <div className="absolute top-6 right-6 left-6 z-20">
+      <div className="fixed top-6 right-6 left-6 z-30 pointer-events-none">
         <div className="flex items-center justify-start pb-12">
           <motion.div
             initial={{ opacity: 0, x: -20 }}
@@ -563,10 +563,10 @@ export function Arcade({ onNavigateBack, userEmail }: ArcadeProps) {
               onClick={onNavigateBack}
               variant="outline"
               size="lg"
-              className="bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold"
+              className="pointer-events-auto bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold"
             >
               <ArrowLeft size={20} weight="bold" />
-              {language === 'da' ? 'Tilbage til Spilhjørnet' : 'Back to Game Corner'}
+              {language === 'da' ? 'Tilbage til Spilhjørnet' : language === 'fi' ? 'Takaisin pelinurkkaan' : 'Back to Game Corner'}
             </Button>
           </motion.div>
         </div>
@@ -605,7 +605,7 @@ export function Arcade({ onNavigateBack, userEmail }: ArcadeProps) {
           >
             {language === 'da' 
               ? 'Tag en pause og test dine færdigheder. Konkurrér med kollegaer om de bedste scores!'
-              : 'Take a break and test your skills. Compete with colleagues for the best scores!'}
+              : language === 'fi' ? 'Pidä tauko ja testaa taitojasi. Kilpaile kollegoiden kanssa saadaksesi parhaat tulokset!' : 'Take a break and test your skills. Compete with colleagues for the best scores!'}
           </motion.p>
         </motion.header>
 
@@ -686,7 +686,7 @@ export function Arcade({ onNavigateBack, userEmail }: ArcadeProps) {
           >
             <GameController size={64} className="text-muted-foreground/30 mx-auto mb-4" />
             <p className="text-lg text-muted-foreground">
-              {language === 'da' ? 'Nye spil kommer snart!' : 'New games coming soon!'}
+              {language === 'da' ? 'Nye spil kommer snart!' : language === 'fi' ? 'Uudet pelit tulevat pian!' : 'New games coming soon!'}
             </p>
           </motion.div>
         )}

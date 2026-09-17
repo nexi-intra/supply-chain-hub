@@ -4,7 +4,7 @@
 // resultatet som automatisk oversat. Ordbogen deles med søgeindekset, så
 // danske søgninger rammer engelske guides og omvendt.
 
-export type GuideLanguage = 'da' | 'en'
+export type GuideLanguage = 'da' | 'en' | 'fi'
 
 // Fraser oversættes før enkeltord (længste først). [da, en]
 const PHRASES: Array<[string, string]> = [
@@ -104,6 +104,35 @@ const EN_EXTRA: Array<[string, string]> = [
   ['will', 'vil'], ['done', 'færdig'], ['via', 'via'],
 ]
 
+// Teknisk engelsk↔finsk fallback. Neural Bergamot bruges først, når de relevante
+// modeller findes på det delte drev; ukendte produktnavne og koder bevares.
+const FI_WORDS: Array<[string, string]> = [
+  ['press', 'paina'], ['click', 'napsauta'], ['select', 'valitse'], ['open', 'avaa'],
+  ['close', 'sulje'], ['insert', 'aseta'], ['remove', 'poista'], ['connect', 'yhdistä'],
+  ['disconnect', 'irrota'], ['scan', 'skannaa'], ['print', 'tulosta'], ['enter', 'syötä'],
+  ['confirm', 'vahvista'], ['cancel', 'peruuta'], ['save', 'tallenna'], ['delete', 'poista'],
+  ['start', 'aloita'], ['stop', 'pysäytä'], ['restart', 'käynnistä uudelleen'],
+  ['check', 'tarkista'], ['verify', 'varmista'], ['wait', 'odota'], ['run', 'suorita'],
+  ['pack', 'pakkaa'], ['place', 'aseta'], ['attach', 'kiinnitä'],
+  ['terminal', 'pääte'], ['payment terminal', 'maksupääte'], ['receipt', 'kuitti'],
+  ['power', 'virta'], ['cable', 'kaapeli'], ['screen', 'näyttö'], ['button', 'painike'],
+  ['menu', 'valikko'], ['settings', 'asetukset'], ['order', 'tilaus'], ['delivery', 'toimitus'],
+  ['shipment', 'lähetys'], ['label', 'tarra'], ['printer', 'tulostin'],
+  ['keyboard', 'näppäimistö'], ['mouse', 'hiiri'], ['network', 'verkko'],
+  ['error', 'virhe'], ['warning', 'varoitus'], ['problem', 'ongelma'], ['guide', 'opas'],
+  ['step', 'vaihe'], ['section', 'osio'], ['page', 'sivu'], ['number', 'numero'],
+  ['country', 'maa'], ['agreement', 'sopimus'], ['box', 'laatikko'], ['bag', 'pussi'],
+  ['warehouse', 'varasto'], ['address', 'osoite'], ['field', 'kenttä'], ['icon', 'kuvake'],
+  ['card', 'kortti'], ['user', 'käyttäjä'], ['password', 'salasana'], ['username', 'käyttäjänimi'],
+  ['update', 'päivitys'], ['installation', 'asennus'], ['configuration', 'määritys'],
+  ['battery', 'akku'], ['charger', 'laturi'], ['new', 'uusi'], ['old', 'vanha'],
+  ['next', 'seuraava'], ['previous', 'edellinen'], ['first', 'ensin'], ['then', 'sitten'],
+  ['when', 'kun'], ['if', 'jos'], ['now', 'nyt'], ['again', 'uudelleen'],
+  ['always', 'aina'], ['never', 'ei koskaan'], ['ready', 'valmis'], ['correct', 'oikea'],
+  ['wrong', 'väärä'], ['works', 'toimii'], ['and', 'ja'], ['or', 'tai'], ['with', 'kanssa'],
+  ['without', 'ilman'], ['from', 'alkaen'], ['in', 'sisällä'], ['under', 'alla'], ['over', 'yli'],
+]
+
 function buildMaps(): { daToEn: Map<string, string>; enToDa: Map<string, string> } {
   const daToEn = new Map<string, string>()
   const enToDa = new Map<string, string>()
@@ -118,6 +147,8 @@ function buildMaps(): { daToEn: Map<string, string>; enToDa: Map<string, string>
 }
 
 const { daToEn, enToDa } = buildMaps()
+const enToFi = new Map(FI_WORDS)
+const fiToEn = new Map<string, string>(FI_WORDS.map(([en, fi]) => [fi, en] as [string, string]))
 
 /** Ordpar (da, en) til tosproget søge-udvidelse. */
 export function getDictionaryPairs(): Array<[string, string]> {
@@ -126,19 +157,25 @@ export function getDictionaryPairs(): Array<[string, string]> {
 
 const DA_MARKERS = new Set(['og', 'ikke', 'det', 'der', 'til', 'på', 'med', 'som', 'af', 'skal', 'kan', 'når', 'hvis', 'eller', 'også', 'være', 'bliver', 'derefter', 'vælg', 'tryk', 'åbn', 'indsæt'])
 const EN_MARKERS = new Set(['the', 'and', 'not', 'that', 'this', 'with', 'from', 'will', 'can', 'when', 'if', 'or', 'also', 'be', 'is', 'are', 'then', 'select', 'press', 'open', 'insert', 'into'])
+const FI_MARKERS = new Set(['ja', 'ei', 'että', 'tämä', 'kanssa', 'alkaen', 'voi', 'kun', 'jos', 'tai', 'myös', 'on', 'ovat', 'sitten', 'valitse', 'paina', 'avaa', 'aseta'])
 
 /** Heuristisk sprogdetektion: æ/ø/å + stopords-flertal. Ved uafgjort (fx enkeltord) bruges fallback. */
 export function detectLanguage(text: string, fallback: GuideLanguage = 'en'): GuideLanguage {
   if (/[æøå]/i.test(text)) return 'da'
-  const tokens = text.toLowerCase().split(/[^a-zæøå]+/).filter(Boolean)
+  if (/[äö]/i.test(text)) return 'fi'
+  const tokens = text.toLowerCase().split(/[^a-zæøåäö]+/).filter(Boolean)
   let daScore = 0
   let enScore = 0
+  let fiScore = 0
   for (const token of tokens) {
     if (DA_MARKERS.has(token)) daScore++
     if (EN_MARKERS.has(token)) enScore++
+    if (FI_MARKERS.has(token)) fiScore++
   }
-  if (daScore === enScore) return fallback
-  return daScore > enScore ? 'da' : 'en'
+  const scores: Array<[GuideLanguage, number]> = [['da', daScore], ['en', enScore], ['fi', fiScore]]
+  scores.sort((a, b) => b[1] - a[1])
+  if (scores[0][1] === scores[1][1]) return fallback
+  return scores[0][0]
 }
 
 function matchCase(source: string, translated: string): string {
@@ -154,7 +191,27 @@ function matchCase(source: string, translated: string): string {
 export function translateText(text: string, from: GuideLanguage, to: GuideLanguage): string {
   if (from === to || !text.trim()) return text
 
+  // Dansk↔finsk går via engelsk i den deterministiske fallback. Den neurale
+  // motor prøver direkte modeller/pivot før denne kode nås.
+  if (from === 'da' && to === 'fi') return translateText(translateText(text, 'da', 'en'), 'en', 'fi')
+  if (from === 'fi' && to === 'da') return translateText(translateText(text, 'fi', 'en'), 'en', 'da')
+
   let result = text
+
+  if (from === 'en' && to === 'fi') {
+    result = result.replace(/[A-Za-z]+/g, (word) => {
+      const translated = enToFi.get(word.toLowerCase())
+      return translated === undefined ? word : matchCase(word, translated)
+    })
+    return result
+  }
+  if (from === 'fi' && to === 'en') {
+    result = result.replace(/[A-Za-zÄÖäö]+/g, (word) => {
+      const translated = fiToEn.get(word.toLowerCase())
+      return translated === undefined ? word : matchCase(word, translated)
+    })
+    return result
+  }
 
   // Frase-pas: længste fraser først, case-insensitivt, bevar stort begyndelsesbogstav.
   const phrases = [...PHRASES].sort((a, b) => (from === 'da' ? b[0].length - a[0].length : b[1].length - a[1].length))

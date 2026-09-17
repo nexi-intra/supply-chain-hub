@@ -56,7 +56,7 @@ export function TheLibrarian2Game({ onNavigateBack }: TheLibrarian2GameProps) {
           className="bg-background shadow-lg gap-2 font-semibold"
         >
           <ArrowLeft size={16} weight="bold" />
-          {language === 'da' ? 'Tilbage' : 'Back'}
+          {language === 'da' ? 'Tilbage' : language === 'fi' ? 'Takaisin' : 'Back'}
         </Button>
       </div>
     </div>

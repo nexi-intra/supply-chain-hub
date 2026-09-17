@@ -56,7 +56,7 @@ const UI_TEXT = {
       `Jeg fandt ${count} relevant${count === 1 ? '' : 'e'} afsnit i ${guides} guide${guides === 1 ? '' : 's'}. Svaret er citeret direkte fra biblioteket:`,
     noHits: (q: string) => `Jeg fandt ikke noget i guidebiblioteket, der matcher "${q}". Prøv andre søgeord — eller opret en guide om emnet, hvis det mangler.`,
     empty: 'Der er ingen guides i biblioteket endnu. Opret den første guide via "Ny guide"-knappen.',
-    translatedFrom: { da: 'Oversat fra dansk', en: 'Oversat fra engelsk' },
+    translatedFrom: { da: 'Oversat fra dansk', en: 'Oversat fra engelsk', fi: 'Oversat fra finsk' },
     openGuide: 'Åbn guide',
     placeholder: 'Spørg om noget fra guiderne…',
   },
@@ -66,9 +66,19 @@ const UI_TEXT = {
       `I found ${count} relevant section${count === 1 ? '' : 's'} in ${guides} guide${guides === 1 ? '' : 's'}. The answer is quoted directly from the library:`,
     noHits: (q: string) => `I couldn't find anything in the guide library matching "${q}". Try different keywords — or create a guide on the topic if it's missing.`,
     empty: 'There are no guides in the library yet. Create the first one via the "Ny guide" button.',
-    translatedFrom: { da: 'Translated from Danish', en: 'Translated from English' },
+    translatedFrom: { da: 'Translated from Danish', en: 'Translated from English', fi: 'Translated from Finnish' },
     openGuide: 'Open guide',
     placeholder: 'Ask about anything in the guides…',
+  },
+  fi: {
+    greeting: 'Hei! Kysy minulta kysymys, niin etsin vastauksen opaskirjastosta ja lainaan asiaankuuluvat vaiheet.',
+    found: (count: number, guides: number) =>
+      `Löysin ${count} asiaankuuluvaa osiota ${guides} oppaasta. Vastaus on lainattu suoraan kirjastosta:`,
+    noHits: (q: string) => `Opaskirjastosta ei löytynyt hakua ”${q}” vastaavaa sisältöä. Kokeile muita hakusanoja tai luo aiheesta uusi opas.`,
+    empty: 'Kirjastossa ei ole vielä oppaita. Luo ensimmäinen opas Uusi opas -painikkeella.',
+    translatedFrom: { da: 'Käännetty tanskasta', en: 'Käännetty englannista', fi: 'Käännetty suomesta' },
+    openGuide: 'Avaa opas',
+    placeholder: 'Kysy jotain oppaista…',
   },
 } as const
 
@@ -108,12 +118,12 @@ async function hitsToCitations(hits: SearchHit[], guides: Guide[], answerLanguag
 
 export function GuideChat({ open, onOpenChange, guides, searchIndex, onOpenGuide }: GuideChatProps) {
   const { language } = useLanguage()
-  const appLanguage: GuideLanguage = language === 'en' ? 'en' : 'da'
+  const appLanguage: GuideLanguage = language
   const [messages, setMessages] = useState<RagMessage[]>(() => [
     {
       id: '1',
       role: 'assistant',
-      content: UI_TEXT[language === 'en' ? 'en' : 'da'].greeting,
+      content: UI_TEXT[language].greeting,
       timestamp: Date.now(),
     },
   ])

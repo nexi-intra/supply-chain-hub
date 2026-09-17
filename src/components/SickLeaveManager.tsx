@@ -8,7 +8,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { SickLeaveDialog } from '@/components/SickLeaveDialog'
 import { useKV } from '@/hooks/useKV'
 import { format } from 'date-fns'
-import { da, enUS } from 'date-fns/locale'
+import { da, enUS, fi } from 'date-fns/locale'
 import { toast } from 'sonner'
 import type { SickLeaveEntry } from '@/lib/types'
 import { useLanguage } from '@/contexts/LanguageContext'
@@ -19,7 +19,7 @@ interface SickLeaveManagerProps {
 
 export function SickLeaveManager({ userEmail }: SickLeaveManagerProps) {
   const { t, language } = useLanguage()
-  const dateLocale = language === 'en' ? enUS : da
+  const dateLocale = language === 'en' ? enUS : language === 'fi' ? fi : da
   const [sickLeaveEntries, setSickLeaveEntries] = useKV<SickLeaveEntry[]>('sick-leave-entries', [])
   const [editingEntry, setEditingEntry] = useState<SickLeaveEntry | null>(null)
   const [showEditDialog, setShowEditDialog] = useState(false)

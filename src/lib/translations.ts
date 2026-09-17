@@ -1,4 +1,6 @@
-export const translations = {
+import fiTranslations from './translations.fi.json'
+
+const baseTranslations = {
   da: {
     auth: {
       loginSubtitle: "Log ind for at fortsætte",
@@ -193,8 +195,17 @@ export const translations = {
         codeHint: "Kun bogstaver/tal, bruges som mappenavn på disken",
         codePlaceholder: "fx TRR",
         createdToast: "Team oprettet",
+        updatedToast: "Team opdateret",
         codeExists: "Denne kode findes allerede",
         fieldsRequired: "Udfyld navn og kode",
+        editFieldsRequired: "Udfyld navn og forkortelse",
+        invalidAbbreviation: "Forkortelsen må kun indeholde bogstaver, tal, _ og - (maks. 12 tegn)",
+        editTeam: "Rediger team",
+        editHint: "Navn og forkortelse kan ændres uden at flytte eller ændre teamets datamappe.",
+        abbreviationLabel: "Forkortelse",
+        manager: "Manager",
+        managers: "Managere",
+        noManagers: "Ingen manager er registreret i teamet",
         noneFound: "Ingen teams registreret endnu"
       },
       createUserDialog: {
@@ -207,6 +218,25 @@ export const translations = {
         submit: "Opret bruger",
         created: "Bruger oprettet",
         fieldsRequired: "Udfyld alle felter"
+      },
+      accessViews: {
+        title: "Skrivebeskyttede samlehubs",
+        description: "Opret en rigtig hub med data fra flere teams uden at gøre de tildelte personer til medlemmer af teamene.",
+        create: "Opret samlehub",
+        edit: "Rediger samlehub",
+        name: "Navn",
+        namePlaceholder: "fx TCD + TRR",
+        teams: "Teams i hubben",
+        people: "Personer med adgang",
+        noPeople: "Ingen personer tildelt",
+        noneFound: "Ingen samlehubs oprettet endnu",
+        readOnly: "Kun læsning",
+        selectTwoTeams: "Vælg mindst to teams",
+        nameRequired: "Indtast et navn",
+        saved: "Samlehub gemt",
+        deleted: "Samlehub slettet",
+        deleteConfirm: "Vil du slette denne samlehub? Ingen teamdata bliver slettet.",
+        save: "Gem samlehub"
       }
     },
     managerPanel: {
@@ -577,6 +607,7 @@ export const translations = {
       languageAuto: "Automatisk (registreres ved gemning)",
       languageDanish: "Dansk",
       languageEnglish: "Engelsk",
+      languageFinnish: "Finsk",
       reviewIntervalLabel: "Opdaterings-interval",
       reviewIntervalHintPrefix: "Guiden markeres som \"skal opdateres\"",
       reviewIntervalHintSuffix: "efter seneste gemning/gennemgang.",
@@ -709,7 +740,7 @@ export const translations = {
     dataStorageManager: {
       sourceLabels: {
         env: "Sat via miljøvariabel (TCD_HUB_DATA_DIR)",
-        config: "Sat via tcd-hub.config.json ved siden af programmet",
+        config: "Sat via supply-chan-hub.config ved siden af programmet",
         user: "Valgt her i appen",
         default: "Appens egen mappe på denne computer"
       },
@@ -983,7 +1014,7 @@ export const translations = {
       presetThemesDescription: "Hurtig start med disse presets"
     },
     hub: {
-      title: "Terminal Configuration & Dispatch Hub",
+      title: "Supply Chain Hub",
       modules: {
         shifts: "Vagtplan",
         calendar: "Kalender",
@@ -994,9 +1025,9 @@ export const translations = {
         meals: "Madplan",
         games: "Spil Hjørnet",
         documents: "Dokumenter",
-        projects: "Projekter",
+        projects: "To Do",
         chat: "Team Chat",
-        notebook: "Virtuel Notesbog"
+        notebook: "Notesbog"
       },
       descriptions: {
         shifts: "Administrer vagter og roller for teamet",
@@ -1007,7 +1038,7 @@ export const translations = {
         guides: "Søg og administrer afdelingens guides og procedurer",
         games: "Sjove spil til pause og afslapning",
         documents: "Fælles dokumenter og filer",
-        projects: "Projektadministration og opgaver",
+        projects: "Team-to-do's og personlige to-do's",
         chat: "Intern kommunikation og beskeder",
         manager: "Administrer rettigheder og håndter sygemeldinger",
         managerLocked: "Kun tilgængelig for managere og administratorer",
@@ -1033,7 +1064,28 @@ export const translations = {
         homeOfficeInSupplyChain: "Hjemmearbejde i Supply Chain",
         noOneOffSupplyChain: "Ingen personer fra andre teams har fri i dag",
         noOneSickSupplyChain: "Ingen personer fra andre teams er syge i dag",
-        noOneHomeOfficeSupplyChain: "Ingen personer fra andre teams arbejder hjemme i dag"
+        noOneHomeOfficeSupplyChain: "Ingen i Supply Chain arbejder hjemme i dag"
+      },
+      dashboard: {
+        customize: "Tilpas dashboard",
+        title: "Tilpas dit dashboard",
+        description: "Vælg hvilke informationskort du vil se, og hvor meget plads de skal bruge. Valget gemmes personligt til din konto.",
+        reset: "Nulstil",
+        done: "Færdig",
+        sizes: {
+          compact: "Lille",
+          standard: "Normal",
+          large: "Stor"
+        },
+        widgets: {
+          teamTasks: "Teamopgaver i dag",
+          offToday: "Fri i dag",
+          todaysMeal: "Mad i dag",
+          sickToday: "Syge i dag",
+          supplyOff: "Fri i Supply Chain",
+          supplyHomeOffice: "Hjemmearbejde i Supply Chain",
+          supplySick: "Syge i Supply Chain"
+        }
       }
     },
     shifts: {
@@ -1549,7 +1601,7 @@ export const translations = {
       requestError: "Kunne ikke oprette fridag anmodning"
     },
     notebook: {
-      title: "Virtuel Notesbog",
+      title: "Notesbog",
       sharedNotes: "Delte Noter",
       personalNotes: "Personlige Noter",
       addNote: "Tilføj Note",
@@ -1796,8 +1848,17 @@ export const translations = {
         codeHint: "Letters/numbers only, used as the folder name on disk",
         codePlaceholder: "e.g. TRR",
         createdToast: "Team created",
+        updatedToast: "Team updated",
         codeExists: "This code already exists",
         fieldsRequired: "Fill in name and code",
+        editFieldsRequired: "Fill in name and abbreviation",
+        invalidAbbreviation: "The abbreviation may only contain letters, numbers, _ and - (maximum 12 characters)",
+        editTeam: "Edit team",
+        editHint: "The name and abbreviation can be changed without moving or changing the team's data folder.",
+        abbreviationLabel: "Abbreviation",
+        manager: "Manager",
+        managers: "Managers",
+        noManagers: "No manager is registered in the team",
         noneFound: "No teams registered yet"
       },
       createUserDialog: {
@@ -1810,6 +1871,25 @@ export const translations = {
         submit: "Create user",
         created: "User created",
         fieldsRequired: "Fill in all fields"
+      },
+      accessViews: {
+        title: "Read-only combined hubs",
+        description: "Create a full hub with data from multiple teams without making assigned people members of those teams.",
+        create: "Create combined hub",
+        edit: "Edit combined hub",
+        name: "Name",
+        namePlaceholder: "e.g. TCD + TRR",
+        teams: "Teams in the hub",
+        people: "People with access",
+        noPeople: "No people assigned",
+        noneFound: "No combined hubs created yet",
+        readOnly: "Read only",
+        selectTwoTeams: "Select at least two teams",
+        nameRequired: "Enter a name",
+        saved: "Combined hub saved",
+        deleted: "Combined hub deleted",
+        deleteConfirm: "Delete this combined hub? No team data will be deleted.",
+        save: "Save combined hub"
       }
     },
     managerPanel: {
@@ -2180,6 +2260,7 @@ export const translations = {
       languageAuto: "Automatic (detected on save)",
       languageDanish: "Danish",
       languageEnglish: "English",
+      languageFinnish: "Finnish",
       reviewIntervalLabel: "Review interval",
       reviewIntervalHintPrefix: "The guide is marked as \"needs review\"",
       reviewIntervalHintSuffix: "after the latest save/review.",
@@ -2312,7 +2393,7 @@ export const translations = {
     dataStorageManager: {
       sourceLabels: {
         env: "Set via environment variable (TCD_HUB_DATA_DIR)",
-        config: "Set via tcd-hub.config.json next to the program",
+        config: "Set via supply-chan-hub.config next to the program",
         user: "Chosen here in the app",
         default: "The app's own folder on this computer"
       },
@@ -2586,7 +2667,7 @@ export const translations = {
       presetThemesDescription: "Quick start with these presets"
     },
     hub: {
-      title: "Terminal Configuration & Dispatch Hub",
+      title: "Supply Chain Hub",
       modules: {
         shifts: "Shift Schedule",
         calendar: "Calendar",
@@ -2597,9 +2678,9 @@ export const translations = {
         meals: "Meal Plan",
         games: "Game Corner",
         documents: "Documents",
-        projects: "Projects",
+        projects: "To Do",
         chat: "Team Chat",
-        notebook: "Virtual Notebook"
+        notebook: "Notebook"
       },
       descriptions: {
         shifts: "Manage shifts and roles for the team",
@@ -2610,7 +2691,7 @@ export const translations = {
         guides: "Search and manage department guides and procedures",
         games: "Fun games for breaks and relaxation",
         documents: "Shared documents and files",
-        projects: "Project management and tasks",
+        projects: "Team and personal to-do's",
         chat: "Internal communication and messages",
         manager: "Manage permissions and handle sick leave reports",
         managerLocked: "Only available for managers and administrators",
@@ -2636,7 +2717,28 @@ export const translations = {
         homeOfficeInSupplyChain: "Home office in Supply Chain",
         noOneOffSupplyChain: "No one in other teams is off today",
         noOneSickSupplyChain: "No one in other teams is sick today",
-        noOneHomeOfficeSupplyChain: "No one in other teams is working from home today"
+        noOneHomeOfficeSupplyChain: "No one in Supply Chain is working from home today"
+      },
+      dashboard: {
+        customize: "Customize dashboard",
+        title: "Customize your dashboard",
+        description: "Choose which information cards to show and how much space they should use. Your choice is saved to your account.",
+        reset: "Reset",
+        done: "Done",
+        sizes: {
+          compact: "Small",
+          standard: "Standard",
+          large: "Large"
+        },
+        widgets: {
+          teamTasks: "Team tasks today",
+          offToday: "Off today",
+          todaysMeal: "Today's meal",
+          sickToday: "Sick today",
+          supplyOff: "Off in Supply Chain",
+          supplyHomeOffice: "Home office in Supply Chain",
+          supplySick: "Sick in Supply Chain"
+        }
       }
     },
     shifts: {
@@ -3175,7 +3277,7 @@ export const translations = {
       requestError: "Could not create day off request"
     },
     notebook: {
-      title: "Virtual Notebook",
+      title: "Notebook",
       sharedNotes: "Shared Notes",
       personalNotes: "Personal Notes",
       addNote: "Add Note",
@@ -3205,6 +3307,11 @@ export const translations = {
       enterContent: "Write note content..."
     }
   }
+}
+
+export const translations = {
+  ...baseTranslations,
+  fi: fiTranslations as typeof baseTranslations.en,
 }
 
 export type Language = keyof typeof translations

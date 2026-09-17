@@ -18,6 +18,7 @@ export interface KvStore {
    * samme fil-lås som `update()`, men til data der ikke er et array af {id}-objekter.
    */
   updateField(key: string, operation: KvFieldOperation): Promise<Record<string, unknown>>
+  compareAndSet<T>(key: string, expected: T | undefined, value: T): Promise<T>
   /** Notifies when keys change (other tabs/clients, and local writes). Returns unsubscribe. */
   subscribe(listener: (changedKeys: string[]) => void): () => void
 }
@@ -26,10 +27,12 @@ export type KvArrayOperation<T extends { id: string }> =
   | { op: 'append'; items: T[]; path?: string[] }
   | { op: 'upsert'; items: T[]; path?: string[] }
   | { op: 'remove'; ids: string[]; path?: string[] }
+  | { op: 'replaceItem'; id: string; expected: T; item: T; path?: never }
 
 export type KvFieldOperation =
   | { op: 'setField'; field: string; value: unknown }
   | { op: 'deleteField'; field: string }
+  | { op: 'renameField'; field: string; newField: string; expected: unknown; value: unknown }
 
 const PREFIX = 'tcd-hub:'
 
@@ -101,11 +104,9 @@ export const localKv: KvStore = {
   async get<T>(key: string): Promise<T | undefined> {
     const raw = read(key)
     if (raw === undefined) return undefined
-    try {
-      return JSON.parse(raw) as T
-    } catch {
-      return undefined
-    }
+    // An existing invalid value is not a missing key: initialization must not
+    // overwrite it with an empty default.
+    return JSON.parse(raw) as T
   },
 
   async set<T>(key: string, value: T): Promise<void> {
@@ -125,7 +126,8 @@ export const localKv: KvStore = {
   // Browser kører single-client pr. origin — simpel read-modify-write rækker her.
   // path navigerer ned i et objekt til et nested array (fx leaderboard pr. sværhedsgrad).
   async update<T extends { id: string }>(key: string, operation: KvArrayOperation<T>): Promise<T[]> {
-    const current = await localKv.get<Record<string, unknown> | T[]>(key)
+    const raw = read(key)
+    const current = raw === undefined ? undefined : JSON.parse(raw) as Record<string, unknown> | T[]
     const path = operation.path && operation.path.length > 0 ? operation.path : null
     let root: Record<string, unknown> | undefined
     let list: T[]
@@ -154,6 +156,11 @@ export const localKv: KvStore = {
         if (index !== -1) next[index] = item
         else next.push(item)
       }
+    } else if (operation.op === 'replaceItem') {
+      const index = list.findIndex(entry => entry?.id === operation.id)
+      if (index === -1 || JSON.stringify(list[index]) !== JSON.stringify(operation.expected)) throw new Error('KV_CONFLICT: Data changed. Reload and try again.')
+      next = [...list]
+      next[index] = operation.item
     } else {
       const ids = new Set(operation.ids)
       next = list.filter((entry) => !entry || !ids.has(entry.id))
@@ -175,11 +182,32 @@ export const localKv: KvStore = {
     return () => listeners.delete(listener)
   },
 
+  async compareAndSet<T>(key: string, expected: T | undefined, value: T): Promise<T> {
+    // No await between read/check/write: local operations are serialized in
+    // this renderer. Shared desktop data uses the file lock in store.cjs.
+    const raw = read(key)
+    const current = raw === undefined ? undefined : JSON.parse(raw)
+    if (JSON.stringify(current) !== JSON.stringify(expected)) throw new Error('KV_CONFLICT: Data changed. Reload and try again.')
+    write(key, JSON.stringify(value))
+    notify([key])
+    return value
+  },
+
   // Browser kører single-client pr. origin — simpel read-modify-write rækker her.
   async updateField(key: string, operation: KvFieldOperation): Promise<Record<string, unknown>> {
-    const current = await localKv.get<Record<string, unknown>>(key)
+    const unsafe = new Set(['__proto__', 'constructor', 'prototype'])
+    if (!operation.field || unsafe.has(operation.field) || (operation.op === 'renameField' && (!operation.newField || unsafe.has(operation.newField)))) throw new Error('KV_INVALID_OPERATION: Invalid field.')
+    if (operation.op !== 'deleteField' && JSON.stringify(operation.value) === undefined) throw new Error('KV_INVALID_OPERATION: Missing value.')
+    const raw = read(key)
+    const current = raw === undefined ? undefined : JSON.parse(raw) as Record<string, unknown>
+    if (current !== undefined && (!current || typeof current !== 'object' || Array.isArray(current))) throw new Error('KV_INVALID_OPERATION: Expected an object.')
     const root: Record<string, unknown> = current && typeof current === 'object' && !Array.isArray(current) ? current : {}
-    if (operation.op === 'setField') root[operation.field] = operation.value
+    if (operation.op === 'renameField') {
+      if (!Object.prototype.hasOwnProperty.call(root, operation.field) || JSON.stringify(root[operation.field]) !== JSON.stringify(operation.expected) || (operation.field !== operation.newField && Object.prototype.hasOwnProperty.call(root, operation.newField))) throw new Error('KV_CONFLICT: The account changed or the new email is taken.')
+      delete root[operation.field]
+      root[operation.newField] = operation.value
+    }
+    else if (operation.op === 'setField') root[operation.field] = operation.value
     else delete root[operation.field]
     write(key, JSON.stringify(root))
     notify([key])

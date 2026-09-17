@@ -23,7 +23,7 @@ interface AuthProps {
 }
 
 export function Auth({ onAuthenticated }: AuthProps) {
-  const { t } = useLanguage()
+  const { t, language } = useLanguage()
   const [mode, setMode] = useState<'login' | 'signup'>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -37,6 +37,34 @@ export function Auth({ onAuthenticated }: AuthProps) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsLoading(true)
+
+    if (window.electronAuth) {
+      try {
+        if (mode === 'signup') {
+          if (!fullName.trim()) { toast.error(t.auth.errors.fullNameRequired); return }
+          if (!phoneNumber.trim()) { toast.error(t.auth.errors.phoneRequired); return }
+          if (password.length < 6) { toast.error(t.auth.errors.passwordTooShort); return }
+          if (password !== confirmPassword) { toast.error(t.auth.errors.passwordsMismatch); return }
+          await window.electronAuth.signup({ email, password, fullName, phone: phoneNumber, language })
+          toast.success(t.auth.signupRequestSent, { duration: 8000 })
+          setMode('login'); setPassword(''); setConfirmPassword('')
+        } else {
+          const session = await window.electronAuth.login({ email, password, rememberMe })
+          await onAuthenticated(session.userId, session.email, rememberMe)
+          toast.success(t.auth.welcomeBack)
+        }
+      } catch (error) {
+        const code = String(error)
+        toast.error(code.includes('AUTH_PENDING') ? t.auth.errors.pendingApproval
+          : code.includes('AUTH_REJECTED') ? t.auth.errors.rejected
+          : code.includes('AUTH_EMAIL_EXISTS') ? t.auth.errors.emailExists
+          : code.includes('AUTH_NO_TEAMS') ? t.auth.errors.noTeamsConfigured
+          : code.includes('AUTH_PICK_TEAM') ? t.auth.errors.teamPickerNotSupported
+          : code.includes('AUTH_CREDENTIALS') || code.includes('AUTH_RESERVED') ? t.auth.errors.wrongCredentials
+          : t.auth.errors.connectionFailed)
+      } finally { setIsLoading(false) }
+      return
+    }
 
     // Supply Chain Hub multitenancy (Fase 1): slå emailen op i det centrale
     // team-register FØR noget som helst andet, så den rigtige teams KV-store

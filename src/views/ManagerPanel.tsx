@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowLeft, ShieldCheck, Check, Crown, User as UserIcon, Trash, FirstAidKit, X, Umbrella, ClockCounterClockwise, PencilSimple, Plus, Phone, CalendarBlank, Eye, Gift, WaveSine, LockKey } from '@phosphor-icons/react'
+import { ArrowLeft, ShieldCheck, Check, Crown, User as UserIcon, Trash, FirstAidKit, X, Umbrella, ClockCounterClockwise, PencilSimple, Plus, Phone, CalendarBlank, Eye, Gift, WaveSine, LockKey, Books } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -16,16 +16,17 @@ import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { format } from 'date-fns'
-import { da, enUS } from 'date-fns/locale'
+import { da, enUS, fi } from 'date-fns/locale'
 import { UserRole, hasManagerAccess, getCreatorEmail, getRoleDisplayName, getRoleDescription } from '@/lib/userRoles'
 import { hashPassword } from '@/lib/passwords'
 import { newId } from '@/lib/utils'
 import { parseLocalDate } from '@/lib/dateUtils'
-import { appendToKvArray, updateKvArrayItem, removeFromKvArray, upsertInKvArray, setKvObjectField, deleteKvObjectField } from '@/lib/kvArrays'
+import { appendToKvArray, updateKvArrayItem, removeFromKvArray, upsertInKvArray, setKvObjectField, deleteKvObjectField, replaceKvObjectField } from '@/lib/kvArrays'
 import { cn } from '@/lib/utils'
 import { isAnyModalOpen } from '@/lib/modalStack'
 import { consumeNavigationParams } from '@/lib/appNavigation'
-import { getEmployeeColorByEmail } from '@/lib/employeeColors'
+import { getEmployeeColorByEmail, EMPLOYEE_COLOR_OVERRIDES_KEY, EMPLOYEE_COLOR_PALETTE, type EmployeeColorOverrides } from '@/lib/employeeColors'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { getWeekNumber as getISOWeekNumber } from '@/lib/dateUtils'
 import { useLanguage } from '@/contexts/LanguageContext'
 import React from 'react'
@@ -52,18 +53,19 @@ interface ManagerPanelProps {
 
 export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPanelProps) {
   const { t, language } = useLanguage()
-  const dateLocale = language === 'en' ? enUS : da
+  const dateLocale = language === 'en' ? enUS : language === 'fi' ? fi : da
   // Deep-link (fx knappen i ferieanmodnings-mails) kan bede om en bestemt fane.
   const [initialTab] = useState(() => consumeNavigationParams()?.tab ?? 'permissions')
   const [activeTab, setActiveTab] = useState(initialTab)
   const [users, setUsers] = useState<User[]>([])
+  // Manager-satte farveoverstyringer (delt KV) — vinder over den automatiske hash-farve.
+  const [colorOverrides] = useKV<EmployeeColorOverrides>(EMPLOYEE_COLOR_OVERRIDES_KEY, {})
   const [pendingUsers, setPendingUsers] = useState<User[]>([])
   const [sickLeaveEntries, setSickLeaveEntries] = useState<SickLeaveEntry[]>([])
   const [vacationEntries, setVacationEntries] = useState<VacationEntry[]>([])
   const [allVacations, setAllVacations] = useState<VacationEntry[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [hasAccess, setHasAccess] = useState(false)
-  const [creatorEmail, setCreatorEmail] = useState<string | null>(null)
   const [editingUser, setEditingUser] = useState<User | null>(null)
   const [newName, setNewName] = useState('')
   const [newEmail, setNewEmail] = useState('')
@@ -98,6 +100,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
   // Hvilke ferieanmodninger DENNE manager allerede har set — bruges til at fjerne
   // Hub-advarslen/notifikationen, uden at røre selve "afventer godkendelse"-status.
   const [seenVacationRequestIds, setSeenVacationRequestIds] = useKV<string[]>(`seen-vacation-requests-${userEmail}`, [])
+  const [guideAdminEmails, setGuideAdminEmails] = useKV<string[]>('guide-admin-emails', [], { initializeIfMissing: false })
   const [isBulkProcessing, setIsBulkProcessing] = useState(false)
   // Fase 8/9 guide-adgangsanmodning: andre teams' brugere anmoder om adgang til EGNE guides.
   // BEVIDST ikke useKV her: dens "skriv default hvis undefined"-adfærd kan i et kapløb
@@ -115,7 +118,6 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
     const checkAccess = async () => {
       const access = await hasManagerAccess(userEmail)
       setHasAccess(access)
-      setCreatorEmail(await getCreatorEmail())
       if (access) {
         loadUsers()
         loadSickLeaveEntries()
@@ -158,12 +160,10 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
     const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; phone?: string; role?: UserRole; isManager?: boolean; status?: 'pending' | 'approved' | 'rejected'; username?: string }>>('users')
     if (usersData) {
       const allUsers = Object.values(usersData)
-        .filter(u => !creator || u.email.toLowerCase() !== creator)
+        .filter(u => u.role !== 'creator' && (!creator || u.email.toLowerCase() !== creator))
         .map(u => {
         let role: UserRole = 'user'
-        if (creator && u.email.toLowerCase() === creator) {
-          role = 'creator'
-        } else if (u.role) {
+        if (u.role) {
           role = u.role
         } else if (u.isManager) {
           role = 'manager'
@@ -211,7 +211,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
       toast.error(t.managerPanel.permissions.userNotFound)
       return
     }
-    await setKvObjectField('users', user.email, { ...usersData[user.email], status: 'approved' })
+    await replaceKvObjectField('users', user.email, usersData[user.email], { ...usersData[user.email], status: 'approved' })
     await loadUsers()
     await sendUserDecisionEmail(user, true)
     toast.success(`${user.fullName} ${t.managerPanel.permissions.userApprovedSuffix}`)
@@ -223,7 +223,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
       toast.error(t.managerPanel.permissions.userNotFound)
       return
     }
-    await setKvObjectField('users', user.email, { ...usersData[user.email], status: 'rejected' })
+    await replaceKvObjectField('users', user.email, usersData[user.email], { ...usersData[user.email], status: 'rejected' })
     await loadUsers()
     await sendUserDecisionEmail(user, false)
     toast.success(`${t.managerPanel.permissions.userRequestRejectedPrefix} ${user.fullName} ${t.managerPanel.permissions.userRequestRejectedSuffix}`)
@@ -309,7 +309,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
 
     const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; role: UserRole; isManager: boolean }>>('users')
     if (usersData && usersData[email]) {
-      await setKvObjectField('users', email, {
+      await replaceKvObjectField('users', email, usersData[email], {
         ...usersData[email],
         role: newRole,
         isManager: newRole === 'manager' || newRole === 'creator',
@@ -317,6 +317,25 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
       await loadUsers()
       
       toast.success(`${t.managerPanel.permissions.roleChangedPrefix} ${getRoleDisplayName(newRole, language)}`)
+    }
+  }
+
+  // Sætter en manuel farve for en bruger (delt override) — vinder over auto-farven overalt.
+  const setUserColor = async (email: string, paletteIndex: number) => {
+    try {
+      await setKvObjectField(EMPLOYEE_COLOR_OVERRIDES_KEY, email.trim().toLowerCase(), paletteIndex)
+      toast.success(language === 'da' ? 'Farve opdateret' : language === 'fi' ? 'Väri päivitetty' : 'Color updated')
+    } catch {
+      toast.error(language === 'da' ? 'Kunne ikke ændre farve' : language === 'fi' ? 'Värin muutos epäonnistui' : 'Could not change color')
+    }
+  }
+
+  const resetUserColor = async (email: string) => {
+    try {
+      await deleteKvObjectField(EMPLOYEE_COLOR_OVERRIDES_KEY, email.trim().toLowerCase())
+      toast.success(language === 'da' ? 'Farve nulstillet' : language === 'fi' ? 'Väri palautettu' : 'Color reset')
+    } catch {
+      toast.error(language === 'da' ? 'Kunne ikke nulstille farve' : language === 'fi' ? 'Värin palautus epäonnistui' : 'Could not reset color')
     }
   }
 
@@ -332,6 +351,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
       const userFullName = usersData[email].fullName
       
       await deleteKvObjectField('users', email)
+      setGuideAdminEmails((current) => (current || []).filter((item) => item.toLowerCase() !== email.toLowerCase()))
       
       const assignments = (await window.kv.get<Array<{ id: string; employeeId: string; employeeName: string; roleId: string; date: string; comment?: string }>>('shift-assignments')) || []
       const assignmentIdsToRemove = assignments.filter(a => a.employeeName === userFullName).map(a => a.id)
@@ -340,6 +360,17 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
       await loadUsers()
       toast.success(t.managerPanel.permissions.deleted)
     }
+  }
+
+  const setGuideAdmin = (email: string, enabled: boolean) => {
+    const normalizedEmail = email.trim().toLowerCase()
+    setGuideAdminEmails((current) => {
+      const withoutUser = (current || []).filter((item) => item.trim().toLowerCase() !== normalizedEmail)
+      return enabled ? [...withoutUser, normalizedEmail] : withoutUser
+    })
+    toast.success(enabled
+      ? (language === 'da' ? 'Brugeren er nu Guide Admin' : language === 'fi' ? 'Käyttäjä on nyt opasvastaava' : 'User is now a Guide Admin')
+      : (language === 'da' ? 'Guide Admin-adgangen er fjernet' : language === 'fi' ? 'Opasvastaavan käyttöoikeus poistettiin' : 'Guide Admin access removed'))
   }
 
   const handleApproveGuideAccessRequest = async (request: GuideAccessRequest) => {
@@ -419,6 +450,11 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
     }
 
     const userData = usersData[editingUser.email]
+    const normalizedNewEmail = newEmail.trim().toLowerCase()
+    if (normalizedNewEmail !== editingUser.email.trim().toLowerCase() && Object.keys(usersData).some(email => email.trim().toLowerCase() === normalizedNewEmail)) {
+      toast.error(t.managerPanel.validation.emailExists)
+      return
+    }
 
     if (newPassword && newPassword.length < 6) {
       toast.error(t.managerPanel.validation.passwordTooShort)
@@ -435,18 +471,26 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
     }
 
     if (newEmail.trim().toLowerCase() !== editingUser.email.toLowerCase()) {
-      // Registret kender kun den GAMLE email — uden en frisk tildeling her kan
-      // brugeren ikke logge ind med sin nye email bagefter.
-      if (window.electronRegistry) {
+      // Native account migration updates the directory and all references.
+      if (!window.electronAuth && window.electronRegistry) {
         const currentTeam = await window.electronRegistry.getCurrentTeam()
         if (currentTeam) await window.electronRegistry.assignUser(newEmail.trim().toLowerCase(), currentTeam.teamId)
       }
-      await deleteKvObjectField('users', editingUser.email)
-      await setKvObjectField('users', newEmail.trim().toLowerCase(), updatedUserData)
+      await window.kv.updateField('users', { op: 'renameField', field: editingUser.email, newField: normalizedNewEmail, expected: userData, value: { ...updatedUserData, email: normalizedNewEmail } })
+      if (!window.electronAuth && (guideAdminEmails || []).some((item) => item.toLowerCase() === editingUser.email.toLowerCase())) {
+        setGuideAdminEmails((current) => [
+          ...(current || []).filter((item) => item.toLowerCase() !== editingUser.email.toLowerCase()),
+          newEmail.trim().toLowerCase(),
+        ])
+      }
     } else {
-      await setKvObjectField('users', editingUser.email, updatedUserData)
+      await window.kv.updateField('users', { op: 'renameField', field: editingUser.email, newField: editingUser.email, expected: userData, value: updatedUserData })
     }
 
+    if (window.electronAuth && normalizedNewEmail !== editingUser.email.toLowerCase() && editingUser.email.toLowerCase() === userEmail.toLowerCase()) {
+      onLogout()
+      return
+    }
     await loadUsers()
     setIsEditDialogOpen(false)
     setEditingUser(null)
@@ -814,13 +858,6 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
 
   const getRoleBadge = (role: UserRole) => {
     switch (role) {
-      case 'creator':
-        return (
-          <Badge className="bg-gradient-to-r from-accent via-primary to-accent text-white">
-            <Crown size={14} className="mr-1" weight="fill" />
-            {t.teamOverview.roleCreator}
-          </Badge>
-        )
       case 'manager':
         return (
           <Badge className="bg-gradient-to-r from-primary to-accent text-white">
@@ -865,7 +902,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
   return (
     <div className="min-h-screen relative overflow-hidden">
 
-      <div className="absolute top-6 right-6 left-6 z-20">
+      <div className="fixed top-6 right-6 left-6 z-30 pointer-events-none">
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pb-16">
           <div className="flex items-center gap-3">
             <motion.div
@@ -877,7 +914,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                 variant="outline"
                 size="lg"
                 onClick={onNavigateBack}
-                className="bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
+                className="pointer-events-auto bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
               >
                 <ArrowLeft size={20} />
                 {t.common.back}
@@ -1046,12 +1083,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                     >
                       <div className="flex items-center gap-4 flex-1 min-w-0">
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            <div className="font-bold text-lg">{user.fullName}</div>
-                            {user.role === 'creator' && (
-                              <Crown size={18} className="text-accent" weight="fill" />
-                            )}
-                          </div>
+                          <div className="font-bold text-lg mb-1">{user.fullName}</div>
                           <div className="text-sm text-muted-foreground truncate">{user.email}</div>
                           <div className="text-xs text-muted-foreground mt-1">{getRoleDescription(user.role, language)}</div>
                         </div>
@@ -1063,68 +1095,108 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                         </div>
                       </div>
                       <div className="ml-4 flex items-center gap-2">
-                        {user.email.toLowerCase() !== creatorEmail ? (
-                          <>
-                            <Button 
-                              variant="ghost" 
-                              size="icon" 
-                              onClick={() => openEditNameDialog(user)}
-                              className="hover:bg-primary/10"
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <button
+                              type="button"
+                              className="w-10 h-10 rounded-lg flex items-center justify-center font-bold text-sm shadow-md border-2 border-transparent hover:border-primary/40 transition-colors"
+                              style={{
+                                backgroundColor: getEmployeeColorByEmail(user.email, colorOverrides).bg,
+                                color: getEmployeeColorByEmail(user.email, colorOverrides).text,
+                              }}
+                              title={language === 'da' ? 'Skift farve' : language === 'fi' ? 'Vaihda väri' : 'Change color'}
                             >
-                              <PencilSimple size={20} />
+                              {user.fullName.charAt(0).toUpperCase()}
+                            </button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-64">
+                            <div className="space-y-3">
+                              <div className="text-sm font-semibold">
+                                {language === 'da' ? 'Vælg farve' : language === 'fi' ? 'Valitse väri' : 'Choose color'}
+                              </div>
+                              <div className="grid grid-cols-8 gap-2">
+                                {EMPLOYEE_COLOR_PALETTE.map((color, index) => {
+                                  const isActive = colorOverrides?.[user.email.trim().toLowerCase()] === index
+                                  return (
+                                    <button
+                                      key={color.name}
+                                      type="button"
+                                      onClick={() => setUserColor(user.email, index)}
+                                      className={cn(
+                                        'w-6 h-6 rounded-full border-2 transition-transform hover:scale-110',
+                                        isActive ? 'border-foreground ring-2 ring-primary ring-offset-1 ring-offset-background' : 'border-transparent'
+                                      )}
+                                      style={{ backgroundColor: color.bg }}
+                                      title={color.name}
+                                    />
+                                  )
+                                })}
+                              </div>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="w-full"
+                                onClick={() => resetUserColor(user.email)}
+                              >
+                                {language === 'da' ? 'Nulstil til automatisk' : language === 'fi' ? 'Palauta automaattiseksi' : 'Reset to automatic'}
+                              </Button>
+                            </div>
+                          </PopoverContent>
+                        </Popover>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => openEditNameDialog(user)}
+                          className="hover:bg-primary/10"
+                        >
+                          <PencilSimple size={20} />
+                        </Button>
+                        <Select
+                          value={user.role}
+                          onValueChange={(value) => changeUserRole(user.email, value as UserRole)}
+                        >
+                          <SelectTrigger className="w-40 h-10">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="user">
+                              <div className="flex items-center gap-2">
+                                <UserIcon size={16} />
+                                {t.teamOverview.userSingular}
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="manager">
+                              <div className="flex items-center gap-2">
+                                <ShieldCheck size={16} />
+                                {t.teamOverview.roleManager}
+                              </div>
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10">
+                              <Trash size={20} />
                             </Button>
-                            <Select
-                              value={user.role}
-                              onValueChange={(value) => changeUserRole(user.email, value as UserRole)}
-                            >
-                              <SelectTrigger className="w-40 h-10">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="user">
-                                  <div className="flex items-center gap-2">
-                                    <UserIcon size={16} />
-                                    {t.teamOverview.userSingular}
-                                  </div>
-                                </SelectItem>
-                                <SelectItem value="manager">
-                                  <div className="flex items-center gap-2">
-                                    <ShieldCheck size={16} />
-                                    {t.teamOverview.roleManager}
-                                  </div>
-                                </SelectItem>
-                              </SelectContent>
-                            </Select>
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10">
-                                  <Trash size={20} />
-                                </Button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>{t.managerPanel.permissions.deleteTitle}</AlertDialogTitle>
-                                  <AlertDialogDescription>
-                                    {t.managerPanel.permissions.deleteConfirmPrefix} <strong>{user.fullName}</strong>{t.managerPanel.permissions.deleteConfirmSuffix}
-                                  </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
-                                  <AlertDialogAction
-                                    onClick={() => deleteUser(user.email)}
-                                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                  >
-                                    {t.managerPanel.permissions.deleteAction}
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
-                          </>
-                        ) : (
-                          <Badge variant="outline" className="ml-2">
-                            {t.managerPanel.permissions.permanentAdmin}
-                          </Badge>
-                        )}
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>{t.managerPanel.permissions.deleteTitle}</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                {t.managerPanel.permissions.deleteConfirmPrefix} <strong>{user.fullName}</strong>{t.managerPanel.permissions.deleteConfirmSuffix}
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
+                              <AlertDialogAction
+                                onClick={() => deleteUser(user.email)}
+                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                              >
+                                {t.managerPanel.permissions.deleteAction}
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
                       </div>
                     </motion.div>
                   ))}
@@ -1132,15 +1204,43 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
               )}
             </Card>
 
+            <Card className="p-6 border-2">
+              <div className="flex items-start gap-3 mb-5">
+                <Books size={28} className="text-primary shrink-0" weight="duotone" />
+                <div>
+                  <h2 className="text-2xl font-bold">Guide Admins</h2>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {language === 'da'
+                      ? 'Vælg brugere, som må reviewe, redigere og godkende andre brugeres guideforslag. De får ingen øvrige managerrettigheder og kan ikke godkende deres egne indsendelser.'
+                      : language === 'fi'
+                        ? 'Valitse käyttäjät, jotka voivat tarkistaa, muokata ja hyväksyä muiden opasehdotuksia. He eivät saa muita esihenkilöoikeuksia eivätkä voi hyväksyä omia lähetyksiään.'
+                        : 'Choose users who may review, edit and approve other users’ guide proposals. They receive no other manager permissions and cannot approve their own submissions.'}
+                  </p>
+                </div>
+              </div>
+              <div className="space-y-2">
+                {users.filter((user) => user.status !== 'rejected').map((user) => {
+                  const automaticReviewer = user.role === 'manager' || user.role === 'creator'
+                  const checked = automaticReviewer || (guideAdminEmails || []).some((email) => email.toLowerCase() === user.email.toLowerCase())
+                  return (
+                    <label key={user.email} className={cn('flex items-center justify-between gap-4 rounded-xl border p-4', !automaticReviewer && 'cursor-pointer hover:border-primary/40')}>
+                      <div className="min-w-0">
+                        <div className="font-semibold truncate">{user.fullName}</div>
+                        <div className="text-sm text-muted-foreground truncate">{user.email}</div>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        {automaticReviewer && <Badge variant="secondary">{language === 'da' ? 'Automatisk via managerrolle' : language === 'fi' ? 'Automaattinen esihenkilöroolin kautta' : 'Automatic through manager role'}</Badge>}
+                        {!automaticReviewer && checked && <Badge variant="outline">Guide Admin</Badge>}
+                        <Checkbox checked={checked} disabled={automaticReviewer} onCheckedChange={(value) => setGuideAdmin(user.email, value === true)} />
+                      </div>
+                    </label>
+                  )
+                })}
+              </div>
+            </Card>
+
             <Card className="p-6 border-2 bg-muted/30">
               <div className="space-y-4">
-                <div className="flex items-start gap-3">
-                  <Crown size={24} className="text-accent mt-0.5" weight="fill" />
-                  <div>
-                    <h3 className="font-bold text-lg mb-1">{t.teamOverview.roleCreator}</h3>
-                    <p className="text-sm text-muted-foreground">{getRoleDescription('creator', language)}</p>
-                  </div>
-                </div>
                 <div className="flex items-start gap-3">
                   <ShieldCheck size={24} className="text-primary mt-0.5" weight="fill" />
                   <div>

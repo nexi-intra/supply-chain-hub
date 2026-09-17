@@ -27,16 +27,35 @@ function hashString(str: string): number {
   return Math.abs(hash)
 }
 
-export function getEmployeeColor(employeeId: string): { bg: string; text: string; name: string } {
+export type EmployeeColor = { bg: string; text: string; name: string }
+
+/** Manuelle farve-overstyringer sat af en manager: normaliseret email -> palette-indeks. */
+export type EmployeeColorOverrides = Record<string, number>
+
+/** KV-nøgle hvor manager-farveoverstyringer gemmes (delt, læsbar af alle). */
+export const EMPLOYEE_COLOR_OVERRIDES_KEY = 'employee-color-overrides'
+
+/** Hele farvepaletten, så manager-panelet kan vise valgmulighederne. */
+export const EMPLOYEE_COLOR_PALETTE: EmployeeColor[] = colorPalette
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase()
+}
+
+export function getEmployeeColor(employeeId: string): EmployeeColor {
   const hash = hashString(employeeId)
   const index = hash % colorPalette.length
   return colorPalette[index]
 }
 
-export function getEmployeeColorByEmail(email: string): { bg: string; text: string; name: string } {
+export function getEmployeeColorByEmail(email: string, overrides?: EmployeeColorOverrides): EmployeeColor {
+  const overrideIndex = overrides?.[normalizeEmail(email)]
+  if (typeof overrideIndex === 'number' && overrideIndex >= 0 && overrideIndex < colorPalette.length) {
+    return colorPalette[overrideIndex]
+  }
   return getEmployeeColor(email)
 }
 
-export function getEmployeeColorByName(name: string): { bg: string; text: string; name: string } {
+export function getEmployeeColorByName(name: string): EmployeeColor {
   return getEmployeeColor(name)
 }

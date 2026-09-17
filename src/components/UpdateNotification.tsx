@@ -19,6 +19,7 @@ export function UpdateNotification() {
   const [progress, setProgress] = useState<UpdateProgress | null>(null)
 
   const da = language === 'da'
+  const fi = language === 'fi'
 
   useEffect(() => {
     const api = window.electronUpdates
@@ -61,6 +62,17 @@ export function UpdateNotification() {
         error: 'Opdateringen fejlede',
       }[phase]
     }
+    if (fi) {
+      return {
+        comparing: 'Etsitään muuttuneita tiedostoja…',
+        downloading: 'Ladataan päivitystä…',
+        verifying: 'Tarkistetaan tiedostoa…',
+        extracting: 'Puretaan…',
+        ready: 'Valmis — käynnistetään uudelleen…',
+        restarting: 'Käynnistetään sovellus uudelleen…',
+        error: 'Päivitys epäonnistui',
+      }[phase]
+    }
     return {
       comparing: 'Finding changed files…',
       downloading: 'Downloading update…',
@@ -85,7 +97,7 @@ export function UpdateNotification() {
       toast.error(
         error instanceof Error && error.message
           ? error.message
-          : da ? 'Opdateringen kunne ikke startes' : 'The update could not be started'
+          : da ? 'Opdateringen kunne ikke startes' : fi ? 'Päivitystä ei voitu käynnistää' : 'The update could not be started'
       )
       setIsInstalling(false)
     }
@@ -97,25 +109,25 @@ export function UpdateNotification() {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkle size={22} weight="duotone" className="text-primary" />
-            {da ? 'Ny version tilgængelig' : 'New version available'}
+            {da ? 'Ny version tilgængelig' : fi ? 'Uusi versio saatavilla' : 'New version available'}
           </DialogTitle>
           <DialogDescription>
             {da
               ? 'Opdateringen hentes i baggrunden, mens du kan arbejde videre. Når den er klar, genstarter appen selv — alle data bevares.'
-              : 'The update downloads in the background while you keep working. When it is ready the app restarts itself and all data is kept.'}
+              : fi ? 'Päivitys latautuu taustalla, kun jatkat työskentelyä. Kun sovellus on valmis, se käynnistyy uudelleen ja kaikki tiedot säilytetään.' : 'The update downloads in the background while you keep working. When it is ready the app restarts itself and all data is kept.'}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">
           <div className="flex items-center gap-2">
-            <Badge variant="secondary">{da ? 'Nuværende' : 'Current'}: {currentVersion || '…'}</Badge>
+            <Badge variant="secondary">{da ? 'Nuværende' : fi ? 'Kuluva' : 'Current'}: {currentVersion || '…'}</Badge>
             <span className="text-muted-foreground">→</span>
-            <Badge>{da ? 'Ny' : 'New'}: {manifest.version}</Badge>
+            <Badge>{da ? 'Ny' : fi ? 'Uusi' : 'New'}: {manifest.version}</Badge>
           </div>
           {manifest.notes && !isInstalling && (
             <div className="rounded-lg border bg-muted/40 p-3">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">
-                {da ? 'Nyt i denne version' : "What's new"}
+                {da ? 'Nyt i denne version' : fi ? "Mitä uutta?" : "What's new"}
               </p>
               <p className="text-sm whitespace-pre-wrap">{manifest.notes}</p>
             </div>
@@ -134,7 +146,7 @@ export function UpdateNotification() {
                   {progress.fileCount !== undefined
                     ? (da
                       ? `Kun ændrede filer hentes: ${progress.fileCount} filer (${formatMb(progress.totalBytes)})`
-                      : `Only changed files are downloaded: ${progress.fileCount} files (${formatMb(progress.totalBytes)})`)
+                      : fi ? `Vain muuttuneet tiedostot ladataan: ${progress.fileCount}-tiedostot (${formatMb(progress.totalBytes)})` : `Only changed files are downloaded: ${progress.fileCount} files (${formatMb(progress.totalBytes)})`)
                     : formatMb(progress.totalBytes)}
                 </p>
               )}
@@ -144,11 +156,11 @@ export function UpdateNotification() {
 
         <DialogFooter className="gap-2 sm:gap-0">
           <Button variant="outline" onClick={() => setDismissedVersion(manifest.version)} disabled={isInstalling}>
-            {da ? 'Senere' : 'Later'}
+            {da ? 'Senere' : fi ? 'Myöhemmin' : 'Later'}
           </Button>
           <Button onClick={handleInstall} disabled={isInstalling} className="gap-2">
             <DownloadSimple size={18} />
-            {isInstalling ? (da ? 'Opdaterer…' : 'Updating…') : (da ? 'Opdater nu' : 'Update now')}
+            {isInstalling ? (da ? 'Opdaterer…' : fi ? 'Päivitetään...' : 'Updating…') : (da ? 'Opdater nu' : fi ? 'Päivitä nyt' : 'Update now')}
           </Button>
         </DialogFooter>
       </DialogContent>

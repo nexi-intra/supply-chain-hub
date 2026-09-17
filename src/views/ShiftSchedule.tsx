@@ -26,7 +26,7 @@ import { da, enUS } from 'date-fns/locale'
 import { getWeekNumber, getWeekDates, getWeeksInYear, isDanishHoliday } from '@/lib/dateUtils'
 import { Textarea } from '@/components/ui/textarea'
 import type { TeamEmployee } from '@/views/TeamOverview'
-import { getEmployeeColorByEmail } from '@/lib/employeeColors'
+import { getEmployeeColorByEmail, EMPLOYEE_COLOR_OVERRIDES_KEY, type EmployeeColorOverrides } from '@/lib/employeeColors'
 import { useLanguage } from '@/contexts/LanguageContext'
 import type { ShiftRole, ShiftAssignment, SickLeaveEntry, VacationEntry, BirthdayEntry } from '@/lib/types'
 
@@ -39,6 +39,7 @@ interface ShiftScheduleProps {
 export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEmail }: ShiftScheduleProps) {
   const [roles, setRoles] = useKV<ShiftRole[]>('shift-roles', [])
   const [assignments, setAssignments] = useKV<ShiftAssignment[]>('shift-assignments', [])
+  const [colorOverrides] = useKV<EmployeeColorOverrides>(EMPLOYEE_COLOR_OVERRIDES_KEY, {})
   const [employees, setEmployees] = useState<TeamEmployee[]>([])
   const [sickLeaveEntries, setSickLeaveEntries] = useKV<SickLeaveEntry[]>('sick-leave-entries', [])
   const [vacationEntries, setVacationEntries] = useKV<VacationEntry[]>('vacation-entries', [])
@@ -615,7 +616,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
 
   return (
     <div className="min-h-screen w-full relative overflow-hidden">
-      <div className="absolute top-6 right-6 left-6 z-20">
+      <div className="fixed top-6 right-6 left-6 z-30 pointer-events-none">
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pb-16">
           <div className="flex items-center gap-3">
             <motion.div
@@ -627,7 +628,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                 variant="outline"
                 size="lg"
                 onClick={onNavigateBack}
-                className="bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
+                className="pointer-events-auto bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
               >
                 <ArrowLeft size={20} />
                 <AutoText text="Tilbage" />
@@ -748,7 +749,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                         </th>
                         {(employees || []).map((employee) => {
                           const firstName = employee.name.split(' ')[0]
-                          const employeeColor = getEmployeeColorByEmail(employee.email)
+                          const employeeColor = getEmployeeColorByEmail(employee.email, colorOverrides)
                           return (
                             <th
                               key={employee.id}
@@ -843,7 +844,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                                 const vacation = getEmployeeVacationForDate(employee.email, dateString)
                                 const isEmployeeCellLocked = isDateLockedForEmployee(employee.email, dateString)
                                 
-                                const employeeColor = getEmployeeColorByEmail(employee.email)
+                                const employeeColor = getEmployeeColorByEmail(employee.email, colorOverrides)
 
                                 return (
                                   <td
@@ -1066,7 +1067,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   {(employees || []).map((employee) => {
-                    const employeeColor = getEmployeeColorByEmail(employee.email)
+                    const employeeColor = getEmployeeColorByEmail(employee.email, colorOverrides)
                     return (
                       <motion.div
                         key={employee.id}

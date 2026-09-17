@@ -14,6 +14,7 @@ export function LanguageToggle() {
   const languageLabels = {
     da: 'Dansk',
     en: 'English',
+    fi: 'Suomi',
   }
 
   return (
@@ -34,6 +35,11 @@ export function LanguageToggle() {
           {language === 'en' && <Check weight="bold" />}
           {language !== 'en' && <span className="w-4" />}
           English
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => setLanguage('fi')} className="gap-2 cursor-pointer">
+          {language === 'fi' && <Check weight="bold" />}
+          {language !== 'fi' && <span className="w-4" />}
+          Suomi
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

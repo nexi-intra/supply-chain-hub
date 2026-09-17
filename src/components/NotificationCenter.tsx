@@ -7,7 +7,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { useKV } from '@/hooks/useKV'
 import { useLanguage } from '@/contexts/LanguageContext'
 import { navigateTo } from '@/lib/appNavigation'
-import { getReviewStatus, type Guide } from '@/lib/guideTypes'
+import { getReviewStatus, type Guide, type GuideReviewRequest } from '@/lib/guideTypes'
 import type { Email, VacationEntry, SickLeaveEntry, BirthdayEntry } from '@/lib/types'
 
 interface NotebookNotification {
@@ -40,13 +40,15 @@ interface NotificationCenterProps {
   vacations: VacationEntry[] | undefined
   sickLeave: SickLeaveEntry[] | undefined
   guides: Guide[] | undefined
+  guideReviewRequests: GuideReviewRequest[] | undefined
+  isGuideReviewer: boolean
   // Ferieanmodninger denne manager allerede har set inde i Manager Panel — skal
   // ikke blive ved med at poppe op her, selvom de stadig afventer godkendelse.
   seenVacationRequestIds: string[] | undefined
 }
 
 /** Samlet klokke-ikon på Hub: aggregerer alle "kræver din opmærksomhed"-kilder på tværs af moduler. */
-export function NotificationCenter({ userEmail, isAdminOrManager, emails, vacations, sickLeave, guides, seenVacationRequestIds }: NotificationCenterProps) {
+export function NotificationCenter({ userEmail, isAdminOrManager, emails, vacations, sickLeave, guides, guideReviewRequests, isGuideReviewer, seenVacationRequestIds }: NotificationCenterProps) {
   const { language } = useLanguage()
   const [open, setOpen] = useState(false)
   const [notebookNotifications] = useKV<NotebookNotification[]>('notebook-notifications', [])
@@ -62,7 +64,7 @@ export function NotificationCenter({ userEmail, isAdminOrManager, emails, vacati
         icon: Envelope,
         iconColor: 'text-primary',
         title: e.subject,
-        subtitle: language === 'da' ? `Fra ${e.from}` : `From ${e.from}`,
+        subtitle: language === 'da' ? `Fra ${e.from}` : language === 'fi' ? `${e.from}:stä` : `From ${e.from}`,
         timestamp: e.timestamp,
         onOpen: () => navigateTo('email'),
       })
@@ -77,7 +79,7 @@ export function NotificationCenter({ userEmail, isAdminOrManager, emails, vacati
         icon: NotePencil,
         iconColor: 'text-accent',
         title: n.noteTitle,
-        subtitle: language === 'da' ? `${n.editedByName} redigerede noten` : `${n.editedByName} edited the note`,
+        subtitle: language === 'da' ? `${n.editedByName} redigerede noten` : language === 'fi' ? `${n.editedByName} muokattu viesti` : `${n.editedByName} edited the note`,
         timestamp: new Date(n.timestamp).getTime(),
         onOpen: () => navigateTo('notebook'),
       })
@@ -91,7 +93,7 @@ export function NotificationCenter({ userEmail, isAdminOrManager, emails, vacati
           id: `vacation-${v.id}`,
           icon: Umbrella,
           iconColor: 'text-amber-600',
-          title: language === 'da' ? 'Afventende ferieanmodning' : 'Pending vacation request',
+          title: language === 'da' ? 'Afventende ferieanmodning' : language === 'fi' ? 'Odotetaan lomapyyntöä' : 'Pending vacation request',
           subtitle: v.userEmail,
           timestamp: new Date(v.startDate).getTime() || Date.now(),
           onOpen: () => navigateTo('manager', { tab: 'vacation-requests' }),
@@ -103,7 +105,7 @@ export function NotificationCenter({ userEmail, isAdminOrManager, emails, vacati
           id: `sick-${s.id}`,
           icon: Bell,
           iconColor: 'text-destructive',
-          title: language === 'da' ? 'Ny sygemelding' : 'New sick leave',
+          title: language === 'da' ? 'Ny sygemelding' : language === 'fi' ? 'Uusi sairasloma' : 'New sick leave',
           subtitle: s.userName,
           timestamp: new Date(s.submittedAt).getTime() || Date.now(),
           onOpen: () => navigateTo('manager', { tab: 'sick-leave' }),
@@ -118,12 +120,25 @@ export function NotificationCenter({ userEmail, isAdminOrManager, emails, vacati
         id: `guide-${g.id}`,
         icon: Books,
         iconColor: 'text-destructive',
-        title: language === 'da' ? 'Guide skal revideres' : 'Guide needs review',
+        title: language === 'da' ? 'Guide skal revideres' : language === 'fi' ? 'Opastarvekatsaus' : 'Guide needs review',
         subtitle: g.title,
         timestamp: g.nextReviewAt || now,
         onOpen: () => navigateTo('guides', { search: g.title }),
       })
     })
+
+    const pendingGuideReviews = isGuideReviewer ? (guideReviewRequests || []).filter((request) => request.status === 'pending') : []
+    if (pendingGuideReviews.length > 0) {
+      result.push({
+        id: 'guide-review-queue',
+        icon: Books,
+        iconColor: 'text-amber-600',
+        title: language === 'da' ? 'Guides afventer review' : language === 'fi' ? 'Oppaita odottaa tarkistusta' : 'Guides awaiting review',
+        subtitle: language === 'da' ? `${pendingGuideReviews.length} ${pendingGuideReviews.length === 1 ? 'guide' : 'guides'} i køen` : language === 'fi' ? `${pendingGuideReviews.length} ${pendingGuideReviews.length === 1 ? 'opas' : 'opasta'} jonossa` : `${pendingGuideReviews.length} ${pendingGuideReviews.length === 1 ? 'guide' : 'guides'} in the queue`,
+        timestamp: Math.max(...pendingGuideReviews.map((request) => request.submittedAt)),
+        onOpen: () => navigateTo('guides', { tab: 'review' }),
+      })
+    }
 
     const todayKey = new Date().toISOString().slice(5, 10)
     const birthdaysToday = (birthdays || []).filter(b => b.birthday === todayKey)
@@ -132,15 +147,15 @@ export function NotificationCenter({ userEmail, isAdminOrManager, emails, vacati
         id: `birthday-${b.email}`,
         icon: Gift,
         iconColor: 'text-pink-500',
-        title: language === 'da' ? `${b.fullName} har fødselsdag i dag!` : `${b.fullName}'s birthday today!`,
-        subtitle: language === 'da' ? 'Husk et tillykke 🎉' : "Don't forget to say congrats 🎉",
+        title: language === 'da' ? `${b.fullName} har fødselsdag i dag!` : language === 'fi' ? `${b.fullName}:n syntymäpäivä tänään!` : `${b.fullName}'s birthday today!`,
+        subtitle: language === 'da' ? 'Husk et tillykke 🎉' : language === 'fi' ? "Muista onnitella" : "Don't forget to say congrats 🎉",
         timestamp: now,
         onOpen: () => navigateTo('calendar'),
       })
     })
 
     return result.sort((a, b) => b.timestamp - a.timestamp)
-  }, [emails, notebookNotifications, vacations, sickLeave, guides, birthdays, userEmail, isAdminOrManager, language, seenVacationRequestIds])
+  }, [emails, notebookNotifications, vacations, sickLeave, guides, guideReviewRequests, birthdays, userEmail, isAdminOrManager, isGuideReviewer, language, seenVacationRequestIds])
 
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set())
   useEffect(() => {
@@ -167,7 +182,7 @@ export function NotificationCenter({ userEmail, isAdminOrManager, emails, vacati
       </PopoverTrigger>
       <PopoverContent className="w-96 p-0" align="end">
         <div className="p-3 border-b flex items-center justify-between">
-          <span className="font-semibold text-sm">{language === 'da' ? 'Notifikationer' : 'Notifications'}</span>
+          <span className="font-semibold text-sm">{language === 'da' ? 'Notifikationer' : language === 'fi' ? 'Ilmoitukset' : 'Notifications'}</span>
           {visibleItems.length > 0 && (
             <span className="text-xs text-muted-foreground">{visibleItems.length}</span>
           )}
@@ -175,7 +190,7 @@ export function NotificationCenter({ userEmail, isAdminOrManager, emails, vacati
         <ScrollArea className="max-h-96">
           {visibleItems.length === 0 ? (
             <div className="p-6 text-center text-sm text-muted-foreground">
-              {language === 'da' ? 'Intet nyt lige nu 🎉' : "You're all caught up 🎉"}
+              {language === 'da' ? 'Intet nyt lige nu 🎉' : language === 'fi' ? "Teidät on saatu kiinni." : "You're all caught up 🎉"}
             </div>
           ) : (
             <div className="divide-y">
@@ -201,7 +216,7 @@ export function NotificationCenter({ userEmail, isAdminOrManager, emails, vacati
                       size="icon"
                       className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
                       onClick={() => setDismissedIds(current => new Set(current).add(item.id))}
-                      title={language === 'da' ? 'Skjul' : 'Dismiss'}
+                      title={language === 'da' ? 'Skjul' : language === 'fi' ? 'Poistu' : 'Dismiss'}
                     >
                       <X size={14} />
                     </Button>

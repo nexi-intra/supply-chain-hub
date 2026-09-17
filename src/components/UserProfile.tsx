@@ -78,7 +78,7 @@ export function UserProfile({ userEmail, onLogout, onAdminClick, showAdmin, onCr
           return
         }
 
-        if (!(await verifyPassword(currentPassword, userData.password))) {
+        if (!window.electronAuth && !(await verifyPassword(currentPassword, userData.password))) {
           toast.error(t.profile.errors.currentPasswordWrong)
           return
         }
@@ -93,6 +93,19 @@ export function UserProfile({ userEmail, onLogout, onAdminClick, showAdmin, onCr
           return
         }
 
+        if (window.electronAuth) {
+          try {
+            await window.electronAuth.profile({ phone: phoneNumber || userData.phone || '', currentPassword, newPassword })
+          } catch (error) {
+            if (String(error).includes('AUTH_CREDENTIALS')) { toast.error(t.profile.errors.currentPasswordWrong); return }
+            throw error
+          }
+          toast.success(t.profile.passwordUpdated)
+          setSettingsOpen(false)
+          onLogout()
+          return
+        }
+
         usersData[userEmail] = {
           ...userData,
           password: await hashPassword(newPassword),
@@ -102,6 +115,12 @@ export function UserProfile({ userEmail, onLogout, onAdminClick, showAdmin, onCr
         await window.kv.set('users', usersData)
         toast.success(t.profile.passwordUpdated)
       } else if (phoneNumber !== userData.phone) {
+        if (window.electronAuth) {
+          await window.electronAuth.profile({ phone: phoneNumber })
+          toast.success(t.profile.settingsUpdated)
+          setSettingsOpen(false)
+          return
+        }
         usersData[userEmail] = {
           ...userData,
           phone: phoneNumber,
