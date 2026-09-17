@@ -5,6 +5,129 @@ const os = require('os')
 const path = require('path')
 const { createStore } = require('./store.cjs')
 
+test('trusted multi-key capabilities read fresh data, lock every key, and expire', t => {
+  const { directory, store } = temporaryStore(t), other = createStore(directory)
+  store.set('a', { old: true }); other.set('a', { fresh: true })
+  let escaped
+  store.withLockedKeys(['b', 'a', 'a'], tx => {
+    escaped = tx
+    assert.deepEqual(tx.get('a'), { fresh: true })
+    assert.ok(fs.existsSync(path.join(directory, 'a.json.lock')))
+    assert.ok(fs.existsSync(path.join(directory, 'b.json.lock')))
+    assert.throws(() => tx.set('unlocked', 1), /Invalid transaction capability/)
+    tx.set('b', [1]); tx.delete('a')
+  })
+  assert.equal(store.get('a'), undefined); assert.deepEqual(store.get('b'), [1])
+  assert.throws(() => escaped.get('b'), /Invalid transaction capability/)
+  assert.ok(!fs.existsSync(path.join(directory, 'a.json.lock')))
+})
+test('asynchronous multi-key callbacks are rejected before running and failures release locks', t => {
+  const { directory, store } = temporaryStore(t)
+  assert.throws(() => store.withLockedKeys(['a'], async tx => { tx.set('a', 'must not write') }), /synchronous/)
+  assert.equal(store.get('a'), undefined)
+  assert.throws(() => store.withLockedKeys(['a'], () => { throw new Error('synthetic failure') }), /synthetic failure/)
+  assert.ok(!fs.existsSync(path.join(directory, 'a.json.lock')))
+})
+
+test('trusted migration mutation uses fresh data and releases the lock if backup fails', (t) => {
+  const { directory, store } = temporaryStore(t)
+  const other = createStore(directory)
+  store.set('items', ['initial'])
+  other.set('items', ['initial', 'other'])
+  store.mutate('items', current => [...current, 'migration'])
+  assert.deepEqual(store.get('items', { skipCache: true }), ['initial', 'other', 'migration'])
+  assert.throws(() => store.mutate('items', current => { current.push('must-not-save'); throw new Error('backup failed') }), /backup failed/)
+  assert.deepEqual(store.get('items', { skipCache: true }), ['initial', 'other', 'migration'])
+  assert.ok(!fs.existsSync(path.join(directory, 'items.json.lock')))
+})
+
+test('a compare-and-set replay already applied to the share succeeds without rewriting', (t) => {
+  const { store } = temporaryStore(t)
+  store.set('setting', 'new')
+  assert.equal(store.update('setting', { op: 'compareAndSet', expected: 'old', value: 'new' }), 'new')
+  assert.equal(store.get('setting', { skipCache: true }), 'new')
+})
+
+test('append replay is idempotent but cannot overwrite an existing different record', (t) => {
+  const { store } = temporaryStore(t)
+  const item = { id: 'same', text: 'Synthetic message' }
+  store.update('emails', { op: 'append', items: [item] })
+  store.update('emails', { op: 'append', items: [item] })
+  assert.deepEqual(store.get('emails', { skipCache: true }), [item])
+  assert.throws(() => store.update('emails', { op: 'append', items: [{ ...item, text: 'Different message' }] }), { code: 'KV_CONFLICT' })
+  assert.deepEqual(store.get('emails', { skipCache: true }), [item])
+})
+
+test('renaming an account is one atomic mutation and preserves unrelated accounts', (t) => {
+  const { store } = temporaryStore(t)
+  const original = { email: 'old@example.com', password: 'synthetic-hash', phone: 'synthetic-phone', status: 'approved' }
+  const other = { email: 'other@example.com', password: 'other-synthetic-hash' }
+  store.set('users', { 'old@example.com': original, 'other@example.com': other })
+  const renamed = { ...original, email: 'new@example.com', fullName: 'Synthetic Name' }
+  store.update('users', { op: 'renameField', field: 'old@example.com', newField: 'new@example.com', expected: original, value: renamed })
+  const users = store.get('users', { skipCache: true })
+  assert.equal(users['old@example.com'], undefined)
+  assert.equal(users['new@example.com'].password, original.password)
+  assert.equal(users['new@example.com'].phone, original.phone)
+  assert.deepEqual(users['other@example.com'], other)
+})
+
+test('an account rename rejects an occupied email or a changed source without deleting either account', (t) => {
+  const { store } = temporaryStore(t)
+  const original = { email: 'old@example.com', password: 'synthetic-hash' }
+  const newer = { ...original, status: 'approved' }
+  store.set('users', { 'old@example.com': newer, 'taken@example.com': { name: 'Other' } })
+  assert.throws(() => store.update('users', { op: 'renameField', field: 'old@example.com', newField: 'new@example.com', expected: original, value: original }), { code: 'KV_CONFLICT' })
+  assert.throws(() => store.update('users', { op: 'renameField', field: 'old@example.com', newField: 'taken@example.com', expected: newer, value: newer }), { code: 'KV_CONFLICT' })
+  assert.deepEqual(store.get('users', { skipCache: true }), { 'old@example.com': newer, 'taken@example.com': { name: 'Other' } })
+})
+
+test('invalid array or field operations cannot empty existing data', (t) => {
+  const { store } = temporaryStore(t)
+  store.set('items', { retained: true })
+  assert.throws(() => store.update('items', { op: 'append', items: [] }), { code: 'KV_INVALID_OPERATION' })
+  assert.deepEqual(store.get('items', { skipCache: true }), { retained: true })
+  store.set('items', ['retained'])
+  assert.throws(() => store.update('items', { op: 'setField', field: 'new', value: true }), { code: 'KV_INVALID_OPERATION' })
+  assert.deepEqual(store.get('items', { skipCache: true }), ['retained'])
+})
+
+test('compare-and-set rejects a stale snapshot from a second client', (t) => {
+  const { directory, store } = temporaryStore(t)
+  const other = createStore(directory)
+  store.set('projects', [{ id: 'first' }])
+  const snapshot = store.get('projects')
+  other.update('projects', { op: 'append', items: [{ id: 'other' }] })
+  assert.throws(() => store.update('projects', { op: 'compareAndSet', expected: snapshot, value: [{ id: 'mine' }] }), { code: 'KV_CONFLICT' })
+  assert.deepEqual(store.get('projects', { skipCache: true }), [{ id: 'first' }, { id: 'other' }])
+})
+
+test('compare-and-set initializes once and preserves an existing value', (t) => {
+  const { store } = temporaryStore(t)
+  assert.equal(store.update('setting', { op: 'compareAndSet', expected: undefined, value: 'first' }), 'first')
+  assert.throws(() => store.update('setting', { op: 'compareAndSet', expected: undefined, value: 'second' }), { code: 'KV_CONFLICT' })
+  assert.equal(store.get('setting', { skipCache: true }), 'first')
+})
+
+test('replaceItem preserves changes to other items and rejects changes to its own item', (t) => {
+  const { directory, store } = temporaryStore(t)
+  const other = createStore(directory)
+  const first = { id: 'first', members: [] }
+  store.set('projects', [first, { id: 'second', members: [] }])
+  other.update('projects', { op: 'upsert', items: [{ id: 'second', members: ['other'] }] })
+  store.update('projects', { op: 'replaceItem', id: 'first', expected: first, item: { ...first, members: ['mine'] } })
+  assert.deepEqual(store.get('projects', { skipCache: true })[1].members, ['other'])
+  assert.throws(() => other.update('projects', { op: 'replaceItem', id: 'first', expected: first, item: first }), { code: 'KV_CONFLICT' })
+})
+
+test('unsafe object fields and paths cannot change prototypes', (t) => {
+  const { store } = temporaryStore(t)
+  assert.throws(() => store.update('users', { op: 'setField', field: '__proto__', value: { polluted: true } }), { code: 'KV_INVALID_OPERATION' })
+  assert.throws(() => store.update('items', { op: 'append', path: ['constructor', 'prototype'], items: [] }), { code: 'KV_INVALID_OPERATION' })
+  assert.equal({}.polluted, undefined)
+  assert.equal(store.get('users'), undefined)
+})
+
 function temporaryStore(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tcd-hub-store-test-'))
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
@@ -14,6 +137,15 @@ function temporaryStore(t) {
 test('missing keys return undefined', (t) => {
   const { store } = temporaryStore(t)
   assert.equal(store.get('missing'), undefined)
+})
+
+test('getAsync mirrors get: decrypts, caches, and reports missing keys as undefined', async (t) => {
+  const { store } = temporaryStore(t)
+  assert.equal(await store.getAsync('missing'), undefined)
+  const value = [{ id: '1', name: 'Vagt' }]
+  store.set('shifts', value)
+  assert.deepEqual(await store.getAsync('shifts', { skipCache: true }), value)
+  assert.deepEqual(await store.getAsync('shifts'), value)
 })
 
 test('values survive encrypted writes and reads', (t) => {

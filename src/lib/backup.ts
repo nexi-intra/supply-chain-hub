@@ -9,6 +9,10 @@ export interface BackupFile {
 }
 
 export async function createBackup(): Promise<BackupFile> {
+  if (window.electronAuth) {
+    if (!window.electronBackup) throw new Error('BACKUP_BACKEND_REQUIRED')
+    return window.electronBackup.export()
+  }
   const keys = await window.kv.keys()
   const data: Record<string, unknown> = {}
   for (const key of keys) {
@@ -46,6 +50,12 @@ export function parseBackup(text: string): BackupFile {
 
 /** Skriver alle keys fra backuppen ind i storen (overskriver eksisterende). */
 export async function restoreBackup(backup: BackupFile): Promise<number> {
+  if (window.electronAuth) {
+    // Generic KV can no longer replace accounts. Until the recoverable
+    // backend restore transaction is implemented, fail BEFORE any writes.
+    if (!window.electronBackup?.restore) throw new Error('BACKUP_RESTORE_PENDING')
+    return window.electronBackup.restore(backup)
+  }
   const entries = Object.entries(backup.data)
   for (const [key, value] of entries) {
     await window.kv.set(key, value)

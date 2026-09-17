@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import {
   ArrowLeft, Crown, Buildings, Plus, UserPlus, GameController, HardDrives,
-  WaveSine, RocketLaunch, Cube, Bird, SquaresFour, ShieldCheck,
+  WaveSine, RocketLaunch, Cube, Bird, SquaresFour, ShieldCheck, Eye, PencilSimple, Trash, UsersThree,
 } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Checkbox } from '@/components/ui/checkbox'
 import { UserProfile } from '@/components/UserProfile'
 import { DataStorageManager } from '@/components/DataStorageManager'
 import { UpdateManager } from '@/components/UpdateManager'
@@ -23,7 +24,7 @@ import { hashPassword } from '@/lib/passwords'
 import { setKvObjectField } from '@/lib/kvArrays'
 import { isAnyModalOpen } from '@/lib/modalStack'
 import { useLanguage } from '@/contexts/LanguageContext'
-import type { RegisteredTeam } from '@/lib/electronRegistryBridge'
+import type { AccessView, RegisteredTeam, RegistryUserOption, TeamAdministration } from '@/lib/electronRegistryBridge'
 
 interface CreatorPanelProps {
   onNavigateBack: () => void
@@ -37,11 +38,19 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
   const [isLoading, setIsLoading] = useState(true)
   const [hasAccess, setHasAccess] = useState(false)
   const [teams, setTeams] = useState<RegisteredTeam[]>([])
+  const [teamAdministrations, setTeamAdministrations] = useState<TeamAdministration[]>([])
   const [users, setUsers] = useState<Array<{ email: string; fullName: string }>>([])
+  const [accessViews, setAccessViews] = useState<AccessView[]>([])
+  const [userOptions, setUserOptions] = useState<RegistryUserOption[]>([])
 
   const [isCreateTeamOpen, setIsCreateTeamOpen] = useState(false)
   const [newTeamName, setNewTeamName] = useState('')
   const [newTeamCode, setNewTeamCode] = useState('')
+
+  const [isEditTeamOpen, setIsEditTeamOpen] = useState(false)
+  const [editingTeamId, setEditingTeamId] = useState<string | null>(null)
+  const [editTeamName, setEditTeamName] = useState('')
+  const [editTeamAbbreviation, setEditTeamAbbreviation] = useState('')
 
   const [isCreateUserOpen, setIsCreateUserOpen] = useState(false)
   const [newUserTeamId, setNewUserTeamId] = useState('')
@@ -50,12 +59,18 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
   const [newUserPassword, setNewUserPassword] = useState('')
   const [newUserRole, setNewUserRole] = useState<'user' | 'manager'>('manager')
 
+  const [isAccessViewOpen, setIsAccessViewOpen] = useState(false)
+  const [editingAccessViewId, setEditingAccessViewId] = useState<string | null>(null)
+  const [accessViewName, setAccessViewName] = useState('')
+  const [accessViewTeamIds, setAccessViewTeamIds] = useState<string[]>([])
+  const [accessViewUserEmails, setAccessViewUserEmails] = useState<string[]>([])
+
   useEffect(() => {
     const check = async () => {
       const access = await hasCreatorAccess(userEmail)
       setHasAccess(access)
       if (access) {
-        await Promise.all([loadTeams(), loadUsers()])
+        await Promise.all([loadTeams(), loadUsers(), loadAccessViews(), loadUserOptions()])
       }
       setIsLoading(false)
     }
@@ -74,13 +89,84 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
   }, [onNavigateBack])
 
   const loadTeams = async () => {
-    const list = (await window.electronRegistry?.listTeams()) || []
-    setTeams(list.sort((a, b) => a.name.localeCompare(b.name)))
+    if (!window.electronRegistry) return
+    const list = await window.electronRegistry.listTeamAdministration(userEmail)
+    const sorted = list.sort((a, b) => a.name.localeCompare(b.name))
+    setTeamAdministrations(sorted)
+    setTeams(sorted)
   }
 
   const loadUsers = async () => {
     const usersData = (await window.kv.get<Record<string, { email: string; fullName: string }>>('users')) || {}
     setUsers(Object.values(usersData))
+  }
+
+  const loadAccessViews = async () => {
+    const list = (await window.electronRegistry?.listAccessViews(userEmail)) || []
+    setAccessViews(list.sort((a, b) => a.name.localeCompare(b.name)))
+  }
+
+  const loadUserOptions = async () => {
+    const list = (await window.electronRegistry?.listUserOptions(userEmail)) || []
+    setUserOptions(list)
+  }
+
+  const openCreateAccessView = () => {
+    setEditingAccessViewId(null)
+    setAccessViewName('')
+    setAccessViewTeamIds([])
+    setAccessViewUserEmails([])
+    setIsAccessViewOpen(true)
+  }
+
+  const openEditAccessView = (view: AccessView) => {
+    setEditingAccessViewId(view.viewId)
+    setAccessViewName(view.name)
+    setAccessViewTeamIds(view.teamIds)
+    setAccessViewUserEmails(view.userEmails)
+    setIsAccessViewOpen(true)
+  }
+
+  const toggleValue = (values: string[], value: string, checked: boolean) =>
+    checked ? [...new Set([...values, value])] : values.filter((item) => item !== value)
+
+  const handleSaveAccessView = async () => {
+    const name = accessViewName.trim()
+    if (!name) {
+      toast.error(t.creatorPanel.accessViews.nameRequired)
+      return
+    }
+    if (accessViewTeamIds.length < 2) {
+      toast.error(t.creatorPanel.accessViews.selectTwoTeams)
+      return
+    }
+    if (!window.electronRegistry) return
+    const input = { name, teamIds: accessViewTeamIds, userEmails: accessViewUserEmails }
+    try {
+      if (editingAccessViewId) {
+        await window.electronRegistry.updateAccessView(userEmail, editingAccessViewId, input)
+      } else {
+        await window.electronRegistry.createAccessView(userEmail, input)
+      }
+      await loadAccessViews()
+      setIsAccessViewOpen(false)
+      toast.success(t.creatorPanel.accessViews.saved)
+    } catch (error) {
+      console.error('Kunne ikke gemme samlevisning:', error)
+      toast.error(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const handleDeleteAccessView = async (viewId: string) => {
+    if (!window.confirm(t.creatorPanel.accessViews.deleteConfirm)) return
+    try {
+      await window.electronRegistry?.deleteAccessView(userEmail, viewId)
+      await loadAccessViews()
+      toast.success(t.creatorPanel.accessViews.deleted)
+    } catch (error) {
+      console.error('Kunne ikke slette samlevisning:', error)
+      toast.error(error instanceof Error ? error.message : String(error))
+    }
   }
 
   const handleCreateTeam = async () => {
@@ -99,6 +185,37 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
       loadTeams()
     } catch {
       toast.error(t.creatorPanel.teams.codeExists)
+    }
+  }
+
+  const openEditTeam = (team: TeamAdministration) => {
+    setEditingTeamId(team.teamId)
+    setEditTeamName(team.name)
+    setEditTeamAbbreviation(team.abbreviation)
+    setIsEditTeamOpen(true)
+  }
+
+  const handleUpdateTeam = async () => {
+    const name = editTeamName.trim()
+    const abbreviation = editTeamAbbreviation.trim().toUpperCase()
+    if (!name || !abbreviation) {
+      toast.error(t.creatorPanel.teams.editFieldsRequired)
+      return
+    }
+    if (!/^[A-Z0-9_-]{1,12}$/.test(abbreviation)) {
+      toast.error(t.creatorPanel.teams.invalidAbbreviation)
+      return
+    }
+    if (!editingTeamId || !window.electronRegistry) return
+
+    try {
+      await window.electronRegistry.updateTeam(userEmail, editingTeamId, { name, abbreviation })
+      await loadTeams()
+      setIsEditTeamOpen(false)
+      toast.success(t.creatorPanel.teams.updatedToast)
+    } catch (error) {
+      console.error('Kunne ikke opdatere team:', error)
+      toast.error(error instanceof Error ? error.message : String(error))
     }
   }
 
@@ -135,7 +252,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
       setNewUserRole('manager')
     } finally {
       if (homeTeam) await window.electronRegistry.switchToTeam(homeTeam.folderName)
-      loadUsers()
+      await Promise.all([loadTeams(), loadUsers(), loadUserOptions()])
     }
   }
 
@@ -161,14 +278,14 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
 
   return (
     <div className="min-h-screen relative overflow-hidden">
-      <div className="absolute top-6 right-6 left-6 z-20">
+      <div className="fixed top-6 right-6 left-6 z-30 pointer-events-none">
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pb-16">
           <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.05 }}>
             <Button
               variant="outline"
               size="lg"
               onClick={onNavigateBack}
-              className="bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
+              className="pointer-events-auto bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
             >
               <ArrowLeft size={20} />
               {t.common.back}
@@ -225,17 +342,95 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
                 </div>
               </div>
 
-              {teams.length === 0 ? (
+              {teamAdministrations.length === 0 ? (
                 <p className="text-muted-foreground text-center py-12">{t.creatorPanel.teams.noneFound}</p>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {teams.map(team => (
-                    <div key={team.teamId} className="p-4 rounded-xl border-2 bg-card">
-                      <div className="flex items-center gap-2 mb-1">
-                        <ShieldCheck size={18} className="text-primary" weight="duotone" />
-                        <div className="font-bold">{team.name}</div>
+                  {teamAdministrations.map(team => (
+                    <div key={team.teamId} className="p-4 rounded-xl border-2 bg-card space-y-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-2 min-w-0">
+                          <ShieldCheck size={20} className="text-primary mt-0.5 shrink-0" weight="duotone" />
+                          <div className="min-w-0">
+                            <div className="font-bold break-words">{team.name}</div>
+                            <Badge variant="secondary" className="mt-1">{team.abbreviation}</Badge>
+                          </div>
+                        </div>
+                        <Button size="icon" variant="ghost" onClick={() => openEditTeam(team)} aria-label={t.creatorPanel.teams.editTeam}>
+                          <PencilSimple size={18} />
+                        </Button>
                       </div>
-                      <div className="text-sm text-muted-foreground">{team.folderName}</div>
+                      <div className="border-t pt-3">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                          {team.managers.length === 1 ? t.creatorPanel.teams.manager : t.creatorPanel.teams.managers}
+                        </div>
+                        {team.managers.length === 0 ? (
+                          <div className="text-sm text-muted-foreground">{t.creatorPanel.teams.noManagers}</div>
+                        ) : (
+                          <div className="space-y-2">
+                            {team.managers.map(manager => (
+                              <div key={manager.email} className="text-sm">
+                                <div className="font-medium">{manager.fullName}</div>
+                                <div className="text-xs text-muted-foreground break-all">{manager.email}</div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+
+            <Card className="p-6 border-2">
+              <div className="flex items-start justify-between gap-4 mb-6 flex-wrap">
+                <div className="flex items-start gap-3">
+                  <UsersThree size={30} className="text-primary mt-0.5" weight="duotone" />
+                  <div>
+                    <h2 className="text-2xl font-bold">{t.creatorPanel.accessViews.title}</h2>
+                    <p className="text-sm text-muted-foreground mt-1">{t.creatorPanel.accessViews.description}</p>
+                  </div>
+                </div>
+                <Button onClick={openCreateAccessView} className="gap-2">
+                  <Plus size={18} weight="bold" />
+                  {t.creatorPanel.accessViews.create}
+                </Button>
+              </div>
+
+              {accessViews.length === 0 ? (
+                <p className="text-muted-foreground text-center py-10">{t.creatorPanel.accessViews.noneFound}</p>
+              ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {accessViews.map((view) => (
+                    <div key={view.viewId} className="p-4 rounded-xl border-2 bg-card space-y-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="font-bold text-lg">{view.name}</div>
+                          <Badge variant="secondary" className="mt-1 gap-1">
+                            <Eye size={14} /> {t.creatorPanel.accessViews.readOnly}
+                          </Badge>
+                        </div>
+                        <div className="flex gap-1">
+                          <Button size="icon" variant="ghost" onClick={() => openEditAccessView(view)} aria-label={t.common.edit}>
+                            <PencilSimple size={18} />
+                          </Button>
+                          <Button size="icon" variant="ghost" className="text-destructive" onClick={() => handleDeleteAccessView(view.viewId)} aria-label={t.common.delete}>
+                            <Trash size={18} />
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {view.teamIds.map((teamId) => {
+                          const team = teams.find((item) => item.teamId === teamId)
+                          return <Badge key={teamId} variant="outline">{team?.name || teamId}</Badge>
+                        })}
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        {view.userEmails.length === 0
+                          ? t.creatorPanel.accessViews.noPeople
+                          : view.userEmails.map((email) => userOptions.find((user) => user.email === email)?.fullName || email).join(', ')}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -357,6 +552,34 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
         </DialogContent>
       </Dialog>
 
+      <Dialog open={isEditTeamOpen} onOpenChange={setIsEditTeamOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t.creatorPanel.teams.editTeam}</DialogTitle>
+            <DialogDescription>{t.creatorPanel.teams.editHint}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="edit-team-name">{t.creatorPanel.teams.nameLabel}</Label>
+              <Input id="edit-team-name" value={editTeamName} onChange={e => setEditTeamName(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-team-abbreviation">{t.creatorPanel.teams.abbreviationLabel}</Label>
+              <Input
+                id="edit-team-abbreviation"
+                value={editTeamAbbreviation}
+                maxLength={12}
+                onChange={e => setEditTeamAbbreviation(e.target.value.toUpperCase().replace(/[^A-Z0-9_-]/g, ''))}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsEditTeamOpen(false)}>{t.common.cancel}</Button>
+            <Button onClick={handleUpdateTeam}>{t.common.save}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={isCreateUserOpen} onOpenChange={setIsCreateUserOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -407,6 +630,56 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
               <UserPlus size={18} weight="bold" />
               {t.creatorPanel.createUserDialog.submit}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isAccessViewOpen} onOpenChange={setIsAccessViewOpen}>
+        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{editingAccessViewId ? t.creatorPanel.accessViews.edit : t.creatorPanel.accessViews.create}</DialogTitle>
+            <DialogDescription>{t.creatorPanel.accessViews.description}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-6 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="access-view-name">{t.creatorPanel.accessViews.name}</Label>
+              <Input id="access-view-name" value={accessViewName} onChange={(event) => setAccessViewName(event.target.value)} placeholder={t.creatorPanel.accessViews.namePlaceholder} />
+            </div>
+            <div className="space-y-3">
+              <Label>{t.creatorPanel.accessViews.teams}</Label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {teams.map((team) => (
+                  <label key={team.teamId} className="flex items-center gap-3 rounded-lg border p-3 cursor-pointer hover:bg-muted/50">
+                    <Checkbox
+                      checked={accessViewTeamIds.includes(team.teamId)}
+                      onCheckedChange={(checked) => setAccessViewTeamIds((current) => toggleValue(current, team.teamId, checked === true))}
+                    />
+                    <span><span className="font-medium">{team.name}</span> <span className="text-muted-foreground">({team.abbreviation})</span></span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-3">
+              <Label>{t.creatorPanel.accessViews.people}</Label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-64 overflow-y-auto pr-1">
+                {userOptions.map((user) => (
+                  <label key={user.email} className="flex items-center gap-3 rounded-lg border p-3 cursor-pointer hover:bg-muted/50">
+                    <Checkbox
+                      checked={accessViewUserEmails.includes(user.email)}
+                      onCheckedChange={(checked) => setAccessViewUserEmails((current) => toggleValue(current, user.email, checked === true))}
+                    />
+                    <span className="min-w-0">
+                      <span className="font-medium block truncate">{user.fullName}</span>
+                      <span className="text-xs text-muted-foreground block truncate">{user.email} · {user.primaryTeamId}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsAccessViewOpen(false)}>{t.common.cancel}</Button>
+            <Button onClick={handleSaveAccessView}>{t.creatorPanel.accessViews.save}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

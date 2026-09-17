@@ -51,7 +51,7 @@ interface EmailSystemProps {
 }
 
 export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail }: EmailSystemProps) {
-  const { t } = useLanguage()
+  const { t, language } = useLanguage()
   const [emails, setEmails] = useKV<Email[]>('emails', [])
   const [folders, setFolders] = useKV<EmailFolder[]>('email-folders', [])
   const [vacations, setVacations] = useKV<VacationEntry[]>('vacation-entries', [])
@@ -102,10 +102,8 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
         setUsers(usersData as Array<{ email: string; name: string }>)
       }
 
-      const kvEmails = await window.kv.get<Email[]>('emails')
-      if (kvEmails && Array.isArray(kvEmails)) {
-        setEmails(() => kvEmails)
-      }
+      // useKV subscribes to emails. Refreshing contacts must not write an old
+      // snapshot of the mailbox back over newly arrived messages.
     }
     
     loadUserAndData()
@@ -148,12 +146,12 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
     const diffHours = Math.floor(diffMs / 3600000)
     const diffDays = Math.floor(diffMs / 86400000)
 
-    if (diffMins < 1) return 'Lige nu'
-    if (diffMins < 60) return `${diffMins} min siden`
-    if (diffHours < 24) return `${diffHours} time${diffHours > 1 ? 'r' : ''} siden`
-    if (diffDays < 7) return `${diffDays} dag${diffDays > 1 ? 'e' : ''} siden`
+    if (diffMins < 1) return language === 'da' ? 'Lige nu' : language === 'fi' ? 'Juuri nyt' : 'Just now'
+    if (diffMins < 60) return language === 'da' ? `${diffMins} min siden` : language === 'fi' ? `${diffMins} min sitten` : `${diffMins} min ago`
+    if (diffHours < 24) return language === 'da' ? `${diffHours} time${diffHours > 1 ? 'r' : ''} siden` : language === 'fi' ? `${diffHours} tuntia sitten` : `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`
+    if (diffDays < 7) return language === 'da' ? `${diffDays} dag${diffDays > 1 ? 'e' : ''} siden` : language === 'fi' ? `${diffDays} päivää sitten` : `${diffDays} day${diffDays > 1 ? 's' : ''} ago`
     
-    return date.toLocaleDateString('da-DK', { day: 'numeric', month: 'short', year: 'numeric' })
+    return date.toLocaleDateString(language === 'da' ? 'da-DK' : language === 'fi' ? 'fi-FI' : 'en-US', { day: 'numeric', month: 'short', year: 'numeric' })
   }
 
   const filterByDate = (email: Email) => {
@@ -345,7 +343,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
           : v
       )
     )
-    toast.success('Ferie godkendt')
+    toast.success(t.email.vacationApproved)
 
     try {
       const emailContent = vacationApprovedEmail(vacation.startDate, vacation.endDate, userEmail, vacation.notes)
@@ -390,7 +388,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
           : v
       )
     )
-    toast.error('Ferie afvist')
+    toast.error(t.email.vacationRejected)
 
     try {
       const emailContent = vacationRejectedEmail(vacation.startDate, vacation.endDate, userEmail, vacation.notes)
@@ -429,7 +427,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
 
   const handleCreateFolder = () => {
     if (!folderName.trim()) {
-      toast.error('Indtast et mappenavn')
+      toast.error(t.email.enterFolderName)
       return
     }
 
@@ -442,7 +440,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
     }
 
     setFolders(current => [...(current || []), newFolder])
-    toast.success('Mappe oprettet')
+    toast.success(t.email.folderCreated)
     setFolderName('')
     setFolderColor('#8B5CF6')
     setShowFolderDialog(false)
@@ -450,7 +448,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
 
   const handleUpdateFolder = () => {
     if (!editingFolder || !folderName.trim()) {
-      toast.error('Indtast et mappenavn')
+      toast.error(t.email.enterFolderName)
       return
     }
 
@@ -462,7 +460,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
       )
     )
 
-    toast.success('Mappe opdateret')
+    toast.success(t.email.folderUpdated)
     setFolderName('')
     setFolderColor('#8B5CF6')
     setEditingFolder(null)
@@ -485,7 +483,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
       setSelectedFolderId(null)
     }
 
-    toast.success('Mappe slettet')
+    toast.success(t.email.folderDeleted)
   }
 
   const handleMoveToFolder = (folderId: string | null) => {
@@ -501,9 +499,9 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
 
     if (folderId) {
       const folder = userFolders.find(f => f.id === folderId)
-      toast.success(`Email flyttet til ${folder?.name}`)
+      toast.success(t.email.movedToFolder.replace('{folder}', folder?.name || ''))
     } else {
-      toast.success('Email flyttet til indbakke')
+      toast.success(t.email.movedToInbox)
     }
 
     setShowMoveToFolderDialog(false)
@@ -550,9 +548,9 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
 
     if (folderId) {
       const folder = userFolders.find(f => f.id === folderId)
-      toast.success(`Email flyttet til ${folder?.name}`)
+      toast.success(t.email.movedToFolder.replace('{folder}', folder?.name || ''))
     } else {
-      toast.success('Email flyttet til indbakke')
+      toast.success(t.email.movedToInbox)
     }
 
     setDraggedEmail(null)
@@ -560,7 +558,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
   }
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('da-DK', {
+    return new Date(dateString).toLocaleDateString(language === 'da' ? 'da-DK' : language === 'fi' ? 'fi-FI' : 'en-US', {
       day: 'numeric',
       month: 'long',
       year: 'numeric'
@@ -594,9 +592,13 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
 
     const daysInMonth = getDaysInMonth(monthToShow, yearToShow)
     const firstDay = getFirstDayOfMonth(monthToShow, yearToShow)
-    const monthName = new Date(yearToShow, monthToShow).toLocaleDateString('da-DK', { month: 'long', year: 'numeric' })
+    const monthName = new Date(yearToShow, monthToShow).toLocaleDateString(language === 'da' ? 'da-DK' : language === 'fi' ? 'fi-FI' : 'en-US', { month: 'long', year: 'numeric' })
 
-    const weekdays = ['Søn', 'Man', 'Tir', 'Ons', 'Tor', 'Fre', 'Lør']
+    const weekdays = language === 'da'
+      ? ['Søn', 'Man', 'Tir', 'Ons', 'Tor', 'Fre', 'Lør']
+      : language === 'fi'
+        ? ['Su', 'Ma', 'Ti', 'Ke', 'To', 'Pe', 'La']
+        : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
     const days: ReactElement[] = []
 
     for (let i = 0; i < firstDay; i++) {
@@ -665,7 +667,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
 
   return (
     <div className="min-h-screen relative overflow-hidden">
-      <div className="absolute top-6 right-6 left-6 z-20">
+      <div className="fixed top-6 right-6 left-6 z-30 pointer-events-none">
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pb-16">
           <div className="flex items-center gap-3">
             <motion.div
@@ -677,7 +679,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
                 variant="outline"
                 size="lg"
                 onClick={onNavigateBack}
-                className="bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
+                className="pointer-events-auto bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
               >
                 <ArrowLeft size={20} />
                 {t.email.back}

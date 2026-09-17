@@ -8,6 +8,31 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.5.2',
+    items: [
+      'Hubert AI-assistent er nu med i appen og svarer på dansk, engelsk og finsk ud fra spørgsmålets sprog',
+      'AI-svar aktiveres pr. pc via "Aktivér AI-svar" i chatten — modellen hentes én gang fra det delte drev',
+      'Uden AI-model svarer Hubert stadig med data (opgaver, madplan, ferie, personer, highscores) og guide-uddrag',
+    ],
+  },
+  {
+    version: '1.5.1',
+    items: [
+      "Nyt To Do-modul (tidligere Projekt): team-to-do's og personlige to-do's — opgaver og kommentarer kan oprettes direkte fra forsiden",
+      'Ny widget "Team status i dag": se hver medarbejders opgave, kommentar, ferie og sygdom samlet ét sted',
+      'Medarbejderfarver kan nu vælges i Manager Panel og slår igennem i teamoversigt, vagtplan og feriekalender',
+      'Notesbogen har fået samme udseende som To Do og hedder nu blot "Notesbog"',
+      'Hubert forstår og svarer nu på dansk, engelsk og finsk ud fra spørgsmålets sprog',
+      'Nyt app-ikon til Supply Chain Hub',
+      'Nye skrivebeskyttede fælleshubs kan samle ferie, vagtplaner, personer og guides fra flere teams',
+      'Guide-workflow med kladder, review-kø, Guide Admins, før/efter-visning og godkendelse før udgivelse',
+      'Guideopdateringer og sletninger kræver nu review, og arkiverede eller tidligere versioner kan gendannes via en ny godkendelse',
+      'Finsk kan vælges som appsprog og bruges i guideoversættelsen via Bergamot',
+      'Personlige widgets på forsiden kan vises, skjules og ændres i størrelse',
+      'Genvejstaster og faste tilbageknapper virker nu også i skrivebeskyttede fælleshubs',
+    ],
+  },
+  {
     version: '1.4.2',
     items: [
       'Notifikationscenter på forsiden samler emails, ferieanmodninger, guide-revisioner og fødselsdage ét sted',

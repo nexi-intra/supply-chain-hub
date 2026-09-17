@@ -7,9 +7,10 @@ import { Badge } from '@/components/ui/badge'
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion'
 import { UserProfile } from '@/components/UserProfile'
 import { UserRole, getRoleDisplayName, excludeCreator } from '@/lib/userRoles'
-import { getEmployeeColorByEmail } from '@/lib/employeeColors'
+import { getEmployeeColorByEmail, EMPLOYEE_COLOR_OVERRIDES_KEY, type EmployeeColorOverrides } from '@/lib/employeeColors'
 import { isAnyModalOpen } from '@/lib/modalStack'
 import { useLanguage } from '@/contexts/LanguageContext'
+import { useKV } from '@/hooks/useKV'
 import type { RegisteredTeam } from '@/lib/electronRegistryBridge'
 
 export interface TeamEmployee {
@@ -42,6 +43,7 @@ async function toEmployeeList(usersData: Record<string, RawUser> | null | undefi
 
 export function TeamOverview({ onNavigateBack, onLogout }: TeamOverviewProps) {
   const { t } = useLanguage()
+  const [colorOverrides] = useKV<EmployeeColorOverrides>(EMPLOYEE_COLOR_OVERRIDES_KEY, {})
   const [employees, setEmployees] = useState<TeamEmployee[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [otherTeams, setOtherTeams] = useState<Array<{ team: RegisteredTeam; employees: TeamEmployee[] }>>([])
@@ -126,7 +128,7 @@ export function TeamOverview({ onNavigateBack, onLogout }: TeamOverviewProps) {
   const renderEmployeeGrid = (list: TeamEmployee[]) => (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
       {list.map((employee) => {
-        const employeeColor = getEmployeeColorByEmail(employee.email)
+        const employeeColor = getEmployeeColorByEmail(employee.email, colorOverrides)
         return (
           <motion.div
             key={employee.id}
@@ -180,7 +182,7 @@ export function TeamOverview({ onNavigateBack, onLogout }: TeamOverviewProps) {
 
   return (
     <div className="min-h-screen relative overflow-hidden">
-      <div className="absolute top-6 right-6 left-6 z-20">
+      <div className="fixed top-6 right-6 left-6 z-30 pointer-events-none">
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pb-16">
           <div className="flex items-center gap-3">
             <motion.div
@@ -192,7 +194,7 @@ export function TeamOverview({ onNavigateBack, onLogout }: TeamOverviewProps) {
                 variant="outline"
                 size="lg"
                 onClick={onNavigateBack}
-                className="bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
+                className="pointer-events-auto bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
               >
                 <ArrowLeft size={20} />
                 {t.common.back}

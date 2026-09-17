@@ -10,10 +10,14 @@ import { GuideImportStatus } from '@/components/GuideImportStatus'
 import { LoginDigest } from '@/components/LoginDigest'
 import { WhatsNewDialog } from '@/components/WhatsNewDialog'
 import { CommandPalette } from '@/components/CommandPalette'
+import { AccessContextPicker } from '@/components/AccessContextPicker'
 import { StorageConnectionBanner } from '@/components/StorageConnectionBanner'
+import { HubAssistant } from '@/components/HubAssistant'
+import { AccountMigrationRecovery } from '@/components/AccountMigrationRecovery'
 import { toast, Toaster } from 'sonner'
 import { setKvObjectField, deleteKvObjectField } from '@/lib/kvArrays'
 import { NAVIGATE_EVENT, type AppViewId } from '@/lib/appNavigation'
+import type { AccessView, RegisteredTeam } from '@/lib/electronRegistryBridge'
 
 // Lazy-loadet: Hub og Auth vises altid lige efter opstart/login, så de
 // forbliver i hoved-bundlen. Alle andre views hentes først når brugeren
@@ -30,6 +34,7 @@ const MealPlan = lazy(() => import('@/views/MealPlan').then(m => ({ default: m.M
 const GameCorner = lazy(() => import('@/views/GameCorner').then(m => ({ default: m.GameCorner })))
 const ProjectBoard = lazy(() => import('@/views/ProjectBoard').then(m => ({ default: m.ProjectBoard })))
 const VirtualNotebook = lazy(() => import('@/views/VirtualNotebook').then(m => ({ default: m.VirtualNotebook })))
+const ObserverWorkspace = lazy(() => import('@/views/ObserverWorkspace').then(m => ({ default: m.ObserverWorkspace })))
 
 /** Vises kortvarigt mens et views kode hentes ved første besøg. */
 function ViewLoadingFallback() {
@@ -71,6 +76,12 @@ function generateSessionToken(): string {
 }
 
 async function validateSession(token: string): Promise<{ valid: boolean; session?: StoredSession }> {
+  if (window.electronAuth) {
+    try { return { valid: true, session: await window.electronAuth.resume(token) } } catch (error) {
+      if (String(error).includes('AUTH_')) return { valid: false }
+      throw error
+    }
+  }
   const sessions = await window.kv.get<Record<string, StoredSession>>('active-sessions') || {}
   const session = sessions[token]
   
@@ -88,6 +99,11 @@ async function validateSession(token: string): Promise<{ valid: boolean; session
 }
 
 async function createSession(userId: string, email: string, duration: number): Promise<string> {
+  if (window.electronAuth) {
+    const session = await window.electronAuth.current()
+    if (session.email !== email || session.userId !== userId) throw new Error('AUTH_FORBIDDEN')
+    return session.token
+  }
   const token = generateSessionToken()
   const expiresAt = Date.now() + duration
   const createdAt = Date.now()
@@ -105,6 +121,7 @@ async function createSession(userId: string, email: string, duration: number): P
 
 /** Forlænger en husket sessions udløb (glidende vindue ved hver app-start). */
 async function renewSession(token: string): Promise<void> {
+  if (window.electronAuth) { await window.electronAuth.renew(); return }
   const sessions = await window.kv.get<Record<string, StoredSession>>('active-sessions') || {}
   if (sessions[token]) {
     await setKvObjectField('active-sessions', token, { ...sessions[token], expiresAt: Date.now() + REMEMBERED_SESSION_DURATION })
@@ -112,6 +129,7 @@ async function renewSession(token: string): Promise<void> {
 }
 
 async function deleteSession(token: string): Promise<void> {
+  if (window.electronAuth) { await window.electronAuth.logout(); return }
   await deleteKvObjectField('active-sessions', token)
 }
 
@@ -120,6 +138,28 @@ function App() {
   const [userSession, setUserSession] = useState<UserSession | null>(null)
   const [isCheckingAuth, setIsCheckingAuth] = useState(true)
   const [lastActivity, setLastActivity] = useState(Date.now())
+  const [accessViews, setAccessViews] = useState<AccessView[]>([])
+  const [registeredTeams, setRegisteredTeams] = useState<RegisteredTeam[]>([])
+  const [homeTeam, setHomeTeam] = useState<RegisteredTeam | null>(null)
+  const [activeAccessView, setActiveAccessView] = useState<AccessView | null>(null)
+  const [isAccessPickerOpen, setIsAccessPickerOpen] = useState(false)
+
+  const loadAccessOptions = async (email: string, openPicker: boolean) => {
+    if (!window.electronRegistry) return
+    try {
+      const [views, teams, primaryTeam] = await Promise.all([
+        window.electronRegistry.listMyAccessViews(email),
+        window.electronRegistry.listTeams(),
+        window.electronRegistry.lookupTeam(email),
+      ])
+      setAccessViews(views)
+      setRegisteredTeams(teams)
+      setHomeTeam(primaryTeam)
+      if (openPicker && views.length > 0) setIsAccessPickerOpen(true)
+    } catch (error) {
+      console.error('Kunne ikke hente brugerens samlevisninger:', error)
+    }
+  }
 
   useEffect(() => {
     // Éngangs-migrering: ældre ferie-poster med fulde ISO-datoer ('...T00:00:00.000Z')
@@ -212,40 +252,78 @@ function App() {
 
   useEffect(() => {
     // Auto-login: gyldigt lokalt "husk mig"-token logger brugeren direkte ind.
-    const restoreSession = async () => {
+    let cancelled = false
+    let unsubscribeReconnect: (() => void) | undefined
+
+    // True kun når det DELTE lager faktisk er tilgængeligt. Et husket login må
+    // aldrig glemmes, blot fordi netværksdrevet var nede ved opstart (VPN/Zscaler)
+    // — ellers tvinges brugeren til at logge ind igen ved hver ustabil opstart.
+    const storageReachable = async (): Promise<boolean> => {
+      if (!window.electronKv?.getConnectionStatus) return true
       try {
-        const token = localStorage.getItem(REMEMBER_TOKEN_KEY)
-        if (token) {
-          const { valid, session } = await validateSession(token)
-          if (valid && session) {
-            // Brugeren skal stadig findes og være godkendt i den delte brugerliste.
-            const users = await window.kv.get<Record<string, { status?: string }>>('users') || {}
-            const user = users[session.email] || users[session.email.toLowerCase()]
-            if (user && user.status !== 'pending' && user.status !== 'rejected') {
-              await renewSession(token)
-              setUserSession({
-                userId: session.userId,
-                email: session.email,
-                token,
-                expiresAt: Date.now() + REMEMBERED_SESSION_DURATION,
-                remembered: true,
-              })
-            } else {
-              localStorage.removeItem(REMEMBER_TOKEN_KEY)
-              await deleteSession(token)
-            }
-          } else {
-            localStorage.removeItem(REMEMBER_TOKEN_KEY)
-          }
-        }
-      } catch (error) {
-        console.error('Kunne ikke genskabe session:', error)
-      }
-      
-      setIsCheckingAuth(false)
+        const status = await window.electronKv.getConnectionStatus()
+        return status.connected && !status.startedDisconnected
+      } catch { return false }
     }
-    
-    restoreSession()
+
+    // Returnerer false, hvis det delte lager var utilgængeligt, så kaldet kan
+    // prøve igen ved genforbindelse i stedet for at glemme det huskede login.
+    const restoreSession = async (): Promise<boolean> => {
+      const token = localStorage.getItem(REMEMBER_TOKEN_KEY)
+      if (!token) return true
+      const { valid, session } = await validateSession(token)
+      if (valid && session) {
+        // Ved en ny appstart peger den aktive store endnu på platformroden.
+        // Slå derfor brugerens primære team op, før kontoen valideres.
+        if (window.electronRegistry) {
+          const primaryTeam = await window.electronRegistry.lookupTeam(session.email)
+          if (primaryTeam) await window.electronRegistry.switchToTeam(primaryTeam.folderName)
+        }
+        // Brugeren skal stadig findes og være godkendt i den delte brugerliste.
+        const users = await window.kv.get<Record<string, { status?: string }>>('users') || {}
+        const user = users[session.email] || users[session.email.toLowerCase()]
+        if (user && user.status !== 'pending' && user.status !== 'rejected') {
+          await renewSession(token)
+          if (cancelled) return true
+          setUserSession({
+            userId: session.userId,
+            email: session.email,
+            token,
+            expiresAt: Date.now() + REMEMBERED_SESSION_DURATION,
+            remembered: true,
+          })
+          await loadAccessOptions(session.email, true)
+          return true
+        }
+        // En reelt afventende/afvist konto rydder tokenet — men aldrig når den
+        // delte brugerliste blot var utilgængelig (offline-cachen kan være tom).
+        if (await storageReachable()) { localStorage.removeItem(REMEMBER_TOKEN_KEY); await deleteSession(token); return true }
+        return false
+      }
+      // Glem aldrig et husket login, fordi drevet var nede ved opstart — kun når
+      // lageret er tilgængeligt OG sessionen reelt blev afvist.
+      if (await storageReachable()) { localStorage.removeItem(REMEMBER_TOKEN_KEY); return true }
+      return false
+    }
+
+    const run = async () => {
+      let resolved = true
+      try { resolved = await restoreSession() } catch (error) {
+        console.error('Kunne ikke genskabe session:', error)
+        resolved = !localStorage.getItem(REMEMBER_TOKEN_KEY)
+      }
+      if (!cancelled) setIsCheckingAuth(false)
+      if (!resolved && !unsubscribeReconnect && window.electronKv?.onConnectionChanged) {
+        // Log automatisk ind igen, når det delte drev kommer tilbage — uden at
+        // brugeren skal genstarte appen.
+        unsubscribeReconnect = window.electronKv.onConnectionChanged((status) => {
+          if (status.connected && !cancelled) { unsubscribeReconnect?.(); unsubscribeReconnect = undefined; void run() }
+        })
+      }
+    }
+
+    run()
+    return () => { cancelled = true; unsubscribeReconnect?.() }
   }, [])
 
   useEffect(() => {
@@ -285,13 +363,16 @@ function App() {
 
   const handleAuthenticated = async (userId: string, email: string, rememberMe: boolean) => {
     const duration = rememberMe ? REMEMBERED_SESSION_DURATION : SESSION_DURATION
-    const expiresAt = Date.now() + duration
-    let token = generateSessionToken()
+    const verified = window.electronAuth ? await window.electronAuth.current() : undefined
+    if (verified && (verified.email !== email || verified.userId !== userId)) throw new Error('AUTH_FORBIDDEN')
+    const expiresAt = verified?.expiresAt || Date.now() + duration
+    let token = verified?.token || generateSessionToken()
 
     try {
       token = await createSession(userId, email, duration)
     } catch (error) {
       console.error('Kunne ikke oprette session i KV:', error)
+      if (window.electronAuth) throw error
     }
 
     if (rememberMe) {
@@ -306,16 +387,20 @@ function App() {
 
     setUserSession({ userId, email, token, expiresAt, remembered: rememberMe })
     setLastActivity(Date.now())
+    await loadAccessOptions(email, true)
   }
 
   const handleLogout = async () => {
-    if (userSession?.token) {
-      await deleteSession(userSession.token)
-    }
+    try { if (userSession?.token) await deleteSession(userSession.token) } catch (error) { console.error('Session cleanup failed during logout', error) }
     localStorage.removeItem(REMEMBER_TOKEN_KEY)
     
     setUserSession(null)
     setCurrentView('hub')
+    setAccessViews([])
+    setRegisteredTeams([])
+    setHomeTeam(null)
+    setActiveAccessView(null)
+    setIsAccessPickerOpen(false)
   }
 
   const handleNavigate = (moduleId: string) => {
@@ -384,6 +469,50 @@ function App() {
     )
   }
 
+  if (isAccessPickerOpen && accessViews.length > 0) {
+    return (
+      <ThemeProvider userId={userSession.userId}>
+        <LanguageProvider userId={userSession.userId}>
+          <Toaster position="top-center" richColors />
+          <AnimatedBackground />
+          <AccessContextPicker
+            homeTeam={homeTeam}
+            views={accessViews}
+            teams={registeredTeams}
+            onSelectHome={async () => { try { await window.electronAuth?.selectView(null); setActiveAccessView(null); setCurrentView('hub'); setIsAccessPickerOpen(false) } catch { toast.error('Adgangen til hubben kunne ikke bekræftes') } }}
+            onSelectView={async (view) => { try { await window.electronAuth?.selectView(view.viewId); setActiveAccessView(view); setCurrentView('hub'); setIsAccessPickerOpen(false) } catch { toast.error('Adgangen til hubben kunne ikke bekræftes') } }}
+            onLogout={handleLogout}
+          />
+          <AccountMigrationRecovery userEmail={userSession.email} onLogout={handleLogout} />
+        </LanguageProvider>
+      </ThemeProvider>
+    )
+  }
+
+  if (activeAccessView) {
+    return (
+      <ThemeProvider userId={userSession.userId}>
+        <LanguageProvider userId={userSession.userId}>
+          <Toaster position="top-center" richColors />
+          <AnimatedBackground />
+          <UpdateNotification />
+          <StorageConnectionBanner />
+          <Suspense fallback={<ViewLoadingFallback />}>
+            <ObserverWorkspace
+              userEmail={userSession.email}
+              view={activeAccessView}
+              allTeams={registeredTeams}
+              onChangeView={() => setIsAccessPickerOpen(true)}
+              onLogout={handleLogout}
+            />
+          </Suspense>
+          <HubAssistant key={activeAccessView.viewId} token={userSession.token} viewId={activeAccessView.viewId} />
+          <AccountMigrationRecovery userEmail={userSession.email} onLogout={handleLogout} />
+        </LanguageProvider>
+      </ThemeProvider>
+    )
+  }
+
   return (
     <ThemeProvider userId={userSession.userId}>
       <LanguageProvider userId={userSession.userId}>
@@ -396,7 +525,9 @@ function App() {
         <LoginDigest userEmail={userSession.email} />
         <WhatsNewDialog />
         <CommandPalette userEmail={userSession.email} />
-        {currentView === 'hub' && <Hub onNavigate={handleNavigate} onLogout={handleLogout} userEmail={userSession.email} />}
+        <HubAssistant key={userSession.token} token={userSession.token} />
+        <AccountMigrationRecovery userEmail={userSession.email} onLogout={handleLogout} />
+        {currentView === 'hub' && <Hub onNavigate={handleNavigate} onLogout={handleLogout} userEmail={userSession.email} onChooseAccessView={accessViews.length > 0 ? () => setIsAccessPickerOpen(true) : undefined} />}
         <Suspense fallback={<ViewLoadingFallback />}>
           {currentView === 'guides' && <GuideLibrary onNavigateBack={handleNavigateBack} onLogout={handleLogout} userEmail={userSession.email} />}
           {currentView === 'calendar' && <VacationCalendar onNavigateBack={handleNavigateBack} onLogout={handleLogout} userEmail={userSession.email} />}

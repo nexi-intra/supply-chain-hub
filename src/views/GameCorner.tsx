@@ -40,7 +40,7 @@ export function GameCorner({ onNavigateBack, userEmail }: GameCornerProps) {
 
   return (
     <div className="min-h-screen relative overflow-hidden">
-      <div className="absolute top-6 right-6 left-6 z-20">
+      <div className="fixed top-6 right-6 left-6 z-30 pointer-events-none">
         <div className="flex items-center justify-start pb-12">
           <motion.div
             initial={{ opacity: 0, x: -20 }}
@@ -51,10 +51,10 @@ export function GameCorner({ onNavigateBack, userEmail }: GameCornerProps) {
               onClick={onNavigateBack}
               variant="outline"
               size="lg"
-              className="bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold"
+              className="pointer-events-auto bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold"
             >
               <ArrowLeft size={20} weight="bold" />
-              {language === 'da' ? 'Tilbage til Hub' : 'Back to Hub'}
+              {language === 'da' ? 'Tilbage til Hub' : language === 'fi' ? 'Takaisin Hubiin' : 'Back to Hub'}
             </Button>
           </motion.div>
         </div>
@@ -83,7 +83,7 @@ export function GameCorner({ onNavigateBack, userEmail }: GameCornerProps) {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.3, duration: 0.6 }}
           >
-            {language === 'da' ? 'Spilhjørnet' : 'Game Corner'}
+            {language === 'da' ? 'Spilhjørnet' : language === 'fi' ? 'Pelikulma' : 'Game Corner'}
           </motion.h1>
           <motion.p
             className="text-lg text-muted-foreground max-w-2xl mx-auto"
@@ -93,7 +93,7 @@ export function GameCorner({ onNavigateBack, userEmail }: GameCornerProps) {
           >
             {language === 'da'
               ? 'Tag en pause og test dine færdigheder.'
-              : 'Take a break and test your skills.'}
+              : language === 'fi' ? 'Pidä tauko ja testaa taitojasi.' : 'Take a break and test your skills.'}
           </motion.p>
         </motion.header>
 
@@ -146,7 +146,7 @@ export function GameCorner({ onNavigateBack, userEmail }: GameCornerProps) {
                   <p className="text-muted-foreground text-xs leading-relaxed mb-3 md:mb-4 flex-1">
                     {language === 'da'
                       ? 'Klassiske arkadespil — konkurrér med kollegaer om de bedste scores!'
-                      : 'Classic arcade games — compete with colleagues for the best scores!'}
+                      : language === 'fi' ? 'Classic arcade Pelit ... kilpailla kollegoiden kanssa parhaista tuloksista!' : 'Classic arcade games — compete with colleagues for the best scores!'}
                   </p>
                 </div>
               </Card>
@@ -196,7 +196,7 @@ export function GameCorner({ onNavigateBack, userEmail }: GameCornerProps) {
                   <p className="text-muted-foreground text-xs leading-relaxed mb-3 md:mb-4 flex-1">
                     {language === 'da'
                       ? 'Større 3D-spil i moderne stil — mere end blot en hurtig omgang.'
-                      : 'Bigger, modern 3D games — more than just a quick round.'}
+                      : language === 'fi' ? 'Suurempi, moderni 3D-pelit ... enemmän kuin vain nopea kierros.' : 'Bigger, modern 3D games — more than just a quick round.'}
                   </p>
                 </div>
               </Card>

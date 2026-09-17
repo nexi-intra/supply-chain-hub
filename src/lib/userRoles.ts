@@ -49,6 +49,17 @@ function normalizeStoredRole(role: string | undefined): UserRole | undefined {
 
 export async function getUserRole(email: string): Promise<UserRole> {
   const normalizedEmail = email.trim().toLowerCase()
+  if (window.electronAuth) {
+    try {
+      const actor = await window.electronAuth.current()
+      if (actor.email === normalizedEmail) return actor.viewId ? 'user' : actor.role
+      const users = await window.kv.get<Record<string, UserData>>('users')
+      const other = users?.[normalizedEmail] || users?.[email]
+      const creator = await window.electronRegistry?.getCreatorEmail()
+      if (creator?.trim().toLowerCase() === normalizedEmail) return 'creator'
+      return other?.role === 'creator' ? 'user' : normalizeStoredRole(other?.role) || (other?.isManager ? 'manager' : 'user')
+    } catch { return 'user' }
+  }
 
   const creatorEmail = await getCreatorEmail()
   if (creatorEmail && normalizedEmail === creatorEmail) {
@@ -105,7 +116,7 @@ export async function hasManagerAccess(email: string): Promise<boolean> {
   return role === 'creator' || role === 'manager'
 }
 
-export function getRoleDisplayName(role: UserRole, language: 'da' | 'en' = 'da'): string {
+export function getRoleDisplayName(role: UserRole, language: 'da' | 'en' | 'fi' = 'da'): string {
   const roleNames = {
     da: {
       creator: 'Creator',
@@ -116,18 +127,33 @@ export function getRoleDisplayName(role: UserRole, language: 'da' | 'en' = 'da')
       creator: 'Creator',
       manager: 'Manager',
       user: 'User'
+    },
+    fi: {
+      creator: 'Creator',
+      manager: 'Esihenkilö',
+      user: 'Käyttäjä'
     }
   }
   return roleNames[language][role]
 }
 
-export function getRoleDescription(role: UserRole, language: 'da' | 'en' = 'da'): string {
+export function getRoleDescription(role: UserRole, language: 'da' | 'en' | 'fi' = 'da'): string {
+  if (language === 'fi') {
+    switch (role) {
+      case 'creator':
+        return 'Täydet käyttöoikeudet kaikkialla ja kaikissa tiimeissä – ainoa rooli, jolla on pääsy Arcade-tuloksiin ja tietojen tallennukseen'
+      case 'manager':
+        return 'Voi määrittää käyttöoikeuksia, käsitellä poissaoloja, nimetä opasvastaavia sekä tarkistaa ja hyväksyä oppaita'
+      case 'user':
+        return 'Tavalliset käyttäjäoikeudet: voi lukea oppaita ja pyytää lomaa'
+    }
+  }
   if (language === 'en') {
     switch (role) {
       case 'creator':
         return 'Full access everywhere, in every team — the only role with access to Arcade highscores and Data Storage'
       case 'manager':
-        return 'Can assign permissions, handle sick leave, approve/reject vacation requests and edit guides'
+        return 'Can assign permissions, handle absence, appoint Guide Admins, and review and approve guides'
       case 'user':
         return 'Standard user access, can view guides and request vacation'
     }
@@ -136,7 +162,7 @@ export function getRoleDescription(role: UserRole, language: 'da' | 'en' = 'da')
     case 'creator':
       return 'Fuld adgang overalt, i alle teams — eneste rolle med adgang til Arcade-highscores og Datalagring'
     case 'manager':
-      return 'Kan tildele rettigheder, håndtere sygemeldinger, godkende/afvise ferieansøgninger og redigere guides'
+      return 'Kan tildele rettigheder, håndtere fravær, udpege Guide Admins samt reviewe og godkende guides'
     case 'user':
       return 'Standard brugeradgang, kan se guides og anmode om ferie'
   }

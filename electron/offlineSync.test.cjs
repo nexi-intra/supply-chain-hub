@@ -6,15 +6,140 @@ const path = require('path')
 const { createStore } = require('./store.cjs')
 const { createResilientStore } = require('./offlineSync.cjs')
 
+test('replay guard preserves a blocked queue without touching network data and can retry safely', t => {
+  const local = temporaryLocalStore(t), real = temporaryNetworkStore(t), network = withControllableConnection(real)
+  let blocked = true
+  const resilient = createResilientStore(network, local, { guardReplay: (_, callback) => {
+    if (blocked) throw Object.assign(new Error('ACCOUNT_MIGRATION_PENDING'), { code: 'ACCOUNT_MIGRATION_PENDING' })
+    return callback()
+  } })
+  network.__setConnected(false); resilient.set('synthetic', 'queued'); network.__setConnected(true)
+  assert.deepEqual(resilient.retrySyncNow(), { succeeded: 0, failed: 1, remaining: 1 })
+  assert.equal(real.get('synthetic'), undefined)
+  blocked = false
+  assert.deepEqual(resilient.retrySyncNow(), { succeeded: 1, failed: 0, remaining: 0 })
+  assert.equal(real.get('synthetic'), 'queued')
+})
+test('invalidation cancels delayed mirrors of reads as well as writes', async t => {
+  const local = temporaryLocalStore(t), real = temporaryNetworkStore(t), resilient = createResilientStore(real, local)
+  real.set('synthetic', 'old'); resilient.get('synthetic')
+  resilient.invalidate(); local.set('synthetic', 'new')
+  await flushMicrotasks()
+  assert.equal(local.get('synthetic'), 'new')
+})
+
+test('an append that reached the share before an error is not duplicated by retry', (t) => {
+  const local = temporaryLocalStore(t)
+  const real = temporaryNetworkStore(t)
+  let failOnce = true
+  const network = fakeNetworkStore({ get: (...args) => real.get(...args), update: (key, operation) => {
+    const result = real.update(key, operation)
+    if (failOnce) { failOnce = false; throw new Error('ENOTCONN after successful write') }
+    return result
+  } })
+  const resilient = createResilientStore(network, local)
+  const item = { id: 'same', text: 'Synthetic message' }
+  resilient.update('emails', { op: 'append', items: [item] })
+  assert.equal(resilient.getPendingSyncCount(), 1)
+  assert.deepEqual(resilient.retrySyncNow(), { succeeded: 1, failed: 0, remaining: 0 })
+  assert.deepEqual(real.get('emails', { skipCache: true }), [item])
+})
+
+test('a delayed delete mirror cannot delete a newer cached write', async (t) => {
+  const local = temporaryLocalStore(t)
+  const network = withControllableConnection(temporaryNetworkStore(t))
+  local.set('same', 'old')
+  const resilient = createResilientStore(network, local)
+  resilient.delete('same')
+  network.__setConnected(false)
+  resilient.set('same', 'new')
+  await flushMicrotasks()
+  assert.equal(local.get('same'), 'new')
+})
+
+test('replayed deletion clears stale local data before going offline again', async (t) => {
+  const local = temporaryLocalStore(t)
+  const network = withControllableConnection(temporaryNetworkStore(t))
+  const resilient = createResilientStore(network, local)
+  network.__setConnected(false)
+  resilient.set('same', 'temporary')
+  resilient.delete('same')
+  network.__setConnected(true)
+  resilient.retrySyncNow()
+  await flushMicrotasks()
+  network.__setConnected(false)
+  assert.equal(resilient.get('same'), undefined)
+})
+
+test('a failed queued operation blocks later operations on the same key, not other keys', (t) => {
+  const local = temporaryLocalStore(t)
+  let connected = false
+  let failing = true
+  const applied = []
+  const network = fakeNetworkStore({ isConnected: () => connected, set: (key, value) => {
+    if (key === 'same' && failing) throw new Error('EACCES')
+    applied.push([key, value])
+  } })
+  const resilient = createResilientStore(network, local)
+  resilient.set('same', 'old')
+  resilient.set('same', 'new')
+  resilient.set('independent', 'okay')
+  connected = true
+  assert.deepEqual(resilient.retrySyncNow(), { succeeded: 1, failed: 1, remaining: 2 })
+  assert.deepEqual(applied, [['independent', 'okay']])
+  assert.equal(resilient.get('same'), 'new')
+  failing = false
+  assert.deepEqual(resilient.retrySyncNow(), { succeeded: 2, failed: 0, remaining: 0 })
+  assert.deepEqual(applied.slice(1), [['same', 'old'], ['same', 'new']])
+})
+
+test('an online write cannot overtake an older pending write', (t) => {
+  const local = temporaryLocalStore(t)
+  const network = withControllableConnection(temporaryNetworkStore(t))
+  const resilient = createResilientStore(network, local)
+  network.__setConnected(false)
+  resilient.set('same', 'old')
+  network.__setConnected(true)
+  resilient.set('same', 'new')
+  assert.equal(network.get('same'), undefined)
+  assert.equal(resilient.get('same'), 'new')
+  assert.equal(resilient.getPendingSyncCount(), 2)
+  resilient.retrySyncNow()
+  assert.equal(network.get('same', { skipCache: true }), 'new')
+})
+
+test('a delayed network mirror cannot replace a newer offline change', async (t) => {
+  const local = temporaryLocalStore(t)
+  const network = withControllableConnection(temporaryNetworkStore(t))
+  network.set('same', 'old')
+  const resilient = createResilientStore(network, local)
+  resilient.get('same')
+  network.__setConnected(false)
+  resilient.set('same', 'new')
+  await flushMicrotasks()
+  assert.equal(local.get('same'), 'new')
+})
+
+test('a compare-and-set conflict is never converted into an offline write', (t) => {
+  const local = temporaryLocalStore(t)
+  const network = temporaryNetworkStore(t)
+  network.set('same', 'new')
+  local.set('same', 'old')
+  const resilient = createResilientStore(network, local)
+  assert.throws(() => resilient.update('same', { op: 'compareAndSet', expected: 'old', value: 'mine' }), { code: 'KV_CONFLICT' })
+  assert.equal(resilient.getPendingSyncCount(), 0)
+  assert.equal(network.get('same', { skipCache: true }), 'new')
+})
+
 function temporaryLocalStore(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tcd-hub-offline-test-'))
-  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  t.after(async () => { await flushMicrotasks(); fs.rmSync(directory, { recursive: true, force: true }) })
   return createStore(directory)
 }
 
 function temporaryNetworkStore(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tcd-hub-network-test-'))
-  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  t.after(async () => { await flushMicrotasks(); fs.rmSync(directory, { recursive: true, force: true }) })
   return createStore(directory)
 }
 

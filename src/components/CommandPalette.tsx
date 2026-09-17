@@ -11,8 +11,8 @@ import { navigateTo, type AppViewId } from '@/lib/appNavigation'
 import { hasManagerAccess, hasCreatorAccess } from '@/lib/userRoles'
 import type { RegisteredTeam } from '@/lib/electronRegistryBridge'
 
-interface ModuleEntry {
-  id: AppViewId
+export interface CommandPaletteModule {
+  id: string
   icon: typeof House
   label: string
   managerOnly?: boolean
@@ -21,11 +21,14 @@ interface ModuleEntry {
 
 interface CommandPaletteProps {
   userEmail: string
+  modulesOverride?: CommandPaletteModule[]
+  onNavigateOverride?: (view: string) => void
 }
 
 /** Global hurtig-navigation (Ctrl/Cmd+K) mellem moduler. */
-export function CommandPalette({ userEmail }: CommandPaletteProps) {
+export function CommandPalette({ userEmail, modulesOverride, onNavigateOverride }: CommandPaletteProps) {
   const { language } = useLanguage()
+  const usesCustomNavigation = Boolean(modulesOverride)
   const [open, setOpen] = useState(false)
   const [isManager, setIsManager] = useState(false)
   const [isCreator, setIsCreator] = useState(false)
@@ -43,31 +46,34 @@ export function CommandPalette({ userEmail }: CommandPaletteProps) {
   }, [])
 
   useEffect(() => {
+    if (usesCustomNavigation) return
     hasManagerAccess(userEmail).then(setIsManager)
     hasCreatorAccess(userEmail).then((creator) => {
       setIsCreator(creator)
       if (creator) window.electronRegistry?.listTeams().then((list) => setTeams(list || []))
     })
-  }, [userEmail])
+  }, [userEmail, usesCustomNavigation])
 
-  const modules: ModuleEntry[] = [
-    { id: 'hub', icon: House, label: language === 'da' ? 'Forside' : 'Home' },
-    { id: 'guides', icon: Books, label: language === 'da' ? 'Guide Bibliotek' : 'Guide Library' },
-    { id: 'calendar', icon: CalendarBlank, label: language === 'da' ? 'Kalender' : 'Calendar' },
-    { id: 'shifts', icon: ClipboardText, label: language === 'da' ? 'Vagtplan' : 'Shift Schedule' },
-    { id: 'team', icon: Users, label: language === 'da' ? 'Team Oversigt' : 'Team Overview' },
-    { id: 'email', icon: Envelope, label: language === 'da' ? 'Email' : 'Email' },
-    { id: 'meals', icon: ForkKnife, label: language === 'da' ? 'Madplan' : 'Meal Plan' },
-    { id: 'games', icon: GameController, label: language === 'da' ? 'Spilhjørnet' : 'Game Corner' },
-    { id: 'projects', icon: Kanban, label: language === 'da' ? 'Projekttavle' : 'Project Board' },
-    { id: 'notebook', icon: NotePencil, label: language === 'da' ? 'Notesbog' : 'Notebook' },
+  const defaultModules: CommandPaletteModule[] = [
+    { id: 'hub', icon: House, label: language === 'da' ? 'Forside' : language === 'fi' ? 'Alkuun' : 'Home' },
+    { id: 'guides', icon: Books, label: language === 'da' ? 'Guide Bibliotek' : language === 'fi' ? 'Opaskirjasto' : 'Guide Library' },
+    { id: 'calendar', icon: CalendarBlank, label: language === 'da' ? 'Kalender' : language === 'fi' ? 'Kalenteri' : 'Calendar' },
+    { id: 'shifts', icon: ClipboardText, label: language === 'da' ? 'Vagtplan' : language === 'fi' ? 'Vaihtoaikataulu' : 'Shift Schedule' },
+    { id: 'team', icon: Users, label: language === 'da' ? 'Team Oversigt' : language === 'fi' ? 'Ryhmän yleiskatsaus' : 'Team Overview' },
+    { id: 'email', icon: Envelope, label: language === 'da' ? 'Email' : language === 'fi' ? 'Sähköposti' : 'Email' },
+    { id: 'meals', icon: ForkKnife, label: language === 'da' ? 'Madplan' : language === 'fi' ? 'Ateriasuunnitelma' : 'Meal Plan' },
+    { id: 'games', icon: GameController, label: language === 'da' ? 'Spilhjørnet' : language === 'fi' ? 'Pelikulma' : 'Game Corner' },
+    { id: 'projects', icon: Kanban, label: 'To Do' },
+    { id: 'notebook', icon: NotePencil, label: language === 'da' ? 'Notesbog' : language === 'fi' ? 'Muistikirja' : 'Notebook' },
     { id: 'manager', icon: ManagerIcon, label: 'Manager Panel', managerOnly: true },
     { id: 'admin', icon: ShieldCheck, label: 'Admin Panel', managerOnly: true },
     { id: 'creator', icon: Crown, label: 'Creator Panel', creatorOnly: true },
   ]
+  const modules = modulesOverride || defaultModules
 
-  const go = (view: AppViewId) => {
-    navigateTo(view)
+  const go = (view: string) => {
+    if (onNavigateOverride) onNavigateOverride(view)
+    else navigateTo(view as AppViewId)
     setOpen(false)
   }
 
@@ -83,14 +89,14 @@ export function CommandPalette({ userEmail }: CommandPaletteProps) {
     <CommandDialog
       open={open}
       onOpenChange={setOpen}
-      title={language === 'da' ? 'Hurtig-navigation' : 'Quick navigation'}
-      description={language === 'da' ? 'Naviger mellem moduler i Supply Chain Hub' : 'Navigate between Supply Chain Hub modules'}
+      title={language === 'da' ? 'Hurtig-navigation' : language === 'fi' ? 'Nopea navigointi' : 'Quick navigation'}
+      description={language === 'da' ? 'Naviger mellem moduler i Supply Chain Hub' : language === 'fi' ? 'Navigoi Supply Chain Hub -moduulien välillä' : 'Navigate between Supply Chain Hub modules'}
     >
-      <CommandInput placeholder={language === 'da' ? 'Søg efter et modul…' : 'Search for a module…'} />
+      <CommandInput placeholder={language === 'da' ? 'Søg efter et modul…' : language === 'fi' ? 'Etsi moduulia...' : 'Search for a module…'} />
       <CommandList>
-        <CommandEmpty>{language === 'da' ? 'Intet fundet' : 'Nothing found'}</CommandEmpty>
+        <CommandEmpty>{language === 'da' ? 'Intet fundet' : language === 'fi' ? 'Mitään ei löytynyt' : 'Nothing found'}</CommandEmpty>
 
-        <CommandGroup heading={language === 'da' ? 'Moduler' : 'Modules'}>
+        <CommandGroup heading={language === 'da' ? 'Moduler' : language === 'fi' ? 'Moduulit' : 'Modules'}>
           {modules.filter(m => (!m.managerOnly || isManager) && (!m.creatorOnly || isCreator)).map(m => {
             const Icon = m.icon
             return (
@@ -102,16 +108,16 @@ export function CommandPalette({ userEmail }: CommandPaletteProps) {
           })}
         </CommandGroup>
 
-        {isCreator && teams.length > 0 && (
-          <CommandGroup heading={language === 'da' ? 'Skift team' : 'Switch team'}>
+        {!modulesOverride && isCreator && teams.length > 0 && (
+          <CommandGroup heading={language === 'da' ? 'Skift team' : language === 'fi' ? 'Vaihtoryhmä' : 'Switch team'}>
             {teams.map(team => (
               <CommandItem
                 key={team.teamId}
-                value={`${language === 'da' ? 'Skift til' : 'Switch to'} ${team.name}`}
+                value={`${language === 'da' ? 'Skift til' : language === 'fi' ? 'Vaihda kohteeseen' : 'Switch to'} ${team.name}`}
                 onSelect={() => switchTeam(team.folderName)}
               >
                 <Buildings size={18} className="mr-2" />
-                {language === 'da' ? `Skift til: ${team.name}` : `Switch to: ${team.name}`}
+                {language === 'da' ? `Skift til: ${team.name}` : language === 'fi' ? `Vaihda kohteeseen: ${team.name}` : `Switch to: ${team.name}`}
               </CommandItem>
             ))}
           </CommandGroup>

@@ -35,7 +35,7 @@ import {
   REVIEW_INTERVAL_CHOICES, newId, migrateGuide, computeNextReviewAt, guidePlainText,
 } from '@/lib/guideTypes'
 import { detectLanguage, type GuideLanguage } from '@/lib/translator'
-import { bumpVersion, saveVersionSnapshot, getVersionHistory } from '@/lib/guideStore'
+import { bumpVersion, getVersionHistory } from '@/lib/guideStore'
 import type { GuideImportDraft } from '@/lib/docxImporter'
 import { useLanguage } from '@/contexts/LanguageContext'
 import { GuideViewer } from '@/components/GuideViewer'
@@ -43,7 +43,7 @@ import { GuideViewer } from '@/components/GuideViewer'
 interface GuideEditorProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onSave: (guide: Guide) => void
+  onSave: (guide: Guide, changeNote?: string) => void | Promise<void>
   editGuide?: Guide
   categories: string[]
   /** Opretter en ny kategori i det delte kategorisæt og returnerer om det lykkedes. */
@@ -51,6 +51,11 @@ interface GuideEditorProps {
   /** Forudsætter en ny guide med indhold parset fra et importeret Word-dokument. */
   importDraft?: GuideImportDraft | null
   userEmail: string
+  /** Bevarer revisionsnummeret når en allerede oprettet review-revision redigeres. */
+  preserveVersion?: boolean
+  submitLabel?: string
+  titleOverride?: string
+  descriptionOverride?: string
 }
 
 function emptySection(): GuideSection {
@@ -153,7 +158,7 @@ function ImageDropZone({ onUploaded, compact }: { onUploaded: (fileIds: string[]
   )
 }
 
-export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories, onCreateCategory, importDraft, userEmail }: GuideEditorProps) {
+export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories, onCreateCategory, importDraft, userEmail, preserveVersion = false, submitLabel, titleOverride, descriptionOverride }: GuideEditorProps) {
   const { t, language: appLanguage } = useLanguage()
   const [title, setTitle] = useState('')
   const [category, setCategory] = useState<string>(categories[0] || 'General')
@@ -167,10 +172,17 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
   const [changeNote, setChangeNote] = useState('')
   const [wordFile, setWordFile] = useState<File | null>(null)
   const [removeWordAttachment, setRemoveWordAttachment] = useState(false)
+  const [restoredVersionFields, setRestoredVersionFields] = useState<{
+    content?: string
+    fileUrl?: string
+    wordFileName?: string
+    fileSize?: number
+  } | null>(null)
   const [history, setHistory] = useState<GuideVersionEntry[]>([])
   const [showHistory, setShowHistory] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [previewOpen, setPreviewOpen] = useState(false)
+  const [newGuideId, setNewGuideId] = useState(() => newId('guide'))
   // Tværgående deling (Fase 3): andre teams denne guide skal ligge hos, ud over eget team.
   // `otherTeamCodes` er ALTID "andre" (eget team indgår aldrig i checkbox-listen `allTeams`
   // nedenfor), så der er ingen tvetydighed om retning uanset hvem der redigerer guiden.
@@ -208,6 +220,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
       setReviewInterval(migrated.reviewIntervalMonths ?? null)
       getVersionHistory(migrated.id).then(setHistory).catch(() => setHistory([]))
     } else {
+      setNewGuideId(newId('guide'))
       setTitle(importDraft?.title || '')
       setCategory(categories[0] || 'General')
       setTags('')
@@ -220,6 +233,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
     setChangeNote('')
     setWordFile(importDraft?.originalFile || null)
     setRemoveWordAttachment(false)
+    setRestoredVersionFields(null)
     setShowHistory(false)
     setIsCreatingCategory(false)
     setNewCategoryName('')
@@ -241,11 +255,12 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
         || reviewInterval !== (migrated.reviewIntervalMonths ?? null)
         || wordFile !== null
         || removeWordAttachment
+        || restoredVersionFields !== null
         || JSON.stringify([...otherTeamCodes].sort()) !== JSON.stringify([...(migrated.sharedWithTeamCodes || []).filter((code) => code !== currentTeamCode)].sort())
     }
     return title.trim() !== '' || tags.trim() !== '' || wordFile !== null || otherTeamCodes.length > 0
       || sections.some((s) => s.heading.trim() || s.steps.some((st) => st.text.trim() || st.imageIds.length > 0))
-  }, [open, migrated, title, category, tags, sections, coverImageId, reviewInterval, wordFile, removeWordAttachment, otherTeamCodes, currentTeamCode])
+  }, [open, migrated, title, category, tags, sections, coverImageId, reviewInterval, wordFile, removeWordAttachment, restoredVersionFields, otherTeamCodes, currentTeamCode])
 
   const cleanupSessionImages = useCallback(async () => {
     for (const id of sessionImagesRef.current) {
@@ -336,6 +351,23 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
       ? entry.snapshot.sections.map((s) => ({ ...s, steps: s.steps.map((st) => ({ ...st, imageIds: [...st.imageIds] })) }))
       : [emptySection()])
     setCoverImageId(entry.snapshot.coverImageId)
+    if (entry.snapshot.schemaVersion === 2) {
+      setLanguage(entry.snapshot.language || 'auto')
+      setReviewInterval(entry.snapshot.reviewIntervalMonths ?? null)
+      setOtherTeamCodes((entry.snapshot.sharedWithTeamCodes || []).filter((code) => code !== currentTeamCode))
+      setRestoredVersionFields({
+        content: entry.snapshot.content,
+        fileUrl: entry.snapshot.fileUrl,
+        wordFileName: entry.snapshot.wordFileName,
+        fileSize: entry.snapshot.fileSize,
+      })
+    } else {
+      // Ældre historik indeholder kun titel/kategori/tags/sektioner/billede.
+      // Ukendte felter bevares derfor fra den aktive version.
+      setRestoredVersionFields(null)
+    }
+    setWordFile(null)
+    setRemoveWordAttachment(false)
     setChangeNote(`${t.guideEditor.restoredFromVersionPrefix} ${entry.version}`)
     setShowHistory(false)
     toast.success(`${t.guideEditor.versionRestoredPrefix} ${entry.version} ${t.guideEditor.versionRestoredSuffix}`)
@@ -367,6 +399,9 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
     return Array.from(new Set(codes))
   }
 
+  const retainedFileUrl = restoredVersionFields ? restoredVersionFields.fileUrl : migrated?.fileUrl
+  const retainedWordFileName = restoredVersionFields ? restoredVersionFields.wordFileName : migrated?.wordFileName
+
   // Bygger et Guide-objekt af den aktuelle, endnu IKKE gemte formular-tilstand — bruges
   // til preview, så man kan se guiden som den vil se ud, før man trykker Gem.
   const buildDraftGuide = (): Guide => {
@@ -385,13 +420,13 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
       ? detectLanguage(guidePlainText({ title, tags: tagArray, category, sections: cleanedSections, content: migrated?.content || '', id: '', createdAt: 0, updatedAt: 0 } as Guide), 'da')
       : language
     return {
-      id: migrated?.id || 'preview',
+      id: migrated?.id || newGuideId,
       schemaVersion: 2,
       title: title.trim() || t.guideEditor.untitledPreview,
       category,
       tags: tagArray,
       language: resolvedLanguage,
-      content: migrated?.content || '',
+      content: restoredVersionFields ? (restoredVersionFields.content || '') : (migrated?.content || ''),
       sections: cleanedSections,
       coverImageId,
       version: migrated ? migrated.version : '1.00',
@@ -403,9 +438,9 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
       reviewIntervalMonths: reviewInterval,
       nextReviewAt: computeNextReviewAt(now, reviewInterval),
       lastReviewedAt: now,
-      fileUrl: removeWordAttachment ? undefined : migrated?.fileUrl,
-      wordFileName: removeWordAttachment ? undefined : migrated?.wordFileName,
-      fileSize: removeWordAttachment ? undefined : migrated?.fileSize,
+      fileUrl: removeWordAttachment ? undefined : (restoredVersionFields ? restoredVersionFields.fileUrl : migrated?.fileUrl),
+      wordFileName: removeWordAttachment ? undefined : (restoredVersionFields ? restoredVersionFields.wordFileName : migrated?.wordFileName),
+      fileSize: removeWordAttachment ? undefined : (restoredVersionFields ? restoredVersionFields.fileSize : migrated?.fileSize),
       sharedWithTeamCodes: resolveSharedWithTeamCodes(),
     }
   }
@@ -425,7 +460,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
       }))
       .filter((s) => s.heading || s.steps.length > 0)
 
-    if (cleanedSections.length === 0 && !wordFile && !migrated?.fileUrl) {
+    if (cleanedSections.length === 0 && !wordFile && !retainedFileUrl) {
       toast.error(t.guideEditor.atLeastOneSectionRequired)
       return
     }
@@ -435,33 +470,30 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
       const now = Date.now()
       const tagArray = tags.split(',').map((t) => t.trim()).filter(Boolean)
 
-      let fileUrl = removeWordAttachment ? undefined : migrated?.fileUrl
-      let wordFileName = removeWordAttachment ? undefined : migrated?.wordFileName
-      let fileSize = removeWordAttachment ? undefined : migrated?.fileSize
+      let fileUrl = removeWordAttachment ? undefined : (restoredVersionFields ? restoredVersionFields.fileUrl : migrated?.fileUrl)
+      let wordFileName = removeWordAttachment ? undefined : (restoredVersionFields ? restoredVersionFields.wordFileName : migrated?.wordFileName)
+      let fileSize = removeWordAttachment ? undefined : (restoredVersionFields ? restoredVersionFields.fileSize : migrated?.fileSize)
       if (wordFile) {
         const stored = await fileStorage.uploadFile(wordFile)
-        if (migrated?.fileUrl) {
-          try { await fileStorage.deleteFile(migrated.fileUrl) } catch { /* ignorér */ }
-        }
+        // Den gamle vedhæftning tilhører fortsat den udgivne version, indtil
+        // revisionen er godkendt, og må derfor ikke slettes her.
         fileUrl = stored.url
         wordFileName = stored.filename
         fileSize = stored.size
-      } else if (removeWordAttachment && migrated?.fileUrl) {
-        try { await fileStorage.deleteFile(migrated.fileUrl) } catch { /* ignorér */ }
       }
 
-      const version = migrated ? bumpVersion(migrated.version) : '1.00'
+      const version = migrated ? (preserveVersion ? (migrated.version || '1.00') : bumpVersion(migrated.version)) : '1.00'
       const resolvedLanguage: GuideLanguage = language === 'auto'
         ? detectLanguage(guidePlainText({ ...(migrated || {}), title, tags: tagArray, category, sections: cleanedSections, content: migrated?.content || '', id: '', createdAt: 0, updatedAt: 0 } as Guide), 'da')
         : language
       const guide: Guide = {
-        id: migrated?.id || Date.now().toString(),
+        id: migrated?.id || newGuideId,
         schemaVersion: 2,
         title: title.trim(),
         category,
         tags: tagArray,
         language: resolvedLanguage,
-        content: migrated?.content || '',
+        content: restoredVersionFields ? (restoredVersionFields.content || '') : (migrated?.content || ''),
         sections: cleanedSections,
         coverImageId,
         version,
@@ -479,9 +511,8 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
         sharedWithTeamCodes: resolveSharedWithTeamCodes(),
       }
 
-      await saveVersionSnapshot(guide, userEmail, changeNote)
       sessionImagesRef.current = []
-      onSave(guide)
+      await onSave(guide, changeNote.trim() || undefined)
       onOpenChange(false)
     } catch (error) {
       console.error('Kunne ikke gemme guide:', error)
@@ -491,7 +522,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
     }
   }
 
-  const nextVersion = migrated ? bumpVersion(migrated.version) : '1.00'
+  const nextVersion = migrated ? (preserveVersion ? (migrated.version || '1.00') : bumpVersion(migrated.version)) : '1.00'
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o && hasUnsavedChanges) return; if (!o) cleanupSessionImages(); onOpenChange(o) }}>
@@ -500,12 +531,12 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
           <div className="flex items-center justify-between gap-3">
             <div>
               <DialogTitle className="text-xl">
-                {migrated ? t.guideEditor.editTitle : t.guideEditor.newTitle}
+                {titleOverride || (migrated ? t.guideEditor.editTitle : t.guideEditor.newTitle)}
               </DialogTitle>
               <DialogDescription className="mt-1">
-                {migrated
+                {descriptionOverride || (migrated
                   ? <>Version {migrated.version || '1.00'} {t.guideEditor.versionArrowSuffix} <Badge variant="secondary" className="font-mono">{nextVersion}</Badge></>
-                  : t.guideEditor.newGuideDescription}
+                  : t.guideEditor.newGuideDescription)}
               </DialogDescription>
             </div>
             {migrated && history.length > 0 && (
@@ -530,7 +561,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
                     <Badge variant="outline" className="font-mono shrink-0">v{entry.version}</Badge>
                     <div className="flex-1 min-w-0">
                       <div className="text-xs font-medium truncate">
-                        {new Date(entry.savedAt).toLocaleString(appLanguage === 'en' ? 'en-US' : 'da-DK')} · {entry.savedBy}
+                        {new Date(entry.savedAt).toLocaleString(appLanguage === 'en' ? 'en-US' : appLanguage === 'fi' ? 'fi-FI' : 'da-DK')} · {entry.savedBy}
                       </div>
                       {entry.changeNote && <div className="text-xs text-muted-foreground truncate">{entry.changeNote}</div>}
                     </div>
@@ -604,6 +635,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
                     <SelectItem value="auto">{t.guideEditor.languageAuto}</SelectItem>
                     <SelectItem value="da">{t.guideEditor.languageDanish}</SelectItem>
                     <SelectItem value="en">{t.guideEditor.languageEnglish}</SelectItem>
+                    <SelectItem value="fi">{t.guideEditor.languageFinnish}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -733,10 +765,10 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
                     <X size={16} />
                   </Button>
                 </div>
-              ) : migrated?.fileUrl && !removeWordAttachment ? (
+              ) : retainedFileUrl && !removeWordAttachment ? (
                 <div className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30">
                   <FileDoc size={22} className="text-primary shrink-0" />
-                  <span className="text-sm truncate flex-1">{migrated.wordFileName}</span>
+                  <span className="text-sm truncate flex-1">{retainedWordFileName}</span>
                   <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive shrink-0" onClick={() => setRemoveWordAttachment(true)}>
                     <Trash size={16} />
                   </Button>
@@ -747,7 +779,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
                   {t.guideEditor.attachWordFile}
                 </Button>
               )}
-              {(wordFile || (migrated?.fileUrl && !removeWordAttachment)) && (
+              {(wordFile || (retainedFileUrl && !removeWordAttachment)) && (
                 <p className="text-xs text-muted-foreground">{t.guideEditor.wordAttachmentHint}</p>
               )}
               <input
@@ -816,7 +848,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
             {t.guideEditor.preview}
           </Button>
           <Button onClick={handleSave} disabled={isSaving} className="gap-2">
-            {isSaving ? t.guideEditor.saving : migrated ? `${t.guideEditor.saveAsVersionPrefix}${nextVersion}` : t.guideEditor.createGuide}
+            {isSaving ? t.guideEditor.saving : submitLabel || (migrated ? `${t.guideEditor.saveAsVersionPrefix}${nextVersion}` : t.guideEditor.createGuide)}
           </Button>
         </DialogFooter>
       </DialogContent>

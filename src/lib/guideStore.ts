@@ -30,11 +30,19 @@ export async function saveVersionSnapshot(guide: Guide, savedBy: string, changeN
     savedBy,
     changeNote: changeNote?.trim() || undefined,
     snapshot: {
+      schemaVersion: 2,
       title: guide.title,
       category: guide.category,
       tags: guide.tags,
       sections: guide.sections || [],
       coverImageId: guide.coverImageId,
+      language: guide.language,
+      content: guide.content,
+      reviewIntervalMonths: guide.reviewIntervalMonths,
+      fileUrl: guide.fileUrl,
+      wordFileName: guide.wordFileName,
+      fileSize: guide.fileSize,
+      sharedWithTeamCodes: guide.sharedWithTeamCodes,
     },
   }
   const history = await getVersionHistory(guide.id)

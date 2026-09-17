@@ -41,7 +41,7 @@ export function Modern({ onNavigateBack }: ModernProps) {
 
   return (
     <div className="min-h-screen relative overflow-hidden">
-      <div className="absolute top-6 right-6 left-6 z-20">
+      <div className="fixed top-6 right-6 left-6 z-30 pointer-events-none">
         <div className="flex items-center justify-start pb-12">
           <motion.div
             initial={{ opacity: 0, x: -20 }}
@@ -52,10 +52,10 @@ export function Modern({ onNavigateBack }: ModernProps) {
               onClick={onNavigateBack}
               variant="outline"
               size="lg"
-              className="bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold"
+              className="pointer-events-auto bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold"
             >
               <ArrowLeft size={20} weight="bold" />
-              {language === 'da' ? 'Tilbage til Spilhjørnet' : 'Back to Game Corner'}
+              {language === 'da' ? 'Tilbage til Spilhjørnet' : language === 'fi' ? 'Takaisin pelinurkkaan' : 'Back to Game Corner'}
             </Button>
           </motion.div>
         </div>
@@ -94,7 +94,7 @@ export function Modern({ onNavigateBack }: ModernProps) {
           >
             {language === 'da'
               ? 'Større, moderne 3D-spil — mere end blot en hurtig omgang.'
-              : 'Bigger, modern 3D games — more than just a quick round.'}
+              : language === 'fi' ? 'Suurempi, moderni 3D-pelit ... enemmän kuin vain nopea kierros.' : 'Bigger, modern 3D games — more than just a quick round.'}
           </motion.p>
         </motion.header>
 
@@ -150,7 +150,7 @@ export function Modern({ onNavigateBack }: ModernProps) {
                   <p className="text-muted-foreground text-xs leading-relaxed mb-3 md:mb-4 flex-1">
                     {language === 'da'
                       ? 'Overlev 30 minutter mod en voksende hær af onde terninger. Byg din helt og bank fjender med din hammer!'
-                      : 'Survive 30 minutes against a growing horde of evil cubes. Level up your hero and bash enemies with your hammer!'}
+                      : language === 'fi' ? 'Selviytyä 30 minuuttia vastaan kasvava lauma pahoja kuutioita. Tasoita sankari ja lyö vihollisia vasaralla!' : 'Survive 30 minutes against a growing horde of evil cubes. Level up your hero and bash enemies with your hammer!'}
                   </p>
                 </div>
               </Card>
@@ -200,7 +200,7 @@ export function Modern({ onNavigateBack }: ModernProps) {
                   <p className="text-muted-foreground text-xs leading-relaxed mb-3 md:mb-4 flex-1">
                     {language === 'da'
                       ? 'Stil bøger tilbage på hylderne hurtigere end børnene kan tage dem ned. Hold Kaos-måleren under 100 % indtil lukketid!'
-                      : 'Shelve books faster than the kids can unshelve them. Keep the Chaos meter under 100% until closing time!'}
+                      : language === 'fi' ? 'Hyllyt ovat nopeampia kuin lapset. Pidä kaaosmittari alle 100% kunnes sulkemisaika!' : 'Shelve books faster than the kids can unshelve them. Keep the Chaos meter under 100% until closing time!'}
                   </p>
                 </div>
               </Card>

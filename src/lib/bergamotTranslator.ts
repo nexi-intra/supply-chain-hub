@@ -1,6 +1,7 @@
-// Neural da↔en-oversættelse via Bergamot/Firefox Translations (WASM) — kører
+// Neural da↔en↔fi-oversættelse via Bergamot/Firefox Translations (WASM) — kører
 // 100 % offline i appen. Modellerne ligger i <datamappe>/translation-models/
-// (daen/, enda/), så én download på det delte drev tjener alle klienter.
+// (daen/, enda/, enfi/, fien/), så én download på det delte drev tjener alle
+// klienter. Dansk↔finsk pivoterer neuralt gennem engelsk.
 //
 // Electron-produktionsappen kører under file://, hvor hverken fetch() eller
 // Worker-URL'er virker — derfor bygges workeren som en Blob med et prelude,
@@ -177,7 +178,11 @@ async function createTranslator(): Promise<TranslatorModule | null> {
 export async function bergamotTranslate(text: string, from: GuideLanguage, to: GuideLanguage): Promise<string | null> {
   if (!text.trim()) return text
   try {
-    if (!(await hasBergamotModel(from, to))) return null
+    const hasDirectModel = await hasBergamotModel(from, to)
+    const canPivotThroughEnglish = from !== 'en' && to !== 'en'
+      && await hasBergamotModel(from, 'en')
+      && await hasBergamotModel('en', to)
+    if (!hasDirectModel && !canPivotThroughEnglish) return null
 
     if (!translatorPromise) {
       translatorPromise = createTranslator()
@@ -195,7 +200,13 @@ export async function bergamotTranslate(text: string, from: GuideLanguage, to: G
     const translator = await translatorPromise
     if (!translator) return null
 
-    const response = await translator.translate({ from, to, text, html: false })
+    if (hasDirectModel) {
+      const response = await translator.translate({ from, to, text, html: false })
+      return response.target.text
+    }
+
+    const english = await translator.translate({ from, to: 'en', text, html: false })
+    const response = await translator.translate({ from: 'en', to, text: english.target.text, html: false })
     return response.target.text
   } catch (error) {
     console.error('Bergamot-oversættelse fejlede:', error)

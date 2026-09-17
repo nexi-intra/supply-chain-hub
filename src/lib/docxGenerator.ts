@@ -30,9 +30,11 @@ interface LoadedImage {
   type: 'png' | 'jpg' | 'gif' | 'bmp'
 }
 
-async function loadStoredImage(imageId: string, maxWidthPx: number, maxHeightPx?: number): Promise<LoadedImage | null> {
+export type StoredFileLoader = (fileUrl: string) => Promise<Blob>
+
+async function loadStoredImage(imageId: string, maxWidthPx: number, maxHeightPx?: number, fileLoader: StoredFileLoader = (url) => fileStorage.downloadFile(url)): Promise<LoadedImage | null> {
   try {
-    const blob = await fileStorage.downloadFile(`kv://${imageId}`)
+    const blob = await fileLoader(`kv://${imageId}`)
     const bitmap = await createImageBitmap(blob)
     let { width, height } = bitmap
     bitmap.close()
@@ -88,7 +90,7 @@ function imageParagraph(image: LoadedImage, alignment: (typeof AlignmentType)[ke
 }
 
 /** Genererer guiden som DOCX-blob efter den fælles dokumentmodel. */
-export async function generateGuideDocx(model: DocModel, authorName: string): Promise<Blob> {
+export async function generateGuideDocx(model: DocModel, authorName: string, fileLoader?: StoredFileLoader): Promise<Blob> {
   const logo = await loadHeaderLogo()
 
   const bodyChildren: Paragraph[] = []
@@ -101,7 +103,7 @@ export async function generateGuideDocx(model: DocModel, authorName: string): Pr
 
   const coverChildren: Paragraph[] = []
   if (model.coverImageId) {
-    const cover = await loadStoredImage(model.coverImageId, MAX_IMAGE_WIDTH_PX - 120, MAX_COVER_HEIGHT_PX)
+    const cover = await loadStoredImage(model.coverImageId, MAX_IMAGE_WIDTH_PX - 120, MAX_COVER_HEIGHT_PX, fileLoader)
     if (cover) coverChildren.push(imageParagraph(cover))
   }
   coverChildren.push(new Paragraph({ children: [new PageBreak()] }))
@@ -125,7 +127,7 @@ export async function generateGuideDocx(model: DocModel, authorName: string): Pr
         }))
       }
       for (const imageId of step.imageIds) {
-        const image = await loadStoredImage(imageId, MAX_IMAGE_WIDTH_PX - 120)
+        const image = await loadStoredImage(imageId, MAX_IMAGE_WIDTH_PX - 120, undefined, fileLoader)
         if (image) bodyChildren.push(imageParagraph(image))
       }
     }

@@ -17,7 +17,7 @@ async function bootstrap() {
 
     // One-time migration: carry over old localStorage data into the shared
     // store the first time the desktop app starts against an empty folder.
-    try {
+    if (!window.electronAuth) try {
       const [sharedKeys, localKeys] = await Promise.all([window.kv.keys(), localKv.keys()])
       if (sharedKeys.length === 0 && localKeys.length > 0) {
         for (const key of localKeys) {

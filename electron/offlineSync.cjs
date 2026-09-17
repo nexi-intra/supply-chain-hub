@@ -21,15 +21,34 @@ const QUEUE_KEY = '__offline-queue__'
  */
 function createResilientStore(networkStore, localStore, options = {}) {
   const { onSyncResult } = options
+  const revisions = new Map()
+  let mirrorGeneration = 0
+  const touch = key => revisions.set(key, (revisions.get(key) || 0) + 1)
+  const queued = key => loadQueue().some(entry => entry.key === key)
+  const semanticError = error => ['KV_CONFLICT', 'KV_INVALID_OPERATION', 'KV_LOCK_BUSY'].includes(error.code)
 
   /** Best-effort, ikke-blokerende spejling — må aldrig kunne vælte hovedoperationen. */
   function mirrorToLocal(key, value) {
+    const revision = revisions.get(key) || 0
+    const generation = mirrorGeneration
     setImmediate(() => {
       try {
+        if (generation !== mirrorGeneration || (revisions.get(key) || 0) !== revision || queued(key)) return
         localStore.set(key, value)
       } catch (err) {
         console.error(`TCD Hub: kunne ikke spejle "${key}" til lokal cache:`, err)
       }
+    })
+  }
+
+  function mirrorDeleteToLocal(key) {
+    const revision = revisions.get(key) || 0
+    const generation = mirrorGeneration
+    setImmediate(() => {
+      try {
+        if (generation !== mirrorGeneration || (revisions.get(key) || 0) !== revision || queued(key)) return
+        localStore.delete(key)
+      } catch (err) { console.error(`Supply Chain Hub: kunne ikke rydde cache for "${key}":`, err) }
     })
   }
 
@@ -54,11 +73,16 @@ function createResilientStore(networkStore, localStore, options = {}) {
   }
 
   function applyToNetwork(entry) {
+    if (options.guardReplay) return options.guardReplay(entry, () => applyToNetworkUnlocked(entry))
+    return applyToNetworkUnlocked(entry)
+  }
+  function applyToNetworkUnlocked(entry) {
     if (entry.kind === 'set') {
       networkStore.set(entry.key, entry.value)
       mirrorToLocal(entry.key, entry.value)
     } else if (entry.kind === 'delete') {
       networkStore.delete(entry.key)
+      mirrorDeleteToLocal(entry.key)
     } else if (entry.kind === 'update') {
       const result = networkStore.update(entry.key, entry.operation)
       mirrorToLocal(entry.key, result)
@@ -75,11 +99,13 @@ function createResilientStore(networkStore, localStore, options = {}) {
     if (queue.length === 0) return { succeeded: 0, failed: 0, remaining: 0 }
 
     const remaining = []
+    const blockedKeys = new Set()
     let succeeded = 0
     let failed = 0
 
     for (let i = 0; i < queue.length; i++) {
       const entry = queue[i]
+      if (blockedKeys.has(entry.key)) { remaining.push(entry); continue }
       if (!networkStore.isConnected()) {
         remaining.push(...queue.slice(i))
         break
@@ -89,6 +115,7 @@ function createResilientStore(networkStore, localStore, options = {}) {
         succeeded++
       } catch (err) {
         failed++
+        blockedKeys.add(entry.key)
         remaining.push({ ...entry, attempts: entry.attempts + 1, lastError: String((err && err.message) || err) })
       }
     }
@@ -105,6 +132,7 @@ function createResilientStore(networkStore, localStore, options = {}) {
   }
 
   function get(key, options) {
+    if (queued(key)) return localStore.get(key)
     if (!networkStore.isConnected()) {
       // Watcheren har allerede opdaget at netværksstien er utilgængelig — stol
       // IKKE på networkStore.get()'s resultat (et fuldt drev-udfald kan
@@ -121,13 +149,30 @@ function createResilientStore(networkStore, localStore, options = {}) {
     }
   }
 
+  // Async twin of get(): same offline/cache fallback, but the network read runs
+  // off the main thread so a slow SMB read never blocks Electron's event loop.
+  async function getAsync(key, options) {
+    if (queued(key)) return localStore.get(key)
+    if (!networkStore.isConnected()) return localStore.get(key)
+    try {
+      const value = await networkStore.getAsync(key, options)
+      if (value !== undefined) mirrorToLocal(key, value)
+      return value
+    } catch (err) {
+      console.error(`TCD Hub: kunne ikke læse "${key}" fra delt lager, bruger lokal cache:`, err)
+      return localStore.get(key)
+    }
+  }
+
   function set(key, value) {
-    if (networkStore.isConnected()) {
+    touch(key)
+    if (!queued(key) && networkStore.isConnected()) {
       try {
         networkStore.set(key, value)
         mirrorToLocal(key, value)
         return
       } catch (err) {
+        if (semanticError(err)) throw err
         console.error(`TCD Hub: skrivning af "${key}" fejlede, gemmer lokalt og synkroniserer senere:`, err)
       }
     }
@@ -136,14 +181,14 @@ function createResilientStore(networkStore, localStore, options = {}) {
   }
 
   function del(key) {
-    if (networkStore.isConnected()) {
+    touch(key)
+    if (!queued(key) && networkStore.isConnected()) {
       try {
         networkStore.delete(key)
-        setImmediate(() => {
-          try { localStore.delete(key) } catch (err) { console.error(`TCD Hub: kunne ikke slette "${key}" fra lokal cache:`, err) }
-        })
+        mirrorDeleteToLocal(key)
         return
       } catch (err) {
+        if (semanticError(err)) throw err
         console.error(`TCD Hub: sletning af "${key}" fejlede, gemmer lokalt og synkroniserer senere:`, err)
       }
     }
@@ -162,12 +207,14 @@ function createResilientStore(networkStore, localStore, options = {}) {
   }
 
   function update(key, operation) {
-    if (networkStore.isConnected()) {
+    touch(key)
+    if (!queued(key) && networkStore.isConnected()) {
       try {
         const result = networkStore.update(key, operation)
         mirrorToLocal(key, result)
         return result
       } catch (err) {
+        if (semanticError(err)) throw err
         console.error(`TCD Hub: opdatering af "${key}" fejlede, gemmer lokalt og synkroniserer senere:`, err)
       }
     }
@@ -202,6 +249,7 @@ function createResilientStore(networkStore, localStore, options = {}) {
 
   return {
     get,
+    getAsync,
     set,
     delete: del,
     keys,
@@ -211,6 +259,7 @@ function createResilientStore(networkStore, localStore, options = {}) {
     dumpAll,
     getPendingSyncCount,
     retrySyncNow: runReplay,
+    invalidate() { mirrorGeneration++; networkStore.invalidate?.(); localStore.invalidate?.() },
     get dataDir() {
       return networkStore.dataDir
     },

@@ -159,7 +159,7 @@ export function UpdateManager({ userEmail }: UpdateManagerProps) {
         </div>
         {status?.manifest && (
           <p className="text-xs text-muted-foreground">
-            {t.updateManager.publishedPrefix} {new Date(status.manifest.publishedAt).toLocaleString(language === 'en' ? 'en-US' : 'da-DK')}
+            {t.updateManager.publishedPrefix} {new Date(status.manifest.publishedAt).toLocaleString(language === 'en' ? 'en-US' : language === 'fi' ? 'fi-FI' : 'da-DK')}
             {status.manifest.publishedBy && <> {t.updateManager.byPrefix} {status.manifest.publishedBy}</>} · {status.manifest.file} ({formatMB(status.manifest.size)})
           </p>
         )}

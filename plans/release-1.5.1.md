@@ -15,7 +15,7 @@ Version 1.5.0 er en frossen release-baseline. Alle nye rettelser og funktioner t
 
 - Det interne pakkenavn forbliver `tcd-hub`.
 - Electron app-id forbliver `com.nexigroup.tcdhub`.
-- Configfilen forbliver `tcd-hub.config.json`.
+- Configfilen hedder fra 1.5.1 `supply-chan-hub.config`; det gamle navn læses kun som fallback under migrering.
 - Miljøvariablen forbliver `TCD_HUB_DATA_DIR`.
 - Eksisterende data i platformroden, `_registry`, `_shared` og teammapper må ikke
   overskrives eller slettes af migreringer.

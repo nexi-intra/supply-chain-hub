@@ -60,7 +60,7 @@ export function LoginDigest({ userEmail }: LoginDigestProps) {
           iconColor: 'text-primary',
           text: language === 'da'
             ? `${newEmails.length} ${newEmails.length === 1 ? 'ny email' : 'nye emails'}`
-            : `${newEmails.length} new ${newEmails.length === 1 ? 'email' : 'emails'}`,
+            : language === 'fi' ? `${newEmails.length} uusi ${newEmails.length === 1 ? 'email' : 'emails'}` : `${newEmails.length} new ${newEmails.length === 1 ? 'email' : 'emails'}`,
           onOpen: () => navigateTo('email'),
         })
       }
@@ -73,12 +73,12 @@ export function LoginDigest({ userEmail }: LoginDigestProps) {
         const approved = decisions.filter(v => v.status === 'approved').length
         const rejected = decisions.filter(v => v.status === 'rejected').length
         const parts: string[] = []
-        if (approved > 0) parts.push(language === 'da' ? `${approved} godkendt` : `${approved} approved`)
-        if (rejected > 0) parts.push(language === 'da' ? `${rejected} afvist` : `${rejected} rejected`)
+        if (approved > 0) parts.push(language === 'da' ? `${approved} godkendt` : language === 'fi' ? `Hyväksytty ${approved}` : `${approved} approved`)
+        if (rejected > 0) parts.push(language === 'da' ? `${rejected} afvist` : language === 'fi' ? `${rejected} hylätty` : `${rejected} rejected`)
         result.push({
           icon: Umbrella,
           iconColor: 'text-accent',
-          text: `${language === 'da' ? 'Ferie:' : 'Vacation:'} ${parts.join(', ')}`,
+          text: `${language === 'da' ? 'Ferie:' : language === 'fi' ? 'Loma:' : 'Vacation:'} ${parts.join(', ')}`,
           onOpen: () => navigateTo('calendar'),
         })
       }
@@ -93,7 +93,7 @@ export function LoginDigest({ userEmail }: LoginDigestProps) {
           iconColor: 'text-secondary-foreground',
           text: language === 'da'
             ? `${newSharedNotes.length} ${newSharedNotes.length === 1 ? 'delt note opdateret' : 'delte noter opdateret'}`
-            : `${newSharedNotes.length} shared ${newSharedNotes.length === 1 ? 'note' : 'notes'} updated`,
+            : language === 'fi' ? `${newSharedNotes.length} jaettu ${newSharedNotes.length === 1 ? 'note' : 'notes'} päivitetty` : `${newSharedNotes.length} shared ${newSharedNotes.length === 1 ? 'note' : 'notes'} updated`,
           onOpen: () => navigateTo('notebook'),
         })
       }
@@ -106,7 +106,7 @@ export function LoginDigest({ userEmail }: LoginDigestProps) {
           iconColor: 'text-destructive',
           text: language === 'da'
             ? `${newAnnouncements.length} ${newAnnouncements.length === 1 ? 'nyt opslag' : 'nye opslag'}`
-            : `${newAnnouncements.length} new ${newAnnouncements.length === 1 ? 'announcement' : 'announcements'}`,
+            : language === 'fi' ? `${newAnnouncements.length} uusi ${newAnnouncements.length === 1 ? 'announcement' : 'announcements'}` : `${newAnnouncements.length} new ${newAnnouncements.length === 1 ? 'announcement' : 'announcements'}`,
           onOpen: () => navigateTo('hub'),
         })
       }
@@ -129,10 +129,10 @@ export function LoginDigest({ userEmail }: LoginDigestProps) {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkle size={22} weight="fill" className="text-accent" />
-            {language === 'da' ? 'Siden sidst' : 'Since last time'}
+            {language === 'da' ? 'Siden sidst' : language === 'fi' ? 'Viime kerrasta lähtien' : 'Since last time'}
           </DialogTitle>
           <DialogDescription>
-            {language === 'da' ? 'Her er hvad der er sket, mens du var væk.' : "Here's what happened while you were away."}
+            {language === 'da' ? 'Her er hvad der er sket, mens du var væk.' : language === 'fi' ? "Näin tapahtui ollessasi poissa." : "Here's what happened while you were away."}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2 py-2">
@@ -152,7 +152,7 @@ export function LoginDigest({ userEmail }: LoginDigestProps) {
         </div>
         <DialogFooter>
           <Button onClick={() => setItems(null)} className="w-full">
-            {language === 'da' ? 'Luk' : 'Close'}
+            {language === 'da' ? 'Luk' : language === 'fi' ? 'Sulje' : 'Close'}
           </Button>
         </DialogFooter>
       </DialogContent>

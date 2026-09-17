@@ -27,12 +27,19 @@ export async function updateKvArrayItem<T extends { id: string }>(
   id: string,
   updater: (current: T) => T,
 ): Promise<T | null> {
-  const list = (await window.kv.get<T[]>(key)) || []
-  const current = list.find((entry) => entry?.id === id)
-  if (!current) return null
-  const updated = updater(current)
-  await window.kv.update<T>(key, { op: 'upsert', items: [updated] })
-  return updated
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const list = (await window.kv.get<T[]>(key)) || []
+    const current = list.find((entry) => entry?.id === id)
+    if (!current) return null
+    const updated = updater(structuredClone(current))
+    try {
+      await window.kv.update<T>(key, { op: 'replaceItem', id, expected: current, item: updated })
+      return updated
+    } catch (error) {
+      if (attempt === 4 || !String(error).includes('KV_CONFLICT')) throw error
+    }
+  }
+  return null
 }
 
 /**
@@ -55,6 +62,11 @@ export async function upsertInNestedKvArray<T extends { id: string }>(
  */
 export async function setKvObjectField(key: string, field: string, value: unknown): Promise<Record<string, unknown>> {
   return window.kv.updateField(key, { op: 'setField', field, value })
+}
+
+/** Replace one known record only if its public snapshot still matches. */
+export async function replaceKvObjectField(key: string, field: string, expected: unknown, value: unknown): Promise<Record<string, unknown>> {
+  return window.kv.updateField(key, { op: 'renameField', field, newField: field, expected, value })
 }
 
 /** Fjerner ét felt (fx én bruger) fra et opslagsobjekt under fil-lås. */

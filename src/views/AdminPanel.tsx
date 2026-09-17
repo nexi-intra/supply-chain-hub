@@ -6,7 +6,7 @@ import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { UserProfile } from '@/components/UserProfile'
 import { toast } from 'sonner'
-import { appendToKvArray, removeFromKvArray, setKvObjectField, deleteKvObjectField } from '@/lib/kvArrays'
+import { appendToKvArray, removeFromKvArray, setKvObjectField, deleteKvObjectField, replaceKvObjectField } from '@/lib/kvArrays'
 import { isAnyModalOpen } from '@/lib/modalStack'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
@@ -15,7 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { format } from 'date-fns'
-import { da, enUS } from 'date-fns/locale'
+import { da, enUS, fi } from 'date-fns/locale'
 import { UserRole, hasManagerAccess, getCreatorEmail, getRoleDisplayName, getRoleDescription } from '@/lib/userRoles'
 import { hashPassword } from '@/lib/passwords'
 import { useLanguage } from '@/contexts/LanguageContext'
@@ -35,7 +35,7 @@ interface AdminPanelProps {
 
 export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEmail }: AdminPanelProps) {
   const { t, language } = useLanguage()
-  const dateLocale = language === 'en' ? enUS : da
+  const dateLocale = language === 'en' ? enUS : language === 'fi' ? fi : da
   const [users, setUsers] = useState<User[]>([])
   const [sickLeaveEntries, setSickLeaveEntries] = useState<SickLeaveEntry[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -193,38 +193,46 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
     }
 
     const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; role: UserRole; isManager: boolean }>>('users') || {}
+    const normalizedEmail = employeeForm.email.trim().toLowerCase()
+    const existingEmail = Object.keys(usersData).find(email => email.trim().toLowerCase() === normalizedEmail && email !== editingEmployee?.email)
 
-    if (!editingEmployee && usersData[employeeForm.email]) {
+    if (!editingEmployee && existingEmail) {
       toast.error(t.adminPanel.employees.emailExists)
       return
     }
 
-    if (editingEmployee && editingEmployee.email !== employeeForm.email && usersData[employeeForm.email]) {
+    if (editingEmployee && existingEmail) {
       toast.error(t.adminPanel.employees.emailExists)
       return
-    }
-
-    if (editingEmployee && editingEmployee.email !== employeeForm.email) {
-      await deleteKvObjectField('users', editingEmployee.email)
     }
 
     // Ny bruger ELLER en ændret email kræver en frisk tildeling i det centrale
     // register — ellers kan personen slet ikke logge ind (registret ved ikke
     // hvilket team den nye/oprettede email hører til).
-    if ((!editingEmployee || editingEmployee.email !== employeeForm.email) && window.electronRegistry) {
+    if ((!editingEmployee || (!window.electronAuth && editingEmployee.email !== normalizedEmail)) && window.electronRegistry) {
       const currentTeam = await window.electronRegistry.getCurrentTeam()
-      if (currentTeam) await window.electronRegistry.assignUser(employeeForm.email, currentTeam.teamId)
+      if (currentTeam) await window.electronRegistry.assignUser(normalizedEmail, currentTeam.teamId)
     }
 
     const trimmedPassword = employeeForm.password.trim()
-    await setKvObjectField('users', employeeForm.email, {
-      email: employeeForm.email,
-      password: trimmedPassword ? await hashPassword(trimmedPassword) : usersData[employeeForm.email]?.password || '',
+    const updatedEmployee = {
+      ...usersData[editingEmployee?.email || employeeForm.email],
+      email: normalizedEmail,
+      password: trimmedPassword ? await hashPassword(trimmedPassword) : usersData[editingEmployee?.email || employeeForm.email]?.password || '',
       fullName: employeeForm.fullName,
       role: employeeForm.role,
       isManager: employeeForm.role === 'manager' || employeeForm.role === 'creator'
-    })
+    }
+    if (editingEmployee) {
+      await window.kv.updateField('users', { op: 'renameField', field: editingEmployee.email, newField: normalizedEmail, expected: usersData[editingEmployee.email], value: updatedEmployee })
+    } else {
+      await setKvObjectField('users', normalizedEmail, updatedEmployee)
+    }
 
+    if (window.electronAuth && editingEmployee && normalizedEmail !== editingEmployee.email.toLowerCase() && editingEmployee.email.toLowerCase() === userEmail.toLowerCase()) {
+      onLogout()
+      return
+    }
     await loadUsers()
     setShowEmployeeDialog(false)
     toast.success(editingEmployee ? t.adminPanel.employees.updated : t.adminPanel.employees.created)
@@ -254,7 +262,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
 
     const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; role: UserRole; isManager: boolean }>>('users')
     if (usersData && usersData[email]) {
-      await setKvObjectField('users', email, {
+      await replaceKvObjectField('users', email, usersData[email], {
         ...usersData[email],
         role: newRole,
         isManager: newRole === 'manager' || newRole === 'creator',
@@ -274,8 +282,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
 
     const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; role: UserRole; isManager: boolean }>>('users')
     if (usersData && usersData[email]) {
-      delete usersData[email]
-      await window.kv.set('users', usersData)
+      await deleteKvObjectField('users', email)
       await loadUsers()
       toast.success(t.adminPanel.users.deleted)
     }
@@ -334,7 +341,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
   return (
     <div className="min-h-screen relative overflow-hidden">
 
-      <div className="absolute top-6 right-6 left-6 z-20">
+      <div className="fixed top-6 right-6 left-6 z-30 pointer-events-none">
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pb-16">
           <div className="flex items-center gap-3">
             <motion.div
@@ -346,7 +353,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
                 variant="outline"
                 size="lg"
                 onClick={onNavigateBack}
-                className="bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
+                className="pointer-events-auto bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
               >
                 <ArrowLeft size={20} />
                 {t.common.back}

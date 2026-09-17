@@ -3,21 +3,47 @@
 // module with no Electron imports so it can be tested standalone.
 //
 // Concurrency model: writes are atomic (temp file + rename, atomic on the
-// same volume incl. SMB shares) with last-write-wins per key — adequate for
-// 10-15 clients with low write frequency. Change detection is polling-based
+// same volume incl. SMB shares). All mutations take the same per-key lock;
+// compareAndSet/replaceItem reject stale snapshots. Change detection is polling-based
 // (mtime scans) because fs.watch is unreliable on network shares.
 const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
+const { withFileLock, withFileLocks } = require('./fileLock.cjs')
 
 const FILE_EXT = '.json'
 const READ_ATTEMPTS = 5
 const WRITE_ATTEMPTS = 30
 const RETRY_DELAY_MS = 100
+const SLOW_OPERATION_MS = 100
 
-// Kryptering på disken (AES-256-GCM): beskytter mod at data/passwords kan
-// læses direkte af alle med adgang til mappen på et delt drev. Nøglen er
-// indbygget i appen, så alle klienter kan læse samme delte mappe.
+// A slow SMB share collapses under concurrent reads: this drive serves ~150ms
+// per read when accessed one-at-a-time, but seconds each under even light
+// parallelism (which also stalls the synchronous main-thread reads competing
+// for the same drive). Serialize async network reads across ALL stores on this
+// drive; they still run off the main thread, so the event loop stays free.
+const MAX_CONCURRENT_READS = 1
+let activeReads = 0
+const readWaiters = []
+function acquireReadSlot() {
+  if (activeReads < MAX_CONCURRENT_READS) { activeReads++; return Promise.resolve() }
+  return new Promise(resolve => readWaiters.push(resolve))
+}
+function releaseReadSlot() {
+  const next = readWaiters.shift()
+  if (next) next()
+  else activeReads--
+}
+
+function logSlow(operation, target, startedAt, attempts = 1) {
+  if (!process.env.TCD_HUB_DEBUG) return
+  const elapsedMs = Date.now() - startedAt
+  if (elapsedMs >= SLOW_OPERATION_MS) console.warn(`KV TIMING: ${operation} ${elapsedMs}ms attempts=${attempts} target=${target}`)
+}
+
+// Kryptering på disken (AES-256-GCM) forhindrer utilsigtet klartekstvisning.
+// Den indbyggede fælles nøgle er ikke en adgangsgrænse: filrettigheder og
+// backendens autorisation skal begrænse, hvem der må læse data.
 const ENC_KEY = crypto.scryptSync('tcd-hub-storage-v1', 'tcd-hub-static-salt', 32)
 
 function encryptPayload(json) {
@@ -78,6 +104,7 @@ function createStore(dataDir) {
   }
 
   function get(key, options) {
+    const startedAt = Date.now()
     const skipCache = options && options.skipCache
     const cached = !skipCache && readCache.get(key)
     if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
@@ -91,6 +118,7 @@ function createStore(dataDir) {
           // Keep cached value on error.
         }
       })
+      logSlow('get-cache', key, startedAt)
       return cached.value
     }
 
@@ -100,28 +128,75 @@ function createStore(dataDir) {
         const raw = fs.readFileSync(filePath(key), 'utf8')
         const decoded = parseFileContents(raw)
         readCache.set(key, { value: decoded, at: Date.now() })
+        logSlow('get', key, startedAt, attempt)
         return decoded
       } catch (err) {
-        if (err.code === 'ENOENT') return undefined
+        if (err.code === 'ENOENT') { readCache.delete(key); logSlow('get-missing', key, startedAt, attempt); return undefined }
         lastError = err
         if (attempt < READ_ATTEMPTS) wait(RETRY_DELAY_MS)
       }
     }
     // Existing but temporarily unreadable data must never look like a missing
     // key; callers may otherwise initialize it with an empty value.
+    logSlow('get-failed', key, startedAt, READ_ATTEMPTS)
     throw lastError
   }
 
-  function set(key, value) {
-    readCache.set(key, { value, at: Date.now() })
+  // Async read for IPC handlers: identical semantics to get(), but the network
+  // file read runs on libuv's threadpool so Electron's main event loop stays
+  // responsive during slow SMB reads instead of blocking on fs.readFileSync.
+  async function getAsync(key, options) {
+    const startedAt = Date.now()
+    const skipCache = options && options.skipCache
+    const cached = !skipCache && readCache.get(key)
+    if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
+      logSlow('get-cache', key, startedAt)
+      return cached.value
+    }
+    await acquireReadSlot()
+    try {
+      let lastError
+      for (let attempt = 1; attempt <= READ_ATTEMPTS; attempt++) {
+        try {
+          const raw = await fs.promises.readFile(filePath(key), 'utf8')
+          const decoded = parseFileContents(raw)
+          readCache.set(key, { value: decoded, at: Date.now() })
+          logSlow('get', key, startedAt, attempt)
+          return decoded
+        } catch (err) {
+          if (err.code === 'ENOENT') { readCache.delete(key); logSlow('get-missing', key, startedAt, attempt); return undefined }
+          lastError = err
+          if (attempt < READ_ATTEMPTS) await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS))
+        }
+      }
+      logSlow('get-failed', key, startedAt, READ_ATTEMPTS)
+      throw lastError
+    } finally {
+      releaseReadSlot()
+    }
+  }
+
+  function setUnlocked(key, value) {
+    let json
+    try { json = JSON.stringify(value) } catch {
+      const error = new Error('KV_INVALID_OPERATION: Værdien kan ikke gemmes som JSON')
+      error.code = 'KV_INVALID_OPERATION'
+      throw error
+    }
+    if (json === undefined) {
+      const error = new Error('KV_INVALID_OPERATION: Værdien mangler')
+      error.code = 'KV_INVALID_OPERATION'
+      throw error
+    }
     const target = filePath(key)
     const tmp = `${target}.${process.pid}.${Date.now()}.${crypto.randomBytes(4).toString('hex')}.tmp`
-    fs.writeFileSync(tmp, encryptPayload(JSON.stringify(value)))
+    fs.writeFileSync(tmp, encryptPayload(json))
 
     let lastError
     for (let attempt = 1; attempt <= WRITE_ATTEMPTS; attempt++) {
       try {
         fs.renameSync(tmp, target)
+        readCache.set(key, { value, at: Date.now() })
         return
       } catch (err) {
         lastError = err
@@ -134,60 +209,34 @@ function createStore(dataDir) {
     throw lastError
   }
 
+  function set(key, value) {
+    return withFileLock(filePath(key) + '.lock', () => setUnlocked(key, value), { createParent: false })
+  }
+
   function del(key) {
-    readCache.delete(key)
-    try {
-      fs.unlinkSync(filePath(key))
-    } catch (err) {
-      if (err.code !== 'ENOENT') throw err
-    }
+    return withFileLock(filePath(key) + '.lock', () => {
+      try { fs.unlinkSync(filePath(key)) } catch (err) { if (err.code !== 'ENOENT') throw err }
+      readCache.delete(key)
+    }, { createParent: false })
   }
 
   function keys() {
-    return fs
+    const startedAt = Date.now()
+    const result = fs
       .readdirSync(dataDir)
       .filter((name) => name.endsWith(FILE_EXT))
       .map(filenameToKey)
+    logSlow('keys', dataDir, startedAt)
+    return result
   }
 
   // --- Atomar array-opdatering på tværs af klienter -----------------------
   // Låsefil pr. nøgle (exclusive create er atomisk, også på SMB-shares).
-  // Forældede låse (crashet klient) overtages efter STALE_LOCK_MS.
-  const LOCK_ATTEMPTS = 50
-  const LOCK_RETRY_MS = 100
-  const STALE_LOCK_MS = 10_000
+  // Ownership is checked on release; a slow remote owner is never evicted
+  // merely because the operation has taken longer than ten seconds.
 
   function lockPath(key) {
     return filePath(key) + '.lock'
-  }
-
-  function acquireLock(key) {
-    const target = lockPath(key)
-    for (let attempt = 1; attempt <= LOCK_ATTEMPTS; attempt++) {
-      try {
-        const fd = fs.openSync(target, 'wx')
-        fs.writeSync(fd, String(process.pid))
-        fs.closeSync(fd)
-        return
-      } catch (err) {
-        if (err.code !== 'EEXIST') throw err
-        try {
-          const stat = fs.statSync(target)
-          if (Date.now() - stat.mtimeMs > STALE_LOCK_MS) {
-            fs.unlinkSync(target)
-            continue
-          }
-        } catch {
-          continue // Låsen forsvandt imens — prøv igen med det samme.
-        }
-        if (attempt === LOCK_ATTEMPTS) throw new Error(`Kunne ikke få lås på "${key}" (optaget af anden klient)`)
-        wait(LOCK_RETRY_MS)
-      }
-    }
-  }
-
-  function releaseLock(key) {
-    try { fs.unlinkSync(lockPath(key)) } catch {}
   }
 
   /**
@@ -208,14 +257,57 @@ function createStore(dataDir) {
    * har den forventede type (array for array-ops, objekt for felt-ops).
    */
   function update(key, operation) {
-    acquireLock(key)
-    try {
+    const invalid = message => { const error = new Error(`KV_INVALID_OPERATION: ${message}`); error.code = 'KV_INVALID_OPERATION'; throw error }
+    const conflict = () => { const error = new Error('KV_CONFLICT: Data blev ændret af en anden klient. Genindlæs og prøv igen.'); error.code = 'KV_CONFLICT'; throw error }
+    if (!operation || typeof operation !== 'object') invalid('Ugyldig operation')
+    if (!['compareAndSet', 'replaceItem', 'renameField', 'setField', 'deleteField', 'append', 'upsert', 'remove'].includes(operation.op)) invalid('Ukendt operation')
+    const unsafe = new Set(['__proto__', 'constructor', 'prototype'])
+    if (operation.field && unsafe.has(operation.field)) invalid('Ugyldigt felt')
+    if (operation.path && (!Array.isArray(operation.path) || operation.path.some(segment => typeof segment !== 'string' || unsafe.has(segment)))) invalid('Ugyldig sti')
+    if (['renameField', 'setField', 'deleteField'].includes(operation.op) && (typeof operation.field !== 'string' || !operation.field)) invalid('Ugyldigt felt')
+    if (operation.op === 'renameField' && (typeof operation.newField !== 'string' || !operation.newField || unsafe.has(operation.newField))) invalid('Ugyldigt nyt felt')
+    if (['renameField', 'setField', 'compareAndSet'].includes(operation.op) && JSON.stringify(operation.value) === undefined) invalid('Værdien kan ikke gemmes')
+    if (['append', 'upsert'].includes(operation.op) && (!Array.isArray(operation.items) || operation.items.some(item => !item || typeof item.id !== 'string' || !item.id))) invalid('Ugyldige elementer')
+    if (operation.op === 'remove' && (!Array.isArray(operation.ids) || operation.ids.some(id => typeof id !== 'string'))) invalid('Ugyldige id’er')
+    return withFileLock(lockPath(key), () => {
+      if (operation.op === 'compareAndSet') {
+        const current = get(key, { skipCache: true })
+        if (JSON.stringify(current) !== JSON.stringify(operation.expected)) {
+          if (JSON.stringify(current) === JSON.stringify(operation.value)) return current
+          conflict()
+        }
+        if (JSON.stringify(operation.value) === undefined) invalid('Værdien kan ikke gemmes')
+        setUnlocked(key, operation.value)
+        return operation.value
+      }
+      if (operation.op === 'replaceItem') {
+        const current = get(key, { skipCache: true }) || []
+        if (!Array.isArray(current) || !operation.item || operation.item.id !== operation.id) invalid('Ugyldigt element')
+        const index = current.findIndex(item => item?.id === operation.id)
+        if (index === -1 || JSON.stringify(current[index]) !== JSON.stringify(operation.expected)) conflict()
+        const next = [...current]
+        next[index] = operation.item
+        setUnlocked(key, next)
+        return next
+      }
+      if (operation.op === 'renameField') {
+        const current = get(key, { skipCache: true })
+        if (!current || typeof current !== 'object' || Array.isArray(current)) invalid('Flytning kræver et objekt')
+        if (!Object.hasOwn(current, operation.field) || JSON.stringify(current[operation.field]) !== JSON.stringify(operation.expected)) conflict()
+        if (operation.newField !== operation.field && Object.hasOwn(current, operation.newField)) conflict()
+        const next = { ...current }
+        delete next[operation.field]
+        next[operation.newField] = operation.value
+        setUnlocked(key, next)
+        return next
+      }
       if (operation.op === 'setField' || operation.op === 'deleteField') {
         const current = get(key, { skipCache: true })
-        const root = current && typeof current === 'object' && !Array.isArray(current) ? current : {}
+        if (current !== undefined && (!current || typeof current !== 'object' || Array.isArray(current))) invalid('Feltoperation kræver et objekt')
+        const root = current && typeof current === 'object' && !Array.isArray(current) ? structuredClone(current) : {}
         if (operation.op === 'setField') root[operation.field] = operation.value
         else delete root[operation.field]
-        set(key, root)
+        setUnlocked(key, root)
         return root
       }
 
@@ -224,26 +316,36 @@ function createStore(dataDir) {
       let root
       let list
       if (path) {
-        root = current && typeof current === 'object' && !Array.isArray(current) ? current : {}
+        if (current !== undefined && (!current || typeof current !== 'object' || Array.isArray(current))) invalid('Stien kræver et objekt')
+        root = current && typeof current === 'object' && !Array.isArray(current) ? structuredClone(current) : {}
         let parent = root
         for (let i = 0; i < path.length - 1; i++) {
           const segment = path[i]
+          if (parent[segment] !== undefined && (!parent[segment] || typeof parent[segment] !== 'object' || Array.isArray(parent[segment]))) invalid('Stien kræver et objekt')
           if (!parent[segment] || typeof parent[segment] !== 'object' || Array.isArray(parent[segment])) {
             parent[segment] = {}
           }
           parent = parent[segment]
         }
         const lastSegment = path[path.length - 1]
+        if (parent[lastSegment] !== undefined && !Array.isArray(parent[lastSegment])) invalid('Stien kræver et array')
         list = Array.isArray(parent[lastSegment]) ? parent[lastSegment] : []
       } else {
         list = current === undefined ? [] : current
         if (!Array.isArray(list)) {
-          throw new Error(`kv:update kræver et array i "${key}"`)
+          invalid(`kv:update kræver et array i "${key}"`)
         }
       }
       let next
       if (operation.op === 'append') {
-        next = [...list, ...operation.items]
+        next = [...list]
+        for (const item of operation.items) {
+          const existing = next.find(entry => entry?.id === item.id)
+          // A queue replay may repeat a write that reached the share before
+          // the connection failed. Identical IDs/content are already applied.
+          if (existing) { if (JSON.stringify(existing) !== JSON.stringify(item)) conflict() }
+          else next.push(item)
+        }
       } else if (operation.op === 'upsert') {
         next = [...list]
         for (const item of operation.items) {
@@ -261,14 +363,46 @@ function createStore(dataDir) {
         let parent = root
         for (let i = 0; i < path.length - 1; i++) parent = parent[path[i]]
         parent[path[path.length - 1]] = next
-        set(key, root)
+        setUnlocked(key, root)
       } else {
-        set(key, next)
+        setUnlocked(key, next)
       }
       return next
-    } finally {
-      releaseLock(key)
+    }, { createParent: false })
+  }
+
+  // Trusted Node callers only (not exposed through preload/IPC). The callback
+  // runs synchronously with the same lock as every other mutation. Returning
+  // undefined skips the write; backups may be made inside the callback.
+  function mutate(key, callback) {
+    return withFileLock(filePath(key) + '.lock', () => {
+      const next = callback(structuredClone(get(key, { skipCache: true })))
+      if (next && typeof next.then === 'function') throw new Error('Mutation callback must be synchronous')
+      if (next !== undefined) setUnlocked(key, next)
+      return next
+    }, { createParent: false })
+  }
+
+  // Trusted multi-record operations only. No capability is exposed to IPC.
+  // Locks follow the same filename order across instances and stay held until
+  // the synchronous callback returns. Escaped capabilities expire afterwards.
+  function withLockedKeys(keys, callback) {
+    if (typeof callback !== 'function' || require('node:util').types.isAsyncFunction(callback)) throw new Error('KV_INVALID_OPERATION: Transaction must be synchronous')
+    if (!Array.isArray(keys) || keys.some(key => typeof key !== 'string' || !key)) throw new Error('KV_INVALID_OPERATION: Invalid transaction keys')
+    const ordered = [...new Set(keys)].sort((a, b) => lockPath(a).localeCompare(lockPath(b), 'en'))
+    const allowed = new Set(ordered)
+    let active = true
+    const check = key => { if (!active || !allowed.has(key)) throw new Error('KV_INVALID_OPERATION: Invalid transaction capability') }
+    const transaction = {
+      get(key) { check(key); return structuredClone(get(key, { skipCache: true })) },
+      set(key, value) { check(key); setUnlocked(key, value) },
+      delete(key) { check(key); try { fs.unlinkSync(filePath(key)) } catch (error) { if (error.code !== 'ENOENT') throw error }; readCache.delete(key) },
     }
+    try {
+      const result = withFileLocks(ordered.map(lockPath), () => callback(transaction), { createParent: false })
+      if (result && typeof result.then === 'function') throw new Error('KV_INVALID_OPERATION: Transaction must be synchronous')
+      return result
+    } finally { active = false }
   }
 
   /** Alle nøgler + værdier (til backup). */
@@ -397,7 +531,7 @@ function createStore(dataDir) {
     return connected
   }
 
-  return { get, set, delete: del, keys, watch, update, dumpAll, dataDir, isConnected, scanDirectory }
+  return { get, getAsync, set, delete: del, keys, watch, update, mutate, withLockedKeys, invalidate: () => readCache.clear(), dumpAll, dataDir, isConnected, scanDirectory }
 }
 
-module.exports = { createStore }
+module.exports = { createStore, parseFileContents, keyToFilename }

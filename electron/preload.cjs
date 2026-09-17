@@ -1,9 +1,57 @@
 // Exposes the shared file-based KV store to the renderer. All file I/O stays
 // in the main process; the renderer only sees an async API.
 const { contextBridge, ipcRenderer } = require('electron')
+const kvChangedListeners = new Set()
+ipcRenderer.on('kv:changed', (_event, changedKeys) => {
+  for (const listener of kvChangedListeners) listener(changedKeys)
+})
+contextBridge.exposeInMainWorld('electronAccounts', {
+  status: () => ipcRenderer.invoke('accounts:status'),
+  resume: id => ipcRenderer.invoke('accounts:resume', id),
+  rollback: id => ipcRenderer.invoke('accounts:rollback', id),
+})
+contextBridge.exposeInMainWorld('electronBackup', {
+  export: () => ipcRenderer.invoke('backup:export'),
+})
+contextBridge.exposeInMainWorld('electronAuth', {
+  login: request => ipcRenderer.invoke('auth:login', request),
+  signup: request => ipcRenderer.invoke('auth:signup', request),
+  resume: token => ipcRenderer.invoke('auth:resume', token),
+  current: () => ipcRenderer.invoke('auth:current'),
+  renew: () => ipcRenderer.invoke('auth:renew'),
+  logout: () => ipcRenderer.invoke('auth:logout'),
+  selectView: viewId => ipcRenderer.invoke('auth:select-view', viewId),
+  profile: request => ipcRenderer.invoke('auth:profile', request),
+})
+contextBridge.exposeInMainWorld('electronAssistant', {
+  status: request => ipcRenderer.invoke('assistant:status', request),
+  ask: request => ipcRenderer.invoke('assistant:ask', request),
+  stop: options => ipcRenderer.invoke('assistant:stop', options),
+  prepare: request => ipcRenderer.invoke('assistant:prepare', request),
+  provision: request => ipcRenderer.invoke('assistant:provision', request),
+  guide: request => ipcRenderer.invoke('assistant:guide', request),
+  image: request => ipcRenderer.invoke('assistant:image', request),
+  record: request => ipcRenderer.invoke('assistant:record', request),
+  onProvisionProgress: callback => {
+    const listener = (_event, progress) => callback(progress)
+    ipcRenderer.on('assistant:provision-progress', listener)
+    return () => ipcRenderer.removeListener('assistant:provision-progress', listener)
+  },
+  onContextChanged: callback => {
+    const listener = () => callback()
+    ipcRenderer.on('assistant:context-changed', listener)
+    return () => ipcRenderer.removeListener('assistant:context-changed', listener)
+  },
+  onGuidesChanged: callback => {
+    const listener = () => callback()
+    ipcRenderer.on('assistant:guides-changed', listener)
+    return () => ipcRenderer.removeListener('assistant:guides-changed', listener)
+  },
+})
 
 contextBridge.exposeInMainWorld('electronKv', {
   get: (key) => ipcRenderer.invoke('kv:get', key),
+  getMany: (keys) => ipcRenderer.invoke('kv:get-many', keys),
   set: (key, value) => ipcRenderer.invoke('kv:set', key, value),
   delete: (key) => ipcRenderer.invoke('kv:delete', key),
   keys: () => ipcRenderer.invoke('kv:keys'),
@@ -24,9 +72,8 @@ contextBridge.exposeInMainWorld('electronKv', {
     return () => ipcRenderer.removeListener('storage:sync-result', listener)
   },
   onChanged: (callback) => {
-    const listener = (_event, changedKeys) => callback(changedKeys)
-    ipcRenderer.on('kv:changed', listener)
-    return () => ipcRenderer.removeListener('kv:changed', listener)
+    kvChangedListeners.add(callback)
+    return () => kvChangedListeners.delete(callback)
   },
 })
 
@@ -76,8 +123,19 @@ contextBridge.exposeInMainWorld('electronRegistry', {
   getCreatorEmail: () => ipcRenderer.invoke('registry:get-creator-email'),
   setCreatorEmail: (email) => ipcRenderer.invoke('registry:set-creator-email', email),
   createTeam: (team) => ipcRenderer.invoke('registry:create-team', team),
+  listTeamAdministration: (requesterEmail) => ipcRenderer.invoke('registry:list-team-administration', requesterEmail),
+  updateTeam: (requesterEmail, teamId, input) => ipcRenderer.invoke('registry:update-team', requesterEmail, teamId, input),
+  listAccessViews: (requesterEmail) => ipcRenderer.invoke('registry:list-access-views', requesterEmail),
+  listMyAccessViews: (email) => ipcRenderer.invoke('registry:list-my-access-views', email),
+  createAccessView: (requesterEmail, input) => ipcRenderer.invoke('registry:create-access-view', requesterEmail, input),
+  updateAccessView: (requesterEmail, viewId, input) => ipcRenderer.invoke('registry:update-access-view', requesterEmail, viewId, input),
+  deleteAccessView: (requesterEmail, viewId) => ipcRenderer.invoke('registry:delete-access-view', requesterEmail, viewId),
+  listUserOptions: (requesterEmail) => ipcRenderer.invoke('registry:list-user-options', requesterEmail),
+  readAccessViewKey: (email, viewId, teamId, key) => ipcRenderer.invoke('registry:read-access-view-key', email, viewId, teamId, key),
   getCurrentTeam: () => ipcRenderer.invoke('registry:get-current-team'),
   readTeamKey: (folderName, key) => ipcRenderer.invoke('registry:read-team-key', folderName, key),
+  readTeamKeys: (folderName, keys) => ipcRenderer.invoke('registry:read-team-keys', folderName, keys),
+  readTeamsKeys: (requests) => ipcRenderer.invoke('registry:read-teams-keys', requests),
   submitGuideAccessRequest: (folderName, request) => ipcRenderer.invoke('registry:submit-guide-access-request', folderName, request),
 })
 

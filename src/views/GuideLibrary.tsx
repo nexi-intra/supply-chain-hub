@@ -5,11 +5,11 @@ import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
-import { Plus, MagnifyingGlass, Books, Gear, ArrowLeft, Timer, FolderOpen, ChatCircleDots, FileArrowUp, Buildings, LockKey, Clock, CheckCircle, XCircle, Eye } from '@phosphor-icons/react'
+import { Plus, MagnifyingGlass, Books, Gear, ArrowLeft, Timer, FolderOpen, ChatCircleDots, FileArrowUp, Buildings, LockKey, Clock, CheckCircle, XCircle, Eye, ClipboardText } from '@phosphor-icons/react'
 import { Guide, GuideAccessRequest } from '@/lib/types'
-import { guidePlainText, getReviewStatus, computeNextReviewAt } from '@/lib/guideTypes'
+import { guidePlainText, getReviewStatus, computeNextReviewAt, type ArchivedGuideEntry, type GuideReviewRequest } from '@/lib/guideTypes'
 import { GuideSearchIndex } from '@/lib/searchIndex'
-import { deleteGuideArtifacts } from '@/lib/guideStore'
+import { bumpVersion, saveVersionSnapshot } from '@/lib/guideStore'
 import { guideToDocModel, resolveAuthorName } from '@/lib/docModel'
 import { isExportAvailable, getExportRoot, chooseAndSaveExportRoot, exportGuideToLibrary } from '@/lib/guideExporter'
 import { guideImportManager } from '@/lib/guideImportManager'
@@ -19,6 +19,7 @@ import { GuideCard } from '@/components/GuideCard'
 import { GuideEditor } from '@/components/GuideEditor'
 import { GuideViewer } from '@/components/GuideViewer'
 import { GuideChat } from '@/components/GuideChat'
+import { GuideReviewDashboard } from '@/components/GuideReviewDashboard'
 import { CategoryManager } from '@/components/CategoryManager'
 import { UserProfile } from '@/components/UserProfile'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -28,6 +29,9 @@ import { consumeNavigationParams } from '@/lib/appNavigation'
 import { toast } from 'sonner'
 import { useLanguage } from '@/contexts/LanguageContext'
 import type { RegisteredTeam } from '@/lib/electronRegistryBridge'
+import { getUserRole, type UserRole } from '@/lib/userRoles'
+import { canReviewGuideRequest, hasGuideReviewConflict, isOpenGuideReview } from '@/lib/guideReview'
+import { removeFromKvArray, upsertInKvArray } from '@/lib/kvArrays'
 
 const defaultCategories: string[] = ['Procedures', 'Technical', 'HR', 'Safety', 'General']
 
@@ -38,7 +42,7 @@ interface GuideLibraryProps {
 }
 
 export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibraryProps) {
-  const { t } = useLanguage()
+  const { t, language } = useLanguage()
   const [guides, setGuides] = useKV<Guide[]>('guides', [])
   // Tvaergaaende delte guides (Fase 3, plans/guide-library-cross-team-links-format.md) — samme
   // platform-delte KV-mekanisme som madplanen (Fase 9.1, se SHARED_KV_KEYS i main.cjs). Alle
@@ -50,6 +54,13 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
   // resolveAuthorName, som er async og ville give ét KV-kald pr. kort) — samme genbrugsmønster
   // som andre views bruger til e-mail→navn-overslåg.
   const [usersByEmail] = useKV<Record<string, { fullName?: string }>>('users', {})
+  const [reviewRequests] = useKV<GuideReviewRequest[]>('guide-review-requests', [], { initializeIfMissing: false })
+  const [archivedGuides] = useKV<ArchivedGuideEntry[]>('archived-guides', [], { initializeIfMissing: false })
+  const [guideAdminEmails] = useKV<string[]>('guide-admin-emails', [], { initializeIfMissing: false })
+  const [userRole, setUserRole] = useState<UserRole>('user')
+  const [workflowView, setWorkflowView] = useState<'published' | 'workflow'>('published')
+  const [editingReviewRequest, setEditingReviewRequest] = useState<GuideReviewRequest | null>(null)
+  const [editingAsReviewer, setEditingAsReviewer] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [viewerOpen, setViewerOpen] = useState(false)
   const [categoryManagerOpen, setCategoryManagerOpen] = useState(false)
@@ -59,7 +70,8 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
   const importJob = useSyncExternalStore(guideImportManager.subscribe, guideImportManager.getJob)
   const isImporting = importJob !== null
   const importInputRef = useRef<HTMLInputElement>(null)
-  const [searchQuery, setSearchQuery] = useState(() => consumeNavigationParams()?.search ?? '')
+  const [initialNavigation] = useState(() => consumeNavigationParams())
+  const [searchQuery, setSearchQuery] = useState(() => initialNavigation?.search ?? '')
   const [activeCategory, setActiveCategory] = useState<string>('All')
   const [showNeedsReview, setShowNeedsReview] = useState(false)
   const [exportDialogOpen, setExportDialogOpen] = useState(false)
@@ -67,6 +79,21 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
   const [isExportingAll, setIsExportingAll] = useState(false)
   const [exportProgress, setExportProgress] = useState('')
   const [chatOpen, setChatOpen] = useState(false)
+
+  useEffect(() => {
+    getUserRole(userEmail).then(setUserRole)
+  }, [userEmail])
+
+  useEffect(() => {
+    if (initialNavigation?.tab === 'review') setWorkflowView('workflow')
+  }, [initialNavigation])
+
+  const normalizedUserEmail = userEmail.trim().toLowerCase()
+  const isManager = userRole === 'manager' || userRole === 'creator'
+  const isGuideAdmin = (guideAdminEmails || []).some((email) => email.trim().toLowerCase() === normalizedUserEmail)
+  const isGuideReviewer = isManager || isGuideAdmin
+  const pendingReviewCount = (reviewRequests || []).filter((request) => request.status === 'pending').length
+  const myOpenReviewCount = (reviewRequests || []).filter((request) => request.submittedBy.trim().toLowerCase() === normalizedUserEmail && request.status !== 'approved' && request.status !== 'withdrawn').length
 
   // Tværgående guide-eksistens (Fase 8): kun titel/kategori vises fra ANDRE teams — men vi henter
   // det FULDE Guide-objekt, så en godkendt adgangsanmodning kan vise ægte indhold uden et ekstra kald.
@@ -258,54 +285,254 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
     toast.success(`"${guide.title}" ${t.guideLibrary.toasts.markedReviewedSuffix}`)
   }
 
-  const handleSaveGuide = (guide: Guide) => {
-    const wasShared = (sharedGuides || []).some((g) => g.id === guide.id)
-    const wasLocal = (guides || []).some((g) => g.id === guide.id)
-    const isEdit = wasShared || wasLocal
-    const nowShared = isSharedGuide(guide)
+  const updateReviewRequest = async (updated: GuideReviewRequest) => {
+    await upsertInKvArray('guide-review-requests', [updated])
+  }
 
-    const upsert = (list: Guide[] | undefined) => (list || []).some((g) => g.id === guide.id)
-      ? (list || []).map((g) => (g.id === guide.id ? guide : g))
-      : [guide, ...(list || [])]
+  const publishGuide = async (guide: Guide) => {
+    const wasShared = (sharedGuides || []).some((item) => item.id === guide.id)
+    const wasLocal = (guides || []).some((item) => item.id === guide.id)
 
-    if (nowShared) {
-      setSharedGuides(upsert)
-      // Flyttet fra lokal til delt (eller altid var delt) — fjern en evt. gammel lokal kopi.
-      if (wasLocal) setGuides((current) => (current || []).filter((g) => g.id !== guide.id))
+    if (isSharedGuide(guide)) {
+      await upsertInKvArray('shared-guides', [guide])
+      if (wasLocal) await removeFromKvArray('guides', [guide.id])
     } else {
-      setGuides(upsert)
-      // Flyttet fra delt til lokal (alle andre teams fjernet igen) — fjern den gamle delte kopi.
-      if (wasShared) setSharedGuides((current) => (current || []).filter((g) => g.id !== guide.id))
+      await upsertInKvArray('guides', [guide])
+      if (wasShared) await removeFromKvArray('shared-guides', [guide.id])
     }
+  }
 
-    toast.success(isEdit ? `${t.guideLibrary.toasts.updatedPrefix} (v${guide.version})` : t.guideLibrary.toasts.created)
+  const closeGuideEditor = () => {
     setDialogOpen(false)
     setEditGuide(undefined)
+    setEditingReviewRequest(null)
+    setEditingAsReviewer(false)
+    setImportDraft(null)
+  }
+
+  const handleSaveGuide = async (guide: Guide, changeNote?: string) => {
+    const now = Date.now()
+    const displayName = usersByEmail?.[userEmail]?.fullName || userEmail
+
+    if (editingReviewRequest) {
+      const updated: GuideReviewRequest = {
+        ...editingReviewRequest,
+        guideId: guide.id,
+        guideTitle: guide.title,
+        proposedGuide: guide,
+        status: 'pending',
+        updatedAt: now,
+        submittedAt: editingAsReviewer ? editingReviewRequest.submittedAt : now,
+        changeNote: changeNote || editingReviewRequest.changeNote,
+        reviewerComment: editingAsReviewer ? editingReviewRequest.reviewerComment : undefined,
+        claimedBy: editingAsReviewer ? userEmail : undefined,
+        claimedAt: editingAsReviewer ? (editingReviewRequest.claimedAt || now) : undefined,
+        reviewerEditedBy: editingAsReviewer ? userEmail : editingReviewRequest.reviewerEditedBy,
+        reviewerEditedAt: editingAsReviewer ? now : editingReviewRequest.reviewerEditedAt,
+        reviewedBy: undefined,
+        reviewedAt: undefined,
+      }
+      await updateReviewRequest(updated)
+      toast.success(editingAsReviewer
+        ? (language === 'da' ? 'Reviewerens rettelser er gemt i forslaget' : language === 'fi' ? 'Tarkistajan muutokset tallennettiin ehdotukseen' : 'Reviewer changes saved to the proposal')
+        : (language === 'da' ? 'Guiden er sendt til review igen' : language === 'fi' ? 'Opas lähetettiin uudelleen tarkistettavaksi' : 'Guide resubmitted for review'))
+      closeGuideEditor()
+      return
+    }
+
+    const [latestLocalGuides, latestSharedGuides] = await Promise.all([
+      window.kv.get<Guide[]>('guides'),
+      window.kv.get<Guide[]>('shared-guides'),
+    ])
+    const latestPublishedGuides = [...(latestLocalGuides || []), ...(latestSharedGuides || [])]
+    const intendedAsUpdate = Boolean(editGuide)
+    const published = intendedAsUpdate ? latestPublishedGuides.find((item) => item.id === guide.id) : undefined
+    if (intendedAsUpdate && !published) {
+      toast.error(language === 'da' ? 'Den udgivne guide findes ikke længere. Genindlæs biblioteket og prøv igen.' : language === 'fi' ? 'Julkaistua opasta ei enää ole. Lataa kirjasto uudelleen ja yritä uudelleen.' : 'The published guide no longer exists. Reload the library and try again.')
+      return
+    }
+    const hasIdCollision = !intendedAsUpdate && latestPublishedGuides.some((item) => item.id === guide.id)
+    const submittedGuide = hasIdCollision
+      ? { ...guide, id: newId('guide'), createdAt: now, updatedAt: now }
+      : guide
+    const request: GuideReviewRequest = {
+      id: newId('guide-review'),
+      guideId: submittedGuide.id,
+      guideTitle: submittedGuide.title,
+      action: published ? 'update' : 'create',
+      status: 'pending',
+      baseVersion: published?.version,
+      baseGuide: published ? structuredClone(published) : undefined,
+      proposedGuide: submittedGuide,
+      submittedBy: userEmail,
+      submittedByName: displayName,
+      submittedAt: now,
+      updatedAt: now,
+      changeNote,
+    }
+    await updateReviewRequest(request)
+    toast.success(language === 'da' ? 'Guiden er sendt til review' : language === 'fi' ? 'Opas lähetettiin tarkistettavaksi' : 'Guide submitted for review')
+    closeGuideEditor()
+    setWorkflowView('workflow')
   }
 
   const handleEditGuide = (guide: Guide) => {
+    const existingRequest = (reviewRequests || []).find((request) => request.guideId === guide.id && isOpenGuideReview(request))
+    if (existingRequest) {
+      const own = existingRequest.submittedBy.trim().toLowerCase() === normalizedUserEmail
+      if (own && existingRequest.status !== 'pending' && existingRequest.action !== 'delete') {
+        setEditingReviewRequest(existingRequest)
+        setEditingAsReviewer(false)
+        setEditGuide(existingRequest.proposedGuide)
+        setDialogOpen(true)
+        return
+      }
+      toast.info(language === 'da' ? 'Der findes allerede en åben revision af denne guide' : language === 'fi' ? 'Tälle oppaalle on jo avoin versio' : 'An open revision already exists for this guide')
+      setWorkflowView('workflow')
+      return
+    }
     setEditGuide(guide)
     setDialogOpen(true)
   }
 
-  const handleDeleteGuide = (id: string) => {
+  const handleDeleteGuide = async (id: string) => {
     const guide = myGuides.find((g) => g.id === id)
-    if (guide && isSharedGuide(guide)) {
-      setSharedGuides((current) => (current || []).filter((g) => g.id !== id))
-    } else {
-      setGuides((current) => (current || []).filter((g) => g.id !== id))
+    if (!guide) return
+    const existingRequest = (reviewRequests || []).find((request) => request.guideId === id && isOpenGuideReview(request))
+    if (existingRequest) {
+      toast.info(language === 'da' ? 'Der findes allerede en åben anmodning for denne guide' : language === 'fi' ? 'Tälle oppaalle on jo avoin pyyntö' : 'An open request already exists for this guide')
+      return
     }
-    if (guide) {
-      // Ryd versionshistorik og billeder i baggrunden.
-      deleteGuideArtifacts(guide).catch((error) => console.error('Oprydning fejlede:', error))
-    }
-    toast.success(t.guideLibrary.toasts.deleted)
+    const now = Date.now()
+    await updateReviewRequest({
+      id: newId('guide-review'),
+      guideId: guide.id,
+      guideTitle: guide.title,
+      action: 'delete',
+      status: 'pending',
+      baseVersion: guide.version,
+      baseGuide: structuredClone(guide),
+      submittedBy: userEmail,
+      submittedByName: usersByEmail?.[userEmail]?.fullName || userEmail,
+      submittedAt: now,
+      updatedAt: now,
+    })
+    toast.success(language === 'da' ? 'Sletningen er sendt til review' : language === 'fi' ? 'Poistaminen lähetettiin tarkistettavaksi' : 'Deletion submitted for review')
+    setWorkflowView('workflow')
   }
 
   const handleAddNew = () => {
+    setEditingReviewRequest(null)
+    setEditingAsReviewer(false)
     setEditGuide(undefined)
     setImportDraft(null)
     setDialogOpen(true)
+  }
+
+  const handleEditReviewRequest = async (request: GuideReviewRequest, asReviewer: boolean) => {
+    if (!request.proposedGuide) {
+      if (!asReviewer && request.action === 'delete') {
+        await updateReviewRequest({ ...request, status: 'pending', submittedAt: Date.now(), updatedAt: Date.now(), reviewerComment: undefined })
+        toast.success(language === 'da' ? 'Sletningen er sendt til review igen' : language === 'fi' ? 'Poistaminen lähetettiin uudelleen tarkistettavaksi' : 'Deletion resubmitted for review')
+      }
+      return
+    }
+    setEditingReviewRequest(request)
+    setEditingAsReviewer(asReviewer)
+    setEditGuide(request.proposedGuide)
+    setDialogOpen(true)
+  }
+
+  const handleClaimReview = async (request: GuideReviewRequest) => {
+    if (!isGuideReviewer || !canReviewGuideRequest(request, userEmail, isManager) || (request.claimedBy && request.claimedBy !== userEmail && !isManager)) return
+    await updateReviewRequest({ ...request, claimedBy: userEmail, claimedAt: Date.now(), updatedAt: Date.now() })
+  }
+
+  const handleReturnReview = async (request: GuideReviewRequest, comment: string) => {
+    await updateReviewRequest({
+      ...request,
+      status: 'changes_requested',
+      reviewerComment: comment,
+      reviewedBy: userEmail,
+      reviewedAt: Date.now(),
+      claimedBy: undefined,
+      claimedAt: undefined,
+      updatedAt: Date.now(),
+    })
+    toast.success(language === 'da' ? 'Guiden er sendt tilbage til forfatteren' : language === 'fi' ? 'Opas palautettiin tekijälle' : 'Guide returned to the author')
+  }
+
+  const handleWithdrawReview = async (request: GuideReviewRequest) => {
+    if (request.submittedBy.trim().toLowerCase() !== normalizedUserEmail) return
+    await updateReviewRequest({ ...request, status: 'draft', claimedBy: undefined, claimedAt: undefined, updatedAt: Date.now() })
+    toast.success(language === 'da' ? 'Revisionen er trukket tilbage som kladde' : language === 'fi' ? 'Versio palautettiin luonnokseksi' : 'Revision withdrawn to draft')
+  }
+
+  const handleApproveReview = async (request: GuideReviewRequest) => {
+    if (!isGuideReviewer || !canReviewGuideRequest(request, userEmail, isManager)) return
+    const [latestLocalGuides, latestSharedGuides] = await Promise.all([
+      window.kv.get<Guide[]>('guides'),
+      window.kv.get<Guide[]>('shared-guides'),
+    ])
+    const published = [...(latestLocalGuides || []), ...(latestSharedGuides || [])].find((guide) => guide.id === request.guideId)
+    const hasConflict = hasGuideReviewConflict(request, published)
+    if (hasConflict) {
+      await handleReturnReview(request, language === 'da' ? 'Den udgivne guide er ændret siden indsendelsen. Opret revisionen igen fra den nyeste version.' : language === 'fi' ? 'Julkaistua opasta on muutettu lähetyksen jälkeen. Luo versio uudelleen uusimmasta versiosta.' : 'The published guide changed after submission. Recreate the revision from the latest version.')
+      toast.error(language === 'da' ? 'Revisionen kunne ikke godkendes på grund af en versionskonflikt' : language === 'fi' ? 'Versiota ei voitu hyväksyä versiokonfliktin vuoksi' : 'The revision could not be approved because of a version conflict')
+      return
+    }
+
+    if (request.action === 'delete') {
+      if (!published) return
+      await upsertInKvArray('archived-guides', [{
+        id: `guide-archive-${request.id}`, guide: structuredClone(published), archivedAt: Date.now(),
+        archivedBy: userEmail, requestId: request.id,
+      }])
+      if (isSharedGuide(published)) await removeFromKvArray('shared-guides', [published.id])
+      else await removeFromKvArray('guides', [published.id])
+    } else if (request.proposedGuide) {
+      const approvedGuide = {
+        ...request.proposedGuide,
+        updatedBy: request.reviewerEditedBy || request.proposedGuide.updatedBy,
+        updatedAt: Date.now(),
+        lastReviewedAt: Date.now(),
+        nextReviewAt: computeNextReviewAt(Date.now(), request.proposedGuide.reviewIntervalMonths),
+      }
+      await publishGuide(approvedGuide)
+      try {
+        await saveVersionSnapshot(approvedGuide, userEmail, request.changeNote)
+      } catch (historyError) {
+        console.error('Guiden blev udgivet, men versionshistorikken kunne ikke opdateres:', historyError)
+        toast.warning(language === 'da' ? 'Guiden blev udgivet, men versionshistorikken kunne ikke gemmes' : language === 'fi' ? 'Opas julkaistiin, mutta versiohistoriaa ei voitu tallentaa' : 'Guide published, but version history could not be saved')
+      }
+      if (request.action === 'restore') {
+        const archiveEntry = (archivedGuides || []).find((entry) => entry.guide.id === request.guideId && !entry.restoredAt)
+        if (archiveEntry) await upsertInKvArray('archived-guides', [{ ...archiveEntry, restoredAt: Date.now(), restoredBy: userEmail }])
+      }
+    }
+
+    await updateReviewRequest({ ...request, status: 'approved', reviewedBy: userEmail, reviewedAt: Date.now(), updatedAt: Date.now() })
+    toast.success(request.action === 'delete'
+      ? (language === 'da' ? 'Guiden er godkendt til sletning og arkiveret' : language === 'fi' ? 'Oppaan poistaminen hyväksyttiin ja opas arkistoitiin' : 'Guide deletion approved and archived')
+      : (language === 'da' ? 'Guiden er godkendt og udgivet' : language === 'fi' ? 'Opas hyväksyttiin ja julkaistiin' : 'Guide approved and published'))
+  }
+
+  const handleRestoreArchived = async (entry: ArchivedGuideEntry) => {
+    const existing = (reviewRequests || []).find((request) => request.guideId === entry.guide.id && request.action === 'restore' && isOpenGuideReview(request))
+    if (existing) {
+      toast.info(language === 'da' ? 'Der findes allerede en gendannelsesanmodning' : language === 'fi' ? 'Palautuspyyntö on jo olemassa' : 'A restore request already exists')
+      return
+    }
+    const now = Date.now()
+    const restored: Guide = { ...structuredClone(entry.guide), version: bumpVersion(entry.guide.version), updatedBy: userEmail, updatedAt: now }
+    await updateReviewRequest({
+      id: newId('guide-review'), guideId: restored.id, guideTitle: restored.title,
+      action: 'restore', status: 'pending', baseGuide: entry.guide, proposedGuide: restored,
+      submittedBy: userEmail, submittedByName: usersByEmail?.[userEmail]?.fullName || userEmail,
+      submittedAt: now, updatedAt: now,
+      changeNote: language === 'da' ? `Gendannelse af arkiveret version ${entry.guide.version || '1.00'}` : language === 'fi' ? `Arkistoidun version ${entry.guide.version || '1.00'} palautus` : `Restore archived version ${entry.guide.version || '1.00'}`,
+    })
+    toast.success(language === 'da' ? 'Gendannelsen er sendt til review' : language === 'fi' ? 'Palautus lähetettiin tarkistettavaksi' : 'Restore submitted for review')
   }
 
   const handleImportFileSelected = (file: File | undefined) => {
@@ -440,7 +667,7 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
     const otherTeam = teams.find(team => team.teamId === selectedTeamId)
     return (
       <div className="min-h-screen relative overflow-hidden">
-        <div className="absolute top-6 right-6 left-6 z-20">
+        <div className="fixed top-6 right-6 left-6 z-30 pointer-events-none">
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pb-16">
             <div className="flex items-center gap-3">
               <motion.div
@@ -452,7 +679,7 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
                   variant="outline"
                   size="lg"
                   onClick={onNavigateBack}
-                  className="bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
+                  className="pointer-events-auto bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
                 >
                   <ArrowLeft size={20} weight="bold" />
                   {t.common.back}
@@ -533,7 +760,7 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
 
   return (
     <div className="min-h-screen relative overflow-hidden">
-      <div className="absolute top-6 right-6 left-6 z-20">
+      <div className="fixed top-6 right-6 left-6 z-30 pointer-events-none">
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pb-16">
           <div className="flex items-center gap-3">
             <motion.div
@@ -545,7 +772,7 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
                 variant="outline"
                 size="lg"
                 onClick={onNavigateBack}
-                className="bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
+                className="pointer-events-auto bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
               >
                 <ArrowLeft size={20} weight="bold" />
                 {t.common.back}
@@ -583,6 +810,17 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
             <div className="flex gap-2 flex-shrink-0 items-center">
               <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
                 <Button
+                  variant={workflowView === 'workflow' ? 'default' : 'outline'}
+                  onClick={() => setWorkflowView((current) => current === 'published' ? 'workflow' : 'published')}
+                  className="h-11 px-4 font-semibold border-2 rounded-xl gap-2"
+                >
+                  <ClipboardText size={20} weight="duotone" />
+                  <span className="hidden sm:inline">{workflowView === 'workflow' ? (language === 'da' ? 'Udgivne guides' : language === 'fi' ? 'Julkaistut oppaat' : 'Published guides') : (language === 'da' ? 'Review og kladder' : language === 'fi' ? 'Tarkistukset ja luonnokset' : 'Reviews and drafts')}</span>
+                  {(isGuideReviewer ? pendingReviewCount : myOpenReviewCount) > 0 && <Badge variant="secondary">{isGuideReviewer ? pendingReviewCount : myOpenReviewCount}</Badge>}
+                </Button>
+              </motion.div>
+              <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                <Button
                   variant="outline"
                   onClick={() => importInputRef.current?.click()}
                   disabled={isImporting}
@@ -611,6 +849,7 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
             </div>
           </div>
 
+          {workflowView === 'published' && <>
           <div className="flex flex-col sm:flex-row gap-6">
             <div className="relative flex-1">
               <MagnifyingGlass
@@ -712,9 +951,26 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
               </motion.div>
             )}
           </div>
+          </>}
         </header>
 
-        {filteredGuides.length === 0 ? (
+        {workflowView === 'workflow' ? (
+          <GuideReviewDashboard
+            key={isGuideReviewer ? 'reviewer-workflow' : 'user-workflow'}
+            requests={reviewRequests || []}
+            archivedGuides={archivedGuides || []}
+            userEmail={userEmail}
+            isReviewer={isGuideReviewer}
+            isManager={isManager}
+            onEditRequest={handleEditReviewRequest}
+            onPreview={handleViewGuide}
+            onApprove={handleApproveReview}
+            onReturn={handleReturnReview}
+            onWithdraw={handleWithdrawReview}
+            onClaim={handleClaimReview}
+            onRestore={handleRestoreArchived}
+          />
+        ) : filteredGuides.length === 0 ? (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -773,6 +1029,7 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
                   onDelete={handleDeleteGuide}
                   onView={handleViewGuide}
                   onMarkReviewed={handleMarkReviewed}
+                  deleteRequiresReview
                   matchSnippet={matchInfoById.get(guide.id)}
                 />
               ))}
@@ -788,6 +1045,8 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
           if (!open) {
             setEditGuide(undefined)
             setImportDraft(null)
+            setEditingReviewRequest(null)
+            setEditingAsReviewer(false)
           }
         }}
         onSave={handleSaveGuide}
@@ -796,6 +1055,18 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
         onCreateCategory={handleCreateCategory}
         importDraft={importDraft}
         userEmail={userEmail}
+        preserveVersion={Boolean(editingReviewRequest)}
+        titleOverride={editingReviewRequest
+          ? (editingAsReviewer
+              ? (language === 'da' ? 'Rediger guide som reviewer' : language === 'fi' ? 'Muokkaa opasta tarkistajana' : 'Edit guide as reviewer')
+              : (language === 'da' ? 'Ret guide og indsend igen' : language === 'fi' ? 'Muokkaa opasta ja lähetä uudelleen' : 'Edit and resubmit guide'))
+          : undefined}
+        descriptionOverride={editingReviewRequest
+          ? (language === 'da' ? 'Rettelserne gemmes i review-forslaget. Den udgivne guide ændres først ved godkendelse.' : language === 'fi' ? 'Muutokset tallennetaan tarkistusehdotukseen. Julkaistu opas muuttuu vasta hyväksynnän jälkeen.' : 'Changes are saved to the review proposal. The published guide changes only after approval.')
+          : (language === 'da' ? 'Guiden bliver sendt til review og udgives først efter godkendelse.' : language === 'fi' ? 'Opas lähetetään tarkistettavaksi ja julkaistaan vasta hyväksynnän jälkeen.' : 'The guide will be submitted for review and published only after approval.')}
+        submitLabel={editingReviewRequest
+          ? (editingAsReviewer ? (language === 'da' ? 'Gem reviewerrettelser' : language === 'fi' ? 'Tallenna tarkistajan muutokset' : 'Save reviewer changes') : (language === 'da' ? 'Indsend igen' : language === 'fi' ? 'Lähetä uudelleen' : 'Resubmit'))
+          : (language === 'da' ? 'Send til review' : language === 'fi' ? 'Lähetä tarkistettavaksi' : 'Submit for review')}
       />
 
       <GuideViewer
