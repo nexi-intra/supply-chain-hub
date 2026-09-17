@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { getWeekNumber, toIsoDateString, parseLocalDate, isSameLocalDay, isDanishHoliday } from './dateUtils'
+import { getWeekNumber, toIsoDateString, parseLocalDate, isSameLocalDay, isDanishHoliday, matchesShiftInterval } from './dateUtils'
 
 describe('getWeekNumber', () => {
   it('returns ISO week 1 for a date early in January that belongs to week 1', () => {
@@ -35,6 +35,50 @@ describe('parseLocalDate', () => {
     expect(date.getFullYear()).toBe(2026)
     expect(date.getMonth()).toBe(8)
     expect(date.getDate()).toBe(3)
+  })
+})
+
+describe('matchesShiftInterval', () => {
+  // Anker: mandag 2026-09-07 (uge 37).
+  const anchor = '2026-09-07'
+
+  it('matches the anchor week itself for every interval', () => {
+    for (const interval of [1, 2, 3, 4] as const) {
+      expect(matchesShiftInterval('2026-09-09', anchor, interval)).toBe(true) // onsdag i ankerugen
+    }
+  })
+
+  it('every-week interval (1) matches all following weeks', () => {
+    expect(matchesShiftInterval('2026-09-14', anchor, 1)).toBe(true)
+    expect(matchesShiftInterval('2026-09-21', anchor, 1)).toBe(true)
+  })
+
+  it('every-2nd-week interval only matches even offsets', () => {
+    expect(matchesShiftInterval('2026-09-14', anchor, 2)).toBe(false) // +1 uge
+    expect(matchesShiftInterval('2026-09-21', anchor, 2)).toBe(true) // +2 uger
+    expect(matchesShiftInterval('2026-09-28', anchor, 2)).toBe(false) // +3 uger
+  })
+
+  it('every-3rd/4th-week interval matches only exact multiples', () => {
+    expect(matchesShiftInterval('2026-09-28', anchor, 3)).toBe(true) // +3 uger
+    expect(matchesShiftInterval('2026-10-05', anchor, 4)).toBe(true) // +4 uger
+    expect(matchesShiftInterval('2026-10-05', anchor, 3)).toBe(false)
+  })
+
+  it('dates before the anchor week never match', () => {
+    expect(matchesShiftInterval('2026-08-31', anchor, 1)).toBe(false)
+  })
+
+  it('is robust across a year boundary (does not reset like ISO week numbers do)', () => {
+    // Anker i uge 51 2026 (14. dec, mandag); +3 uger lander i starten af 2027.
+    const yearEndAnchor = '2026-12-14'
+    expect(matchesShiftInterval('2027-01-04', yearEndAnchor, 3)).toBe(true) // +3 uger
+    expect(matchesShiftInterval('2027-01-11', yearEndAnchor, 3)).toBe(false) // +4 uger
+  })
+
+  it('any weekday within a matching week returns true regardless of anchor weekday', () => {
+    // Ankeren var en mandag, men selve mønsteret gælder alle ugedage i den matchende uge.
+    expect(matchesShiftInterval('2026-09-25', anchor, 2)).toBe(true) // fredag, +2 uger
   })
 })
 

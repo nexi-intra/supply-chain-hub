@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, type ReactElement } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowLeft, Plus, Trash, UserCircle, Tag, Calendar as CalendarIcon, PencilSimple, ChatText, Phone, FirstAidKit, Airplane, Gift } from '@phosphor-icons/react'
+import { ArrowLeft, Plus, Trash, UserCircle, Tag, Calendar as CalendarIcon, PencilSimple, ChatText, Phone, FirstAidKit, Airplane, Gift, ArrowsClockwise } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -23,12 +23,12 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Calendar as CalendarComponent } from '@/components/ui/calendar'
 import { format } from 'date-fns'
 import { da, enUS } from 'date-fns/locale'
-import { getWeekNumber, getWeekDates, getWeeksInYear, isDanishHoliday } from '@/lib/dateUtils'
+import { getWeekNumber, getWeekDates, getWeeksInYear, isDanishHoliday, matchesShiftInterval, toIsoDateString, parseLocalDate } from '@/lib/dateUtils'
 import { Textarea } from '@/components/ui/textarea'
 import type { TeamEmployee } from '@/views/TeamOverview'
 import { getEmployeeColorByEmail, EMPLOYEE_COLOR_OVERRIDES_KEY, type EmployeeColorOverrides } from '@/lib/employeeColors'
 import { useLanguage } from '@/contexts/LanguageContext'
-import type { ShiftRole, ShiftAssignment, SickLeaveEntry, VacationEntry, BirthdayEntry } from '@/lib/types'
+import type { ShiftRole, ShiftAssignment, ShiftPatternRule, SickLeaveEntry, VacationEntry, BirthdayEntry } from '@/lib/types'
 
 interface ShiftScheduleProps {
   onNavigateBack: () => void
@@ -39,6 +39,7 @@ interface ShiftScheduleProps {
 export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEmail }: ShiftScheduleProps) {
   const [roles, setRoles] = useKV<ShiftRole[]>('shift-roles', [])
   const [assignments, setAssignments] = useKV<ShiftAssignment[]>('shift-assignments', [])
+  const [shiftPatterns, setShiftPatterns] = useKV<ShiftPatternRule[]>('shift-patterns', [])
   const [colorOverrides] = useKV<EmployeeColorOverrides>(EMPLOYEE_COLOR_OVERRIDES_KEY, {})
   const [employees, setEmployees] = useState<TeamEmployee[]>([])
   const [sickLeaveEntries, setSickLeaveEntries] = useKV<SickLeaveEntry[]>('sick-leave-entries', [])
@@ -53,6 +54,14 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
   const [showWeekClearDialog, setShowWeekClearDialog] = useState(false)
   const [showCommentDialog, setShowCommentDialog] = useState(false)
   const [showDuplicateTaskDialog, setShowDuplicateTaskDialog] = useState(false)
+  const [showPatternDialog, setShowPatternDialog] = useState(false)
+  const [patternEmployee, setPatternEmployee] = useState('')
+  const [patternRole, setPatternRole] = useState('')
+  const [patternWeekdays, setPatternWeekdays] = useState<number[]>([])
+  const [patternInterval, setPatternInterval] = useState<1 | 2 | 3 | 4>(2)
+  const [patternStartDate, setPatternStartDate] = useState(() => toIsoDateString(new Date()))
+  const [patternEndDate, setPatternEndDate] = useState('')
+  const [patternComment, setPatternComment] = useState('')
   const [duplicateTaskInfo, setDuplicateTaskInfo] = useState<{ employeeName: string; roleName: string } | null>(null)
   const [editingRole, setEditingRole] = useState<ShiftRole | null>(null)
   const [editingComment, setEditingComment] = useState<{ employeeId: string; date: string } | null>(null)
@@ -362,8 +371,33 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
            date.getFullYear() === today.getFullYear()
   }
 
-  const getAssignmentsForEmployeeAndDate = (employeeId: string, dateString: string) => {
-    return (assignments || []).filter(a => a.employeeId === employeeId && a.date === dateString)
+  const getAssignmentsForEmployeeAndDate = (employeeId: string, dateString: string): (ShiftAssignment & { isPattern?: boolean })[] => {
+    const real = (assignments || []).filter(a => a.employeeId === employeeId && a.date === dateString)
+    // Gentagelses-mønstre udfoldes her, kun for de datoer der rent faktisk
+    // vises — der skrives ALDRIG konkrete rækker for hver fremtidig uge.
+    const employee = (employees || []).find(e => e.id === employeeId)
+    const date = parseLocalDate(dateString)
+    const weekday = date.getDay()
+    const patternDerived: (ShiftAssignment & { isPattern?: boolean })[] = employee && !isDateLockedForEmployee(employee.email, dateString)
+      ? (shiftPatterns || [])
+        .filter(p => p.employeeId === employeeId
+          && p.weekdays.includes(weekday)
+          && dateString >= p.anchorDate
+          && (!p.endDate || dateString <= p.endDate)
+          && matchesShiftInterval(dateString, p.anchorDate, p.intervalWeeks)
+          // En rigtig tildeling for samme rolle+dato vinder altid over mønsteret.
+          && !real.some(a => a.roleId === p.roleId))
+        .map(p => ({
+          id: `pattern-${p.id}-${dateString}`,
+          employeeId: p.employeeId,
+          employeeName: p.employeeName,
+          roleId: p.roleId,
+          date: dateString,
+          comment: p.comment,
+          isPattern: true,
+        }))
+      : []
+    return [...real, ...patternDerived]
   }
 
   const handleAddTaskToCell = (employeeId: string, dateString: string, roleId: string) => {
@@ -480,6 +514,56 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
     } else {
       toast.info('Ingen opgaver fundet i den valgte uge')
     }
+  }
+
+  const resetPatternForm = () => {
+    setPatternEmployee('')
+    setPatternRole('')
+    setPatternWeekdays([])
+    setPatternInterval(2)
+    setPatternStartDate(toIsoDateString(new Date()))
+    setPatternEndDate('')
+    setPatternComment('')
+  }
+
+  const togglePatternWeekday = (weekday: number) => {
+    setPatternWeekdays((current) => (
+      current.includes(weekday) ? current.filter((d) => d !== weekday) : [...current, weekday].sort()
+    ))
+  }
+
+  const handleCreatePattern = () => {
+    if (!patternEmployee || !patternRole || patternWeekdays.length === 0) {
+      toast.error('Vælg medarbejder, rolle og mindst én ugedag')
+      return
+    }
+    const employee = (employees || []).find(e => e.id === patternEmployee)
+    if (!employee) return
+    if (patternEndDate && patternEndDate < patternStartDate) {
+      toast.error('Slutdato kan ikke ligge før startdato')
+      return
+    }
+
+    const newPattern: ShiftPatternRule = {
+      id: `sp-${Date.now()}`,
+      employeeId: patternEmployee,
+      employeeName: employee.name,
+      roleId: patternRole,
+      weekdays: patternWeekdays,
+      intervalWeeks: patternInterval,
+      anchorDate: patternStartDate,
+      endDate: patternEndDate || undefined,
+      comment: patternComment.trim() || undefined,
+    }
+
+    setShiftPatterns((current) => [...(current || []), newPattern])
+    resetPatternForm()
+    toast.success('Gentaget vagt oprettet')
+  }
+
+  const handleDeletePattern = (patternId: string) => {
+    setShiftPatterns((current) => (current || []).filter(p => p.id !== patternId))
+    toast.success('Gentaget vagt slettet')
   }
 
   const openCommentDialog = (employeeId: string, dateString: string) => {
@@ -715,6 +799,14 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                     <AutoText text="Tilføj Opgaver til Hel Uge" />
                   </Button>
                   <Button
+                    onClick={() => setShowPatternDialog(true)}
+                    variant="outline"
+                    className="gap-2 shadow-md hover:shadow-lg transition-all border-2"
+                  >
+                    <ArrowsClockwise size={18} weight="bold" />
+                    <AutoText text="Gentagne vagter" />
+                  </Button>
+                  <Button
                     onClick={() => setShowWeekClearDialog(true)}
                     variant="destructive"
                     className="gap-2 shadow-md hover:shadow-lg transition-all"
@@ -920,15 +1012,19 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                                             return (
                                               <div key={assignment.id} className="group relative">
                                                 <div
-                                                  className="px-1.5 py-1.5 rounded text-[11px] font-semibold truncate text-white border transition-all"
+                                                  className={cn(
+                                                    "px-1.5 py-1.5 rounded text-[11px] font-semibold truncate text-white border transition-all flex items-center justify-center gap-1",
+                                                    assignment.isPattern && "border-dashed"
+                                                  )}
                                                   style={{
                                                     backgroundColor: role.color || '#8b5cf6',
                                                     borderColor: `${role.color || '#8b5cf6'}CC`,
                                                     boxShadow: `0 2px 6px ${role.color || '#8b5cf6'}40`
                                                   }}
-                                                  title={role.name}
+                                                  title={assignment.isPattern ? `${role.name} (gentaget mønster)` : role.name}
                                                 >
-                                                  {role.name}
+                                                  {assignment.isPattern && <ArrowsClockwise size={10} weight="bold" className="shrink-0" />}
+                                                  <span className="truncate">{role.name}</span>
                                                 </div>
                                                 <Button
                                                   size="sm"
@@ -936,6 +1032,10 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                                                   className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity z-10"
                                                   onClick={(e) => {
                                                     e.stopPropagation()
+                                                    if (assignment.isPattern) {
+                                                      toast.info('Dette er en gentaget vagt — rediger eller slet mønsteret under "Gentagne vagter"')
+                                                      return
+                                                    }
                                                     handleDeleteAssignment(assignment.id)
                                                   }}
                                                 >
@@ -1426,6 +1526,127 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
             <Button onClick={handleAssignWeek} className="w-full">
               <AutoText text="Tildel Hel Uge" />
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={showPatternDialog} onOpenChange={(open) => {
+        setShowPatternDialog(open)
+        if (!open) resetPatternForm()
+      }}>
+        <DialogContent className="max-h-[85vh] flex flex-col">
+          <DialogHeader className="shrink-0">
+            <DialogTitle><AutoText text="Gentagne vagter" /></DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 overflow-y-auto flex-1 min-h-0 pr-2 -mr-2 pt-2">
+            <div className="p-3 bg-muted/50 rounded-lg border">
+              <p className="text-xs text-muted-foreground">
+                <AutoText text="Tildel en opgave der gentages hver uge, hver anden, tredje eller fjerde uge — fx 'Bo har support hver tredje mandag'. Weekender, helligdage, ferie og sygdom springes automatisk over." />
+              </p>
+            </div>
+            <div>
+              <Label><AutoText text="Medarbejder" /></Label>
+              <Select value={patternEmployee} onValueChange={setPatternEmployee}>
+                <SelectTrigger>
+                  <SelectValue placeholder={selectEmployeePlaceholder} />
+                </SelectTrigger>
+                <SelectContent>
+                  {(employees || []).map(emp => (
+                    <SelectItem key={emp.id} value={emp.id}>{emp.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label><AutoText text="Opgave" /></Label>
+              <Select value={patternRole} onValueChange={setPatternRole}>
+                <SelectTrigger>
+                  <SelectValue placeholder={selectTaskPlaceholder} />
+                </SelectTrigger>
+                <SelectContent>
+                  {(roles || []).map(role => (
+                    <SelectItem key={role.id} value={role.id}>
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: role.color }} />
+                        {role.name}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label><AutoText text="Ugedage" /></Label>
+              <div className="flex gap-2 mt-1">
+                {[{ day: 1, label: 'Man' }, { day: 2, label: 'Tir' }, { day: 3, label: 'Ons' }, { day: 4, label: 'Tor' }, { day: 5, label: 'Fre' }].map(({ day, label }) => (
+                  <button
+                    key={day}
+                    type="button"
+                    onClick={() => togglePatternWeekday(day)}
+                    className={cn(
+                      "flex-1 py-2 rounded-lg border-2 text-xs font-semibold transition-all",
+                      patternWeekdays.includes(day) ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/40"
+                    )}
+                  >
+                    <AutoText text={label} />
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <Label><AutoText text="Interval" /></Label>
+              <Select value={patternInterval.toString()} onValueChange={(value) => setPatternInterval(parseInt(value) as 1 | 2 | 3 | 4)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1"><AutoText text="Hver uge" /></SelectItem>
+                  <SelectItem value="2"><AutoText text="Hver anden uge" /></SelectItem>
+                  <SelectItem value="3"><AutoText text="Hver tredje uge" /></SelectItem>
+                  <SelectItem value="4"><AutoText text="Hver fjerde uge" /></SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label><AutoText text="Startdato" /></Label>
+                <DatePickerField value={patternStartDate} onChange={setPatternStartDate} />
+              </div>
+              <div>
+                <Label><AutoText text="Slutdato (valgfri)" /></Label>
+                <DatePickerField value={patternEndDate} onChange={setPatternEndDate} min={patternStartDate} />
+              </div>
+            </div>
+            <div>
+              <Label><AutoText text="Kommentar (valgfri)" /></Label>
+              <Input value={patternComment} onChange={(e) => setPatternComment(e.target.value)} placeholder={commentPlaceholder} />
+            </div>
+            <Button onClick={handleCreatePattern} className="w-full">
+              <AutoText text="Opret gentaget vagt" />
+            </Button>
+
+            {(shiftPatterns || []).length > 0 && (
+              <div className="pt-2 border-t space-y-2">
+                <Label><AutoText text="Eksisterende mønstre" /></Label>
+                {(shiftPatterns || []).map((pattern) => {
+                  const role = (roles || []).find(r => r.id === pattern.roleId)
+                  const intervalLabel = pattern.intervalWeeks === 1 ? 'Hver uge' : pattern.intervalWeeks === 2 ? 'Hver anden uge' : pattern.intervalWeeks === 3 ? 'Hver tredje uge' : 'Hver fjerde uge'
+                  const weekdayLabels = pattern.weekdays.map(d => ['Søn', 'Man', 'Tir', 'Ons', 'Tor', 'Fre', 'Lør'][d]).join(', ')
+                  return (
+                    <div key={pattern.id} className="flex items-center justify-between gap-2 p-2 rounded-lg border bg-card">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold truncate">{pattern.employeeName} — {role?.name || '?'}</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          <AutoText text={intervalLabel} /> · {weekdayLabels} · {pattern.anchorDate}{pattern.endDate ? ` → ${pattern.endDate}` : ''}
+                        </p>
+                      </div>
+                      <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-destructive shrink-0" onClick={() => handleDeletePattern(pattern.id)}>
+                        <Trash size={14} weight="duotone" />
+                      </Button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>

@@ -73,35 +73,34 @@ computeren midt i arbejdet, er ALT tabt.
 
 ---
 
-## Fase 4 - Vagtplan: gentagelses-moenster ("hver anden/tredje/fjerde uge")
+## Fase 4 - Vagtplan: gentagelses-moenster ("hver anden/tredje/fjerde uge") - FAERDIG
 
 **Model:** genbruger IKKE hjemmearbejde-moensteret direkte (det er et simpelt
-"disse ugedage, hver uge for evigt" - ingen interval-logik). Vagtplanen faar
-sin egen, parallelle model, der matcher det oensskede "hver Nte uge":
+"disse ugedage, hver uge for evigt" - ingen interval-logik). Vagtplanen fik
+sin egen, parallelle model.
 
-- [ ] Ny type `ShiftPatternRule` i `src/lib/types.ts`: `{ id, employeeId,
+- [x] Ny type `ShiftPatternRule` i `src/lib/types.ts`: `{ id, employeeId,
       employeeName, roleId, weekdays: number[], intervalWeeks: 1|2|3|4,
-      anchorDate: string, endDate?: string, comment?: string }`
-- [ ] Ny KV-noegle `shift-patterns` (array, samme moenster som
-      `shift-assignments`)
-- [ ] Date-math: `matchesInterval(date, anchorDate, intervalWeeks)` i
-      `src/lib/dateUtils.ts` - antal hele uger siden anchor modulo
-      intervalWeeks === 0
-- [ ] I `ShiftSchedule.tsx`: ny knap "Tildel gentaget vagt" ved siden af
-      "Tilfoej Opgaver til Hel Uge" - dialog med medarbejder + rolle +
-      ugedage (mandag-fredag afkrydsning) + interval-dropdown (hver uge/hver
-      2./3./4. uge) + startdato + valgfri slutdato
-      + valgfri kommentar
-- [ ] Visning: moenstre "udfoldes" til konkrete `ShiftAssignment`-agtige
-      celler ved rendering af den viste uge (samme respekt for
-      ferie/sygdom/helligdage som `handleAssignWeek` allerede har) - IKKE
-      permanent skrevet som tusindvis af raa assignments, kun beregnet for de
-      uger der faktisk vises
-- [ ] Mulighed for at slette/redigere selve moensteret (ikke kun enkelte
-      celler) fra en "Moenstre"-oversigt/liste
-- [ ] Tests: `matchesInterval` date-math (flere intervaller, kant-tilfaelde
-      ved aarsskifte), moenster-udfoldning respekterer ferie/sygdom
-- [ ] `npx tsc --noEmit`, `npx vitest run`, manuel test i vagtplanen
+      anchorDate, endDate?, comment? }`
+- [x] Ny KV-noegle `shift-patterns` (array)
+- [x] Date-math: `matchesShiftInterval(dateString, anchorDate, intervalWeeks)`
+      i `src/lib/dateUtils.ts` - taeller ELAPSED uger fra anker-mandag (ikke
+      ISO-ugenumre, som nulstiller ved aarsskifte); 6 nye tests inkl.
+      aarsskifte-kant-tilfaelde
+- [x] Ny knap "Gentagne vagter" i `ShiftSchedule.tsx` ved siden af "Tilfoej
+      Opgaver til Hel Uge" - dialog med medarbejder + rolle + ugedage
+      (mandag-fredag afkrydsning) + interval-dropdown + start-/slutdato +
+      valgfri kommentar, samme scroll-fix som fase 1
+- [x] Visning: moenstre udfoldes til synlige celler i
+      `getAssignmentsForEmployeeAndDate` KUN for de datoer der rent faktisk
+      vises - ingen konkrete raekker skrevet for fremtidige uger. Respekterer
+      ferie/sygdom/weekend/helligdag (samme `isDateLockedForEmployee`); en
+      rigtig tildeling for samme rolle+dato vinder altid over moensteret
+- [x] Moenster-genererede celler vises med stiplet kant + gentagelses-ikon;
+      klik-slet paa selve cellen giver besked om at redigere/slette
+      moensteret i stedet (ikke en enkelt celle)
+- [x] Liste over eksisterende moenstre med slet-knap i samme dialog
+- [x] `npx tsc --noEmit` + `npx vitest run` (85/85) groenne
 
 ---
 

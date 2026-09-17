@@ -115,6 +115,28 @@ export interface ShiftAssignment {
   comment?: string
 }
 
+/**
+ * KV: 'shift-patterns'. Gentaget vagt-tildeling ("hver anden/tredje/fjerde
+ * uge"), i modsætning til `ShiftAssignment` som er en konkret vagt på én dato.
+ * Udfoldes til synlige celler ved rendering (se ShiftSchedule.tsx) i stedet
+ * for at blive skrevet som tusindvis af enkelt-datoer.
+ */
+export interface ShiftPatternRule {
+  id: string
+  employeeId: string
+  employeeName: string
+  roleId: string
+  /** 1=mandag..5=fredag (samme konvention som Date.getDay(), weekender giver ingen mening her). */
+  weekdays: number[]
+  /** Hver uge (1), hver anden (2), hver tredje (3) eller hver fjerde (4). */
+  intervalWeeks: 1 | 2 | 3 | 4
+  /** Ankerdato ('yyyy-MM-dd') — ugen den ligger i tæller som uge 0 i intervallet. */
+  anchorDate: string
+  /** Valgfri slutdato ('yyyy-MM-dd'), inklusiv. Ingen = løber for evigt. */
+  endDate?: string
+  comment?: string
+}
+
 /** KV: 'employee-birthdays'. */
 export interface BirthdayEntry {
   email: string
