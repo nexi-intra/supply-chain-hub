@@ -26,12 +26,12 @@ const SLOW_OPERATION_MS = 100
 // forladte laase, men genopretter 4× hurtigere end det gamle 2-minutters vindue.
 const ASYNC_WRITE_LOCK = { createParent: false, staleMs: 30000, attempts: 60, delayMs: 120 }
 
-// A slow SMB share collapses under concurrent reads: this drive serves ~150ms
-// per read when accessed one-at-a-time, but seconds each under even light
-// parallelism (which also stalls the synchronous main-thread reads competing
-// for the same drive). Serialize async network reads across ALL stores on this
-// drive; they still run off the main thread, so the event loop stays free.
-const MAX_CONCURRENT_READS = 1
+// Laesninger mod SMB er latens-bundne (~150-300 ms pr. rundtur uanset
+// filstoerrelse), saa parallelisme er den eneste maade at faa flere noegler
+// hurtigt: maalt paa M: tog forsidens 11 noegler 3,7 s serielt mod 1,5 s
+// parallelt. Graensen holdes moderat, fordi et SMB-share stadig kollapser under
+// ubegraenset parallelisme; alle laesninger er async, saa main-traaden er fri.
+const MAX_CONCURRENT_READS = 6
 let activeReads = 0
 const readWaiters = []
 function acquireReadSlot() {
@@ -43,6 +43,19 @@ function releaseReadSlot() {
   if (next) next()
   else activeReads--
 }
+
+// Read-cache-levetid. Naar watch() koerer, ved storen praecis hvilke filer der
+// er aendret paa disken (mtime+size hvert tick) og sletter dem fra cachen —
+// saa cachen kan holdes laenge, og TTL'en er kun et sikkerhedsnet mod en
+// scanning der ikke fanger en aendring. Uden watcher (tests, engangs-stores)
+// bruges den korte TTL som foer.
+const CACHE_TTL_MS = 3000
+const CACHE_TTL_WATCHED_MS = 60000
+// Watcher-interval: et readdir+stat af 500 filer koster ~27 ms paa M:, saa 2 s
+// er billigt og giver baade hurtigere synlighed af kollegers aendringer og
+// hurtigere cache-invalidering.
+const DEFAULT_WATCH_INTERVAL_MS = 2000
+const MIN_WATCH_INTERVAL_MS = 1000
 
 function logSlow(operation, target, startedAt, attempts = 1) {
   if (!process.env.TCD_HUB_DEBUG) return
@@ -98,15 +111,23 @@ function wait(milliseconds) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds)
 }
 
-function createStore(dataDir) {
+function createStore(dataDir, { externallyWatched = false } = {}) {
   fs.mkdirSync(dataDir, { recursive: true })
 
-  // Local read cache (3s TTL) to reduce repeated network I/O. Async background refresh.
+  // Local read cache. Invalideres af watch() pr. aendret noegle; TTL er sikkerhedsnet.
   const readCache = new Map()
-  const CACHE_TTL_MS = 3000
   // Opdateres af watch()'s polling — true indtil bevist ellers (dvs. optimistisk
   // ved opstart, før første scanning har kørt).
   let connected = true
+  // externallyWatched: en anden store-instans paa SAMME mappe koerer watch() og
+  // kalder invalidate() her ved aendringer, saa cachen kan holdes lige saa laenge.
+  let watching = externallyWatched
+
+  // Cachen er kun paalidelig i lang tid naar watcheren aktivt overvaager
+  // mappen OG kan naa den (frakoblet = ingen scanning = ingen invalidering).
+  function isFresh(cached) {
+    return Date.now() - cached.at < (watching && connected ? CACHE_TTL_WATCHED_MS : CACHE_TTL_MS)
+  }
 
   function filePath(key) {
     return path.join(dataDir, keyToFilename(key))
@@ -116,9 +137,10 @@ function createStore(dataDir) {
     const startedAt = Date.now()
     const skipCache = options && options.skipCache
     const cached = !skipCache && readCache.get(key)
-    if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
-      // Return cached value immediately, refresh in background.
-      setImmediate(() => {
+    if (cached && isFresh(cached)) {
+      // Uden watcher: opfrisk i baggrunden. Med watcher er det unoedvendigt (og en
+      // synkron SMB-laesning paa main-traaden pr. cache-hit er netop det, vi undgaar).
+      if (!watching) setImmediate(() => {
         try {
           const raw = fs.readFileSync(filePath(key), 'utf8')
           const decoded = parseFileContents(raw)
@@ -158,7 +180,7 @@ function createStore(dataDir) {
     const startedAt = Date.now()
     const skipCache = options && options.skipCache
     const cached = !skipCache && readCache.get(key)
-    if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
+    if (cached && isFresh(cached)) {
       logSlow('get-cache', key, startedAt)
       return cached.value
     }
@@ -580,12 +602,13 @@ function createStore(dataDir) {
    * whenever dataDir goes from reachable to unreachable or back (e.g. a
    * network share disconnecting/reconnecting). Returns a stop function.
    */
-  function watch(onChange, onConnectionChange, intervalMs = 5000) {
+  function watch(onChange, onConnectionChange, intervalMs = DEFAULT_WATCH_INTERVAL_MS) {
     // Første scan er synkron (sker ved opstart, før vinduet vises) så
     // isConnected() er retvisende med det samme.
     const initial = scanDirectory(null)
     let snapshot = initial.snapshot
     connected = initial.reachable
+    watching = true
     let scanning = false
 
     const timer = setInterval(() => {
@@ -595,6 +618,8 @@ function createStore(dataDir) {
         .then((result) => {
           if (result.reachable !== connected) {
             connected = result.reachable
+            // Efter en frakobling kan vi have misset aendringer: start paa en frisk.
+            if (connected) readCache.clear()
             onConnectionChange?.(connected)
           }
           if (!result.reachable) return
@@ -607,10 +632,10 @@ function createStore(dataDir) {
           }
         })
         .finally(() => { scanning = false })
-    }, Math.max(intervalMs, 5000))
+    }, Math.max(intervalMs, MIN_WATCH_INTERVAL_MS))
     timer.unref?.()
 
-    return () => clearInterval(timer)
+    return () => { watching = false; clearInterval(timer) }
   }
 
   function isConnected() {

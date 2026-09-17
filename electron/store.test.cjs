@@ -191,6 +191,61 @@ test('getAsync mirrors get: decrypts, caches, and reports missing keys as undefi
   assert.deepEqual(await store.getAsync('shifts'), value)
 })
 
+test('a watched store serves cached reads long past the short TTL until the watcher sees a change', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  const other = createStore(directory)
+  store.set('shifts', ['first'])
+  assert.deepEqual(await store.getAsync('shifts'), ['first'])
+  const changed = []
+  const stop = store.watch(keys => changed.push(...keys), () => {}, 1000)
+  t.after(() => stop())
+  // Klokken skrues 10 s frem: uden watcher ville 3 s-TTL'en have udloebet.
+  const realNow = Date.now
+  Date.now = () => realNow() + 10000
+  t.after(() => { Date.now = realNow })
+  other.set('shifts', ['second'])
+  // Watcheren har ikke tikket endnu: cachen er stadig gaeldende (ingen rundtur).
+  assert.deepEqual(await store.getAsync('shifts'), ['first'])
+  await new Promise(resolve => setTimeout(resolve, 1500))
+  assert.ok(changed.includes('shifts'), 'watcheren skal melde noeglen aendret')
+  assert.deepEqual(await store.getAsync('shifts'), ['second'])
+})
+
+test('an unwatched store still expires its cache after the short TTL', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  const other = createStore(directory)
+  store.set('setting', 'old')
+  assert.equal(await store.getAsync('setting'), 'old')
+  other.set('setting', 'new')
+  const realNow = Date.now
+  Date.now = () => realNow() + 3500
+  t.after(() => { Date.now = realNow })
+  assert.equal(await store.getAsync('setting'), 'new')
+})
+
+test('an externally watched store keeps its cache until invalidate() is called', async (t) => {
+  const { directory } = temporaryStore(t)
+  const users = createStore(directory, { externallyWatched: true })
+  const writer = createStore(directory)
+  writer.set('users', { a: 1 })
+  assert.deepEqual(await users.getAsync('users'), { a: 1 })
+  writer.set('users', { a: 2 })
+  const realNow = Date.now
+  Date.now = () => realNow() + 10000
+  t.after(() => { Date.now = realNow })
+  assert.deepEqual(await users.getAsync('users'), { a: 1 })
+  users.invalidate()
+  assert.deepEqual(await users.getAsync('users'), { a: 2 })
+})
+
+test('many concurrent getAsync calls run in parallel rather than one at a time', async (t) => {
+  const { store } = temporaryStore(t)
+  for (let i = 0; i < 12; i++) store.set(`k${i}`, i)
+  store.invalidate()
+  const values = await Promise.all(Array.from({ length: 12 }, (_, i) => store.getAsync(`k${i}`)))
+  assert.deepEqual(values, Array.from({ length: 12 }, (_, i) => i))
+})
+
 test('values survive encrypted writes and reads', (t) => {
   const { store } = temporaryStore(t)
   const value = [{ id: '1', name: 'Vagt' }]

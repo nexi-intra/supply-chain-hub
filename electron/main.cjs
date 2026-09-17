@@ -147,6 +147,15 @@ let platformRoot = null
 // dvs. før et team er slået op — sker kun helt kortvarigt før login/signup er fuldført).
 let currentTeamFolder = null
 let stopWatcher = null
+// Direkte (ikke-offline-spejlet) users-laesning: cache store-instansen pr.
+// datamappe — createStore laver ellers en synkron mkdirSync mod M: pr. kald.
+// Instansen har ingen egen watcher, saa dens read-cache invalideres af
+// hoved-watcheren (startWatcher) naar 'users' aendres paa disken.
+let directUsersStore = { dir: null, store: null }
+const usersStore = () => {
+  if (directUsersStore.dir !== store.dataDir) directUsersStore = { dir: store.dataDir, store: createStore(store.dataDir, { externallyWatched: true }) }
+  return directUsersStore.store
+}
 // Platform-delt store (Fase 9.1): data der IKKE hører til noget enkelt team (fx madplanen —
 // alle teams spiser i samme kantine). Peger på <platformRoot>/_shared/, oprettes ÉN gang ved
 // opstart og skiftes ALDRIG ud ved team-skift (i modsætning til `store`). Nøgler heri er
@@ -206,7 +215,10 @@ function createDebouncedBroadcast(delayMs = 100) {
 function startWatcher() {
   if (stopWatcher) stopWatcher()
   const debouncedBroadcast = createDebouncedBroadcast(100)
-  stopWatcher = store.watch((changedKeys) => debouncedBroadcast(changedKeys), setStorageConnected)
+  stopWatcher = store.watch((changedKeys) => {
+    if (changedKeys.includes('users') && directUsersStore.store) directUsersStore.store.invalidate()
+    debouncedBroadcast(changedKeys)
+  }, setStorageConnected)
 }
 
 /**
@@ -532,15 +544,11 @@ app.whenReady().then(() => {
   })
   const kvTarget = key => ['app-language-guest', 'user-theme-guest'].includes(key) ? guestStore : SHARED_KV_KEYS.has(key) ? sharedStore : store
 
-  // Direkte (ikke-offline-spejlet) users-laesning: cache store-instansen pr.
-  // datamappe — createStore laver ellers en synkron mkdirSync mod M: pr. kald.
-  let directUsersStore = { dir: null, store: null }
-  const usersStore = () => {
-    if (directUsersStore.dir !== store.dataDir) directUsersStore = { dir: store.dataDir, store: createStore(store.dataDir) }
-    return directUsersStore.store
-  }
-  ipcMain.handle('kv:get', (_event, key) => key === 'users' ? usersStore().getAsync(key, { skipCache: true }).then(publicUsers) : kvTarget(key).getAsync(key))
-  ipcMain.handle('kv:get-many', (_event, keys) => Promise.all(keys.map(key => key === 'users' ? usersStore().getAsync(key, { skipCache: true }).then(publicUsers) : kvTarget(key).getAsync(key))))
+  // 'users' laeses fra usersStore()s cache (invalideret af watcheren) — foer laa
+  // der skipCache paa, dvs. en fuld SMB-rundtur ved HVER laesning af brugerlisten.
+  const readKv = key => key === 'users' ? usersStore().getAsync(key).then(publicUsers) : kvTarget(key).getAsync(key)
+  ipcMain.handle('kv:get', (_event, key) => readKv(key))
+  ipcMain.handle('kv:get-many', (_event, keys) => Promise.all(keys.map(readKv)))
   ipcMain.handle('kv:set', (_event, key, value) => kvTarget(key).setAsync(key, value))
   ipcMain.handle('kv:delete', (_event, key) => kvTarget(key).deleteAsync(key))
   ipcMain.handle('kv:keys', async () => (await store.keysAsync()).filter(key => !key.startsWith('__') && !key.startsWith('account-') && key !== 'active-sessions'))
