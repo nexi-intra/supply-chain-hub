@@ -19,6 +19,7 @@ import { newId } from '@/lib/utils'
 import { appendToKvArray, updateKvArrayItem, removeFromKvArray } from '@/lib/kvArrays'
 import { createPersonalTodo, personalTodosKey, type PersonalTodo } from '@/lib/personalTodos'
 import { todoDueStatus } from '@/lib/todoDueDates'
+import { DatePickerField } from '@/components/DatePickerField'
 import { isAnyModalOpen } from '@/lib/modalStack'
 import { consumeNavigationParams } from '@/lib/appNavigation'
 import { format } from 'date-fns'
@@ -449,11 +450,10 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="todo-due-date">{language === 'da' ? 'Forfaldsdato (valgfri)' : language === 'fi' ? 'Määräaika (valinnainen)' : 'Due date (optional)'}</Label>
-                  <Input
+                  <DatePickerField
                     id="todo-due-date"
-                    type="date"
                     value={newTodoDueDate}
-                    onChange={(e) => setNewTodoDueDate(e.target.value)}
+                    onChange={setNewTodoDueDate}
                   />
                 </div>
               </div>
@@ -499,11 +499,10 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="edit-todo-due-date">{language === 'da' ? 'Forfaldsdato (valgfri)' : language === 'fi' ? 'Määräaika (valinnainen)' : 'Due date (optional)'}</Label>
-                  <Input
+                  <DatePickerField
                     id="edit-todo-due-date"
-                    type="date"
                     value={editTodoDueDate}
-                    onChange={(e) => setEditTodoDueDate(e.target.value)}
+                    onChange={setEditTodoDueDate}
                   />
                 </div>
               </div>
@@ -855,11 +854,10 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="due-date">{language === 'da' ? 'Forfaldsdato (valgfri)' : language === 'fi' ? 'Määräaika (valinnainen)' : 'Due date (optional)'}</Label>
-                  <Input
+                  <DatePickerField
                     id="due-date"
-                    type="date"
                     value={newDueDate}
-                    onChange={(e) => setNewDueDate(e.target.value)}
+                    onChange={setNewDueDate}
                   />
                 </div>
               </div>
@@ -904,11 +902,10 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="edit-due-date">{language === 'da' ? 'Forfaldsdato (valgfri)' : language === 'fi' ? 'Määräaika (valinnainen)' : 'Due date (optional)'}</Label>
-                  <Input
+                  <DatePickerField
                     id="edit-due-date"
-                    type="date"
                     value={editProjectDueDate}
-                    onChange={(e) => setEditProjectDueDate(e.target.value)}
+                    onChange={setEditProjectDueDate}
                   />
                 </div>
               </div>
