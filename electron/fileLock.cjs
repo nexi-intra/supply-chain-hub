@@ -71,7 +71,12 @@ async function acquireFileLockAsync(target, { attempts = 50, delayMs = 100, crea
         busy.code = 'KV_LOCK_BUSY'
         throw busy
       }
-      await new Promise(resolve => setTimeout(resolve, delayMs))
+      // Jitter (±40%) bryder lockstep: uden det ville mange klienter, der
+      // kolliderer om samme laas, vente PRAECIS lige laenge og saa kollidere
+      // igen i det samme oejeblik — igen og igen. Med jitter spreder de sig ud
+      // og en efter en slipper igennem, saa faerre skrivninger loeber toer.
+      const jitter = 0.6 + Math.random() * 0.8
+      await new Promise(resolve => setTimeout(resolve, Math.round(delayMs * jitter)))
     }
   }
   return async () => { try { if (await fs.promises.readFile(target, 'utf8') === owner) await fs.promises.unlink(target) } catch { /* preserve ownership */ } }

@@ -42,6 +42,32 @@ export interface ElectronKvApi {
 
 
 
+// Et kort øjeblik hvor en ANDEN klient holder fil-låsen på det delte drev giver
+// en KV_LOCK_BUSY-fejl. Låsen blev aldrig taget, så skrivningen kørte ALDRIG —
+// derfor er et nyt forsøg altid sikkert og kan aldrig anvende ændringen to
+// gange. Med ~40 klienter på et langsomt SMB-share sker denne kortvarige
+// kollision hele tiden; uden dette ville brugeren se en fejl-toast for hver
+// samtidig gemning. UI'et er allerede optimistisk (viser ændringen med det
+// samme), så disse baggrunds-genforsøg er usynlige — fejlen vises først hvis
+// ALLE forsøg er brugt op (~6-7s), hvilket kun sker ved et reelt vedvarende
+// problem. KV_CONFLICT/KV_INVALID_OPERATION genforsøges bevidst IKKE her.
+const TRANSIENT_WRITE_ERROR = 'KV_LOCK_BUSY'
+const RETRY_BACKOFF_MS = [150, 300, 600, 1100, 1800, 2600]
+async function retryTransient<T>(operation: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await operation()
+    } catch (error) {
+      const message = String((error as { message?: string })?.message ?? error)
+      if (attempt >= RETRY_BACKOFF_MS.length || !message.includes(TRANSIENT_WRITE_ERROR)) throw error
+      // Jitter (±30%) bryder lockstep, så de mange klienter ikke vågner og
+      // kolliderer om låsen i samme øjeblik igen og igen.
+      const jitter = 0.7 + Math.random() * 0.6
+      await new Promise(resolve => setTimeout(resolve, Math.round(RETRY_BACKOFF_MS[attempt] * jitter)))
+    }
+  }
+}
+
 /** Adapts the preload bridge to the app's KvStore interface. */
 export function createElectronKv(api: ElectronKvApi): KvStore {
   let queued = new Map<string, Array<{ resolve: (value: unknown) => void; reject: (error: unknown) => void }>>()
@@ -71,22 +97,22 @@ export function createElectronKv(api: ElectronKvApi): KvStore {
       })
     },
     async set<T>(key: string, value: T): Promise<void> {
-      await api.set(key, value)
+      await retryTransient(() => api.set(key, value))
     },
     async delete(key: string): Promise<void> {
-      await api.delete(key)
+      await retryTransient(() => api.delete(key))
     },
     async keys(): Promise<string[]> {
       return api.keys()
     },
     async update<T extends { id: string }>(key: string, operation: KvArrayOperation<T>): Promise<T[]> {
-      return (await api.update(key, operation)) as T[]
+      return (await retryTransient(() => api.update(key, operation))) as T[]
     },
     async updateField(key: string, operation: KvFieldOperation): Promise<Record<string, unknown>> {
-      return (await api.update(key, operation)) as Record<string, unknown>
+      return (await retryTransient(() => api.update(key, operation))) as Record<string, unknown>
     },
     async compareAndSet<T>(key: string, expected: T | undefined, value: T): Promise<T> {
-      return (await api.update(key, { op: 'compareAndSet', expected, value })) as T
+      return (await retryTransient(() => api.update(key, { op: 'compareAndSet', expected, value }))) as T
     },
     subscribe(listener) {
       return api.onChanged(listener)

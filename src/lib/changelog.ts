@@ -8,6 +8,12 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.5.4',
+    items: [
+      'Gemninger fejler ikke længere med "Kunne ikke gemme ændringen — prøv igen om lidt" når mange bruger appen samtidig — appen prøver nu selv igen i baggrunden og genopretter automatisk',
+    ],
+  },
+  {
     version: '1.5.3',
     items: [
       'Appen svarer hurtigere: gemninger blokerer ikke længere appen, og hakken/frysninger ved langsomt netværksdrev er fjernet',

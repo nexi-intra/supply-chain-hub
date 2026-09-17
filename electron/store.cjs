@@ -17,6 +17,15 @@ const WRITE_ATTEMPTS = 30
 const RETRY_DELAY_MS = 100
 const SLOW_OPERATION_MS = 100
 
+// Fil-laas for asynkrone (IPC) skrivninger. Med ~40 klienter paa et langsomt
+// SMB-share kolliderer flere klienter ofte om samme noegle. attempts×delayMs
+// giver et generoest vindue (~9s med jitter) saa en travl noegle rider
+// kollisionen af sig i stedet for at fejle. staleMs=30s: en crashet klients
+// laas ville ellers blokere ALLE andres skrivninger til den noegle; 30s er
+// langt over enhver legitim holdetid (<2s), saa vi stjaeler kun beviseligt
+// forladte laase, men genopretter 4× hurtigere end det gamle 2-minutters vindue.
+const ASYNC_WRITE_LOCK = { createParent: false, staleMs: 30000, attempts: 60, delayMs: 120 }
+
 // A slow SMB share collapses under concurrent reads: this drive serves ~150ms
 // per read when accessed one-at-a-time, but seconds each under even light
 // parallelism (which also stalls the synchronous main-thread reads competing
@@ -259,14 +268,14 @@ function createStore(dataDir) {
   }
 
   function setAsync(key, value) {
-    return serializeWrite(key, () => withFileLockAsync(filePath(key) + '.lock', () => setUnlockedAsync(key, value), { createParent: false, staleMs: 120000 }))
+    return serializeWrite(key, () => withFileLockAsync(filePath(key) + '.lock', () => setUnlockedAsync(key, value), ASYNC_WRITE_LOCK))
   }
 
   function deleteAsync(key) {
     return serializeWrite(key, () => withFileLockAsync(filePath(key) + '.lock', async () => {
       try { await fs.promises.unlink(filePath(key)) } catch (err) { if (err.code !== 'ENOENT') throw err }
       readCache.delete(key)
-    }, { createParent: false, staleMs: 120000 }))
+    }, ASYNC_WRITE_LOCK))
   }
 
   async function keysAsync() {
@@ -338,7 +347,7 @@ function createStore(dataDir) {
       const outcome = computeUpdate(key, operation, await getAsync(key, { skipCache: true }))
       if (outcome.write) await setUnlockedAsync(key, outcome.value)
       return outcome.result
-    }, { createParent: false, staleMs: 120000 }))
+    }, ASYNC_WRITE_LOCK))
   }
 
   function validateOperation(operation) {
