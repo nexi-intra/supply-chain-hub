@@ -197,7 +197,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
   const [balls, setBalls] = useState<Ball[]>([])
   const [users, setUsers] = useState<User[]>([])
   const [ballAttachedToPaddle, setBallAttachedToPaddle] = useState(true)
-  const [powerUps, setPowerUps] = useState<PowerUp[]>([])
   const [hasShield, setHasShield] = useState(false)
   const [shieldTimeLeft, setShieldTimeLeft] = useState(0)
   const [isFireball, setIsFireball] = useState(false)
@@ -206,7 +205,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
   const [speedPowerupTimeLeft, setSpeedPowerupTimeLeft] = useState(0)
   const [hasLaser, setHasLaser] = useState(false)
   const [laserTimeLeft, setLaserTimeLeft] = useState(0)
-  const [lasers, setLasers] = useState<Laser[]>([])
   const [enlargePaddleTimeLeft, setEnlargePaddleTimeLeft] = useState(0)
   const [shrinkPaddleTimeLeft, setShrinkPaddleTimeLeft] = useState(0)
   const [isStickyPaddle, setIsStickyPaddle] = useState(false)
@@ -243,9 +241,9 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const gameLoopRef = useRef<number | undefined>(undefined)
-  // Powerup-nedt\u00e6llinger (skjold/fireball/osv.) k\u00f8rer hver deres setInterval — samlet her
-  // s\u00e5 alle bliver ryddet, hvis komponenten unmountes midt i et powerup (fx spilleren
-  // navigerer v\u00e6k), i stedet for at l\u00e6kke en kørende timer der aldrig selv-clearer.
+  // Powerup-nedtaellinger (skjold/fireball/osv.) koerer hver deres setInterval — samlet her
+  // saa alle bliver ryddet, hvis komponenten unmountes midt i et powerup (fx spilleren
+  // navigerer vaek), i stedet for at laekke en koerende timer der aldrig selv-clearer.
   const activePowerupIntervalsRef = useRef<Set<ReturnType<typeof setInterval>>>(new Set())
 
   useEffect(() => {
@@ -514,7 +512,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
     setScore(0)
     setLevel(1)
     setLives(3)
-    setPowerUps([])
     setHasShield(false)
     setShieldTimeLeft(0)
     setIsFireball(false)
@@ -532,7 +529,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
     lasersRef.current = []
     setHasLaser(false)
     setLaserTimeLeft(0)
-    setLasers([])
     setGameState('waitingToLaunch')
   }
 
@@ -565,7 +561,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
     setBalls(newBalls)
     setBricks(newBricks)
     setLevel(newLevel)
-    setPowerUps([])
     setHasShield(false)
     setShieldTimeLeft(0)
     setIsFireball(false)
@@ -576,7 +571,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
     setSpeedPowerupTimeLeft(0)
     setHasLaser(false)
     setLaserTimeLeft(0)
-    setLasers([])
     setEnlargePaddleTimeLeft(0)
     setShrinkPaddleTimeLeft(0)
     setIsStickyPaddle(false)
@@ -1099,7 +1093,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                 dy: POWERUP_FALL_SPEED
               }
               powerUpsRef.current = [...powerUpsRef.current, newPowerUp]
-              setPowerUps(prev => [...prev, newPowerUp])
             }
             
             spawnBrickParticles(brick)
@@ -1132,7 +1125,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                 dy: POWERUP_FALL_SPEED
               }
               powerUpsRef.current = [...powerUpsRef.current, newPowerUp]
-              setPowerUps(prev => [...prev, newPowerUp])
             }
             
             spawnBrickParticles(brick)
@@ -1190,7 +1182,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                   dy: POWERUP_FALL_SPEED
                 }
                 powerUpsRef.current = [...powerUpsRef.current, newPowerUp]
-                setPowerUps(prev => [...prev, newPowerUp])
               }
               
               spawnBrickParticles(brick)
@@ -1231,7 +1222,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
     })
     
     powerUpsRef.current = updatedPowerUps
-    setPowerUps(updatedPowerUps)
 
     if (hasLaserRef.current) {
       const currentTime = Date.now()
@@ -1253,7 +1243,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
           dy: -10
         }
         lasersRef.current = [...lasersRef.current, leftLaser, rightLaser]
-        setLasers(prev => [...prev, leftLaser, rightLaser])
         lastLaserTimeRef.current = currentTime
       }
     }
@@ -1302,7 +1291,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                 dy: POWERUP_FALL_SPEED
               }
               powerUpsRef.current = [...powerUpsRef.current, newPowerUp]
-              setPowerUps(prev => [...prev, newPowerUp])
             }
 
             laserBricksToRemove.push(index)
@@ -1335,14 +1323,12 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
         toast.info(shieldMsg)
         
         powerUpsRef.current = []
-        setPowerUps([])
         setIsFireball(false)
         setFireballTimeLeft(0)
         setBallSpeedMultiplier(1)
         setSpeedPowerupTimeLeft(0)
         setHasLaser(false)
         setLaserTimeLeft(0)
-        setLasers([])
         setEnlargePaddleTimeLeft(0)
         setShrinkPaddleTimeLeft(0)
         isFireballRef.current = false
@@ -1369,7 +1355,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
         shakeRef.current = 18
         
         powerUpsRef.current = []
-        setPowerUps([])
         setHasShield(false)
         setShieldTimeLeft(0)
         setIsFireball(false)
@@ -1378,7 +1363,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
         setSpeedPowerupTimeLeft(0)
         setHasLaser(false)
         setLaserTimeLeft(0)
-        setLasers([])
         setEnlargePaddleTimeLeft(0)
         setShrinkPaddleTimeLeft(0)
         hasShieldRef.current = false

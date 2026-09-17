@@ -129,3 +129,39 @@ Fix:
       `TRR/client-versions.json.lock`, begge fra doed PID) fjernet manuelt
 - [x] 3 nye tests (fileLock.test.cjs x2, accountService.test.cjs x1)
 - [x] Fuld suite: 356/356 electron-tests, tsc ren
+
+## Sidefund under test (17/9, fortsat): Game Corner - langsomme highscores + daarligt input
+
+Brugerklage: highscores "ekstremt langsomt", spillene "naesten uspillelige".
+Diagnose fandt TO separate, ubeslaegtede rodaarsager:
+
+**A) Highscores (teamReadPolicy.cjs):** cross-team-laesninger (highscore-lister
+fra andre teams) gik UDENOM al caching fra fase 1-2. `storeFor(folder)` lavede
+en FRISK `createStore()` (synkron mkdirSync mod M:) VED HVERT ENESTE KALD, og
+ALLE laesninger - inkl. highscores, som ikke er adgangs-kritiske - brugte
+`skipCache: true` ubetinget. `readTeamMany`/`readTeamsMany` laeste desuden
+noegler/teams SEKVENTIELT (for-loop med await) i stedet for parallelt.
+Fix: (1) cache store-instanser pr. mappe (samme moenster som accountService.cjs
+`openStoreCached`); (2) highscores bruger nu normal cache (ikke skipCache) -
+sikkerheds-kritiske noegler (users/guides/adgangsanmodninger) beholder
+skipCache; (3) readTeamMany/readTeamsMany koerer nu Promise.all i stedet for
+sekventielt. 18/18 teamReadPolicy-tests groenne.
+
+**B) Input i Brick Break (BrickBreak.tsx):** `powerUps`- og `lasers`-React-state
+blev skrevet (setPowerUps/setLasers) fra det 60fps rAF-spilloop - `powerUps`
+ENDDA UBETINGET HVER ENESTE FRAME, uanset om noget faktisk aendrede sig. Begge
+var 100% write-only dead state: hverken JSX eller draw() laeser dem - kun
+`powerUpsRef.current`/`lasersRef.current` bruges til tegning/kollision (samme
+moenster som balls/bricks, der allerede blev fjernet i en tidligere fix).
+Resultat: et fuldt React-re-render af hele spil-komponenten op til 60 gange i
+sekundet, som konkurrerede med input-haandtering. Fix: fjernet begge state-
+variabler og alle deres settere helt; kun refs er nu kilden. tsc ren, ingen
+andre arcade-spil (NeonSnake/EndlessDodger/NexiFlyer/Tetris) havde samme moenster
+(de har kun skalar setScore/setLives, som React allerede springer over ved
+uaendret vaerdi).
+
+Ikke roert (ude af scope/lav risiko-gevinst-forhold): iframe-spillenes egen
+vendorede kode (public/games/cube-basher, public/games/the-librarian-2) - kun
+vores React-wrapper-komponenter er vores kode; fokus-/keyup-spejling var
+allerede fikset tidligere. Powerup-nedtaellingernes separate setIntervals i
+BrickBreak blev ikke aendret (lav frekvens, ikke en bekraeftet rodaarsag).

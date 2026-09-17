@@ -25,7 +25,18 @@ function overview(key, value) {
 }
 function createTeamReader({ getRoot, listTeams, listViews, openStore, now = Date.now }) {
   const target = folder => registeredTeamDir(getRoot(), listTeams(), folder)
-  const storeFor = folder => openStore(target(folder).directory)
+  // Uden cache lavede HVER cross-team-laesning (fx en highscore-liste med 6
+  // andre teams) en frisk store pr. kald - synkron mkdirSync mod M: pr. kald,
+  // og INGEN genbrug af laesecachen, saa selv gentagne aabninger af samme
+  // Game Corner-skaerm altid ramte netvaerket forfra. Cache pr. mappe fjerner
+  // begge; sikkerheds-kritiske laesninger (users/guides/adgangsanmodninger)
+  // bruger fortsat skipCache saa de aldrig er stale.
+  const storeCache = new Map()
+  const storeFor = folder => {
+    const directory = target(folder).directory
+    if (!storeCache.has(directory)) storeCache.set(directory, openStore(directory))
+    return storeCache.get(directory)
+  }
   function requests(store, actor) {
     return store.getAsync('guide-access-requests', { skipCache: true }).then(rows => (rows || []).filter(row => normalize(row.requestingUserEmail) === actor.email && row.requestingTeamCode === actor.home.folderName))
   }
@@ -41,7 +52,11 @@ function createTeamReader({ getRoot, listTeams, listViews, openStore, now = Date
   async function readTeam(actor, folder, key) {
     const store = storeFor(folder)
     if (OVERVIEW_KEYS.has(key)) return overview(key, await store.getAsync(key, { skipCache: true }))
-    if (LEADERBOARDS.has(key)) return store.getAsync(key, { skipCache: true })
+    // Highscores er ikke adgangs-kritiske - et par sekunders forsinkelse er
+    // fint, og den normale cache goer gentagne visninger (skift af
+    // svaerhedsgrad, genaabning af Game Corner) oejeblikkelige i stedet for
+    // altid at ramme M: forfra.
+    if (LEADERBOARDS.has(key)) return store.getAsync(key)
     if (key === 'guide-access-requests') return requests(store, actor)
     if (key === 'guides') return guides(store, actor)
     const file = typeof key === 'string' && key.match(FILE_KEY)
@@ -50,18 +65,15 @@ function createTeamReader({ getRoot, listTeams, listViews, openStore, now = Date
   }
   async function readTeamMany(actor, folder, keys) {
     if (!Array.isArray(keys) || !keys.length || keys.length > 20) fail()
-    const values = []
-    for (const key of keys) values.push(await readTeam(actor, folder, key))
-    return values
+    return Promise.all(keys.map(key => readTeam(actor, folder, key)))
   }
   async function readTeamsMany(actor, requests) {
     if (!Array.isArray(requests) || !requests.length || requests.length > 20) fail()
-    const values = []
-    for (const request of requests) {
-      if (!request || typeof request.folderName !== 'string') fail()
-      values.push(await readTeamMany(actor, request.folderName, request.keys))
-    }
-    return values
+    // Valider ALLE requests FOER noget I/O startes: en fail() midt i et
+    // Promise.all-kald ville ellers efterlade allerede-startede laesninger for
+    // tidligere (gyldige) requests koerende uden nogen der afventer dem.
+    for (const request of requests) if (!request || typeof request.folderName !== 'string') fail()
+    return Promise.all(requests.map(request => readTeamMany(actor, request.folderName, request.keys)))
   }
   async function readView(actor, viewId, teamId, key) {
     if (actor.viewId !== viewId) fail()
