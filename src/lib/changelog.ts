@@ -15,6 +15,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Kollegers ændringer bliver synlige hurtigere (drevet tjekkes hvert 2. sekund i stedet for hvert 5.)',
       'Gemninger fejler ikke længere med "Kunne ikke gemme ændringen — prøv igen om lidt" når mange bruger appen samtidig — appen prøver nu selv igen i baggrunden og genopretter automatisk',
       'Rettet en kritisk fejl: en enkelt nedbrudt klient kunne efterlade en laas, der blokerede login for ALLE 40 brugere permanent, indtil nogen manuelt ryddede den — laasen retter nu sig selv',
+      'Notesbogen: lange noter skjulte før Opret/Gem-knapperne — dialogen kan nu altid scrolles, og knapperne er altid synlige',
       'Highscores i Spilhjørnet hentes markant hurtigere paa tvaers af teams (ingen unoedvendig genindlaesning fra drevet, og laesninger koerer nu parallelt i stedet for én ad gangen)',
       'Brick Break føles meget mere responsivt: fjernet unoedvendige gen-tegninger 60 gange i sekundet, der konkurrerede med tastatur/mus-input',
     ],

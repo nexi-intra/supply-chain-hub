@@ -658,14 +658,14 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
         </div>
 
       <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
+        <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
+          <DialogHeader className="shrink-0">
             <DialogTitle>{t.notebook.addNote}</DialogTitle>
             <DialogDescription>
               {isCreatingPersonal ? t.notebook.personalNotes : t.notebook.sharedNotes}
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="space-y-4 overflow-y-auto pr-2 -mr-2 flex-1 min-h-0">
             <div>
               <Input
                 placeholder={t.notebook.enterTitle}
@@ -690,7 +690,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
               />
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="shrink-0">
             <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
               {t.notebook.cancel}
             </Button>
@@ -702,11 +702,11 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
       </Dialog>
 
       <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
+        <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
+          <DialogHeader className="shrink-0">
             <DialogTitle>{t.notebook.editNote}</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="space-y-4 overflow-y-auto pr-2 -mr-2 flex-1 min-h-0">
             <div>
               <Input
                 placeholder={t.notebook.enterTitle}
@@ -731,7 +731,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
               />
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="shrink-0">
             <Button variant="outline" onClick={() => setShowEditDialog(false)}>
               {t.notebook.cancel}
             </Button>
