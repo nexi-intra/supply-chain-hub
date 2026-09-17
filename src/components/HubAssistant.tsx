@@ -20,9 +20,9 @@ const PREPARE_LABEL = {
   fi: { loading: 'Oppaita valmistellaan taustalla…', ready: 'Opashaku valmis', failed: 'Oppaita ei voitu valmistella. Tarkista yhteys tietokansioon.', retry: 'Yritä uudelleen' },
 }
 const CHAT_TEXT = {
-  da: { open: 'Spørg Hubert', welcome: 'Hvad kan jeg hjælpe dig med?', placeholder: 'Spørg Hubert…', stopped: 'Svaret blev afbrudt.' },
-  en: { open: 'Ask Hubert', welcome: 'How can I help?', placeholder: 'Ask Hubert…', stopped: 'The answer was stopped.' },
-  fi: { open: 'Kysy Hubertilta', welcome: 'Miten voin auttaa?', placeholder: 'Kysy Hubertilta…', stopped: 'Vastaus keskeytettiin.' },
+  da: { open: 'Spørg Hubert', welcome: 'Vuf! 🐾 Hvad kan jeg hjælpe dig med?', placeholder: 'Spørg Hubert…', stopped: 'Svaret blev afbrudt.' },
+  en: { open: 'Ask Hubert', welcome: 'Woof! 🐾 How can I help?', placeholder: 'Ask Hubert…', stopped: 'The answer was stopped.' },
+  fi: { open: 'Kysy Hubertilta', welcome: 'Hau! 🐾 Miten voin auttaa?', placeholder: 'Kysy Hubertilta…', stopped: 'Vastaus keskeytettiin.' },
 }
 // Handlings-forslag (fx "opret en ferieanmodning") kraever ALTID et eksplicit
 // bekraeft-klik - Hubert skriver aldrig noget uden det, uanset hvor "simpel"
