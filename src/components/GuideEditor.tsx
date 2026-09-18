@@ -33,12 +33,14 @@ import { useUnsavedChanges } from '@/hooks/useUnsavedChanges'
 import type { Guide, GuideSection, GuideVersionEntry, GuideDraft } from '@/lib/guideTypes'
 import {
   REVIEW_INTERVAL_CHOICES, newId, migrateGuide, computeNextReviewAt, guidePlainText,
+  dateStringToTimestamp, timestampToDateString, todayDateString,
 } from '@/lib/guideTypes'
 import { detectLanguage, type GuideLanguage } from '@/lib/translator'
 import { bumpVersion, getVersionHistory, saveDraft, getDraft, deleteDraft } from '@/lib/guideStore'
 import type { GuideImportDraft } from '@/lib/docxImporter'
 import { useLanguage } from '@/contexts/LanguageContext'
 import { GuideViewer } from '@/components/GuideViewer'
+import { DatePickerField } from '@/components/DatePickerField'
 
 interface GuideEditorProps {
   open: boolean
@@ -51,6 +53,8 @@ interface GuideEditorProps {
   /** Forudsætter en ny guide med indhold parset fra et importeret Word-dokument. */
   importDraft?: GuideImportDraft | null
   userEmail: string
+  /** Til "Ansvarlig for gennemgang"-vælgeren - samme kilde som GuideLibrary allerede læser. */
+  users?: Array<{ email: string; fullName: string }>
   /** Bevarer revisionsnummeret når en allerede oprettet review-revision redigeres. */
   preserveVersion?: boolean
   submitLabel?: string
@@ -158,7 +162,7 @@ function ImageDropZone({ onUploaded, compact }: { onUploaded: (fileIds: string[]
   )
 }
 
-export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories, onCreateCategory, importDraft, userEmail, preserveVersion = false, submitLabel, titleOverride, descriptionOverride }: GuideEditorProps) {
+export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories, onCreateCategory, importDraft, userEmail, users = [], preserveVersion = false, submitLabel, titleOverride, descriptionOverride }: GuideEditorProps) {
   const { t, language: appLanguage } = useLanguage()
   const [title, setTitle] = useState('')
   const [category, setCategory] = useState<string>(categories[0] || 'General')
@@ -169,6 +173,10 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
   const [sections, setSections] = useState<GuideSection[]>([emptySection()])
   const [coverImageId, setCoverImageId] = useState<string | undefined>()
   const [reviewInterval, setReviewInterval] = useState<number | null>(null)
+  // yyyy-MM-dd - kun relevant naar reviewInterval er sat. Lader brugeren staggere
+  // naeste-tjek-datoen i stedet for at den altid bliver "i dag + interval".
+  const [nextReviewDate, setNextReviewDate] = useState<string>(() => todayDateString())
+  const [responsibleEmail, setResponsibleEmail] = useState(userEmail)
   const [changeNote, setChangeNote] = useState('')
   const [wordFile, setWordFile] = useState<File | null>(null)
   const [removeWordAttachment, setRemoveWordAttachment] = useState(false)
@@ -223,6 +231,10 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
         : [emptySection()])
       setCoverImageId(migrated.coverImageId)
       setReviewInterval(migrated.reviewIntervalMonths ?? null)
+      // Forudfyldt med guidens NUVAERENDE naeste-tjek - en almindelig redigering
+      // (fx en tekstrettelse) flytter derfor ikke automatisk gennemgangs-fristen.
+      setNextReviewDate(migrated.nextReviewAt ? timestampToDateString(migrated.nextReviewAt) : todayDateString())
+      setResponsibleEmail(migrated.responsibleEmail || migrated.author || userEmail)
       getVersionHistory(migrated.id).then(setHistory).catch(() => setHistory([]))
     } else {
       newId_ = newId('guide')
@@ -234,6 +246,8 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
       setSections(importDraft?.sections.length ? importDraft.sections : [emptySection()])
       setCoverImageId(undefined)
       setReviewInterval(null)
+      setNextReviewDate(todayDateString())
+      setResponsibleEmail(userEmail)
       setHistory([])
     }
     setChangeNote('')
@@ -253,7 +267,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
     // Billeder fra et importeret dokument uploades allerede før editoren åbner —
     // de skal ryddes op på lige fod med session-billeder, hvis brugeren fortryder.
     sessionImagesRef.current = importDraft ? importDraft.sections.flatMap((s) => s.steps.flatMap((st) => st.imageIds)) : []
-  }, [open, migrated, categories, importDraft, currentTeamCode])
+  }, [open, migrated, categories, importDraft, currentTeamCode, userEmail])
 
   const hasUnsavedChanges = useMemo(() => {
     if (!open) return false
@@ -265,6 +279,8 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
         || JSON.stringify(sections) !== JSON.stringify(migrated.sections?.length ? migrated.sections : [emptySection()])
         || coverImageId !== migrated.coverImageId
         || reviewInterval !== (migrated.reviewIntervalMonths ?? null)
+        || nextReviewDate !== (migrated.nextReviewAt ? timestampToDateString(migrated.nextReviewAt) : todayDateString())
+        || responsibleEmail !== (migrated.responsibleEmail || migrated.author || userEmail)
         || wordFile !== null
         || removeWordAttachment
         || restoredVersionFields !== null
@@ -272,7 +288,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
     }
     return title.trim() !== '' || tags.trim() !== '' || wordFile !== null || otherTeamCodes.length > 0
       || sections.some((s) => s.heading.trim() || s.steps.some((st) => st.text.trim() || st.imageIds.length > 0))
-  }, [open, migrated, title, category, tags, sections, coverImageId, reviewInterval, wordFile, removeWordAttachment, restoredVersionFields, otherTeamCodes, currentTeamCode])
+  }, [open, migrated, title, category, tags, sections, coverImageId, reviewInterval, nextReviewDate, responsibleEmail, wordFile, removeWordAttachment, restoredVersionFields, otherTeamCodes, currentTeamCode, userEmail])
 
   const cleanupSessionImages = useCallback(async () => {
     for (const id of sessionImagesRef.current) {
@@ -295,6 +311,8 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
     setSections(detectedDraft.sections)
     setCoverImageId(detectedDraft.coverImageId)
     setReviewInterval(detectedDraft.reviewInterval)
+    setNextReviewDate(detectedDraft.nextReviewDate || todayDateString())
+    setResponsibleEmail(detectedDraft.responsibleEmail || userEmail)
     setOtherTeamCodes(detectedDraft.otherTeamCodes)
     setDetectedDraft(null)
   }
@@ -315,6 +333,8 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
         sections,
         coverImageId,
         reviewInterval,
+        nextReviewDate,
+        responsibleEmail,
         otherTeamCodes,
         savedBy: userEmail,
         lastAutoSavedAt: Date.now(),
@@ -322,7 +342,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
       saveDraft(draft).catch((error) => console.error('Kunne ikke autogemme guide-kladde:', error))
     }, 4000)
     return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current) }
-  }, [open, detectedDraft, draftId, title, category, tags, language, sections, coverImageId, reviewInterval, otherTeamCodes, userEmail])
+  }, [open, detectedDraft, draftId, title, category, tags, language, sections, coverImageId, reviewInterval, nextReviewDate, responsibleEmail, otherTeamCodes, userEmail])
 
   useUnsavedChanges({
     hasUnsavedChanges,
@@ -489,10 +509,11 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
       author: migrated?.author || userEmail,
       createdBy: migrated?.createdBy || userEmail,
       updatedBy: userEmail,
+      responsibleEmail,
       createdAt: migrated?.createdAt || now,
       updatedAt: now,
       reviewIntervalMonths: reviewInterval,
-      nextReviewAt: computeNextReviewAt(now, reviewInterval),
+      nextReviewAt: reviewInterval ? dateStringToTimestamp(nextReviewDate) : null,
       lastReviewedAt: now,
       fileUrl: removeWordAttachment ? undefined : (restoredVersionFields ? restoredVersionFields.fileUrl : migrated?.fileUrl),
       wordFileName: removeWordAttachment ? undefined : (restoredVersionFields ? restoredVersionFields.wordFileName : migrated?.wordFileName),
@@ -556,10 +577,11 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
         author: migrated?.author || userEmail,
         createdBy: migrated?.createdBy || userEmail,
         updatedBy: userEmail,
+        responsibleEmail,
         createdAt: migrated?.createdAt || now,
         updatedAt: now,
         reviewIntervalMonths: reviewInterval,
-        nextReviewAt: computeNextReviewAt(now, reviewInterval),
+        nextReviewAt: reviewInterval ? dateStringToTimestamp(nextReviewDate) : null,
         lastReviewedAt: now,
         fileUrl,
         wordFileName,
@@ -716,7 +738,14 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
                 </Label>
                 <Select
                   value={reviewInterval === null ? 'none' : String(reviewInterval)}
-                  onValueChange={(v) => setReviewInterval(v === 'none' ? null : Number(v))}
+                  onValueChange={(v) => {
+                    const value = v === 'none' ? null : Number(v)
+                    setReviewInterval(value)
+                    // Foreslaar en frisk naeste-tjek-dato ved hvert intervalskift - brugeren
+                    // kan straks tilpasse den igen i feltet herunder.
+                    const suggested = computeNextReviewAt(Date.now(), value)
+                    setNextReviewDate(suggested ? timestampToDateString(suggested) : todayDateString())
+                  }}
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -732,6 +761,28 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
                     ? `${t.guideEditor.reviewIntervalHintPrefix} ${REVIEW_INTERVAL_CHOICES.find((c) => c.value === reviewInterval)?.label.toLowerCase()} ${t.guideEditor.reviewIntervalHintSuffix}`
                     : t.guideEditor.reviewIntervalHintNone}
                 </p>
+              </div>
+              {reviewInterval !== null && (
+                <div className="space-y-2">
+                  <Label className="flex items-center gap-2">
+                    <Timer size={16} />
+                    {t.guideEditor.nextReviewDateLabel}
+                  </Label>
+                  <DatePickerField value={nextReviewDate} onChange={setNextReviewDate} />
+                  <p className="text-xs text-muted-foreground">{t.guideEditor.nextReviewDateHint}</p>
+                </div>
+              )}
+              <div className="space-y-2">
+                <Label>{t.guideEditor.responsiblePersonLabel}</Label>
+                <Select value={responsibleEmail} onValueChange={setResponsibleEmail}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {(users.some((u) => u.email === responsibleEmail) ? users : [...users, { email: responsibleEmail, fullName: responsibleEmail }]).map((u) => (
+                      <SelectItem key={u.email} value={u.email}>{u.fullName || u.email}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">{t.guideEditor.responsiblePersonHint}</p>
               </div>
             </div>
 

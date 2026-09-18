@@ -34,6 +34,7 @@ import type { RegisteredTeam } from '@/lib/electronRegistryBridge'
 import { getHomeOfficeUsersForDate } from '@/lib/homeOffice'
 import { personalTodosKey, type PersonalTodo } from '@/lib/personalTodos'
 import type { Project } from '@/views/ProjectBoard'
+import { appendToKvArray, removeFromKvArray, upsertInKvArray } from '@/lib/kvArrays'
 
 interface HubModule {
   id: string
@@ -529,7 +530,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       date: today,
     }
 
-    await window.kv.set('shift-assignments', [...assignments, newAssignment])
+    await appendToKvArray<ShiftAssignment>('shift-assignments', [newAssignment])
 
     toast.success(language === 'da' ? `${employeeName} tildelt ${task.roleName}` : language === 'fi' ? `${employeeName} ${task.roleName}:lle osoitettu` : `${employeeName} assigned to ${task.roleName}`)
     
@@ -638,14 +639,11 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
 
     const assignments = (await window.kv.get<ShiftAssignment[]>('shift-assignments')) || []
     
-    const updatedAssignments = assignments.map(a => {
-      if (a.date === today && a.employeeName === selectedUserForComment.name && a.roleId === selectedUserForComment.roleId) {
-        return { ...a, comment: newComment || undefined }
-      }
-      return a
-    })
+    const matching = assignments.filter(a => a.date === today && a.employeeName === selectedUserForComment.name && a.roleId === selectedUserForComment.roleId)
     
-    await window.kv.set('shift-assignments', updatedAssignments)
+    if (matching.length > 0) {
+      await upsertInKvArray<ShiftAssignment>('shift-assignments', matching.map(a => ({ ...a, comment: newComment || undefined })))
+    }
     
     toast.success(language === 'da' ? 'Kommentar opdateret' : language === 'fi' ? 'Kommentti päivitetty' : 'Comment updated')
     
@@ -744,11 +742,11 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
     const today = format(new Date(), 'yyyy-MM-dd')
     const assignments = (await window.kv.get<ShiftAssignment[]>('shift-assignments')) || []
     
-    const updatedAssignments = assignments.filter(
-      a => !(a.date === today && a.employeeName === employeeName && a.roleId === roleId)
-    )
+    const matchingIds = assignments.filter(
+      a => a.date === today && a.employeeName === employeeName && a.roleId === roleId
+    ).map(a => a.id)
     
-    await window.kv.set('shift-assignments', updatedAssignments)
+    await removeFromKvArray<ShiftAssignment>('shift-assignments', matchingIds)
     
     toast.success(language === 'da' ? `${employeeName} fjernet fra opgaven` : language === 'fi' ? `${employeeName} poistettu tehtävästä` : `${employeeName} removed from task`)
     

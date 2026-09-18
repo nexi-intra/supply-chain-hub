@@ -561,7 +561,8 @@ const baseTranslations = {
       deleteConfirmSuffix: "? Denne handling kan ikke fortrydes.",
       deleteAction: "Slet guide",
       markReviewed: "Gennemgået",
-      sharedWithPrefix: "Delt med:"
+      sharedWithPrefix: "Delt med:",
+      responsiblePrefix: "Ansvarlig:"
     },
     guideImportStatus: {
       importedSuffix: "er importeret",
@@ -617,6 +618,10 @@ const baseTranslations = {
       reviewIntervalHintPrefix: "Guiden markeres som \"skal opdateres\"",
       reviewIntervalHintSuffix: "efter seneste gemning/gennemgang.",
       reviewIntervalHintNone: "Guiden får ingen påmindelse om opdatering.",
+      nextReviewDateLabel: "Næste tjek",
+      nextReviewDateHint: "Vælg en bestemt dato for næste tjek, så guider ikke alle forfalder samtidig.",
+      responsiblePersonLabel: "Ansvarlig for gennemgang",
+      responsiblePersonHint: "Personen der får påmindelser om at holde guiden opdateret — behøver ikke være dig.",
       coverImageLabel: "Forsidebillede (bruges på DOCX-forsiden)",
       sectionsLabel: "Sektioner & trin",
       numberingHint: "Nummereres automatisk: 1.0, 1.1, 1.2 …",
@@ -2230,7 +2235,8 @@ const baseTranslations = {
       deleteConfirmSuffix: "? This action cannot be undone.",
       deleteAction: "Delete guide",
       markReviewed: "Reviewed",
-      sharedWithPrefix: "Shared with:"
+      sharedWithPrefix: "Shared with:",
+      responsiblePrefix: "Responsible:"
     },
     guideImportStatus: {
       importedSuffix: "has been imported",
@@ -2286,6 +2292,10 @@ const baseTranslations = {
       reviewIntervalHintPrefix: "The guide is marked as \"needs review\"",
       reviewIntervalHintSuffix: "after the latest save/review.",
       reviewIntervalHintNone: "The guide gets no reminder about updates.",
+      nextReviewDateLabel: "Next check",
+      nextReviewDateHint: "Pick a specific date for the next check, so guides don't all fall due at the same time.",
+      responsiblePersonLabel: "Responsible for review",
+      responsiblePersonHint: "The person who gets reminders to keep the guide updated — doesn't have to be you.",
       coverImageLabel: "Cover image (used on the DOCX cover)",
       sectionsLabel: "Sections & steps",
       numberingHint: "Numbered automatically: 1.0, 1.1, 1.2 …",

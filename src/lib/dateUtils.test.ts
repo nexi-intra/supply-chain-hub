@@ -65,6 +65,12 @@ describe('matchesShiftInterval', () => {
     expect(matchesShiftInterval('2026-10-05', anchor, 3)).toBe(false)
   })
 
+  it('every-5th/6th-week interval matches only exact multiples', () => {
+    expect(matchesShiftInterval('2026-10-12', anchor, 5)).toBe(true) // +5 uger
+    expect(matchesShiftInterval('2026-10-19', anchor, 6)).toBe(true) // +6 uger
+    expect(matchesShiftInterval('2026-10-12', anchor, 6)).toBe(false)
+  })
+
   it('dates before the anchor week never match', () => {
     expect(matchesShiftInterval('2026-08-31', anchor, 1)).toBe(false)
   })

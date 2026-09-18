@@ -23,6 +23,8 @@ interface GuideCardProps {
   guide: Guide
   /** Forfatterens visningsnavn, allerede slået op af GuideLibrary (undgår ét KV-kald pr. kort). */
   authorName?: string
+  /** Den ansvarliges visningsnavn - kun vist hvis forskellig fra forfatteren. */
+  responsibleName?: string
   /** Eget teams kode (folderName) — bruges til at udelade eget team fra "delt med"-badgen. */
   currentTeamCode?: string
   onEdit: (guide: Guide) => void
@@ -42,7 +44,7 @@ const categoryColors: Record<string, string> = {
   General: 'bg-gradient-to-br from-muted to-muted/70 text-foreground border-border shadow-lg shadow-black/5',
 }
 
-export function GuideCard({ guide, authorName, currentTeamCode, onEdit, onDelete, onView, onMarkReviewed, deleteRequiresReview = false, matchSnippet }: GuideCardProps) {
+export function GuideCard({ guide, authorName, responsibleName, currentTeamCode, onEdit, onDelete, onView, onMarkReviewed, deleteRequiresReview = false, matchSnippet }: GuideCardProps) {
   const { t, language } = useLanguage()
   const dateLocale = language === 'en' ? 'en-US' : language === 'fi' ? 'fi-FI' : 'da-DK'
   const [isExpanded, setIsExpanded] = useState(false)
@@ -121,6 +123,12 @@ export function GuideCard({ guide, authorName, currentTeamCode, onEdit, onDelete
                     <span className="text-xs text-muted-foreground flex items-center gap-1">
                       <User size={12} />
                       {authorName}
+                    </span>
+                  )}
+                  {responsibleName && responsibleName !== authorName && (
+                    <span className="text-xs text-muted-foreground flex items-center gap-1">
+                      <User size={12} weight="fill" />
+                      {t.guideCard.responsiblePrefix} {responsibleName}
                     </span>
                   )}
                 </CardDescription>

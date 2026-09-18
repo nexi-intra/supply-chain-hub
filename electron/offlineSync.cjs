@@ -102,6 +102,13 @@ function createResilientStore(networkStore, localStore, options = {}) {
     const blockedKeys = new Set()
     let succeeded = 0
     let failed = 0
+    // Et enkelt forsøg der rammer et kortvarigt travlt delt drev er normalt og
+    // retter sig selv af sig selv ved næste automatiske forsøg (se
+    // startPendingSyncRetry i main.cjs) — det skal IKKE vise brugeren en
+    // skræmmende fejl-toast hver gang. Kun en post der er fejlet FLERE gange i
+    // træk (reelt fastlåst, ikke bare travl et øjeblik) er værd at gøre
+    // opmærksom på.
+    let hasRepeatedFailure = false
 
     for (let i = 0; i < queue.length; i++) {
       const entry = queue[i]
@@ -116,19 +123,21 @@ function createResilientStore(networkStore, localStore, options = {}) {
       } catch (err) {
         failed++
         blockedKeys.add(entry.key)
-        remaining.push({ ...entry, attempts: entry.attempts + 1, lastError: String((err && err.message) || err) })
+        const attempts = entry.attempts + 1
+        if (attempts >= 2) hasRepeatedFailure = true
+        remaining.push({ ...entry, attempts, lastError: String((err && err.message) || err) })
       }
     }
 
     saveQueue(remaining)
-    return { succeeded, failed, remaining: remaining.length }
+    const result = { succeeded, failed, remaining: remaining.length }
+    if (succeeded > 0 || hasRepeatedFailure) onSyncResult?.(result)
+    return result
   }
 
   /** Afspiller køen og rapporterer resultatet videre (bruges både automatisk og fra en manuel "prøv igen"-knap). */
   function runReplay() {
-    const result = replayQueue()
-    if (result.succeeded > 0 || result.failed > 0) onSyncResult?.(result)
-    return result
+    return replayQueue()
   }
 
   function get(key, options) {

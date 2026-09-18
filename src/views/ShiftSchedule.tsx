@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, type ReactElement } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowLeft, Plus, Trash, UserCircle, Tag, Calendar as CalendarIcon, PencilSimple, ChatText, Phone, FirstAidKit, Airplane, Gift, ArrowsClockwise } from '@phosphor-icons/react'
+import { ArrowLeft, Plus, Trash, UserCircle, Tag, Calendar as CalendarIcon, PencilSimple, ChatText, Phone, FirstAidKit, Airplane, Gift, ArrowsClockwise, CaretDown, CaretUp, Funnel, Warning } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -36,6 +36,15 @@ interface ShiftScheduleProps {
   userEmail: string
 }
 
+const SHIFT_PATTERN_INTERVAL_LABELS: Record<number, string> = {
+  1: 'Hver uge',
+  2: 'Hver anden uge',
+  3: 'Hver tredje uge',
+  4: 'Hver fjerde uge',
+  5: 'Hver femte uge',
+  6: 'Hver sjette uge',
+}
+
 export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEmail }: ShiftScheduleProps) {
   const [roles, setRoles] = useKV<ShiftRole[]>('shift-roles', [])
   const [assignments, setAssignments] = useKV<ShiftAssignment[]>('shift-assignments', [])
@@ -58,10 +67,14 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
   const [patternEmployee, setPatternEmployee] = useState('')
   const [patternRole, setPatternRole] = useState('')
   const [patternWeekdays, setPatternWeekdays] = useState<number[]>([])
-  const [patternInterval, setPatternInterval] = useState<1 | 2 | 3 | 4>(2)
+  const [patternInterval, setPatternInterval] = useState<1 | 2 | 3 | 4 | 5 | 6>(2)
   const [patternStartDate, setPatternStartDate] = useState(() => toIsoDateString(new Date()))
   const [patternEndDate, setPatternEndDate] = useState('')
   const [patternComment, setPatternComment] = useState('')
+  const [editingPatternId, setEditingPatternId] = useState<string | null>(null)
+  const [showExistingPatterns, setShowExistingPatterns] = useState(true)
+  const [patternFilterRole, setPatternFilterRole] = useState('all')
+  const [patternFilterEmployee, setPatternFilterEmployee] = useState('all')
   const [duplicateTaskInfo, setDuplicateTaskInfo] = useState<{ employeeName: string; roleName: string } | null>(null)
   const [editingRole, setEditingRole] = useState<ShiftRole | null>(null)
   const [editingComment, setEditingComment] = useState<{ employeeId: string; date: string } | null>(null)
@@ -337,6 +350,14 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
     toast.success('Vagt fjernet')
   }
 
+  // En tildeling hvis opgave er blevet slettet/omdannet (roleId matcher ikke
+  // længere nogen opgave i listen) må ALDRIG bare forsvinde fra kalenderen —
+  // den knyttes til en ny opgave i stedet for at miste medarbejder/dato/kommentar.
+  const handleReassignRole = (assignmentId: string, newRoleId: string) => {
+    setAssignments((current) => (current || []).map(a => a.id === assignmentId ? { ...a, roleId: newRoleId } : a))
+    toast.success('Opgave tilknyttet')
+  }
+
   const openEditRoleDialog = (role: ShiftRole) => {
     setEditingRole(role)
     setNewRoleName(role.name)
@@ -524,6 +545,18 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
     setPatternStartDate(toIsoDateString(new Date()))
     setPatternEndDate('')
     setPatternComment('')
+    setEditingPatternId(null)
+  }
+
+  const startEditPattern = (pattern: ShiftPatternRule) => {
+    setEditingPatternId(pattern.id)
+    setPatternEmployee(pattern.employeeId)
+    setPatternRole(pattern.roleId)
+    setPatternWeekdays(pattern.weekdays)
+    setPatternInterval(pattern.intervalWeeks)
+    setPatternStartDate(pattern.anchorDate)
+    setPatternEndDate(pattern.endDate || '')
+    setPatternComment(pattern.comment || '')
   }
 
   const togglePatternWeekday = (weekday: number) => {
@@ -541,6 +574,23 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
     if (!employee) return
     if (patternEndDate && patternEndDate < patternStartDate) {
       toast.error('Slutdato kan ikke ligge før startdato')
+      return
+    }
+
+    if (editingPatternId) {
+      setShiftPatterns((current) => (current || []).map((p) => p.id !== editingPatternId ? p : {
+        ...p,
+        employeeId: patternEmployee,
+        employeeName: employee.name,
+        roleId: patternRole,
+        weekdays: patternWeekdays,
+        intervalWeeks: patternInterval,
+        anchorDate: patternStartDate,
+        endDate: patternEndDate || undefined,
+        comment: patternComment.trim() || undefined,
+      }))
+      resetPatternForm()
+      toast.success('Gentaget vagt opdateret')
       return
     }
 
@@ -563,6 +613,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
 
   const handleDeletePattern = (patternId: string) => {
     setShiftPatterns((current) => (current || []).filter(p => p.id !== patternId))
+    if (editingPatternId === patternId) resetPatternForm()
     toast.success('Gentaget vagt slettet')
   }
 
@@ -1007,7 +1058,54 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                                         <>
                                           {cellAssignments.map((assignment) => {
                                             const role = (roles || []).find(r => r.id === assignment.roleId)
-                                            if (!role) return null
+                                            if (!role && assignment.isPattern) return null
+
+                                            if (!role) {
+                                              // Opgaven bag denne tildeling findes ikke mere (fx slettet/omdannet) —
+                                              // vis den stadig (medarbejder+dato+kommentar må ikke bare forsvinde),
+                                              // og lad brugeren knytte den til en gyldig opgave med det samme.
+                                              return (
+                                                <div key={assignment.id} className="group relative">
+                                                  <Popover>
+                                                    <PopoverTrigger asChild>
+                                                      <button
+                                                        className="w-full px-1.5 py-1.5 rounded text-[11px] font-semibold truncate text-foreground border border-dashed border-amber-500 bg-amber-500/10 transition-all flex items-center justify-center gap-1"
+                                                        title="Opgaven bag denne tildeling findes ikke mere — klik for at vælge en opgave"
+                                                      >
+                                                        <Warning size={11} weight="duotone" className="text-amber-600 shrink-0" />
+                                                        <span className="truncate">Ukendt opgave</span>
+                                                      </button>
+                                                    </PopoverTrigger>
+                                                    <PopoverContent className="w-64 p-2" align="center">
+                                                      <div className="space-y-1">
+                                                        <p className="text-sm font-semibold mb-2 px-2">Vælg Opgave</p>
+                                                        {(roles || []).map(r => (
+                                                          <button
+                                                            key={r.id}
+                                                            onClick={() => handleReassignRole(assignment.id, r.id)}
+                                                            className="w-full text-left px-3 py-2 rounded-md hover:bg-muted transition-all flex items-center gap-3"
+                                                          >
+                                                            <div className="w-4 h-4 rounded-full flex-shrink-0" style={{ backgroundColor: r.color }} />
+                                                            <span className="text-sm font-medium truncate">{r.name}</span>
+                                                          </button>
+                                                        ))}
+                                                      </div>
+                                                    </PopoverContent>
+                                                  </Popover>
+                                                  <Button
+                                                    size="sm"
+                                                    variant="destructive"
+                                                    className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                                                    onClick={(e) => {
+                                                      e.stopPropagation()
+                                                      handleDeleteAssignment(assignment.id)
+                                                    }}
+                                                  >
+                                                    <Trash size={10} />
+                                                  </Button>
+                                                </div>
+                                              )
+                                            }
                                             
                                             return (
                                               <div key={assignment.id} className="group relative">
@@ -1540,7 +1638,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
           <div className="space-y-4 overflow-y-auto flex-1 min-h-0 pr-2 -mr-2 pt-2">
             <div className="p-3 bg-muted/50 rounded-lg border">
               <p className="text-xs text-muted-foreground">
-                <AutoText text="Tildel en opgave der gentages hver uge, hver anden, tredje eller fjerde uge — fx 'Bo har support hver tredje mandag'. Weekender, helligdage, ferie og sygdom springes automatisk over." />
+                <AutoText text="Tildel en opgave der gentages hver uge og op til hver sjette uge — fx 'Bo har support hver tredje mandag'. Weekender, helligdage, ferie og sygdom springes automatisk over." />
               </p>
             </div>
             <div>
@@ -1594,15 +1692,14 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
             </div>
             <div>
               <Label><AutoText text="Interval" /></Label>
-              <Select value={patternInterval.toString()} onValueChange={(value) => setPatternInterval(parseInt(value) as 1 | 2 | 3 | 4)}>
+              <Select value={patternInterval.toString()} onValueChange={(value) => setPatternInterval(parseInt(value) as 1 | 2 | 3 | 4 | 5 | 6)}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="1"><AutoText text="Hver uge" /></SelectItem>
-                  <SelectItem value="2"><AutoText text="Hver anden uge" /></SelectItem>
-                  <SelectItem value="3"><AutoText text="Hver tredje uge" /></SelectItem>
-                  <SelectItem value="4"><AutoText text="Hver fjerde uge" /></SelectItem>
+                  {Object.entries(SHIFT_PATTERN_INTERVAL_LABELS).map(([value, label]) => (
+                    <SelectItem key={value} value={value}><AutoText text={label} /></SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -1620,33 +1717,88 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
               <Label><AutoText text="Kommentar (valgfri)" /></Label>
               <Input value={patternComment} onChange={(e) => setPatternComment(e.target.value)} placeholder={commentPlaceholder} />
             </div>
-            <Button onClick={handleCreatePattern} className="w-full">
-              <AutoText text="Opret gentaget vagt" />
-            </Button>
+            <div className="flex gap-2">
+              <Button onClick={handleCreatePattern} className="flex-1">
+                <AutoText text={editingPatternId ? 'Gem ændringer' : 'Opret gentaget vagt'} />
+              </Button>
+              {editingPatternId && (
+                <Button variant="outline" onClick={resetPatternForm}>
+                  <AutoText text="Annuller redigering" />
+                </Button>
+              )}
+            </div>
 
-            {(shiftPatterns || []).length > 0 && (
-              <div className="pt-2 border-t space-y-2">
-                <Label><AutoText text="Eksisterende mønstre" /></Label>
-                {(shiftPatterns || []).map((pattern) => {
-                  const role = (roles || []).find(r => r.id === pattern.roleId)
-                  const intervalLabel = pattern.intervalWeeks === 1 ? 'Hver uge' : pattern.intervalWeeks === 2 ? 'Hver anden uge' : pattern.intervalWeeks === 3 ? 'Hver tredje uge' : 'Hver fjerde uge'
-                  const weekdayLabels = pattern.weekdays.map(d => ['Søn', 'Man', 'Tir', 'Ons', 'Tor', 'Fre', 'Lør'][d]).join(', ')
-                  return (
-                    <div key={pattern.id} className="flex items-center justify-between gap-2 p-2 rounded-lg border bg-card">
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold truncate">{pattern.employeeName} — {role?.name || '?'}</p>
-                        <p className="text-xs text-muted-foreground truncate">
-                          <AutoText text={intervalLabel} /> · {weekdayLabels} · {pattern.anchorDate}{pattern.endDate ? ` → ${pattern.endDate}` : ''}
-                        </p>
+            {(shiftPatterns || []).length > 0 && (() => {
+              const filteredPatterns = (shiftPatterns || []).filter((pattern) =>
+                (patternFilterRole === 'all' || pattern.roleId === patternFilterRole)
+                && (patternFilterEmployee === 'all' || pattern.employeeId === patternFilterEmployee)
+              )
+              return (
+                <div className="pt-2 border-t space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <Label><AutoText text="Eksisterende mønstre" /> ({filteredPatterns.length})</Label>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 gap-1 text-xs"
+                      onClick={() => setShowExistingPatterns((current) => !current)}
+                    >
+                      <AutoText text={showExistingPatterns ? 'Skjul' : 'Vis'} />
+                      {showExistingPatterns ? <CaretUp size={14} /> : <CaretDown size={14} />}
+                    </Button>
+                  </div>
+                  {showExistingPatterns && (
+                    <>
+                      <div className="grid grid-cols-2 gap-2">
+                        <Select value={patternFilterRole} onValueChange={setPatternFilterRole}>
+                          <SelectTrigger className="h-8 text-xs"><Funnel size={12} className="mr-1 shrink-0" /><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all"><AutoText text="Alle opgaver" /></SelectItem>
+                            {(roles || []).map((role) => (
+                              <SelectItem key={role.id} value={role.id}>{role.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Select value={patternFilterEmployee} onValueChange={setPatternFilterEmployee}>
+                          <SelectTrigger className="h-8 text-xs"><Funnel size={12} className="mr-1 shrink-0" /><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all"><AutoText text="Alle medarbejdere" /></SelectItem>
+                            {(employees || []).map((emp) => (
+                              <SelectItem key={emp.id} value={emp.id}>{emp.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </div>
-                      <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-destructive shrink-0" onClick={() => handleDeletePattern(pattern.id)}>
-                        <Trash size={14} weight="duotone" />
-                      </Button>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
+                      {filteredPatterns.length === 0 ? (
+                        <p className="text-xs text-muted-foreground py-2"><AutoText text="Ingen mønstre matcher filtrene" /></p>
+                      ) : filteredPatterns.map((pattern) => {
+                        const role = (roles || []).find(r => r.id === pattern.roleId)
+                        const intervalLabel = SHIFT_PATTERN_INTERVAL_LABELS[pattern.intervalWeeks] || 'Hver uge'
+                        const weekdayLabels = pattern.weekdays.map(d => ['Søn', 'Man', 'Tir', 'Ons', 'Tor', 'Fre', 'Lør'][d]).join(', ')
+                        return (
+                          <div key={pattern.id} className={cn("flex items-center justify-between gap-2 p-2 rounded-lg border bg-card", editingPatternId === pattern.id && "border-primary bg-primary/5")}>
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold truncate">{pattern.employeeName} — {role?.name || '?'}</p>
+                              <p className="text-xs text-muted-foreground truncate">
+                                <AutoText text={intervalLabel} /> · {weekdayLabels} · {pattern.anchorDate}{pattern.endDate ? ` → ${pattern.endDate}` : ''}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={() => startEditPattern(pattern)}>
+                                <PencilSimple size={14} weight="duotone" />
+                              </Button>
+                              <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-destructive" onClick={() => handleDeletePattern(pattern.id)}>
+                                <Trash size={14} weight="duotone" />
+                              </Button>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </>
+                  )}
+                </div>
+              )
+            })()}
           </div>
         </DialogContent>
       </Dialog>

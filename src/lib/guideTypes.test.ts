@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeNextReviewAt, getReviewStatus, migrateGuide, type Guide } from './guideTypes'
+import { computeNextReviewAt, getReviewStatus, migrateGuide, dateStringToTimestamp, timestampToDateString, type Guide } from './guideTypes'
 
 function makeGuide(overrides: Partial<Guide> = {}): Guide {
   return {
@@ -27,6 +27,26 @@ describe('computeNextReviewAt', () => {
     const nextDate = new Date(next!)
     expect(nextDate.getMonth()).toBe(3) // april (0-indeks)
     expect(nextDate.getDate()).toBe(15)
+  })
+
+  it('can start counting from a user-picked anchor date instead of always "now" — the actual staggering mechanism', () => {
+    // Two guides created at the exact same moment, but with different chosen
+    // anchor dates, must NOT end up with the same next-review date.
+    const anchorA = dateStringToTimestamp('2026-10-01')
+    const anchorB = dateStringToTimestamp('2026-11-15')
+    const nextA = computeNextReviewAt(anchorA, 3)
+    const nextB = computeNextReviewAt(anchorB, 3)
+    expect(timestampToDateString(nextA!)).toBe('2027-01-01')
+    expect(timestampToDateString(nextB!)).toBe('2027-02-15')
+    expect(nextA).not.toBe(nextB)
+  })
+})
+
+describe('dateStringToTimestamp / timestampToDateString', () => {
+  it('round-trips a plain yyyy-MM-dd date without a timezone off-by-one', () => {
+    for (const value of ['2026-01-01', '2026-06-15', '2026-12-31']) {
+      expect(timestampToDateString(dateStringToTimestamp(value))).toBe(value)
+    }
   })
 })
 

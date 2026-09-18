@@ -128,8 +128,8 @@ export interface ShiftPatternRule {
   roleId: string
   /** 1=mandag..5=fredag (samme konvention som Date.getDay(), weekender giver ingen mening her). */
   weekdays: number[]
-  /** Hver uge (1), hver anden (2), hver tredje (3) eller hver fjerde (4). */
-  intervalWeeks: 1 | 2 | 3 | 4
+  /** Hver uge (1) op til hver sjette uge (6). */
+  intervalWeeks: 1 | 2 | 3 | 4 | 5 | 6
   /** Ankerdato ('yyyy-MM-dd') — ugen den ligger i tæller som uge 0 i intervallet. */
   anchorDate: string
   /** Valgfri slutdato ('yyyy-MM-dd'), inklusiv. Ingen = løber for evigt. */

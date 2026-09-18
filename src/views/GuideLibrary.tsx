@@ -53,6 +53,12 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
   // resolveAuthorName, som er async og ville give ét KV-kald pr. kort) — samme genbrugsmønster
   // som andre views bruger til e-mail→navn-overslåg.
   const [usersByEmail] = useKV<Record<string, { fullName?: string }>>('users', {})
+  // Til GuideEditors "Ansvarlig for gennemgang"-vælger — samme kilde som usersByEmail,
+  // blot som en liste i stedet for et opslagsobjekt.
+  const teamUsers = useMemo(
+    () => Object.entries(usersByEmail || {}).map(([email, data]) => ({ email, fullName: data?.fullName || email })),
+    [usersByEmail]
+  )
   const [reviewRequests] = useKV<GuideReviewRequest[]>('guide-review-requests', [], { initializeIfMissing: false })
   const [archivedGuides] = useKV<ArchivedGuideEntry[]>('archived-guides', [], { initializeIfMissing: false })
   const [guideAdminEmails] = useKV<string[]>('guide-admin-emails', [], { initializeIfMissing: false })
@@ -1062,6 +1068,7 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
                   key={guide.id}
                   guide={guide}
                   authorName={(guide.author && usersByEmail?.[guide.author]?.fullName) || guide.author?.split('@')[0] || ''}
+                  responsibleName={(guide.responsibleEmail && usersByEmail?.[guide.responsibleEmail]?.fullName) || guide.responsibleEmail?.split('@')[0] || ''}
                   currentTeamCode={currentTeamCode}
                   onEdit={handleEditGuide}
                   onDelete={handleDeleteGuide}
@@ -1093,6 +1100,7 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
         onCreateCategory={handleCreateCategory}
         importDraft={importDraft}
         userEmail={userEmail}
+        users={teamUsers}
         preserveVersion={Boolean(editingReviewRequest)}
         titleOverride={editingReviewRequest
           ? (editingAsReviewer
