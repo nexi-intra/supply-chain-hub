@@ -12,6 +12,11 @@ export const CHANGELOG: ChangelogEntry[] = [
     items: [
       'Guide Bibliotek: næste-tjek-datoen kan nu sættes til en specifik dag i stedet for altid at blive "i dag + interval" — så guider I opretter samtidig ikke alle forfalder på samme dato',
       'Guide Bibliotek: en guide kan nu have en "ansvarlig for gennemgang" — en anden person end forfatteren, som får påmindelserne om at holde den opdateret',
+      'Vagtplan: "Gentagne vagter" kan nu redigeres bagefter (ikke kun oprettes/slettes), listen over mønstre kan skjules/vises, filtreres på opgave eller medarbejder, og intervallet kan sættes helt op til hver sjette uge',
+      'Vagtplan: en tildeling hvis opgave er blevet slettet/omdannet forsvinder ikke længere stille fra kalenderen — den vises nu som "Ukendt opgave" og kan med ét klik knyttes til en gyldig opgave igen',
+      'Login/genoptag session er nu markant mere robust ved travlt delt drev — færre falske "Lageret er optaget af en anden klient"-fejl ved login',
+      'Rettet en sjælden race i "Tildel opgave" fra forsiden, der kunne overskrive en andens samtidige ændring af vagtplanen',
+      'Baggrunds-synkronisering: en enkelt forbigående fejl viser ikke længere en bekymrende fejl-besked — kun hvis noget er reelt fastlåst efter flere forsøg',
     ],
   },
   {

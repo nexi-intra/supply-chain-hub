@@ -39,7 +39,11 @@ function acquireFileLock(target, { attempts = 50, delayMs = 100, createParent = 
         busy.code = 'KV_LOCK_BUSY'
         throw busy
       }
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs)
+      // Jitter (samme begrundelse som acquireFileLockAsync): uden det ville
+      // flere klienter der kolliderer om samme laas vente PRAECIS lige laenge
+      // og saa stoede sammen igen i naeste forsoeg, igen og igen.
+      const jitter = 0.6 + Math.random() * 0.8
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.round(delayMs * jitter))
     }
   }
   return () => { try { if (fs.readFileSync(target, 'utf8') === owner) fs.unlinkSync(target) } catch { /* preserve ownership */ } }

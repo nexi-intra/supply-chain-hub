@@ -299,6 +299,22 @@ function handleSyncResult(result) {
   broadcast('storage:connection-changed', getStorageConnectionStatus())
 }
 
+// Et forsøg der rammer et travlt delt drev retter kun sig selv hvis NOGEN
+// prøver igen senere — uden dette holder en afventende ændring sig kun kø indtil
+// brugeren selv trykker "prøv igen" eller drevet tilfældigvis skifter forbindelse.
+// Kører uafhængigt af hvilken store-instans der er aktiv lige nu (store-variablen
+// genindlæses ved hvert kald), så den behøver ikke genstartes ved team/mappe-skift.
+const PENDING_SYNC_RETRY_INTERVAL = 45 * 1000
+let pendingSyncRetryTimer = null
+function retryPendingSyncIfAny() {
+  try { if (store.getPendingSyncCount() > 0) store.retrySyncNow() } catch (err) { console.error('TCD Hub: automatisk gen-synkronisering fejlede', err) }
+}
+function startPendingSyncRetry() {
+  if (pendingSyncRetryTimer) return
+  pendingSyncRetryTimer = setInterval(retryPendingSyncIfAny, PENDING_SYNC_RETRY_INTERVAL)
+  pendingSyncRetryTimer.unref?.()
+}
+
 // --- Automatisk daglig backup -------------------------------------------
 // Skriver hele storen (dekrypteret) til <datamappe>/Backup/tcd-hub-auto-backup-YYYY-MM-DD.json.
 // Exclusive create ('wx') sikrer at kun én af de delte klienter skriver dagens fil.
@@ -989,6 +1005,7 @@ app.whenReady().then(() => {
   setTimeout(checkForUpdates, 10 * 1000)
   updateCheckTimer = setInterval(checkForUpdates, UPDATE_CHECK_INTERVAL)
   updateCheckTimer.unref?.()
+  startPendingSyncRetry()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
