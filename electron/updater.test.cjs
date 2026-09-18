@@ -141,6 +141,39 @@ test('publishUpdate retains earlier versions in history so a manager can pick on
   assert.equal(getManifestForVersion(dataDir, '1.0.0'), null)
 })
 
+test('publishUpdate with setAsLatest: false adds the version to the library without changing the current manifest', async (t) => {
+  const dataDir = makeTempDir(t, 'tcd-data-')
+
+  await publishUpdate(dataDir, { zipPath: buildReleaseZip(t, '9.9.9'), version: '9.9.9', notes: '', publishedBy: '' })
+  const beforeManifest = readManifest(dataDir)
+
+  // An older stepping-stone version is added afterwards purely for later force-push selection.
+  const added = await publishUpdate(dataDir, { zipPath: buildReleaseZip(t, '9.9.1'), version: '9.9.1', notes: '', publishedBy: '', setAsLatest: false })
+
+  assert.equal(added.version, '9.9.1')
+  assert.deepEqual(readManifest(dataDir), beforeManifest)
+  assert.ok(getManifestForVersion(dataDir, '9.9.1'))
+  assert.ok(fs.existsSync(path.join(dataDir, 'updates', '9.9.1')))
+  assert.deepEqual(readHistory(dataDir).map((entry) => entry.version), ['9.9.1', '9.9.9'])
+})
+
+test('a library-only addition never evicts the current manifest version from disk', async (t) => {
+  const dataDir = makeTempDir(t, 'tcd-data-')
+
+  await publishUpdate(dataDir, { zipPath: buildReleaseZip(t, '1.0.0'), version: '1.0.0', notes: '', publishedBy: '' })
+
+  // Add more library-only versions than HISTORY_RETENTION so the current
+  // manifest's version would normally fall out of the retained window.
+  for (let i = 1; i <= 11; i++) {
+    const version = `2.0.${i}`
+    await publishUpdate(dataDir, { zipPath: buildReleaseZip(t, version), version, notes: '', publishedBy: '', setAsLatest: false })
+  }
+
+  assert.equal(readManifest(dataDir).version, '1.0.0')
+  assert.ok(fs.existsSync(path.join(dataDir, 'updates', '1.0.0')), 'the live manifest version must still exist on disk')
+  assert.ok(getManifestForVersion(dataDir, '1.0.0'))
+})
+
 test('prepareUpdate transfers only the files that actually changed', async (t) => {
   const dataDir = makeTempDir(t, 'tcd-data-')
   const installDir = makeTempDir(t, 'tcd-install-')

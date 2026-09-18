@@ -724,7 +724,16 @@ const baseTranslations = {
       forceFullInstall: "Tving fuld installation for alle klienter",
       forceFullInstallHint: "Slår hurtig delta-opdatering fra for denne udgivelse. Anbefales hvis ældre klienter fejler ved opdatering (fx \"ENOENT ... app.asar\") — fuld installation virker altid, uanset hvilken version klienten kører nu.",
       publishUpdate: "Publicér opdatering",
-      selectNewPackage: "Vælg ny app-pakke (.zip)…"
+      selectNewPackage: "Vælg ny app-pakke (.zip)…",
+      setAsLatestLabel: "Sæt som den version alle automatisk opdaterer til",
+      setAsLatestHint: "Slå fra for kun at lægge versionen i biblioteket nedenfor, uden at ændre hvad andre klienter automatisk bliver tilbudt — praktisk til en ældre mellemversion (fx 1.5.1), som nogle få fastlåste brugere skal igennem før de kan nå den nyeste.",
+      addToLibrary: "Tilføj til biblioteket",
+      addedToLibraryPrefix: "Version",
+      addedToLibrarySuffix: "er lagt i biblioteket. Den er ikke sendt til nogen — vælg den under en specifik bruger i \"Brugernes app-versioner\" for at tvinge den ud.",
+      libraryTitle: "Version-bibliotek",
+      libraryHint: "Alle versioner du har lagt ind. Vælg en specifik version pr. bruger i \"Brugernes app-versioner\" herunder.",
+      libraryEmpty: "Ingen versioner i biblioteket endnu.",
+      libraryLatestBadge: "Nyeste"
     },
     clientVersionManager: {
       noVersionToPush: "Ingen version tilgængelig at pushe",
@@ -2384,7 +2393,16 @@ const baseTranslations = {
       forceFullInstall: "Force full installation for all clients",
       forceFullInstallHint: "Turns off fast delta updates for this release. Recommended if older clients fail to update (e.g. \"ENOENT ... app.asar\") — a full install always works, regardless of which version the client is currently running.",
       publishUpdate: "Publish update",
-      selectNewPackage: "Select new app package (.zip)…"
+      selectNewPackage: "Select new app package (.zip)…",
+      setAsLatestLabel: "Set as the version everyone automatically updates to",
+      setAsLatestHint: "Turn off to only add the version to the library below, without changing what other clients are automatically offered — useful for an older stepping-stone version (e.g. 1.5.1) that a few stuck users need before they can reach the latest.",
+      addToLibrary: "Add to library",
+      addedToLibraryPrefix: "Version",
+      addedToLibrarySuffix: "was added to the library. It was not sent to anyone — pick it for a specific user in \"Users' App Versions\" to force it out.",
+      libraryTitle: "Version library",
+      libraryHint: "Every version you've added. Pick a specific version per user in \"Users' App Versions\" below.",
+      libraryEmpty: "No versions in the library yet.",
+      libraryLatestBadge: "Latest"
     },
     clientVersionManager: {
       noVersionToPush: "No version available to push",

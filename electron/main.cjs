@@ -895,15 +895,21 @@ app.whenReady().then(() => {
 
   ipcMain.handle('updates:publish', async (_event, payload) => {
     const version = String(payload.version)
-    // Tillader at publicere den samme version som denne app selv kører — andre
-    // klienter kan sagtens være bagud (fx stadig på 1.4.0), selvom manageren
-    // allerede er opdateret. Kun reelle nedgraderinger blokeres.
-    if (updater.isNewerVersion(app.getVersion(), version)) {
-      throw new Error(`Version ${version} er ældre end denne app (${app.getVersion()})`)
-    }
-    const existingManifest = updater.readManifest(platformRoot)
-    if (existingManifest && updater.isNewerVersion(existingManifest.version, version)) {
-      throw new Error(`Version ${version} er ældre end den seneste publicerede version (${existingManifest.version})`)
+    const setAsLatest = payload.setAsLatest !== false
+    // Disse to spærrer er kun relevante når versionen skal blive den nye
+    // "seneste" for ALLE klienter - en ren biblioteks-tilføjelse (setAsLatest:
+    // false) må gerne være en ældre version end det, manageren selv kører.
+    if (setAsLatest) {
+      // Tillader at publicere den samme version som denne app selv kører — andre
+      // klienter kan sagtens være bagud (fx stadig på 1.4.0), selvom manageren
+      // allerede er opdateret. Kun reelle nedgraderinger blokeres.
+      if (updater.isNewerVersion(app.getVersion(), version)) {
+        throw new Error(`Version ${version} er ældre end denne app (${app.getVersion()})`)
+      }
+      const existingManifest = updater.readManifest(platformRoot)
+      if (existingManifest && updater.isNewerVersion(existingManifest.version, version)) {
+        throw new Error(`Version ${version} er ældre end den seneste publicerede version (${existingManifest.version})`)
+      }
     }
     const manifest = await updater.publishUpdate(platformRoot, {
       zipPath: String(payload.zipPath),
@@ -911,9 +917,10 @@ app.whenReady().then(() => {
       notes: String(payload.notes || ''),
       publishedBy: authService.current(_event.sender.id).email,
       skipDelta: !!payload.skipDelta,
+      setAsLatest,
       onProgress: (progress) => broadcast('updates:publish-progress', progress),
     })
-    checkForUpdates()
+    if (setAsLatest) checkForUpdates()
     return manifest
   })
 

@@ -172,7 +172,7 @@ function versionFromFilename(fileName) {
  * Kopierer zip'en til <datamappe>/updates/, verificerer kopien og skriver
  * manifestet. Gamle zip-filer ryddes op bagefter.
  */
-async function publishUpdate(dataDir, { zipPath, version, notes, publishedBy, skipDelta = false, onProgress = () => {} }) {
+async function publishUpdate(dataDir, { zipPath, version, notes, publishedBy, skipDelta = false, setAsLatest = true, onProgress = () => {} }) {
   if (!parseVersion(version)) {
     throw new Error('Versionsnummeret skal have formatet X.Y.Z, fx 1.2.0')
   }
@@ -234,8 +234,13 @@ async function publishUpdate(dataDir, { zipPath, version, notes, publishedBy, sk
   }
 
   const tmp = manifestPath(dataDir) + '.' + process.pid + '.tmp'
-  fs.writeFileSync(tmp, JSON.stringify(manifest, null, 2))
-  fs.renameSync(tmp, manifestPath(dataDir))
+  // setAsLatest=false: versionen laegges KUN i biblioteket (historik) til
+  // senere force-push til udvalgte brugere - den aendrer ikke hvad alle
+  // andre klienter automatisk bliver tilbudt at opdatere til.
+  if (setAsLatest) {
+    fs.writeFileSync(tmp, JSON.stringify(manifest, null, 2))
+    fs.renameSync(tmp, manifestPath(dataDir))
+  }
 
   // Behold op til HISTORY_RETENTION versioner (denne + tidligere), så en
   // manager senere kan vælge en specifik version at force-pushe til én bruger.
@@ -246,6 +251,14 @@ async function publishUpdate(dataDir, { zipPath, version, notes, publishedBy, sk
 
   const retainedVersions = new Set(retained.map((entry) => entry.version))
   const retainedFiles = new Set(retained.map((entry) => entry.file))
+  // Den nuvaerende manifest.json (den version alle andre auto-opdaterer til)
+  // maa ALDRIG ryddes op, selv hvis den er faldet ud af de seneste
+  // HISTORY_RETENTION historik-poster efter flere biblioteks-tilfoejelser.
+  const currentManifest = readManifest(dataDir)
+  if (currentManifest) {
+    retainedVersions.add(currentManifest.version)
+    retainedFiles.add(currentManifest.file)
+  }
 
   for (const name of fs.readdirSync(dir)) {
     const fullPath = path.join(dir, name)
