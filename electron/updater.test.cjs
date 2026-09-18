@@ -4,7 +4,7 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 const { execFileSync } = require('child_process')
-const { publishUpdate, prepareUpdate, isNewerVersion, readManifest, readHistory, getManifestForVersion, buildApplyScript } = require('./updater.cjs')
+const { publishUpdate, prepareUpdate, isNewerVersion, readManifest, readHistory, getManifestForVersion, buildApplyScript, describeMissingExe } = require('./updater.cjs')
 
 const EXE_NAME = 'TCD Hub.exe'
 
@@ -16,13 +16,18 @@ function makeTempDir(t, prefix) {
 
 /** Builds a minimal release zip that looks like a packaged TCD Hub build. */
 function buildReleaseZip(t, version = '9.9.9') {
+  return buildReleaseZipNamed(t, version, EXE_NAME)
+}
+
+/** Same as buildReleaseZip, but with a custom top-level exe name — used to simulate a rebrand. */
+function buildReleaseZipNamed(t, version, exeName) {
   const sourceDir = makeTempDir(t, 'tcd-release-src-')
-  fs.writeFileSync(path.join(sourceDir, EXE_NAME), 'binary-placeholder')
+  fs.writeFileSync(path.join(sourceDir, exeName), 'binary-placeholder')
   fs.mkdirSync(path.join(sourceDir, 'resources'))
   fs.writeFileSync(path.join(sourceDir, 'resources', 'app.asar'), 'asar-placeholder')
 
   const zipDir = makeTempDir(t, 'tcd-release-zip-')
-  const zipPath = path.join(zipDir, `TCD Hub-${version}-win.zip`)
+  const zipPath = path.join(zipDir, `${exeName.replace('.exe', '')}-${version}-win.zip`)
   execFileSync('tar.exe', ['-a', '-c', '-f', zipPath, '-C', sourceDir, '.'], { windowsHide: true })
   return zipPath
 }
@@ -81,6 +86,44 @@ test('prepareUpdate rejects a package whose checksum does not match', async (t) 
   await assert.rejects(
     prepareUpdate({ dataDir, manifest: tampered, exePath: path.join(installDir, EXE_NAME), installDir }),
     /Checksum-fejl/
+  )
+})
+
+test('describeMissingExe explains a rebrand (renamed exe) instead of claiming the package is invalid', (t) => {
+  const stagingDir = makeTempDir(t, 'tcd-staging-')
+  fs.writeFileSync(path.join(stagingDir, 'Supply Chain Hub.exe'), 'binary-placeholder')
+
+  const message = describeMissingExe(stagingDir, 'TCD Hub.exe')
+  assert.match(message, /omdøbt/)
+  assert.match(message, /TCD Hub\.exe/)
+  assert.match(message, /Supply Chain Hub\.exe/)
+})
+
+test('describeMissingExe falls back to the generic message when no exe exists at all', (t) => {
+  const stagingDir = makeTempDir(t, 'tcd-staging-')
+  fs.mkdirSync(path.join(stagingDir, 'resources'))
+
+  const message = describeMissingExe(stagingDir, 'TCD Hub.exe')
+  assert.match(message, /ikke en gyldig udgivelse/)
+})
+
+test('prepareUpdate (full install) rejects a rebranded package with a clear rename explanation, not a generic checksum-style error', async (t) => {
+  const dataDir = makeTempDir(t, 'tcd-data-')
+  const installDir = makeTempDir(t, 'tcd-install-')
+  // The install is still the OLD "TCD Hub.exe" build; the newly published
+  // package has already been rebranded to "Supply Chain Hub.exe".
+  fs.writeFileSync(path.join(installDir, EXE_NAME), 'current-version')
+  const zipPath = buildReleaseZipNamed(t, '9.9.9', 'Supply Chain Hub.exe')
+
+  const manifest = await publishUpdate(dataDir, { zipPath, version: '9.9.9', notes: '', publishedBy: '', skipDelta: true })
+
+  await assert.rejects(
+    prepareUpdate({ dataDir, manifest, exePath: path.join(installDir, EXE_NAME), installDir }),
+    (error) => {
+      assert.match(error.message, /omdøbt/)
+      assert.match(error.message, /Supply Chain Hub\.exe/)
+      return true
+    }
   )
 })
 
