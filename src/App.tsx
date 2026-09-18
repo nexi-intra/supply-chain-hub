@@ -138,6 +138,9 @@ function App() {
   const [userSession, setUserSession] = useState<UserSession | null>(null)
   const [isCheckingAuth, setIsCheckingAuth] = useState(true)
   const [lastActivity, setLastActivity] = useState(Date.now())
+  // Se checkForcedUpdate herunder: undertrykker den globale opdaterings-popup
+  // mens en manager-paatvunget version installeres i baggrunden.
+  const [suppressUpdatePopup, setSuppressUpdatePopup] = useState(false)
   const [accessViews, setAccessViews] = useState<AccessView[]>([])
   const [registeredTeams, setRegisteredTeams] = useState<RegisteredTeam[]>([])
   const [homeTeam, setHomeTeam] = useState<RegisteredTeam | null>(null)
@@ -218,6 +221,11 @@ function App() {
         const request = requests[userSession.email]
         if (!request || handledRequests.has(request.requestedAt)) return
         handledRequests.add(request.requestedAt)
+        // Undertryk den globale "ny version tilgaengelig"-popup mens den tvungne
+        // installation koerer - ellers kan brugeren naa at trykke "Opdatér nu" paa
+        // den ALMINDELIGE seneste version og springe den paatvungne mellemversion
+        // over (netop det scenarie tvungen-version-valg findes for at undgaa).
+        setSuppressUpdatePopup(true)
 
         await deleteKvObjectField('force-update-requests', userSession.email)
         toast.info(
@@ -240,6 +248,9 @@ function App() {
       } catch (error) {
         console.error('Tvungen opdatering fejlede:', error)
         toast.error('Tvungen opdatering fejlede — prøv igen fra Manager Panel')
+        // Fejlede installationen, skal den almindelige opdaterings-popup igen
+        // kunne tilbyde brugeren den seneste version som normalt.
+        setSuppressUpdatePopup(false)
       }
     }
 
@@ -495,7 +506,7 @@ function App() {
         <LanguageProvider userId={userSession.userId}>
           <Toaster position="top-center" richColors />
           <AnimatedBackground />
-          <UpdateNotification />
+          <UpdateNotification suppressed={suppressUpdatePopup} />
           <StorageConnectionBanner />
           <Suspense fallback={<ViewLoadingFallback />}>
             <ObserverWorkspace
@@ -518,7 +529,7 @@ function App() {
       <LanguageProvider userId={userSession.userId}>
         <Toaster position="top-center" richColors />
         <AnimatedBackground />
-        <UpdateNotification />
+        <UpdateNotification suppressed={suppressUpdatePopup} />
         <StorageConnectionBanner />
         <GuideImportStatus onOpenGuideLibrary={() => handleNavigate('guides')} />
         <BirthdayCelebration userEmail={userSession.email} />

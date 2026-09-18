@@ -49,7 +49,7 @@ export interface ElectronUpdatesApi {
   check(): Promise<UpdateManifest | null>
   history(): Promise<UpdateManifest[]>
   selectZip(): Promise<SelectedZip | null>
-  publish(payload: { zipPath: string; version: string; notes: string; publishedBy: string; skipDelta?: boolean }): Promise<UpdateManifest>
+  publish(payload: { zipPath: string; version: string; notes: string; publishedBy: string; skipDelta?: boolean; setAsLatest?: boolean }): Promise<UpdateManifest>
   install(version?: string): Promise<void>
   onUpdateAvailable(callback: (manifest: UpdateManifest) => void): () => void
   onProgress(callback: (progress: UpdateProgress) => void): () => void

@@ -9,7 +9,7 @@ import { Progress } from '@/components/ui/progress'
 import { Checkbox } from '@/components/ui/checkbox'
 import { ArrowsClockwise, CloudArrowUp, Info, Package, RocketLaunch } from '@phosphor-icons/react'
 import { toast } from 'sonner'
-import type { SelectedZip, UpdateStatus, PublishProgress } from '@/lib/electronUpdatesBridge'
+import type { SelectedZip, UpdateStatus, UpdateManifest, PublishProgress } from '@/lib/electronUpdatesBridge'
 import { useLanguage } from '@/contexts/LanguageContext'
 
 interface UpdateManagerProps {
@@ -35,6 +35,17 @@ export function UpdateManager({ userEmail }: UpdateManagerProps) {
   const [notes, setNotes] = useState('')
   const [publishProgress, setPublishProgress] = useState<PublishProgress | null>(null)
   const [skipDelta, setSkipDelta] = useState(false)
+  const [setAsLatest, setSetAsLatest] = useState(true)
+  const [library, setLibrary] = useState<UpdateManifest[]>([])
+
+  const refreshLibrary = useCallback(async () => {
+    if (!window.electronUpdates) return
+    try {
+      setLibrary(await window.electronUpdates.history())
+    } catch (error) {
+      console.error('Kunne ikke hente version-biblioteket:', error)
+    }
+  }, [])
 
   const refreshStatus = useCallback(async () => {
     if (!window.electronUpdates) return
@@ -47,7 +58,8 @@ export function UpdateManager({ userEmail }: UpdateManagerProps) {
 
   useEffect(() => {
     refreshStatus()
-  }, [refreshStatus])
+    refreshLibrary()
+  }, [refreshStatus, refreshLibrary])
 
   useEffect(() => {
     if (!window.electronUpdates) return
@@ -103,12 +115,18 @@ export function UpdateManager({ userEmail }: UpdateManagerProps) {
         notes: notes.trim(),
         publishedBy: userEmail,
         skipDelta,
+        setAsLatest,
       })
-      toast.success(`${t.updateManager.versionPublishedPrefix} ${manifest.version} ${t.updateManager.publishedSuffix}`, { duration: 8000 })
+      if (setAsLatest) {
+        toast.success(`${t.updateManager.versionPublishedPrefix} ${manifest.version} ${t.updateManager.publishedSuffix}`, { duration: 8000 })
+      } else {
+        toast.success(`${t.updateManager.addedToLibraryPrefix} ${manifest.version} ${t.updateManager.addedToLibrarySuffix}`, { duration: 8000 })
+      }
       setSelectedZip(null)
       setVersion('')
       setNotes('')
       await refreshStatus()
+      await refreshLibrary()
     } catch (error) {
       console.error('Publicering fejlede:', error)
       toast.error(error instanceof Error && error.message ? error.message : t.updateManager.publishFailed)
@@ -218,6 +236,16 @@ export function UpdateManager({ userEmail }: UpdateManagerProps) {
               </p>
             )}
             <label className="flex items-start gap-2.5 rounded-lg border bg-muted/40 p-3 cursor-pointer">
+              <Checkbox checked={setAsLatest} onCheckedChange={(checked) => setSetAsLatest(checked === true)} className="mt-0.5" />
+              <span className="text-sm">
+                <span className="font-medium">{t.updateManager.setAsLatestLabel}</span>
+                <br />
+                <span className="text-muted-foreground text-xs">
+                  {t.updateManager.setAsLatestHint}
+                </span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2.5 rounded-lg border bg-muted/40 p-3 cursor-pointer">
               <Checkbox checked={skipDelta} onCheckedChange={(checked) => setSkipDelta(checked === true)} className="mt-0.5" />
               <span className="text-sm">
                 <span className="font-medium">{t.updateManager.forceFullInstall}</span>
@@ -239,7 +267,7 @@ export function UpdateManager({ userEmail }: UpdateManagerProps) {
             <div className="flex flex-wrap gap-3">
               <Button onClick={handlePublish} disabled={isBusy} className="gap-2">
                 <CloudArrowUp size={18} />
-                {t.updateManager.publishUpdate}
+                {setAsLatest ? t.updateManager.publishUpdate : t.updateManager.addToLibrary}
               </Button>
               <Button variant="ghost" onClick={() => setSelectedZip(null)} disabled={isBusy}>
                 {t.common.cancel}
@@ -251,6 +279,33 @@ export function UpdateManager({ userEmail }: UpdateManagerProps) {
             <Package size={18} />
             {t.updateManager.selectNewPackage}
           </Button>
+        )}
+      </div>
+
+      <div className="border-t pt-4 space-y-3">
+        <div>
+          <h4 className="text-sm font-bold">{t.updateManager.libraryTitle}</h4>
+          <p className="text-xs text-muted-foreground">{t.updateManager.libraryHint}</p>
+        </div>
+        {library.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{t.updateManager.libraryEmpty}</p>
+        ) : (
+          <div className="rounded-lg border divide-y">
+            {library.map((entry) => (
+              <div key={entry.version} className="p-3 flex items-center justify-between gap-3 flex-wrap">
+                <div className="min-w-0">
+                  <div className="font-medium text-sm flex items-center gap-2">
+                    v{entry.version}
+                    {status?.manifest?.version === entry.version && <Badge variant="default" className="text-xs">{t.updateManager.libraryLatestBadge}</Badge>}
+                  </div>
+                  {entry.notes && <div className="text-xs text-muted-foreground truncate">{entry.notes}</div>}
+                </div>
+                <div className="text-xs text-muted-foreground shrink-0">
+                  {new Date(entry.publishedAt).toLocaleDateString(language === 'en' ? 'en-US' : language === 'fi' ? 'fi-FI' : 'da-DK')} · {formatMB(entry.size)}
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </div>
     </Card>

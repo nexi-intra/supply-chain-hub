@@ -74,6 +74,15 @@ test('an occupied global account lock blocks writes but the read gate stays lock
   assert.equal(fs.readFileSync(lock, 'utf8'), 'synthetic-other-client')
   assert.deepEqual(f.read(f.own, 'users')[f.oldEmail], f.user)
 })
+test('a lock abandoned by a crashed client self-heals instead of blocking every future account operation forever', t => {
+  const f = fixture(t), lock = path.join(f.root, '_registry', 'account-operation.lock')
+  fs.writeFileSync(lock, 'crashed-client-pid:old-uuid')
+  const old = new Date(Date.now() - 61000)
+  fs.utimesSync(lock, old, old)
+  f.rename()
+  assert.equal(f.read(f.own, 'users')[f.newEmail].password, f.user.password)
+  assert.equal(f.service.pending(), null)
+})
 test('context reads are served from a bounded snapshot and stay lock-free under contention', t => {
   let clock = 1000
   const f = fixture(t, { now: () => clock }), lock = path.join(f.root, '_registry', 'account-operation.lock')

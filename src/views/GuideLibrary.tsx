@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
-import { Plus, MagnifyingGlass, Books, Gear, ArrowLeft, Timer, FolderOpen, ChatCircleDots, FileArrowUp, Buildings, LockKey, Clock, CheckCircle, XCircle, Eye, ClipboardText } from '@phosphor-icons/react'
+import { Plus, MagnifyingGlass, Books, Gear, ArrowLeft, Timer, FolderOpen, FileArrowUp, Buildings, LockKey, Clock, CheckCircle, XCircle, Eye, ClipboardText } from '@phosphor-icons/react'
 import { Guide, GuideAccessRequest } from '@/lib/types'
 import { guidePlainText, getReviewStatus, computeNextReviewAt, type ArchivedGuideEntry, type GuideReviewRequest } from '@/lib/guideTypes'
 import { GuideSearchIndex } from '@/lib/searchIndex'
@@ -18,7 +18,6 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { GuideCard } from '@/components/GuideCard'
 import { GuideEditor } from '@/components/GuideEditor'
 import { GuideViewer } from '@/components/GuideViewer'
-import { GuideChat } from '@/components/GuideChat'
 import { GuideReviewDashboard } from '@/components/GuideReviewDashboard'
 import { CategoryManager } from '@/components/CategoryManager'
 import { UserProfile } from '@/components/UserProfile'
@@ -30,7 +29,7 @@ import { toast } from 'sonner'
 import { useLanguage } from '@/contexts/LanguageContext'
 import type { RegisteredTeam } from '@/lib/electronRegistryBridge'
 import { getUserRole, type UserRole } from '@/lib/userRoles'
-import { canReviewGuideRequest, hasGuideReviewConflict, isOpenGuideReview } from '@/lib/guideReview'
+import { canReviewGuideRequest, hasGuideReviewConflict, isGuideReviewAlreadyApplied, isOpenGuideReview } from '@/lib/guideReview'
 import { removeFromKvArray, upsertInKvArray } from '@/lib/kvArrays'
 
 const defaultCategories: string[] = ['Procedures', 'Technical', 'HR', 'Safety', 'General']
@@ -78,7 +77,6 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
   const [exportRoot, setExportRootState] = useState<string | null>(null)
   const [isExportingAll, setIsExportingAll] = useState(false)
   const [exportProgress, setExportProgress] = useState('')
-  const [chatOpen, setChatOpen] = useState(false)
 
   useEffect(() => {
     getUserRole(userEmail).then(setUserRole)
@@ -201,7 +199,6 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
     // kapløbstilstand ved store/komplekse dialoger (fx guide-preview).
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
-      if (chatOpen) { setChatOpen(false); return }
       if (categoryManagerOpen) { setCategoryManagerOpen(false); return }
       if (exportDialogOpen) { setExportDialogOpen(false); return }
       if (viewerOpen) { setViewerOpen(false); setViewGuide(null); return }
@@ -212,7 +209,7 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
     
     window.addEventListener('keydown', handleKeyDown, true)
     return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [onNavigateBack, chatOpen, categoryManagerOpen, exportDialogOpen, viewerOpen, dialogOpen])
+  }, [onNavigateBack, categoryManagerOpen, exportDialogOpen, viewerOpen, dialogOpen])
 
   const needsReviewCount = useMemo(() => {
     return myGuides.filter((g) => {
@@ -315,11 +312,30 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
     const displayName = usersByEmail?.[userEmail]?.fullName || userEmail
 
     if (editingReviewRequest) {
+      // Rebase ved gen-indsendelse af en opdatering: sammenligningsgrundlaget
+      // laases til den AKTUELT udgivne version. Ellers beholder requesten sin
+      // gamle baseVersion og kan aldrig godkendes, hvis guiden er aendret siden
+      // (evig "versionskonflikt"). Forslagets version re-bumpes fra samme base,
+      // saa versionsnummeret aldrig gaar baglaens.
+      let rebase: Partial<GuideReviewRequest> = {}
+      let submittedGuide = guide
+      if (editingReviewRequest.action === 'update') {
+        const [latestLocal, latestShared] = await Promise.all([
+          window.kv.get<Guide[]>('guides'),
+          window.kv.get<Guide[]>('shared-guides'),
+        ])
+        const currentPublished = [...(latestLocal || []), ...(latestShared || [])].find((item) => item.id === guide.id)
+        if (currentPublished) {
+          rebase = { baseVersion: currentPublished.version, baseGuide: structuredClone(currentPublished) }
+          submittedGuide = { ...guide, version: bumpVersion(currentPublished.version) }
+        }
+      }
       const updated: GuideReviewRequest = {
         ...editingReviewRequest,
-        guideId: guide.id,
-        guideTitle: guide.title,
-        proposedGuide: guide,
+        ...rebase,
+        guideId: submittedGuide.id,
+        guideTitle: submittedGuide.title,
+        proposedGuide: submittedGuide,
         status: 'pending',
         updatedAt: now,
         submittedAt: editingAsReviewer ? editingReviewRequest.submittedAt : now,
@@ -468,13 +484,33 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
     toast.success(language === 'da' ? 'Revisionen er trukket tilbage som kladde' : language === 'fi' ? 'Versio palautettiin luonnokseksi' : 'Revision withdrawn to draft')
   }
 
+  // Fjerner en aaben anmodning helt (den udgivne guide roeres ikke). Sidste
+  // udvej mod fastlaaste anmodninger — kladder blokerer ellers nye revisioner.
+  const handleDiscardReview = async (request: GuideReviewRequest) => {
+    const isOwn = request.submittedBy.trim().toLowerCase() === normalizedUserEmail
+    if (!isOwn && !isManager) return
+    if (!isOpenGuideReview(request)) return
+    await removeFromKvArray('guide-review-requests', [request.id])
+    toast.success(language === 'da' ? 'Anmodningen er kasseret' : language === 'fi' ? 'Pyyntö hylättiin' : 'Request discarded')
+  }
+
   const handleApproveReview = async (request: GuideReviewRequest) => {
     if (!isGuideReviewer || !canReviewGuideRequest(request, userEmail, isManager)) return
-    const [latestLocalGuides, latestSharedGuides] = await Promise.all([
+    const [latestLocalGuides, latestSharedGuides, latestArchived] = await Promise.all([
       window.kv.get<Guide[]>('guides'),
       window.kv.get<Guide[]>('shared-guides'),
+      window.kv.get<ArchivedGuideEntry[]>('archived-guides'),
     ])
     const published = [...(latestLocalGuides || []), ...(latestSharedGuides || [])].find((guide) => guide.id === request.guideId)
+
+    // En tidligere godkendelse kan vaere afbrudt EFTER virkningen slog igennem,
+    // men FOER requesten blev lukket (fx netvaerksfejl mod det delte drev).
+    // Saa er der ingen konflikt — luk blot requesten som godkendt.
+    if (isGuideReviewAlreadyApplied(request, published, latestArchived || [])) {
+      await closeApprovedReview(request)
+      return
+    }
+
     const hasConflict = hasGuideReviewConflict(request, published)
     if (hasConflict) {
       await handleReturnReview(request, language === 'da' ? 'Den udgivne guide er ændret siden indsendelsen. Opret revisionen igen fra den nyeste version.' : language === 'fi' ? 'Julkaistua opasta on muutettu lähetyksen jälkeen. Luo versio uudelleen uusimmasta versiosta.' : 'The published guide changed after submission. Recreate the revision from the latest version.')
@@ -511,7 +547,18 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
       }
     }
 
-    await updateReviewRequest({ ...request, status: 'approved', reviewedBy: userEmail, reviewedAt: Date.now(), updatedAt: Date.now() })
+    await closeApprovedReview(request)
+  }
+
+  /** Sidste trin af en godkendelse. Fejler lukningen (flaky drev), er nyt tryk paa Godkend sikkert, da godkendelse er idempotent. */
+  const closeApprovedReview = async (request: GuideReviewRequest) => {
+    try {
+      await updateReviewRequest({ ...request, status: 'approved', reviewedBy: userEmail, reviewedAt: Date.now(), updatedAt: Date.now() })
+    } catch (error) {
+      console.error('Godkendelsen slog igennem, men anmodningen kunne ikke lukkes:', error)
+      toast.error(language === 'da' ? 'Guiden er godkendt, men anmodningen kunne ikke markeres som afsluttet. Tryk Godkend igen for at afslutte den.' : language === 'fi' ? 'Opas hyväksyttiin, mutta pyyntöä ei voitu merkitä valmiiksi. Paina Hyväksy uudelleen.' : 'The guide was approved, but the request could not be marked as completed. Press Approve again to finish it.')
+      return
+    }
     toast.success(request.action === 'delete'
       ? (language === 'da' ? 'Guiden er godkendt til sletning og arkiveret' : language === 'fi' ? 'Oppaan poistaminen hyväksyttiin ja opas arkistoitiin' : 'Guide deletion approved and archived')
       : (language === 'da' ? 'Guiden er godkendt og udgivet' : language === 'fi' ? 'Opas hyväksyttiin ja julkaistiin' : 'Guide approved and published'))
@@ -561,16 +608,6 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
   const handleViewGuide = (guide: Guide) => {
     setViewGuide(guide)
     setViewerOpen(true)
-  }
-
-  const handleOpenGuideFromChat = (guideId: string) => {
-    const guide = myGuides.find((g) => g.id === guideId)
-    if (guide) {
-      setViewGuide(guide)
-      setViewerOpen(true)
-    } else {
-      toast.error(t.guideLibrary.toasts.guideNoLongerExists)
-    }
   }
 
   const handleChooseExportRoot = async () => {
@@ -967,6 +1004,7 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
             onApprove={handleApproveReview}
             onReturn={handleReturnReview}
             onWithdraw={handleWithdrawReview}
+            onDiscard={handleDiscardReview}
             onClaim={handleClaimReview}
             onRestore={handleRestoreArchived}
           />
@@ -1085,26 +1123,6 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
         categories={categories || defaultCategories}
         onUpdateCategories={handleUpdateCategories}
         guides={myGuides}
-      />
-
-      {/* Flydende chat-knap — RAG-assistent over guidebiblioteket */}
-      <motion.button
-        type="button"
-        onClick={() => setChatOpen(true)}
-        whileHover={{ scale: 1.08 }}
-        whileTap={{ scale: 0.94 }}
-        className="fixed bottom-6 right-6 z-30 h-14 w-14 rounded-full bg-gradient-to-br from-primary to-accent shadow-2xl shadow-primary/40 flex items-center justify-center text-primary-foreground border-2 border-primary/30"
-        aria-label={t.guideLibrary.chatAriaLabel}
-      >
-        <ChatCircleDots size={26} weight="duotone" />
-      </motion.button>
-
-      <GuideChat
-        open={chatOpen}
-        onOpenChange={setChatOpen}
-        guides={myGuides}
-        searchIndex={searchIndex}
-        onOpenGuide={handleOpenGuideFromChat}
       />
 
       <Dialog open={exportDialogOpen} onOpenChange={(open) => { if (!isExportingAll) setExportDialogOpen(open) }}>

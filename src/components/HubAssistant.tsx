@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { PaperPlaneRight, Stop, Image as ImageIcon, ArrowSquareOut, X } from '@phosphor-icons/react'
+import { PaperPlaneRight, Stop, Image as ImageIcon, ArrowSquareOut, X, ThumbsUp, ThumbsDown } from '@phosphor-icons/react'
 import { HubertIcon } from './HubertIcon'
 import { AssistantChatWindow, type ChatWidth } from '@/components/AssistantChatWindow'
 import { Button } from '@/components/ui/button'
@@ -9,6 +9,9 @@ import { GuideViewer } from '@/components/GuideViewer'
 import { useLanguage } from '@/contexts/LanguageContext'
 import type { AssistantScope, AssistantSource, AssistantAnswer, AssistantStatus } from '@/lib/assistantBridge'
 import type { Guide } from '@/lib/guideTypes'
+import { submitVacationRequest } from '@/lib/vacationRequests'
+import { createPersonalTodo } from '@/lib/personalTodos'
+import { submitHubertFeedback } from '@/lib/hubertFeedback'
 const KNOWLEDGE_LABEL = { da: 'Søgning i hubdata', en: 'Hub data search', fi: 'Hub-tietojen haku' }
 const MORE_LABEL = { da: 'Vis flere resultater', en: 'Show more results', fi: 'Näytä lisää tuloksia' }
 const PREPARE_LABEL = {
@@ -17,9 +20,24 @@ const PREPARE_LABEL = {
   fi: { loading: 'Oppaita valmistellaan taustalla…', ready: 'Opashaku valmis', failed: 'Oppaita ei voitu valmistella. Tarkista yhteys tietokansioon.', retry: 'Yritä uudelleen' },
 }
 const CHAT_TEXT = {
-  da: { open: 'Spørg Hubert', welcome: 'Hvad kan jeg hjælpe dig med?', placeholder: 'Spørg Hubert…', stopped: 'Svaret blev afbrudt.' },
-  en: { open: 'Ask Hubert', welcome: 'How can I help?', placeholder: 'Ask Hubert…', stopped: 'The answer was stopped.' },
-  fi: { open: 'Kysy Hubertilta', welcome: 'Miten voin auttaa?', placeholder: 'Kysy Hubertilta…', stopped: 'Vastaus keskeytettiin.' },
+  da: { open: 'Spørg Hubert', welcome: 'Vuf! 🐾 Hvad kan jeg hjælpe dig med?', placeholder: 'Spørg Hubert…', stopped: 'Svaret blev afbrudt.' },
+  en: { open: 'Ask Hubert', welcome: 'Woof! 🐾 How can I help?', placeholder: 'Ask Hubert…', stopped: 'The answer was stopped.' },
+  fi: { open: 'Kysy Hubertilta', welcome: 'Hau! 🐾 Miten voin auttaa?', placeholder: 'Kysy Hubertilta…', stopped: 'Vastaus keskeytettiin.' },
+}
+// Handlings-forslag (fx "opret en ferieanmodning") kraever ALTID et eksplicit
+// bekraeft-klik - Hubert skriver aldrig noget uden det, uanset hvor "simpel"
+// handlingen er. Se electron/assistantActions.cjs for selve genkendelsen.
+const ACTION_TEXT = {
+  da: { confirm: 'Bekræft', cancel: 'Annuller', cancelled: 'Annulleret — der er ikke skrevet noget.', vacationSuccess: 'Ferieanmodningen er oprettet og sendt til godkendelse.', todoSuccess: 'To-do\'en er oprettet.', failed: 'Kunne ikke gennemføre handlingen. Prøv igen fra den relevante side i appen.' },
+  en: { confirm: 'Confirm', cancel: 'Cancel', cancelled: 'Cancelled — nothing was written.', vacationSuccess: 'The vacation request was created and sent for approval.', todoSuccess: 'The to-do was created.', failed: 'Could not complete the action. Try again from the relevant page in the app.' },
+  fi: { confirm: 'Vahvista', cancel: 'Peruuta', cancelled: 'Peruttu — mitään ei tallennettu.', vacationSuccess: 'Loma-anomus luotiin ja lähetettiin hyväksyttäväksi.', todoSuccess: 'To-do luotiin.', failed: 'Toimintoa ei voitu suorittaa. Yritä uudelleen sovelluksen asianomaiselta sivulta.' },
+}
+// "Var dette svar nyttigt?"-feedback vises kun paa almindelige svar (ikke
+// handlings-forslag, der allerede har deres eget bekraeft/annuller-flow).
+const FEEDBACK_TEXT = {
+  da: { question: 'Var dette svar nyttigt?', thanks: 'Tak for din feedback!' },
+  en: { question: 'Was this answer helpful?', thanks: 'Thanks for your feedback!' },
+  fi: { question: 'Oliko tästä vastauksesta apua?', thanks: 'Kiitos palautteestasi!' },
 }
 const AI_LABELS = {
   da: { activate: 'Aktivér AI-svar', hint: 'AI-sammenfatning er ikke aktiveret på denne pc. Hent modellen fra det delte drev (engangs, ca. 6 GB).', downloading: 'Henter AI-model', retry: 'Prøv igen' },
@@ -29,9 +47,9 @@ const AI_LABELS = {
 const readableError = (failure: unknown) => (failure instanceof Error ? failure.message : String(failure)).replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, '').replace(/^Error:\s*/, '')
 
 const LABELS = {
-  da: { title: 'Hub-assistent · lokal test', intro: 'Spørg om dine opgaver, hjemmearbejde, ferie eller guides. Planlægning slås direkte op; guideforklaringer bruger lokal AI. Der ændres ingen data.', placeholder: 'Fx: Hvilke opgaver skal jeg lave i næste uge?', send: 'Send', wait: 'Arbejder lokalt…', stop: 'Stop', images: 'Læs også guidebillede (langsommere)', attach: 'Vedhæft testbillede', data: 'Direkte dataopslag', retrieval: 'Guideopslag', ai: 'Lokal AI — kontrollér kilderne', sources: 'Kilder', clear: 'Ryd chat', size: 'Bredde', examples: ['Hvilke opgaver skal jeg lave i næste uge?', 'Hvem arbejder hjemme i Supply Chain næste torsdag?', 'Hvem har ferie næste uge?'], missing: 'Modellen er ikke installeret endnu.', version: 'Guiden er ændret siden svaret. Den aktuelle version vises uden trinmarkering.' },
-  en: { title: 'Hub assistant · local pilot', intro: 'Ask about your tasks, working from home, vacation or guides. Planning uses direct lookups; guide explanations use local AI. No data is changed.', placeholder: 'E.g. Which tasks do I have next week?', send: 'Send', wait: 'Working locally…', stop: 'Stop', images: 'Read a guide image too (slower)', attach: 'Attach test image', data: 'Direct data lookup', retrieval: 'Guide lookup', ai: 'Local AI — check sources', sources: 'Sources', clear: 'Clear chat', size: 'Width', examples: ['Which tasks do I have next week?', 'Who works from home in Supply Chain next Thursday?', 'Who has vacation next week?'], missing: 'The model is not installed yet.', version: 'The guide changed since the answer. Showing the current version without a step highlight.' },
-  fi: { title: 'Hub-avustaja · paikallinen testi', intro: 'Kysy tehtävistäsi, etätyöstä, lomista tai oppaista. Suunnittelutiedot haetaan suoraan; oppaiden selitykset käyttävät paikallista tekoälyä. Tietoja ei muuteta.', placeholder: 'Esim. Mitkä tehtävät minulla on ensi viikolla?', send: 'Lähetä', wait: 'Käsitellään paikallisesti…', stop: 'Pysäytä', images: 'Lue myös oppaan kuva (hitaampi)', attach: 'Liitä testikuva', data: 'Suora tietohaku', retrieval: 'Opashaku', ai: 'Paikallinen tekoäly — tarkista lähteet', sources: 'Lähteet', clear: 'Tyhjennä keskustelu', size: 'Leveys', examples: ['Mitkä tehtävät minulla on ensi viikolla?', 'Kuka työskentelee etänä Supply Chainissa ensi torstaina?', 'Kenellä on lomaa ensi viikolla?'], missing: 'Mallia ei ole vielä asennettu.', version: 'Opas muuttui vastauksen jälkeen. Nykyinen versio näytetään ilman vaihemerkintää.' },
+  da: { title: 'Hub-assistent · lokal test', intro: 'Spørg om dine opgaver, hjemmearbejde, ferie eller guides. Planlægning slås direkte op; guideforklaringer bruger lokal AI. Der ændres ingen data.', placeholder: 'Fx: Hvor er Anne i dag?', send: 'Send', wait: 'Arbejder lokalt…', stop: 'Stop', images: 'Læs også guidebillede (langsommere)', attach: 'Vedhæft testbillede', data: 'Direkte dataopslag', retrieval: 'Guideopslag', ai: 'Lokal AI — kontrollér kilderne', sources: 'Kilder', clear: 'Ryd chat', size: 'Bredde', examples: ['Hvem er på arbejde i dag?', 'Hvor er kollegaen i morgen?', 'Hvem har flest opgaver i næste uge?', 'Hvilke opgaver skal jeg lave i næste uge?'], missing: 'Modellen er ikke installeret endnu.', version: 'Guiden er ændret siden svaret. Den aktuelle version vises uden trinmarkering.' },
+  en: { title: 'Hub assistant · local pilot', intro: 'Ask about your tasks, working from home, vacation or guides. Planning uses direct lookups; guide explanations use local AI. No data is changed.', placeholder: 'E.g. Where is Anne today?', send: 'Send', wait: 'Working locally…', stop: 'Stop', images: 'Read a guide image too (slower)', attach: 'Attach test image', data: 'Direct data lookup', retrieval: 'Guide lookup', ai: 'Local AI — check sources', sources: 'Sources', clear: 'Clear chat', size: 'Width', examples: ['Who is at work today?', 'When is my colleague back?', 'Who has the most tasks next week?', 'Which tasks do I have next week?'], missing: 'The model is not installed yet.', version: 'The guide changed since the answer. Showing the current version without a step highlight.' },
+  fi: { title: 'Hub-avustaja · paikallinen testi', intro: 'Kysy tehtävistäsi, etätyöstä, lomista tai oppaista. Suunnittelutiedot haetaan suoraan; oppaiden selitykset käyttävät paikallista tekoälyä. Tietoja ei muuteta.', placeholder: 'Esim. Missä Anne on tänään?', send: 'Lähetä', wait: 'Käsitellään paikallisesti…', stop: 'Pysäytä', images: 'Lue myös oppaan kuva (hitaampi)', attach: 'Liitä testikuva', data: 'Suora tietohaku', retrieval: 'Opashaku', ai: 'Paikallinen tekoäly — tarkista lähteet', sources: 'Lähteet', clear: 'Tyhjennä keskustelu', size: 'Leveys', examples: ['Ketkä ovat töissä tänään?', 'Milloin kollega palaa?', 'Kenellä on eniten tehtäviä ensi viikolla?', 'Mitkä tehtävät minulla on ensi viikolla?'], missing: 'Mallia ei ole vielä asennettu.', version: 'Opas muuttui vastauksen jälkeen. Nykyinen versio näytetään ilman vaihemerkintää.' },
 }
 
 export function HubAssistant({ token, viewId }: AssistantScope) {
@@ -40,7 +58,7 @@ export function HubAssistant({ token, viewId }: AssistantScope) {
   const [open, setOpen] = useState(false)
   const [minimized, setMinimized] = useState(false)
   const [input, setInput] = useState('')
-  const [messages, setMessages] = useState<Array<{ id: number; question: string; answer?: AssistantAnswer; error?: string }>>([])
+  const [messages, setMessages] = useState<Array<{ id: number; question: string; answer?: AssistantAnswer; error?: string; actionOutcome?: 'confirmed' | 'cancelled' | 'success' | 'failed'; actionOutcomeMessage?: string; feedback?: 'helpful' | 'unhelpful' }>>([])
   const [busy, setBusy] = useState(false)
   const [preparation, setPreparation] = useState<'loading' | 'ready' | 'failed'>('loading')
   const [prepareAttempt, setPrepareAttempt] = useState(0)
@@ -54,6 +72,7 @@ export function HubAssistant({ token, viewId }: AssistantScope) {
   const [provisionPct, setProvisionPct] = useState(0)
   const [isProvisioning, setIsProvisioning] = useState(false)
   const [provisionError, setProvisionError] = useState('')
+  const [userEmail, setUserEmail] = useState('')
   const sequence = useRef(0)
   const scroll = useRef<HTMLDivElement>(null)
   const upload = useRef<HTMLInputElement>(null)
@@ -61,6 +80,13 @@ export function HubAssistant({ token, viewId }: AssistantScope) {
   const composer = useRef<HTMLInputElement>(null)
   const api = window.electronAssistant
   const enabled = !!api
+
+  useEffect(() => {
+    // Kun til at udfylde afsender/ejer paa en handling Hubert opretter EFTER
+    // eksplicit brugerbekraeftelse (se confirmAction) - laeses ikke af nogen
+    // besvarelse/opslag.
+    window.electronAuth?.current().then(session => setUserEmail(session.email)).catch(() => {})
+  }, [])
 
   useEffect(() => {
     sequence.current++
@@ -142,6 +168,41 @@ export function HubAssistant({ token, viewId }: AssistantScope) {
       if (requestId === sequence.current) setMessages(current => current.map(message => message.id === requestId ? { ...message, error: readableError(failure) } : message))
     } finally { if (requestId === sequence.current) setBusy(false) }
   }
+  const cancelAction = (messageId: number) => {
+    setMessages(current => current.map(message => message.id === messageId ? { ...message, actionOutcome: 'cancelled' } : message))
+  }
+  // Eneste sted et handlings-forslag fra Hubert bliver til en rigtig
+  // skrivning - og kun efter brugeren selv har trykket "Bekræft" her. Kalder
+  // PRÆCIS samme delte funktion som den manuelle dialog/formular bruger
+  // (submitVacationRequest/createPersonalTodo), saa validering, KV-skrivevej
+  // og rettighedshaandhaevelse er identisk uanset hvor handlingen kom fra.
+  const confirmAction = async (messageId: number, proposal: NonNullable<AssistantAnswer['actionProposal']>) => {
+    setMessages(current => current.map(message => message.id === messageId ? { ...message, actionOutcome: 'confirmed' } : message))
+    const text = ACTION_TEXT[language]
+    try {
+      if (!userEmail) throw new Error('Ingen bruger fundet')
+      if (proposal.type === 'vacation-request') {
+        await submitVacationRequest({ userEmail, startDate: proposal.params.startDate, endDate: proposal.params.endDate })
+        setMessages(current => current.map(message => message.id === messageId ? { ...message, actionOutcome: 'success', actionOutcomeMessage: text.vacationSuccess } : message))
+      } else if (proposal.type === 'personal-todo') {
+        await createPersonalTodo(userEmail, proposal.params.title)
+        setMessages(current => current.map(message => message.id === messageId ? { ...message, actionOutcome: 'success', actionOutcomeMessage: text.todoSuccess } : message))
+      }
+    } catch (failure) {
+      console.error('Hubert action failed:', failure)
+      setMessages(current => current.map(message => message.id === messageId ? { ...message, actionOutcome: 'failed', actionOutcomeMessage: text.failed } : message))
+    }
+  }
+  // Best-effort feedback-logning - paavirker aldrig selve svaret, og et klik
+  // laaser knapperne saa der ikke sendes dobbelt feedback for samme svar.
+  const submitFeedback = async (messageId: number, message: { question: string; answer?: AssistantAnswer }, helpful: boolean) => {
+    setMessages(current => current.map(item => item.id === messageId ? { ...item, feedback: helpful ? 'helpful' : 'unhelpful' } : item))
+    try {
+      if (userEmail && message.answer) await submitHubertFeedback({ userEmail, question: message.answer.contextQuestion || message.question, mode: message.answer.mode, helpful })
+    } catch (failure) {
+      console.error('Hubert feedback failed:', failure)
+    }
+  }
   const openSource = async (source: AssistantSource) => {
     if (!api) return
     const requestId = sequence.current
@@ -207,10 +268,33 @@ export function HubAssistant({ token, viewId }: AssistantScope) {
             <div className="ml-auto max-w-[88%] rounded-2xl rounded-br-md bg-primary/15 px-3.5 py-2.5 text-sm whitespace-pre-wrap break-words">{message.question}</div>
             {message.answer && <div className="mr-3 rounded-2xl rounded-bl-md bg-muted/55 px-3.5 py-3 text-sm space-y-3">
               <p className="whitespace-pre-wrap break-words leading-relaxed">{message.answer.text}</p>
+              {message.answer.actionProposal && (
+                message.actionOutcome === 'success' || message.actionOutcome === 'failed' ? (
+                  <p className={message.actionOutcome === 'failed' ? 'text-xs text-destructive' : 'text-xs text-primary'}>{message.actionOutcomeMessage}</p>
+                ) : message.actionOutcome === 'cancelled' ? (
+                  <p className="text-xs text-muted-foreground">{ACTION_TEXT[language].cancelled}</p>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <Button type="button" size="sm" disabled={message.actionOutcome === 'confirmed'} onClick={() => void confirmAction(message.id, message.answer!.actionProposal!)}>{ACTION_TEXT[language].confirm}</Button>
+                    <Button type="button" size="sm" variant="outline" disabled={message.actionOutcome === 'confirmed'} onClick={() => cancelAction(message.id)}>{ACTION_TEXT[language].cancel}</Button>
+                  </div>
+                )
+              )}
               {!!message.answer.personChoices?.length && <div className="flex flex-col items-start gap-2">{message.answer.personChoices.map(choice => <Button key={choice.id} type="button" variant="outline" size="sm" disabled={busy} onClick={() => void send(message.question, choice.id)}>{choice.label}</Button>)}</div>}
               {message.answer.nextPage !== undefined && <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void send(message.answer!.contextQuestion || message.question, undefined, message.answer!.nextPage)}>{MORE_LABEL[language]}</Button>}
               {message.answer.warning && <details className="text-xs text-amber-600"><summary className="cursor-pointer">{t.ai}</summary><p className="mt-1 whitespace-pre-wrap break-words">{message.answer.warning}</p></details>}
               {!!message.answer.sources.length && <details className="border-t border-border/50 pt-2"><summary className="cursor-pointer text-xs text-muted-foreground">{t.sources} · {message.answer.sources.length}</summary><div className="mt-2 space-y-2">{message.answer.sources.map((source, sourceIndex) => source.kind === 'guide' || source.kind === 'module' ? <button key={sourceIndex} onClick={() => void openSource(source)} className="flex items-start gap-1.5 text-primary text-left text-xs hover:underline"><span>[{sourceIndex + 1}] {source.title}</span><ArrowSquareOut size={14} className="mt-0.5 shrink-0" /></button> : <p key={sourceIndex} className="text-xs">{source.title}</p>)}</div></details>}
+              {!message.answer.actionProposal && (
+                message.feedback ? (
+                  <p className="text-xs text-muted-foreground">{FEEDBACK_TEXT[language].thanks}</p>
+                ) : (
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <span className="text-xs">{FEEDBACK_TEXT[language].question}</span>
+                    <button type="button" aria-label={FEEDBACK_TEXT[language].thanks} title={FEEDBACK_TEXT[language].question} className="rounded-full p-1 hover:bg-muted hover:text-foreground" onClick={() => void submitFeedback(message.id, message, true)}><ThumbsUp size={14} /></button>
+                    <button type="button" aria-label={FEEDBACK_TEXT[language].thanks} title={FEEDBACK_TEXT[language].question} className="rounded-full p-1 hover:bg-muted hover:text-foreground" onClick={() => void submitFeedback(message.id, message, false)}><ThumbsDown size={14} /></button>
+                  </div>
+                )
+              )}
             </div>}
             {message.error && <p className="rounded-xl bg-destructive/10 p-3 text-xs text-destructive whitespace-pre-wrap break-words" role="alert">{message.error}</p>}
           </div>)}

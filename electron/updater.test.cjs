@@ -4,7 +4,7 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 const { execFileSync } = require('child_process')
-const { publishUpdate, prepareUpdate, isNewerVersion, readManifest, readHistory, getManifestForVersion, buildApplyScript } = require('./updater.cjs')
+const { publishUpdate, prepareUpdate, isNewerVersion, readManifest, readHistory, getManifestForVersion, buildApplyScript, describeMissingExe } = require('./updater.cjs')
 
 const EXE_NAME = 'TCD Hub.exe'
 
@@ -16,13 +16,18 @@ function makeTempDir(t, prefix) {
 
 /** Builds a minimal release zip that looks like a packaged TCD Hub build. */
 function buildReleaseZip(t, version = '9.9.9') {
+  return buildReleaseZipNamed(t, version, EXE_NAME)
+}
+
+/** Same as buildReleaseZip, but with a custom top-level exe name — used to simulate a rebrand. */
+function buildReleaseZipNamed(t, version, exeName) {
   const sourceDir = makeTempDir(t, 'tcd-release-src-')
-  fs.writeFileSync(path.join(sourceDir, EXE_NAME), 'binary-placeholder')
+  fs.writeFileSync(path.join(sourceDir, exeName), 'binary-placeholder')
   fs.mkdirSync(path.join(sourceDir, 'resources'))
   fs.writeFileSync(path.join(sourceDir, 'resources', 'app.asar'), 'asar-placeholder')
 
   const zipDir = makeTempDir(t, 'tcd-release-zip-')
-  const zipPath = path.join(zipDir, `TCD Hub-${version}-win.zip`)
+  const zipPath = path.join(zipDir, `${exeName.replace('.exe', '')}-${version}-win.zip`)
   execFileSync('tar.exe', ['-a', '-c', '-f', zipPath, '-C', sourceDir, '.'], { windowsHide: true })
   return zipPath
 }
@@ -84,6 +89,44 @@ test('prepareUpdate rejects a package whose checksum does not match', async (t) 
   )
 })
 
+test('describeMissingExe explains a rebrand (renamed exe) instead of claiming the package is invalid', (t) => {
+  const stagingDir = makeTempDir(t, 'tcd-staging-')
+  fs.writeFileSync(path.join(stagingDir, 'Supply Chain Hub.exe'), 'binary-placeholder')
+
+  const message = describeMissingExe(stagingDir, 'TCD Hub.exe')
+  assert.match(message, /omdøbt/)
+  assert.match(message, /TCD Hub\.exe/)
+  assert.match(message, /Supply Chain Hub\.exe/)
+})
+
+test('describeMissingExe falls back to the generic message when no exe exists at all', (t) => {
+  const stagingDir = makeTempDir(t, 'tcd-staging-')
+  fs.mkdirSync(path.join(stagingDir, 'resources'))
+
+  const message = describeMissingExe(stagingDir, 'TCD Hub.exe')
+  assert.match(message, /ikke en gyldig udgivelse/)
+})
+
+test('prepareUpdate (full install) rejects a rebranded package with a clear rename explanation, not a generic checksum-style error', async (t) => {
+  const dataDir = makeTempDir(t, 'tcd-data-')
+  const installDir = makeTempDir(t, 'tcd-install-')
+  // The install is still the OLD "TCD Hub.exe" build; the newly published
+  // package has already been rebranded to "Supply Chain Hub.exe".
+  fs.writeFileSync(path.join(installDir, EXE_NAME), 'current-version')
+  const zipPath = buildReleaseZipNamed(t, '9.9.9', 'Supply Chain Hub.exe')
+
+  const manifest = await publishUpdate(dataDir, { zipPath, version: '9.9.9', notes: '', publishedBy: '', skipDelta: true })
+
+  await assert.rejects(
+    prepareUpdate({ dataDir, manifest, exePath: path.join(installDir, EXE_NAME), installDir }),
+    (error) => {
+      assert.match(error.message, /omdøbt/)
+      assert.match(error.message, /Supply Chain Hub\.exe/)
+      return true
+    }
+  )
+})
+
 test('publishUpdate indexes every file so clients can diff them', async (t) => {
   const dataDir = makeTempDir(t, 'tcd-data-')
   const zipPath = buildReleaseZip(t)
@@ -139,6 +182,39 @@ test('publishUpdate retains earlier versions in history so a manager can pick on
   assert.ok(fs.existsSync(path.join(dataDir, 'updates', '9.9.7')))
 
   assert.equal(getManifestForVersion(dataDir, '1.0.0'), null)
+})
+
+test('publishUpdate with setAsLatest: false adds the version to the library without changing the current manifest', async (t) => {
+  const dataDir = makeTempDir(t, 'tcd-data-')
+
+  await publishUpdate(dataDir, { zipPath: buildReleaseZip(t, '9.9.9'), version: '9.9.9', notes: '', publishedBy: '' })
+  const beforeManifest = readManifest(dataDir)
+
+  // An older stepping-stone version is added afterwards purely for later force-push selection.
+  const added = await publishUpdate(dataDir, { zipPath: buildReleaseZip(t, '9.9.1'), version: '9.9.1', notes: '', publishedBy: '', setAsLatest: false })
+
+  assert.equal(added.version, '9.9.1')
+  assert.deepEqual(readManifest(dataDir), beforeManifest)
+  assert.ok(getManifestForVersion(dataDir, '9.9.1'))
+  assert.ok(fs.existsSync(path.join(dataDir, 'updates', '9.9.1')))
+  assert.deepEqual(readHistory(dataDir).map((entry) => entry.version), ['9.9.1', '9.9.9'])
+})
+
+test('a library-only addition never evicts the current manifest version from disk', async (t) => {
+  const dataDir = makeTempDir(t, 'tcd-data-')
+
+  await publishUpdate(dataDir, { zipPath: buildReleaseZip(t, '1.0.0'), version: '1.0.0', notes: '', publishedBy: '' })
+
+  // Add more library-only versions than HISTORY_RETENTION so the current
+  // manifest's version would normally fall out of the retained window.
+  for (let i = 1; i <= 11; i++) {
+    const version = `2.0.${i}`
+    await publishUpdate(dataDir, { zipPath: buildReleaseZip(t, version), version, notes: '', publishedBy: '', setAsLatest: false })
+  }
+
+  assert.equal(readManifest(dataDir).version, '1.0.0')
+  assert.ok(fs.existsSync(path.join(dataDir, 'updates', '1.0.0')), 'the live manifest version must still exist on disk')
+  assert.ok(getManifestForVersion(dataDir, '1.0.0'))
 })
 
 test('prepareUpdate transfers only the files that actually changed', async (t) => {

@@ -17,10 +17,10 @@ const QUEUE_KEY = '__offline-queue__'
 /**
  * @param {ReturnType<import('./store.cjs').createStore>} networkStore
  * @param {ReturnType<import('./store.cjs').createStore>} localStore
- * @param {{ onSyncResult?: (result: { succeeded: number, failed: number, remaining: number }) => void }} [options]
+ * @param {{ onSyncResult?: (result: { succeeded: number, failed: number, remaining: number }) => void, onRevalidated?: (keys: string[]) => void }} [options]
  */
 function createResilientStore(networkStore, localStore, options = {}) {
-  const { onSyncResult } = options
+  const { onSyncResult, onRevalidated } = options
   const revisions = new Map()
   let mirrorGeneration = 0
   const touch = key => revisions.set(key, (revisions.get(key) || 0) + 1)
@@ -149,11 +149,23 @@ function createResilientStore(networkStore, localStore, options = {}) {
     }
   }
 
-  // Async twin of get(): same offline/cache fallback, but the network read runs
-  // off the main thread so a slow SMB read never blocks Electron's event loop.
+  // Async twin of get(): same offline/cache fallback, plus "spejl foerst":
+  // en SMB-rundtur koster 150-300 ms uanset filstoerrelse, saa hvis noeglen
+  // findes i det lokale spejl (fra sidste laesning/session) returneres den MED
+  // DET SAMME, og netvaerket hentes i baggrunden. Afviger M:-vaerdien, opdateres
+  // spejlet og onRevalidated(key) fyres, saa vinduerne genindlaeser noeglen.
   async function getAsync(key, options) {
     if (queued(key)) return localStore.get(key)
     if (!networkStore.isConnected()) return localStore.get(key)
+    if (!(options && options.skipCache)) {
+      const fresh = networkStore.peekCache?.(key)
+      if (fresh) return fresh.value
+      const mirrored = localStore.get(key)
+      if (mirrored !== undefined) {
+        revalidate(key, mirrored, options)
+        return mirrored
+      }
+    }
     try {
       const value = await networkStore.getAsync(key, options)
       if (value !== undefined) mirrorToLocal(key, value)
@@ -162,6 +174,57 @@ function createResilientStore(networkStore, localStore, options = {}) {
       console.error(`TCD Hub: kunne ikke læse "${key}" fra delt lager, bruger lokal cache:`, err)
       return localStore.get(key)
     }
+  }
+
+  // Een baggrundshentning pr. noegle ad gangen; fejl ignoreres (spejlet staar).
+  const revalidating = new Map()
+  function revalidate(key, mirrored, options) {
+    if (revalidating.has(key)) return revalidating.get(key)
+    const run = (async () => {
+      try {
+        const value = await networkStore.getAsync(key, options)
+        if (queued(key)) return
+        if (value === undefined) {
+          if (!networkStore.isConnected()) return
+          mirrorDeleteToLocal(key)
+          onRevalidated?.([key])
+        } else if (JSON.stringify(value) !== JSON.stringify(mirrored)) {
+          mirrorToLocal(key, value)
+          onRevalidated?.([key])
+        }
+      } catch (err) {
+        if (process.env.TCD_HUB_DEBUG) console.warn(`KV: baggrundshentning af "${key}" fejlede, spejl bevares:`, err.message)
+      } finally {
+        revalidating.delete(key)
+      }
+    })()
+    revalidating.set(key, run)
+    return run
+  }
+
+  /**
+   * Opstarts-varmning: genhenter alle spejlede noegler i baggrunden med lav
+   * parallelisme, saa spejlet er ajour FOER brugeren navigerer derhen (ellers
+   * vises sidste sessions data et oejeblik ved foerste besoeg). Kun noegler der
+   * allerede ligger i spejlet - dvs. dem brugeren faktisk bruger - og aldrig
+   * fil-chunks (store, sjaeldent laeste).
+   */
+  async function revalidateMirror({ concurrency = 2 } = {}) {
+    if (!networkStore.isConnected()) return 0
+    const keys = localStore.keys().filter(key => key !== QUEUE_KEY && !key.startsWith('__') && !key.includes('_chunk_') && !queued(key) && !networkStore.peekCache?.(key))
+    let index = 0
+    let refreshed = 0
+    const worker = async () => {
+      while (index < keys.length && networkStore.isConnected()) {
+        const key = keys[index++]
+        const mirrored = localStore.get(key)
+        if (mirrored === undefined) continue
+        await revalidate(key, mirrored)
+        refreshed++
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(concurrency, keys.length) }, worker))
+    return refreshed
   }
 
   function set(key, value) {
@@ -178,6 +241,67 @@ function createResilientStore(networkStore, localStore, options = {}) {
     }
     localStore.set(key, value)
     enqueue({ kind: 'set', key, value })
+  }
+
+  // Async-tvillinger til IPC-vejen: samme offline-koe og fejlsemantik, men
+  // netvaerksskrivningen blokerer aldrig main-event-loopet.
+  async function setAsync(key, value) {
+    touch(key)
+    if (!queued(key) && networkStore.isConnected()) {
+      try {
+        await networkStore.setAsync(key, value)
+        mirrorToLocal(key, value)
+        return
+      } catch (err) {
+        if (semanticError(err)) throw err
+        console.error(`TCD Hub: skrivning af "${key}" fejlede, gemmer lokalt og synkroniserer senere:`, err)
+      }
+    }
+    localStore.set(key, value)
+    enqueue({ kind: 'set', key, value })
+  }
+
+  async function deleteAsync(key) {
+    touch(key)
+    if (!queued(key) && networkStore.isConnected()) {
+      try {
+        await networkStore.deleteAsync(key)
+        mirrorDeleteToLocal(key)
+        return
+      } catch (err) {
+        if (semanticError(err)) throw err
+        console.error(`TCD Hub: sletning af "${key}" fejlede, gemmer lokalt og synkroniserer senere:`, err)
+      }
+    }
+    localStore.delete(key)
+    enqueue({ kind: 'delete', key })
+  }
+
+  async function updateAsync(key, operation) {
+    touch(key)
+    if (!queued(key) && networkStore.isConnected()) {
+      try {
+        const result = await networkStore.updateAsync(key, operation)
+        mirrorToLocal(key, result)
+        return result
+      } catch (err) {
+        if (semanticError(err)) throw err
+        console.error(`TCD Hub: opdatering af "${key}" fejlede, gemmer lokalt og synkroniserer senere:`, err)
+      }
+    }
+    const result = localStore.update(key, operation)
+    enqueue({ kind: 'update', key, operation })
+    return result
+  }
+
+  async function keysAsync() {
+    if (!networkStore.isConnected()) return localStore.keys().filter((k) => k !== QUEUE_KEY)
+    try {
+      return await networkStore.keysAsync()
+    } catch (err) {
+      console.error('TCD Hub: kunne ikke liste nøgler fra delt lager, bruger lokal cache:', err)
+      return localStore.keys().filter((k) => k !== QUEUE_KEY)
+    }
   }
 
   function del(key) {
@@ -251,14 +375,19 @@ function createResilientStore(networkStore, localStore, options = {}) {
     get,
     getAsync,
     set,
+    setAsync,
     delete: del,
+    deleteAsync,
     keys,
+    keysAsync,
     update,
+    updateAsync,
     watch,
     isConnected,
     dumpAll,
     getPendingSyncCount,
     retrySyncNow: runReplay,
+    revalidateMirror,
     invalidate() { mirrorGeneration++; networkStore.invalidate?.(); localStore.invalidate?.() },
     get dataDir() {
       return networkStore.dataDir

@@ -27,6 +27,29 @@ export function isSameLocalDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
 }
 
+/** Mandag i datoens uge (lokal tid, tid nulstillet). */
+function mondayOfWeek(date: Date): Date {
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+  const isoDay = d.getDay() || 7 // 1=mandag..7=søndag
+  d.setDate(d.getDate() - isoDay + 1)
+  return d
+}
+
+/**
+ * Bruges af vagtplanens gentagelses-mønstre ("hver 2./3./4. uge"): true hvis
+ * datoen ligger et heltalligt antal `intervalWeeks` uger efter ankerdatoens
+ * uge (ankerugen selv tæller som match). Tæller ELAPSED uger fra
+ * anker-mandag til dato-mandag i stedet for ISO-ugenumre, som nulstiller ved
+ * årsskifte og ellers ville give forkerte spring dér.
+ */
+export function matchesShiftInterval(dateString: string, anchorDateString: string, intervalWeeks: number): boolean {
+  const targetMonday = mondayOfWeek(parseLocalDate(dateString))
+  const anchorMonday = mondayOfWeek(parseLocalDate(anchorDateString))
+  if (targetMonday.getTime() < anchorMonday.getTime()) return false
+  const weeksElapsed = Math.round((targetMonday.getTime() - anchorMonday.getTime()) / (7 * 86400000))
+  return weeksElapsed % intervalWeeks === 0
+}
+
 // ISO-years with 53 weeks: years where 31 Dec (or 24 Dec) falls in week 53.
 export function getWeeksInYear(year: number): number {
   return getWeekNumber(new Date(year, 11, 28)) // 28 Dec is always in the last ISO week

@@ -62,7 +62,7 @@ function createSecuredIpc(native, { auth, trusted, currentFolder, listTeams, acc
         if (channel === 'registry:assign-user') accountService?.assertAvailable(args[0])
         return listener(event, ...args)
       }
-      const result = await (accountService && !emailRename && (WRITES.has(channel) || IDENTITY_WRITES.has(channel)) ? accountService.runWrite(invoke) : invoke())
+      const result = await (accountService && !emailRename && (WRITES.has(channel) || IDENTITY_WRITES.has(channel)) ? accountService.runWriteAsync(invoke) : invoke())
       if (!emailRename && accountService?.context() !== accountContext) denied('AUTH_CONTEXT_CHANGED')
       // A completed own-email migration deliberately revokes this session.
       // Only the backend migration result may bypass the ordinary postcheck.

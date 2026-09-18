@@ -33,10 +33,17 @@ export function CubeBasherGame({ onNavigateBack }: CubeBasherGameProps) {
     window.addEventListener('focus', refocus)
     document.addEventListener('pointerdown', refocus)
     document.addEventListener('visibilitychange', refocus)
+    // En keyup der lander i PARENT (fokus forlod iframen midt i et tastetryk)
+    // spejles ind i spillet — ellers staar tasten fast og figuren "loeber selv".
+    const forwardKeyUp = (event: KeyboardEvent) => {
+      try { iframeRef.current?.contentWindow?.dispatchEvent(new KeyboardEvent('keyup', { code: event.code, key: event.key, bubbles: true })) } catch { /* iframe ikke klar */ }
+    }
+    window.addEventListener('keyup', forwardKeyUp, true)
     return () => {
       window.removeEventListener('focus', refocus)
       document.removeEventListener('pointerdown', refocus)
       document.removeEventListener('visibilitychange', refocus)
+      window.removeEventListener('keyup', forwardKeyUp, true)
     }
   }, [])
 

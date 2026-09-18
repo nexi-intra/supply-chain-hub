@@ -61,6 +61,7 @@ export function Auth({ onAuthenticated }: AuthProps) {
           : code.includes('AUTH_NO_TEAMS') ? t.auth.errors.noTeamsConfigured
           : code.includes('AUTH_PICK_TEAM') ? t.auth.errors.teamPickerNotSupported
           : code.includes('AUTH_CREDENTIALS') || code.includes('AUTH_RESERVED') ? t.auth.errors.wrongCredentials
+          : code.includes('KV_LOCK_BUSY') ? t.auth.errors.storageBusy
           : t.auth.errors.connectionFailed)
       } finally { setIsLoading(false) }
       return

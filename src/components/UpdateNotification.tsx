@@ -10,7 +10,13 @@ import type { UpdateManifest, UpdateProgress } from '@/lib/electronUpdatesBridge
 
 // Global opdaterings-popup: lytter på broadcasts fra main-processen og viser
 // en dialog, når der ligger en nyere version i den fælles updates-mappe.
-export function UpdateNotification() {
+interface UpdateNotificationProps {
+  /** Sand mens en manager-påtvunget specifik version installeres i baggrunden
+   *  for DENNE bruger — forhindrer at brugeren i mellemtiden trykker "Opdatér
+   *  nu" på den almindelige seneste version og springer mellemversionen over. */
+  suppressed?: boolean
+}
+export function UpdateNotification({ suppressed = false }: UpdateNotificationProps = {}) {
   const { language } = useLanguage()
   const [manifest, setManifest] = useState<UpdateManifest | null>(null)
   const [currentVersion, setCurrentVersion] = useState('')
@@ -46,7 +52,7 @@ export function UpdateNotification() {
     }
   }, [])
 
-  if (!window.electronUpdates || !manifest) return null
+  if (!window.electronUpdates || !manifest || suppressed) return null
 
   const open = manifest.version !== dismissedVersion
 

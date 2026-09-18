@@ -169,10 +169,32 @@ function versionFromFilename(fileName) {
 }
 
 /**
+ * Når den forventede .exe (samme navn som den kørende app) ikke findes i en
+ * ellers gyldig pakke, er den mest sandsynlige årsag at appen er blevet
+ * omdøbt siden brugerens nuværende version (fx "TCD Hub.exe" -> "Supply
+ * Chain Hub.exe" efter et rebrand) - IKKE at pakken er korrupt/forkert.
+ * Giver et klart, handlingsorienteret fejlsvar i stedet for en generisk
+ * "mangler X.exe", som ikke fortæller brugeren hvad de reelt skal gøre.
+ * Auto-opdatering kan ikke fuldføre et navneskifte sikkert (genveje/pinned
+ * proces peger stadig på det gamle filnavn) - en engangs manuel geninstallation
+ * er den sikre vej videre.
+ */
+function describeMissingExe(stagingDir, exeName) {
+  let rootExe = null
+  try {
+    rootExe = fs.readdirSync(stagingDir).find((name) => name.toLowerCase().endsWith('.exe') && name.toLowerCase() !== exeName.toLowerCase())
+  } catch { /* stagingDir findes ikke - falder tilbage til den generiske besked */ }
+  if (rootExe) {
+    return `Denne opdatering kan ikke installeres automatisk: appen er blevet omdøbt siden din nuværende version (fra "${exeName}" til "${rootExe}"). Hent og kør den nye version manuelt én gang fra den fælles mappe — derefter virker automatiske opdateringer normalt igen.`
+  }
+  return `Zip-filen ligner ikke en gyldig udgivelse (mangler ${exeName})`
+}
+
+/**
  * Kopierer zip'en til <datamappe>/updates/, verificerer kopien og skriver
  * manifestet. Gamle zip-filer ryddes op bagefter.
  */
-async function publishUpdate(dataDir, { zipPath, version, notes, publishedBy, skipDelta = false, onProgress = () => {} }) {
+async function publishUpdate(dataDir, { zipPath, version, notes, publishedBy, skipDelta = false, setAsLatest = true, onProgress = () => {} }) {
   if (!parseVersion(version)) {
     throw new Error('Versionsnummeret skal have formatet X.Y.Z, fx 1.2.0')
   }
@@ -234,8 +256,13 @@ async function publishUpdate(dataDir, { zipPath, version, notes, publishedBy, sk
   }
 
   const tmp = manifestPath(dataDir) + '.' + process.pid + '.tmp'
-  fs.writeFileSync(tmp, JSON.stringify(manifest, null, 2))
-  fs.renameSync(tmp, manifestPath(dataDir))
+  // setAsLatest=false: versionen laegges KUN i biblioteket (historik) til
+  // senere force-push til udvalgte brugere - den aendrer ikke hvad alle
+  // andre klienter automatisk bliver tilbudt at opdatere til.
+  if (setAsLatest) {
+    fs.writeFileSync(tmp, JSON.stringify(manifest, null, 2))
+    fs.renameSync(tmp, manifestPath(dataDir))
+  }
 
   // Behold op til HISTORY_RETENTION versioner (denne + tidligere), så en
   // manager senere kan vælge en specifik version at force-pushe til én bruger.
@@ -246,6 +273,14 @@ async function publishUpdate(dataDir, { zipPath, version, notes, publishedBy, sk
 
   const retainedVersions = new Set(retained.map((entry) => entry.version))
   const retainedFiles = new Set(retained.map((entry) => entry.file))
+  // Den nuvaerende manifest.json (den version alle andre auto-opdaterer til)
+  // maa ALDRIG ryddes op, selv hvis den er faldet ud af de seneste
+  // HISTORY_RETENTION historik-poster efter flere biblioteks-tilfoejelser.
+  const currentManifest = readManifest(dataDir)
+  if (currentManifest) {
+    retainedVersions.add(currentManifest.version)
+    retainedFiles.add(currentManifest.file)
+  }
 
   for (const name of fs.readdirSync(dir)) {
     const fullPath = path.join(dir, name)
@@ -415,7 +450,7 @@ async function prepareDeltaUpdate({ manifest, versionDir, installDir, exePath, o
     const exeName = path.basename(exePath)
     const exeChanged = changed.some((entry) => path.basename(entry.path).toLowerCase() === exeName.toLowerCase())
     if (exeChanged && !fs.existsSync(path.join(stagingDir, exeName))) {
-      throw new Error(`Opdateringen ligner ikke en TCD Hub-udgivelse (mangler ${exeName})`)
+      throw new Error(describeMissingExe(stagingDir, exeName))
     }
 
     onProgress({ phase: 'ready', percent: 100, transferredBytes: totalBytes, totalBytes, fileCount: changed.length })
@@ -455,7 +490,7 @@ async function prepareFullUpdate({ dataDir, manifest, exePath, onProgress }) {
 
     const exeName = path.basename(exePath)
     if (!fs.existsSync(path.join(stagingDir, exeName))) {
-      throw new Error(`Zip-filen ligner ikke en TCD Hub-udgivelse (mangler ${exeName})`)
+      throw new Error(describeMissingExe(stagingDir, exeName))
     }
 
     await fsp.rm(localZip, { force: true })
@@ -567,4 +602,5 @@ module.exports = {
   cleanupOldWorkDirs,
   sha256File,
   buildApplyScript,
+  describeMissingExe,
 }

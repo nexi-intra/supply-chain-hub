@@ -28,6 +28,7 @@ const baseTranslations = {
         passwordsMismatch: "Adgangskoderne matcher ikke",
         emailExists: "En bruger med denne email eksisterer allerede",
         connectionFailed: "Kunne ikke oprette forbindelse. Prøv igen.",
+        storageBusy: "Lageret er optaget af en anden klient — vent et øjeblik og prøv igen.",
         wrongCredentials: "Forkert email/brugernavn eller adgangskode",
         pendingApproval: "Din konto afventer godkendelse af en manager.",
         rejected: "Din anmodning om adgang er blevet afvist. Kontakt en manager.",
@@ -588,6 +589,10 @@ const baseTranslations = {
       titleRequired: "Titel er påkrævet",
       atLeastOneSectionRequired: "Tilføj mindst én sektion med indhold eller et Word-dokument",
       saveFailed: "Kunne ikke gemme guiden",
+      draftFoundTitle: "Ugemt kladde fundet",
+      draftFoundBody: "Der blev fundet en automatisk gemt kladde fra en tidligere session, der ikke blev gemt færdigt. Vil du genskabe den?",
+      draftRestore: "Genskab kladde",
+      draftDiscard: "Forkast kladde",
       editTitle: "Rediger guide",
       newTitle: "Ny guide",
       versionArrowSuffix: "→ gemmes som",
@@ -719,7 +724,16 @@ const baseTranslations = {
       forceFullInstall: "Tving fuld installation for alle klienter",
       forceFullInstallHint: "Slår hurtig delta-opdatering fra for denne udgivelse. Anbefales hvis ældre klienter fejler ved opdatering (fx \"ENOENT ... app.asar\") — fuld installation virker altid, uanset hvilken version klienten kører nu.",
       publishUpdate: "Publicér opdatering",
-      selectNewPackage: "Vælg ny app-pakke (.zip)…"
+      selectNewPackage: "Vælg ny app-pakke (.zip)…",
+      setAsLatestLabel: "Sæt som den version alle automatisk opdaterer til",
+      setAsLatestHint: "Slå fra for kun at lægge versionen i biblioteket nedenfor, uden at ændre hvad andre klienter automatisk bliver tilbudt — praktisk til en ældre mellemversion (fx 1.5.1), som nogle få fastlåste brugere skal igennem før de kan nå den nyeste.",
+      addToLibrary: "Tilføj til biblioteket",
+      addedToLibraryPrefix: "Version",
+      addedToLibrarySuffix: "er lagt i biblioteket. Den er ikke sendt til nogen — vælg den under en specifik bruger i \"Brugernes app-versioner\" for at tvinge den ud.",
+      libraryTitle: "Version-bibliotek",
+      libraryHint: "Alle versioner du har lagt ind. Vælg en specifik version pr. bruger i \"Brugernes app-versioner\" herunder.",
+      libraryEmpty: "Ingen versioner i biblioteket endnu.",
+      libraryLatestBadge: "Nyeste"
     },
     clientVersionManager: {
       noVersionToPush: "Ingen version tilgængelig at pushe",
@@ -735,7 +749,9 @@ const baseTranslations = {
       notSeenIn24h: "Ikke set i 24t+",
       pendingSuffix: "afventer",
       selectVersion: "Vælg version",
-      forcePrefix: "Tving v"
+      forcePrefix: "Tving v",
+      allHubsOption: "Alle hubs",
+      crossHubReadOnlyHint: "Skift til dette hub for at tvinge en opdatering"
     },
     dataStorageManager: {
       sourceLabels: {
@@ -1681,6 +1697,7 @@ const baseTranslations = {
         passwordsMismatch: "Passwords don't match",
         emailExists: "A user with this email already exists",
         connectionFailed: "Could not connect. Please try again.",
+        storageBusy: "The storage is busy with another client — wait a moment and try again.",
         wrongCredentials: "Incorrect email/username or password",
         pendingApproval: "Your account is awaiting approval from a manager.",
         rejected: "Your access request has been rejected. Contact a manager.",
@@ -2241,6 +2258,10 @@ const baseTranslations = {
       titleRequired: "Title is required",
       atLeastOneSectionRequired: "Add at least one section with content or a Word document",
       saveFailed: "Could not save the guide",
+      draftFoundTitle: "Unsaved draft found",
+      draftFoundBody: "An auto-saved draft was found from a previous session that wasn't finished saving. Do you want to restore it?",
+      draftRestore: "Restore draft",
+      draftDiscard: "Discard draft",
       editTitle: "Edit guide",
       newTitle: "New guide",
       versionArrowSuffix: "→ will be saved as",
@@ -2372,7 +2393,16 @@ const baseTranslations = {
       forceFullInstall: "Force full installation for all clients",
       forceFullInstallHint: "Turns off fast delta updates for this release. Recommended if older clients fail to update (e.g. \"ENOENT ... app.asar\") — a full install always works, regardless of which version the client is currently running.",
       publishUpdate: "Publish update",
-      selectNewPackage: "Select new app package (.zip)…"
+      selectNewPackage: "Select new app package (.zip)…",
+      setAsLatestLabel: "Set as the version everyone automatically updates to",
+      setAsLatestHint: "Turn off to only add the version to the library below, without changing what other clients are automatically offered — useful for an older stepping-stone version (e.g. 1.5.1) that a few stuck users need before they can reach the latest.",
+      addToLibrary: "Add to library",
+      addedToLibraryPrefix: "Version",
+      addedToLibrarySuffix: "was added to the library. It was not sent to anyone — pick it for a specific user in \"Users' App Versions\" to force it out.",
+      libraryTitle: "Version library",
+      libraryHint: "Every version you've added. Pick a specific version per user in \"Users' App Versions\" below.",
+      libraryEmpty: "No versions in the library yet.",
+      libraryLatestBadge: "Latest"
     },
     clientVersionManager: {
       noVersionToPush: "No version available to push",
@@ -2388,7 +2418,9 @@ const baseTranslations = {
       notSeenIn24h: "Not seen in 24h+",
       pendingSuffix: "pending",
       selectVersion: "Select version",
-      forcePrefix: "Force v"
+      forcePrefix: "Force v",
+      allHubsOption: "All hubs",
+      crossHubReadOnlyHint: "Switch to this hub to force an update"
     },
     dataStorageManager: {
       sourceLabels: {

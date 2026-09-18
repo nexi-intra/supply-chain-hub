@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import {
   Archive, ArrowCounterClockwise, Check, Clock, Eye, NotePencil,
-  PencilSimple, UserCircle, Warning, X,
+  PencilSimple, Trash, UserCircle, Warning, X,
 } from '@phosphor-icons/react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -25,6 +25,7 @@ interface GuideReviewDashboardProps {
   onApprove: (request: GuideReviewRequest) => void
   onReturn: (request: GuideReviewRequest, comment: string) => void
   onWithdraw: (request: GuideReviewRequest) => void
+  onDiscard: (request: GuideReviewRequest) => void
   onClaim: (request: GuideReviewRequest) => void
   onRestore: (entry: ArchivedGuideEntry) => void
 }
@@ -148,13 +149,14 @@ function GuideDifference({ before, after }: { before?: Guide; after?: Guide }) {
 
 export function GuideReviewDashboard({
   requests, archivedGuides, userEmail, isReviewer, isManager, onEditRequest, onPreview,
-  onApprove, onReturn, onWithdraw, onClaim, onRestore,
+  onApprove, onReturn, onWithdraw, onDiscard, onClaim, onRestore,
 }: GuideReviewDashboardProps) {
   const { language } = useLanguage()
   const da = language === 'da'
   const fi = language === 'fi'
   const [returningRequest, setReturningRequest] = useState<GuideReviewRequest | null>(null)
   const [returnComment, setReturnComment] = useState('')
+  const [discardingRequest, setDiscardingRequest] = useState<GuideReviewRequest | null>(null)
   const myRequests = useMemo(() => requests
     .filter((request) => normalized(request.submittedBy) === normalized(userEmail) && request.status !== 'withdrawn')
     .sort((left, right) => right.updatedAt - left.updatedAt), [requests, userEmail])
@@ -194,6 +196,9 @@ export function GuideReviewDashboard({
             {request.baseGuide && request.proposedGuide && <Button size="sm" variant="outline" className="gap-1.5" onClick={() => onPreview(request.baseGuide!)}><Eye size={16} />{da ? 'Vis udgivet' : fi ? 'Näytä julkaistu' : 'View published'}</Button>}
             {previewGuide && <Button size="sm" variant="outline" className="gap-1.5" onClick={() => onPreview(previewGuide)}><Eye size={16} />{request.proposedGuide && request.baseGuide ? (da ? 'Vis forslag' : fi ? 'Näytä ehdotus' : 'View proposal') : (da ? 'Vis' : fi ? 'Näytä' : 'View')}</Button>}
             {!reviewMode && request.status === 'pending' && <Button size="sm" variant="outline" onClick={() => onWithdraw(request)}>{da ? 'Træk tilbage' : fi ? 'Peruuta' : 'Withdraw'}</Button>}
+            {((!reviewMode && ['pending', 'draft', 'changes_requested'].includes(request.status)) || (reviewMode && isManager)) && (
+              <Button size="sm" variant="outline" className="gap-1.5 text-destructive" onClick={() => setDiscardingRequest(request)}><Trash size={16} />{da ? 'Kassér' : fi ? 'Hylkää' : 'Discard'}</Button>
+            )}
             {!reviewMode && (request.status === 'draft' || request.status === 'changes_requested') && request.action !== 'delete' && (
               <Button size="sm" className="gap-1.5" onClick={() => onEditRequest(request, false)}><PencilSimple size={16} />{da ? 'Ret og indsend' : fi ? 'Muokkaa ja lähetä' : 'Edit and resubmit'}</Button>
             )}
@@ -273,6 +278,12 @@ export function GuideReviewDashboard({
           <DialogHeader><DialogTitle>{da ? 'Send guiden tilbage' : fi ? 'Palauta opas' : 'Return guide'}</DialogTitle><DialogDescription>{da ? 'Forklar tydeligt, hvad forfatteren skal ændre.' : fi ? 'Selitä selkeästi, mitä tekijän tulee muuttaa.' : 'Explain clearly what the author needs to change.'}</DialogDescription></DialogHeader>
           <Textarea value={returnComment} onChange={(event) => setReturnComment(event.target.value)} rows={5} placeholder={da ? 'Skriv en kommentar…' : fi ? 'Kirjoita kommentti...' : 'Write a comment…'} />
           <DialogFooter><Button variant="outline" onClick={() => setReturningRequest(null)}>{da ? 'Annuller' : fi ? 'Peruuta' : 'Cancel'}</Button><Button disabled={!returnComment.trim()} onClick={() => { if (returningRequest && returnComment.trim()) onReturn(returningRequest, returnComment.trim()); setReturningRequest(null) }}>{da ? 'Send tilbage' : fi ? 'Palauta' : 'Return'}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={discardingRequest !== null} onOpenChange={(open) => !open && setDiscardingRequest(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{da ? 'Kassér anmodningen?' : fi ? 'Hylkää pyyntö?' : 'Discard the request?'}</DialogTitle><DialogDescription>{da ? 'Anmodningen og dens forslag fjernes helt. Den udgivne guide påvirkes ikke. Dette kan ikke fortrydes.' : fi ? 'Pyyntö ja sen ehdotus poistetaan kokonaan. Julkaistuun oppaaseen ei vaikuteta. Tätä ei voi kumota.' : 'The request and its proposal are removed entirely. The published guide is not affected. This cannot be undone.'}</DialogDescription></DialogHeader>
+          <DialogFooter><Button variant="outline" onClick={() => setDiscardingRequest(null)}>{da ? 'Annuller' : fi ? 'Peruuta' : 'Cancel'}</Button><Button variant="destructive" onClick={() => { if (discardingRequest) onDiscard(discardingRequest); setDiscardingRequest(null) }}>{da ? 'Kassér anmodning' : fi ? 'Hylkää pyyntö' : 'Discard request'}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </>

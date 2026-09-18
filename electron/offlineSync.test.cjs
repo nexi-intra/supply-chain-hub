@@ -188,6 +188,84 @@ function flushMicrotasks() {
   return new Promise((resolve) => setImmediate(resolve))
 }
 
+test('getAsync serves the local mirror at once and refreshes from the network in the background', async (t) => {
+  const local = temporaryLocalStore(t)
+  const real = temporaryNetworkStore(t)
+  local.set('shift-assignments', ['stale-from-last-session'])
+  // Skrevet af en ANDEN klient: denne klients netvaerks-cache er kold.
+  createStore(real.dataDir).set('shift-assignments', ['fresh-on-share'])
+  const revalidated = []
+  const resilient = createResilientStore(real, local, { onRevalidated: keys => revalidated.push(...keys) })
+
+  // Spejlet returneres uden at vente paa netvaerket.
+  assert.deepEqual(await resilient.getAsync('shift-assignments'), ['stale-from-last-session'])
+  // Baggrundshentningen opdager afvigelsen, opdaterer spejlet og melder noeglen.
+  for (let i = 0; i < 20 && revalidated.length === 0; i++) await flushMicrotasks()
+  assert.deepEqual(revalidated, ['shift-assignments'])
+  await flushMicrotasks()
+  assert.deepEqual(local.get('shift-assignments', { skipCache: true }), ['fresh-on-share'])
+  // Naeste laesning kommer fra netvaerks-cachen (nu frisk) - ikke det gamle spejl.
+  assert.deepEqual(await resilient.getAsync('shift-assignments'), ['fresh-on-share'])
+})
+
+test('getAsync does not announce a revalidation when the mirror already matches the share', async (t) => {
+  const local = temporaryLocalStore(t)
+  const real = temporaryNetworkStore(t)
+  local.set('guides', [{ id: 'g1' }])
+  createStore(real.dataDir).set('guides', [{ id: 'g1' }])
+  const revalidated = []
+  const resilient = createResilientStore(real, local, { onRevalidated: keys => revalidated.push(...keys) })
+  assert.deepEqual(await resilient.getAsync('guides'), [{ id: 'g1' }])
+  for (let i = 0; i < 20; i++) await flushMicrotasks()
+  assert.deepEqual(revalidated, [])
+})
+
+test('getAsync with skipCache bypasses the mirror and reads the share directly', async (t) => {
+  const local = temporaryLocalStore(t)
+  const real = temporaryNetworkStore(t)
+  local.set('users', { stale: true })
+  createStore(real.dataDir).set('users', { fresh: true })
+  const resilient = createResilientStore(real, local)
+  assert.deepEqual(await resilient.getAsync('users', { skipCache: true }), { fresh: true })
+})
+
+test('a key deleted on the share is dropped from the mirror after revalidation', async (t) => {
+  const local = temporaryLocalStore(t)
+  const real = temporaryNetworkStore(t)
+  local.set('gone', 'was-here')
+  const revalidated = []
+  const resilient = createResilientStore(real, local, { onRevalidated: keys => revalidated.push(...keys) })
+  assert.equal(await resilient.getAsync('gone'), 'was-here')
+  for (let i = 0; i < 20 && revalidated.length === 0; i++) await flushMicrotasks()
+  assert.deepEqual(revalidated, ['gone'])
+  await flushMicrotasks()
+  assert.equal(local.get('gone', { skipCache: true }), undefined)
+})
+
+test('revalidateMirror refreshes every mirrored key except chunks and the queue, and reports changes', async (t) => {
+  const local = temporaryLocalStore(t)
+  const real = temporaryNetworkStore(t)
+  local.set('a', 1); local.set('b', 2); local.set('file_chunk_0', 'blob')
+  const writer = createStore(real.dataDir)
+  writer.set('a', 1); writer.set('b', 22); writer.set('file_chunk_0', 'other')
+  const revalidated = []
+  const resilient = createResilientStore(real, local, { onRevalidated: keys => revalidated.push(...keys) })
+  const refreshed = await resilient.revalidateMirror({ concurrency: 2 })
+  assert.equal(refreshed, 2)
+  await flushMicrotasks()
+  assert.deepEqual(revalidated, ['b'])
+  assert.equal(local.get('b', { skipCache: true }), 22)
+  assert.equal(local.get('file_chunk_0', { skipCache: true }), 'blob')
+})
+
+test('revalidateMirror is a no-op while disconnected', async (t) => {
+  const local = temporaryLocalStore(t)
+  local.set('a', 1)
+  const network = fakeNetworkStore({ isConnected: () => false, getAsync: async () => { throw new Error('must not read') } })
+  const resilient = createResilientStore(network, local)
+  assert.equal(await resilient.revalidateMirror(), 0)
+})
+
 test('get() mirrors a successful network read to the local cache', async (t) => {
   const local = temporaryLocalStore(t)
   const network = fakeNetworkStore({ get: () => [{ id: '1' }] })
@@ -249,6 +327,37 @@ test('update() mirrors the resulting array to the local cache when online', asyn
 
   await flushMicrotasks()
   assert.deepEqual(local.get('notes'), [{ id: 'n1' }])
+})
+
+test('async twins mirror online writes and queue offline writes exactly like the sync path', async (t) => {
+  const local = temporaryLocalStore(t)
+  let written
+  const network = fakeNetworkStore({
+    setAsync: async (_key, value) => { written = value },
+    updateAsync: async (_key, op) => op.items,
+    deleteAsync: async () => {},
+    keysAsync: async () => ['emails'],
+  })
+  const resilient = createResilientStore(network, local)
+
+  await resilient.setAsync('vacation-entries', [{ id: 'v1' }])
+  assert.deepEqual(written, [{ id: 'v1' }])
+  assert.deepEqual(await resilient.updateAsync('notes', { op: 'append', items: [{ id: 'n1' }] }), [{ id: 'n1' }])
+  assert.deepEqual(await resilient.keysAsync(), ['emails'])
+  await flushMicrotasks()
+  assert.deepEqual(local.get('vacation-entries'), [{ id: 'v1' }])
+
+  // Offline: samme lokale anvendelse + kø som den synkrone vej
+  const offline = createResilientStore(fakeNetworkStore({ isConnected: () => false, setAsync: async () => { throw new Error('must not be called') }, updateAsync: async () => { throw new Error('must not be called') } }), temporaryLocalStore(t))
+  await offline.setAsync('projects', [{ id: 'p1' }])
+  const merged = await offline.updateAsync('projects', { op: 'upsert', items: [{ id: 'p2' }] })
+  assert.deepEqual(merged.map(item => item.id), ['p1', 'p2'])
+  assert.equal(offline.getPendingSyncCount(), 2)
+
+  // Semantiske fejl (fx KV_CONFLICT) kastes videre — de må aldrig ende i køen
+  const conflicting = createResilientStore(fakeNetworkStore({ updateAsync: async () => { const error = new Error('KV_CONFLICT: test'); error.code = 'KV_CONFLICT'; throw error } }), temporaryLocalStore(t))
+  await assert.rejects(conflicting.updateAsync('notes', { op: 'append', items: [{ id: 'n1' }] }), { code: 'KV_CONFLICT' })
+  assert.equal(conflicting.getPendingSyncCount(), 0)
 })
 
 test('keys() falls back to local cache when disconnected, hiding the internal queue key', (t) => {

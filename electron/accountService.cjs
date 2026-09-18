@@ -1,6 +1,6 @@
 const path = require('node:path')
 const crypto = require('node:crypto')
-const { withFileLock } = require('./fileLock.cjs')
+const { withFileLock, withFileLockAsync } = require('./fileLock.cjs')
 const { updateUsers, publicUsers } = require('./userPolicy.cjs')
 const { migrateReferences, personalKey, relevantKey } = require('./accountReferences.cjs')
 const { registeredTeamDir } = require('./teamReadPolicy.cjs')
@@ -22,7 +22,11 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
   const CONTEXT_TTL_MS = 500
   let contextCache = null
   const invalidateContext = () => { contextCache = null }
-  const metadata = () => openStore(path.join(getRoot(), '_registry'))
+  // Genbrug store-instansen pr. mappe: openStore/createStore laver ellers en
+  // synkron mkdirSync mod netvaerksdrevet ved HVERT kald (fx hver skrivning).
+  const storeCache = new Map()
+  const openStoreCached = dir => { if (!storeCache.has(dir)) storeCache.set(dir, openStore(dir)); return storeCache.get(dir) }
+  const metadata = () => openStoreCached(path.join(getRoot(), '_registry'))
   function readControl() {
     const meta = metadata()
     let record = meta.get(CONTROL, { skipCache: true })
@@ -43,7 +47,17 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
     return { ...journal, state: progress.state, applied: progress.applied }
   }
   const globalLock = () => path.join(getRoot(), '_registry', 'account-operation.lock')
-  const withAccountLock = callback => withFileLock(globalLock(), callback, { attempts: 1 })
+  // Uden staleMs blokerede en enkelt crashet/dræbt klient permanent ALLE
+  // fremtidige konto-operationer (herunder login) for ALLE klienter, indtil
+  // nogen manuelt slettede laasefilen. 60s er langt over enhver legitim
+  // holdetid for disse operationer (typisk under et sekund, selv med flere
+  // teams paa langsomt SMB), saa en live konkurrerende klient stjaeles aldrig.
+  const ACCOUNT_LOCK_STALE_MS = 60000
+  const withAccountLock = callback => withFileLock(globalLock(), callback, { attempts: 1, staleMs: ACCOUNT_LOCK_STALE_MS })
+  // Login/resume: faa korte gen-forsoeg i stedet for att fejle straks - to
+  // klienter der logger ind samtidigt gav ellers falske "Kunne ikke oprette
+  // forbindelse"-fejl. Brugeren venter allerede ved en spinner her.
+  const withAuthenticationLock = callback => withFileLock(globalLock(), callback, { attempts: 6, delayMs: 120, staleMs: ACCOUNT_LOCK_STALE_MS })
   function assertReady() { if (!terminal(readControl())) fail('ACCOUNT_MIGRATION_PENDING') }
   function synchronous(callback) {
     if (typeof callback !== 'function' || require('node:util').types.isAsyncFunction(callback)) fail('KV_INVALID_OPERATION')
@@ -52,8 +66,30 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
     return result
   }
   function runWrite(callback) { return withAccountLock(() => { assertReady(); return synchronous(callback) }) }
+  // Asynkron tvilling til IPC-skrivninger: samme globale konto-laas og
+  // migrations-gate, men await-baseret saa main-event-loopet aldrig blokeres.
+  // Flere ikke-blokerende forsoeg erstatter sync-vejens attempts:1, saa
+  // samtidige skrivninger fra flere klienter ikke fejler unoedigt med KV_LOCK_BUSY.
+  async function readControlAsync() {
+    const meta = metadata()
+    let record = await meta.getAsync(CONTROL, { skipCache: true })
+    if (record === undefined) {
+      const journal = await meta.getAsync(JOURNAL, { skipCache: true })
+      if (journal === undefined) return null
+      if (!object(journal) || !Array.isArray(journal.steps) || !Array.isArray(journal.scopes)) fail('ACCOUNT_MIGRATION_INVALID')
+      record = control(journal)
+    }
+    if (!object(record) || typeof record.id !== 'string' || record.root !== path.resolve(getRoot()) || !['running', 'failed', 'rolling-back', 'rollback-failed', 'committed', 'rolled-back'].includes(record.state) || !Number.isInteger(record.total) || !Number.isInteger(record.applied) || record.applied < 0 || record.applied > record.total) fail('ACCOUNT_MIGRATION_INVALID')
+    return record
+  }
+  function runWriteAsync(callback) {
+    return withFileLockAsync(globalLock(), async () => {
+      if (!terminal(await readControlAsync())) fail('ACCOUNT_MIGRATION_PENDING')
+      return callback()
+    }, { attempts: 10, delayMs: 150, staleMs: 600000 })
+  }
   function runAuthentication(email, callback) {
-    return withAccountLock(() => {
+    return withAuthenticationLock(() => {
       const recovering = !terminal(readControl())
       if (recovering && normalize(email) !== normalize(registry.getCreatorEmail(getRoot()))) fail('ACCOUNT_MIGRATION_PENDING')
       return synchronous(() => callback({ recovering }))
@@ -237,6 +273,6 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
       return { state: reverse ? 'rolled-back' : 'committed' }
     })
   }
-  return { rename, pending, status, assertReady, assertAvailable, assertReferences, context, runWrite, runAuthentication, resume: (actor, id) => recover(actor, id, false), rollback: (actor, id) => recover(actor, id, true) }
+  return { rename, pending, status, assertReady, assertAvailable, assertReferences, context, runWrite, runWriteAsync, runAuthentication, resume: (actor, id) => recover(actor, id, false), rollback: (actor, id) => recover(actor, id, true) }
 }
 module.exports = { createAccountService }

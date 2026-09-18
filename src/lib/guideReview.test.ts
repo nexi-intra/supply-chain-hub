@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Guide, GuideReviewRequest } from './guideTypes'
-import { canReviewGuideRequest, hasGuideReviewConflict, isOpenGuideReview } from './guideReview'
+import { canReviewGuideRequest, hasGuideReviewConflict, isGuideReviewAlreadyApplied, isOpenGuideReview } from './guideReview'
 
 const guide = (version = '1.00'): Guide => ({
   id: 'guide-1', title: 'Test', category: 'General', tags: [], content: '',
@@ -40,5 +40,22 @@ describe('guide review rules', () => {
     expect(isOpenGuideReview(request({ status: 'draft' }))).toBe(true)
     expect(isOpenGuideReview(request({ status: 'changes_requested' }))).toBe(true)
     expect(isOpenGuideReview(request({ status: 'approved' }))).toBe(false)
+  })
+
+  it('recognizes an interrupted approval whose effect already went through', () => {
+    // create: forslaget (v1.00) er allerede udgivet, men requesten blev aldrig lukket
+    expect(isGuideReviewAlreadyApplied(request({ action: 'create', baseVersion: undefined, proposedGuide: guide('1.00') }), guide('1.00'), [])).toBe(true)
+    // update: præcis forslags-versionen er udgivet
+    expect(isGuideReviewAlreadyApplied(request(), guide('1.01'), [])).toBe(true)
+    // update: udgivet version er stadig basen — ikke anvendt endnu
+    expect(isGuideReviewAlreadyApplied(request(), guide('1.00'), [])).toBe(false)
+    // delete: guiden fjernet + arkivpost for denne request
+    expect(isGuideReviewAlreadyApplied(request({ action: 'delete', proposedGuide: undefined }), undefined, [{ requestId: 'review-1' }])).toBe(true)
+    // delete: guiden fjernet men ingen arkivpost — ukendt tilstand, ikke "anvendt"
+    expect(isGuideReviewAlreadyApplied(request({ action: 'delete', proposedGuide: undefined }), undefined, [{ requestId: 'other' }])).toBe(false)
+    // delete: guiden findes stadig
+    expect(isGuideReviewAlreadyApplied(request({ action: 'delete', proposedGuide: undefined }), guide('1.00'), [{ requestId: 'review-1' }])).toBe(false)
+    // restore: gendannelsen (bumpet version) er allerede udgivet
+    expect(isGuideReviewAlreadyApplied(request({ action: 'restore', baseVersion: undefined, proposedGuide: guide('1.01') }), guide('1.01'), [])).toBe(true)
   })
 })

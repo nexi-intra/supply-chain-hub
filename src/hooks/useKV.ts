@@ -10,6 +10,25 @@ type SetValue<T> = T | ((current: T) => T)
 // empty widget for seconds while the slow network read completes.
 const kvSnapshotCache = new Map<string, unknown>()
 
+// Under aktivt spil (data-game-active paa <body>) udskydes KV-genindlaesninger,
+// saa den store re-render-kaede ikke blokerer spillets mus/tastatur-input. Naar
+// spillet slutter og attributten fjernes, genindlaeses de udskudte noegler.
+let kvGamesActive = false
+let kvWatchStarted = false
+const kvResumeListeners = new Set<() => void>()
+function ensureGameActiveWatch() {
+  if (kvWatchStarted || typeof document === 'undefined' || !document.body) return
+  kvWatchStarted = true
+  const sync = () => {
+    const active = document.body.hasAttribute('data-game-active')
+    if (active === kvGamesActive) return
+    kvGamesActive = active
+    if (!active) kvResumeListeners.forEach((fn) => fn())
+  }
+  new MutationObserver(sync).observe(document.body, { attributes: true, attributeFilter: ['data-game-active'] })
+  sync()
+}
+
 // React hook over the app KV store (window.kv — shared folder in the desktop
 // app, localStorage in the browser). Subscribes to changes so edits made by
 // other clients/tabs show up live in open views.
@@ -27,6 +46,7 @@ export function useKV<T>(key: string, initialValue: T, options?: { initializeIfM
   const initializeIfMissingRef = useRef(options?.initializeIfMissing !== false)
 
   useEffect(() => {
+    ensureGameActiveWatch()
     lifecycle.current++
     pendingSave.current = false
     let cancelled = false
@@ -65,17 +85,22 @@ export function useKV<T>(key: string, initialValue: T, options?: { initializeIfM
     load()
     // Only reload when *this specific key* changes (not on all changes).
     // This prevents unnecessary re-renders when other keys are modified.
+    let deferredReload = false
     const unsubscribe = window.kv.subscribe((changedKeys) => {
-      if (changedKeys.includes(key)) {
-        load()
-      }
+      if (!changedKeys.includes(key)) return
+      // Udskyd genindlaesning under spil — ellers blokerer re-render kaeden input.
+      if (kvGamesActive) { deferredReload = true; return }
+      load()
     })
+    const onGamesEnded = () => { if (deferredReload) { deferredReload = false; load() } }
+    kvResumeListeners.add(onGamesEnded)
 
     return () => {
       lifecycle.current++
       cancelled = true
       if (retryTimer) clearTimeout(retryTimer)
       unsubscribe()
+      kvResumeListeners.delete(onGamesEnded)
     }
   }, [key])
 

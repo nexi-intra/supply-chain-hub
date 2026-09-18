@@ -22,6 +22,28 @@ function continueQuestion(question, previous, now, resolveDates) {
     const combined = `${previous} guide kilde`
     return combined.length <= 1000 ? combined : question
   }
+  // Personskifte-opfoelgning til indsigts-spoergsmaal: "og Bo?" efter
+  // "hvor er Anne paa torsdag?" genbruger intent + periode med den nye person.
+  // Ren tekst-omskrivning; adgang og personopslag afgoeres stadig nedstroems.
+  const swap = norm(question).replace(/[?!.,]+\s*$/u, '').match(/^(?:og|and|entä|ja|hvad med|what about)\s+([\p{L}\p{N}@._' -]{2,40})$/u)
+  if (swap && !resolveDates(swap[1], now)) {
+    const p = norm(previous)
+    const whereVerb = p.match(/hvor er|hvor befinder|where is|where's|missä on/u)
+    const backVerb = /(?:hvornår|hvornaar)\s+er\s+.{2,60}?tilbage/u.test(p) ? 'da' : /when\s+is\s+.{2,60}?back/u.test(p) ? 'en' : /milloin\s+.{2,60}?(?:palaa|takaisin)/u.test(p) ? 'fi' : null
+    if (whereVerb || backVerb) {
+      const periodPatterns = [
+        /\b\d{4}-\d{2}-\d{2}\b/gu,
+        /(?:uge|week|viik(?:ko|olla|on))\s*\d{1,2}(?!\d)/gu,
+        /(?:næste|denne|sidste|forrige)\s+uge|(?:next|this|last)\s+week|ensi\s+viik\S*|tällä\s+viik\S*|i dag|idag|i morgen|imorgen|overmorgen|today|tomorrow|tänään|huomenna/gu,
+        /(?:^|[^\p{L}])((?:på\s+)?(?:mandag|tirsdag|onsdag|torsdag|fredag|lørdag|søndag)|monday|tuesday|wednesday|thursday|friday|saturday|sunday|maanantai(?:na)?|tiistai(?:na)?|keskiviikko(?:na)?|torstai(?:na)?|perjantai(?:na)?|lauantai(?:na)?|sunnuntai(?:na)?)(?=$|[^\p{L}])/gu,
+      ]
+      const periods = periodPatterns.flatMap((pattern, index) => [...p.matchAll(pattern)].map(match => index === 3 ? match[1] : match[0]))
+      const rewritten = backVerb
+        ? backVerb === 'fi' ? `milloin ${swap[1]} palaa` : backVerb === 'en' ? `when is ${swap[1]} back` : `hvornår er ${swap[1]} tilbage`
+        : `${whereVerb[0]} ${swap[1]} ${periods.join(' ')}`.trim()
+      if (rewritten.length <= 1000) return rewritten
+    }
+  }
   if (!resolveDates(question, now)) return question
   let reply = norm(question).replace(/^(?:og|hvad med|and|what about|entä|ja)\s+/u, '')
   const stripPeriod = value => value

@@ -48,6 +48,49 @@ test('a compare-and-set replay already applied to the share succeeds without rew
   assert.equal(store.get('setting', { skipCache: true }), 'new')
 })
 
+test('async twins keep identical semantics: set, update, delete, keys and lock release', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  await store.setAsync('tasks', [{ id: 'a', text: 'first' }])
+  assert.deepEqual(store.get('tasks', { skipCache: true }), [{ id: 'a', text: 'first' }])
+  const next = await store.updateAsync('tasks', { op: 'upsert', items: [{ id: 'b', text: 'second' }] })
+  assert.deepEqual(next.map(item => item.id), ['a', 'b'])
+  // Konflikt-semantik er identisk med den synkrone vej
+  await assert.rejects(store.updateAsync('tasks', { op: 'append', items: [{ id: 'a', text: 'DIFFERENT' }] }), { code: 'KV_CONFLICT' })
+  await assert.rejects(store.updateAsync('tasks', { op: 'setField', field: 'x', value: 1 }), { code: 'KV_INVALID_OPERATION' })
+  // compareAndSet-replay uden omskrivning
+  await store.setAsync('setting', 'new')
+  assert.equal(await store.updateAsync('setting', { op: 'compareAndSet', expected: 'old', value: 'new' }), 'new')
+  assert.ok((await store.keysAsync()).includes('tasks'))
+  await store.deleteAsync('tasks')
+  assert.equal(store.get('tasks', { skipCache: true }), undefined)
+  assert.ok(!fs.existsSync(path.join(directory, 'tasks.json.lock')))
+})
+
+test('async update against a nested path preserves the surrounding object', async (t) => {
+  const { store } = temporaryStore(t)
+  store.set('board', { meta: 'keep', easy: [{ id: 'old', score: 1 }] })
+  const result = await store.updateAsync('board', { op: 'upsert', path: ['easy'], items: [{ id: 'new', score: 2 }] })
+  assert.deepEqual(result.map(item => item.id), ['old', 'new'])
+  assert.equal(store.get('board', { skipCache: true }).meta, 'keep')
+})
+
+test('async writes self-heal a provably abandoned lock but never steal a fresh one', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  const lockFile = path.join(directory, 'tasks.json.lock')
+  // Forladt laas (crashet klient): mtime langt over legitim holdetid -> fjernes
+  fs.writeFileSync(lockFile, '99999:dead-owner')
+  const abandoned = new Date(Date.now() - 10 * 60 * 1000)
+  fs.utimesSync(lockFile, abandoned, abandoned)
+  await store.setAsync('tasks', [{ id: 'a' }])
+  assert.deepEqual(store.get('tasks', { skipCache: true }), [{ id: 'a' }])
+  assert.ok(!fs.existsSync(lockFile))
+  // Frisk laas (live ejer): stjaeles ALDRIG -> KV_LOCK_BUSY efter forsoegene
+  fs.writeFileSync(lockFile, '99999:live-owner')
+  await assert.rejects(store.setAsync('tasks', [{ id: 'b' }]), { code: 'KV_LOCK_BUSY' })
+  assert.equal(fs.readFileSync(lockFile, 'utf8'), '99999:live-owner')
+  assert.deepEqual(store.get('tasks', { skipCache: true }), [{ id: 'a' }])
+})
+
 test('append replay is idempotent but cannot overwrite an existing different record', (t) => {
   const { store } = temporaryStore(t)
   const item = { id: 'same', text: 'Synthetic message' }
@@ -146,6 +189,61 @@ test('getAsync mirrors get: decrypts, caches, and reports missing keys as undefi
   store.set('shifts', value)
   assert.deepEqual(await store.getAsync('shifts', { skipCache: true }), value)
   assert.deepEqual(await store.getAsync('shifts'), value)
+})
+
+test('a watched store serves cached reads long past the short TTL until the watcher sees a change', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  const other = createStore(directory)
+  store.set('shifts', ['first'])
+  assert.deepEqual(await store.getAsync('shifts'), ['first'])
+  const changed = []
+  const stop = store.watch(keys => changed.push(...keys), () => {}, 1000)
+  t.after(() => stop())
+  // Klokken skrues 10 s frem: uden watcher ville 3 s-TTL'en have udloebet.
+  const realNow = Date.now
+  Date.now = () => realNow() + 10000
+  t.after(() => { Date.now = realNow })
+  other.set('shifts', ['second'])
+  // Watcheren har ikke tikket endnu: cachen er stadig gaeldende (ingen rundtur).
+  assert.deepEqual(await store.getAsync('shifts'), ['first'])
+  await new Promise(resolve => setTimeout(resolve, 1500))
+  assert.ok(changed.includes('shifts'), 'watcheren skal melde noeglen aendret')
+  assert.deepEqual(await store.getAsync('shifts'), ['second'])
+})
+
+test('an unwatched store still expires its cache after the short TTL', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  const other = createStore(directory)
+  store.set('setting', 'old')
+  assert.equal(await store.getAsync('setting'), 'old')
+  other.set('setting', 'new')
+  const realNow = Date.now
+  Date.now = () => realNow() + 3500
+  t.after(() => { Date.now = realNow })
+  assert.equal(await store.getAsync('setting'), 'new')
+})
+
+test('an externally watched store keeps its cache until invalidate() is called', async (t) => {
+  const { directory } = temporaryStore(t)
+  const users = createStore(directory, { externallyWatched: true })
+  const writer = createStore(directory)
+  writer.set('users', { a: 1 })
+  assert.deepEqual(await users.getAsync('users'), { a: 1 })
+  writer.set('users', { a: 2 })
+  const realNow = Date.now
+  Date.now = () => realNow() + 10000
+  t.after(() => { Date.now = realNow })
+  assert.deepEqual(await users.getAsync('users'), { a: 1 })
+  users.invalidate()
+  assert.deepEqual(await users.getAsync('users'), { a: 2 })
+})
+
+test('many concurrent getAsync calls run in parallel rather than one at a time', async (t) => {
+  const { store } = temporaryStore(t)
+  for (let i = 0; i < 12; i++) store.set(`k${i}`, i)
+  store.invalidate()
+  const values = await Promise.all(Array.from({ length: 12 }, (_, i) => store.getAsync(`k${i}`)))
+  assert.deepEqual(values, Array.from({ length: 12 }, (_, i) => i))
 })
 
 test('values survive encrypted writes and reads', (t) => {

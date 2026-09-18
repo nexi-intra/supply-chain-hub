@@ -8,6 +8,7 @@ const { app, BrowserWindow, shell, ipcMain: nativeIpcMain, dialog, nativeImage }
 const { pathToFileURL } = require('node:url')
 const path = require('path')
 const fs = require('fs')
+const crypto = require('crypto')
 const { createStore } = require('./store.cjs')
 const { createResilientStore } = require('./offlineSync.cjs')
 const { createAuthService, loadDeviceSecret } = require('./authService.cjs')
@@ -25,6 +26,7 @@ const { resolveAssistantAnswer, fingerprint } = require('./assistantPlanner.cjs'
 const { conciseGuideFact, conciseGuideFallback } = require('./assistantAnswers.cjs')
 const { buildHubertSystemPrompt } = require('./assistantPersona.cjs')
 const { detectQuestionLanguage } = require('./assistantContext.cjs')
+const { buildUnansweredLogEntry } = require('./assistantUnansweredLog.cjs')
 let localAI = null
 let assistantBackend = null
 let authService = null
@@ -147,6 +149,15 @@ let platformRoot = null
 // dvs. før et team er slået op — sker kun helt kortvarigt før login/signup er fuldført).
 let currentTeamFolder = null
 let stopWatcher = null
+// Direkte (ikke-offline-spejlet) users-laesning: cache store-instansen pr.
+// datamappe — createStore laver ellers en synkron mkdirSync mod M: pr. kald.
+// Instansen har ingen egen watcher, saa dens read-cache invalideres af
+// hoved-watcheren (startWatcher) naar 'users' aendres paa disken.
+let directUsersStore = { dir: null, store: null }
+const usersStore = () => {
+  if (directUsersStore.dir !== store.dataDir) directUsersStore = { dir: store.dataDir, store: createStore(store.dataDir, { externallyWatched: true }) }
+  return directUsersStore.store
+}
 // Platform-delt store (Fase 9.1): data der IKKE hører til noget enkelt team (fx madplanen —
 // alle teams spiser i samme kantine). Peger på <platformRoot>/_shared/, oprettes ÉN gang ved
 // opstart og skiftes ALDRIG ud ved team-skift (i modsætning til `store`). Nøgler heri er
@@ -154,6 +165,26 @@ let stopWatcher = null
 let sharedStore = null
 let stopSharedWatcher = null
 const SHARED_KV_KEYS = new Set(['meal-plan-weeks', 'shared-guides', 'active-sessions'])
+// Faelles for alle resiliente stores: naar en baggrundshentning (spejl-foerst,
+// se offlineSync.getAsync) opdager at M: afviger fra det viste spejl, faar
+// vinduerne besked praecis som ved en watcher-aendring.
+const broadcastKvChanged = createDebouncedBroadcast(100)
+const resilientOptions = () => ({ onSyncResult: handleSyncResult, guardReplay: guardAccountReplay, onRevalidated: broadcastKvChanged })
+let mirrorWarmUpTimer = null
+/** Ajourfoer det lokale spejl i baggrunden kort efter opstart/team-skift (lav parallelisme, aldrig foran brugerens egne laesninger). */
+function scheduleMirrorWarmUp() {
+  if (mirrorWarmUpTimer) clearTimeout(mirrorWarmUpTimer)
+  const target = store
+  mirrorWarmUpTimer = setTimeout(() => {
+    mirrorWarmUpTimer = null
+    if (store !== target) return
+    const startedAt = Date.now()
+    Promise.all([target, sharedStore].filter(Boolean).map(s => Promise.resolve(s.revalidateMirror?.({ concurrency: 2 }))))
+      .then(counts => { if (process.env.TCD_HUB_DEBUG) console.log(`KV: spejl-varmning ${counts.reduce((a, b) => a + (b || 0), 0)} noegler paa ${Date.now() - startedAt} ms`) })
+      .catch(err => console.error('TCD Hub: spejl-varmning fejlede', err))
+  }, 1500)
+  mirrorWarmUpTimer.unref?.()
+}
 let updateCheckTimer = null
 let updateInProgress = false
 // Forbindelsesstatus til den delte datamappe — opdateres af store.watch()'s
@@ -206,7 +237,10 @@ function createDebouncedBroadcast(delayMs = 100) {
 function startWatcher() {
   if (stopWatcher) stopWatcher()
   const debouncedBroadcast = createDebouncedBroadcast(100)
-  stopWatcher = store.watch((changedKeys) => debouncedBroadcast(changedKeys), setStorageConnected)
+  stopWatcher = store.watch((changedKeys) => {
+    if (changedKeys.includes('users') && directUsersStore.store) directUsersStore.store.invalidate()
+    debouncedBroadcast(changedKeys)
+  }, setStorageConnected)
 }
 
 /**
@@ -355,7 +389,7 @@ function switchDataDir(newDir) {
 
   fs.writeFileSync(userConfigPath(), JSON.stringify({ dataDir: newDir }, null, 2))
 
-  store = createResilientStore(createStore(newDir), createStore(localCacheDir(currentTeamFolder)), { onSyncResult: handleSyncResult, guardReplay: guardAccountReplay })
+  store = createResilientStore(createStore(newDir), createStore(localCacheDir(currentTeamFolder)), resilientOptions())
   dataDirSource = 'user'
   // Netop verificeret tilgængelig ovenfor (mkdirSync+accessSync) — nulstil
   // eventuel "startede offline"-tilstand fra opstart.
@@ -386,13 +420,14 @@ function switchToTeamDir(folderName, newDir) {
   broadcast('assistant:context-changed')
 
   if (stopWatcher) stopWatcher()
-  store = createResilientStore(createStore(newDir), createStore(localCacheDir(folderName)), { onSyncResult: handleSyncResult, guardReplay: guardAccountReplay })
+  store = createResilientStore(createStore(newDir), createStore(localCacheDir(folderName)), resilientOptions())
   currentTeamFolder = folderName
   dataDirSource = 'team'
   storageStartedDisconnected = false
   storageFailedSources = []
   setStorageConnected(true)
   startWatcher()
+  scheduleMirrorWarmUp()
   startAutoBackup()
 
   broadcast('kv:changed', store.keys())
@@ -479,7 +514,7 @@ app.whenReady().then(() => {
   const resolved = resolveDataDir()
   platformRoot = resolved.dir
   accountService = createAccountService({ getRoot: () => platformRoot, registry, openStore: createStore, assertNoPendingSync: assertNoPendingAccountSync })
-  store = createResilientStore(createStore(resolved.dir), createStore(localCacheDir()), { onSyncResult: handleSyncResult, guardReplay: guardAccountReplay })
+  store = createResilientStore(createStore(resolved.dir), createStore(localCacheDir()), resilientOptions())
   dataDirSource = resolved.source
   storageStartedDisconnected = resolved.failedSources.length > 0
   storageFailedSources = resolved.failedSources
@@ -491,8 +526,18 @@ app.whenReady().then(() => {
   }
 
   // Platform-delt store (Fase 9.1) — oprettes én gang, uafhængig af hvilket team der er aktivt.
-  sharedStore = createResilientStore(createStore(path.join(platformRoot, '_shared')), createStore(localCacheDir('_shared')), { onSyncResult: handleSyncResult, guardReplay: guardAccountReplay })
-  if (!accountService.pending()) accountService.runWrite(migrateSharedMealPlanIfNeeded)
+  sharedStore = createResilientStore(createStore(path.join(platformRoot, '_shared')), createStore(localCacheDir('_shared')), resilientOptions())
+  // KRITISK: runWrite() er synkron og kaster STRAKS (attempts:1) hvis kontolaasen
+  // er kortvarigt optaget (fx to klienter der starter appen i samme sekund). Uden
+  // try/catch stopper en kastet fejl her HELE resten af denne .then()-callback —
+  // inklusiv createWindow() nedenfor — saa appen bliver en usynlig zombie-proces
+  // uden vindue og uden crash. Denne étgangs-migrering maa ALDRIG kunne blokere
+  // vinduet i at aabne; fejl her logges blot og proeves igen ved naeste opstart.
+  try {
+    if (!accountService.pending()) accountService.runWrite(migrateSharedMealPlanIfNeeded)
+  } catch (err) {
+    console.error('TCD Hub: madplan-migreringstjek fejlede (proeves igen ved naeste opstart):', err)
+  }
   startSharedWatcher()
 
   guestStore = createStore(path.join(app.getPath('userData'), 'guest-preferences'))
@@ -522,18 +567,21 @@ app.whenReady().then(() => {
   })
   const kvTarget = key => ['app-language-guest', 'user-theme-guest'].includes(key) ? guestStore : SHARED_KV_KEYS.has(key) ? sharedStore : store
 
-  ipcMain.handle('kv:get', (_event, key) => key === 'users' ? createStore(store.dataDir).getAsync(key, { skipCache: true }).then(publicUsers) : kvTarget(key).getAsync(key, { skipCache: true }))
-  ipcMain.handle('kv:get-many', (_event, keys) => Promise.all(keys.map(key => key === 'users' ? createStore(store.dataDir).getAsync(key, { skipCache: true }).then(publicUsers) : kvTarget(key).getAsync(key, { skipCache: true }))))
-  ipcMain.handle('kv:set', (_event, key, value) => kvTarget(key).set(key, value))
-  ipcMain.handle('kv:delete', (_event, key) => kvTarget(key).delete(key))
-  ipcMain.handle('kv:keys', () => store.keys().filter(key => !key.startsWith('__') && !key.startsWith('account-') && key !== 'active-sessions'))
+  // 'users' laeses fra usersStore()s cache (invalideret af watcheren) — foer laa
+  // der skipCache paa, dvs. en fuld SMB-rundtur ved HVER laesning af brugerlisten.
+  const readKv = key => key === 'users' ? usersStore().getAsync(key).then(publicUsers) : kvTarget(key).getAsync(key)
+  ipcMain.handle('kv:get', (_event, key) => readKv(key))
+  ipcMain.handle('kv:get-many', (_event, keys) => Promise.all(keys.map(readKv)))
+  ipcMain.handle('kv:set', (_event, key, value) => kvTarget(key).setAsync(key, value))
+  ipcMain.handle('kv:delete', (_event, key) => kvTarget(key).deleteAsync(key))
+  ipcMain.handle('kv:keys', async () => (await store.keysAsync()).filter(key => !key.startsWith('__') && !key.startsWith('account-') && key !== 'active-sessions'))
   ipcMain.handle('backup:export', () => exportBackup(createStore(store.dataDir)))
   // Atomar array-opdatering under fil-lås; broadcast med det samme så dette
   // vindues useKV-abonnenter opdaterer uden at vente på 2s-polleren.
-  ipcMain.handle('kv:update', (_event, key, operation) => {
+  ipcMain.handle('kv:update', async (_event, key, operation) => {
     const emailRename = key === 'users' && operation?.op === 'renameField' && operation.field !== operation.newField
     if (emailRename && path.resolve(store.dataDir) !== path.resolve(registeredTeamDir(platformRoot, registry.listTeams(platformRoot), currentTeamFolder).directory)) throw new Error('ACCOUNT_STORAGE_SCOPE_MISMATCH')
-    const result = emailRename ? accountService.rename(authService.current(_event.sender.id), currentTeamFolder, operation) : key === 'users' ? updateUsers(createStore(store.dataDir), operation, authService.current(_event.sender.id), registry.getCreatorEmail(platformRoot)) : kvTarget(key).update(key, operation)
+    const result = emailRename ? accountService.rename(authService.current(_event.sender.id), currentTeamFolder, operation) : key === 'users' ? updateUsers(usersStore(), operation, authService.current(_event.sender.id), registry.getCreatorEmail(platformRoot)) : await kvTarget(key).updateAsync(key, operation)
     if (emailRename) accountDataChanged()
     broadcast('kv:changed', [key])
     return result
@@ -609,8 +657,12 @@ app.whenReady().then(() => {
       const evidence = await resolveAssistantAnswer(assistant, localAI, request)
       const resolvedRequest = { ...request, question: evidence.contextQuestion || request.question }
       const answer = conciseGuideFact(evidence, resolvedRequest) || evidence
-      if (answer.mode === 'data' || answer.mode === 'unsupported') {
+      if (answer.mode === 'data' || answer.mode === 'unsupported' || answer.mode === 'action-proposal') {
         if (fingerprint(await assistant.revalidateSources(request, answer)) !== scope) throw new Error('Hubben eller adgangen blev ændret under opslaget')
+        // Best-effort log af ubesvarede spoergsmaal til senere at forbedre
+        // Hubert-daekningen - maa ALDRIG braekke selve svaret til brugeren.
+        const unansweredEntry = buildUnansweredLogEntry(resolvedRequest, answer)
+        if (unansweredEntry) store.updateAsync('hubert-unanswered-questions', { op: 'append', items: [{ id: crypto.randomUUID(), ...unansweredEntry }] }).catch(() => {})
         return answer
       }
       // Insufficient evidence never becomes an AI-generated invented answer.
@@ -843,15 +895,21 @@ app.whenReady().then(() => {
 
   ipcMain.handle('updates:publish', async (_event, payload) => {
     const version = String(payload.version)
-    // Tillader at publicere den samme version som denne app selv kører — andre
-    // klienter kan sagtens være bagud (fx stadig på 1.4.0), selvom manageren
-    // allerede er opdateret. Kun reelle nedgraderinger blokeres.
-    if (updater.isNewerVersion(app.getVersion(), version)) {
-      throw new Error(`Version ${version} er ældre end denne app (${app.getVersion()})`)
-    }
-    const existingManifest = updater.readManifest(platformRoot)
-    if (existingManifest && updater.isNewerVersion(existingManifest.version, version)) {
-      throw new Error(`Version ${version} er ældre end den seneste publicerede version (${existingManifest.version})`)
+    const setAsLatest = payload.setAsLatest !== false
+    // Disse to spærrer er kun relevante når versionen skal blive den nye
+    // "seneste" for ALLE klienter - en ren biblioteks-tilføjelse (setAsLatest:
+    // false) må gerne være en ældre version end det, manageren selv kører.
+    if (setAsLatest) {
+      // Tillader at publicere den samme version som denne app selv kører — andre
+      // klienter kan sagtens være bagud (fx stadig på 1.4.0), selvom manageren
+      // allerede er opdateret. Kun reelle nedgraderinger blokeres.
+      if (updater.isNewerVersion(app.getVersion(), version)) {
+        throw new Error(`Version ${version} er ældre end denne app (${app.getVersion()})`)
+      }
+      const existingManifest = updater.readManifest(platformRoot)
+      if (existingManifest && updater.isNewerVersion(existingManifest.version, version)) {
+        throw new Error(`Version ${version} er ældre end den seneste publicerede version (${existingManifest.version})`)
+      }
     }
     const manifest = await updater.publishUpdate(platformRoot, {
       zipPath: String(payload.zipPath),
@@ -859,9 +917,10 @@ app.whenReady().then(() => {
       notes: String(payload.notes || ''),
       publishedBy: authService.current(_event.sender.id).email,
       skipDelta: !!payload.skipDelta,
+      setAsLatest,
       onProgress: (progress) => broadcast('updates:publish-progress', progress),
     })
-    checkForUpdates()
+    if (setAsLatest) checkForUpdates()
     return manifest
   })
 

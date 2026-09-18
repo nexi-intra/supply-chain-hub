@@ -45,7 +45,12 @@ export function AccountMigrationRecovery({ userEmail, onLogout }: { userEmail: s
     if (!accounts) return
     let active = true, checking = false
     const check = async () => {
-      if (checking) return
+      // Denne komponent er altid monteret (ogsaa oven paa spil) og laeser IKKE
+      // via useKV, saa den fik ikke normalt den samme "data-game-active"-pause
+      // som resten af appen - hvert baggrunds-tjek er 2 IPC-rundture, der
+      // konkurrerede med spillets main-traad hver gang NOGEN aendrede data
+      // paa det delte drev (hyppigere efter watcheren blev speedet op).
+      if (checking || (typeof document !== 'undefined' && document.body?.hasAttribute('data-game-active'))) return
       checking = true
       try {
         const record = await accounts.status()

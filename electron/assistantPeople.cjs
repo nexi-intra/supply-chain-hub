@@ -110,4 +110,4 @@ function selectTaskPeople(question, principal, teams, readTeam, creatorEmail, se
   return { own, all, people: candidates }
 }
 
-module.exports = { isTaskQuestion, selectTaskPeople }
+module.exports = { isTaskQuestion, selectTaskPeople, listPeople, aliasesFor, canonical, bounded }

@@ -25,6 +25,7 @@
       "passwordsMismatch": "Salasanat eivät täsmää",
       "emailExists": "Käyttäjä tällä sähköpostilla on jo olemassa",
       "connectionFailed": "Ei voitu yhdistää. Yritä uudestaan.",
+      "storageBusy": "Tallennustila on toisen asiakkaan käytössä — odota hetki ja yritä uudelleen.",
       "wrongCredentials": "Virheellinen sähköposti/käyttäjätunnus tai salasana",
       "pendingApproval": "Tilisi odottaa johtajan hyväksyntää.",
       "rejected": "Pääsypyyntönne on hylätty. Ota yhteyttä johtajaan.",
@@ -606,6 +607,10 @@
     "titleRequired": "Otsikko vaaditaan",
     "atLeastOneSectionRequired": "Lisää vähintään yksi osa, jossa on sisältöä tai Word-asiakirja",
     "saveFailed": "Ohjetta ei voitu tallentaa",
+    "draftFoundTitle": "Tallentamaton luonnos löydetty",
+    "draftFoundBody": "Löydettiin automaattisesti tallennettu luonnos edellisestä istunnosta, jota ei tallennettu loppuun. Haluatko palauttaa sen?",
+    "draftRestore": "Palauta luonnos",
+    "draftDiscard": "Hylkää luonnos",
     "editTitle": "Muokkaa opasta",
     "newTitle": "Uusi opas",
     "versionArrowSuffix": "→ tallennetaan",
@@ -737,7 +742,16 @@
     "forceFullInstall": "Pakko asentaa kaikki asiakkaat",
     "forceFullInstallHint": "Sammuttaa nopeat delta-päivitykset tätä julkaisua varten. Suositellaan, jos vanhemmat asiakkaat eivät päivitä (esim. \"ENOENT ... app.asar\")",
     "publishUpdate": "Julkaise päivitys",
-    "selectNewPackage": "Valitse uusi sovelluspaketti (.zip)..."
+    "selectNewPackage": "Valitse uusi sovelluspaketti (.zip)...",
+    "setAsLatestLabel": "Aseta versioksi, johon kaikki päivittyvät automaattisesti",
+    "setAsLatestHint": "Poista käytöstä lisätäksesi version vain kirjastoon alla, muuttamatta mitä muille asiakkaille automaattisesti tarjotaan - hyödyllinen vanhemmalle väliversiolle (esim. 1.5.1), jonka muutama juuttunut käyttäjä tarvitsee ennen uusimman version saavuttamista.",
+    "addToLibrary": "Lisää kirjastoon",
+    "addedToLibraryPrefix": "Versio",
+    "addedToLibrarySuffix": "lisättiin kirjastoon. Sitä ei lähetetty kenellekään - valitse se tietylle käyttäjälle kohdassa \"Käyttäjän App-versiot\" pakottaaksesi sen ulos.",
+    "libraryTitle": "Versiokirjasto",
+    "libraryHint": "Kaikki lisäämäsi versiot. Valitse tietty versio käyttäjälle kohdassa \"Käyttäjän App-versiot\" alla.",
+    "libraryEmpty": "Kirjastossa ei vielä ole versioita.",
+    "libraryLatestBadge": "Uusin"
   },
   "clientVersionManager": {
     "noVersionToPush": "Työnnettävää versiota ei ole",
@@ -753,7 +767,9 @@
     "notSeenIn24h": "Ei näkyvissä 24h+",
     "pendingSuffix": "vireillä",
     "selectVersion": "Valitse versio",
-    "forcePrefix": "Voima v"
+    "forcePrefix": "Voima v",
+    "allHubsOption": "Kaikki hubit",
+    "crossHubReadOnlyHint": "Vaihda tähän hubiin pakottaaksesi päivityksen"
   },
   "dataStorageManager": {
     "sourceLabels": {

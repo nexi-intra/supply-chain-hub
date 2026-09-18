@@ -170,6 +170,11 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
   const shakeRef = useRef(0)
   const scoreRef = useRef(0)
   const flapAnimRef = useRef(0)
+  // Sand mens mellemrum/pil-op er trykket ned - forhindrer at OS'ets tastatur-
+  // gentagelse (holder man tasten nede, fyrer keydown igen og igen) sender
+  // flere flap() af sted for ÉT fysisk tryk, hvilket fik fuglen til at skyde
+  // ukontrolleret opad i stedet for ét kontrolleret hop.
+  const flapKeyHeldRef = useRef(false)
   const starsRef = useRef<{ x: number; y: number; size: number }[]>(
     Array.from({ length: 40 }, () => ({
       x: Math.random() * GAME_WIDTH,
@@ -586,6 +591,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
     frameCountRef.current = 0
     shakeRef.current = 0
     startedRef.current = false
+    flapKeyHeldRef.current = false
     gameStateRef.current = 'playing'
     setGameState('playing')
 
@@ -604,14 +610,27 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'Space' || e.key === 'ArrowUp') {
-        e.preventDefault()
-        flap()
-      }
+      if (e.code !== 'Space' && e.key !== 'ArrowUp') return
+      e.preventDefault()
+      // e.repeat daekker OS-gentagelse; flapKeyHeldRef daekker desuden det
+      // sjaeldne tilfaelde af to keydown i traek uden en keyup imellem.
+      if (e.repeat || flapKeyHeldRef.current) return
+      flapKeyHeldRef.current = true
+      flap()
     }
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space' || e.key === 'ArrowUp') flapKeyHeldRef.current = false
+    }
+    // Alt-tab eller klik uden for vinduet mens tasten er nede giver ellers
+    // ingen keyup - naeste faktiske tryk ville saa fejlagtigt blive ignoreret.
+    const handleBlur = () => { flapKeyHeldRef.current = false }
     window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keyup', handleKeyUp)
+    window.addEventListener('blur', handleBlur)
     return () => {
       window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+      window.removeEventListener('blur', handleBlur)
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current)
       }

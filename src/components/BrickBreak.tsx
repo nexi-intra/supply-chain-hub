@@ -197,7 +197,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
   const [balls, setBalls] = useState<Ball[]>([])
   const [users, setUsers] = useState<User[]>([])
   const [ballAttachedToPaddle, setBallAttachedToPaddle] = useState(true)
-  const [powerUps, setPowerUps] = useState<PowerUp[]>([])
   const [hasShield, setHasShield] = useState(false)
   const [shieldTimeLeft, setShieldTimeLeft] = useState(0)
   const [isFireball, setIsFireball] = useState(false)
@@ -206,7 +205,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
   const [speedPowerupTimeLeft, setSpeedPowerupTimeLeft] = useState(0)
   const [hasLaser, setHasLaser] = useState(false)
   const [laserTimeLeft, setLaserTimeLeft] = useState(0)
-  const [lasers, setLasers] = useState<Laser[]>([])
   const [enlargePaddleTimeLeft, setEnlargePaddleTimeLeft] = useState(0)
   const [shrinkPaddleTimeLeft, setShrinkPaddleTimeLeft] = useState(0)
   const [isStickyPaddle, setIsStickyPaddle] = useState(false)
@@ -243,9 +241,9 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const gameLoopRef = useRef<number | undefined>(undefined)
-  // Powerup-nedt\u00e6llinger (skjold/fireball/osv.) k\u00f8rer hver deres setInterval — samlet her
-  // s\u00e5 alle bliver ryddet, hvis komponenten unmountes midt i et powerup (fx spilleren
-  // navigerer v\u00e6k), i stedet for at l\u00e6kke en kørende timer der aldrig selv-clearer.
+  // Powerup-nedtaellinger (skjold/fireball/osv.) koerer hver deres setInterval — samlet her
+  // saa alle bliver ryddet, hvis komponenten unmountes midt i et powerup (fx spilleren
+  // navigerer vaek), i stedet for at laekke en koerende timer der aldrig selv-clearer.
   const activePowerupIntervalsRef = useRef<Set<ReturnType<typeof setInterval>>>(new Set())
 
   useEffect(() => {
@@ -514,7 +512,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
     setScore(0)
     setLevel(1)
     setLives(3)
-    setPowerUps([])
     setHasShield(false)
     setShieldTimeLeft(0)
     setIsFireball(false)
@@ -532,7 +529,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
     lasersRef.current = []
     setHasLaser(false)
     setLaserTimeLeft(0)
-    setLasers([])
     setGameState('waitingToLaunch')
   }
 
@@ -565,7 +561,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
     setBalls(newBalls)
     setBricks(newBricks)
     setLevel(newLevel)
-    setPowerUps([])
     setHasShield(false)
     setShieldTimeLeft(0)
     setIsFireball(false)
@@ -576,7 +571,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
     setSpeedPowerupTimeLeft(0)
     setHasLaser(false)
     setLaserTimeLeft(0)
-    setLasers([])
     setEnlargePaddleTimeLeft(0)
     setShrinkPaddleTimeLeft(0)
     setIsStickyPaddle(false)
@@ -970,7 +964,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
         radius: BALL_RADIUS
       }
       ballsRef.current = [attachedBall]
-      setBalls([attachedBall])
       return
     }
 
@@ -1100,7 +1093,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                 dy: POWERUP_FALL_SPEED
               }
               powerUpsRef.current = [...powerUpsRef.current, newPowerUp]
-              setPowerUps(prev => [...prev, newPowerUp])
             }
             
             spawnBrickParticles(brick)
@@ -1133,7 +1125,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                 dy: POWERUP_FALL_SPEED
               }
               powerUpsRef.current = [...powerUpsRef.current, newPowerUp]
-              setPowerUps(prev => [...prev, newPowerUp])
             }
             
             spawnBrickParticles(brick)
@@ -1191,7 +1182,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                   dy: POWERUP_FALL_SPEED
                 }
                 powerUpsRef.current = [...powerUpsRef.current, newPowerUp]
-                setPowerUps(prev => [...prev, newPowerUp])
               }
               
               spawnBrickParticles(brick)
@@ -1232,7 +1222,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
     })
     
     powerUpsRef.current = updatedPowerUps
-    setPowerUps(updatedPowerUps)
 
     if (hasLaserRef.current) {
       const currentTime = Date.now()
@@ -1254,7 +1243,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
           dy: -10
         }
         lasersRef.current = [...lasersRef.current, leftLaser, rightLaser]
-        setLasers(prev => [...prev, leftLaser, rightLaser])
         lastLaserTimeRef.current = currentTime
       }
     }
@@ -1303,7 +1291,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                 dy: POWERUP_FALL_SPEED
               }
               powerUpsRef.current = [...powerUpsRef.current, newPowerUp]
-              setPowerUps(prev => [...prev, newPowerUp])
             }
 
             laserBricksToRemove.push(index)
@@ -1317,7 +1304,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
     })
 
     lasersRef.current = updatedLasers
-    setLasers(updatedLasers)
 
     if (laserScoreIncrease > 0) {
       scoreRef.current += laserScoreIncrease
@@ -1328,9 +1314,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
 
     ballsRef.current = newBalls
     bricksRef.current = newBricks
-    
-    setBalls(newBalls)
-    setBricks(newBricks)
 
     if (newBalls.length === 0 && currentBalls.length > 0) {
       if (hasShieldRef.current) {
@@ -1340,14 +1323,12 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
         toast.info(shieldMsg)
         
         powerUpsRef.current = []
-        setPowerUps([])
         setIsFireball(false)
         setFireballTimeLeft(0)
         setBallSpeedMultiplier(1)
         setSpeedPowerupTimeLeft(0)
         setHasLaser(false)
         setLaserTimeLeft(0)
-        setLasers([])
         setEnlargePaddleTimeLeft(0)
         setShrinkPaddleTimeLeft(0)
         isFireballRef.current = false
@@ -1374,7 +1355,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
         shakeRef.current = 18
         
         powerUpsRef.current = []
-        setPowerUps([])
         setHasShield(false)
         setShieldTimeLeft(0)
         setIsFireball(false)
@@ -1383,7 +1363,6 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
         setSpeedPowerupTimeLeft(0)
         setHasLaser(false)
         setLaserTimeLeft(0)
-        setLasers([])
         setEnlargePaddleTimeLeft(0)
         setShrinkPaddleTimeLeft(0)
         hasShieldRef.current = false
@@ -1466,6 +1445,19 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
     const currentBalls = ballsRef.current
     const currentPaddle = paddleRef.current
 
+    // Genbrug én lodret glans-gradient til alle bricks (samme hoejde) i stedet for
+    // at allokere en ny pr. brick pr. frame, og drop shadowBlur pr. brick. Begge
+    // dele er tunge nok til at tabe FPS ved en fuld mur, hvilket faar den
+    // muse-styrede paddle til at halte selvom bolden ser glat ud.
+    const brickGlowH = currentBricks.length > 0 ? currentBricks[0].height : 0
+    let brickGlow: CanvasGradient | null = null
+    if (brickGlowH > 0) {
+      brickGlow = ctx.createLinearGradient(0, 0, 0, brickGlowH)
+      brickGlow.addColorStop(0, 'rgba(255, 255, 255, 0.45)')
+      brickGlow.addColorStop(0.4, 'rgba(255, 255, 255, 0.05)')
+      brickGlow.addColorStop(1, 'rgba(0, 0, 0, 0.25)')
+    }
+
     currentBricks.forEach(brick => {
       const hitsRemaining = brick.maxHits - brick.hits
       
@@ -1484,19 +1476,17 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
         displayColor = '#FF6B9D'
       }
       
-      ctx.shadowBlur = 12
-      ctx.shadowColor = displayColor
       ctx.fillStyle = displayColor
       ctx.globalAlpha = 1
       ctx.fillRect(brick.x, brick.y, brick.width, brick.height)
-      ctx.shadowBlur = 0
 
-      const brickGlow = ctx.createLinearGradient(brick.x, brick.y, brick.x, brick.y + brick.height)
-      brickGlow.addColorStop(0, 'rgba(255, 255, 255, 0.45)')
-      brickGlow.addColorStop(0.4, 'rgba(255, 255, 255, 0.05)')
-      brickGlow.addColorStop(1, 'rgba(0, 0, 0, 0.25)')
-      ctx.fillStyle = brickGlow
-      ctx.fillRect(brick.x, brick.y, brick.width, brick.height)
+      if (brickGlow) {
+        ctx.save()
+        ctx.translate(brick.x, brick.y)
+        ctx.fillStyle = brickGlow
+        ctx.fillRect(0, 0, brick.width, brick.height)
+        ctx.restore()
+      }
 
       ctx.fillStyle = 'rgba(255, 255, 255, 0.55)'
       ctx.fillRect(brick.x + 2, brick.y + 2, brick.width - 4, Math.max(2, brick.height * 0.22))

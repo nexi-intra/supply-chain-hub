@@ -18,6 +18,7 @@ import { DataStorageManager } from '@/components/DataStorageManager'
 import { UpdateManager } from '@/components/UpdateManager'
 import { ClientVersionManager } from '@/components/ClientVersionManager'
 import { GameLeaderboardAdmin } from '@/components/GameLeaderboardAdmin'
+import { CrossHubHighscores } from '@/components/CrossHubHighscores'
 import { toast } from 'sonner'
 import { hasCreatorAccess } from '@/lib/userRoles'
 import { hashPassword } from '@/lib/passwords'
@@ -471,6 +472,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
                   playCountsKey="neon-snake-play-counts"
                   users={users}
                 />
+                <CrossHubHighscores gameTitle="Neon Snake" leaderboardKey="neon-snake-global-leaderboard" users={users} />
               </TabsContent>
 
               <TabsContent value="dodger-scores" className="space-y-6">
@@ -481,6 +483,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
                   playCountsKey="endless-dodger-play-counts"
                   users={users}
                 />
+                <CrossHubHighscores gameTitle="Chickeninvasion" leaderboardKey="endless-dodger-global-leaderboard" users={users} />
               </TabsContent>
 
               <TabsContent value="brick-break-scores" className="space-y-6">
@@ -492,6 +495,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
                   hasLevel
                   users={users}
                 />
+                <CrossHubHighscores gameTitle="Brick Break" leaderboardKey="brickbreak-global-leaderboard" users={users} />
               </TabsContent>
 
               <TabsContent value="nexiflyer-scores" className="space-y-6">
@@ -502,6 +506,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
                   playCountsKey="nexi-flyer-play-counts"
                   users={users}
                 />
+                <CrossHubHighscores gameTitle="Nexi Flyer" leaderboardKey="nexi-flyer-global-leaderboard" users={users} />
               </TabsContent>
 
               <TabsContent value="tetris-scores" className="space-y-6">
@@ -514,6 +519,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
                   categorySettings={{ all: { label: t.managerPanel.games.highscores, color: 'text-primary', bg: 'bg-primary/10', border: 'border-primary/30', statBg: 'bg-primary/10', statBorder: 'border-primary/20', statText: 'text-primary' } }}
                   users={users}
                 />
+                <CrossHubHighscores gameTitle="Tetris" leaderboardKey="tetris-global-leaderboard" categories={['all']} users={users} />
               </TabsContent>
             </Tabs>
           </TabsContent>
