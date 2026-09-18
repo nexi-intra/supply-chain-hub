@@ -37,6 +37,10 @@ export interface Guide {
   author?: string
   createdBy?: string
   updatedBy?: string
+  /** Personen der skal holde guiden opdateret - IKKE noedvendigvis forfatteren
+   *  (fx en fagperson paa et omraade forfatteren ikke selv har ekspertise i).
+   *  Bruges til at maalrette gennemgangs-paamindelser. */
+  responsibleEmail?: string
   createdAt: number
   updatedAt: number
   /** null/undefined = intet opdaterings-interval */
@@ -69,6 +73,7 @@ export interface GuideVersionSnapshot {
   language?: 'da' | 'en' | 'fi'
   content?: string
   reviewIntervalMonths?: number | null
+  responsibleEmail?: string
   fileUrl?: string
   wordFileName?: string
   fileSize?: number
@@ -99,6 +104,9 @@ export interface GuideDraft {
   sections: GuideSection[]
   coverImageId?: string
   reviewInterval: number | null
+  /** yyyy-MM-dd, eller undefined = brug det automatisk foreslaaede naeste-tjek. */
+  nextReviewDate?: string
+  responsibleEmail?: string
   otherTeamCodes: string[]
   savedBy: string
   lastAutoSavedAt: number
@@ -164,6 +172,21 @@ export function addMonths(timestamp: number, months: number): number {
 export function computeNextReviewAt(fromTimestamp: number, intervalMonths: number | null | undefined): number | null {
   if (!intervalMonths) return null
   return addMonths(fromTimestamp, intervalMonths)
+}
+
+/** yyyy-MM-dd (lokal dato) -> tidsstempel ved middag, for at undgaa tidszone-off-by-one. */
+export function dateStringToTimestamp(value: string): number {
+  return new Date(`${value}T12:00:00`).getTime()
+}
+
+/** Tidsstempel -> yyyy-MM-dd (lokal dato), til brug i et <DatePickerField>. */
+export function timestampToDateString(timestamp: number): string {
+  const date = new Date(timestamp)
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+export function todayDateString(now: number = Date.now()): string {
+  return timestampToDateString(now)
 }
 
 export type ReviewStatus = 'overdue' | 'due-soon' | 'ok' | 'none'

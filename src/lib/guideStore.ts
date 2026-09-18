@@ -57,6 +57,7 @@ export async function saveVersionSnapshot(guide: Guide, savedBy: string, changeN
       language: guide.language,
       content: guide.content,
       reviewIntervalMonths: guide.reviewIntervalMonths,
+      responsibleEmail: guide.responsibleEmail,
       fileUrl: guide.fileUrl,
       wordFileName: guide.wordFileName,
       fileSize: guide.fileSize,

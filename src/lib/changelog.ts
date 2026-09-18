@@ -8,6 +8,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.5.5',
+    items: [
+      'Guide Bibliotek: næste-tjek-datoen kan nu sættes til en specifik dag i stedet for altid at blive "i dag + interval" — så guider I opretter samtidig ikke alle forfalder på samme dato',
+      'Guide Bibliotek: en guide kan nu have en "ansvarlig for gennemgang" — en anden person end forfatteren, som får påmindelserne om at holde den opdateret',
+    ],
+  },
+  {
     version: '1.5.4',
     items: [
       'Appen henter indhold markant hurtigere: forsiden loader op til dobbelt så hurtigt første gang, og efterfølgende navigation er øjeblikkelig — data genhentes kun når noget faktisk er ændret på drevet',
