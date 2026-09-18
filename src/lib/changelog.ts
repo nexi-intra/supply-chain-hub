@@ -23,6 +23,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Hubert kan nu følge op på et ufuldstændigt handlingsforslag ("hvilke datoer?" → dit næste svar med bare datoerne bliver forstået), og hvert svar kan nu bedømmes med tommel op/ned',
       'To Do: både team- og personlige to-do\'er kan nu få en forfaldsdato — du får en notifikation i klokken, når den falder i dag eller er overskredet',
       'Creator: Arcade-highscores og brugernes app-versioner kan nu ses samlet på tværs af ALLE hubs (med hub-filter), uden at skulle skifte aktivt hub først',
+      'Creator: nyt version-bibliotek under App-opdateringer — læg en ældre version ind (fx som mellemtrin for fastlåste klienter) uden at gøre den til den version alle andre automatisk opdaterer til',
       'Highscores i Spilhjørnet hentes markant hurtigere paa tvaers af teams (ingen unoedvendig genindlaesning fra drevet, og laesninger koerer nu parallelt i stedet for én ad gangen)',
       'Brick Break føles meget mere responsivt: fjernet unoedvendige gen-tegninger 60 gange i sekundet, der konkurrerede med tastatur/mus-input',
     ],
