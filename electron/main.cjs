@@ -315,54 +315,83 @@ function startPendingSyncRetry() {
   pendingSyncRetryTimer.unref?.()
 }
 
-// --- Automatisk daglig backup -------------------------------------------
-// Skriver hele storen (dekrypteret) til <datamappe>/Backup/tcd-hub-auto-backup-YYYY-MM-DD.json.
-// Exclusive create ('wx') sikrer at kun én af de delte klienter skriver dagens fil.
+// --- Automatisk backup -------------------------------------------
+// Skriver hele storen (dekrypteret) til <datamappe>/Backup/. To lag:
+// 1) ÉN daglig fil (tcd-hub-auto-backup-YYYY-MM-DD.json), som hidtil.
+// 2) I arbejdstiden (06-16) DESUDEN én fil PR. TIME
+//    (tcd-hub-auto-backup-YYYY-MM-DD_HH.json). Uden dette lag kan op til et
+//    helt døgns ændringer gå tabt hvis noget overskriver data midt på dagen
+//    (skete for TRR 2026-09-18 — kun morgen-backuppen fandtes, så alt der
+//    blev tastet ind resten af dagen kunne ikke genskabes fra en backup).
+// Exclusive create ('wx') sikrer at kun én af de delte klienter skriver en given fil.
 const AUTO_BACKUP_KEEP = 14
+const AUTO_BACKUP_HOURLY_KEEP = 110 // ~10 arbejdsdage a 11 timer (06-16)
+const AUTO_BACKUP_HOURLY_START_HOUR = 6
+const AUTO_BACKUP_HOURLY_END_HOUR = 16 // eksklusiv - sidste time-backup tages kl. 15
 const AUTO_BACKUP_CHECK_INTERVAL = 60 * 60 * 1000
 let autoBackupTimer = null
+
+/** Skriver `payload` til `fileName` medmindre filen allerede findes. Returnerer true hvis DENNE klient skrev den. */
+function writeBackupFileOnce(backupDir, fileName, payload) {
+  const target = path.join(backupDir, fileName)
+  if (fs.existsSync(target)) return false
+  let fd
+  try {
+    fd = fs.openSync(target, 'wx')
+  } catch (err) {
+    if (err.code === 'EEXIST') return false // En anden klient nåede det først.
+    throw err
+  }
+  try {
+    fs.writeSync(fd, payload)
+  } finally {
+    fs.closeSync(fd)
+  }
+  return true
+}
 
 function backupStore(targetStore) {
   try {
     const backupDir = path.join(targetStore.dataDir, 'Backup')
     fs.mkdirSync(backupDir, { recursive: true })
-    const today = new Date().toISOString().slice(0, 10)
-    const target = path.join(backupDir, `tcd-hub-auto-backup-${today}.json`)
-    if (fs.existsSync(target)) return
+    const now = new Date()
+    const today = now.toISOString().slice(0, 10)
+    const hour = now.getHours()
 
     const payload = JSON.stringify({
       app: 'tcd-hub',
       formatVersion: 1,
-      exportedAt: new Date().toISOString(),
+      exportedAt: now.toISOString(),
       auto: true,
       data: targetStore.dumpAll(),
     }, null, 2)
 
-    let fd
-    try {
-      fd = fs.openSync(target, 'wx')
-    } catch (err) {
-      if (err.code === 'EEXIST') return // En anden klient nåede det først.
-      throw err
+    if (writeBackupFileOnce(backupDir, `tcd-hub-auto-backup-${today}.json`, payload)) {
+      console.log(`TCD Hub: automatisk daglig backup skrevet: ${today}`)
     }
-    try {
-      fs.writeSync(fd, payload)
-    } finally {
-      fs.closeSync(fd)
-    }
-    console.log(`TCD Hub: automatisk backup skrevet: ${target}`)
 
-    // Rotation: behold de nyeste AUTO_BACKUP_KEEP auto-backups.
-    const autoBackups = fs.readdirSync(backupDir)
-      .filter((name) => /^tcd-hub-auto-backup-\d{4}-\d{2}-\d{2}\.json$/.test(name))
-      .sort()
-    for (const name of autoBackups.slice(0, Math.max(0, autoBackups.length - AUTO_BACKUP_KEEP))) {
+    if (hour >= AUTO_BACKUP_HOURLY_START_HOUR && hour < AUTO_BACKUP_HOURLY_END_HOUR) {
+      const hourLabel = `${today}_${String(hour).padStart(2, '0')}`
+      if (writeBackupFileOnce(backupDir, `tcd-hub-auto-backup-${hourLabel}.json`, payload)) {
+        console.log(`TCD Hub: automatisk time-backup skrevet: ${hourLabel}`)
+      }
+    }
+
+    // Rotation: daglige og time-baserede auto-backups holdes hver deres antal.
+    const allBackups = fs.readdirSync(backupDir)
+    const dailyBackups = allBackups.filter((name) => /^tcd-hub-auto-backup-\d{4}-\d{2}-\d{2}\.json$/.test(name)).sort()
+    for (const name of dailyBackups.slice(0, Math.max(0, dailyBackups.length - AUTO_BACKUP_KEEP))) {
+      try { fs.unlinkSync(path.join(backupDir, name)) } catch {}
+    }
+    const hourlyBackups = allBackups.filter((name) => /^tcd-hub-auto-backup-\d{4}-\d{2}-\d{2}_\d{2}\.json$/.test(name)).sort()
+    for (const name of hourlyBackups.slice(0, Math.max(0, hourlyBackups.length - AUTO_BACKUP_HOURLY_KEEP))) {
       try { fs.unlinkSync(path.join(backupDir, name)) } catch {}
     }
   } catch (err) {
     console.error('TCD Hub: automatisk backup fejlede', err)
   }
 }
+
 
 function runAutoBackup() {
   backupStore(store)
