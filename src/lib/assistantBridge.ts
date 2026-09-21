@@ -20,7 +20,7 @@ export interface AssistantActionProposal {
   summary: string
 }
 export interface AssistantAnswer {
-  mode: 'data' | 'retrieval' | 'ai' | 'unsupported' | 'knowledge' | 'action-proposal'
+  mode: 'data' | 'retrieval' | 'ai' | 'unsupported' | 'knowledge' | 'action-proposal' | 'app-guide' | 'general'
   text: string
   sources: AssistantSource[]
   personChoices?: Array<{ id: string; label: string }>
@@ -38,7 +38,7 @@ export interface AssistantStatus { installed: boolean; running: boolean; busy: b
 export interface AssistantProvisionProgress { copied: number; total: number; ratio: number }
 export interface AssistantApi {
   status(scope: AssistantScope): Promise<AssistantStatus>
-  ask(request: AssistantScope & { question: string; language: string; includeImages: boolean; image?: string; selectedPerson?: string; previousQuestion?: string; conversation?: string[]; page?: number }): Promise<AssistantAnswer>
+  ask(request: AssistantScope & { question: string; language: string; includeImages: boolean; image?: string; selectedPerson?: string; previousQuestion?: string; conversation?: string[]; page?: number; general?: boolean }): Promise<AssistantAnswer>
   stop(options?: { clearCache?: boolean }): Promise<void>
   prepare(scope: AssistantScope): Promise<{ guideCount: number; stepCount: number }>
   provision(scope: AssistantScope): Promise<AssistantStatus>

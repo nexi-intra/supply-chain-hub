@@ -13,12 +13,36 @@ contextBridge.exposeInMainWorld('electronAccounts', {
 contextBridge.exposeInMainWorld('electronBackup', {
   export: () => ipcRenderer.invoke('backup:export'),
 })
+// Login/resume/renew already retry internally against the shared account lock
+// (accountService.cjs, ~40 attempts ≈ 8s) before ever throwing KV_LOCK_BUSY, but
+// on a genuinely busy SMB share (confirmed live: multiple concurrent clients
+// can keep the lock churning for several seconds straight) even that can run
+// out. A single leftover KV_LOCK_BUSY must never be shown to the user as "you
+// cannot log in" when a retry a moment later would simply work - so retry the
+// WHOLE call here too (same backoff+jitter shape already used for KV writes in
+// src/lib/electronKvBridge.ts). Kept SHORT (only 2 extra attempts): each retry
+// re-runs the full ~8s internal budget above, so a long outer ladder here would
+// compound into an excessive total wait. Safe to retry: a busy-lock error means
+// the operation never ran, so nothing can be applied twice.
+const AUTH_RETRY_BACKOFF_MS = [500, 1500]
+async function retryOnLockBusy(invoke) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await invoke()
+    } catch (error) {
+      const message = String(error?.message ?? error)
+      if (attempt >= AUTH_RETRY_BACKOFF_MS.length || !message.includes('KV_LOCK_BUSY')) throw error
+      const jitter = 0.7 + Math.random() * 0.6
+      await new Promise(resolve => setTimeout(resolve, Math.round(AUTH_RETRY_BACKOFF_MS[attempt] * jitter)))
+    }
+  }
+}
 contextBridge.exposeInMainWorld('electronAuth', {
-  login: request => ipcRenderer.invoke('auth:login', request),
+  login: request => retryOnLockBusy(() => ipcRenderer.invoke('auth:login', request)),
   signup: request => ipcRenderer.invoke('auth:signup', request),
-  resume: token => ipcRenderer.invoke('auth:resume', token),
+  resume: token => retryOnLockBusy(() => ipcRenderer.invoke('auth:resume', token)),
   current: () => ipcRenderer.invoke('auth:current'),
-  renew: () => ipcRenderer.invoke('auth:renew'),
+  renew: () => retryOnLockBusy(() => ipcRenderer.invoke('auth:renew')),
   logout: () => ipcRenderer.invoke('auth:logout'),
   selectView: viewId => ipcRenderer.invoke('auth:select-view', viewId),
   profile: request => ipcRenderer.invoke('auth:profile', request),

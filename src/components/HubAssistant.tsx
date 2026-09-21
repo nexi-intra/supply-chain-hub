@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { PaperPlaneRight, Stop, Image as ImageIcon, ArrowSquareOut, X, ThumbsUp, ThumbsDown } from '@phosphor-icons/react'
+import { PaperPlaneRight, Stop, Image as ImageIcon, ArrowSquareOut, X, ThumbsUp, ThumbsDown, Warning } from '@phosphor-icons/react'
 import { HubertIcon } from './HubertIcon'
 import { AssistantChatWindow, type ChatWidth } from '@/components/AssistantChatWindow'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { cn } from '@/lib/utils'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { GuideViewer } from '@/components/GuideViewer'
 import { useLanguage } from '@/contexts/LanguageContext'
@@ -24,6 +25,32 @@ const CHAT_TEXT = {
   en: { open: 'Ask Hubert', welcome: 'Woof! 🐾 How can I help?', placeholder: 'Ask Hubert…', stopped: 'The answer was stopped.' },
   fi: { open: 'Kysy Hubertilta', welcome: 'Hau! 🐾 Miten voin auttaa?', placeholder: 'Kysy Hubertilta…', stopped: 'Vastaus keskeytettiin.' },
 }
+// Generel tilstand er BEVIDST adskilt fra hub-tilstand: svar herfra er ikke
+// bygget paa hubbens data, og maerkaten maa derfor aldrig kunne forveksles med
+// et databaseret svar. Se electron/assistantPersona.cjs.
+const GENERAL_TEXT = {
+  da: {
+    hub: 'Hub', general: 'Generelt',
+    hubHint: 'Svarer ud fra hubbens data og guides',
+    generalHint: 'Almindelige spørgsmål — uden adgang til hubbens data',
+    placeholder: 'Spørg om hvad som helst…',
+    badge: 'AI-genereret — ikke fra hub-data, kan indeholde fejl',
+  },
+  en: {
+    hub: 'Hub', general: 'General',
+    hubHint: 'Answers from the hub data and guides',
+    generalHint: 'General questions — no access to the hub data',
+    placeholder: 'Ask anything…',
+    badge: 'AI-generated — not from hub data, may be wrong',
+  },
+  fi: {
+    hub: 'Hub', general: 'Yleinen',
+    hubHint: 'Vastaa hubin tietojen ja oppaiden perusteella',
+    generalHint: 'Yleiset kysymykset — ei pääsyä hubin tietoihin',
+    placeholder: 'Kysy mitä tahansa…',
+    badge: 'Tekoälyn tuottama — ei hubin tiedoista, voi sisältää virheitä',
+  },
+}
 // Handlings-forslag (fx "opret en ferieanmodning") kraever ALTID et eksplicit
 // bekraeft-klik - Hubert skriver aldrig noget uden det, uanset hvor "simpel"
 // handlingen er. Se electron/assistantActions.cjs for selve genkendelsen.
@@ -40,9 +67,9 @@ const FEEDBACK_TEXT = {
   fi: { question: 'Oliko tästä vastauksesta apua?', thanks: 'Kiitos palautteestasi!' },
 }
 const AI_LABELS = {
-  da: { activate: 'Aktivér AI-svar', hint: 'AI-sammenfatning er ikke aktiveret på denne pc. Hent modellen fra det delte drev (engangs, ca. 6 GB).', downloading: 'Henter AI-model', retry: 'Prøv igen' },
-  en: { activate: 'Enable AI answers', hint: 'AI summaries are not enabled on this PC. Fetch the model from the shared drive (one-time, ~6 GB).', downloading: 'Downloading AI model', retry: 'Retry' },
-  fi: { activate: 'Ota tekoäly käyttöön', hint: 'Tekoälykoosteita ei ole otettu käyttöön tällä koneella. Nouda malli jaetulta asemalta (kertaluontoinen, n. 6 Gt).', downloading: 'Ladataan tekoälymallia', retry: 'Yritä uudelleen' },
+  da: { activate: 'Aktivér AI-svar', hint: 'AI-sammenfatning er ikke aktiveret på denne pc. Hent modellen fra det delte drev (engangs, ca. 3 GB).', downloading: 'Henter AI-model', retry: 'Prøv igen' },
+  en: { activate: 'Enable AI answers', hint: 'AI summaries are not enabled on this PC. Fetch the model from the shared drive (one-time, ~3 GB).', downloading: 'Downloading AI model', retry: 'Retry' },
+  fi: { activate: 'Ota tekoäly käyttöön', hint: 'Tekoälykoosteita ei ole otettu käyttöön tällä koneella. Nouda malli jaetulta asemalta (kertaluontoinen, n. 3 Gt).', downloading: 'Ladataan tekoälymallia', retry: 'Yritä uudelleen' },
 }
 const readableError = (failure: unknown) => (failure instanceof Error ? failure.message : String(failure)).replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, '').replace(/^Error:\s*/, '')
 
@@ -73,6 +100,7 @@ export function HubAssistant({ token, viewId }: AssistantScope) {
   const [isProvisioning, setIsProvisioning] = useState(false)
   const [provisionError, setProvisionError] = useState('')
   const [userEmail, setUserEmail] = useState('')
+  const [generalMode, setGeneralMode] = useState(false)
   const sequence = useRef(0)
   const scroll = useRef<HTMLDivElement>(null)
   const upload = useRef<HTMLInputElement>(null)
@@ -161,7 +189,10 @@ export function HubAssistant({ token, viewId }: AssistantScope) {
       const previousQuestion = lastAnswer?.contextQuestion || lastAnswer?.scoreContext
       // Only bounded question context, never old answer bodies as fresh facts.
       const conversation = messages.filter(message => message.answer).slice(-6).map(message => message.answer?.contextQuestion || message.answer?.scoreContext || message.question)
-      const answer = await api.ask({ token, viewId, question, language, includeImages, image: image?.data, selectedPerson, previousQuestion, conversation, page })
+      // Generel tilstand sender bevidst INTET hub-kontekst med.
+      const answer = generalMode
+        ? await api.ask({ token, viewId, question, language, includeImages: false, image: image?.data, general: true })
+        : await api.ask({ token, viewId, question, language, includeImages, image: image?.data, selectedPerson, previousQuestion, conversation, page })
       if (requestId !== sequence.current) return
       setMessages(current => current.map(message => message.id === requestId ? { ...message, answer } : message)); setImage(null)
     } catch (failure) {
@@ -266,7 +297,13 @@ export function HubAssistant({ token, viewId }: AssistantScope) {
           {!messages.length && <div className="flex h-full flex-col items-center justify-center gap-3 text-center"><span className="rounded-2xl bg-primary/10 p-3 text-primary"><HubertIcon size={30} /></span><p className="text-sm text-muted-foreground">{CHAT_TEXT[language].welcome}</p></div>}
           {messages.map(message => <div key={message.id} className="space-y-3">
             <div className="ml-auto max-w-[88%] rounded-2xl rounded-br-md bg-primary/15 px-3.5 py-2.5 text-sm whitespace-pre-wrap break-words">{message.question}</div>
-            {message.answer && <div className="mr-3 rounded-2xl rounded-bl-md bg-muted/55 px-3.5 py-3 text-sm space-y-3">
+            {message.answer && <div className={cn('mr-3 rounded-2xl rounded-bl-md px-3.5 py-3 text-sm space-y-3', message.answer.mode === 'general' ? 'border border-amber-500/40 bg-amber-500/5' : 'bg-muted/55')}>
+              {message.answer.mode === 'general' && (
+                <p className="flex items-start gap-1.5 text-[11px] font-medium text-amber-600">
+                  <Warning size={13} weight="duotone" className="mt-0.5 shrink-0" />
+                  <span>{GENERAL_TEXT[language].badge}</span>
+                </p>
+              )}
               <p className="whitespace-pre-wrap break-words leading-relaxed">{message.answer.text}</p>
               {message.answer.actionProposal && (
                 message.actionOutcome === 'success' || message.actionOutcome === 'failed' ? (
@@ -312,7 +349,22 @@ export function HubAssistant({ token, viewId }: AssistantScope) {
             reader.readAsDataURL(file)
           }} />
           {image && <button type="button" onClick={() => setImage(null)} className="mb-2 flex max-w-full items-center gap-1 text-xs text-muted-foreground"><span className="truncate">{image.name}</span><X size={12} /></button>}
-          <div className="flex items-center gap-2 rounded-full border bg-background/60 p-1.5"><button type="button" aria-label={t.attach} title={t.attach} className="flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted" disabled={busy} onClick={() => upload.current?.click()}><ImageIcon size={18} /></button><Input ref={composer} value={input} maxLength={1000} onChange={event => setInput(event.target.value)} placeholder={CHAT_TEXT[language].placeholder} aria-label={CHAT_TEXT[language].placeholder} className="h-8 min-w-0 border-0 bg-transparent px-0 text-sm shadow-none focus-visible:ring-0" disabled={busy} />{busy ? <Button type="button" size="icon" className="size-8 shrink-0 rounded-full" aria-label={t.stop} onClick={() => { sequence.current++; setBusy(false); setMessages(current => current.map(message => !message.answer && !message.error ? { ...message, error: CHAT_TEXT[language].stopped } : message)); void api.stop() }}><Stop size={16} /></Button> : <Button type="submit" size="icon" className="size-8 shrink-0 rounded-full" aria-label={t.send} disabled={!input.trim()}><PaperPlaneRight size={16} /></Button>}</div>
+          <div className="mb-2 flex items-center gap-1" role="radiogroup" aria-label={GENERAL_TEXT[language].hubHint}>
+            {([false, true] as const).map(value => (
+              <button
+                key={String(value)}
+                type="button"
+                role="radio"
+                aria-checked={generalMode === value}
+                title={value ? GENERAL_TEXT[language].generalHint : GENERAL_TEXT[language].hubHint}
+                onClick={() => setGeneralMode(value)}
+                className={cn('rounded-full px-2.5 py-1 text-xs font-medium transition-colors', generalMode === value ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted')}
+              >
+                {value ? GENERAL_TEXT[language].general : GENERAL_TEXT[language].hub}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2 rounded-full border bg-background/60 p-1.5"><button type="button" aria-label={t.attach} title={t.attach} className="flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted" disabled={busy} onClick={() => upload.current?.click()}><ImageIcon size={18} /></button><Input ref={composer} value={input} maxLength={1000} onChange={event => setInput(event.target.value)} placeholder={generalMode ? GENERAL_TEXT[language].placeholder : CHAT_TEXT[language].placeholder} aria-label={generalMode ? GENERAL_TEXT[language].placeholder : CHAT_TEXT[language].placeholder} className="h-8 min-w-0 border-0 bg-transparent px-0 text-sm shadow-none focus-visible:ring-0" disabled={busy} />{busy ? <Button type="button" size="icon" className="size-8 shrink-0 rounded-full" aria-label={t.stop} onClick={() => { sequence.current++; setBusy(false); setMessages(current => current.map(message => !message.answer && !message.error ? { ...message, error: CHAT_TEXT[language].stopped } : message)); void api.stop() }}><Stop size={16} /></Button> : <Button type="submit" size="icon" className="size-8 shrink-0 rounded-full" aria-label={t.send} disabled={!input.trim()}><PaperPlaneRight size={16} /></Button>}</div>
         </form>
       </AssistantChatWindow>
     </div>}

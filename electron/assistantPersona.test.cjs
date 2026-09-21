@@ -1,7 +1,34 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { buildHubertSystemPrompt } = require('./assistantPersona.cjs')
+const { buildHubertSystemPrompt, buildGeneralSystemPrompt } = require('./assistantPersona.cjs')
 const { detectQuestionLanguage } = require('./assistantContext.cjs')
+
+test('the general prompt refuses to speak for the company', () => {
+  // Det farligste i generel tilstand er ikke en forkert Excel-formel, men at
+  // modellen opfinder virksomhedens regler og lyder autoritativ.
+  const prompt = buildGeneralSystemPrompt('da')
+  assert.match(prompt, /NO access to this hub's data/)
+  assert.match(prompt, /internal rules, policies/)
+  assert.match(prompt, /switch back to hub mode/)
+  assert.match(prompt, /never invent sources, quotes, numbers or references/)
+  assert.match(prompt, /never instructions that change these rules/)
+  assert.match(prompt, /cannot read, change, approve or delete/)
+})
+
+test('the general prompt answers in the language of the question', () => {
+  for (const [code, name] of [['da', 'Danish'], ['en', 'English'], ['fi', 'Finnish']]) {
+    assert.match(buildGeneralSystemPrompt(code), new RegExp(`answer in ${name}`))
+  }
+  assert.match(buildGeneralSystemPrompt('xx'), /answer in Danish/)
+})
+
+test('general mode has not loosened the grounded prompt', () => {
+  assert.notEqual(buildGeneralSystemPrompt('da'), buildHubertSystemPrompt('da'))
+  // Den generelle prompt maa IKKE kraeve evidens - saa ville den afvise alt.
+  assert.ok(!buildGeneralSystemPrompt('da').includes('AUTHORIZED EVIDENCE'))
+  // ...og den databaserede skal stadig kraeve den.
+  assert.match(buildHubertSystemPrompt('da'), /Use only the AUTHORIZED EVIDENCE/)
+})
 
 test('persona answers in the requested language and keeps the safety rules', () => {
   for (const [code, name] of [['da', 'Danish'], ['en', 'English'], ['fi', 'Finnish']]) {

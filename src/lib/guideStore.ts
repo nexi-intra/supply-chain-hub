@@ -29,6 +29,28 @@ export async function deleteDraft(guideId: string): Promise<void> {
   await window.kv.delete(draftKey(guideId))
 }
 
+/**
+ * Brugerens egne kladder, nyeste først. Kladder ligger i teamets KV (krypteret
+ * på drevet), så her filtreres på `savedBy` — en kladde er kun ejerens eget
+ * ugemte arbejde og hører ikke hjemme i kollegers oversigt.
+ */
+export async function listDrafts(userEmail: string): Promise<GuideDraft[]> {
+  const prefix = draftKey('')
+  const keys = (await window.kv.keys()).filter((key) => key.startsWith(prefix))
+  const drafts = await Promise.all(keys.map((key) => window.kv.get<GuideDraft>(key).catch(() => undefined)))
+  return drafts
+    .filter((draft): draft is GuideDraft => !!draft?.guideId && draft.savedBy === userEmail)
+    .sort((a, b) => (b.lastAutoSavedAt || 0) - (a.lastAutoSavedAt || 0))
+}
+
+/** Kort resumé til kladdelisten: titel hvis den findes, ellers første trin. */
+export function draftLabel(draft: GuideDraft): string {
+  const title = draft.title?.trim()
+  if (title) return title
+  const firstText = draft.sections?.flatMap((section) => [section.heading, ...(section.steps || []).map((step) => step.text)]).find((text) => text?.trim())
+  return firstText?.trim().slice(0, 80) || ''
+}
+
 /** "1.02" -> "1.03". Ugyldige/gamle værdier bliver "1.00". */
 export function bumpVersion(version?: string): string {
   const parsed = Number.parseFloat(version || '')
@@ -57,6 +79,7 @@ export async function saveVersionSnapshot(guide: Guide, savedBy: string, changeN
       language: guide.language,
       content: guide.content,
       reviewIntervalMonths: guide.reviewIntervalMonths,
+      responsibleEmail: guide.responsibleEmail,
       fileUrl: guide.fileUrl,
       wordFileName: guide.wordFileName,
       fileSize: guide.fileSize,

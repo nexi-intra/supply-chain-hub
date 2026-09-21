@@ -35,9 +35,13 @@ function availablePort() {
   })
 }
 
-function createLocalAI({ assetDir = DEFAULT_ASSET_DIR, sharedAssetDir = null, freeMemory = () => os.freemem(), minimumFreeGiB, idleMs = 120000, defaultModelId = '8b' } = {}) {
+// Loftet var 384, hvilket afskar trinvise vejledninger og generelle svar midt i
+// en saetning. Hoejere loft koster kun tid naar kalderen faktisk beder om mere.
+const MAX_COMPLETION_TOKENS = 1536
+
+function createLocalAI({ assetDir = DEFAULT_ASSET_DIR, sharedAssetDir = null, freeMemory = () => os.freemem(), minimumFreeGiB, idleMs = 120000, defaultModelId = '4b' } = {}) {
   getAIModel(defaultModelId)
-  // Reclaim disk from model files that are no longer offered (e.g. an old 2B).
+  // Reclaim disk from model files that are no longer offered (e.g. the old 8B).
   try {
     if (fs.existsSync(assetDir)) {
       const allowed = allModelFileNames()
@@ -75,6 +79,15 @@ function createLocalAI({ assetDir = DEFAULT_ASSET_DIR, sharedAssetDir = null, fr
     } catch { return false }
   }
 
+  // Testtilstand: TCD_HUB_AI_MIN_FREE_GIB saenker (0 = fjerner) RAM-kravet, saa
+  // man kan maale hvad modellen reelt goer ved maskinen. Produktionsstandarden i
+  // aiModels.cjs roeres ikke - uden env-variablen er opfoerslen praecis som foer.
+  function requiredFreeGiB(config, vision) {
+    const override = Number(process.env.TCD_HUB_AI_MIN_FREE_GIB)
+    if (Number.isFinite(override) && override >= 0) return override
+    return Math.max(minimumFreeGiB || 0, vision ? config.minimumVisionFreeGiB : config.minimumFreeGiB)
+  }
+
   function status(modelId = loadedModelId || defaultModelId) {
     const config = getAIModel(modelId)
     const model = path.join(assetDir, config.files[0].name)
@@ -88,8 +101,8 @@ function createLocalAI({ assetDir = DEFAULT_ASSET_DIR, sharedAssetDir = null, fr
       busy,
       vision: !!child && loadedVision,
       freeGiB: Number((freeMemory() / GiB).toFixed(2)),
-      minimumFreeGiB: Math.max(minimumFreeGiB || 0, config.minimumFreeGiB),
-      minimumVisionFreeGiB: config.minimumVisionFreeGiB,
+      minimumFreeGiB: requiredFreeGiB(config, false),
+      minimumVisionFreeGiB: requiredFreeGiB(config, true),
       modelId,
       loadedModelId: child ? loadedModelId : null,
       model: config.name,
@@ -122,8 +135,8 @@ function createLocalAI({ assetDir = DEFAULT_ASSET_DIR, sharedAssetDir = null, fr
     const projector = path.join(assetDir, config.files[1].name)
     const snapshot = status(modelId)
     if (!snapshot.installed) throw new Error(`AI-modellen mangler. Kør npm run ai:download -- --model ${modelId} i udviklingsmappen.`)
-    const required = Math.max(minimumFreeGiB || 0, vision ? config.minimumVisionFreeGiB : config.minimumFreeGiB)
-    if (freeMemory() < required * GiB) throw new Error(`For lidt ledig RAM (${snapshot.freeGiB} GB). ${vision ? 'Billedmodellen' : 'Modellen'} kræver mindst ${required} GB ledigt før start. Dataopslag kan stadig bruges.`)
+    const required = requiredFreeGiB(config, vision)
+    if (required > 0 && freeMemory() < required * GiB) throw new Error(`For lidt ledig RAM (${snapshot.freeGiB} GB). ${vision ? 'Billedmodellen' : 'Modellen'} kræver mindst ${required} GB ledigt før start. Dataopslag kan stadig bruges.`)
     const epoch = generation
     startPromise = (async () => {
       const nextPort = await availablePort()
@@ -174,7 +187,7 @@ function createLocalAI({ assetDir = DEFAULT_ASSET_DIR, sharedAssetDir = null, fr
     try { await startPromise } catch (error) { stop(); throw error } finally { startPromise = null }
   }
 
-  async function complete(messages, { maxTokens = 256, modelId = defaultModelId } = {}) {
+  async function complete(messages, { maxTokens = 256, modelId = defaultModelId, temperature = 0 } = {}) {
     getAIModel(modelId)
     if (busy) throw new Error('AI’en behandler allerede et spørgsmål. Vent eller stop svaret.')
     const vision = messages.some(message => Array.isArray(message.content) && message.content.some(part => part.type === 'image_url'))
@@ -195,7 +208,7 @@ function createLocalAI({ assetDir = DEFAULT_ASSET_DIR, sharedAssetDir = null, fr
           method: 'POST',
           redirect: 'error',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-          body: JSON.stringify({ messages, max_tokens: Math.min(maxTokens, 384), temperature: 0, repeat_penalty: 1.1, stream: false, cache_prompt: false, chat_template_kwargs: { enable_thinking: false } }),
+          body: JSON.stringify({ messages, max_tokens: Math.min(maxTokens, MAX_COMPLETION_TOKENS), temperature, repeat_penalty: 1.1, stream: false, cache_prompt: false, chat_template_kwargs: { enable_thinking: false } }),
           signal: abortController.signal,
         })
         if (!response.ok) throw new Error(`Lokal AI-fejl: HTTP ${response.status}`)

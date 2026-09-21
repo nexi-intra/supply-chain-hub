@@ -15,6 +15,17 @@ test('never logs data, action-proposal or ai answers', () => {
   }
 })
 
+test('logs an app-guide answer that matched no known topic', () => {
+  // Fase 4 fjernede den haarde afvisning. Uden dette signal ville manglende
+  // daekning blive usynlig, fordi brugeren nu altid faar ET svar.
+  const entry = buildUnansweredLogEntry({ question: 'hvad er hovedstaden i frankrig?', language: 'da' }, { mode: 'app-guide', unmatched: true }, now)
+  assert.equal(entry.question, 'hvad er hovedstaden i frankrig?')
+})
+
+test('never logs an app-guide answer that did match a topic', () => {
+  assert.equal(buildUnansweredLogEntry({ question: 'hvordan opretter jeg en note?' }, { mode: 'app-guide' }, now), null)
+})
+
 test('never logs an empty or missing question', () => {
   assert.equal(buildUnansweredLogEntry({ question: '' }, { mode: 'unsupported' }, now), null)
   assert.equal(buildUnansweredLogEntry({ question: '   ' }, { mode: 'unsupported' }, now), null)

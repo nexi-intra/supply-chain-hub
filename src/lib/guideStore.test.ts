@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { saveDraft, getDraft, deleteDraft, draftKey } from './guideStore'
+import { saveDraft, getDraft, deleteDraft, draftKey, listDrafts, draftLabel } from './guideStore'
 import type { GuideDraft } from './guideTypes'
 
 afterEach(() => vi.unstubAllGlobals())
@@ -11,6 +11,7 @@ function fixture() {
       get: vi.fn(async (key: string) => store.get(key)),
       set: vi.fn(async (key: string, value: unknown) => { store.set(key, value) }),
       delete: vi.fn(async (key: string) => { store.delete(key) }),
+      keys: vi.fn(async () => [...store.keys()]),
     },
   })
   return { store }
@@ -56,5 +57,35 @@ describe('guide draft autosave storage', () => {
     await saveDraft({ ...draft, guideId: 'g2', title: 'Anden kladde' })
     expect((await getDraft('g1'))?.title).toBe('Kladde-titel')
     expect((await getDraft('g2'))?.title).toBe('Anden kladde')
+  })
+})
+
+describe('listDrafts', () => {
+  it('returns only the signed-in users own drafts, newest first', async () => {
+    fixture()
+    await saveDraft({ ...draft, guideId: 'mine-old', lastAutoSavedAt: 1000 })
+    await saveDraft({ ...draft, guideId: 'mine-new', lastAutoSavedAt: 5000 })
+    await saveDraft({ ...draft, guideId: 'theirs', savedBy: 'someone.else@example.test', lastAutoSavedAt: 9000 })
+    expect((await listDrafts('user@example.test')).map((entry) => entry.guideId)).toEqual(['mine-new', 'mine-old'])
+  })
+  it('ignores unrelated keys so guides and versions are never listed as drafts', async () => {
+    const f = fixture()
+    f.store.set('guides', [{ id: 'g1' }])
+    f.store.set('guide-versions-g1', [{ version: '1.00' }])
+    await saveDraft(draft)
+    expect((await listDrafts('user@example.test')).map((entry) => entry.guideId)).toEqual(['g1'])
+  })
+})
+
+describe('draftLabel', () => {
+  it('uses the title when there is one', () => {
+    expect(draftLabel(draft)).toBe('Kladde-titel')
+  })
+  it('falls back to the first written text so an untitled draft is still recognisable', () => {
+    expect(draftLabel({ ...draft, title: '   ' })).toBe('H')
+    expect(draftLabel({ ...draft, title: '', sections: [{ id: 's1', heading: '', steps: [{ id: 'st1', text: 'Første trin', imageIds: [] }] }] })).toBe('Første trin')
+  })
+  it('returns an empty string when the draft is completely empty', () => {
+    expect(draftLabel({ ...draft, title: '', sections: [] })).toBe('')
   })
 })

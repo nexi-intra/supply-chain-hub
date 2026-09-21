@@ -2,6 +2,22 @@ const fs = require('node:fs')
 const path = require('node:path')
 const crypto = require('node:crypto')
 
+// Windows/SMB afviser et 'wx'-open med EPERM (og af og til EACCES/EBUSY) i det
+// oejeblik en anden klient netop har slettet laasefilen: filen er "delete
+// pending" indtil den sidste handle lukkes. Det er kaploeb om laasen - altsaa
+// samme situation som EEXIST - og IKKE en rettighedsfejl, saa det skal proeves
+// igen. Slap den raat igennem, landede brugeren med "EPERM: operation not
+// permitted" midt i en helt almindelig skrivning.
+const LOCK_CONTENTION = new Set(['EEXIST', 'EPERM', 'EACCES', 'EBUSY'])
+
+function lockBusy(code) {
+  const busy = new Error(code === 'EEXIST'
+    ? 'KV_LOCK_BUSY: Lageret er optaget af en anden klient. Prøv igen.'
+    : `KV_LOCK_BUSY: Lageret kunne ikke låses (${code}). Prøv igen.`)
+  busy.code = 'KV_LOCK_BUSY'
+  return busy
+}
+
 // A slow live client on another PC may still own a lock. Do not steal it
 // solely because a wall-clock timeout has elapsed.
 function acquireFileLock(target, { attempts = 50, delayMs = 100, createParent = true, staleMs = 0 } = {}) {
@@ -18,12 +34,12 @@ function acquireFileLock(target, { attempts = 50, delayMs = 100, createParent = 
       }
       break
     } catch (error) {
-      if (error.code !== 'EEXIST') throw error
+      if (!LOCK_CONTENTION.has(error.code)) throw error
       // Selv-heling (samme model som acquireFileLockAsync): en laas efterladt af
       // en crashet/dræbt klient ville ellers blokere ALLE fremtidige forsøg
       // permanent (fx kontolåsen — attempts:1/6 giver ingen reel ventetid). Kun
       // laase hvis alder ligger LANGT over enhver legitim holdetid fjernes.
-      if (staleMs > 0) {
+      if (staleMs > 0 && error.code === 'EEXIST') {
         try {
           const stat = fs.statSync(target)
           if (Date.now() - stat.mtimeMs > staleMs) {
@@ -35,11 +51,13 @@ function acquireFileLock(target, { attempts = 50, delayMs = 100, createParent = 
       }
       if (attempt + 1 >= attempts) {
         if (process.env.TCD_HUB_DEBUG) console.warn(`KV TIMING: lock-failed ${Date.now() - startedAt}ms attempts=${attempts} target=${target}`)
-        const busy = new Error('KV_LOCK_BUSY: Lageret er optaget af en anden klient. Prøv igen.')
-        busy.code = 'KV_LOCK_BUSY'
-        throw busy
+        throw lockBusy(error.code)
       }
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs)
+      // Jitter (samme begrundelse som acquireFileLockAsync): uden det ville
+      // flere klienter der kolliderer om samme laas vente PRAECIS lige laenge
+      // og saa stoede sammen igen i naeste forsoeg, igen og igen.
+      const jitter = 0.6 + Math.random() * 0.8
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.round(delayMs * jitter))
     }
   }
   return () => { try { if (fs.readFileSync(target, 'utf8') === owner) fs.unlinkSync(target) } catch { /* preserve ownership */ } }
@@ -65,11 +83,11 @@ async function acquireFileLockAsync(target, { attempts = 50, delayMs = 100, crea
       }
       break
     } catch (error) {
-      if (error.code !== 'EEXIST') throw error
+      if (!LOCK_CONTENTION.has(error.code)) throw error
       // Selv-heling: en laas efterladt af en crashet klient ville ellers blokere
       // ALLE klienters skrivninger permanent. Kun laase hvis alder ligger LANGT
       // over enhver legitim holdetid fjernes; live ejere beholder altid laasen.
-      if (staleMs > 0) {
+      if (staleMs > 0 && error.code === 'EEXIST') {
         try {
           const stat = await fs.promises.stat(target)
           if (Date.now() - stat.mtimeMs > staleMs) {
@@ -81,9 +99,7 @@ async function acquireFileLockAsync(target, { attempts = 50, delayMs = 100, crea
       }
       if (attempt + 1 >= attempts) {
         if (process.env.TCD_HUB_DEBUG) console.warn(`KV TIMING: lock-async-failed ${Date.now() - startedAt}ms attempts=${attempts} target=${target}`)
-        const busy = new Error('KV_LOCK_BUSY: Lageret er optaget af en anden klient. Prøv igen.')
-        busy.code = 'KV_LOCK_BUSY'
-        throw busy
+        throw lockBusy(error.code)
       }
       // Jitter (±40%) bryder lockstep: uden det ville mange klienter, der
       // kolliderer om samme laas, vente PRAECIS lige laenge og saa kollidere

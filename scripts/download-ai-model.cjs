@@ -48,7 +48,7 @@ async function download(entry, model) {
 async function main() {
   if (process.platform !== 'win32') throw new Error('This pilot uses the Windows x64 CPU runtime')
   const modelFlag = process.argv.indexOf('--model')
-  const model = getAIModel(modelFlag < 0 ? '8b' : process.argv[modelFlag + 1])
+  const model = getAIModel(modelFlag < 0 ? '4b' : process.argv[modelFlag + 1])
   fs.mkdirSync(assetDir, { recursive: true })
   console.log(`AI assets (separate from releases): ${assetDir}`)
   console.log(`Selected model: ${model.name}`)

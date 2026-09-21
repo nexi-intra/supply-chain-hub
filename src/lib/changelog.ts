@@ -8,6 +8,28 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.5.5',
+    items: [
+      'Guide Bibliotek: næste-tjek-datoen kan nu sættes til en specifik dag i stedet for altid at blive "i dag + interval" — så guider I opretter samtidig ikke alle forfalder på samme dato',
+      'Guide Bibliotek: en guide kan nu have en "ansvarlig for gennemgang" — en anden person end forfatteren, som får påmindelserne om at holde den opdateret',
+      'Vagtplan: "Gentagne vagter" kan nu redigeres bagefter (ikke kun oprettes/slettes), listen over mønstre kan skjules/vises, filtreres på opgave eller medarbejder, og intervallet kan sættes helt op til hver sjette uge',
+      'Vagtplan: en tildeling hvis opgave er blevet slettet/omdannet forsvinder ikke længere stille fra kalenderen — den vises nu som "Ukendt opgave" og kan med ét klik knyttes til en gyldig opgave igen',
+      'Login/genoptag session er nu markant mere robust ved travlt delt drev — færre falske "Lageret er optaget af en anden klient"-fejl ved login',
+      'Rettet en sjælden race i "Tildel opgave" fra forsiden, der kunne overskrive en andens samtidige ændring af vagtplanen',
+      'Baggrunds-synkronisering: en enkelt forbigående fejl viser ikke længere en bekymrende fejl-besked — kun hvis noget er reelt fastlåst efter flere forsøg',
+      'Hubert kan nu guide dig gennem appen: spørg fx "hvordan opretter jeg en ferieanmodning?" eller "hvordan laver jeg en gentagen vagt?" og få svar trin for trin i stedet for en liste med registreringer',
+      'Hubert svarer ikke længere "jeg fandt ikke et underbygget svar" som en blindgyde — kan spørgsmålet ikke besvares ud fra hubbens data, forklarer den i stedet hvad den kan hjælpe med og hvor du skal kigge hen',
+      'Hubert har fået en ny "Generelt"-tilstand til almindelige spørgsmål uden for appen (fx en Excel-formel eller en oversættelse). Svar herfra er tydeligt markeret som AI-genererede og bygger ikke på hubbens data',
+      'Hubert bliver ikke længere afbrudt midt i en sætning ved længere svar som fx trinvise vejledninger',
+      'Hubert bruger nu en mindre AI-model, der kræver ca. 4,5 GB ledig hukommelse i stedet for 7 GB — den kan dermed starte på langt flere arbejds-pc\'er. Modellen fylder også kun det halve (ca. 3 GB mod 6 GB), og den gamle model ryddes automatisk fra din pc. Har du allerede aktiveret AI-svar, bliver du bedt om at hente den nye model én gang',
+      'Automatiske sikkerhedskopier fylder ikke længere urimeligt meget: for indeværende dag gemmes én i timen, mens afsluttede dage klappes sammen til den nyeste kopi fra hver dag (14 dage tilbage)',
+      'Importér Word-guide: dokumentets egen indholdsfortegnelse bliver ikke længere importeret som almindelige trin — appen laver selv indholdsfortegnelsen, så den stod tidligere dobbelt',
+      'Importér Word-guide er markant hurtigere: billeder og det vedhæftede dokument gemmes nu i én skrivning i stedet for én pr. 256 KB, hvilket fjerner op mod 85% af netværkskaldene til det delte drev',
+      'Rettet "EPERM: operation not permitted"-fejlen der kunne afbryde en helt almindelig gemning: sker der et sammenfald hvor en anden pc netop har frigivet lås-filen, venter appen nu og prøver igen i stedet for at vise en fejl',
+      'Guide Bibliotek: du kan nu gemme en guide som kladde og arbejde videre på den senere. Dine kladder vises øverst i biblioteket, og forlader du en guide midt i arbejdet, bliver den gemt i stedet for at gå tabt',
+    ],
+  },
+  {
     version: '1.5.4',
     items: [
       'Appen henter indhold markant hurtigere: forsiden loader op til dobbelt så hurtigt første gang, og efterfølgende navigation er øjeblikkelig — data genhentes kun når noget faktisk er ændret på drevet',

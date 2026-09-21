@@ -54,10 +54,20 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
   // teams paa langsomt SMB), saa en live konkurrerende klient stjaeles aldrig.
   const ACCOUNT_LOCK_STALE_MS = 60000
   const withAccountLock = callback => withFileLock(globalLock(), callback, { attempts: 1, staleMs: ACCOUNT_LOCK_STALE_MS })
-  // Login/resume: faa korte gen-forsoeg i stedet for att fejle straks - to
+  // Login/resume: flere korte gen-forsoeg i stedet for att fejle straks - to
   // klienter der logger ind samtidigt gav ellers falske "Kunne ikke oprette
-  // forbindelse"-fejl. Brugeren venter allerede ved en spinner her.
-  const withAuthenticationLock = callback => withFileLock(globalLock(), callback, { attempts: 6, delayMs: 120, staleMs: ACCOUNT_LOCK_STALE_MS })
+  // forbindelse"-fejl. Brugeren venter allerede ved en spinner her. Denne
+  // klients EGET vindue er det eneste der blokeres imens (hver bruger koerer
+  // sin egen Electron-proces), saa et generoest forsoegsbudget (~40 forsoeg x
+  // ~200ms + jitter, typisk 6-9s i alt) koster kun DEN loggende bruger lidt
+  // ventetid, ikke de andre 40 klienter. Bekraeftet noedvendigt live 2026-09-18:
+  // et tidligere, mindre budget (6x120ms, senere 15x150ms) var STADIG for lavt
+  // under reel samtidig produktionsbelastning (kontolaasen blev genudstedt af
+  // andre klienters PID'er kontinuerligt over flere sekunder). Praeload-laget
+  // genforsoeger desuden hele login/resume/renew-kaldet ved KV_LOCK_BUSY (se
+  // preload.cjs), saa der er to uafhaengige lag der skal fejle samtidig foer
+  // brugeren ser en fejl.
+  const withAuthenticationLock = callback => withFileLock(globalLock(), callback, { attempts: 40, delayMs: 200, staleMs: ACCOUNT_LOCK_STALE_MS })
   function assertReady() { if (!terminal(readControl())) fail('ACCOUNT_MIGRATION_PENDING') }
   function synchronous(callback) {
     if (typeof callback !== 'function' || require('node:util').types.isAsyncFunction(callback)) fail('KV_INVALID_OPERATION')

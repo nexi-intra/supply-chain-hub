@@ -13,6 +13,14 @@
 // store.cjs.
 
 const QUEUE_KEY = '__offline-queue__'
+const DISCARDED_KEY = '__offline-discarded__'
+// Fejl der ALDRIG loeser sig selv ved at proeve igen. En konflikt betyder at
+// data blev aendret paa drevet imens; genafspilning giver samme konflikt for
+// evigt. KV_LOCK_BUSY hoerer bevidst IKKE til her - den er forbigaaende.
+const PERMANENT_ERRORS = new Set(['KV_CONFLICT', 'KV_INVALID_OPERATION'])
+// Sikkerhedsnet for alt andet der maatte fejle igen og igen.
+const MAX_REPLAY_ATTEMPTS = 25
+const MAX_DISCARDED_KEPT = 50
 
 /**
  * @param {ReturnType<import('./store.cjs').createStore>} networkStore
@@ -60,6 +68,16 @@ function createResilientStore(networkStore, localStore, options = {}) {
     localStore.set(QUEUE_KEY, queue)
   }
 
+  /** Opgivne skrivninger gemmes lokalt, saa de kan undersoeges - aldrig slettet i stilhed. */
+  function saveDiscarded(entries) {
+    try {
+      const previous = localStore.get(DISCARDED_KEY) || []
+      localStore.set(DISCARDED_KEY, [...entries, ...previous].slice(0, MAX_DISCARDED_KEPT))
+    } catch (err) {
+      console.error('TCD Hub: kunne ikke gemme opgivne skrivninger:', err)
+    }
+  }
+
   let queueIdCounter = 0
   function enqueue(entry) {
     const queue = loadQueue()
@@ -99,6 +117,7 @@ function createResilientStore(networkStore, localStore, options = {}) {
     if (queue.length === 0) return { succeeded: 0, failed: 0, remaining: 0 }
 
     const remaining = []
+    const discarded = []
     const blockedKeys = new Set()
     let succeeded = 0
     let failed = 0
@@ -114,21 +133,38 @@ function createResilientStore(networkStore, localStore, options = {}) {
         applyToNetwork(entry)
         succeeded++
       } catch (err) {
+        const attempts = entry.attempts + 1
+        const lastError = String((err && err.message) || err)
+        // En KONFLIKT kan aldrig loese sig selv ved at proeve igen: elementet
+        // blev aendret paa drevet imens, saa genafspilning giver samme konflikt
+        // i al evighed. Beholdt vi posten, ville noeglen desuden blive ved med
+        // at blive serveret fra den lokale (forael­dede) kopi, fordi queued(key)
+        // er sand. Derfor lægges den til side i stedet - med spor, ikke i stilhed.
+        if (PERMANENT_ERRORS.has(err?.code) || attempts >= MAX_REPLAY_ATTEMPTS) {
+          discarded.push({ ...entry, attempts, lastError, discardedAt: Date.now() })
+          console.error(`TCD Hub: opgav synkronisering af "${entry.key}" efter ${attempts} forsoeg: ${lastError}`)
+          continue
+        }
         failed++
         blockedKeys.add(entry.key)
-        remaining.push({ ...entry, attempts: entry.attempts + 1, lastError: String((err && err.message) || err) })
+        remaining.push({ ...entry, attempts, lastError })
       }
     }
 
     saveQueue(remaining)
-    return { succeeded, failed, remaining: remaining.length }
+    if (discarded.length) saveDiscarded(discarded)
+    // Returformen holdes uaendret (succeeded/failed/remaining) - den er en del
+    // af API'et mod UI og tests. Opgivne poster logges og gemmes lokalt.
+    const result = { succeeded, failed, remaining: remaining.length }
+    // Kun kvittering for noget der FAKTISK blev synkroniseret. Forbigaaende
+    // fejl retter sig selv ved naeste forsoeg og skal ikke afbryde brugeren.
+    if (succeeded > 0) onSyncResult?.(result)
+    return result
   }
 
   /** Afspiller køen og rapporterer resultatet videre (bruges både automatisk og fra en manuel "prøv igen"-knap). */
   function runReplay() {
-    const result = replayQueue()
-    if (result.succeeded > 0 || result.failed > 0) onSyncResult?.(result)
-    return result
+    return replayQueue()
   }
 
   function get(key, options) {
@@ -295,12 +331,12 @@ function createResilientStore(networkStore, localStore, options = {}) {
   }
 
   async function keysAsync() {
-    if (!networkStore.isConnected()) return localStore.keys().filter((k) => k !== QUEUE_KEY)
+    if (!networkStore.isConnected()) return localStore.keys().filter((k) => k !== QUEUE_KEY && k !== DISCARDED_KEY)
     try {
       return await networkStore.keysAsync()
     } catch (err) {
       console.error('TCD Hub: kunne ikke liste nøgler fra delt lager, bruger lokal cache:', err)
-      return localStore.keys().filter((k) => k !== QUEUE_KEY)
+      return localStore.keys().filter((k) => k !== QUEUE_KEY && k !== DISCARDED_KEY)
     }
   }
 
@@ -321,12 +357,12 @@ function createResilientStore(networkStore, localStore, options = {}) {
   }
 
   function keys() {
-    if (!networkStore.isConnected()) return localStore.keys().filter((k) => k !== QUEUE_KEY)
+    if (!networkStore.isConnected()) return localStore.keys().filter((k) => k !== QUEUE_KEY && k !== DISCARDED_KEY)
     try {
       return networkStore.keys()
     } catch (err) {
       console.error('TCD Hub: kunne ikke liste nøgler fra delt lager, bruger lokal cache:', err)
-      return localStore.keys().filter((k) => k !== QUEUE_KEY)
+      return localStore.keys().filter((k) => k !== QUEUE_KEY && k !== DISCARDED_KEY)
     }
   }
 
@@ -367,6 +403,10 @@ function createResilientStore(networkStore, localStore, options = {}) {
     return networkStore.dumpAll()
   }
 
+  function dumpAllAsync() {
+    return networkStore.dumpAllAsync()
+  }
+
   function getPendingSyncCount() {
     return loadQueue().length
   }
@@ -385,6 +425,7 @@ function createResilientStore(networkStore, localStore, options = {}) {
     watch,
     isConnected,
     dumpAll,
+    dumpAllAsync,
     getPendingSyncCount,
     retrySyncNow: runReplay,
     revalidateMirror,

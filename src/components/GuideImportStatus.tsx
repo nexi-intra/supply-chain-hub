@@ -27,7 +27,7 @@ export function GuideImportStatus({ onOpenGuideLibrary }: GuideImportStatusProps
     return () => window.clearInterval(interval)
   }, [job?.startedAt])
 
-  // Job'et går tilbage til null når importen er f\u00e6rdig (b\u00e5de ved succes og fejl) —
+  // Job'et går tilbage til null når importen er færdig (både ved succes og fejl) —
   // tjek her om der er en afslutningsbesked klar til at blive vist.
   useEffect(() => {
     if (job) return

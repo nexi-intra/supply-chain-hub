@@ -6,6 +6,7 @@ const { createKnowledge, validatePlan, moduleCatalog } = require('./assistantKno
 const { continueQuestion, validateConversation } = require('./assistantConversation.cjs')
 const { indexGuide } = require('./assistantGuideIndex.cjs')
 const { detectActionIntent } = require('./assistantActions.cjs')
+const { appGuidance, isHowToQuestion } = require('./assistantAppGuide.cjs')
 const normalize = value => String(value || '').trim().toLowerCase()
 const dateString = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 const addDays = (date, days) => { const copy = new Date(date); copy.setDate(copy.getDate() + days); return copy }
@@ -194,11 +195,17 @@ function createAssistantContext({ listTeams, lookupTeam, listViews, creatorEmail
     for (const read of stores) {
       const meta = read(`${imageId}_meta`)
       if (!meta) continue
-      if (!Number.isInteger(meta.chunkCount) || meta.chunkCount < 1 || meta.chunkCount > 28 || meta.size > 5 * 1024 ** 2 || !/^image\/(png|jpeg|webp|gif|bmp)$/.test(meta.contentType)) throw new Error('Ugyldigt eller for stort guidebillede')
-      const chunks = Array.from({ length: meta.chunkCount }, (_, i) => read(`${imageId}_chunk_${i}`))
-      if (chunks.some(value => typeof value !== 'string')) throw new Error('Guidebilledet mangler data')
-      const base64 = chunks.join('')
-      if (base64.length > 7 * 1024 ** 2) throw new Error('Guidebilledet er for stort')
+      if (meta.size > 5 * 1024 ** 2 || !/^image\/(png|jpeg|webp|gif|bmp)$/.test(meta.contentType)) throw new Error('Ugyldigt eller for stort guidebillede')
+      let base64
+      if (typeof meta.data === 'string') {
+        base64 = meta.data
+      } else {
+        if (!Number.isInteger(meta.chunkCount) || meta.chunkCount < 1 || meta.chunkCount > 28) throw new Error('Ugyldigt eller for stort guidebillede')
+        const chunks = Array.from({ length: meta.chunkCount }, (_, i) => read(`${imageId}_chunk_${i}`))
+        if (chunks.some(value => typeof value !== 'string')) throw new Error('Guidebilledet mangler data')
+        base64 = chunks.join('')
+      }
+      if (base64.length > 7 * 1024 ** 2 || !/^[a-zA-Z0-9+/=]*$/.test(base64)) throw new Error('Guidebilledet er ugyldigt eller for stort')
       return `data:${meta.contentType};base64,${base64}`
     }
     throw new Error('Guidebilledet kunne ikke læses')
@@ -249,6 +256,15 @@ function createAssistantContext({ listTeams, lookupTeam, listViews, creatorEmail
       const action = detectActionIntent(question, language, previousQuestion)
       if (action?.type === 'unresolved') return { mode: 'action-proposal', text: action.message, sources: [], contextQuestion: question }
       if (action) return { mode: 'action-proposal', text: action.summary, sources: [], contextQuestion: question, actionProposal: { type: action.type, params: action.params, summary: action.summary } }
+    }
+    // "Hvordan goer jeg X?" skal besvares med en vejledning, ikke med en liste af
+    // registreringer. Uden det her rammer fx "hvordan opretter jeg en
+    // ferieanmodning?" ferie-dataopslaget og svarer med ferieREGISTRERINGER.
+    // Kun naar en konkret OPGAVE rammes - et loest modul-traef (fx "hvordan ser
+    // min uge ud?") skal fortsat gaa til dataopslaget nedenfor.
+    if (!plan && !image && page === undefined && isHowToQuestion(question)) {
+      const guidance = appGuidance(question, { role: principal.role, requireTask: true })
+      if (guidance) return { mode: 'app-guide', text: guidance.text, sources: [{ kind: 'app-guide', title: guidance.title }], contextQuestion: question }
     }
     const scoreQ = scoreQuestion(q, previousQuestion, listTeams()) || (plan?.modules.includes('highscores') ? `highscore oversigt ${q}` : null)
     if (scoreQ) {
@@ -410,7 +426,13 @@ function createAssistantContext({ listTeams, lookupTeam, listViews, creatorEmail
     chunks.sort((a, b) => b.score - a.score)
     const seen = new Set()
     const selected = chunks.filter(chunk => { const key = `${chunk.guideId}:${chunk.reference}`; if (seen.has(key)) return false; seen.add(key); return true }).slice(0, 3)
-    if (!selected.length && !image && !/guide|vejledning|manual|opas|oppaa/.test(q)) return { mode: 'unsupported', text: language === 'da' ? 'Jeg fandt ikke et underbygget svar i de tilgængelige hubdata. Prøv navnet på en person, en registrering eller et modul, og tilføj en periode hvis relevant. Jeg må ikke gætte på manglende eller utilgængelige data.' : language === 'fi' ? 'Käytettävissä olevista Hub-tiedoista ei löytynyt perusteltua vastausta. Tarkenna henkilö, tietue tai moduuli ja tarvittaessa ajanjakso. En saa arvata puuttuvia tietoja.' : 'I found no supported answer in the accessible hub data. Try a person, record or module name and a period if relevant. I must not guess missing or inaccessible data.', sources: [] }
+    if (!selected.length && !image && !/guide|vejledning|manual|opas|oppaa/.test(q)) {
+      // Blindgyden er vaek: i stedet for en blank afvisning svarer vi ud fra
+      // app-viden. Rammer spoergsmaalet intet kendt emne, fortaeller vi hvad
+      // Hubert KAN - og `unmatched` bevarer signalet til daeknings-loggen.
+      const guidance = appGuidance(question, { role: principal.role })
+      return { mode: 'app-guide', text: guidance.text, sources: [{ kind: 'app-guide', title: guidance.title }], contextQuestion: question, ...(guidance.unmatched ? { unmatched: true } : {}) }
+    }
     return { mode: 'retrieval', text: selected.length ? `${t.excerpts}:\n\n${selected.map((chunk, index) => `[${index + 1}] ${chunk.title} · v${chunk.version} · §${chunk.reference}\n${chunk.text}`).join('\n\n')}` : t.noHits, sources: selected, contextQuestion: question }
   }
   const getRecord = ({ token, viewId, moduleId, recordId, teamId, language }) => knowledge.getRecord(authorize(token, viewId), moduleId, recordId, teamId, language)

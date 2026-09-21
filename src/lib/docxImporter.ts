@@ -44,6 +44,20 @@ const UPLOAD_STAGE_END = 95
 
 const FALLBACK_HEADING = 'Importeret indhold'
 
+// Appen bygger altid sin egen indholdsfortegnelse ud fra sektionerne. Tager vi
+// dokumentets med, staar den samme oversigt to gange - én gang som rigtige trin.
+const TOC_HEADING = /^(indholdsfortegnelse|indhold|table of contents|contents|sis[aä]llysluettelo|sis[aä]llys)$/i
+
+/** Er overskriften dokumentets egen indholdsfortegnelse (evt. med nummerering/kolon)? */
+export function isTocHeading(heading: string): boolean {
+  return TOC_HEADING.test(heading.replace(/^[\d.\s]+/, '').replace(/[:\s]+$/, '').trim())
+}
+
+/** Word linker hver post i sin indholdsfortegnelse til et #_Toc-bogmaerke. */
+function isTocEntry(el: Element): boolean {
+  return el.querySelector('a[href^="#_Toc"]') !== null
+}
+
 function dataUriToFile(dataUri: string, filename: string): File | null {
   const match = /^data:([^;]+);base64,(.*)$/.exec(dataUri)
   if (!match) return null
@@ -104,6 +118,7 @@ async function buildSectionsFromHtml(html: string, onProgress?: ProgressCallback
   const imageCache = new Map<string, string>()
   const sections: GuideSection[] = []
   let current: GuideSection | null = null
+  let skippingToc = false
 
   const totalImages = doc.body.querySelectorAll('img').length
   const progress = { uploaded: 0, total: totalImages }
@@ -123,11 +138,16 @@ async function buildSectionsFromHtml(html: string, onProgress?: ProgressCallback
     if (/^h[1-4]$/.test(tag)) {
       const heading = el.textContent?.trim() || ''
       if (heading) {
+        if (isTocHeading(heading)) { skippingToc = true; current = null; continue }
+        skippingToc = false
         current = { id: newId('sec'), heading, steps: [] }
         sections.push(current)
       }
       continue
     }
+
+    // Alt mellem "Indholdsfortegnelse" og naeste overskrift er selve listen.
+    if (skippingToc || isTocEntry(el)) continue
 
     if (tag === 'p') {
       const text = el.textContent?.trim() || ''

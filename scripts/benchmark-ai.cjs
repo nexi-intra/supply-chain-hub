@@ -3,7 +3,7 @@ const { createLocalAI } = require('../electron/localAI.cjs')
 const os = require('node:os')
 const zlib = require('node:zlib')
 const modelFlag = process.argv.indexOf('--model')
-const ai = createLocalAI({ defaultModelId: modelFlag < 0 ? '8b' : process.argv[modelFlag + 1] })
+const ai = createLocalAI({ defaultModelId: modelFlag < 0 ? '4b' : process.argv[modelFlag + 1] })
 function syntheticImage() {
   const crc32 = buffer => {
     let crc = 0xffffffff

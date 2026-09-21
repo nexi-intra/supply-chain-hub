@@ -27,13 +27,15 @@ import nexiLogo from '@/assets/images/nexi-logo.svg'
 import nexiLogoWhite from '@/assets/images/nexi-logo-white.svg'
 import { format, isSameDay, parseISO } from 'date-fns'
 import { da, enUS } from 'date-fns/locale'
-import type { ShiftRole, ShiftAssignment, SickLeaveEntry, VacationEntry, WeekMenu, Email, HomeOfficePattern, HomeOfficeException } from '@/lib/types'
+import type { ShiftRole, ShiftAssignment, ShiftPatternRule, SickLeaveEntry, VacationEntry, WeekMenu, Email, HomeOfficePattern, HomeOfficeException } from '@/lib/types'
 import { getEmployeeColorByEmail, EMPLOYEE_COLOR_OVERRIDES_KEY, type EmployeeColorOverrides } from '@/lib/employeeColors'
 import type { Guide, GuideReviewRequest } from '@/lib/guideTypes'
 import type { RegisteredTeam } from '@/lib/electronRegistryBridge'
 import { getHomeOfficeUsersForDate } from '@/lib/homeOffice'
 import { personalTodosKey, type PersonalTodo } from '@/lib/personalTodos'
 import type { Project } from '@/views/ProjectBoard'
+import { appendToKvArray, removeFromKvArray, upsertInKvArray } from '@/lib/kvArrays'
+import { expandShiftPatterns } from '@/lib/shiftPatterns'
 
 interface HubModule {
   id: string
@@ -316,13 +318,14 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       const today = format(new Date(), 'yyyy-MM-dd')
       const currentDate = new Date()
       
-      const [assignments = [], roles = [], sickLeave = [], vacations = [], usersData = {}, weekMenus = []] = await Promise.all([
+      const [assignments = [], roles = [], sickLeave = [], vacations = [], usersData = {}, weekMenus = [], shiftPatterns = []] = await Promise.all([
         window.kv.get<ShiftAssignment[]>('shift-assignments'),
         window.kv.get<ShiftRole[]>('shift-roles'),
         window.kv.get<SickLeaveEntry[]>('sick-leave-entries'),
         window.kv.get<VacationEntry[]>('vacation-entries'),
         window.kv.get<Record<string, { fullName: string }>>('users'),
         window.kv.get<WeekMenu[]>('meal-plan-weeks'),
+        window.kv.get<ShiftPatternRule[]>('shift-patterns'),
       ])
       
       const isSickToday = (userEmail: string) => {
@@ -342,7 +345,12 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
         })
       }
       
-      const todaysAssignments = assignments.filter(a => a.date === today)
+      // Gentagne vagter gemmes ikke som raekker - de skal udfoldes her, ellers
+      // mangler personen bag et moenster i widgeten (opgaven vises, personen ikke).
+      const todaysAssignments = [
+        ...assignments.filter(a => a.date === today),
+        ...expandShiftPatterns(shiftPatterns, assignments, today, email => isSickToday(email) || isOnVacationToday(email)),
+      ]
       
       const taskPeopleMap: Record<string, { color: string; people: Array<{ name: string; comment?: string }>; roleId: string }> = {}
       
@@ -529,7 +537,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       date: today,
     }
 
-    await window.kv.set('shift-assignments', [...assignments, newAssignment])
+    await appendToKvArray<ShiftAssignment>('shift-assignments', [newAssignment])
 
     toast.success(language === 'da' ? `${employeeName} tildelt ${task.roleName}` : language === 'fi' ? `${employeeName} ${task.roleName}:lle osoitettu` : `${employeeName} assigned to ${task.roleName}`)
     
@@ -542,6 +550,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       const currentDate = new Date()
       
       const assignments = (await window.kv.get<ShiftAssignment[]>('shift-assignments')) || []
+      const shiftPatterns = (await window.kv.get<ShiftPatternRule[]>('shift-patterns')) || []
       const roles = (await window.kv.get<ShiftRole[]>('shift-roles')) || []
       const sickLeave = (await window.kv.get<SickLeaveEntry[]>('sick-leave-entries')) || []
       const vacations = (await window.kv.get<VacationEntry[]>('vacation-entries')) || []
@@ -564,7 +573,12 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
         })
       }
       
-      const todaysAssignments = assignments.filter(a => a.date === today)
+      // Gentagne vagter gemmes ikke som raekker - de skal udfoldes her, ellers
+      // mangler personen bag et moenster i widgeten (opgaven vises, personen ikke).
+      const todaysAssignments = [
+        ...assignments.filter(a => a.date === today),
+        ...expandShiftPatterns(shiftPatterns, assignments, today, email => isSickToday(email) || isOnVacationToday(email)),
+      ]
       
       const taskPeopleMap: Record<string, { color: string; people: Array<{ name: string; comment?: string }>; roleId: string }> = {}
       
@@ -638,14 +652,11 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
 
     const assignments = (await window.kv.get<ShiftAssignment[]>('shift-assignments')) || []
     
-    const updatedAssignments = assignments.map(a => {
-      if (a.date === today && a.employeeName === selectedUserForComment.name && a.roleId === selectedUserForComment.roleId) {
-        return { ...a, comment: newComment || undefined }
-      }
-      return a
-    })
+    const matching = assignments.filter(a => a.date === today && a.employeeName === selectedUserForComment.name && a.roleId === selectedUserForComment.roleId)
     
-    await window.kv.set('shift-assignments', updatedAssignments)
+    if (matching.length > 0) {
+      await upsertInKvArray<ShiftAssignment>('shift-assignments', matching.map(a => ({ ...a, comment: newComment || undefined })))
+    }
     
     toast.success(language === 'da' ? 'Kommentar opdateret' : language === 'fi' ? 'Kommentti päivitetty' : 'Comment updated')
     
@@ -658,6 +669,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       const currentDate = new Date()
       
       const assignments = (await window.kv.get<ShiftAssignment[]>('shift-assignments')) || []
+      const shiftPatterns = (await window.kv.get<ShiftPatternRule[]>('shift-patterns')) || []
       const roles = (await window.kv.get<ShiftRole[]>('shift-roles')) || []
       const sickLeave = (await window.kv.get<SickLeaveEntry[]>('sick-leave-entries')) || []
       const vacations = (await window.kv.get<VacationEntry[]>('vacation-entries')) || []
@@ -680,7 +692,12 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
         })
       }
       
-      const todaysAssignments = assignments.filter(a => a.date === today)
+      // Gentagne vagter gemmes ikke som raekker - de skal udfoldes her, ellers
+      // mangler personen bag et moenster i widgeten (opgaven vises, personen ikke).
+      const todaysAssignments = [
+        ...assignments.filter(a => a.date === today),
+        ...expandShiftPatterns(shiftPatterns, assignments, today, email => isSickToday(email) || isOnVacationToday(email)),
+      ]
       
       const taskPeopleMap: Record<string, { color: string; people: Array<{ name: string; comment?: string }>; roleId: string }> = {}
       
@@ -744,11 +761,11 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
     const today = format(new Date(), 'yyyy-MM-dd')
     const assignments = (await window.kv.get<ShiftAssignment[]>('shift-assignments')) || []
     
-    const updatedAssignments = assignments.filter(
-      a => !(a.date === today && a.employeeName === employeeName && a.roleId === roleId)
-    )
+    const matchingIds = assignments.filter(
+      a => a.date === today && a.employeeName === employeeName && a.roleId === roleId
+    ).map(a => a.id)
     
-    await window.kv.set('shift-assignments', updatedAssignments)
+    await removeFromKvArray<ShiftAssignment>('shift-assignments', matchingIds)
     
     toast.success(language === 'da' ? `${employeeName} fjernet fra opgaven` : language === 'fi' ? `${employeeName} poistettu tehtävästä` : `${employeeName} removed from task`)
     
@@ -757,6 +774,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       const currentDate = new Date()
       
       const assignments = (await window.kv.get<ShiftAssignment[]>('shift-assignments')) || []
+      const shiftPatterns = (await window.kv.get<ShiftPatternRule[]>('shift-patterns')) || []
       const roles = (await window.kv.get<ShiftRole[]>('shift-roles')) || []
       const sickLeave = (await window.kv.get<SickLeaveEntry[]>('sick-leave-entries')) || []
       const vacations = (await window.kv.get<VacationEntry[]>('vacation-entries')) || []
@@ -779,7 +797,12 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
         })
       }
       
-      const todaysAssignments = assignments.filter(a => a.date === today)
+      // Gentagne vagter gemmes ikke som raekker - de skal udfoldes her, ellers
+      // mangler personen bag et moenster i widgeten (opgaven vises, personen ikke).
+      const todaysAssignments = [
+        ...assignments.filter(a => a.date === today),
+        ...expandShiftPatterns(shiftPatterns, assignments, today, email => isSickToday(email) || isOnVacationToday(email)),
+      ]
       
       const taskPeopleMap: Record<string, { color: string; people: Array<{ name: string; comment?: string }>; roleId: string }> = {}
       

@@ -430,6 +430,50 @@ test('a network write that throws even though we thought we were connected still
   assert.equal(resilient.getPendingSyncCount(), 1)
 })
 
+test('a conflicting replay is given up instead of retried forever', (t) => {
+  // Den rigtige fejl: fire "categories"-skrivninger laa i koeen i fire dage og
+  // fejlede 60 gange med KV_CONFLICT. En konflikt kan ALDRIG loese sig selv ved
+  // at proeve igen - og saa laenge posten laa der, blev noeglen serveret fra den
+  // forael­dede lokale kopi.
+  const local = temporaryLocalStore(t)
+  const network = fakeNetworkStore({ update: () => { const error = new Error('KV_CONFLICT: test'); error.code = 'KV_CONFLICT'; throw error } })
+  const resilient = createResilientStore(network, local, { onSyncResult: () => {} })
+  network.isConnected = () => false
+  resilient.update('categories', { op: 'append', items: [{ id: 'c1' }] })
+  network.isConnected = () => true
+
+  const result = resilient.retrySyncNow()
+  assert.equal(result.remaining, 0, 'den fastlaaste post skal vaere ude af koeen')
+  assert.equal(resilient.getPendingSyncCount(), 0)
+  // Opgivet - men ikke slettet i stilhed.
+  assert.equal((local.get('__offline-discarded__') || []).length, 1)
+  assert.match(local.get('__offline-discarded__')[0].lastError, /KV_CONFLICT/)
+})
+
+test('a busy drive is still retried, never given up', (t) => {
+  const local = temporaryLocalStore(t)
+  const network = fakeNetworkStore({ set: () => { const error = new Error('KV_LOCK_BUSY: optaget'); error.code = 'KV_LOCK_BUSY'; throw error } })
+  const resilient = createResilientStore(network, local, { onSyncResult: () => {} })
+  network.isConnected = () => false
+  resilient.set('categories', ['A'])
+  network.isConnected = () => true
+
+  assert.equal(resilient.retrySyncNow().remaining, 1, 'forbigaaende fejl skal blive i koeen')
+  assert.equal((local.get('__offline-discarded__') || []).length, 0)
+})
+
+test('internal bookkeeping keys are never exposed as app data', (t) => {
+  const local = temporaryLocalStore(t)
+  const network = fakeNetworkStore({ isConnected: () => false })
+  const resilient = createResilientStore(network, local)
+  local.set('__offline-discarded__', [{ key: 'categories' }])
+  resilient.set('real-key', 'value')
+  const keys = resilient.keys()
+  assert.ok(!keys.includes('__offline-queue__'))
+  assert.ok(!keys.includes('__offline-discarded__'))
+  assert.ok(keys.includes('real-key'))
+})
+
 test('retrySyncNow() replays queued operations against the network and clears them on success', (t) => {
   const local = temporaryLocalStore(t)
   let connected = false

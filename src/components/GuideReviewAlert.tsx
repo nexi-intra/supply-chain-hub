@@ -17,7 +17,8 @@ interface GuideReviewAlertProps {
   userEmail: string
 }
 
-// Vises i main Hub i to trin: (1) 10 dage før fristen får KUN guidens forfatter en
+// Vises i main Hub i to trin: (1) 10 dage før fristen får KUN den ansvarlige (eller
+// forfatteren, hvis ingen ansvarlig er sat — bagudkompatibelt med ældre guides) en
 // påmindelse, (2) fra selve fristen og til guiden opdateres, får ALLE brugere en
 // påmindelse. Begge dele er dismissable og dukker højst op én gang pr. kalenderdag
 // pr. bruger (sporet i KV 'guide-review-notice-log'), ikke bare pr. session.
@@ -28,7 +29,7 @@ export function GuideReviewAlert({ onOpenGuideLibrary, guides, userEmail }: Guid
   const upcomingGuides = useMemo(() => {
     const now = Date.now()
     return (guides || []).filter((g) => {
-      if (g.author !== userEmail || !g.nextReviewAt) return false
+      if ((g.responsibleEmail || g.author) !== userEmail || !g.nextReviewAt) return false
       if (now >= g.nextReviewAt || now < g.nextReviewAt - REVIEW_NOTICE_WINDOW_MS) return false
       return !wasNotifiedToday(noticeLog, userEmail, g.id, now)
     })
