@@ -8,6 +8,7 @@ const { app, BrowserWindow, shell, ipcMain: nativeIpcMain, dialog, nativeImage }
 const { pathToFileURL } = require('node:url')
 const path = require('path')
 const fs = require('fs')
+const fsp = require('fs/promises')
 const crypto = require('crypto')
 const { createStore } = require('./store.cjs')
 const { createResilientStore } = require('./offlineSync.cjs')
@@ -24,7 +25,7 @@ const { createLocalAI } = require('./localAI.cjs')
 const { createAssistantWorkerClient } = require('./assistantWorkerClient.cjs')
 const { resolveAssistantAnswer, fingerprint } = require('./assistantPlanner.cjs')
 const { conciseGuideFact, conciseGuideFallback } = require('./assistantAnswers.cjs')
-const { buildHubertSystemPrompt } = require('./assistantPersona.cjs')
+const { buildHubertSystemPrompt, buildGeneralSystemPrompt } = require('./assistantPersona.cjs')
 const { detectQuestionLanguage } = require('./assistantContext.cjs')
 const { buildUnansweredLogEntry } = require('./assistantUnansweredLog.cjs')
 let localAI = null
@@ -324,87 +325,109 @@ function startPendingSyncRetry() {
 //    (skete for TRR 2026-09-18 — kun morgen-backuppen fandtes, så alt der
 //    blev tastet ind resten af dagen kunne ikke genskabes fra en backup).
 // Exclusive create ('wx') sikrer at kun én af de delte klienter skriver en given fil.
-const AUTO_BACKUP_KEEP = 14
-const AUTO_BACKUP_HOURLY_KEEP = 110 // ~10 arbejdsdage a 11 timer (06-16)
+// En fuld snapshot fylder ~32 MB pr. team. Derfor: alle timefiler for I DAG
+// (hoejst en times tab), men kun ÉN fil pr. afsluttet dag. Med 14 dages
+// historik bliver det ~25 filer pr. team i stedet for hundredvis.
+const AUTO_BACKUP_KEEP_DAYS = 14
 const AUTO_BACKUP_HOURLY_START_HOUR = 6
 const AUTO_BACKUP_HOURLY_END_HOUR = 16 // eksklusiv - sidste time-backup tages kl. 15
 const AUTO_BACKUP_CHECK_INTERVAL = 60 * 60 * 1000
 let autoBackupTimer = null
 
 /** Skriver `payload` til `fileName` medmindre filen allerede findes. Returnerer true hvis DENNE klient skrev den. */
-function writeBackupFileOnce(backupDir, fileName, payload) {
+async function writeBackupFileOnce(backupDir, fileName, payload) {
   const target = path.join(backupDir, fileName)
   if (fs.existsSync(target)) return false
-  let fd
+  let handle
   try {
-    fd = fs.openSync(target, 'wx')
+    handle = await fsp.open(target, 'wx')
   } catch (err) {
     if (err.code === 'EEXIST') return false // En anden klient nåede det først.
     throw err
   }
   try {
-    fs.writeSync(fd, payload)
+    await handle.write(payload)
   } finally {
-    fs.closeSync(fd)
+    await handle.close()
   }
   return true
 }
 
-function backupStore(targetStore) {
+async function backupStore(targetStore) {
   try {
     const backupDir = path.join(targetStore.dataDir, 'Backup')
-    fs.mkdirSync(backupDir, { recursive: true })
     const now = new Date()
     const today = now.toISOString().slice(0, 10)
     const hour = now.getHours()
 
+    const wanted = [`tcd-hub-auto-backup-${today}.json`]
+    if (hour >= AUTO_BACKUP_HOURLY_START_HOUR && hour < AUTO_BACKUP_HOURLY_END_HOUR) {
+      wanted.push(`tcd-hub-auto-backup-${today}_${String(hour).padStart(2, '0')}.json`)
+    }
+    // Tjek foer vi bygger indholdet: en dump er ~650 filer over SMB, saa den maa
+    // kun koere naar der faktisk mangler en fil.
+    const missing = wanted.filter(name => !fs.existsSync(path.join(backupDir, name)))
+    if (!missing.length) return
+
+    await fsp.mkdir(backupDir, { recursive: true })
+    // dumpAllAsync frem for dumpAll: den synkrone udgave laaste main-traaden i
+    // op mod et minut, saa hele appen frøs hver gang en backup blev taget.
     const payload = JSON.stringify({
       app: 'tcd-hub',
       formatVersion: 1,
       exportedAt: now.toISOString(),
       auto: true,
-      data: targetStore.dumpAll(),
+      data: await targetStore.dumpAllAsync(),
     }, null, 2)
-
-    if (writeBackupFileOnce(backupDir, `tcd-hub-auto-backup-${today}.json`, payload)) {
-      console.log(`TCD Hub: automatisk daglig backup skrevet: ${today}`)
+    for (const name of missing) {
+      if (await writeBackupFileOnce(backupDir, name, payload)) console.log(`TCD Hub: automatisk backup skrevet: ${name}`)
     }
 
-    if (hour >= AUTO_BACKUP_HOURLY_START_HOUR && hour < AUTO_BACKUP_HOURLY_END_HOUR) {
-      const hourLabel = `${today}_${String(hour).padStart(2, '0')}`
-      if (writeBackupFileOnce(backupDir, `tcd-hub-auto-backup-${hourLabel}.json`, payload)) {
-        console.log(`TCD Hub: automatisk time-backup skrevet: ${hourLabel}`)
-      }
+    // Rotation: I DAG beholdes alle timefiler, saa man kan gaa hoejst en time
+    // tilbage. AFSLUTTEDE dage klappes sammen til ÉN fil - den NYESTE fra dagen.
+    // (Dagsfilen uden time-suffiks er dagens FOERSTE backup, altsaa den aeldste
+    // tilstand; derfor er den sidste timefil den rigtige at beholde. Navnene
+    // sorterer korrekt, fordi '.' kommer foer '_'.)
+    const byDay = new Map()
+    for (const name of await fsp.readdir(backupDir)) {
+      const match = name.match(/^tcd-hub-auto-backup-(\d{4}-\d{2}-\d{2})(?:_\d{2})?\.json$/)
+      if (!match) continue
+      if (!byDay.has(match[1])) byDay.set(match[1], [])
+      byDay.get(match[1]).push(name)
     }
-
-    // Rotation: daglige og time-baserede auto-backups holdes hver deres antal.
-    const allBackups = fs.readdirSync(backupDir)
-    const dailyBackups = allBackups.filter((name) => /^tcd-hub-auto-backup-\d{4}-\d{2}-\d{2}\.json$/.test(name)).sort()
-    for (const name of dailyBackups.slice(0, Math.max(0, dailyBackups.length - AUTO_BACKUP_KEEP))) {
-      try { fs.unlinkSync(path.join(backupDir, name)) } catch {}
+    const days = [...byDay.keys()].sort()
+    const doomed = new Set()
+    for (const day of days) {
+      if (day === today) continue
+      for (const name of byDay.get(day).sort().slice(0, -1)) doomed.add(name)
     }
-    const hourlyBackups = allBackups.filter((name) => /^tcd-hub-auto-backup-\d{4}-\d{2}-\d{2}_\d{2}\.json$/.test(name)).sort()
-    for (const name of hourlyBackups.slice(0, Math.max(0, hourlyBackups.length - AUTO_BACKUP_HOURLY_KEEP))) {
-      try { fs.unlinkSync(path.join(backupDir, name)) } catch {}
+    for (const day of days.slice(0, Math.max(0, days.length - AUTO_BACKUP_KEEP_DAYS))) {
+      for (const name of byDay.get(day)) doomed.add(name)
     }
+    for (const name of doomed) await fsp.unlink(path.join(backupDir, name)).catch(() => {})
   } catch (err) {
     console.error('TCD Hub: automatisk backup fejlede', err)
   }
 }
 
 
-function runAutoBackup() {
-  backupStore(store)
+async function runAutoBackup() {
+  // Sekventielt: to samtidige fulde dumps ville kappes om det samme drev.
+  await backupStore(store)
   // Platform-delt data (fx madplanen, Fase 9.1) hører ikke til under noget team og skal derfor
   // sikkerhedskopieres separat, under sin egen _shared/Backup/-mappe.
-  if (sharedStore) backupStore(sharedStore)
+  if (sharedStore) await backupStore(sharedStore)
 }
 
-function startAutoBackup() {
+function startAutoBackup({ immediate = true } = {}) {
   if (autoBackupTimer) clearInterval(autoBackupTimer)
-  runAutoBackup()
+  // immediate:false ved team-skift. Backup'en er asynkron og blokerer ikke
+  // laengere appen, men den beslaglaegger stadig drevet - og teamets egne
+  // brugere laver alligevel timens backup.
+  const run = () => { runAutoBackup().catch(err => console.error('TCD Hub: automatisk backup fejlede', err)) }
+  if (immediate) run()
   // Timetjek dækker både midnat og klienter, der bare får lov at køre.
-  autoBackupTimer = setInterval(runAutoBackup, AUTO_BACKUP_CHECK_INTERVAL)
+  autoBackupTimer = setInterval(run, AUTO_BACKUP_CHECK_INTERVAL)
   autoBackupTimer.unref?.()
 }
 
@@ -471,11 +494,17 @@ function switchToTeamDir(folderName, newDir) {
   storageStartedDisconnected = false
   storageFailedSources = []
   setStorageConnected(true)
-  startWatcher()
-  scheduleMirrorWarmUp()
-  startAutoBackup()
-
-  broadcast('kv:changed', store.keys())
+  // Hub-skift skal foeles oejeblikkeligt. Watcher-scanning, spejl-varmning og
+  // noeglelisten er alle SMB-kald, saa de koerer foerst efter skiftet er meldt
+  // tilbage - ellers fryser Ctrl+K-skiftet mens de venter paa drevet.
+  setImmediate(() => {
+    startWatcher()
+    scheduleMirrorWarmUp()
+    startAutoBackup({ immediate: false })
+    // keysAsync frem for keys(): den synkrone udgave laaser main-traaden mens
+    // hele teammappen listes over netvaerket.
+    store.keysAsync().then(keys => broadcast('kv:changed', keys)).catch(err => console.error('TCD Hub: kunne ikke opdatere efter hub-skift', err))
+  })
   return { dataDir: newDir }
 }
 
@@ -508,7 +537,13 @@ function createWindow() {
     },
   })
 
-  win.once('ready-to-show', () => win.show())
+  // Vinduet er skjult indtil foerste maling for at undgaa et hvidt glimt. Men
+  // paa et langsomt drev kan den maling traekke ud, og brugeren sidder saa og
+  // kigger paa INGENTING efter at have klikket paa ikonet. Vis derfor vinduet
+  // alligevel efter kort tid, saa appen altid kvitterer for klikket.
+  const revealTimer = setTimeout(() => { if (!win.isDestroyed() && !win.isVisible()) win.show() }, 1200)
+  win.once('ready-to-show', () => { clearTimeout(revealTimer); if (!win.isDestroyed()) win.show() })
+  win.once('closed', () => clearTimeout(revealTimer))
   const senderId = win.webContents.id
   win.webContents.on('destroyed', () => authService?.forget(senderId))
   win.webContents.on('will-navigate', (event, target) => {
@@ -548,6 +583,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  const startedAt = Date.now()
   // Support-diagnostik: viser om WebGL kører på rigtig GPU eller software.
   // Læses først efter 5s — ved ready-tid melder alt altid "disabled" (GPU-
   // processen er ikke færdiginitialiseret). Korrupte GPU-cache-mapper i
@@ -572,18 +608,6 @@ app.whenReady().then(() => {
 
   // Platform-delt store (Fase 9.1) — oprettes én gang, uafhængig af hvilket team der er aktivt.
   sharedStore = createResilientStore(createStore(path.join(platformRoot, '_shared')), createStore(localCacheDir('_shared')), resilientOptions())
-  // KRITISK: runWrite() er synkron og kaster STRAKS (attempts:1) hvis kontolaasen
-  // er kortvarigt optaget (fx to klienter der starter appen i samme sekund). Uden
-  // try/catch stopper en kastet fejl her HELE resten af denne .then()-callback —
-  // inklusiv createWindow() nedenfor — saa appen bliver en usynlig zombie-proces
-  // uden vindue og uden crash. Denne étgangs-migrering maa ALDRIG kunne blokere
-  // vinduet i at aabne; fejl her logges blot og proeves igen ved naeste opstart.
-  try {
-    if (!accountService.pending()) accountService.runWrite(migrateSharedMealPlanIfNeeded)
-  } catch (err) {
-    console.error('TCD Hub: madplan-migreringstjek fejlede (proeves igen ved naeste opstart):', err)
-  }
-  startSharedWatcher()
 
   guestStore = createStore(path.join(app.getPath('userData'), 'guest-preferences'))
   authService = createAuthService({
@@ -661,7 +685,7 @@ app.whenReady().then(() => {
   // Hubert koerer ogsaa i pakkede releases. Den lokale model ligger maskine-globalt i
   // %LOCALAPPDATA%\SupplyChainHub\ai; mangler den, falder guide-svar paent tilbage til uddrag.
   {
-    localAI = createLocalAI({ defaultModelId: '8b', sharedAssetDir: path.join(platformRoot, 'ai-model') })
+    localAI = createLocalAI({ defaultModelId: '4b', sharedAssetDir: path.join(platformRoot, 'ai-model') })
     assistantBackend = createAssistantWorkerClient({ getState: () => ({
       platformRoot, currentFolder: currentTeamFolder, activeDir: store.dataDir,
       localDir: localCacheDir(currentTeamFolder),
@@ -699,15 +723,41 @@ app.whenReady().then(() => {
       const assistant = assistantBackend.session()
       const principal = await assistant.authorize(request?.token, request?.viewId)
       const scope = fingerprint(principal)
+      // Generel tilstand: brugeren har bevidst slaaet hub-data fra for at stille
+      // et almindeligt spoergsmaal. Der hentes INGEN evidens, og der sendes
+      // intet fra hubben til modellen - kun spoergsmaalet selv. Svaret markeres
+      // tydeligt i UI'et, saa det aldrig forveksles med et databaseret svar.
+      if (request?.general === true) {
+        const question = typeof request.question === 'string' ? request.question.trim() : ''
+        if (!question || question.length > 1000) throw new Error('Spørgsmålet skal være mellem 1 og 1000 tegn')
+        const generalLanguage = detectQuestionLanguage(question) || (['da', 'en', 'fi'].includes(request.language) ? request.language : 'da')
+        const attached = request.image ? shrinkImage(request.image) : null
+        let generated
+        try {
+          generated = await localAI.complete([
+            { role: 'system', content: buildGeneralSystemPrompt(generalLanguage) },
+            { role: 'user', content: attached ? [{ type: 'text', text: question }, { type: 'image_url', image_url: { url: attached } }] : question },
+          ], { maxTokens: 1024, temperature: 0.6 })
+        } catch (error) {
+          // Generel tilstand har ingen dataopslag at falde tilbage paa, saa
+          // modellens standardbesked ("Dataopslag kan stadig bruges") ville
+          // vaere direkte misvisende her. Sig hvad brugeren reelt kan goere.
+          const hint = { da: 'Hubert kan ikke svare på generelle spørgsmål lige nu, fordi AI-modellen ikke kan starte. Skift til Hub-tilstand for at slå op i hubbens data.', en: 'Hubert cannot answer general questions right now because the AI model cannot start. Switch to Hub mode to look things up in the hub data.', fi: 'Hubert ei voi vastata yleisiin kysymyksiin juuri nyt, koska tekoälymallia ei voi käynnistää. Vaihda Hub-tilaan hakeaksesi tietoja hubista.' }
+          return { mode: 'general', text: hint[generalLanguage] || hint.da, sources: [], warning: error.message }
+        }
+        if (fingerprint(await assistant.authorize(request.token, request.viewId)) !== scope) throw new Error('Hubben blev skiftet under svaret. Stil spørgsmålet igen.')
+        return { mode: 'general', text: generated.text, sources: [], metrics: generated.metrics, usedImage: !!attached }
+      }
       const evidence = await resolveAssistantAnswer(assistant, localAI, request)
       const resolvedRequest = { ...request, question: evidence.contextQuestion || request.question }
       const answer = conciseGuideFact(evidence, resolvedRequest) || evidence
+      // Best-effort log af spoergsmaal uden daekning til senere at forbedre
+      // Hubert - maa ALDRIG braekke selve svaret til brugeren. Ligger foer
+      // tilstands-tjekket, saa ogsaa app-guide-svar uden emnetraef taelles med.
+      const unansweredEntry = buildUnansweredLogEntry(resolvedRequest, answer)
+      if (unansweredEntry) store.updateAsync('hubert-unanswered-questions', { op: 'append', items: [{ id: crypto.randomUUID(), ...unansweredEntry }] }).catch(() => {})
       if (answer.mode === 'data' || answer.mode === 'unsupported' || answer.mode === 'action-proposal') {
         if (fingerprint(await assistant.revalidateSources(request, answer)) !== scope) throw new Error('Hubben eller adgangen blev ændret under opslaget')
-        // Best-effort log af ubesvarede spoergsmaal til senere at forbedre
-        // Hubert-daekningen - maa ALDRIG braekke selve svaret til brugeren.
-        const unansweredEntry = buildUnansweredLogEntry(resolvedRequest, answer)
-        if (unansweredEntry) store.updateAsync('hubert-unanswered-questions', { op: 'append', items: [{ id: crypto.randomUUID(), ...unansweredEntry }] }).catch(() => {})
         return answer
       }
       // Insufficient evidence never becomes an AI-generated invented answer.
@@ -1023,9 +1073,28 @@ app.whenReady().then(() => {
     }
   })
 
-  startWatcher()
-
+  // Vinduet oprettes SAA TIDLIGT SOM MULIGT - lige efter IPC-handlerne findes,
+  // og foer alt arbejde mod det delte drev. Watchere, migrationstjek og
+  // AI-worker laa foer her og kunne udskyde vinduet i op til flere minutter paa
+  // et langsomt drev, hvor brugeren bare saa... ingenting.
   createWindow()
+
+  // Resten koerer FOERST naar vinduet er paa skaermen. setImmediate giver
+  // Electron lov til at male vinduet, foer vi beslaglaegger main-traaden med
+  // synkrone SMB-kald igen.
+  setImmediate(() => {
+    startWatcher()
+    startSharedWatcher()
+    // runWrite() er synkron og kaster STRAKS (attempts:1) hvis kontolaasen er
+    // kortvarigt optaget. try/catch er kritisk: en kastet fejl her maa aldrig
+    // stoppe resten af opstarten. Proeves igen ved naeste opstart.
+    try {
+      if (!accountService.pending()) accountService.runWrite(migrateSharedMealPlanIfNeeded)
+    } catch (err) {
+      console.error('TCD Hub: madplan-migreringstjek fejlede (proeves igen ved naeste opstart):', err)
+    }
+    console.log(`TCD Hub: klar efter ${Date.now() - startedAt} ms`)
+  })
 
   updater.cleanupOldWorkDirs()
   // Backup kører først når appen har haft et øjeblik til at starte færdig.

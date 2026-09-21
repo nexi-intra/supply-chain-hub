@@ -5,11 +5,11 @@ import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
-import { Plus, MagnifyingGlass, Books, Gear, ArrowLeft, Timer, FolderOpen, FileArrowUp, Buildings, LockKey, Clock, CheckCircle, XCircle, Eye, ClipboardText } from '@phosphor-icons/react'
+import { Plus, MagnifyingGlass, Books, Gear, ArrowLeft, Timer, FolderOpen, FileArrowUp, Buildings, LockKey, Clock, CheckCircle, XCircle, Eye, ClipboardText, FileDashed, Trash } from '@phosphor-icons/react'
 import { Guide, GuideAccessRequest } from '@/lib/types'
-import { guidePlainText, getReviewStatus, computeNextReviewAt, type ArchivedGuideEntry, type GuideReviewRequest } from '@/lib/guideTypes'
+import { guidePlainText, getReviewStatus, computeNextReviewAt, type ArchivedGuideEntry, type GuideDraft, type GuideReviewRequest } from '@/lib/guideTypes'
 import { GuideSearchIndex } from '@/lib/searchIndex'
-import { bumpVersion, saveVersionSnapshot } from '@/lib/guideStore'
+import { bumpVersion, saveVersionSnapshot, listDrafts, deleteDraft, draftLabel } from '@/lib/guideStore'
 import { guideToDocModel, resolveAuthorName } from '@/lib/docModel'
 import { isExportAvailable, getExportRoot, chooseAndSaveExportRoot, exportGuideToLibrary } from '@/lib/guideExporter'
 import { guideImportManager } from '@/lib/guideImportManager'
@@ -72,6 +72,8 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
   const [editGuide, setEditGuide] = useState<Guide | undefined>()
   const [viewGuide, setViewGuide] = useState<Guide | null>(null)
   const [importDraft, setImportDraft] = useState<GuideImportDraft | null>(null)
+  const [drafts, setDrafts] = useState<GuideDraft[]>([])
+  const [resumeDraft, setResumeDraft] = useState<GuideDraft | null>(null)
   const importJob = useSyncExternalStore(guideImportManager.subscribe, guideImportManager.getJob)
   const isImporting = importJob !== null
   const importInputRef = useRef<HTMLInputElement>(null)
@@ -120,7 +122,7 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
     ]).then(([allTeams, currentTeam]) => {
       setTeams(allTeams.filter(team => team.teamId !== currentTeam?.teamId))
       setCurrentTeamCode(currentTeam?.folderName)
-    })
+    }).catch((error) => console.error('Kunne ikke hente teamlisten:', error))
   }, [])
 
   // Fase 3: eget teams "reelle" bibliotek = lokale guides + delte guides denne guide er tagget
@@ -135,6 +137,15 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
     return [...local, ...shared]
   }, [guides, sharedGuides, currentTeamCode])
 
+  // Genindlaeses hver gang editoren lukkes, saa listen afspejler en netop gemt
+  // eller forkastet kladde uden at brugeren skal skifte visning.
+  useEffect(() => {
+    if (dialogOpen) return
+    let cancelled = false
+    listDrafts(userEmail).then((found) => { if (!cancelled) setDrafts(found) }).catch(() => {})
+    return () => { cancelled = true }
+  }, [dialogOpen, userEmail])
+
   const loadOtherTeamGuides = () => {
     if (!selectedTeamId) return
     const team = teams.find(tm => tm.teamId === selectedTeamId)
@@ -146,8 +157,13 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
     ]).then(([guidesData, requestsData]) => {
       setOtherTeamGuides(guidesData || [])
       setOtherTeamRequests(requestsData || [])
-      setIsLoadingOtherTeamGuides(false)
-    })
+    }).catch((error) => {
+      // Uden dette blev spinneren staaende for evigt hvis drevet svigtede.
+      console.error('Kunne ikke hente det andet teams guides:', error)
+      setOtherTeamGuides([])
+      setOtherTeamRequests([])
+      toast.error(t.guideLibrary.loadOtherTeamFailed)
+    }).finally(() => setIsLoadingOtherTeamGuides(false))
   }
 
   useEffect(loadOtherTeamGuides, [selectedTeamId, teams])
@@ -448,7 +464,26 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
     setEditingAsReviewer(false)
     setEditGuide(undefined)
     setImportDraft(null)
+    setResumeDraft(null)
     setDialogOpen(true)
+  }
+
+  const handleResumeDraft = (draft: GuideDraft) => {
+    setEditingReviewRequest(null)
+    setEditingAsReviewer(false)
+    setImportDraft(null)
+    // Hoerer kladden til en allerede udgivet guide, skal den aabnes som en
+    // REDIGERING af den guide. Ellers ville et gem oprette en dublet i stedet
+    // for at opdatere originalen.
+    setEditGuide(myGuides.find((guide) => guide.id === draft.guideId))
+    setResumeDraft(draft)
+    setDialogOpen(true)
+  }
+
+  const handleDeleteDraft = async (draft: GuideDraft) => {
+    await deleteDraft(draft.guideId)
+    setDrafts((current) => current.filter((entry) => entry.guideId !== draft.guideId))
+    toast.success(t.guideEditor.draftDeleted)
   }
 
   const handleEditReviewRequest = async (request: GuideReviewRequest, asReviewer: boolean) => {
@@ -676,8 +711,8 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
 
   const allCategories = ['All', ...(categories || defaultCategories)]
 
-  // Tv\u00e6rg\u00e5ende team-v\u00e6lger (Fase 8): kun vist n\u00e5r der findes mindst \u00e9t andet team.
-  // Genbruges b\u00e5de i "mit team"-visningen og i "andet team"-visningen nedenfor.
+  // Tværgående team-vælger (Fase 8): kun vist når der findes mindst ét andet team.
+  // Genbruges både i "mit team"-visningen og i "andet team"-visningen nedenfor.
   const renderTeamTabs = () => {
     if (teams.length < 1) return null
     return (
@@ -997,6 +1032,34 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
           </>}
         </header>
 
+        {workflowView !== 'workflow' && drafts.length > 0 && (
+          <div className="mb-6 rounded-2xl border-2 border-dashed border-primary/30 bg-primary/5 p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <FileDashed size={20} weight="bold" className="text-primary" />
+              <h3 className="font-bold">{t.guideEditor.draftsTitle}</h3>
+              <Badge variant="secondary">{drafts.length}</Badge>
+            </div>
+            <p className="text-sm text-muted-foreground mb-3">{t.guideEditor.draftsBody}</p>
+            <div className="space-y-2">
+              {drafts.map((draft) => (
+                <div key={draft.guideId} className="flex items-center gap-3 rounded-xl border bg-card p-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold truncate">{draftLabel(draft) || t.guideEditor.draftUntitled}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {new Date(draft.lastAutoSavedAt).toLocaleString(language === 'en' ? 'en-US' : language === 'fi' ? 'fi-FI' : 'da-DK')}
+                      {myGuides.some((guide) => guide.id === draft.guideId) && ` · ${t.guideEditor.draftOfPublished}`}
+                    </div>
+                  </div>
+                  <Button size="sm" onClick={() => handleResumeDraft(draft)} className="shrink-0">{t.guideEditor.draftResume}</Button>
+                  <Button size="sm" variant="ghost" onClick={() => void handleDeleteDraft(draft)} className="shrink-0 text-destructive hover:text-destructive" aria-label={t.guideEditor.draftDiscard}>
+                    <Trash size={16} />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {workflowView === 'workflow' ? (
           <GuideReviewDashboard
             key={isGuideReviewer ? 'reviewer-workflow' : 'user-workflow'}
@@ -1090,6 +1153,7 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
           if (!open) {
             setEditGuide(undefined)
             setImportDraft(null)
+            setResumeDraft(null)
             setEditingReviewRequest(null)
             setEditingAsReviewer(false)
           }
@@ -1099,6 +1163,7 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
         categories={categories || defaultCategories}
         onCreateCategory={handleCreateCategory}
         importDraft={importDraft}
+        resumeDraft={resumeDraft}
         userEmail={userEmail}
         users={teamUsers}
         preserveVersion={Boolean(editingReviewRequest)}

@@ -23,7 +23,7 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Plus, X, ArrowUp, ArrowDown, Image as ImageIcon, Timer,
-  ClockCounterClockwise, ArrowCounterClockwise, FileDoc, Upload, Trash, Eye, Buildings,
+  ClockCounterClockwise, ArrowCounterClockwise, FileDoc, Upload, Trash, Eye, Buildings, FloppyDisk,
 } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -52,6 +52,8 @@ interface GuideEditorProps {
   onCreateCategory?: (category: string) => boolean
   /** Forudsætter en ny guide med indhold parset fra et importeret Word-dokument. */
   importDraft?: GuideImportDraft | null
+  /** Genoptager en gemt kladde - beholder kladdens eget ID, saa den ikke duplikeres. */
+  resumeDraft?: GuideDraft | null
   userEmail: string
   /** Til "Ansvarlig for gennemgang"-vælgeren - samme kilde som GuideLibrary allerede læser. */
   users?: Array<{ email: string; fullName: string }>
@@ -162,7 +164,7 @@ function ImageDropZone({ onUploaded, compact }: { onUploaded: (fileIds: string[]
   )
 }
 
-export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories, onCreateCategory, importDraft, userEmail, users = [], preserveVersion = false, submitLabel, titleOverride, descriptionOverride }: GuideEditorProps) {
+export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories, onCreateCategory, importDraft, resumeDraft, userEmail, users = [], preserveVersion = false, submitLabel, titleOverride, descriptionOverride }: GuideEditorProps) {
   const { t, language: appLanguage } = useLanguage()
   const [title, setTitle] = useState('')
   const [category, setCategory] = useState<string>(categories[0] || 'General')
@@ -259,15 +261,33 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
     setNewCategoryName('')
     setOtherTeamCodes((migrated?.sharedWithTeamCodes || []).filter((code) => code !== currentTeamCode))
     setDetectedDraft(null)
+    // Genoptaget kladde laegges OVEN PAA det ovenstaaende, saa den virker ens
+    // uanset om den hoerer til en ny guide eller til en allerede udgivet guide
+    // der bliver rettet. Kladden beholder sit eget ID og overskriver derfor sig
+    // selv i stedet for at efterlade en ny, foraeldreloes kladde hver gang.
+    if (resumeDraft) {
+      if (!migrated) { newId_ = resumeDraft.guideId; setNewGuideId(newId_) }
+      setTitle(resumeDraft.title)
+      setCategory(resumeDraft.category || categories[0] || 'General')
+      setTags(resumeDraft.tags)
+      setLanguage(resumeDraft.language)
+      setSections(resumeDraft.sections.length ? resumeDraft.sections : [emptySection()])
+      setCoverImageId(resumeDraft.coverImageId)
+      setReviewInterval(resumeDraft.reviewInterval)
+      setNextReviewDate(resumeDraft.nextReviewDate || todayDateString())
+      setResponsibleEmail(resumeDraft.responsibleEmail || userEmail)
+      setOtherTeamCodes(resumeDraft.otherTeamCodes)
+    }
     // En autogemt kladde fra en tidligere afbrudt session (crash/lukket vindue)
     // tilbydes til genskabelse, men anvendes ALDRIG automatisk — brugeren skal
     // eksplicit vælge, ellers kunne en kladde overraskende overskrive frisk
-    // indhold der lige er hentet fra den udgivne guide.
-    getDraft(migrated?.id || newId_).then((draft) => { if (draft) setDetectedDraft(draft) }).catch(() => {})
+    // indhold der lige er hentet fra den udgivne guide. Genoptager man bevidst
+    // en kladde, er indholdet allerede lagt ind, saa banneret ville være støj.
+    if (!resumeDraft) getDraft(migrated?.id || newId_).then((draft) => { if (draft) setDetectedDraft(draft) }).catch(() => {})
     // Billeder fra et importeret dokument uploades allerede før editoren åbner —
     // de skal ryddes op på lige fod med session-billeder, hvis brugeren fortryder.
     sessionImagesRef.current = importDraft ? importDraft.sections.flatMap((s) => s.steps.flatMap((st) => st.imageIds)) : []
-  }, [open, migrated, categories, importDraft, currentTeamCode, userEmail])
+  }, [open, migrated, categories, importDraft, resumeDraft, currentTeamCode, userEmail])
 
   const hasUnsavedChanges = useMemo(() => {
     if (!open) return false
@@ -302,6 +322,31 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
     void deleteDraft(draftId)
   }, [draftId])
 
+  const currentDraft = useCallback((): GuideDraft => ({
+    guideId: draftId,
+    title,
+    category,
+    tags,
+    language,
+    sections,
+    coverImageId,
+    reviewInterval,
+    nextReviewDate,
+    responsibleEmail,
+    otherTeamCodes,
+    savedBy: userEmail,
+    lastAutoSavedAt: Date.now(),
+  }), [draftId, title, category, tags, language, sections, coverImageId, reviewInterval, nextReviewDate, responsibleEmail, otherTeamCodes, userEmail])
+
+  // Forlader man editoren uden at gemme, skal arbejdet kunne findes igen. Derfor
+  // beholdes BAADE kladden og de billeder der er uploadet undervejs - ryddes de
+  // som "ubrugte", peger kladden bagefter paa billeder der ikke findes.
+  const keepAsDraft = useCallback(async () => {
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
+    sessionImagesRef.current = []
+    await saveDraft(currentDraft())
+  }, [currentDraft])
+
   const restoreDraft = () => {
     if (!detectedDraft) return
     setTitle(detectedDraft.title)
@@ -324,31 +369,15 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
     if (!open || detectedDraft) return
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
     autoSaveTimerRef.current = setTimeout(() => {
-      const draft: GuideDraft = {
-        guideId: draftId,
-        title,
-        category,
-        tags,
-        language,
-        sections,
-        coverImageId,
-        reviewInterval,
-        nextReviewDate,
-        responsibleEmail,
-        otherTeamCodes,
-        savedBy: userEmail,
-        lastAutoSavedAt: Date.now(),
-      }
-      saveDraft(draft).catch((error) => console.error('Kunne ikke autogemme guide-kladde:', error))
+      saveDraft(currentDraft()).catch((error) => console.error('Kunne ikke autogemme guide-kladde:', error))
     }, 4000)
     return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current) }
-  }, [open, detectedDraft, draftId, title, category, tags, language, sections, coverImageId, reviewInterval, nextReviewDate, responsibleEmail, otherTeamCodes, userEmail])
+  }, [open, detectedDraft, currentDraft])
 
   useUnsavedChanges({
     hasUnsavedChanges,
     onConfirmedExit: () => {
-      cleanupSessionImages()
-      void deleteDraft(draftId)
+      void keepAsDraft().catch((error) => console.error('Kunne ikke gemme guide-kladde:', error))
       onOpenChange(false)
     },
     enabled: open,
@@ -967,6 +996,10 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
           <Button variant="outline" onClick={() => setPreviewOpen(true)} disabled={isSaving} className="gap-2">
             <Eye size={16} />
             {t.guideEditor.preview}
+          </Button>
+          <Button variant="secondary" onClick={() => { void keepAsDraft().then(() => { toast.success(t.guideEditor.draftSaved); onOpenChange(false) }).catch(() => toast.error(t.guideEditor.draftSaveFailed)) }} disabled={isSaving} className="gap-2">
+            <FloppyDisk size={16} />
+            {t.guideEditor.saveAsDraft}
           </Button>
           <Button onClick={handleSave} disabled={isSaving} className="gap-2">
             {isSaving ? t.guideEditor.saving : submitLabel || (migrated ? `${t.guideEditor.saveAsVersionPrefix}${nextVersion}` : t.guideEditor.createGuide)}

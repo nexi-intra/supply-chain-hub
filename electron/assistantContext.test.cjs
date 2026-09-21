@@ -245,6 +245,18 @@ test('guide and image fetches independently recheck access and belonging', () =>
   assert.throws(() => api.getImage('valid', undefined, 'TCD', 'own', 'file_other'), /ikke del/)
   assert.equal(api.getImage('valid', undefined, 'TCD', 'own', 'file_image'), 'data:image/png;base64,YWJj')
 })
+test('guide images are read from both the single-key and the legacy chunked format', () => {
+  const { api, stores } = fixture()
+  // Gamle billeder ligger stadig som meta + 256 KB-bidder.
+  assert.equal(api.getImage('valid', undefined, 'TCD', 'own', 'file_image'), 'data:image/png;base64,YWJj')
+  // Nye billeder gemmes i én nøgle for at undgå en netværksskrivning pr. bid.
+  stores.TCD.file_image_meta = { chunkCount: 0, contentType: 'image/png', size: 3, data: 'YWJj' }
+  delete stores.TCD.file_image_chunk_0
+  assert.equal(api.getImage('valid', undefined, 'TCD', 'own', 'file_image'), 'data:image/png;base64,YWJj')
+  // Data-feltet ender i en data:-URL, saa det skal stadig vaere ren base64.
+  stores.TCD.file_image_meta = { chunkCount: 0, contentType: 'image/png', size: 3, data: '"><script>' }
+  assert.throws(() => api.getImage('valid', undefined, 'TCD', 'own', 'file_image'), /ugyldigt eller for stort/i)
+})
 test('expired, absent, malformed sessions and unapproved users are rejected', () => {
   const { api, stores, shared } = fixture()
   assert.throws(() => api.query({ ...request('terminal'), token: 'expired' }), /Log ind/)
@@ -271,9 +283,34 @@ test('runtime status works without starting a process or connecting externally',
   const ai = createLocalAI({ assetDir: 'C:\\nonexistent-assistant-test', freeMemory: () => 0 })
   assert.equal(ai.status().running, false)
   assert.equal(ai.status().installed, false)
-  assert.equal(ai.status().modelId, '8b')
-  assert.match(ai.status().model, /8B/)
+  assert.equal(ai.status().modelId, '4b')
+  assert.match(ai.status().model, /4B/)
   ai.stop()
+})
+test('a retired model is deleted locally and the current model is offered from the share', () => {
+  const fs = require('node:fs')
+  const path = require('node:path')
+  const os = require('node:os')
+  const local = fs.mkdtempSync(path.join(os.tmpdir(), 'sch-local-'))
+  const shared = fs.mkdtempSync(path.join(os.tmpdir(), 'sch-shared-'))
+  try {
+    // Brugeren har allerede den pensionerede 8B liggende.
+    for (const name of ['Qwen3VL-8B-Instruct-Q4_K_M.gguf', 'mmproj-Qwen3VL-8B-Instruct-F16.gguf']) fs.writeFileSync(path.join(local, name), Buffer.alloc(8))
+    for (const dir of [local, shared]) {
+      fs.mkdirSync(path.join(dir, 'runtime'), { recursive: true })
+      fs.writeFileSync(path.join(dir, 'runtime', 'llama-server.exe'), 'stub')
+    }
+    for (const name of ['Qwen3VL-4B-Instruct-Q4_K_M.gguf', 'mmproj-Qwen3VL-4B-Instruct-F16.gguf']) fs.writeFileSync(path.join(shared, name), Buffer.alloc(8))
+    const ai = createLocalAI({ assetDir: local, sharedAssetDir: shared, freeMemory: () => 0 })
+    const state = ai.status()
+    assert.deepEqual(fs.readdirSync(local).filter(name => name.endsWith('.gguf')), [], '8B-filerne skal ryddes, saa disken frigives')
+    assert.equal(state.installed, false, 'brugeren skal bedes om at hente den nye model')
+    assert.equal(state.sharedAvailable, true, 'den nye model skal kunne hentes fra drevet')
+    ai.stop()
+  } finally {
+    fs.rmSync(local, { recursive: true, force: true })
+    fs.rmSync(shared, { recursive: true, force: true })
+  }
 })
 test('reported Nexi Flyer question uses direct score data, not Npayhar guide substrings', () => {
   const { api, stores, reads } = fixture()

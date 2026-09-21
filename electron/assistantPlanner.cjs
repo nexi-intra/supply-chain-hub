@@ -19,7 +19,10 @@ async function resolveAssistantAnswer(assistant, localAI, request) {
   answer = { ...answer, contextQuestion: answer.contextQuestion || answer.scoreContext || request.question }
   // No LLM is needed for ordinary lookups. A local semantic planner is a fallback
   // for unfamiliar wording, not permission logic and never a general KV executor.
-  const needsPlan = answer.mode === 'unsupported' || (answer.total === 0 && !answer.sources.length)
+  // `unmatched`: app-viden gav et overblik i stedet for en afvisning, men
+  // spoergsmaalet ramte intet kendt emne - saa den semantiske planlaegger skal
+  // stadig forsoege at finde det rigtige modul foer vi giver op.
+  const needsPlan = answer.mode === 'unsupported' || answer.unmatched === true || (answer.total === 0 && !answer.sources.length)
   if (!needsPlan || request.searchPlan || request.image) return answer
   const status = localAI.status()
   if (!status.installed || (!status.running && status.freeGiB < status.minimumFreeGiB)) return answer

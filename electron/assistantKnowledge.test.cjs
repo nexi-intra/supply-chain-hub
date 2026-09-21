@@ -98,7 +98,10 @@ test('old IP follow-up never substitutes test or unchanged current values and ho
 
 test('local semantic follow-ups use question history only, then fetch fresh authorized module data', async () => {
   const { api, stores } = fixture()
-  stores.ONE['shift-assignments'].push({ id: 'peer-shift', employeeId: 'peer@test', roleId: 'role1', date: '2026-09-22' })
+  // resolveAssistantAnswer slaar op mod den RIGTIGE dato, ikke fixturens faste
+  // 'now'. En haardkodet dato her ville derfor holde op med at virke naar ugen
+  // skifter - vagten skal ligge i den uge spoergsmaalet faktisk peger paa.
+  stores.ONE['shift-assignments'].push({ id: 'peer-shift', employeeId: 'peer@test', roleId: 'role1', date: resolveDates('næste uge', new Date()).start })
   let calls = 0
   const ai = { status: () => ({ installed: true, freeGiB: 5, minimumFreeGiB: 2.75 }), complete: async messages => {
     calls++
@@ -333,10 +336,38 @@ test('semantic planner skips model when low RAM, and revalidates auth after asyn
   const { api, shared } = fixture()
   const request = { token: 'valid', question: 'unrecognized question', language: 'da' }
   const ai = { status: () => ({ installed: true, freeGiB: 1, minimumFreeGiB: 2.75 }), complete: () => { throw new Error('must not start') } }
-  assert.equal((await resolveAssistantAnswer(api, ai, request)).mode, 'unsupported')
+  // Fase 4: ingen blank afvisning laengere. Spoergsmaalet faar et overblik over
+  // hvad Hubert kan, og markeres `unmatched` saa manglende daekning stadig maales.
+  const answer = await resolveAssistantAnswer(api, ai, request)
+  assert.equal(answer.mode, 'app-guide')
+  assert.equal(answer.unmatched, true)
   ai.status = () => ({ installed: true, freeGiB: 5, minimumFreeGiB: 2.75 })
   ai.complete = async () => { shared['active-sessions'].valid.expiresAt = 1; return { text: '{"modules":["messages"],"terms":[]}' } }
   await assert.rejects(() => resolveAssistantAnswer(api, ai, request), /Log ind/)
+})
+
+test('an unknown question gets a capability overview instead of a dead end', () => {
+  const { query } = fixture()
+  const answer = query('hvad er hovedstaden i frankrig?')
+  assert.equal(answer.mode, 'app-guide')
+  assert.equal(answer.unmatched, true)
+  // Brugeren skal kunne se hvad Hubert FAKTISK kan, i stedet for en afvisning.
+  assert.match(answer.text, /Vagtplan/)
+  assert.match(answer.text, /Kalender/)
+  assert.ok(!answer.text.includes('Jeg fandt ikke et underbygget svar'))
+})
+
+test('an unknown question still reaches the semantic planner', async () => {
+  const { api } = fixture()
+  let asked = 0
+  const ai = {
+    status: () => ({ installed: true, freeGiB: 5, minimumFreeGiB: 2.75 }),
+    complete: async () => { asked++; return { text: '{"modules":["meals"],"terms":["pasta"]}' } },
+  }
+  const answer = await resolveAssistantAnswer(api, ai, { token: 'valid', question: 'noget om pasta i uge 36', language: 'da' })
+  assert.equal(asked, 1, 'planlaeggeren skal stadig koere naar app-viden ikke rammer')
+  assert.equal(answer.mode, 'data')
+  assert.match(answer.text, /Synthetic pasta/)
 })
 test('localized meal-plan rows and weekly periods work in English and Finnish', () => {
   const { query } = fixture()
@@ -398,4 +429,64 @@ test('birthdays filter by actual day/month and date range, not merely every team
   assert.match(query('fødselsdage i september').text, /Colleague Example/)
   assert.ok(!query('fødselsdage i september').text.includes('Test Person'))
   assert.match(query('fødselsdage i oktober').text, /Ingen tilgængelige/)
+})
+
+test('how-to questions get step-by-step guidance instead of a record dump', () => {
+  const { query } = fixture()
+  // Ramte foer ferie-DATAopslaget og svarede med ferieregistreringer.
+  const vacation = query('hvordan opretter jeg en ferieanmodning?')
+  assert.equal(vacation.mode, 'app-guide')
+  assert.match(vacation.text, /1\. /)
+  assert.match(vacation.text, /Kalender/)
+  assert.ok(!vacation.text.includes('OWN_VACATION_NOTES'))
+  assert.equal(vacation.sources[0].kind, 'app-guide')
+
+  const shift = query('hvordan laver jeg en gentagen vagt?')
+  assert.equal(shift.mode, 'app-guide')
+  assert.match(shift.text, /Gentagne vagter/)
+})
+
+test('how-to guidance goes through the model rather than being returned raw', () => {
+  // main.cjs springer modellen over for data/unsupported/action-proposal. En
+  // ny tilstand maa ikke stille og roligt havne i den liste.
+  const fs = require('node:fs')
+  const main = fs.readFileSync(require('node:path').join(__dirname, 'main.cjs'), 'utf8')
+  const bypass = main.match(/answer\.mode === 'data'[^\n]*/)[0]
+  assert.ok(!bypass.includes('app-guide'), 'app-guide maa ikke springe modellen over')
+})
+
+test('data lookups are unaffected by the how-to routing', () => {
+  const { query, stores } = fixture()
+  stores.ONE.users['me@test'].role = 'manager'
+  // Regressionsgruppen: almindelige opslag skal stadig give data.
+  assert.equal(query('hvem har ferie i uge 39?').mode, 'data')
+  assert.equal(query('hvad er der på madplanen i uge 36?').mode, 'data')
+  assert.equal(query('hvilke opgaver har jeg i uge 36?').mode, 'data')
+})
+
+test('a vague "how" question is not hijacked by app guidance', () => {
+  const { query } = fixture()
+  // "hvordan ser min uge ud" er ikke en vejledning-anmodning trods ordet
+  // "hvordan". Den maa ikke faa trin-for-trin; den skal videre ad normal vej
+  // (og markeres unmatched, saa den semantiske planlaegger stadig forsoeger).
+  for (const question of ['hvordan ser min uge ud i uge 36?', 'hvordan er madplanen i uge 36?']) {
+    const answer = query(question)
+    assert.ok(answer.mode !== 'app-guide' || answer.unmatched === true, question)
+    assert.ok(!/^\d\. /m.test(answer.text), `${question} fik trin-for-trin`)
+  }
+})
+
+test('manager-only guidance is not handed to an ordinary user', () => {
+  const { query, stores } = fixture()
+  // Brugeren maa ikke faa "saadan ansoeger du om ferie" som erstatning for et
+  // spoergsmaal om at GODKENDE - den skal forklare at det kraever manager.
+  const asUser = query('hvordan godkender jeg en ferieanmodning?')
+  assert.equal(asUser.mode, 'app-guide')
+  assert.match(asUser.text, /Roller/)
+  assert.match(asUser.text, /manager/)
+  assert.ok(!asUser.text.includes('Ansoeg om ferie'))
+  stores.ONE.users['me@test'].role = 'manager'
+  const asManager = query('hvordan godkender jeg en ferieanmodning?')
+  assert.equal(asManager.mode, 'app-guide')
+  assert.match(asManager.text, /Godkend/)
 })

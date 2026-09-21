@@ -8,7 +8,6 @@ export interface StoredFile {
 }
 
 class FileStorageService {
-  private readonly CHUNK_SIZE = 256 * 1024
   private readonly MAX_FILE_SIZE = 5 * 1024 * 1024
   private readonly objectUrlCache = new Map<string, string>()
 
@@ -21,60 +20,37 @@ class FileStorageService {
       throw new Error('Kun Word-dokumenter (.doc, .docx) understøttes')
     }
 
-    console.log('[FileStorage] Starting upload:', {
-      name: file.name,
-      size: file.size,
-      type: file.type
-    })
-    
     const arrayBuffer = await file.arrayBuffer()
     const bytes = new Uint8Array(arrayBuffer)
     const base64Data = await this.arrayBufferToBase64Async(bytes)
     
     const fileId = `file_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`
-    const chunks: string[] = []
-    
-    for (let i = 0; i < base64Data.length; i += this.CHUNK_SIZE) {
-      chunks.push(base64Data.substring(i, i + this.CHUNK_SIZE))
-    }
-    
-    console.log(`[FileStorage] Splitting file into ${chunks.length} chunks`)
-    
+
     try {
       const metadata = {
         filename: file.name,
         contentType: file.type || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         size: file.size,
         uploadedAt: Date.now(),
-        chunkCount: chunks.length
+        chunkCount: 0,
+        data: base64Data,
       }
-      
+
       await window.kv.set(`${fileId}_meta`, metadata)
-      console.log('[FileStorage] Metadata saved')
-      
-      for (let i = 0; i < chunks.length; i++) {
-        await window.kv.set(`${fileId}_chunk_${i}`, chunks[i])
-        console.log(`[FileStorage] Chunk ${i + 1}/${chunks.length} saved`)
-      }
-      
+
       const verification = await window.kv.get(`${fileId}_meta`)
       if (!verification) {
         throw new Error('Fil blev ikke gemt korrekt - verification failed')
       }
-      
-      console.log('[FileStorage] File saved successfully to KV')
     } catch (kvError) {
       console.error('[FileStorage] KV storage error:', kvError)
-      
+
       try {
         await window.kv.delete(`${fileId}_meta`)
-        for (let i = 0; i < chunks.length; i++) {
-          await window.kv.delete(`${fileId}_chunk_${i}`)
-        }
       } catch (cleanupError) {
         console.error('[FileStorage] Cleanup error:', cleanupError)
       }
-      
+
       throw new Error('Kunne ikke gemme fil i storage. Prøv venligst en mindre fil.')
     }
 
@@ -110,29 +86,23 @@ class FileStorageService {
     const base64Data = await this.arrayBufferToBase64Async(bytes)
 
     const fileId = `file_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`
-    const chunks: string[] = []
-    for (let i = 0; i < base64Data.length; i += this.CHUNK_SIZE) {
-      chunks.push(base64Data.substring(i, i + this.CHUNK_SIZE))
-    }
 
     try {
+      // Hele billedet i ÉN nøgle. Tidligere blev det skrevet i 256 KB-bidder,
+      // og da hver bid er en separat krypteret skrivning over SMB kostede et
+      // enkelt skærmbillede 7+ netværksrundture (~28 s under import).
       await window.kv.set(`${fileId}_meta`, {
         filename: file.name,
         contentType: file.type || 'image/png',
         size: file.size,
         uploadedAt: Date.now(),
-        chunkCount: chunks.length,
+        chunkCount: 0,
+        data: base64Data,
       })
-      for (let i = 0; i < chunks.length; i++) {
-        await window.kv.set(`${fileId}_chunk_${i}`, chunks[i])
-      }
     } catch (kvError) {
       console.error('[FileStorage] KV image storage error:', kvError)
       try {
         await window.kv.delete(`${fileId}_meta`)
-        for (let i = 0; i < chunks.length; i++) {
-          await window.kv.delete(`${fileId}_chunk_${i}`)
-        }
       } catch (cleanupError) {
         console.error('[FileStorage] Cleanup error:', cleanupError)
       }
@@ -162,6 +132,7 @@ class FileStorageService {
         size: number
         uploadedAt: number
         chunkCount: number
+        data?: string
       }>(`${fileId}_meta`)
 
       if (!metadata) {
@@ -183,8 +154,11 @@ class FileStorageService {
         })
       }
 
-      console.log(`[FileStorage] Downloading file with ${metadata.chunkCount} chunks`)
-      
+      if (typeof metadata.data === 'string') {
+        const bytes = this.base64ToUint8Array(metadata.data)
+        return new Blob([bytes as BlobPart], { type: metadata.contentType || 'application/octet-stream' })
+      }
+
       const chunks: string[] = []
       for (let i = 0; i < metadata.chunkCount; i++) {
         const chunk = await window.kv.get<string>(`${fileId}_chunk_${i}`)

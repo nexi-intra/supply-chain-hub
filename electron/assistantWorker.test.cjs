@@ -77,7 +77,12 @@ test('editing/deleting a cached guide is reflected without restarting or retaini
   assert.match(edited.text, /192\.0\.2\.20/)
   assert.ok(!edited.text.includes('192.0.2.10'))
   store.delete('guides')
-  assert.equal(query().sources.length, 0)
+  // Efter fase 4 svarer Hubert med app-viden i stedet for en blank afvisning,
+  // saa der kan ligge en app-guide-kilde. Pointen er at INTET guide-indhold
+  // overlever sletningen.
+  const afterDelete = query()
+  assert.ok(!afterDelete.sources.some(source => source.kind === 'guide'))
+  assert.ok(!afterDelete.text.includes('192.0.2.'))
 })
 test('a revoked/expired login cannot reuse a warm guide cache', t => {
   const { query, shared } = fixture(t)

@@ -48,18 +48,17 @@ export function StorageConnectionBanner() {
 
   useEffect(() => {
     if (!window.electronKv) return
+    // Kun kvittering naar noget FAKTISK blev synkroniseret. Fejlede forsoeg
+    // vises ikke laengere som pop-up: de retter sig selv ved naeste forsoeg, og
+    // en skrivning der aldrig kan lykkes bliver nu lagt til side i stedet for
+    // at blive ved med at fejle (se electron/offlineSync.cjs). Antallet af
+    // afventende aendringer staar fortsat i indikatoren nederst til venstre.
     return window.electronKv.onSyncResult((result) => {
-      if (result.failed === 0) {
-        toast.success(
-          `✅ ${result.succeeded} ${result.succeeded === 1 ? t.dataStorageManager.changeSingular : t.dataStorageManager.changePlural} ${t.dataStorageManager.syncedSuffix}`,
-          { id: TOAST_ID, duration: 4000 }
-        )
-      } else {
-        toast.error(
-          `${result.succeeded} ${result.succeeded === 1 ? t.dataStorageManager.changeSingular : t.dataStorageManager.changePlural} ${t.storageConnectionBanner.syncedButFailedMiddle} ${result.failed} ${t.storageConnectionBanner.syncedButFailedSuffix}`,
-          { id: TOAST_ID, duration: 8000 }
-        )
-      }
+      if (result.succeeded === 0) return
+      toast.success(
+        `✅ ${result.succeeded} ${result.succeeded === 1 ? t.dataStorageManager.changeSingular : t.dataStorageManager.changePlural} ${t.dataStorageManager.syncedSuffix}`,
+        { id: TOAST_ID, duration: 4000 }
+      )
     })
   }, [])
 

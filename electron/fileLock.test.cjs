@@ -57,6 +57,31 @@ test('with staleMs set, a recent lock from a live client is still respected', t 
   assert.equal(called, false)
   assert.equal(fs.readFileSync(target, 'utf8'), 'live-other-client')
 })
+// SMB melder EPERM naar en anden klient netop har slettet laasefilen (delete
+// pending). Det er kaploeb, ikke en rettighedsfejl, og slap det raat igennem
+// saa brugeren "EPERM: operation not permitted" midt i en normal skrivning.
+test('a delete-pending lock (EPERM from SMB) is retried instead of surfacing raw', t => {
+  const target = fixture(t)
+  const realOpen = fs.openSync
+  let denied = 0
+  t.mock.method(fs, 'openSync', (...args) => {
+    if (args[0] === target && denied < 2) { denied++; throw Object.assign(new Error('EPERM'), { code: 'EPERM' }) }
+    return realOpen(...args)
+  })
+  assert.equal(withFileLock(target, () => 42, { attempts: 5, delayMs: 1 }), 42)
+  assert.equal(denied, 2)
+  assert.ok(!fs.existsSync(target))
+})
+test('a lock that stays inaccessible reports KV_LOCK_BUSY with the underlying code', t => {
+  const target = fixture(t)
+  t.mock.method(fs, 'openSync', () => { throw Object.assign(new Error('EPERM'), { code: 'EPERM' }) })
+  assert.throws(() => withFileLock(target, () => assert.fail('must not run'), { attempts: 2, delayMs: 1 }), error => error.code === 'KV_LOCK_BUSY' && /EPERM/.test(error.message))
+})
+test('a genuine filesystem failure is never disguised as lock contention', t => {
+  const target = fixture(t)
+  t.mock.method(fs, 'openSync', () => { throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' }) })
+  assert.throws(() => withFileLock(target, () => assert.fail('must not run'), { attempts: 2, delayMs: 1 }), { code: 'ENOSPC' })
+})
 test('release does not remove a lock now owned by another writer', t => {
   const target = fixture(t)
   withFileLock(target, () => fs.writeFileSync(target, 'replacement-owner'))

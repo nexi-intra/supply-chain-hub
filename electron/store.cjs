@@ -533,6 +533,24 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
     return result
   }
 
+  // Async-tvilling til dumpAll(). En fuld dump er ~650 filer over SMB og tager
+  // op mod et minut; den synkrone udgave laaser main-traaden imens, saa HELE
+  // appen fryser under en backup. Her giver hver await event-loopet fri.
+  // Til gengaeld er snapshottet konsistent PR. NOEGLE, ikke ét frosset oejeblik
+  // - acceptabelt for en backup, og langt bedre end en app der gaar i staa.
+  async function dumpAllAsync() {
+    const result = {}
+    for (const key of await keysAsync()) {
+      try {
+        const value = await getAsync(key)
+        if (value !== undefined) result[key] = value
+      } catch (err) {
+        console.warn(`Backup: springer ulæselig nøgle over: ${key}`, err.message)
+      }
+    }
+    return result
+  }
+
   /**
    * Ren, tilstandsløs scanning af dataDir — opdager om mappen overhovedet kan
    * læses (forbindelsen til fx et netværksdrev) samt hvilke nøgler der er
@@ -648,7 +666,7 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
     return connected
   }
 
-  return { get, getAsync, peekCache, set, setAsync, delete: del, deleteAsync, keys, keysAsync, watch, update, updateAsync, mutate, withLockedKeys, invalidate: () => readCache.clear(), dumpAll, dataDir, isConnected, scanDirectory }
+  return { get, getAsync, peekCache, set, setAsync, delete: del, deleteAsync, keys, keysAsync, watch, update, updateAsync, mutate, withLockedKeys, invalidate: () => readCache.clear(), dumpAll, dumpAllAsync, dataDir, isConnected, scanDirectory }
 }
 
 module.exports = { createStore, parseFileContents, keyToFilename }
