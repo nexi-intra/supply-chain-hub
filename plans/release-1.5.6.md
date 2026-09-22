@@ -76,4 +76,26 @@ Fundet ved gennemgangen foer 1.5.5 blev frigivet, men bevidst ikke rettet der:
 
 ## Ændringer til 1.5.6
 
-- Ingen endnu — worktree og versionsbaseline er klargjort.
+Se `src/lib/changelog.ts` for den brugervendte liste. Teknisk overblik — alt i
+denne version handler om at gemninger kunne tage minutter:
+
+- **Global skrivelaas fjernet.** `runWriteAsync` tog `account-operation.lock`
+  ved hver kv-skrivning. Maalt: ved 16 samtidige gemninger fejlede 14.
+- **Spejl-varmningen genhentede alle billeders `_meta`.** Filteret udelukkede
+  kun `_chunk_`. Maalt live: 95 af 104 langsomme laesninger var netop dem.
+- **Backup-stormen.** Pladsen kraeves nu FOER dumpen, saa kun én klient dumper.
+  Timefilen springer uforanderlige billeder over: 1 MB mod 40 MB.
+- **Efterladte laase blokerede permanent.** Synkrone skrivninger havde ingen
+  `staleMs`. Fundet live: `shift-assignments.json.lock` 48 min gammel.
+- **Laas dateret i fremtiden** blev aldrig ryddet (negativ alder). Haandteres nu
+  af den observationsbaserede model.
+- **Ingen stoerrelsesgraense** paa dokumenter/billeder i guides.
+- **`LANGSOM gemning`-log** over 4 sekunder, saa naeste gang kan maales.
+
+### Vigtigt ved udrulning
+
+1.5.5 er det der ligger i hubben nu, og 1.5.5 INDFOERTE time-backuppen. Hver
+1.5.5-klient forsoeger en fuld 650-fils dump hver time. Opdateringen gaar kun
+FREMAD (`isNewerVersion` i updater.cjs), saa et tilbagerul af manifestet til
+1.5.4 ville IKKE flytte nogen. 1.5.6 skal derfor udgives for at faa klienterne
+vaek fra den adfaerd.
