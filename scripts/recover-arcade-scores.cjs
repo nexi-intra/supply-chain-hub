@@ -74,6 +74,19 @@ for (const team of fs.readdirSync(dataDir, { withFileTypes: true })) {
         if (apply) store.update(key, { op: 'remove', path: [difficulty], ids: doomed.map((entry) => entry.id || entry.email) })
       }
     }
+
+    // Samme for spil-statistikken, hvor creator ellers stod som en rå email.
+    for (const game of GAMES) {
+      const key = `${game}-play-counts`
+      if (!fs.existsSync(path.join(teamDir, keyToFilename(key)))) continue
+      const counts = store.get(key, { skipCache: true })
+      if (!counts || typeof counts !== 'object' || Array.isArray(counts)) continue
+      const field = Object.keys(counts).find((email) => isCreator(email))
+      if (!field) continue
+      console.log(`  FJERNER creator fra statistik: ${team.name}/${key}`)
+      creatorScores++
+      if (apply) store.update(key, { op: 'deleteField', field })
+    }
   }
 
   const temps = fs.readdirSync(teamDir).filter((name) => name.endsWith('.tmp'))
