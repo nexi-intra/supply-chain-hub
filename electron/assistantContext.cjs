@@ -7,6 +7,12 @@ const { continueQuestion, validateConversation } = require('./assistantConversat
 const { indexGuide } = require('./assistantGuideIndex.cjs')
 const { detectActionIntent } = require('./assistantActions.cjs')
 const { appGuidance, isHowToQuestion } = require('./assistantAppGuide.cjs')
+// Ikke en indholdsgraense - guides maa indeholde lige saa store billeder de vil.
+// Det her er alene et vaern mod at hovedprocessen skal laese noget absurd stort
+// ind i hukommelsen; billedet skaleres til 1024 px foer modellen ser det.
+const MAX_STORED_IMAGE_BYTES = 48 * 1024 ** 2
+const MAX_STORED_IMAGE_BASE64 = 64 * 1024 ** 2
+const MAX_LEGACY_IMAGE_CHUNKS = 256
 const normalize = value => String(value || '').trim().toLowerCase()
 const dateString = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 const addDays = (date, days) => { const copy = new Date(date); copy.setDate(copy.getDate() + days); return copy }
@@ -195,17 +201,17 @@ function createAssistantContext({ listTeams, lookupTeam, listViews, creatorEmail
     for (const read of stores) {
       const meta = read(`${imageId}_meta`)
       if (!meta) continue
-      if (meta.size > 5 * 1024 ** 2 || !/^image\/(png|jpeg|webp|gif|bmp)$/.test(meta.contentType)) throw new Error('Ugyldigt eller for stort guidebillede')
+      if (meta.size > MAX_STORED_IMAGE_BYTES || !/^image\/(png|jpeg|webp|gif|bmp)$/.test(meta.contentType)) throw new Error('Ugyldigt eller for stort guidebillede')
       let base64
       if (typeof meta.data === 'string') {
         base64 = meta.data
       } else {
-        if (!Number.isInteger(meta.chunkCount) || meta.chunkCount < 1 || meta.chunkCount > 28) throw new Error('Ugyldigt eller for stort guidebillede')
+        if (!Number.isInteger(meta.chunkCount) || meta.chunkCount < 1 || meta.chunkCount > MAX_LEGACY_IMAGE_CHUNKS) throw new Error('Ugyldigt eller for stort guidebillede')
         const chunks = Array.from({ length: meta.chunkCount }, (_, i) => read(`${imageId}_chunk_${i}`))
         if (chunks.some(value => typeof value !== 'string')) throw new Error('Guidebilledet mangler data')
         base64 = chunks.join('')
       }
-      if (base64.length > 7 * 1024 ** 2 || !/^[a-zA-Z0-9+/=]*$/.test(base64)) throw new Error('Guidebilledet er ugyldigt eller for stort')
+      if (base64.length > MAX_STORED_IMAGE_BASE64 || !/^[a-zA-Z0-9+/=]*$/.test(base64)) throw new Error('Guidebilledet er ugyldigt eller for stort')
       return `data:${meta.contentType};base64,${base64}`
     }
     throw new Error('Guidebilledet kunne ikke læses')

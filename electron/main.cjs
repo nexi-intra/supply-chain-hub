@@ -719,7 +719,9 @@ app.whenReady().then(() => {
       diagnostics: { version: app.getVersion(), connected: storageConnected, dataDir: store.dataDir },
     }) })
     const shrinkImage = dataUrl => {
-      if (typeof dataUrl !== 'string' || dataUrl.length > 7 * 1024 ** 2 || !/^data:image\/(png|jpeg|webp|gif|bmp);base64,[a-zA-Z0-9+/=]+$/.test(dataUrl)) throw new Error('Ugyldigt eller for stort billede')
+      // Ikke en indholdsgraense - billedet skaleres alligevel til 1024 px nedenfor.
+      // Kun et vaern mod at nativeImage skal tygge paa noget absurd stort.
+      if (typeof dataUrl !== 'string' || dataUrl.length > 64 * 1024 ** 2 || !/^data:image\/(png|jpeg|webp|gif|bmp);base64,[a-zA-Z0-9+/=]+$/.test(dataUrl)) throw new Error('Ugyldigt eller for stort billede')
       const image = nativeImage.createFromDataURL(dataUrl)
       if (image.isEmpty()) throw new Error('Billedet kunne ikke læses')
       const size = image.getSize()

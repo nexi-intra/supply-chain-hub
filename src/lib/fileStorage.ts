@@ -8,14 +8,12 @@ export interface StoredFile {
 }
 
 class FileStorageService {
-  private readonly MAX_FILE_SIZE = 5 * 1024 * 1024
+  // Bevidst INGEN stoerrelsesgraense: kraever en guide et stort dokument eller
+  // et stort billede, skal det kunne lade sig goere. Store filer er langsommere
+  // at gemme over netvaerksdrevet, men de afvises ikke.
   private readonly objectUrlCache = new Map<string, string>()
 
   private async storeInKV(file: File): Promise<StoredFile> {
-    if (file.size > this.MAX_FILE_SIZE) {
-      throw new Error(`Filen er for stor (max ${this.MAX_FILE_SIZE / 1024 / 1024}MB). Din fil er ${(file.size / 1024 / 1024).toFixed(2)}MB`)
-    }
-
     if (!file.name.match(/\.(docx?|DOCX?)$/)) {
       throw new Error('Kun Word-dokumenter (.doc, .docx) understøttes')
     }
@@ -71,11 +69,8 @@ class FileStorageService {
     }
   }
 
-  /** Gemmer et billede (png/jpg/gif/webp/bmp, max 5MB) i chunked KV. Returnerer fileId uden kv://-præfiks. */
+  /** Gemmer et billede (png/jpg/gif/webp/bmp) i KV. Returnerer fileId uden kv://-præfiks. */
   async uploadImage(file: File): Promise<{ fileId: string; filename: string; size: number }> {
-    if (file.size > this.MAX_FILE_SIZE) {
-      throw new Error(`Billedet er for stort (max ${this.MAX_FILE_SIZE / 1024 / 1024}MB). Dit billede er ${(file.size / 1024 / 1024).toFixed(2)}MB`)
-    }
     const isImage = /\.(png|jpe?g|gif|webp|bmp)$/i.test(file.name) || file.type.startsWith('image/')
     if (!isImage) {
       throw new Error('Kun billeder (PNG, JPG, GIF, WebP, BMP) understøttes')
