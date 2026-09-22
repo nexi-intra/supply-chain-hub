@@ -5,6 +5,7 @@ import {
   recordGamePlay,
   submitHighscore,
 } from '@/lib/leaderboards'
+import { getCreatorEmail } from '@/lib/userRoles'
 
 const DIFFICULTIES = ['easy', 'medium', 'hard', 'expert'] as const
 
@@ -96,7 +97,7 @@ describe('normalizeFlatLeaderboard', () => {
 describe('submitHighscore', () => {
   let stored: Record<string, unknown>
 
-  beforeEach(() => {
+  beforeEach(async () => {
     stored = {}
     const kv = {
       get: vi.fn(async (key: string) => stored[key]),
@@ -128,6 +129,9 @@ describe('submitHighscore', () => {
       }),
     }
     ;(globalThis as any).window = { kv }
+    // Creator-opslaget caches for hele sessionen — nulstil det, så testene ikke
+    // påvirker hinanden.
+    await getCreatorEmail(true)
   })
 
   afterEach(() => {
@@ -189,12 +193,29 @@ describe('submitHighscore', () => {
       submitHighscore('board', { email: 'a@x', score: 8, timestamp: 1 }, { path: ['hard'], categories: DIFFICULTIES }),
     ).rejects.toThrow('KV_LOCK_BUSY')
   })
+
+  // Creator-kontoen spiller kun for at afprøve spillene.
+  it('gemmer ikke creator-kontoens score', async () => {
+    ;(globalThis as any).window.electronRegistry = { getCreatorEmail: async () => 'CREATOR@x' }
+    await getCreatorEmail(true)
+    const result = await submitHighscore('board', { email: 'creator@x', score: 999, timestamp: 1 }, { path: ['hard'], categories: DIFFICULTIES })
+    expect(result.saved).toBe(false)
+    expect(stored.board).toBeUndefined()
+  })
+
+  it('gemmer stadig alle andres scorer når der findes en creator', async () => {
+    ;(globalThis as any).window.electronRegistry = { getCreatorEmail: async () => 'creator@x' }
+    await getCreatorEmail(true)
+    const result = await submitHighscore('board', { email: 'a@x', score: 12, timestamp: 1 }, { path: ['hard'], categories: DIFFICULTIES })
+    expect(result.saved).toBe(true)
+    expect((stored.board as any).hard).toHaveLength(1)
+  })
 })
 
 describe('recordGamePlay', () => {
   let stored: Record<string, unknown>
 
-  beforeEach(() => {
+  beforeEach(async () => {
     stored = {}
     ;(globalThis as any).window = {
       kv: {
@@ -207,6 +228,7 @@ describe('recordGamePlay', () => {
         }),
       },
     }
+    await getCreatorEmail(true)
   })
 
   afterEach(() => {
@@ -232,6 +254,13 @@ describe('recordGamePlay', () => {
 
   it('gør ingenting uden en bruger', async () => {
     await recordGamePlay('counts', '')
+    expect(stored.counts).toBeUndefined()
+  })
+
+  it('tæller ikke creator-kontoens testspil med', async () => {
+    ;(globalThis as any).window.electronRegistry = { getCreatorEmail: async () => 'creator@x' }
+    await getCreatorEmail(true)
+    await recordGamePlay('counts', 'creator@x', 'hard')
     expect(stored.counts).toBeUndefined()
   })
 })

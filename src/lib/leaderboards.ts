@@ -12,6 +12,7 @@
 // der lå i data.
 
 import { setKvObjectField, upsertInKvArray, upsertInNestedKvArray } from '@/lib/kvArrays'
+import { getCreatorEmail } from '@/lib/userRoles'
 
 export interface LeaderboardEntry {
   id: string
@@ -125,6 +126,9 @@ const SUBMIT_ATTEMPTS = 4
  *
  * `path` angiver sværhedsgraden for de spil der er opdelt; udelades den, er
  * listen flad.
+ *
+ * Creator-kontoen bruges til at afprøve spillene, så dens scorer holdes helt
+ * ude af listerne.
  */
 export async function submitHighscore(
   key: string,
@@ -133,6 +137,8 @@ export async function submitHighscore(
 ): Promise<HighscoreResult> {
   const candidate: LeaderboardEntry = { ...entry, id: entry.id || entry.email }
   const category = options.path?.[0]
+
+  if (await isCreatorAccount(candidate.email)) return { saved: false, best: candidate.score }
 
   for (let attempt = 0; attempt < SUBMIT_ATTEMPTS; attempt++) {
     const stored = await window.kv.get<unknown>(key)
@@ -156,6 +162,15 @@ export async function submitHighscore(
   return { saved: false, best: candidate.score }
 }
 
+async function isCreatorAccount(email: string): Promise<boolean> {
+  try {
+    const creatorEmail = await getCreatorEmail()
+    return !!creatorEmail && email.trim().toLowerCase() === creatorEmail.trim().toLowerCase()
+  } catch {
+    return false
+  }
+}
+
 /**
  * Besked til spilleren når en score IKKE kunne gemmes. Før stod fejlen kun i
  * loggen, så spilleren troede rekorden var registreret.
@@ -172,9 +187,12 @@ export function scoreSaveFailedMessage(language: string): string {
  * Før blev hele tælle-objektet læst og skrevet tilbage, så sluttede to kolleger
  * et spil samtidig, forsvandt den enes tælling. Her skrives kun spillerens eget
  * felt — under samme fillås — så ingen andres tal kan overskrives.
+ *
+ * Creator-kontoen tælles ikke med, ligesom den holdes ude af alle andre lister.
  */
 export async function recordGamePlay(key: string, email: string, category?: string): Promise<void> {
   if (!email) return
+  if (await isCreatorAccount(email)) return
   const counts = await window.kv.get<Record<string, unknown>>(key)
   const mine = isRecord(counts?.[email]) ? (counts![email] as Record<string, unknown>) : {}
   const field = category || 'all'

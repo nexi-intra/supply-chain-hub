@@ -24,6 +24,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Pausen tæller ikke med: farten stiger ikke mens du er væk, brikken falder ikke videre i Tetris, og skjold og andre powerups i Brick Break løber ikke ud',
       'Chickeninvasion tæller nu de spillede runder med i statistikken, som de øvrige spil',
       'Spil-statistikken tæller pr. spiller, så to der spiller samtidig ikke længere kan slette hinandens antal spil',
+      'Creator-kontoen kommer ikke på highscore-listerne og tælles ikke med i spil-statistikken — den bruges kun til at afprøve spillene',
     ],
   },
   {
