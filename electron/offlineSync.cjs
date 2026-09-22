@@ -255,7 +255,7 @@ function createResilientStore(networkStore, localStore, options = {}) {
    * allerede ligger i spejlet - dvs. dem brugeren faktisk bruger - og aldrig
    * gemte filer/billeder (store, uforanderlige).
    */
-  async function revalidateMirror({ concurrency = 2 } = {}) {
+  async function revalidateMirror({ concurrency = 2, pauseMs = 0 } = {}) {
     if (!networkStore.isConnected()) return 0
     const keys = localStore.keys().filter(key => key !== QUEUE_KEY && !key.startsWith('__') && !isImmutableBlobKey(key) && !queued(key) && !networkStore.peekCache?.(key))
     let index = 0
@@ -267,6 +267,9 @@ function createResilientStore(networkStore, localStore, options = {}) {
         if (mirrored === undefined) continue
         await revalidate(key, mirrored)
         refreshed++
+        // Pause mellem noeglerne, saa varmningen aldrig beslaglaegger drevet for
+        // brugerens egne handlinger.
+        if (pauseMs > 0) await new Promise(resolve => setTimeout(resolve, pauseMs))
       }
     }
     await Promise.all(Array.from({ length: Math.min(concurrency, keys.length) }, worker))

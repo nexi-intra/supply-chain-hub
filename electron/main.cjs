@@ -177,14 +177,20 @@ let mirrorWarmUpTimer = null
 function scheduleMirrorWarmUp() {
   if (mirrorWarmUpTimer) clearTimeout(mirrorWarmUpTimer)
   const target = store
+  // Maalt live: varmningen tog 103 sekunder for 85 noegler, og i HELE det vindue
+  // var alt andet lammet - almindelige laesninger tog 20-34 s og gemninger 31-55 s.
+  // Umiddelbart efter den var faerdig faldt alt tilbage til ~100 ms. Varmningen er
+  // en ren forbedring af foerste indtryk (useKV viser allerede cachet data med det
+  // samme), saa den maa ALDRIG konkurrere med brugeren: den starter derfor foerst
+  // naar appen er indlaest, og giver drevet luft mellem hver noegle.
   mirrorWarmUpTimer = setTimeout(() => {
     mirrorWarmUpTimer = null
     if (store !== target) return
     const startedAt = Date.now()
-    Promise.all([target, sharedStore].filter(Boolean).map(s => Promise.resolve(s.revalidateMirror?.({ concurrency: 2 }))))
+    Promise.all([target, sharedStore].filter(Boolean).map(s => Promise.resolve(s.revalidateMirror?.({ concurrency: 1, pauseMs: 120 }))))
       .then(counts => { if (process.env.TCD_HUB_DEBUG) console.log(`KV: spejl-varmning ${counts.reduce((a, b) => a + (b || 0), 0)} noegler paa ${Date.now() - startedAt} ms`) })
       .catch(err => console.error('TCD Hub: spejl-varmning fejlede', err))
-  }, 1500)
+  }, 20000)
   mirrorWarmUpTimer.unref?.()
 }
 let updateCheckTimer = null
