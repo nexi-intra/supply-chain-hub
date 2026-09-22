@@ -41,18 +41,31 @@ Version 1.5.5 er en frossen release-baseline. Alle nye rettelser og funktioner t
 
 Fundet ved gennemgangen foer 1.5.5 blev frigivet, men bevidst ikke rettet der:
 
-- [ ] **Én global skrivelaas.** `runWriteAsync` i `accountService.cjs` tager
-      `account-operation.lock` ved HVER `kv:set`/`kv:update`, med kun 10 forsoeg
-      à 150 ms (~1,5 s). Med ~40 brugere er det en flaskehals og forklarer
-      stormen af `KV_LOCK_BUSY` i loggen. De fleste absorberes af de ydre
-      gentagelser i `electronKvBridge.ts` og `preload.cjs`, saa de er formentlig
-      ikke synlige for brugerne — men det er arkitektur der boer ses paa.
-- [ ] **Laas med umulig alder.** Observeret live:
-      `KV: fjerner forladt laas (549566974s gammel)` — 17 aar. Tidsstemplet var
-      vroevl. Selvhelingen gjorde det rigtige, men den STOLER paa `mtime`.
-      Laeses et tidsstempel forkert paa en laas en kollega holder lige nu,
-      stjaeles den, og saa skriver to klienter samtidig. Samme kategori som
-      TRR-datatabet. Boer undersoeges: er det en engangs-fejllaesning fra SMB?
+- [x] **Én global skrivelaas — LØST 2026-09-22, og det var hovedaarsagen til at
+      gemninger tog minutter.** `runWriteAsync` tog `account-operation.lock` ved
+      HVER `kv:set`/`kv:update`. Det er ÉN fil for hele platformen, saa alle
+      brugeres skrivninger paa tvaers af alle teams stod i samme koe.
+      Maalt mod produktionsdrevet:
+
+      | samtidige gemninger | med laasen | uden |
+      | --- | --- | --- |
+      | 8 | 5 af 8 fejlede, 1,2/sek | 0 fejlede, 3,1/sek |
+      | 16 | 14 af 16 fejlede, 1,7/sek | 0 fejlede, 3,6/sek |
+
+      Ved 16 brugere fejlede altsaa 87% af alle gemninger. Hver fejl udloeste
+      gen-forsoeg i renderer'en, og fejlede de ogsaa, skete der "ingenting" i
+      minutter. Laasen beskyttede ikke data - migreringen laaser hver beroert
+      noegle via `withLockedKeys`, og det goer almindelige skrivninger ogsaa.
+      Den var udelukkende en PORT mod skrivninger under migrering, og den
+      kontrol laver `context()` allerede lock-free (cachet). `runWrite` (sync,
+      auth/sessioner) beholder sin laas - den er ikke paa den varme vej.
+- [x] **Laas med umulig alder — LØST 2026-09-22.** Observeret live:
+      `KV: fjerner forladt laas (549628504s gammel)` — 17 aar. En laasefil der
+      netop var oprettet af en anden klient rapporterede et vanvittigt mtime,
+      fordi SMB ikke naaede at skrive metadata. Enhver klient betragtede derfor
+      en LEVENDE laas som forladt og slettede den. mtime bruges nu kun naar
+      alderen er trovaerdig (< 30 dage); ellers skal klienten selv have set
+      laasen uroert i staleMs, maalt paa sin egen klokke.
 - [ ] **Flaky test.** `offlineSync.test.cjs` "getAsync serves the local mirror"
       fejler ca. hver tredje koersel (aegte fs-timing, ikke en reel fejl).
 - [ ] **"Annuller" sletter kladden** i `GuideEditor.tsx`. Uaendret adfaerd, men

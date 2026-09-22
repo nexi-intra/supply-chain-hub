@@ -177,6 +177,9 @@ test('pending state and progress survive a failed write and a new service instan
   assert.throws(f.rename, /SYNTHETIC EACCES/)
   const pending = f.service.status(f.actor); assert.equal(pending.state, 'failed'); assert.equal(pending.applied, 2)
   assert.throws(() => f.service.runWrite(() => f.own.set('projects', [])), code('ACCOUNT_MIGRATION_PENDING'))
+  // Den asynkrone skrivevej tager ikke laengere den globale kontolaas (den
+  // serialiserede ALLE brugeres gemninger). Porten skal stadig holde.
+  assert.rejects(() => f.service.runWriteAsync(() => f.own.set('projects', [])), code('ACCOUNT_MIGRATION_PENDING'))
   const fresh = createAccountService({ getRoot: () => f.root, registry, openStore: createStore })
   assert.equal(fresh.resume(f.actor, pending.id).state, 'committed'); assert.equal(fresh.pending(), null)
   assert.equal(f.read(f.own, 'vacation-entries')[0].userEmail, f.newEmail)
