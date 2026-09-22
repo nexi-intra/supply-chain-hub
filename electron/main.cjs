@@ -11,7 +11,7 @@ const fs = require('fs')
 const fsp = require('fs/promises')
 const crypto = require('crypto')
 const { createStore } = require('./store.cjs')
-const { createResilientStore } = require('./offlineSync.cjs')
+const { createResilientStore, isImmutableBlobKey } = require('./offlineSync.cjs')
 const { createAuthService, loadDeviceSecret } = require('./authService.cjs')
 const { createAccountService } = require('./accountService.cjs')
 const { createSecuredIpc } = require('./securedIpc.cjs')
@@ -336,11 +336,6 @@ const AUTO_BACKUP_CHECK_INTERVAL = 60 * 60 * 1000
 // En fuld dump tager ~1-3 min. over SMB. Laasen maa derfor holde laenge nok til
 // at en langsom klient kan blive faerdig, men frigives igen hvis den crasher.
 const AUTO_BACKUP_LOCK_STALE_MS = 15 * 60 * 1000
-
-/** Gemte filer/billeder: skrives én gang og ændres aldrig - kun nyt id ved ny upload. */
-function isImmutableBlobKey(key) {
-  return key.startsWith('file_') && (key.includes('_chunk_') || key.endsWith('_meta'))
-}
 let autoBackupTimer = null
 
 /** Skriver `payload` til `fileName` medmindre filen allerede findes. Returnerer true hvis DENNE klient skrev den. */

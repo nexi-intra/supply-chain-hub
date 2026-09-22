@@ -14,6 +14,16 @@
 
 const QUEUE_KEY = '__offline-queue__'
 const DISCARDED_KEY = '__offline-discarded__'
+
+/**
+ * Gemte filer/billeder: skrives én gang og ændres aldrig - en ny upload faar et
+ * nyt fileId. De maa derfor hverken genvalideres i spejlet eller kopieres med i
+ * hver time-backup. Maalt 2026-09-22: 95 af 104 langsomme laesninger i en
+ * session var netop disse `_meta`-noegler, fordi kun `_chunk_` var udelukket.
+ */
+function isImmutableBlobKey(key) {
+  return key.startsWith('file_') && (key.includes('_chunk_') || key.endsWith('_meta'))
+}
 // Fejl der ALDRIG loeser sig selv ved at proeve igen. En konflikt betyder at
 // data blev aendret paa drevet imens; genafspilning giver samme konflikt for
 // evigt. KV_LOCK_BUSY hoerer bevidst IKKE til her - den er forbigaaende.
@@ -243,11 +253,11 @@ function createResilientStore(networkStore, localStore, options = {}) {
    * parallelisme, saa spejlet er ajour FOER brugeren navigerer derhen (ellers
    * vises sidste sessions data et oejeblik ved foerste besoeg). Kun noegler der
    * allerede ligger i spejlet - dvs. dem brugeren faktisk bruger - og aldrig
-   * fil-chunks (store, sjaeldent laeste).
+   * gemte filer/billeder (store, uforanderlige).
    */
   async function revalidateMirror({ concurrency = 2 } = {}) {
     if (!networkStore.isConnected()) return 0
-    const keys = localStore.keys().filter(key => key !== QUEUE_KEY && !key.startsWith('__') && !key.includes('_chunk_') && !queued(key) && !networkStore.peekCache?.(key))
+    const keys = localStore.keys().filter(key => key !== QUEUE_KEY && !key.startsWith('__') && !isImmutableBlobKey(key) && !queued(key) && !networkStore.peekCache?.(key))
     let index = 0
     let refreshed = 0
     const worker = async () => {
@@ -436,4 +446,4 @@ function createResilientStore(networkStore, localStore, options = {}) {
   }
 }
 
-module.exports = { createResilientStore }
+module.exports = { createResilientStore, isImmutableBlobKey }
