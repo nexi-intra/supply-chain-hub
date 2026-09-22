@@ -171,7 +171,7 @@ for (const target of ['own-account', 'other-team-account', 'personal-key', 'keye
   assert.throws(f.rename); assert.equal(f.service.pending(), null)
   assert.equal(f.read(f.own, 'vacation-entries')[0].userEmail, f.oldEmail); assert.ok(f.read(f.own, 'users')[f.oldEmail])
 })
-test('pending state and progress survive a failed write and a new service instance can resume', t => {
+test('pending state and progress survive a failed write and a new service instance can resume', async t => {
   let broken = true
   const f = fixture(t, { beforeStep: ({ index }) => { if (broken && index === 2) throw new Error('SYNTHETIC EACCES') } })
   assert.throws(f.rename, /SYNTHETIC EACCES/)
@@ -179,7 +179,9 @@ test('pending state and progress survive a failed write and a new service instan
   assert.throws(() => f.service.runWrite(() => f.own.set('projects', [])), code('ACCOUNT_MIGRATION_PENDING'))
   // Den asynkrone skrivevej tager ikke laengere den globale kontolaas (den
   // serialiserede ALLE brugeres gemninger). Porten skal stadig holde.
-  assert.rejects(() => f.service.runWriteAsync(() => f.own.set('projects', [])), code('ACCOUNT_MIGRATION_PENDING'))
+  // SKAL afventes: uden await koerte skrivningen efter at fixturen var ryddet op,
+  // og fejlede saa med ENOENT i stedet for at teste porten.
+  await assert.rejects(() => f.service.runWriteAsync(() => f.own.set('projects', [])), code('ACCOUNT_MIGRATION_PENDING'))
   const fresh = createAccountService({ getRoot: () => f.root, registry, openStore: createStore })
   assert.equal(fresh.resume(f.actor, pending.id).state, 'committed'); assert.equal(fresh.pending(), null)
   assert.equal(f.read(f.own, 'vacation-entries')[0].userEmail, f.newEmail)

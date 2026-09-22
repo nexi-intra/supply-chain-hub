@@ -173,6 +173,9 @@ const SHARED_KV_KEYS = new Set(['meal-plan-weeks', 'shared-guides', 'active-sess
 const broadcastKvChanged = createDebouncedBroadcast(100)
 const resilientOptions = () => ({ onSyncResult: handleSyncResult, guardReplay: guardAccountReplay, onRevalidated: broadcastKvChanged })
 let mirrorWarmUpTimer = null
+// Baggrundsarbejde paa det DELTE drev maa aldrig konkurrere med brugeren. Tager
+// det laengere end dette, skal det staa i loggen - ogsaa i produktion.
+const SLOW_BACKGROUND_WORK_MS = 20000
 /** Ajourfoer det lokale spejl i baggrunden kort efter opstart/team-skift (lav parallelisme, aldrig foran brugerens egne laesninger). */
 function scheduleMirrorWarmUp() {
   if (mirrorWarmUpTimer) clearTimeout(mirrorWarmUpTimer)
@@ -188,7 +191,15 @@ function scheduleMirrorWarmUp() {
     if (store !== target) return
     const startedAt = Date.now()
     Promise.all([target, sharedStore].filter(Boolean).map(s => Promise.resolve(s.revalidateMirror?.({ concurrency: 1, pauseMs: 120 }))))
-      .then(counts => { if (process.env.TCD_HUB_DEBUG) console.log(`KV: spejl-varmning ${counts.reduce((a, b) => a + (b || 0), 0)} noegler paa ${Date.now() - startedAt} ms`) })
+      .then(counts => {
+        const elapsedMs = Date.now() - startedAt
+        const keys = counts.reduce((a, b) => a + (b || 0), 0)
+        // Advarslen er ALTID paa. Da den kun fandtes bag TCD_HUB_DEBUG, kunne
+        // varmningen laegge beslag paa drevet i 103 sekunder uden at nogen
+        // opdagede det - det blev brugerne der maerkede det foerst.
+        if (elapsedMs >= SLOW_BACKGROUND_WORK_MS) console.warn(`TCD Hub: LANGSOM baggrundsopdatering ${elapsedMs} ms for ${keys} noegler - den konkurrerer med brugerens egne handlinger`)
+        else if (process.env.TCD_HUB_DEBUG) console.log(`KV: spejl-varmning ${keys} noegler paa ${elapsedMs} ms`)
+      })
       .catch(err => console.error('TCD Hub: spejl-varmning fejlede', err))
   }, 20000)
   mirrorWarmUpTimer.unref?.()
@@ -404,6 +415,7 @@ async function backupStore(targetStore) {
       // fulde kopi tages én gang i doegnet. Gendannelse overskriver kun de
       // noegler backuppen indeholder, saa billederne i storen roeres ikke.
       const fullName = missing.find(name => !/_\d{2}\.json$/.test(name))
+      const dumpStartedAt = Date.now()
       const fullPayload = fullName ? await snapshot() : null
       if (fullName && await writeBackupFileOnce(backupDir, fullName, fullPayload)) console.log(`TCD Hub: fuld backup skrevet: ${fullName}`)
       for (const name of missing.filter(entry => entry !== fullName)) {
@@ -411,6 +423,8 @@ async function backupStore(targetStore) {
         const payload = fullPayload || await snapshot(key => !isImmutableBlobKey(key))
         if (await writeBackupFileOnce(backupDir, name, payload)) console.log(`TCD Hub: time-backup skrevet: ${name}`)
       }
+      const dumpMs = Date.now() - dumpStartedAt
+      if (dumpMs >= SLOW_BACKGROUND_WORK_MS) console.warn(`TCD Hub: LANGSOM backup ${dumpMs} ms i ${path.basename(targetStore.dataDir)} - den beslaglaegger drevet for alle andre`)
     }, { attempts: 1, staleMs: AUTO_BACKUP_LOCK_STALE_MS })
 
     // Rotation: I DAG beholdes alle timefiler, saa man kan gaa hoejst en time

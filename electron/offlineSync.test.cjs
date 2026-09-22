@@ -188,6 +188,15 @@ function flushMicrotasks() {
   return new Promise((resolve) => setImmediate(resolve))
 }
 
+// Baggrundsarbejdet her laver RIGTIGE fil-laesninger. At taelle event-loop-tick
+// er derfor ikke nok - det gjorde testen flaky, og stragglere skrev til
+// temp-mappen efter oprydningen (ENOENT paa .lock). Vent paa tid i stedet.
+async function waitFor(condition, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline && !condition()) await new Promise((resolve) => setTimeout(resolve, 10))
+  return condition()
+}
+
 test('getAsync serves the local mirror at once and refreshes from the network in the background', async (t) => {
   const local = temporaryLocalStore(t)
   const real = temporaryNetworkStore(t)
@@ -200,9 +209,10 @@ test('getAsync serves the local mirror at once and refreshes from the network in
   // Spejlet returneres uden at vente paa netvaerket.
   assert.deepEqual(await resilient.getAsync('shift-assignments'), ['stale-from-last-session'])
   // Baggrundshentningen opdager afvigelsen, opdaterer spejlet og melder noeglen.
-  for (let i = 0; i < 20 && revalidated.length === 0; i++) await flushMicrotasks()
+  assert.ok(await waitFor(() => revalidated.length > 0), 'baggrundshentningen meldte aldrig noeglen')
   assert.deepEqual(revalidated, ['shift-assignments'])
-  await flushMicrotasks()
+  const mirrored = () => JSON.stringify(local.get('shift-assignments', { skipCache: true }))
+  assert.ok(await waitFor(() => mirrored() === JSON.stringify(['fresh-on-share'])), 'spejlet blev aldrig opdateret')
   assert.deepEqual(local.get('shift-assignments', { skipCache: true }), ['fresh-on-share'])
   // Naeste laesning kommer fra netvaerks-cachen (nu frisk) - ikke det gamle spejl.
   assert.deepEqual(await resilient.getAsync('shift-assignments'), ['fresh-on-share'])

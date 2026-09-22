@@ -74,6 +74,31 @@ Fundet ved gennemgangen foer 1.5.5 blev frigivet, men bevidst ikke rettet der:
       797 MB). Ikke valgt i 1.5.5 for at holde opsaetningen identisk med den
       afproevede 8B-konfiguration.
 
+## Regler for baggrundsarbejde — skrevet efter fejlen i 1.5.5
+
+Time-backuppen blev indfoert i 1.5.5 og gjorde appen naesten ubrugelig for alle.
+Én daglig kopi blev til ti i timen, PR. KLIENT, mod ét delt drev med ~40
+brugere. Appen er latens-bundet: **det er antallet af rundture der koster, ikke
+antallet af bytes.**
+
+Foer der tilfoejes periodisk eller baggrundsarbejde, skal alle fire besvares:
+
+1. **Hvad sker der naar 40 klienter goer det samtidig?** Standardsvaret er: drevet
+   knaekker. Regn rundturene ud pr. klient pr. time FOER koden skrives.
+2. **Skal kun ÉN klient goere det?** Saa skal pladsen KRAEVES foerst (laas eller
+   markoer) — og derefter laves det dyre. Aldrig omvendt. Det var praecis fejlen:
+   indholdet blev bygget foerst, og foerst bagefter afgjorde `wx` hvem der vandt.
+3. **Konkurrerer det med brugerens egne handlinger?** Opstart er det VAERSTE
+   tidspunkt — det er netop dér brugeren klikker. Udskyd til efter foerste
+   indlaesning, og skru ned (parallelisme 1 + pause mellem hver post).
+   `scheduleMirrorWarmUp` startede efter 1,5 s, tog 103 s, og fik hver gemning
+   til at tage 30-55 s.
+4. **Hvordan ville jeg OPDAGE at det gik galt igen?** Findes der ingen log eller
+   maaling, skal den bygges foerst. Advarslerne `LANGSOM gemning`,
+   `LANGSOM baggrundsopdatering` og `LANGSOM backup` er altid slaaet til —
+   bevidst, for de laa tidligere bag `TCD_HUB_DEBUG`, og derfor var det brugerne
+   der opdagede problemet foer os.
+
 ## Ændringer til 1.5.6
 
 Se `src/lib/changelog.ts` for den brugervendte liste. Teknisk overblik — alt i
