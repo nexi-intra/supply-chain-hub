@@ -66,8 +66,13 @@ Fundet ved gennemgangen foer 1.5.5 blev frigivet, men bevidst ikke rettet der:
       en LEVENDE laas som forladt og slettede den. mtime bruges nu kun naar
       alderen er trovaerdig (< 30 dage); ellers skal klienten selv have set
       laasen uroert i staleMs, maalt paa sin egen klokke.
-- [ ] **Flaky test.** `offlineSync.test.cjs` "getAsync serves the local mirror"
-      fejler ca. hver tredje koersel (aegte fs-timing, ikke en reel fejl).
+- [x] **Flaky test — LØST 2026-09-22, og den skjulte en aegte fejl.**
+      `offlineSync.test.cjs` taalte event-loop-tick i stedet for at vente paa tid,
+      selvom baggrundsarbejdet laver rigtige fil-laesninger. Vaerre: jeg havde
+      selv tilfoejet `assert.rejects` UDEN `await` i en synkron test i
+      `accountService.test.cjs`, og afskrev derefter fejlen som "den kendte
+      flaky" i flere koersler. En suite der raaber ulv skjuler de aegte fejl.
+      Begge rettet; 8 fulde koersler i traek: 422/422.
 - [ ] **"Annuller" sletter kladden** i `GuideEditor.tsx`. Uaendret adfaerd, men
       vaerd at genoverveje nu hvor kladder er en rigtig funktion.
 - [ ] **Vision-encoderen kan halveres.** `mmproj` findes ogsaa i Q8_0 (433 MB mod
