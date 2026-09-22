@@ -10,6 +10,7 @@ import { toast } from 'sonner'
 import { format } from 'date-fns'
 import { da, enUS, fi } from 'date-fns/locale'
 import { useLanguage } from '@/contexts/LanguageContext'
+import { appendToKvArray, removeFromKvArray, upsertInKvArray } from '@/lib/kvArrays'
 import type { Email } from '@/lib/types'
 
 interface EmailNotificationsProps {
@@ -58,33 +59,24 @@ export function EmailNotifications({ open, onOpenChange, userEmail }: EmailNotif
     setSelectedEmail(email)
   }
 
+  // Alle tre handlinger opdaterer listen straks og skriver atomart i baggrunden.
+  // Tidligere blev HELE mail-arrayet laest og skrevet tilbage, hvilket baade var
+  // langsomt og kunne overskrive en kollegas samtidige aendring.
   const handleMarkAsRead = async (id: string) => {
-    const allEmails = await window.kv.get<Email[]>('emails') || []
-    const updatedEmails = allEmails.map(e => 
-      e.id === id ? { ...e, read: true } : e
-    )
-    await window.kv.set('emails', updatedEmails)
-    
+    const target = emails.find(e => e.id === id)
     setEmails(prevEmails => prevEmails.filter(e => e.id !== id))
-    
-    if (selectedEmail?.id === id) {
-      setSelectedEmail(null)
-    }
-    
+    if (selectedEmail?.id === id) setSelectedEmail(null)
     toast.success(language === 'da' ? 'Markeret som læst' : language === 'fi' ? 'Merkitty luetuksi' : 'Marked as read')
+    if (target) {
+      await upsertInKvArray<Email>('emails', [{ ...target, read: true }]).catch(error => console.error('Kunne ikke markere mailen som laest:', error))
+    }
   }
 
   const handleDelete = async (id: string) => {
-    const allEmails = await window.kv.get<Email[]>('emails') || []
-    const updatedEmails = allEmails.filter(e => e.id !== id)
-    await window.kv.set('emails', updatedEmails)
-    
     setEmails(prevEmails => prevEmails.filter(e => e.id !== id))
-    
-    if (selectedEmail?.id === id) {
-      setSelectedEmail(null)
-    }
+    if (selectedEmail?.id === id) setSelectedEmail(null)
     toast.success(t.emailNotifications.deleted)
+    await removeFromKvArray<Email>('emails', [id]).catch(error => console.error('Kunne ikke slette mailen:', error))
   }
 
   const handleSendReply = async () => {
@@ -94,9 +86,8 @@ export function EmailNotifications({ open, onOpenChange, userEmail }: EmailNotif
     }
 
     setIsSending(true)
-    
+
     try {
-      const allEmails = await window.kv.get<Email[]>('emails') || []
       const newEmail: Email = {
         id: `${Date.now()}-${Math.random()}`,
         from: userEmail,
@@ -106,14 +97,12 @@ export function EmailNotifications({ open, onOpenChange, userEmail }: EmailNotif
         timestamp: Date.now(),
         read: false
       }
-      
-      await window.kv.set('emails', [...allEmails, newEmail])
-      
+
       toast.success(language === 'da' ? 'Svar sendt' : language === 'fi' ? 'Vastaus' : 'Reply sent')
       setReplyMessage('')
       setIsReplying(false)
-      
-      await loadEmails()
+
+      await appendToKvArray<Email>('emails', [newEmail])
     } catch (error) {
       toast.error(language === 'da' ? 'Kunne ikke sende svar' : language === 'fi' ? 'Vastauksen lähettäminen epäonnistui' : 'Failed to send reply')
     } finally {

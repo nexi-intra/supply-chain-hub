@@ -57,101 +57,96 @@ export function SingleDayOffDialog({ userEmail }: SingleDayOffDialogProps) {
       return
     }
 
-    setIsSubmitting(true)
+    const selectedDateStr = selectedDate
+    const trimmedNotes = notes.trim() || undefined
 
-    try {
-      const selectedDateStr = selectedDate
-
-      const newVacation: VacationEntry = {
-        id: newId('vacation'),
-        userId: userEmail,
-        userEmail,
-        startDate: selectedDateStr,
-        endDate: selectedDateStr,
-        notes: notes.trim() || undefined,
-        status: 'pending',
-        isSingleDay: true
-      }
-
-      await appendToKvArray('vacation-entries', [newVacation])
-
-      const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; isManager: boolean }>>('users')
-      const managers = Object.values(usersData || {}).filter(user => user.isManager)
-      const requesterName = usersData?.[userEmail]?.fullName || userEmail
-
-      try {
-        const emailContent = singleDayOffRequestEmail(requesterName, selectedDate, notes.trim() || undefined)
-
-        // Saml alle manager-mails/notifikationer og skriv én atomar append pr. nøgle.
-        const managerEmails = managers.map((manager) => ({
-          id: newId('email'),
-          from: userEmail,
-          to: manager.email,
-          subject: emailContent.subject,
-          message: emailContent.body,
-          timestamp: Date.now(),
-          read: false,
-          type: 'single-day-off-request',
-          actionLink: { view: 'manager', tab: 'vacation-requests', label: 'Gå til ferieanmodninger' }
-        }))
-
-        const managerNotifications = managers.map((manager) => ({
-          id: newId('notif'),
-          to: manager.email,
-          subject: emailContent.subject,
-          body: emailContent.body,
-          timestamp: new Date().toISOString(),
-          type: 'vacation-request' as const,
-          read: false
-        }))
-
-        await appendToKvArray('emails', managerEmails)
-        await appendToKvArray('email-notifications', managerNotifications)
-      } catch (emailError) {
-        console.error('Error sending day off request email to manager:', emailError)
-      }
-
-      try {
-        const confirmEmail = singleDayOffConfirmationEmail(selectedDate, notes.trim() || undefined)
-
-        const confirmationEmail = {
-          id: newId('email'),
-          from: 'system@nexigroup.com',
-          to: userEmail,
-          subject: confirmEmail.subject,
-          message: confirmEmail.body,
-          timestamp: Date.now(),
-          read: false,
-          type: 'day-off-confirmation'
-        }
-
-        await appendToKvArray('emails', [confirmationEmail])
-
-        const confirmNotification = {
-          id: newId('notif'),
-          to: userEmail,
-          subject: confirmEmail.subject,
-          body: confirmEmail.body,
-          timestamp: new Date().toISOString(),
-          type: 'vacation-request' as const,
-          read: false
-        }
-
-        await appendToKvArray('email-notifications', [confirmNotification])
-      } catch (error) {
-        console.error('Error sending confirmation email:', error)
-      }
-
-      toast.success(t.singleDayOffDialog.requestSent)
-      setSelectedDate('')
-      setNotes('')
-      setOpen(false)
-    } catch (error) {
-      console.error('Error creating day off request:', error)
-      toast.error(t.singleDayOffDialog.requestError)
-    } finally {
-      setIsSubmitting(false)
+    const newVacation: VacationEntry = {
+      id: newId('vacation'),
+      userId: userEmail,
+      userEmail,
+      startDate: selectedDateStr,
+      endDate: selectedDateStr,
+      notes: trimmedNotes,
+      status: 'pending',
+      isSingleDay: true
     }
+
+    // Kvitter og luk med det samme; anmodning og mails skrives i baggrunden.
+    toast.success(t.singleDayOffDialog.requestSent)
+    setSelectedDate('')
+    setNotes('')
+    setOpen(false)
+
+    void (async () => {
+      try {
+        await appendToKvArray('vacation-entries', [newVacation])
+      } catch (error) {
+        console.error('Error creating day off request:', error)
+        toast.error(t.singleDayOffDialog.requestError)
+        return
+      }
+
+      try {
+        const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; isManager: boolean }>>('users')
+        const managers = Object.values(usersData || {}).filter(user => user.isManager)
+        const requesterName = usersData?.[userEmail]?.fullName || userEmail
+
+        const emailContent = singleDayOffRequestEmail(requesterName, selectedDateStr, trimmedNotes)
+        const confirmEmail = singleDayOffConfirmationEmail(selectedDateStr, trimmedNotes)
+
+        // Saml manager-mails og kvitteringen i én append pr. nøgle, så vi kun
+        // laver to skrivninger mod drevet i stedet for fire.
+        const outgoingEmails = [
+          ...managers.map((manager) => ({
+            id: newId('email'),
+            from: userEmail,
+            to: manager.email,
+            subject: emailContent.subject,
+            message: emailContent.body,
+            timestamp: Date.now(),
+            read: false,
+            type: 'single-day-off-request',
+            actionLink: { view: 'manager', tab: 'vacation-requests', label: 'Gå til ferieanmodninger' }
+          })),
+          {
+            id: newId('email'),
+            from: 'system@nexigroup.com',
+            to: userEmail,
+            subject: confirmEmail.subject,
+            message: confirmEmail.body,
+            timestamp: Date.now(),
+            read: false,
+            type: 'day-off-confirmation'
+          }
+        ]
+
+        const outgoingNotifications = [
+          ...managers.map((manager) => ({
+            id: newId('notif'),
+            to: manager.email,
+            subject: emailContent.subject,
+            body: emailContent.body,
+            timestamp: new Date().toISOString(),
+            type: 'vacation-request' as const,
+            read: false
+          })),
+          {
+            id: newId('notif'),
+            to: userEmail,
+            subject: confirmEmail.subject,
+            body: confirmEmail.body,
+            timestamp: new Date().toISOString(),
+            type: 'vacation-request' as const,
+            read: false
+          }
+        ]
+
+        await appendToKvArray('emails', outgoingEmails)
+        await appendToKvArray('email-notifications', outgoingNotifications)
+      } catch (emailError) {
+        console.error('Error sending day off request emails:', emailError)
+      }
+    })()
   }
 
   return (

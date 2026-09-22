@@ -312,12 +312,18 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
     const wasShared = (sharedGuides || []).some((item) => item.id === guide.id)
     const wasLocal = (guides || []).some((item) => item.id === guide.id)
 
+    // De to noegler er uafhaengige, saa skrivningerne kan ske samtidig i stedet
+    // for at laegge to fulde netvaerksrundture i forlaengelse af hinanden.
     if (isSharedGuide(guide)) {
-      await upsertInKvArray('shared-guides', [guide])
-      if (wasLocal) await removeFromKvArray('guides', [guide.id])
+      await Promise.all([
+        upsertInKvArray('shared-guides', [guide]),
+        wasLocal ? removeFromKvArray('guides', [guide.id]) : Promise.resolve(),
+      ])
     } else {
-      await upsertInKvArray('guides', [guide])
-      if (wasShared) await removeFromKvArray('shared-guides', [guide.id])
+      await Promise.all([
+        upsertInKvArray('guides', [guide]),
+        wasShared ? removeFromKvArray('shared-guides', [guide.id]) : Promise.resolve(),
+      ])
     }
   }
 

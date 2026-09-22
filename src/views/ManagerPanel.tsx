@@ -397,15 +397,14 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
     toast.success(t.managerPanel.guideAccessRequests.rejected)
   }
 
-  const openEditNameDialog = async (user: User) => {
-    const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; role: UserRole; isManager: boolean; phone?: string; username?: string }>>('users')
-    const userData = usersData?.[user.email]
-
+  // Telefon og brugernavn er allerede hentet af loadUsers, saa dialogen aabner
+  // med det samme i stedet for at vente paa endnu et opslag mod drevet.
+  const openEditNameDialog = (user: User) => {
     setEditingUser(user)
     setNewName(user.fullName)
     setNewEmail(user.email)
-    setNewPhone(userData?.phone || '')
-    setNewUsername(userData?.username || '')
+    setNewPhone(user.phone || '')
+    setNewUsername(user.username || '')
     setNewPassword('')
     setIsEditDialogOpen(true)
   }
@@ -568,27 +567,26 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
   }
 
   const deleteSickLeave = async (id: string) => {
-    await removeFromKvArray('sick-leave-entries', [id])
-    await loadSickLeaveEntries()
+    const previous = sickLeaveEntries
+    setSickLeaveEntries(current => current.filter(entry => entry.id !== id))
     toast.success(t.managerPanel.sickLeave.deletedToast)
-  }
-
-  const handleApproveVacation = async (vacation: VacationEntry) => {
-    // Atomar pr.-element-opdatering — to manageres samtidige beslutninger taber ikke hinanden.
-    const updated = await updateKvArrayItem<VacationEntry>('vacation-entries', vacation.id, (v) => ({
-      ...v, status: 'approved' as VacationStatus, reviewedBy: userEmail, reviewedAt: new Date().toISOString(),
-    }))
-    if (!updated) {
-      toast.error(t.managerPanel.vacationRequests.notFoundError)
-      await loadVacationEntries()
-      return
-    }
-    await loadVacationEntries()
-    toast.success(t.managerPanel.vacationRequests.approvedToast)
 
     try {
-      const emailContent = vacationApprovedEmail(vacation.startDate, vacation.endDate, userEmail, vacation.notes)
+      await removeFromKvArray('sick-leave-entries', [id])
+    } catch (error) {
+      console.error('Failed to delete sick leave:', error)
+      setSickLeaveEntries(previous)
+      toast.error(t.managerPanel.vacationRequests.notFoundError)
+      void loadSickLeaveEntries()
+    }
+  }
 
+  /** Sender kvitterings-mail og notifikation. Maa aldrig forsinke selve beslutningen. */
+  const sendVacationDecisionEmail = async (vacation: VacationEntry, approved: boolean) => {
+    try {
+      const emailContent = approved
+        ? vacationApprovedEmail(vacation.startDate, vacation.endDate, userEmail, vacation.notes)
+        : vacationRejectedEmail(vacation.startDate, vacation.endDate, userEmail, vacation.notes)
       const newEmail = {
         id: newId('email'),
         from: userEmail,
@@ -596,69 +594,50 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
         subject: emailContent.subject,
         message: emailContent.body,
         timestamp: Date.now(),
-        read: false
+        read: false,
       }
-
       await appendToKvArray('emails', [newEmail])
-
-      const notification = {
+      await appendToKvArray('email-notifications', [{
         id: newId('notif'),
         type: 'email' as const,
-        message: t.managerPanel.vacationRequests.approvalEmailNotification,
+        message: approved ? t.managerPanel.vacationRequests.approvalEmailNotification : t.managerPanel.vacationRequests.rejectionEmailNotification,
         timestamp: Date.now(),
         read: false,
         from: userEmail,
-        emailId: newEmail.id
-      }
-
-      await appendToKvArray('email-notifications', [notification])
+        emailId: newEmail.id,
+      }])
     } catch (emailError) {
-      console.error('Error sending vacation approval email:', emailError)
+      console.error('Kunne ikke sende feriebeslutnings-mail:', emailError)
     }
   }
 
-  const handleRejectVacation = async (vacation: VacationEntry) => {
+  /**
+   * Beslutningen vises straks: anmodningen forsvinder fra listen med det samme,
+   * og skrivning + mail sker i baggrunden. Tidligere ventede brugeren paa en
+   * skrivning, en unoedvendig genindlaesning og to mail-skrivninger.
+   */
+  const decideVacation = async (vacation: VacationEntry, status: 'approved' | 'rejected') => {
+    const previous = vacationEntries
+    setVacationEntries(current => current.filter(entry => entry.id !== vacation.id))
+    if (status === 'approved') toast.success(t.managerPanel.vacationRequests.approvedToast)
+    else toast.error(t.managerPanel.vacationRequests.rejectedToast)
+
     const updated = await updateKvArrayItem<VacationEntry>('vacation-entries', vacation.id, (v) => ({
-      ...v, status: 'rejected' as VacationStatus, reviewedBy: userEmail, reviewedAt: new Date().toISOString(),
-    }))
+      ...v, status: status as VacationStatus, reviewedBy: userEmail, reviewedAt: new Date().toISOString(),
+    })).catch(error => { console.error('Kunne ikke gemme feriebeslutningen:', error); return null })
+
     if (!updated) {
+      setVacationEntries(previous)
       toast.error(t.managerPanel.vacationRequests.notFoundError)
-      await loadVacationEntries()
+      void loadVacationEntries()
       return
     }
-    await loadVacationEntries()
-    toast.error(t.managerPanel.vacationRequests.rejectedToast)
-
-    try {
-      const emailContent = vacationRejectedEmail(vacation.startDate, vacation.endDate, userEmail, vacation.notes)
-
-      const newEmail = {
-        id: newId('email'),
-        from: userEmail,
-        to: vacation.userEmail,
-        subject: emailContent.subject,
-        message: emailContent.body,
-        timestamp: Date.now(),
-        read: false
-      }
-
-      await appendToKvArray('emails', [newEmail])
-
-      const notification = {
-        id: newId('notif'),
-        type: 'email' as const,
-        message: t.managerPanel.vacationRequests.rejectionEmailNotification,
-        timestamp: Date.now(),
-        read: false,
-        from: userEmail,
-        emailId: newEmail.id
-      }
-
-      await appendToKvArray('email-notifications', [notification])
-    } catch (emailError) {
-      console.error('Error sending vacation rejection email:', emailError)
-    }
+    void sendVacationDecisionEmail(vacation, status === 'approved')
   }
+
+  const handleApproveVacation = (vacation: VacationEntry) => decideVacation(vacation, 'approved')
+
+  const handleRejectVacation = (vacation: VacationEntry) => decideVacation(vacation, 'rejected')
 
   const openEditVacationDialog = (vacation: VacationEntry) => {
     setEditingVacation(vacation)
@@ -717,11 +696,13 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
       }
 
       if (emailItems.length > 0) {
-        await appendToKvArray('emails', emailItems)
-        await appendToKvArray('email-notifications', notificationItems)
+        // Mails maa ikke forsinke listen - de sendes i baggrunden.
+        void appendToKvArray('emails', emailItems)
+          .then(() => appendToKvArray('email-notifications', notificationItems))
+          .catch(error => console.error('Kunne ikke sende beslutnings-mails:', error))
       }
 
-      await loadVacationEntries()
+      setVacationEntries(current => current.filter(entry => !selectedVacationIds.includes(entry.id)))
       setSelectedVacationIds([])
 
       if (succeeded === 0) {
@@ -755,11 +736,11 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
     }))
     if (!editedEntry) {
       toast.error(t.managerPanel.vacationRequests.notFoundError)
-      await loadVacationEntries()
+      void loadVacationEntries()
       setIsEditVacationDialogOpen(false)
       return
     }
-    await loadVacationEntries()
+    setVacationEntries(current => current.map(entry => entry.id === editedEntry.id ? editedEntry : entry))
     setIsEditVacationDialogOpen(false)
 
     try {

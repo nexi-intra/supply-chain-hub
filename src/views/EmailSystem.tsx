@@ -370,8 +370,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
         emailId: newEmail.id
       }
 
-      const notifications = await window.kv.get<any[]>('email-notifications') || []
-      await window.kv.set('email-notifications', [...notifications, notification])
+      await appendToKvArray('email-notifications', [notification])
     } catch (emailError) {
       console.error('Error sending vacation approval email:', emailError)
     }
@@ -415,8 +414,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
         emailId: newEmail.id
       }
 
-      const notifications = await window.kv.get<any[]>('email-notifications') || []
-      await window.kv.set('email-notifications', [...notifications, notification])
+      await appendToKvArray('email-notifications', [notification])
     } catch (emailError) {
       console.error('Error sending vacation rejection email:', emailError)
     }

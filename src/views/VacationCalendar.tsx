@@ -112,8 +112,19 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
     const vacation = (vacations || []).find(v => v.id === id)
     if (!vacation) return
 
-    await removeFromKvArray('vacation-entries', [id])
+    // Fjern med det samme i billedet og kvitter; skrivning og mails i baggrunden.
+    const previousVacations = vacations || []
+    setVacations((current) => (current || []).filter(v => v.id !== id))
     toast.success('Ferie anmodning fjernet')
+
+    try {
+      await removeFromKvArray('vacation-entries', [id])
+    } catch (error) {
+      console.error('Error removing vacation:', error)
+      setVacations(previousVacations)
+      toast.error('Kunne ikke fjerne ferie anmodningen')
+      return
+    }
 
     try {
       const emailContent = vacationCancelledByEmployeeEmail(vacation.userEmail, vacation.startDate, vacation.endDate)
@@ -175,16 +186,6 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
     try {
       const emailContent = vacationApprovedEmail(vacation.startDate, vacation.endDate, userEmail, vacation.notes)
 
-      const emails = (await window.kv.get<Array<{
-        id: string
-        from: string
-        to: string
-        subject: string
-        message: string
-        timestamp: number
-        read: boolean
-      }>>('emails')) || []
-
       const newEmail = {
         id: Date.now().toString() + '-approval',
         from: userEmail,
@@ -195,7 +196,9 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
         read: false
       }
 
-      await window.kv.set('emails', [...emails, newEmail])
+      // Atomart append i stedet for at laese og skrive hele arrayet: hurtigere,
+      // og to samtidige godkendelser taber ikke hinandens mail.
+      await appendToKvArray('emails', [newEmail])
 
       const notification = {
         id: Date.now().toString() + '-notif',
@@ -207,8 +210,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
         read: false
       }
 
-      const notifications = (await window.kv.get<any[]>('email-notifications')) || []
-      await window.kv.set('email-notifications', [...notifications, notification])
+      await appendToKvArray('email-notifications', [notification])
     } catch (emailError) {
       console.error('Error sending vacation approval email:', emailError)
       toast.error('Kunne ikke sende email notifikation')
@@ -231,16 +233,6 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
     try {
       const emailContent = vacationRejectedEmail(vacation.startDate, vacation.endDate, userEmail, vacation.notes)
 
-      const emails = (await window.kv.get<Array<{
-        id: string
-        from: string
-        to: string
-        subject: string
-        message: string
-        timestamp: number
-        read: boolean
-      }>>('emails')) || []
-
       const newEmail = {
         id: Date.now().toString() + '-rejection',
         from: userEmail,
@@ -251,7 +243,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
         read: false
       }
 
-      await window.kv.set('emails', [...emails, newEmail])
+      await appendToKvArray('emails', [newEmail])
 
       const notification = {
         id: Date.now().toString() + '-notif-reject',
@@ -263,8 +255,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
         read: false
       }
 
-      const notifications = (await window.kv.get<any[]>('email-notifications')) || []
-      await window.kv.set('email-notifications', [...notifications, notification])
+      await appendToKvArray('email-notifications', [notification])
     } catch (emailError) {
       console.error('Error sending vacation rejection email:', emailError)
       toast.error('Kunne ikke sende email notifikation')

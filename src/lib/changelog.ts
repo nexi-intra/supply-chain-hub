@@ -8,6 +8,17 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.5.7',
+    items: [
+      'Hele hubben svarer nu med det samme. Knapper, dialoger og kvitteringer venter ikke længere på det delte drev — ændringen vises øjeblikkeligt, og selve gemningen sker i baggrunden. Går gemningen galt, sættes det tilbage og du får besked',
+      'Sygemeld, barn syg og enkelte fridage: dialogen lukker og kvitterer nu med det samme i stedet for først at skulle skrive besked til lederen og vente på svar',
+      'Ferie kan godkendes, afvises og slettes uden ventetid — også når flere ledere sidder i kalenderen samtidig. Før kunne to samtidige godkendelser overskrive hinandens besked',
+      'Noter, notifikationer og e-mails åbner, markeres som læst og slettes med det samme. Hver handling brugte før tre ture frem og tilbage til drevet, nu kun én',
+      'Rettet at redigering af en medarbejders navn ventede på et unødvendigt opslag, før dialogen overhovedet åbnede',
+      'Færre skrivninger til drevet over hele linjen: fx sendes lederbesked og kvittering for en fridag nu samlet i stedet for i fire omgange',
+    ],
+  },
+  {
     version: '1.5.6',
     items: [
       'Appen gemmer igen med det samme. Gemninger kunne tage flere minutter — godkende en ferie, oprette en note eller tildele en opgave fra forsiden — fordi alle brugeres skrivninger stod i én og samme kø på det delte drev. Køen er fjernet: målt på 16 samtidige gemninger fejlede 14 før, nu ingen',

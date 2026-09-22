@@ -120,33 +120,45 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
     setUnreadCount(userNotifications.filter(n => !n.read).length)
   }
 
+  // Notifikationerne opdateres lokalt med det samme og skrives i baggrunden.
+  // Tidligere kostede hvert klik tre netvaerksrundture (laes, skriv, genlaes)
+  // foer der skete noget paa skaermen.
   const markNotificationAsRead = async (notificationId: string) => {
-    const allNotifications = (await window.kv.get<Notification[]>('notebook-notifications')) || []
-    const updated = allNotifications.map(n => 
-      n.id === notificationId ? { ...n, read: true } : n
-    )
-    await window.kv.set('notebook-notifications', updated)
-    await loadNotifications()
+    setNotifications(current => current.map(n => n.id === notificationId ? { ...n, read: true } : n))
+    setUnreadCount(current => Math.max(0, current - 1))
+    try {
+      await upsertInKvArray<Notification>('notebook-notifications', [{ ...(notifications.find(n => n.id === notificationId) as Notification), read: true }])
+    } catch (error) {
+      console.error('Kunne ikke markere notifikationen som laest:', error)
+      void loadNotifications()
+    }
   }
 
   const markAllAsRead = async () => {
-    const allNotifications = (await window.kv.get<Notification[]>('notebook-notifications')) || []
-    const updated = allNotifications.map(n => {
-      if (n.editedBy !== userEmail && (n.originalCreator === userEmail || !notes.find(note => note.id === n.noteId)?.isPersonal)) {
-        return { ...n, read: true }
-      }
-      return n
-    })
-    await window.kv.set('notebook-notifications', updated)
-    await loadNotifications()
+    const mine = notifications.filter(n => !n.read)
+    if (!mine.length) return
+    setNotifications(current => current.map(n => ({ ...n, read: true })))
+    setUnreadCount(0)
     toast.success(language === 'da' ? 'Alle notifikationer markeret som læst' : language === 'fi' ? 'Kaikki tiedoksi merkityt ilmoitukset' : 'All notifications marked as read')
+    try {
+      await upsertInKvArray<Notification>('notebook-notifications', mine.map(n => ({ ...n, read: true })))
+    } catch (error) {
+      console.error('Kunne ikke markere notifikationerne som laest:', error)
+      void loadNotifications()
+    }
   }
 
   const deleteNotification = async (notificationId: string) => {
-    const allNotifications = (await window.kv.get<Notification[]>('notebook-notifications')) || []
-    const updated = allNotifications.filter(n => n.id !== notificationId)
-    await window.kv.set('notebook-notifications', updated)
-    await loadNotifications()
+    const previous = notifications
+    setNotifications(current => current.filter(n => n.id !== notificationId))
+    setUnreadCount(current => Math.max(0, current - (previous.find(n => n.id === notificationId)?.read ? 0 : 1)))
+    try {
+      await removeFromKvArray<Notification>('notebook-notifications', [notificationId])
+    } catch (error) {
+      console.error('Kunne ikke slette notifikationen:', error)
+      setNotifications(previous)
+      void loadNotifications()
+    }
   }
 
   /** Parser komma-separeret tag-input til en unik, trimmet liste. */
@@ -187,18 +199,27 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
       ...(tags.length > 0 ? { tags } : {}),
     }
 
-    const updatedNotes = await appendToKvArray('notebook-notes', [newNote])
-    setNotes(updatedNotes)
-
+    // Vis noten og luk dialogen straks; skrivningen sker i baggrunden.
+    setNotes(current => [...current, newNote])
     setNoteTitle('')
     setNoteContent('')
     setNoteTags('')
     setShowCreateDialog(false)
     toast.success(t.notebook.noteCreated)
+
+    try {
+      await appendToKvArray('notebook-notes', [newNote])
+    } catch (error) {
+      console.error('Kunne ikke oprette noten:', error)
+      setNotes(current => current.filter(note => note.id !== newNote.id))
+      toast.error(language === 'da' ? 'Noten blev ikke gemt — prøv igen' : language === 'fi' ? 'Muistiinpanoa ei tallennettu — yritä uudelleen' : 'The note was not saved — please try again')
+    }
   }
 
   const handleEditNote = async () => {
     if (!selectedNote) return
+    // Fastholdes foer dialogen lukkes, saa baggrundsarbejdet ikke laeser null.
+    const selectedNoteSnapshot = selectedNote
     if (!noteTitle.trim()) {
       toast.error(t.notebook.titleRequired)
       return
@@ -219,51 +240,67 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
       lastEditedByName: userName,
     }
 
-    // Atomar pr.-note-opdatering — to brugere der redigerer forskellige noter samtidig taber ikke hinandens ændringer.
-    const updatedNotes = await upsertInKvArray('notebook-notes', [updatedNote])
-    setNotes(updatedNotes)
-
-    if (!selectedNote.isPersonal) {
-      const notification = {
-        id: newId('notification'),
-        type: 'note-edited' as const,
-        noteId: selectedNote.id,
-        noteTitle: updatedNote.title,
-        editedBy: userEmail,
-        editedByName: userName,
-        originalCreator: selectedNote.creatorEmail,
-        timestamp: new Date().toISOString(),
-        read: false,
-      }
-
-      await appendToKvArray('notebook-notifications', [notification])
-      
-      if (selectedNote.creatorEmail !== userEmail) {
-        toast.info(
-          language === 'da' 
-            ? `${userName} redigerede noten "${updatedNote.title}"` 
-            : language === 'fi' ? `${userName} muokattu huomautus "${updatedNote.title}"` : `${userName} edited the note "${updatedNote.title}"`
-        )
-      }
-    }
-
+    // Vis aendringen og luk dialogen straks; resten sker i baggrunden.
+    const previousNotes = notes
+    setNotes(current => current.map(note => note.id === updatedNote.id ? updatedNote : note))
     setNoteTitle('')
     setNoteContent('')
     setNoteTags('')
     setSelectedNote(null)
     setShowEditDialog(false)
     toast.success(t.notebook.noteUpdated)
+
+    try {
+      // Atomar pr.-note-opdatering — to brugere der redigerer forskellige noter samtidig taber ikke hinandens ændringer.
+      await upsertInKvArray('notebook-notes', [updatedNote])
+    } catch (error) {
+      console.error('Kunne ikke gemme noten:', error)
+      setNotes(previousNotes)
+      toast.error(language === 'da' ? 'Noten blev ikke gemt — prøv igen' : language === 'fi' ? 'Muistiinpanoa ei tallennettu — yritä uudelleen' : 'The note was not saved — please try again')
+      return
+    }
+
+    if (!selectedNoteSnapshot.isPersonal) {
+      const notification = {
+        id: newId('notification'),
+        type: 'note-edited' as const,
+        noteId: selectedNoteSnapshot.id,
+        noteTitle: updatedNote.title,
+        editedBy: userEmail,
+        editedByName: userName,
+        originalCreator: selectedNoteSnapshot.creatorEmail,
+        timestamp: new Date().toISOString(),
+        read: false,
+      }
+      await appendToKvArray('notebook-notifications', [notification]).catch(err => console.error('Kunne ikke sende notifikationen:', err))
+
+      if (selectedNoteSnapshot.creatorEmail !== userEmail) {
+        toast.info(
+          language === 'da'
+            ? `${userName} redigerede noten "${updatedNote.title}"`
+            : language === 'fi' ? `${userName} muokattu huomautus "${updatedNote.title}"` : `${userName} edited the note "${updatedNote.title}"`
+        )
+      }
+    }
   }
 
   const handleDeleteNote = async () => {
     if (!selectedNote) return
+    const doomed = selectedNote
+    const previousNotes = notes
 
-    const updatedNotes = await removeFromKvArray<Note>('notebook-notes', [selectedNote.id])
-    setNotes(updatedNotes)
-
+    setNotes(current => current.filter(note => note.id !== doomed.id))
     setSelectedNote(null)
     setShowDeleteDialog(false)
     toast.success(t.notebook.noteDeleted)
+
+    try {
+      await removeFromKvArray<Note>('notebook-notes', [doomed.id])
+    } catch (error) {
+      console.error('Kunne ikke slette noten:', error)
+      setNotes(previousNotes)
+      toast.error(language === 'da' ? 'Noten blev ikke slettet — prøv igen' : language === 'fi' ? 'Muistiinpanoa ei poistettu — yritä uudelleen' : 'The note was not deleted — please try again')
+    }
   }
 
   const openCreateDialog = (isPersonal: boolean) => {
