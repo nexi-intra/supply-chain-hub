@@ -538,9 +538,13 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
   // appen fryser under en backup. Her giver hver await event-loopet fri.
   // Til gengaeld er snapshottet konsistent PR. NOEGLE, ikke ét frosset oejeblik
   // - acceptabelt for en backup, og langt bedre end en app der gaar i staa.
-  async function dumpAllAsync() {
+  // `include` filtreres FOER laesningen. Det er hele pointen: de store
+  // billed-blobs udgoer ~99% af en dump, og det er laesningen af dem over SMB
+  // der koster minutter - ikke selve skrivningen.
+  async function dumpAllAsync(include) {
     const result = {}
     for (const key of await keysAsync()) {
+      if (include && !include(key)) continue
       try {
         const value = await getAsync(key)
         if (value !== undefined) result[key] = value

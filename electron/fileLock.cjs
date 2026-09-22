@@ -18,6 +18,41 @@ function lockBusy(code) {
   return busy
 }
 
+// MAALT PAA PRODUKTIONSDREVET: en laasefil der netop er oprettet af en anden
+// klient rapporterede mtime som 17 AAR gammel (`fjerner forladt laas
+// (549628504s gammel)`, set gentagne gange). SMB naaede ikke at skrive metadata
+// foer vi stattede den. Stolede vi blindt paa mtime, slettede vi altsaa en laas
+// en kollega holdt LIGE NU - og saa skrev to klienter samtidig i den samme fil.
+//
+// Derfor: mtime bruges kun naar alderen er plausibel. Er den absurd, falder vi
+// tilbage paa VORES EGEN klokke - vi skal selv have set den samme laas (samme
+// ejer) ligge uroert i staleMs, foer den maa fjernes. Det er ogsaa immunt over
+// for en kollega-pc med forkert systemur.
+const MAX_TRUSTED_LOCK_AGE_MS = 30 * 24 * 60 * 60 * 1000
+const observedLocks = new Map()
+
+function readOwner(target) {
+  try { return fs.readFileSync(target, 'utf8') } catch { return null }
+}
+
+/** Maa laasen fjernes? `mtimeMs` bruges kun hvis alderen er troværdig. */
+function isAbandonedLock(target, staleMs, mtimeMs, owner) {
+  const age = Date.now() - mtimeMs
+  if (age >= staleMs && age < MAX_TRUSTED_LOCK_AGE_MS) {
+    observedLocks.delete(target)
+    return { abandoned: true, reason: `${Math.round(age / 1000)}s gammel` }
+  }
+  const seen = observedLocks.get(target)
+  if (!seen || seen.owner !== owner) {
+    observedLocks.set(target, { owner, since: Date.now() })
+    return { abandoned: false }
+  }
+  const watched = Date.now() - seen.since
+  if (watched < staleMs) return { abandoned: false }
+  observedLocks.delete(target)
+  return { abandoned: true, reason: `uroert i ${Math.round(watched / 1000)}s (mtime var utroværdig)` }
+}
+
 // A slow live client on another PC may still own a lock. Do not steal it
 // solely because a wall-clock timeout has elapsed.
 function acquireFileLock(target, { attempts = 50, delayMs = 100, createParent = true, staleMs = 0 } = {}) {
@@ -28,6 +63,7 @@ function acquireFileLock(target, { attempts = 50, delayMs = 100, createParent = 
     try {
       const fd = fs.openSync(target, 'wx')
       try { fs.writeSync(fd, owner) } finally { fs.closeSync(fd) }
+      observedLocks.delete(target)
       if (process.env.TCD_HUB_DEBUG) {
         const elapsedMs = Date.now() - startedAt
         if (elapsedMs >= 100) console.warn(`KV TIMING: lock ${elapsedMs}ms attempts=${attempt + 1} target=${target}`)
@@ -37,13 +73,13 @@ function acquireFileLock(target, { attempts = 50, delayMs = 100, createParent = 
       if (!LOCK_CONTENTION.has(error.code)) throw error
       // Selv-heling (samme model som acquireFileLockAsync): en laas efterladt af
       // en crashet/dræbt klient ville ellers blokere ALLE fremtidige forsøg
-      // permanent (fx kontolåsen — attempts:1/6 giver ingen reel ventetid). Kun
-      // laase hvis alder ligger LANGT over enhver legitim holdetid fjernes.
+      // permanent (fx kontolåsen — attempts:1/6 giver ingen reel ventetid).
       if (staleMs > 0 && error.code === 'EEXIST') {
         try {
           const stat = fs.statSync(target)
-          if (Date.now() - stat.mtimeMs > staleMs) {
-            console.warn(`KV: fjerner forladt laas (${Math.round((Date.now() - stat.mtimeMs) / 1000)}s gammel): ${target}`)
+          const verdict = isAbandonedLock(target, staleMs, stat.mtimeMs, readOwner(target))
+          if (verdict.abandoned) {
+            console.warn(`KV: fjerner forladt laas (${verdict.reason}): ${target}`)
             try { fs.unlinkSync(target) } catch { /* ignoreres */ }
             continue
           }
@@ -77,6 +113,7 @@ async function acquireFileLockAsync(target, { attempts = 50, delayMs = 100, crea
     try {
       const handle = await fs.promises.open(target, 'wx')
       try { await handle.write(owner) } finally { await handle.close() }
+      observedLocks.delete(target)
       if (process.env.TCD_HUB_DEBUG) {
         const elapsedMs = Date.now() - startedAt
         if (elapsedMs >= 100) console.warn(`KV TIMING: lock-async ${elapsedMs}ms attempts=${attempt + 1} target=${target}`)
@@ -90,8 +127,9 @@ async function acquireFileLockAsync(target, { attempts = 50, delayMs = 100, crea
       if (staleMs > 0 && error.code === 'EEXIST') {
         try {
           const stat = await fs.promises.stat(target)
-          if (Date.now() - stat.mtimeMs > staleMs) {
-            console.warn(`KV: fjerner forladt laas (${Math.round((Date.now() - stat.mtimeMs) / 1000)}s gammel): ${target}`)
+          const verdict = isAbandonedLock(target, staleMs, stat.mtimeMs, readOwner(target))
+          if (verdict.abandoned) {
+            console.warn(`KV: fjerner forladt laas (${verdict.reason}): ${target}`)
             await fs.promises.unlink(target).catch(() => {})
             continue
           }

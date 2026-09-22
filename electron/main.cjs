@@ -18,6 +18,7 @@ const { createSecuredIpc } = require('./securedIpc.cjs')
 const { publicUsers, updateUsers } = require('./userPolicy.cjs')
 const { createTeamReader, registeredTeamDir } = require('./teamReadPolicy.cjs')
 const { createTrustedWindow } = require('./trustedWindow.cjs')
+const { withFileLockAsync } = require('./fileLock.cjs')
 const { exportBackup } = require('./backupPolicy.cjs')
 const updater = require('./updater.cjs')
 const registry = require('./registry.cjs')
@@ -332,6 +333,14 @@ const AUTO_BACKUP_KEEP_DAYS = 14
 const AUTO_BACKUP_HOURLY_START_HOUR = 6
 const AUTO_BACKUP_HOURLY_END_HOUR = 16 // eksklusiv - sidste time-backup tages kl. 15
 const AUTO_BACKUP_CHECK_INTERVAL = 60 * 60 * 1000
+// En fuld dump tager ~1-3 min. over SMB. Laasen maa derfor holde laenge nok til
+// at en langsom klient kan blive faerdig, men frigives igen hvis den crasher.
+const AUTO_BACKUP_LOCK_STALE_MS = 15 * 60 * 1000
+
+/** Gemte filer/billeder: skrives én gang og ændres aldrig - kun nyt id ved ny upload. */
+function isImmutableBlobKey(key) {
+  return key.startsWith('file_') && (key.includes('_chunk_') || key.endsWith('_meta'))
+}
 let autoBackupTimer = null
 
 /** Skriver `payload` til `fileName` medmindre filen allerede findes. Returnerer true hvis DENNE klient skrev den. */
@@ -366,22 +375,42 @@ async function backupStore(targetStore) {
     }
     // Tjek foer vi bygger indholdet: en dump er ~650 filer over SMB, saa den maa
     // kun koere naar der faktisk mangler en fil.
-    const missing = wanted.filter(name => !fs.existsSync(path.join(backupDir, name)))
-    if (!missing.length) return
+    if (wanted.every(name => fs.existsSync(path.join(backupDir, name)))) return
 
     await fsp.mkdir(backupDir, { recursive: true })
-    // dumpAllAsync frem for dumpAll: den synkrone udgave laaste main-traaden i
-    // op mod et minut, saa hele appen frøs hver gang en backup blev taget.
-    const payload = JSON.stringify({
-      app: 'tcd-hub',
-      formatVersion: 1,
-      exportedAt: now.toISOString(),
-      auto: true,
-      data: await targetStore.dumpAllAsync(),
-    }, null, 2)
-    for (const name of missing) {
-      if (await writeBackupFileOnce(backupDir, name, payload)) console.log(`TCD Hub: automatisk backup skrevet: ${name}`)
-    }
+    // Pladsen skal KRAEVES foer dumpen, ikke efter. Tidligere afgjorde 'wx' foerst
+    // HVEM der vandt naar indholdet allerede var bygget - saa ved hvert klokkeslet
+    // startede ALLE kørende klienter en fuld 650-noegle-dump samtidig, og alle
+    // paa naer én smed resultatet vaek. Det maettede drevet i minutter og var
+    // aarsagen til at helt almindelige gemninger tog 2-5 minutter for alle andre.
+    await withFileLockAsync(path.join(backupDir, 'backup-in-progress.lock'), async () => {
+      // Genkontrol inde i laasen: vinderen kan have skrevet filerne mens vi ventede.
+      const missing = wanted.filter(name => !fs.existsSync(path.join(backupDir, name)))
+      if (!missing.length) return
+      const snapshot = async include => JSON.stringify({
+        app: 'tcd-hub',
+        formatVersion: 1,
+        exportedAt: now.toISOString(),
+        auto: true,
+        // dumpAllAsync frem for dumpAll: den synkrone udgave laaste main-traaden i
+        // op mod et minut, saa hele appen frøs hver gang en backup blev taget.
+        data: await targetStore.dumpAllAsync(include),
+      }, null, 2)
+      // Maalt paa et rigtigt team: 523 af 652 noegler og 39,9 af 40,4 MB er
+      // billed-blobs. De er uforanderlige - en ny upload faar et nyt fileId - saa
+      // at kopiere dem hver time var ren spild og tog minutter over SMB.
+      // Timefilen daekker derfor kun de data der rent faktisk aendrer sig; den
+      // fulde kopi tages én gang i doegnet. Gendannelse overskriver kun de
+      // noegler backuppen indeholder, saa billederne i storen roeres ikke.
+      const fullName = missing.find(name => !/_\d{2}\.json$/.test(name))
+      const fullPayload = fullName ? await snapshot() : null
+      if (fullName && await writeBackupFileOnce(backupDir, fullName, fullPayload)) console.log(`TCD Hub: fuld backup skrevet: ${fullName}`)
+      for (const name of missing.filter(entry => entry !== fullName)) {
+        // Er den fulde kopi lige taget, genbruges den frem for at laese alt igen.
+        const payload = fullPayload || await snapshot(key => !isImmutableBlobKey(key))
+        if (await writeBackupFileOnce(backupDir, name, payload)) console.log(`TCD Hub: time-backup skrevet: ${name}`)
+      }
+    }, { attempts: 1, staleMs: AUTO_BACKUP_LOCK_STALE_MS })
 
     // Rotation: I DAG beholdes alle timefiler, saa man kan gaa hoejst en time
     // tilbage. AFSLUTTEDE dage klappes sammen til ÉN fil - den NYESTE fra dagen.
@@ -406,6 +435,9 @@ async function backupStore(targetStore) {
     }
     for (const name of doomed) await fsp.unlink(path.join(backupDir, name)).catch(() => {})
   } catch (err) {
+    // En anden klient tager backup'en lige nu - det er den normale tilstand naar
+    // flere sidder i samme hub, ikke en fejl.
+    if (err.code === 'KV_LOCK_BUSY') return
     console.error('TCD Hub: automatisk backup fejlede', err)
   }
 }

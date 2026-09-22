@@ -403,8 +403,8 @@ function createResilientStore(networkStore, localStore, options = {}) {
     return networkStore.dumpAll()
   }
 
-  function dumpAllAsync() {
-    return networkStore.dumpAllAsync()
+  function dumpAllAsync(include) {
+    return networkStore.dumpAllAsync(include)
   }
 
   function getPendingSyncCount() {
