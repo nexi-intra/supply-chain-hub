@@ -107,6 +107,20 @@ test('a lock with an absurd mtime is reclaimed once WE have watched it for stale
   assert.equal(withFileLock(target, () => 42, { attempts: 1, staleMs: 40 }), 42)
   assert.ok(!fs.existsSync(target))
 })
+// Fundet live 2026-09-22: en laas havde mtime 2 TIMER ude i fremtiden (kollega-pc
+// med forkert ur). `now - mtime` blev negativ, saa den blev aldrig regnet for
+// forladt og blokerede noeglen permanent.
+test('a lock dated in the future is still reclaimed once we have watched it', t => {
+  const target = fixture(t)
+  fs.writeFileSync(target, 'client-with-wrong-clock')
+  const future = new Date(Date.now() + 2 * 60 * 60 * 1000)
+  fs.utimesSync(target, future, future)
+  assert.throws(() => withFileLock(target, () => {}, { attempts: 1, staleMs: 40 }), { code: 'KV_LOCK_BUSY' })
+  const waitUntil = Date.now() + 60
+  while (Date.now() < waitUntil) { /* vores egen klokke */ }
+  assert.equal(withFileLock(target, () => 42, { attempts: 1, staleMs: 40 }), 42)
+  assert.ok(!fs.existsSync(target))
+})
 test('release does not remove a lock now owned by another writer', t => {
   const target = fixture(t)
   withFileLock(target, () => fs.writeFileSync(target, 'replacement-owner'))
