@@ -364,22 +364,34 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
    * har den forventede type (array for array-ops, objekt for felt-ops).
    */
   function update(key, operation) {
+    return updateDetailed(key, operation).result
+  }
+
+  // Som update(), men returnerer OGSAA hele den gemte vaerdi. Operationens
+  // resultat er ved en sti-operation kun under-arrayet paa stien, saa en kalder
+  // der vil spejle/cache noeglen skal bruge `value` - ellers spejles et fladt
+  // array oven i et objekt, og laeserne crasher paa den forkerte form.
+  function updateDetailed(key, operation) {
     validateOperation(operation)
     return withFileLock(lockPath(key), () => {
       const outcome = computeUpdate(key, operation, get(key, { skipCache: true }))
       if (outcome.write) setUnlocked(key, outcome.value)
-      return outcome.result
+      return { result: outcome.result, value: outcome.write ? outcome.value : get(key, { skipCache: true }) }
     }, SYNC_WRITE_LOCK)
   }
 
   // Asynkron tvilling til IPC-vejen: samme laas, samme computeUpdate, men al
   // netvaerks-I/O er await-baseret saa main-event-loopet aldrig blokeres.
   async function updateAsync(key, operation) {
+    return (await updateDetailedAsync(key, operation)).result
+  }
+
+  async function updateDetailedAsync(key, operation) {
     validateOperation(operation)
     return serializeWrite(key, () => withFileLockAsync(lockPath(key), async () => {
       const outcome = computeUpdate(key, operation, await getAsync(key, { skipCache: true }))
       if (outcome.write) await setUnlockedAsync(key, outcome.value)
-      return outcome.result
+      return { result: outcome.result, value: outcome.write ? outcome.value : await getAsync(key, { skipCache: true }) }
     }, ASYNC_WRITE_LOCK))
   }
 
@@ -675,7 +687,7 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
     return connected
   }
 
-  return { get, getAsync, peekCache, set, setAsync, delete: del, deleteAsync, keys, keysAsync, watch, update, updateAsync, mutate, withLockedKeys, invalidate: () => readCache.clear(), dumpAll, dumpAllAsync, dataDir, isConnected, scanDirectory }
+  return { get, getAsync, peekCache, set, setAsync, delete: del, deleteAsync, keys, keysAsync, watch, update, updateAsync, updateDetailed, updateDetailedAsync, mutate, withLockedKeys, invalidate: () => readCache.clear(), dumpAll, dumpAllAsync, dataDir, isConnected, scanDirectory }
 }
 
 module.exports = { createStore, parseFileContents, keyToFilename }

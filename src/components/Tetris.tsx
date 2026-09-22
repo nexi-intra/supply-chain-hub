@@ -2,13 +2,19 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { SquaresFour, Trophy, X, Crown, Medal, Star, ArrowLeft, ArrowRight, ArrowClockwise, ArrowLineDown, CaretDown } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { useKV } from '@/hooks/useKV'
+import { toast } from 'sonner'
 import { useLanguage } from '@/contexts/LanguageContext'
-import { upsertInKvArray } from '@/lib/kvArrays'
+import { useLeaderboard } from '@/hooks/useLeaderboard'
+import { useAutoPauseOnBlur } from '@/hooks/useAutoPauseOnBlur'
+import { PauseOverlay } from '@/components/PauseOverlay'
+import { recordGamePlay, scoreSaveFailedMessage, submitHighscore } from '@/lib/leaderboards'
 import { useCrossTeamLeaderboard, mergeFlatLeaderboard } from '@/hooks/useCrossTeamLeaderboard'
 
+const LEADERBOARD_KEY = 'tetris-global-leaderboard'
+const PLAY_COUNTS_KEY = 'tetris-play-counts'
+
 type PieceType = 'I' | 'O' | 'T' | 'S' | 'Z' | 'J' | 'L'
-type GameState = 'menu' | 'playing' | 'ended'
+type GameState = 'menu' | 'playing' | 'paused' | 'ended'
 type Cell = string | null
 
 interface ActivePiece {
@@ -134,52 +140,13 @@ function getStage(lines: number, elapsedMs: number): number {
   return Math.floor(lines / 8) + Math.floor(elapsedMs / 25000)
 }
 
-// Migrerer gammelt leaderboard (opdelt pr. sværhedsgrad) til ét samlet highscores-array.
-// Sørger også for `id` (bruges af den atomare kv:update-upsert) og at listen altid
-// er sorteret højest score først, uanset rækkefølgen data blev skrevet i.
-function migrateLeaderboard(data: unknown): LeaderboardEntry[] {
-  if (Array.isArray(data)) {
-    return (data as LeaderboardEntry[])
-      .map((entry) => ({ ...entry, id: entry.id || entry.email }))
-      .sort((a, b) => b.score - a.score)
-  }
-  if (!data || typeof data !== 'object') return []
-  const combined = new Map<string, LeaderboardEntry>()
-  for (const diff of ['easy', 'medium', 'hard', 'expert']) {
-    const arr = (data as Record<string, LeaderboardEntry[]>)[diff] || []
-    for (const entry of arr) {
-      const existing = combined.get(entry.email)
-      if (!existing || entry.score > existing.score) {
-        combined.set(entry.email, { id: entry.email, email: entry.email, score: entry.score, timestamp: entry.timestamp })
-      }
-    }
-  }
-  return Array.from(combined.values()).sort((a, b) => b.score - a.score).slice(0, 10)
-}
-
-// Migrerer gamle play-counts (opdelt pr. sværhedsgrad) til ét samlet antal spil pr. bruger.
-function migratePlayCounts(data: unknown): Record<string, { all: number }> {
-  if (!data || typeof data !== 'object') return {}
-  const result: Record<string, { all: number }> = {}
-  for (const [email, counts] of Object.entries(data as Record<string, unknown>)) {
-    if (counts && typeof counts === 'object' && 'all' in (counts as Record<string, unknown>)) {
-      result[email] = { all: (counts as { all: number }).all || 0 }
-      continue
-    }
-    const c = counts as Record<string, number> | undefined
-    const total = ['easy', 'medium', 'hard', 'expert'].reduce((sum, d) => sum + (c?.[d] || 0), 0)
-    result[email] = { all: total }
-  }
-  return result
-}
-
 export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
   const { language } = useLanguage()
   const [gameState, setGameState] = useState<GameState>('menu')
   const [score, setScore] = useState(0)
   const [lines, setLines] = useState(0)
   const [users, setUsers] = useState<User[]>([])
-  const [globalLeaderboard, setGlobalLeaderboard] = useKV<GlobalLeaderboard>('tetris-global-leaderboard', [])
+  const { leaderboard: safeLeaderboard, refresh: refreshLeaderboard } = useLeaderboard(LEADERBOARD_KEY)
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const nextCanvasRef = useRef<HTMLCanvasElement>(null)
@@ -210,28 +177,13 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
     loadUsers()
   }, [])
 
-  // Éngangs-migrering: gammelt leaderboard opdelt pr. sværhedsgrad -> ét samlet array.
-  // safeLeaderboard bruges til ALT render/logik, så en legacy-formet værdi fra
-  // KV (før migreringen når at skrive tilbage) aldrig får kaldt array-metoder
-  // på et almindeligt objekt og crasher komponenten.
-  const safeLeaderboard = useMemo(() => migrateLeaderboard(globalLeaderboard), [globalLeaderboard])
-
   // Fase 8/9 "Highscores på tværs": fletter alle andre teams' samme leaderboard-nøgle ind,
   // sorteret samlet efter score. Skriver ALDRIG til andre teams' data, kun læser til visning.
-  const { otherTeams } = useCrossTeamLeaderboard<GlobalLeaderboard>('tetris-global-leaderboard')
+  const { otherTeams } = useCrossTeamLeaderboard<GlobalLeaderboard>(LEADERBOARD_KEY)
   const crossTeamLeaderboard = useMemo(() => {
     const ownUsers = Object.fromEntries(users.map(u => [u.email, { fullName: u.fullName }]))
     return mergeFlatLeaderboard(safeLeaderboard, ownUsers, otherTeams)
   }, [safeLeaderboard, users, otherTeams])
-
-  useEffect(() => {
-    if (!globalLeaderboard) return
-    const needsMigration = !Array.isArray(globalLeaderboard) || globalLeaderboard.some((entry) => !entry.id)
-    if (needsMigration) {
-      setGlobalLeaderboard(safeLeaderboard)
-      window.kv.set('tetris-global-leaderboard', safeLeaderboard)
-    }
-  }, [globalLeaderboard, safeLeaderboard, setGlobalLeaderboard])
 
   const getDisplayName = (email: string) => {
     const user = users.find(u => u.email === email)
@@ -343,29 +295,19 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
     if (!userEmail) return
 
     try {
-      const stored = await window.kv.get<unknown>('tetris-global-leaderboard')
-      const board = migrateLeaderboard(stored)
-      const existing = board.find(entry => entry.email === userEmail)
-
-      if (!existing || finalScore > existing.score) {
-        const updated = await upsertInKvArray<LeaderboardEntry>('tetris-global-leaderboard', [
-          { id: userEmail, email: userEmail, score: finalScore, timestamp: Date.now() },
-        ])
-        setGlobalLeaderboard(updated)
-      }
+      await submitHighscore(LEADERBOARD_KEY, { email: userEmail, score: finalScore, timestamp: Date.now() })
+      refreshLeaderboard()
     } catch (error) {
       console.error('Error saving Tetris score:', error)
+      toast.error(scoreSaveFailedMessage(language))
     }
 
     try {
-      const stored = await window.kv.get<unknown>('tetris-play-counts')
-      const gameStats = migratePlayCounts(stored)
-      gameStats[userEmail] = { all: (gameStats[userEmail]?.all || 0) + 1 }
-      await window.kv.set('tetris-play-counts', gameStats)
+      await recordGamePlay(PLAY_COUNTS_KEY, userEmail)
     } catch (error) {
       console.error('Error tracking Tetris play count:', error)
     }
-  }, [userEmail, setGlobalLeaderboard])
+  }, [userEmail, refreshLeaderboard, language])
 
 
   const draw = useCallback(() => {
@@ -563,11 +505,53 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
     }
   }
 
+  const pausedAtRef = useRef(0)
+
+  const pauseGame = useCallback(() => {
+    if (gameStateRef.current !== 'playing') return
+    gameStateRef.current = 'paused'
+    setGameState('paused')
+    pausedAtRef.current = performance.now()
+    softDropRef.current = false
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current)
+      animationFrameRef.current = null
+    }
+  }, [])
+
+  const resumeGame = useCallback(() => {
+    if (gameStateRef.current !== 'paused') return
+    gameStateRef.current = 'playing'
+    setGameState('playing')
+    animationFrameRef.current = requestAnimationFrame((timestamp) => {
+      // Pausen må hverken tælle med i spilletiden (som styrer farten) eller
+      // give ét enormt tidsspring der lader brikken falde flere felter.
+      startTimeRef.current += timestamp - pausedAtRef.current
+      lastTimeRef.current = timestamp
+      dropAccRef.current = 0
+      step(timestamp)
+    })
+  }, [step])
+
+  useAutoPauseOnBlur(gameState === 'playing', pauseGame)
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (gameStateRef.current === 'paused') {
+        if (e.code === 'KeyP' || e.code === 'Space' || e.code === 'Enter') {
+          e.preventDefault()
+          resumeGame()
+        }
+        return
+      }
       if (gameStateRef.current !== 'playing') return
       if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space'].includes(e.code)) {
         e.preventDefault()
+      }
+      if (e.code === 'KeyP') {
+        e.preventDefault()
+        pauseGame()
+        return
       }
       switch (e.code) {
         case 'ArrowLeft':
@@ -602,9 +586,8 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
       window.removeEventListener('keyup', handleKeyUp)
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current)
-      }
-    }
-  }, [moveLeft, moveRight, rotatePiece, softDropStep, hardDrop])
+      }    }
+  }, [moveLeft, moveRight, rotatePiece, softDropStep, hardDrop, pauseGame, resumeGame])
 
   return (
     <div className="space-y-6">
@@ -654,7 +637,7 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
         )}
       </Card>
 
-      {gameState === 'playing' && (
+      {(gameState === 'playing' || gameState === 'paused') && (
         <Card className="p-0 overflow-hidden border-2 border-primary/30 shadow-2xl">
           <div className="relative bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 p-6 border-b-2 border-primary/30">
             <div className="absolute inset-0 bg-gradient-to-r from-primary/5 via-accent/10 to-primary/5" />
@@ -698,13 +681,16 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
           </div>
 
           <div className="flex flex-col items-center gap-4 bg-slate-950 py-6">
-            <canvas
-              ref={canvasRef}
-              width={BOARD_WIDTH}
-              height={BOARD_HEIGHT}
-              className="rounded-lg shadow-2xl border-2 border-primary/20"
-              style={{ maxWidth: '100%', height: 'auto' }}
-            />
+            <div className="relative">
+              <canvas
+                ref={canvasRef}
+                width={BOARD_WIDTH}
+                height={BOARD_HEIGHT}
+                className="rounded-lg shadow-2xl border-2 border-primary/20"
+                style={{ maxWidth: '100%', height: 'auto' }}
+              />
+              {gameState === 'paused' && <PauseOverlay onResume={resumeGame} />}
+            </div>
 
             <div className="flex items-center gap-2">
               <Button variant="outline" size="icon" onClick={moveLeft} className="bg-background/80">

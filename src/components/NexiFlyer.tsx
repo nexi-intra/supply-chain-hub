@@ -2,11 +2,18 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { Bird, Trophy, X, Lightning, Speedometer, Fire, Flame, Crown, Medal, Star } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { useKV } from '@/hooks/useKV'
+import { toast } from 'sonner'
 import { useLanguage } from '@/contexts/LanguageContext'
-import { upsertInNestedKvArray } from '@/lib/kvArrays'
+import { useNestedLeaderboard } from '@/hooks/useLeaderboard'
+import { useAutoPauseOnBlur } from '@/hooks/useAutoPauseOnBlur'
+import { PauseOverlay } from '@/components/PauseOverlay'
+import { recordGamePlay, scoreSaveFailedMessage, submitHighscore } from '@/lib/leaderboards'
 import { nextParticleId } from '@/lib/utils'
 import { useCrossTeamLeaderboard, mergeNestedLeaderboard, type CrossTeamEntry } from '@/hooks/useCrossTeamLeaderboard'
+
+const LEADERBOARD_KEY = 'nexi-flyer-global-leaderboard'
+const PLAY_COUNTS_KEY = 'nexi-flyer-play-counts'
+const DIFFICULTIES = ['easy', 'medium', 'hard', 'expert'] as const
 
 interface Pipe {
   id: number
@@ -41,7 +48,7 @@ interface GlobalLeaderboard {
 }
 
 type Difficulty = 'easy' | 'medium' | 'hard' | 'expert'
-type GameState = 'menu' | 'playing' | 'ended'
+type GameState = 'menu' | 'playing' | 'paused' | 'ended'
 
 const DIFFICULTY_SETTINGS = {
   easy: {
@@ -129,30 +136,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
   const [gameState, setGameState] = useState<GameState>('menu')
   const [score, setScore] = useState(0)
   const [users, setUsers] = useState<User[]>([])
-  const [globalLeaderboard, setGlobalLeaderboard] = useKV<GlobalLeaderboard>('nexi-flyer-global-leaderboard', {
-    easy: [],
-    medium: [],
-    hard: [],
-    expert: []
-  })
-
-  // Éngangs-migrering: gamle entries manglede `id` (indført for atomare opdateringer) —
-  // uden den kan slet/rediger i manager-panelet ikke finde entry'en igen.
-  useEffect(() => {
-    if (!globalLeaderboard) return
-    const needsMigration = (Object.values(globalLeaderboard) as LeaderboardEntry[][]).some((board) =>
-      board.some((entry) => !entry.id)
-    )
-    if (!needsMigration) return
-    const migrated: GlobalLeaderboard = {
-      easy: (globalLeaderboard.easy || []).map((e) => ({ ...e, id: e.id || e.email })),
-      medium: (globalLeaderboard.medium || []).map((e) => ({ ...e, id: e.id || e.email })),
-      hard: (globalLeaderboard.hard || []).map((e) => ({ ...e, id: e.id || e.email })),
-      expert: (globalLeaderboard.expert || []).map((e) => ({ ...e, id: e.id || e.email })),
-    }
-    setGlobalLeaderboard(migrated)
-    window.kv.set('nexi-flyer-global-leaderboard', migrated)
-  }, [globalLeaderboard, setGlobalLeaderboard])
+  const { leaderboard: globalLeaderboard, refresh: refreshLeaderboard } = useNestedLeaderboard(LEADERBOARD_KEY, DIFFICULTIES)
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const animationFrameRef = useRef<number | null>(null)
@@ -203,7 +187,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
   // Storage-rækkefølgen garanteres ikke sorteret (atomar upsert tilføjer bare i
   // slutningen) — sortér altid ved læsning, så rangnumre/medaljer er korrekte.
   // Fase 8/9 "Highscores på tværs": fletter alle andre teams' samme sværhedsgrad ind.
-  const { otherTeams } = useCrossTeamLeaderboard<GlobalLeaderboard>('nexi-flyer-global-leaderboard')
+  const { otherTeams } = useCrossTeamLeaderboard<GlobalLeaderboard>(LEADERBOARD_KEY)
   const getSortedBoard = (diff: Difficulty): CrossTeamEntry[] => {
     const ownUsers = Object.fromEntries(users.map(u => [u.email, { fullName: u.fullName }]))
     return mergeNestedLeaderboard(globalLeaderboard, ownUsers, otherTeams, diff)
@@ -463,37 +447,23 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
     if (!userEmail) return
 
     try {
-      const currentLeaderboard = await window.kv.get<GlobalLeaderboard>('nexi-flyer-global-leaderboard') || {
-        easy: [], medium: [], hard: [], expert: []
-      }
-
-      const diff = difficultyRef.current
-      const board = currentLeaderboard[diff] || []
-      const existing = board.find(entry => entry.email === userEmail)
-
-      if (!existing || finalScore > existing.score) {
-        const updatedBoard = await upsertInNestedKvArray<LeaderboardEntry>(
-          'nexi-flyer-global-leaderboard',
-          [diff],
-          [{ id: userEmail, email: userEmail, score: finalScore, timestamp: Date.now() }],
-        )
-        setGlobalLeaderboard({ ...currentLeaderboard, [diff]: updatedBoard })
-      }
+      await submitHighscore(
+        LEADERBOARD_KEY,
+        { email: userEmail, score: finalScore, timestamp: Date.now() },
+        { path: [difficultyRef.current], categories: DIFFICULTIES },
+      )
+      refreshLeaderboard()
     } catch (error) {
       console.error('Error saving Nexi Flyer score:', error)
+      toast.error(scoreSaveFailedMessage(language))
     }
 
     try {
-      const gameStats = await window.kv.get<Record<string, Record<Difficulty, number>>>('nexi-flyer-play-counts') || {}
-      if (!gameStats[userEmail]) {
-        gameStats[userEmail] = { easy: 0, medium: 0, hard: 0, expert: 0 }
-      }
-      gameStats[userEmail][difficultyRef.current] = (gameStats[userEmail][difficultyRef.current] || 0) + 1
-      await window.kv.set('nexi-flyer-play-counts', gameStats)
+      await recordGamePlay(PLAY_COUNTS_KEY, userEmail, difficultyRef.current)
     } catch (error) {
       console.error('Error tracking Nexi Flyer play count:', error)
     }
-  }, [userEmail, setGlobalLeaderboard])
+  }, [userEmail, refreshLeaderboard, language])
 
   const triggerDeath = useCallback(() => {
     if (!startedRef.current && gameStateRef.current !== 'playing') return
@@ -608,8 +578,40 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
     }
   }
 
+  const pauseGame = useCallback(() => {
+    if (gameStateRef.current !== 'playing') return
+    gameStateRef.current = 'paused'
+    setGameState('paused')
+    flapKeyHeldRef.current = false
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current)
+      animationFrameRef.current = null
+    }
+  }, [])
+
+  const resumeGame = useCallback(() => {
+    if (gameStateRef.current !== 'paused') return
+    gameStateRef.current = 'playing'
+    setGameState('playing')
+    animationFrameRef.current = requestAnimationFrame(step)
+  }, [step])
+
+  useAutoPauseOnBlur(gameState === 'playing', pauseGame)
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (gameStateRef.current === 'paused') {
+        if (e.code === 'Space' || e.code === 'KeyP' || e.code === 'Enter') {
+          e.preventDefault()
+          resumeGame()
+        }
+        return
+      }
+      if (e.code === 'KeyP' && gameStateRef.current === 'playing') {
+        e.preventDefault()
+        pauseGame()
+        return
+      }
       if (e.code !== 'Space' && e.key !== 'ArrowUp') return
       e.preventDefault()
       // e.repeat daekker OS-gentagelse; flapKeyHeldRef daekker desuden det
@@ -635,7 +637,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
         cancelAnimationFrame(animationFrameRef.current)
       }
     }
-  }, [flap])
+  }, [flap, pauseGame, resumeGame])
 
   return (
     <div className="space-y-6">
@@ -728,7 +730,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
         )}
       </Card>
 
-      {gameState === 'playing' && (
+      {(gameState === 'playing' || gameState === 'paused') && (
         <Card className="p-0 overflow-hidden border-2 border-primary/30 shadow-2xl">
           <div className="relative bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 p-6 border-b-2 border-primary/30">
             <div className="absolute inset-0 bg-gradient-to-r from-primary/5 via-accent/10 to-primary/5" />
@@ -773,15 +775,18 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
           </div>
 
           <div className="flex justify-center bg-slate-950 py-4">
-            <canvas
-              ref={canvasRef}
-              width={GAME_WIDTH}
-              height={GAME_HEIGHT}
-              onClick={flap}
-              onTouchStart={(e) => { e.preventDefault(); flap() }}
-              className="cursor-pointer rounded-lg shadow-2xl border-2 border-primary/20 touch-none"
-              style={{ maxWidth: '100%', height: 'auto' }}
-            />
+            <div className="relative">
+              <canvas
+                ref={canvasRef}
+                width={GAME_WIDTH}
+                height={GAME_HEIGHT}
+                onClick={flap}
+                onTouchStart={(e) => { e.preventDefault(); flap() }}
+                className="cursor-pointer rounded-lg shadow-2xl border-2 border-primary/20 touch-none"
+                style={{ maxWidth: '100%', height: 'auto' }}
+              />
+              {gameState === 'paused' && <PauseOverlay onResume={resumeGame} />}
+            </div>
           </div>
         </Card>
       )}

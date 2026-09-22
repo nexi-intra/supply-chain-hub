@@ -112,8 +112,9 @@ function createResilientStore(networkStore, localStore, options = {}) {
       networkStore.delete(entry.key)
       mirrorDeleteToLocal(entry.key)
     } else if (entry.kind === 'update') {
-      const result = networkStore.update(entry.key, entry.operation)
-      mirrorToLocal(entry.key, result)
+      // Hele vaerdien spejles, ikke operationens resultat — se updateAsync.
+      const { value } = networkStore.updateDetailed(entry.key, entry.operation)
+      mirrorToLocal(entry.key, value)
     }
   }
 
@@ -330,15 +331,19 @@ function createResilientStore(networkStore, localStore, options = {}) {
     touch(key)
     if (!queued(key) && networkStore.isConnected()) {
       try {
-        const result = await networkStore.updateAsync(key, operation)
-        mirrorToLocal(key, result)
+        // Spejl HELE den gemte vaerdi, ikke operationens resultat: ved en
+        // sti-operation (fx et leaderboard opdelt pr. svaerhedsgrad) er
+        // resultatet kun under-arrayet, og spejles det som hele noeglen,
+        // ender spejlet med et fladt array hvor der skulle staa et objekt.
+        const { result, value } = await networkStore.updateDetailedAsync(key, operation)
+        mirrorToLocal(key, value)
         return result
       } catch (err) {
         if (semanticError(err)) throw err
         console.error(`TCD Hub: opdatering af "${key}" fejlede, gemmer lokalt og synkroniserer senere:`, err)
       }
     }
-    const result = localStore.update(key, operation)
+    const result = applyLocally(key, operation)
     enqueue({ kind: 'update', key, operation })
     return result
   }
@@ -379,21 +384,39 @@ function createResilientStore(networkStore, localStore, options = {}) {
     }
   }
 
+  // Genbruger den lokale stores EGEN atomare update()-logik til at beregne det
+  // umiddelbare resultat, saa kaldere ser en konsistent vaerdi med det samme.
+  // Har spejlet en form der ikke passer til operationen (fx et gammelt, fejlagtigt
+  // spejlet fladt array hvor der skulle staa et objekt), ville skrivningen ellers
+  // blive afvist og brugerens aendring gaa tabt. Spejlet er kun en kopi, saa det
+  // kasseres og operationen anvendes forfra; koen indeholder selve OPERATIONEN,
+  // saa den delte kopi faar den rigtige fletning naar forbindelsen er tilbage.
+  function applyLocally(key, operation) {
+    try {
+      return localStore.update(key, operation)
+    } catch (err) {
+      if (err.code !== 'KV_INVALID_OPERATION' || localStore.get(key) === undefined) throw err
+      console.error(`TCD Hub: den lokale kopi af "${key}" havde en uventet form og er kasseret:`, err)
+      localStore.delete(key)
+      return localStore.update(key, operation)
+    }
+  }
+
   function update(key, operation) {
     touch(key)
     if (!queued(key) && networkStore.isConnected()) {
       try {
-        const result = networkStore.update(key, operation)
-        mirrorToLocal(key, result)
+        // Se kommentaren i updateAsync: det er `value` (hele noeglen) der skal
+        // spejles, ikke `result` (kun arrayet paa stien).
+        const { result, value } = networkStore.updateDetailed(key, operation)
+        mirrorToLocal(key, value)
         return result
       } catch (err) {
         if (semanticError(err)) throw err
         console.error(`TCD Hub: opdatering af "${key}" fejlede, gemmer lokalt og synkroniserer senere:`, err)
       }
     }
-    // Genbruger den lokale stores EGEN atomare update()-logik til at beregne
-    // det umiddelbare resultat, så kaldere ser en konsistent værdi med det samme.
-    const result = localStore.update(key, operation)
+    const result = applyLocally(key, operation)
     enqueue({ kind: 'update', key, operation })
     return result
   }

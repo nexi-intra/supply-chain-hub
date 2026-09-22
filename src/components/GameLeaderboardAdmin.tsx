@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { toast } from 'sonner'
 import { upsertInKvArray, upsertInNestedKvArray, removeFromKvArray } from '@/lib/kvArrays'
+import { normalizeFlatLeaderboard, normalizeNestedLeaderboard } from '@/lib/leaderboards'
 import { useLanguage } from '@/contexts/LanguageContext'
 
 type Difficulty = string
@@ -78,12 +79,14 @@ export function GameLeaderboardAdmin({ gameTitle, icon, leaderboardKey, playCoun
 
   const load = useCallback(async () => {
     const raw = await window.kv.get<unknown>(leaderboardKey)
+    // Samme normalisering som spillene bruger: uanset hvad der ligger i data,
+    // får skærmen en liste den kan vise uden at kunne falde ned.
     const board: Leaderboard = isFlatMode
-      ? { [categories[0]]: Array.isArray(raw) ? raw as ScoreEntry[] : [] }
-      : (raw as Leaderboard) || Object.fromEntries(categories.map(c => [c, []])) as Leaderboard
+      ? { [categories[0]]: normalizeFlatLeaderboard(raw) }
+      : normalizeNestedLeaderboard(raw, categories)
     setLeaderboard(board)
     const counts = await window.kv.get<PlayCounts>(playCountsKey)
-    setPlayCounts(counts || {})
+    setPlayCounts(counts && typeof counts === 'object' && !Array.isArray(counts) ? counts : {})
   }, [leaderboardKey, playCountsKey, categories, isFlatMode])
 
   useEffect(() => {
@@ -96,7 +99,7 @@ export function GameLeaderboardAdmin({ gameTitle, icon, leaderboardKey, playCoun
   }
 
   const totalPlays = (counts: Record<Difficulty, number>) =>
-    categories.reduce((sum, c) => sum + (counts[c] || 0), 0)
+    categories.reduce((sum, c) => sum + (typeof counts?.[c] === 'number' ? counts[c] : 0), 0)
 
   const openEditDialog = (difficulty: Difficulty, entry: ScoreEntry) => {
     setEditingEntry({ difficulty, email: entry.email })

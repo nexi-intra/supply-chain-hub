@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Trophy } from '@phosphor-icons/react'
 import { Card } from '@/components/ui/card'
 import { useLanguage } from '@/contexts/LanguageContext'
+import { normalizeFlatLeaderboard, normalizeNestedLeaderboard } from '@/lib/leaderboards'
 import { useCrossTeamLeaderboard, mergeFlatLeaderboard, mergeNestedLeaderboard, type CrossTeamEntry, type OtherTeamLeaderboardData } from '@/hooks/useCrossTeamLeaderboard'
 
 type Difficulty = string
@@ -54,9 +55,11 @@ export function CrossHubHighscores({ gameTitle, leaderboardKey, categories = DEF
   const labels = categoryLabels || defaultLabels
 
   const merged = useMemo(() => {
+    // Egne data normaliseres, og fletningen tåler selv forkert formede data fra
+    // andre hubs — denne skærm må aldrig kunne vælte manager-panelet.
     const ownBoard: Leaderboard = isFlatMode
-      ? { [categories[0]]: Array.isArray(ownRaw) ? ownRaw as ScoreEntry[] : [] }
-      : ((ownRaw as Leaderboard) || {})
+      ? { [categories[0]]: normalizeFlatLeaderboard(ownRaw) }
+      : normalizeNestedLeaderboard(ownRaw, categories)
     const flatOtherTeams = otherTeams as unknown as OtherTeamLeaderboardData<ScoreEntry[]>[]
     const nestedOtherTeams = otherTeams as unknown as OtherTeamLeaderboardData<Leaderboard>[]
     const result: Record<Difficulty, CrossTeamEntry[]> = {}

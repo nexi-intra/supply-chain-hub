@@ -131,8 +131,112 @@ test('a compare-and-set conflict is never converted into an offline write', (t) 
   assert.equal(network.get('same', { skipCache: true }), 'new')
 })
 
-function temporaryLocalStore(t) {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tcd-hub-offline-test-'))
+// En sti-opdatering (fx et leaderboard opdelt pr. svaerhedsgrad) returnerer kun
+// arrayet paa stien. Spejles DET som hele noeglens vaerdi, faar spejlet et fladt
+// array hvor der skulle staa et objekt — og spillene crashede paa det med
+// "n.some is not a function", eller fik scoren afvist naar de gemte offline.
+test('a nested update mirrors the whole object, not just the array on the path', async (t) => {
+  const local = temporaryLocalStore(t)
+  const network = withControllableConnection(temporaryNetworkStore(t))
+  network.set('leaderboard', { easy: [], medium: [{ id: 'a', score: 1 }], hard: [] })
+  const resilient = createResilientStore(network, local)
+
+  const returned = resilient.update('leaderboard', { op: 'upsert', path: ['hard'], items: [{ id: 'b', score: 9 }] })
+  await flushMicrotasks()
+
+  assert.deepEqual(returned, [{ id: 'b', score: 9 }], 'kalderen faar stadig kun arrayet paa stien')
+  assert.deepEqual(local.get('leaderboard', { skipCache: true }), {
+    easy: [], medium: [{ id: 'a', score: 1 }], hard: [{ id: 'b', score: 9 }],
+  }, 'spejlet skal indeholde hele objektet')
+})
+
+test('a nested update keeps working offline right after an online one', async (t) => {
+  const local = temporaryLocalStore(t)
+  const network = withControllableConnection(temporaryNetworkStore(t))
+  network.set('leaderboard', { easy: [], medium: [], hard: [] })
+  const resilient = createResilientStore(network, local)
+
+  resilient.update('leaderboard', { op: 'upsert', path: ['hard'], items: [{ id: 'a', score: 5 }] })
+  await flushMicrotasks()
+  network.__setConnected(false)
+
+  // Foer rettelsen var spejlet et fladt array her, og denne skrivning fejlede
+  // med KV_INVALID_OPERATION ("Stien kraever et objekt") — scoren gik tabt.
+  const offlineResult = resilient.update('leaderboard', { op: 'upsert', path: ['hard'], items: [{ id: 'b', score: 7 }] })
+
+  assert.deepEqual(offlineResult, [{ id: 'a', score: 5 }, { id: 'b', score: 7 }])
+  assert.deepEqual(local.get('leaderboard', { skipCache: true }).hard, [{ id: 'a', score: 5 }, { id: 'b', score: 7 }])
+})
+
+test('a replayed nested update mirrors the whole object too', async (t) => {
+  const local = temporaryLocalStore(t)
+  const network = withControllableConnection(temporaryNetworkStore(t))
+  network.set('leaderboard', { easy: [], medium: [], hard: [] })
+  const resilient = createResilientStore(network, local)
+
+  network.__setConnected(false)
+  resilient.update('leaderboard', { op: 'upsert', path: ['medium'], items: [{ id: 'a', score: 3 }] })
+  network.__setConnected(true)
+  resilient.retrySyncNow()
+  await flushMicrotasks()
+
+  assert.deepEqual(network.get('leaderboard', { skipCache: true }), { easy: [], medium: [{ id: 'a', score: 3 }], hard: [] })
+  assert.deepEqual(local.get('leaderboard', { skipCache: true }), { easy: [], medium: [{ id: 'a', score: 3 }], hard: [] })
+})
+
+test('the async path mirrors nested updates exactly like the sync path', async (t) => {
+  const local = temporaryLocalStore(t)
+  const network = withControllableConnection(temporaryNetworkStore(t))
+  network.set('leaderboard', { easy: [{ id: 'x', score: 2 }], expert: [] })
+  const resilient = createResilientStore(network, local)
+
+  const returned = await resilient.updateAsync('leaderboard', { op: 'upsert', path: ['expert'], items: [{ id: 'y', score: 4 }] })
+  await flushMicrotasks()
+
+  assert.deepEqual(returned, [{ id: 'y', score: 4 }])
+  assert.deepEqual(local.get('leaderboard', { skipCache: true }), {
+    easy: [{ id: 'x', score: 2 }], expert: [{ id: 'y', score: 4 }],
+  })
+})
+
+// Feltoperationer returnerer hele objektet, saa de var aldrig ramt — men de skal
+// blive ved med at spejle korrekt, ogsaa efter omlaegningen.
+test('a field update still mirrors the whole object', async (t) => {
+  const local = temporaryLocalStore(t)
+  const network = withControllableConnection(temporaryNetworkStore(t))
+  network.set('play-counts', { 'a@x': { all: 1 } })
+  const resilient = createResilientStore(network, local)
+
+  resilient.update('play-counts', { op: 'setField', field: 'b@x', value: { all: 2 } })
+  await flushMicrotasks()
+
+  assert.deepEqual(local.get('play-counts', { skipCache: true }), { 'a@x': { all: 1 }, 'b@x': { all: 2 } })
+})
+
+// Spejle der blev oedelagt af den gamle fejl skal ikke kunne spaerre for nye
+// skrivninger mens man er offline — kopien kasseres, og koen retter op paa det
+// delte drev bagefter.
+test('an offline write survives a locally mirrored value with the wrong shape', async (t) => {
+  const local = temporaryLocalStore(t)
+  const network = withControllableConnection(temporaryNetworkStore(t))
+  network.set('leaderboard', { easy: [], hard: [{ id: 'a', score: 5 }] })
+  local.set('leaderboard', [{ id: 'a', score: 5 }])
+  const resilient = createResilientStore(network, local)
+  network.__setConnected(false)
+
+  const result = resilient.update('leaderboard', { op: 'upsert', path: ['hard'], items: [{ id: 'b', score: 8 }] })
+  assert.deepEqual(result, [{ id: 'b', score: 8 }])
+
+  network.__setConnected(true)
+  resilient.retrySyncNow()
+  await flushMicrotasks()
+
+  assert.deepEqual(network.get('leaderboard', { skipCache: true }), {
+    easy: [], hard: [{ id: 'a', score: 5 }, { id: 'b', score: 8 }],
+  }, 'det delte drev skal have BEGGE scorer efter afspilning')
+})
+
+function temporaryLocalStore(t) {  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tcd-hub-offline-test-'))
   t.after(async () => { await flushMicrotasks(); fs.rmSync(directory, { recursive: true, force: true }) })
   return createStore(directory)
 }
@@ -145,7 +249,7 @@ function temporaryNetworkStore(t) {
 
 /** Minimal stub af en netværks-store — lader tests styre isConnected()/fejl helt præcist uden rigtig fil-I/O. */
 function fakeNetworkStore(overrides = {}) {
-  return {
+  const base = {
     get: () => undefined,
     set: () => {},
     delete: () => {},
@@ -157,6 +261,20 @@ function fakeNetworkStore(overrides = {}) {
     dataDir: '/fake/network/dir',
     ...overrides,
   }
+  // Stubs i tests behoever kun at definere update(); den detaljerede variant
+  // afledes heraf, saa de to aldrig kan komme ud af trit.
+  // Stubs i tests behoever kun at definere update()/updateAsync(); de detaljerede
+  // varianter afledes heraf, saa de aldrig kan komme ud af trit.
+  if (!base.updateDetailed) base.updateDetailed = (key, op) => {
+    const result = base.update(key, op)
+    return { result, value: base.get(key) ?? result }
+  }
+  if (!base.updateDetailedAsync) base.updateDetailedAsync = async (key, op) => {
+    if (!overrides.updateAsync) return base.updateDetailed(key, op)
+    const result = await base.updateAsync(key, op)
+    return { result, value: base.get(key) ?? result }
+  }
+  return base
 }
 
 /**
@@ -174,6 +292,8 @@ function withControllableConnection(realStore) {
     delete: (...args) => realStore.delete(...args),
     keys: (...args) => realStore.keys(...args),
     update: (...args) => realStore.update(...args),
+    updateDetailed: (...args) => realStore.updateDetailed(...args),
+    updateDetailedAsync: (...args) => realStore.updateDetailedAsync(...args),
     watch: (...args) => realStore.watch(...args),
     dumpAll: (...args) => realStore.dumpAll(...args),
     dataDir: realStore.dataDir,

@@ -1,13 +1,20 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { RocketLaunch, Trophy, X, Lightning, Speedometer, Fire, Flame, Crown, Medal, Star, ShieldCheck, Lightning as RapidFireIcon, Heart } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { useKV } from '@/hooks/useKV'
+import { toast } from 'sonner'
 import { useLanguage } from '@/contexts/LanguageContext'
-import { upsertInNestedKvArray } from '@/lib/kvArrays'
+import { useNestedLeaderboard } from '@/hooks/useLeaderboard'
+import { useAutoPauseOnBlur } from '@/hooks/useAutoPauseOnBlur'
+import { PauseOverlay } from '@/components/PauseOverlay'
+import { recordGamePlay, scoreSaveFailedMessage, submitHighscore } from '@/lib/leaderboards'
 import { nextParticleId } from '@/lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useCrossTeamLeaderboard, mergeNestedLeaderboard, type CrossTeamEntry } from '@/hooks/useCrossTeamLeaderboard'
+
+const LEADERBOARD_KEY = 'endless-dodger-global-leaderboard'
+const PLAY_COUNTS_KEY = 'endless-dodger-play-counts'
+const DIFFICULTIES = ['easy', 'medium', 'hard', 'expert'] as const
 
 interface Chicken {
   id: number
@@ -65,7 +72,7 @@ interface GlobalLeaderboard {
 }
 
 type Difficulty = 'easy' | 'medium' | 'hard' | 'expert'
-type GameState = 'menu' | 'playing' | 'ended'
+type GameState = 'menu' | 'playing' | 'paused' | 'ended'
 
 const DIFFICULTY_SETTINGS = {
   easy: {
@@ -189,30 +196,7 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
   const [isShaking, setIsShaking] = useState(false)
   const [waveBanner, setWaveBanner] = useState<number | null>(null)
   const [users, setUsers] = useState<User[]>([])
-  const [globalLeaderboard, setGlobalLeaderboard] = useKV<GlobalLeaderboard>('endless-dodger-global-leaderboard', {
-    easy: [],
-    medium: [],
-    hard: [],
-    expert: []
-  })
-
-  // Éngangs-migrering: gamle entries manglede `id` (indført for atomare opdateringer) —
-  // uden den kan slet/rediger i manager-panelet ikke finde entry'en igen.
-  useEffect(() => {
-    if (!globalLeaderboard) return
-    const needsMigration = (Object.values(globalLeaderboard) as LeaderboardEntry[][]).some((board) =>
-      board.some((entry) => !entry.id)
-    )
-    if (!needsMigration) return
-    const migrated: GlobalLeaderboard = {
-      easy: (globalLeaderboard.easy || []).map((e) => ({ ...e, id: e.id || e.email })),
-      medium: (globalLeaderboard.medium || []).map((e) => ({ ...e, id: e.id || e.email })),
-      hard: (globalLeaderboard.hard || []).map((e) => ({ ...e, id: e.id || e.email })),
-      expert: (globalLeaderboard.expert || []).map((e) => ({ ...e, id: e.id || e.email })),
-    }
-    setGlobalLeaderboard(migrated)
-    window.kv.set('endless-dodger-global-leaderboard', migrated)
-  }, [globalLeaderboard, setGlobalLeaderboard])
+  const { leaderboard: globalLeaderboard, refresh: refreshLeaderboard } = useNestedLeaderboard(LEADERBOARD_KEY, DIFFICULTIES)
 
   const gameAreaRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -278,7 +262,7 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
   // Storage-rækkefølgen garanteres ikke sorteret (atomar upsert tilføjer bare i
   // slutningen) — sortér altid ved læsning, så rangnumre/medaljer er korrekte.
   // Fase 8/9 "Highscores på tværs": fletter alle andre teams' samme sværhedsgrad ind.
-  const { otherTeams } = useCrossTeamLeaderboard<GlobalLeaderboard>('endless-dodger-global-leaderboard')
+  const { otherTeams } = useCrossTeamLeaderboard<GlobalLeaderboard>(LEADERBOARD_KEY)
   const getSortedBoard = (diff: Difficulty): CrossTeamEntry[] => {
     const ownUsers = Object.fromEntries(users.map(u => [u.email, { fullName: u.fullName }]))
     return mergeNestedLeaderboard(globalLeaderboard, ownUsers, otherTeams, diff)
@@ -653,6 +637,25 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
     animationFrameRef.current = requestAnimationFrame(runGameLoop)
   }
 
+  const pauseGame = useCallback(() => {
+    if (gameStateRef.current !== 'playing') return
+    gameStateRef.current = 'paused'
+    setGameState('paused')
+    keysPressed.current.clear()
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current)
+      animationFrameRef.current = null
+    }
+  }, [])
+
+  const resumeGame = useCallback(() => {
+    if (gameStateRef.current !== 'paused') return
+    gameStateRef.current = 'playing'
+    setGameState('playing')
+    animationFrameRef.current = requestAnimationFrame(runGameLoop)
+  }, [])
+
+  useAutoPauseOnBlur(gameState === 'playing', pauseGame)
   const endGame = async (finalScore: number) => {
     gameStateRef.current = 'ended'
     setGameState('ended')
@@ -670,24 +673,23 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
     if (!userEmail) return
 
     try {
-      const currentLeaderboard = await window.kv.get<GlobalLeaderboard>('endless-dodger-global-leaderboard') || {
-        easy: [], medium: [], hard: [], expert: []
-      }
-
-      const diff = difficultyRef.current
-      const board = currentLeaderboard[diff] || []
-      const existing = board.find(entry => entry.email === userEmail)
-
-      if (!existing || finalScore > existing.score) {
-        const updatedBoard = await upsertInNestedKvArray<LeaderboardEntry>(
-          'endless-dodger-global-leaderboard',
-          [diff],
-          [{ id: userEmail, email: userEmail, score: finalScore, timestamp: Date.now() }],
-        )
-        setGlobalLeaderboard({ ...currentLeaderboard, [diff]: updatedBoard })
-      }
+      await submitHighscore(
+        LEADERBOARD_KEY,
+        { email: userEmail, score: finalScore, timestamp: Date.now() },
+        { path: [difficultyRef.current], categories: DIFFICULTIES },
+      )
+      refreshLeaderboard()
     } catch (error) {
       console.error('Error saving score:', error)
+      toast.error(scoreSaveFailedMessage(language))
+    }
+
+    // Chickeninvasion talte som det eneste spil slet ikke spillede runder, saa
+    // det stod tomt i manager-panelets statistik.
+    try {
+      await recordGamePlay(PLAY_COUNTS_KEY, userEmail, difficultyRef.current)
+    } catch (error) {
+      console.error('Error tracking play count:', error)
     }
   }
 
@@ -928,6 +930,18 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase()
+      if (gameStateRef.current === 'paused') {
+        if (key === ' ' || key === 'p' || key === 'enter') {
+          e.preventDefault()
+          resumeGame()
+        }
+        return
+      }
+      if (key === 'p' && gameStateRef.current === 'playing') {
+        e.preventDefault()
+        pauseGame()
+        return
+      }
       if (['arrowleft', 'arrowright', 'a', 'd', ' '].includes(key)) {
         e.preventDefault()
         keysPressed.current.add(key)
@@ -956,7 +970,7 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
         clearTimeout(rapidFireTimeoutRef.current)
       }
     }
-  }, [])
+  }, [pauseGame, resumeGame])
 
   return (
     <div className="space-y-6">
@@ -1059,7 +1073,7 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
         )}
       </Card>
 
-      {gameState === 'playing' && (
+      {(gameState === 'playing' || gameState === 'paused') && (
         <Card className="p-0 overflow-hidden border-2 border-primary/30 shadow-2xl">
           <div className="relative bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 p-6 border-b-2 border-primary/30">
             <div className="absolute inset-0 bg-gradient-to-r from-primary/5 via-accent/10 to-primary/5" />
@@ -1197,6 +1211,8 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
                 </motion.div>
               )}
             </AnimatePresence>
+
+            {gameState === 'paused' && <PauseOverlay onResume={resumeGame} />}
           </motion.div>
         </Card>
       )}

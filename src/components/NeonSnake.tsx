@@ -2,14 +2,21 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { WaveSine, Trophy, X, Lightning, Speedometer, Fire, Flame, Crown, Medal, Star, ArrowUp, ArrowDown, ArrowLeft, ArrowRight } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { useKV } from '@/hooks/useKV'
 import { useLanguage } from '@/contexts/LanguageContext'
-import { upsertInNestedKvArray } from '@/lib/kvArrays'
+import { toast } from 'sonner'
+import { useNestedLeaderboard } from '@/hooks/useLeaderboard'
+import { useAutoPauseOnBlur } from '@/hooks/useAutoPauseOnBlur'
+import { PauseOverlay } from '@/components/PauseOverlay'
+import { recordGamePlay, scoreSaveFailedMessage, submitHighscore } from '@/lib/leaderboards'
 import { useCrossTeamLeaderboard, mergeNestedLeaderboard, type CrossTeamEntry } from '@/hooks/useCrossTeamLeaderboard'
+
+const LEADERBOARD_KEY = 'neon-snake-global-leaderboard'
+const PLAY_COUNTS_KEY = 'neon-snake-play-counts'
+const DIFFICULTIES = ['easy', 'medium', 'hard', 'expert'] as const
 
 type Difficulty = 'easy' | 'medium' | 'hard' | 'expert'
 // 'dying' keeps the render loop alive for the death animation before the results screen.
-type GameState = 'menu' | 'playing' | 'dying' | 'ended'
+type GameState = 'menu' | 'playing' | 'paused' | 'dying' | 'ended'
 type Direction = 'up' | 'down' | 'left' | 'right'
 
 interface Cell {
@@ -118,30 +125,7 @@ export function NeonSnake({ userEmail = 'guest@example.com' }: NeonSnakeProps = 
   const [score, setScore] = useState(0)
   const [applesEaten, setApplesEaten] = useState(0)
   const [users, setUsers] = useState<User[]>([])
-  const [globalLeaderboard, setGlobalLeaderboard] = useKV<GlobalLeaderboard>('neon-snake-global-leaderboard', {
-    easy: [],
-    medium: [],
-    hard: [],
-    expert: [],
-  })
-
-  // Éngangs-migrering: gamle entries manglede `id` (indført for atomare opdateringer) —
-  // uden den kan slet/rediger i manager-panelet ikke finde entry'en igen.
-  useEffect(() => {
-    if (!globalLeaderboard) return
-    const needsMigration = (Object.values(globalLeaderboard) as LeaderboardEntry[][]).some((board) =>
-      board.some((entry) => !entry.id)
-    )
-    if (!needsMigration) return
-    const migrated: GlobalLeaderboard = {
-      easy: (globalLeaderboard.easy || []).map((e) => ({ ...e, id: e.id || e.email })),
-      medium: (globalLeaderboard.medium || []).map((e) => ({ ...e, id: e.id || e.email })),
-      hard: (globalLeaderboard.hard || []).map((e) => ({ ...e, id: e.id || e.email })),
-      expert: (globalLeaderboard.expert || []).map((e) => ({ ...e, id: e.id || e.email })),
-    }
-    setGlobalLeaderboard(migrated)
-    window.kv.set('neon-snake-global-leaderboard', migrated)
-  }, [globalLeaderboard, setGlobalLeaderboard])
+  const { leaderboard: globalLeaderboard, refresh: refreshLeaderboard } = useNestedLeaderboard(LEADERBOARD_KEY, DIFFICULTIES)
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const rafRef = useRef<number | null>(null)
@@ -175,7 +159,7 @@ export function NeonSnake({ userEmail = 'guest@example.com' }: NeonSnakeProps = 
   // Storage-rækkefølgen garanteres ikke sorteret (atomar upsert tilføjer bare i
   // slutningen) — sortér altid ved læsning, så rangnumre/medaljer er korrekte.
   // Fase 8/9 "Highscores på tværs": fletter alle andre teams' samme sværhedsgrad ind.
-  const { otherTeams } = useCrossTeamLeaderboard<GlobalLeaderboard>('neon-snake-global-leaderboard')
+  const { otherTeams } = useCrossTeamLeaderboard<GlobalLeaderboard>(LEADERBOARD_KEY)
   const getSortedBoard = (diff: Difficulty): CrossTeamEntry[] => {
     const ownUsers = Object.fromEntries(users.map((u) => [u.email, { fullName: u.fullName }]))
     return mergeNestedLeaderboard(globalLeaderboard, ownUsers, otherTeams, diff)
@@ -232,34 +216,23 @@ export function NeonSnake({ userEmail = 'guest@example.com' }: NeonSnakeProps = 
     if (!userEmail) return
 
     try {
-      const currentLeaderboard = (await window.kv.get<GlobalLeaderboard>('neon-snake-global-leaderboard')) || {
-        easy: [], medium: [], hard: [], expert: [],
-      }
-      const diff = difficultyRef.current
-      const board = currentLeaderboard[diff] || []
-      const existing = board.find((entry) => entry.email === userEmail)
-
-      if (!existing || finalScore > existing.score) {
-        const updatedBoard = await upsertInNestedKvArray<LeaderboardEntry>(
-          'neon-snake-global-leaderboard',
-          [diff],
-          [{ id: userEmail, email: userEmail, score: finalScore, timestamp: Date.now() }],
-        )
-        setGlobalLeaderboard({ ...currentLeaderboard, [diff]: updatedBoard })
-      }
+      await submitHighscore(
+        LEADERBOARD_KEY,
+        { email: userEmail, score: finalScore, timestamp: Date.now() },
+        { path: [difficultyRef.current], categories: DIFFICULTIES },
+      )
+      refreshLeaderboard()
     } catch (error) {
       console.error('Error saving Neon Snake score:', error)
+      toast.error(scoreSaveFailedMessage(language))
     }
 
     try {
-      const playCounts = (await window.kv.get<Record<string, Record<Difficulty, number>>>('neon-snake-play-counts')) || {}
-      if (!playCounts[userEmail]) playCounts[userEmail] = { easy: 0, medium: 0, hard: 0, expert: 0 }
-      playCounts[userEmail][difficultyRef.current] = (playCounts[userEmail][difficultyRef.current] || 0) + 1
-      await window.kv.set('neon-snake-play-counts', playCounts)
+      await recordGamePlay(PLAY_COUNTS_KEY, userEmail, difficultyRef.current)
     } catch (error) {
       console.error('Error tracking Neon Snake play count:', error)
     }
-  }, [userEmail, setGlobalLeaderboard])
+  }, [userEmail, refreshLeaderboard, language])
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current
@@ -543,9 +516,43 @@ export function NeonSnake({ userEmail = 'guest@example.com' }: NeonSnakeProps = 
     }
   }
 
+  const pauseGame = useCallback(() => {
+    if (gameStateRef.current !== 'playing') return
+    gameStateRef.current = 'paused'
+    setGameState('paused')
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
+    }
+  }, [])
+
+  const resumeGame = useCallback(() => {
+    if (gameStateRef.current !== 'paused') return
+    gameStateRef.current = 'playing'
+    setGameState('playing')
+    // Nulstil tidsmålingen, så pausens længde ikke bliver ædt som ét kæmpe spring.
+    lastTickRef.current = performance.now()
+    inputQueueRef.current = []
+    rafRef.current = requestAnimationFrame(loop)
+  }, [loop])
+
+  useAutoPauseOnBlur(gameState === 'playing', pauseGame)
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (gameStateRef.current === 'paused') {
+        if (e.code === 'KeyP' || e.code === 'Space' || e.code === 'Enter') {
+          e.preventDefault()
+          resumeGame()
+        }
+        return
+      }
       if (gameStateRef.current !== 'playing') return
+      if (e.code === 'KeyP') {
+        e.preventDefault()
+        pauseGame()
+        return
+      }
       const map: Record<string, Direction> = {
         ArrowUp: 'up', KeyW: 'up',
         ArrowDown: 'down', KeyS: 'down',
@@ -563,7 +570,7 @@ export function NeonSnake({ userEmail = 'guest@example.com' }: NeonSnakeProps = 
       window.removeEventListener('keydown', handleKeyDown)
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
     }
-  }, [queueDirection])
+  }, [queueDirection, pauseGame, resumeGame])
 
   return (
     <div className="space-y-6">
@@ -656,7 +663,7 @@ export function NeonSnake({ userEmail = 'guest@example.com' }: NeonSnakeProps = 
         )}
       </Card>
 
-      {gameState === 'playing' && (
+      {(gameState === 'playing' || gameState === 'paused') && (
         <Card className="p-0 overflow-hidden border-2 border-primary/30 shadow-2xl">
           <div className="relative bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 p-6 border-b-2 border-primary/30">
             <div className="absolute inset-0 bg-gradient-to-r from-primary/5 via-accent/10 to-primary/5" />
@@ -702,13 +709,16 @@ export function NeonSnake({ userEmail = 'guest@example.com' }: NeonSnakeProps = 
           </div>
 
           <div className="flex flex-col items-center gap-4 bg-slate-950 py-6">
-            <canvas
-              ref={canvasRef}
-              width={BOARD}
-              height={BOARD}
-              className="rounded-lg shadow-2xl border-2 border-primary/20"
-              style={{ maxWidth: '100%', height: 'auto' }}
-            />
+            <div className="relative">
+              <canvas
+                ref={canvasRef}
+                width={BOARD}
+                height={BOARD}
+                className="rounded-lg shadow-2xl border-2 border-primary/20"
+                style={{ maxWidth: '100%', height: 'auto' }}
+              />
+              {gameState === 'paused' && <PauseOverlay onResume={resumeGame} />}
+            </div>
 
             <div className="grid grid-cols-3 gap-1.5">
               <div />

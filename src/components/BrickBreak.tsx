@@ -2,12 +2,18 @@ import { useState, useEffect, useRef } from 'react'
 import { Cube, Trophy, X, Lightning, Speedometer, Fire, Flame, Crown, Medal, Star, Play } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { useKV } from '@/hooks/useKV'
 import { useLanguage } from '@/contexts/LanguageContext'
-import { upsertInNestedKvArray } from '@/lib/kvArrays'
+import { useNestedLeaderboard } from '@/hooks/useLeaderboard'
+import { useAutoPauseOnBlur } from '@/hooks/useAutoPauseOnBlur'
+import { PauseOverlay } from '@/components/PauseOverlay'
+import { recordGamePlay, scoreSaveFailedMessage, submitHighscore } from '@/lib/leaderboards'
 import { nextParticleId } from '@/lib/utils'
 import { toast } from 'sonner'
 import { useCrossTeamLeaderboard, mergeNestedLeaderboard, type CrossTeamEntry } from '@/hooks/useCrossTeamLeaderboard'
+
+const LEADERBOARD_KEY = 'brickbreak-global-leaderboard'
+const PLAY_COUNTS_KEY = 'brickbreak-play-counts'
+const DIFFICULTIES = ['easy', 'medium', 'hard', 'expert'] as const
 
 interface Brick {
   id: number
@@ -214,30 +220,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
   const [isReverseControls, setIsReverseControls] = useState(false)
   const [reverseControlsTimeLeft, setReverseControlsTimeLeft] = useState(0)
   const [aimAngle, setAimAngle] = useState(0)
-  const [globalLeaderboard, setGlobalLeaderboard] = useKV<GlobalLeaderboard>('brickbreak-global-leaderboard', {
-    easy: [],
-    medium: [],
-    hard: [],
-    expert: []
-  })
-
-  // Éngangs-migrering: gamle entries manglede `id` (indført for atomare opdateringer) —
-  // uden den kan slet/rediger i manager-panelet ikke finde entry'en igen.
-  useEffect(() => {
-    if (!globalLeaderboard) return
-    const needsMigration = (Object.values(globalLeaderboard) as LeaderboardEntry[][]).some((board) =>
-      board.some((entry) => !entry.id)
-    )
-    if (!needsMigration) return
-    const migrated: GlobalLeaderboard = {
-      easy: (globalLeaderboard.easy || []).map((e) => ({ ...e, id: e.id || e.email })),
-      medium: (globalLeaderboard.medium || []).map((e) => ({ ...e, id: e.id || e.email })),
-      hard: (globalLeaderboard.hard || []).map((e) => ({ ...e, id: e.id || e.email })),
-      expert: (globalLeaderboard.expert || []).map((e) => ({ ...e, id: e.id || e.email })),
-    }
-    setGlobalLeaderboard(migrated)
-    window.kv.set('brickbreak-global-leaderboard', migrated)
-  }, [globalLeaderboard, setGlobalLeaderboard])
+  const { leaderboard: globalLeaderboard, refresh: refreshLeaderboard } = useNestedLeaderboard(LEADERBOARD_KEY, DIFFICULTIES)
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const gameLoopRef = useRef<number | undefined>(undefined)
@@ -245,6 +228,13 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
   // saa alle bliver ryddet, hvis komponenten unmountes midt i et powerup (fx spilleren
   // navigerer vaek), i stedet for at laekke en koerende timer der aldrig selv-clearer.
   const activePowerupIntervalsRef = useRef<Set<ReturnType<typeof setInterval>>>(new Set())
+  // Sand mens spillet er paa pause. Powerup-nedtaellingerne herunder staar stille
+  // saa laenge den er sand - ellers ville et skjold loebe ud mens man var vaek.
+  const pausedRef = useRef(false)
+
+  /** Som setInterval, men tikker ikke mens spillet er paa pause. */
+  const setPausableInterval = (callback: () => void, ms: number) =>
+    setInterval(() => { if (!pausedRef.current) callback() }, ms)
 
   useEffect(() => {
     return () => {
@@ -309,7 +299,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
   // Storage-rækkefølgen garanteres ikke længere sorteret (atomar upsert tilføjer
   // bare i slutningen) — sortér altid ved læsning, så rangnumre/medaljer er korrekte.
   // Fase 8/9 "Highscores på tværs": fletter alle andre teams' samme sværhedsgrad ind.
-  const { otherTeams } = useCrossTeamLeaderboard<GlobalLeaderboard>('brickbreak-global-leaderboard')
+  const { otherTeams } = useCrossTeamLeaderboard<GlobalLeaderboard>(LEADERBOARD_KEY)
   const getSortedBoard = (diff: Difficulty): CrossTeamEntry[] => {
     const ownUsers = Object.fromEntries(users.map(u => [u.email, { fullName: u.fullName }]))
     return mergeNestedLeaderboard(globalLeaderboard, ownUsers, otherTeams, diff)
@@ -596,28 +586,17 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
     const finalLevel = levelRef.current
 
     try {
-      const currentLeaderboard = await window.kv.get<GlobalLeaderboard>('brickbreak-global-leaderboard') || {
-        easy: [],
-        medium: [],
-        hard: [],
-        expert: []
-      }
-
-      const difficultyBoard = currentLeaderboard[difficulty] || []
-      const existing = difficultyBoard.find(entry => entry.email === userEmail)
-
-      if (!existing || finalScore > existing.score) {
-        const updatedBoard = await upsertInNestedKvArray<LeaderboardEntry>(
-          'brickbreak-global-leaderboard',
-          [difficulty],
-          [{ id: userEmail, email: userEmail, score: finalScore, level: finalLevel, timestamp: Date.now() }],
-        )
-        setGlobalLeaderboard({ ...currentLeaderboard, [difficulty]: updatedBoard })
-      }
+      await submitHighscore(
+        LEADERBOARD_KEY,
+        { email: userEmail, score: finalScore, level: finalLevel, timestamp: Date.now() },
+        { path: [difficulty], categories: DIFFICULTIES },
+      )
+      refreshLeaderboard()
     } catch (error) {
       console.error('Error saving score to leaderboard:', error)
+      toast.error(scoreSaveFailedMessage(language))
     }
-    
+
     await trackGamePlay(difficulty)
   }
 
@@ -625,15 +604,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
     if (!userEmail) return
 
     try {
-      const gameStats = await window.kv.get<Record<string, Record<Difficulty, number>>>('brickbreak-play-counts') || {}
-      
-      if (!gameStats[userEmail]) {
-        gameStats[userEmail] = { easy: 0, medium: 0, hard: 0, expert: 0 }
-      }
-      
-      gameStats[userEmail][gameDifficulty] = (gameStats[userEmail][gameDifficulty] || 0) + 1
-      
-      await window.kv.set('brickbreak-play-counts', gameStats)
+      await recordGamePlay(PLAY_COUNTS_KEY, userEmail, gameDifficulty)
     } catch (error) {
       console.error('Error tracking game play:', error)
     }
@@ -703,7 +674,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
         setShieldTimeLeft(20)
         toast.success(message)
         
-        const shieldInterval = setInterval(() => {
+        const shieldInterval = setPausableInterval(() => {
           setShieldTimeLeft(prev => {
             if (prev <= 1) {
               clearInterval(shieldInterval)
@@ -724,7 +695,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
         setFireballTimeLeft(10)
         toast.success(message)
         
-        const fireballInterval = setInterval(() => {
+        const fireballInterval = setPausableInterval(() => {
           setFireballTimeLeft(prev => {
             if (prev <= 1) {
               clearInterval(fireballInterval)
@@ -748,7 +719,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
         setShrinkPaddleTimeLeft(10)
         toast.success(message)
         
-        const shrinkInterval = setInterval(() => {
+        const shrinkInterval = setPausableInterval(() => {
           setShrinkPaddleTimeLeft(prev => {
             if (prev <= 1) {
               clearInterval(shrinkInterval)
@@ -775,7 +746,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
         setEnlargePaddleTimeLeft(10)
         toast.success(message)
         
-        const enlargeInterval = setInterval(() => {
+        const enlargeInterval = setPausableInterval(() => {
           setEnlargePaddleTimeLeft(prev => {
             if (prev <= 1) {
               clearInterval(enlargeInterval)
@@ -799,7 +770,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
         setSpeedPowerupTimeLeft(8)
         toast.success(message)
         
-        const slowMotionInterval = setInterval(() => {
+        const slowMotionInterval = setPausableInterval(() => {
           setSpeedPowerupTimeLeft(prev => {
             if (prev <= 1) {
               clearInterval(slowMotionInterval)
@@ -820,7 +791,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
         setSpeedPowerupTimeLeft(8)
         toast.success(message)
         
-        const speedBoostInterval = setInterval(() => {
+        const speedBoostInterval = setPausableInterval(() => {
           setSpeedPowerupTimeLeft(prev => {
             if (prev <= 1) {
               clearInterval(speedBoostInterval)
@@ -841,7 +812,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
         setLaserTimeLeft(5)
         toast.success(message)
         
-        const laserInterval = setInterval(() => {
+        const laserInterval = setPausableInterval(() => {
           setLaserTimeLeft(prev => {
             if (prev <= 1) {
               clearInterval(laserInterval)
@@ -862,7 +833,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
         setStickyPaddleTimeLeft(10)
         toast.success(message)
         
-        const stickyInterval = setInterval(() => {
+        const stickyInterval = setPausableInterval(() => {
           setStickyPaddleTimeLeft(prev => {
             if (prev <= 1) {
               clearInterval(stickyInterval)
@@ -883,7 +854,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
         setExplosiveBallTimeLeft(10)
         toast.success(message)
         
-        const explosiveInterval = setInterval(() => {
+        const explosiveInterval = setPausableInterval(() => {
           setExplosiveBallTimeLeft(prev => {
             if (prev <= 1) {
               clearInterval(explosiveInterval)
@@ -904,7 +875,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
         setReverseControlsTimeLeft(5)
         toast.success(message)
         
-        const reverseInterval = setInterval(() => {
+        const reverseInterval = setPausableInterval(() => {
           setReverseControlsTimeLeft(prev => {
             if (prev <= 1) {
               clearInterval(reverseInterval)
@@ -1710,9 +1681,23 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
   }, [gameState])
 
   useEffect(() => {
-    if (gameState !== 'playing' && gameState !== 'waitingToLaunch') return
+    if (gameState !== 'playing' && gameState !== 'waitingToLaunch' && gameState !== 'paused') return
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (gameState === 'paused') {
+        if (e.key === ' ' || e.key.toLowerCase() === 'p' || e.key === 'Enter') {
+          e.preventDefault()
+          resumeGame()
+        }
+        return
+      }
+
+      if (e.key.toLowerCase() === 'p') {
+        e.preventDefault()
+        pauseGame()
+        return
+      }
+
       if (e.key === ' ' && gameState === 'waitingToLaunch') {
         e.preventDefault()
         launchBall()
@@ -1762,6 +1747,26 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
       paddleRef.current = { ...currentPaddle, x: newX }
     }
   }
+
+  // Spillets loop er styret af gameState, saa 'paused' stopper det af sig selv
+  // (effektens oprydning annullerer billedet) og 'playing' starter det igen.
+  const stateBeforePauseRef = useRef<GameState>('playing')
+
+  const pauseGame = () => {
+    if (gameState !== 'playing' && gameState !== 'waitingToLaunch') return
+    stateBeforePauseRef.current = gameState
+    pausedRef.current = true
+    pressedKeysRef.current.clear()
+    setGameState('paused')
+  }
+
+  const resumeGame = () => {
+    if (gameState !== 'paused') return
+    pausedRef.current = false
+    setGameState(stateBeforePauseRef.current)
+  }
+
+  useAutoPauseOnBlur(gameState === 'playing' || gameState === 'waitingToLaunch', pauseGame)
 
   useEffect(() => {
     if (gameState !== 'playing' && gameState !== 'waitingToLaunch') return
@@ -2337,13 +2342,16 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
       </div>
 
       <Card className="p-4 flex justify-center">
-        <canvas
-          ref={canvasRef}
-          width={GAME_WIDTH}
-          height={GAME_HEIGHT}
-          className="border-2 border-border rounded-lg bg-gradient-to-b from-gray-900 to-gray-800"
-          style={{ maxWidth: '100%', height: 'auto' }}
-        />
+        <div className="relative">
+          <canvas
+            ref={canvasRef}
+            width={GAME_WIDTH}
+            height={GAME_HEIGHT}
+            className="border-2 border-border rounded-lg bg-gradient-to-b from-gray-900 to-gray-800"
+            style={{ maxWidth: '100%', height: 'auto' }}
+          />
+          {gameState === 'paused' && <PauseOverlay onResume={resumeGame} />}
+        </div>
       </Card>
     </div>
   )
