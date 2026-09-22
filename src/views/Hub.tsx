@@ -537,94 +537,27 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       date: today,
     }
 
-    await appendToKvArray<ShiftAssignment>('shift-assignments', [newAssignment])
-
+    // Vis tildelingen straks og luk dialogen. Tidligere ventede UI'et paa
+    // skrivningen OG en genindlaesning af seks noegler over netvaerket, saa der
+    // gik lang tid foer noget skete. Genindlaesningen er unoedvendig: abonnementet
+    // paa 'shift-assignments' (se effekten ovenfor) henter selv det friske billede.
+    setTeamTasks(prev => prev.map(entry => entry.roleId === task.roleId
+      ? { ...entry, people: [...entry.people, { name: employeeName }] }
+      : entry))
     toast.success(language === 'da' ? `${employeeName} tildelt ${task.roleName}` : language === 'fi' ? `${employeeName} ${task.roleName}:lle osoitettu` : `${employeeName} assigned to ${task.roleName}`)
-    
     setShowQuickAssignDialog(false)
     setSelectedTaskForAssign(null)
     setSelectedEmployeeForAssign('')
 
-    const loadOverviewData = async () => {
-      const today = format(new Date(), 'yyyy-MM-dd')
-      const currentDate = new Date()
-      
-      const assignments = (await window.kv.get<ShiftAssignment[]>('shift-assignments')) || []
-      const shiftPatterns = (await window.kv.get<ShiftPatternRule[]>('shift-patterns')) || []
-      const roles = (await window.kv.get<ShiftRole[]>('shift-roles')) || []
-      const sickLeave = (await window.kv.get<SickLeaveEntry[]>('sick-leave-entries')) || []
-      const vacations = (await window.kv.get<VacationEntry[]>('vacation-entries')) || []
-      const usersData = (await window.kv.get<Record<string, { fullName: string }>>('users')) || {}
-      
-      const isSickToday = (userEmail: string) => {
-        return sickLeave.some(s => 
-          s.userEmail === userEmail && 
-          s.status === 'approved' && 
-          isSameDay(parseISO(s.startDate), currentDate)
-        )
-      }
-      
-      const isOnVacationToday = (userEmail: string) => {
-        return vacations.some(v => {
-          if (v.userEmail !== userEmail || v.status !== 'approved') return false
-          const start = parseISO(v.startDate)
-          const end = parseISO(v.endDate)
-          return (isSameDay(start, currentDate) || isSameDay(end, currentDate) || (start < currentDate && end > currentDate))
-        })
-      }
-      
-      // Gentagne vagter gemmes ikke som raekker - de skal udfoldes her, ellers
-      // mangler personen bag et moenster i widgeten (opgaven vises, personen ikke).
-      const todaysAssignments = [
-        ...assignments.filter(a => a.date === today),
-        ...expandShiftPatterns(shiftPatterns, assignments, today, email => isSickToday(email) || isOnVacationToday(email)),
-      ]
-      
-      const taskPeopleMap: Record<string, { color: string; people: Array<{ name: string; comment?: string }>; roleId: string }> = {}
-      
-      roles.forEach(role => {
-        taskPeopleMap[role.name] = {
-          color: role.color,
-          people: [],
-          roleId: role.id
-        }
-      })
-      
-      todaysAssignments.forEach(assignment => {
-        const role = roles.find(r => r.id === assignment.roleId)
-        const roleName = role?.name || 'Unknown'
-        
-        const userEmail = Object.keys(usersData).find(email => usersData[email]?.fullName === assignment.employeeName)
-        
-        if (!userEmail) {
-          return
-        }
-        
-        if (isSickToday(userEmail) || isOnVacationToday(userEmail)) {
-          return
-        }
-        
-        if (taskPeopleMap[roleName]) {
-          const existingPerson = taskPeopleMap[roleName].people.find(p => p.name === assignment.employeeName)
-          if (!existingPerson) {
-            taskPeopleMap[roleName].people.push({
-              name: assignment.employeeName,
-              comment: assignment.comment
-            })
-          }
-        }
-      })
-      
-      const teamTasksList = Object.entries(taskPeopleMap).map(([taskName, data]) => ({
-        taskName,
-        taskColor: data.color,
-        people: data.people,
-        roleId: data.roleId
-      }))
-      
-      setTeamTasks(teamTasksList)
+    try {
+      await appendToKvArray<ShiftAssignment>('shift-assignments', [newAssignment])
+    } catch (error) {
+      console.error('Kunne ikke tildele opgaven:', error)
+      setTeamTasks(prev => prev.map(entry => entry.roleId === task.roleId
+        ? { ...entry, people: entry.people.filter(person => person.name !== employeeName) }
+        : entry))
+      toast.error(language === 'da' ? 'Tildelingen blev ikke gemt — prøv igen' : language === 'fi' ? 'Osoitusta ei tallennettu — yritä uudelleen' : 'The assignment was not saved — please try again')
     }
-    loadOverviewData()
   }
 
   const handleAddOrUpdateComment = async () => {
@@ -650,100 +583,27 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       return
     }
 
-    const assignments = (await window.kv.get<ShiftAssignment[]>('shift-assignments')) || []
-    
-    const matching = assignments.filter(a => a.date === today && a.employeeName === selectedUserForComment.name && a.roleId === selectedUserForComment.roleId)
-    
-    if (matching.length > 0) {
-      await upsertInKvArray<ShiftAssignment>('shift-assignments', matching.map(a => ({ ...a, comment: newComment || undefined })))
-    }
-    
+    const commentText = newComment || undefined
+    const person = selectedUserForComment
+    // Vis kommentaren straks og luk dialogen; resten sker i baggrunden.
+    setTeamTasks(prev => prev.map(entry => entry.roleId === person.roleId
+      ? { ...entry, people: entry.people.map(p => p.name === person.name ? { ...p, comment: commentText } : p) }
+      : entry))
     toast.success(language === 'da' ? 'Kommentar opdateret' : language === 'fi' ? 'Kommentti päivitetty' : 'Comment updated')
-    
     setShowCommentDialog(false)
     setSelectedUserForComment(null)
     setNewComment('')
-    
-    const loadOverviewData = async () => {
-      const today = format(new Date(), 'yyyy-MM-dd')
-      const currentDate = new Date()
-      
+
+    try {
       const assignments = (await window.kv.get<ShiftAssignment[]>('shift-assignments')) || []
-      const shiftPatterns = (await window.kv.get<ShiftPatternRule[]>('shift-patterns')) || []
-      const roles = (await window.kv.get<ShiftRole[]>('shift-roles')) || []
-      const sickLeave = (await window.kv.get<SickLeaveEntry[]>('sick-leave-entries')) || []
-      const vacations = (await window.kv.get<VacationEntry[]>('vacation-entries')) || []
-      const usersData = (await window.kv.get<Record<string, { fullName: string }>>('users')) || {}
-      
-      const isSickToday = (userEmail: string) => {
-        return sickLeave.some(s => 
-          s.userEmail === userEmail && 
-          s.status === 'approved' && 
-          isSameDay(parseISO(s.startDate), currentDate)
-        )
+      const matching = assignments.filter(a => a.date === today && a.employeeName === person.name && a.roleId === person.roleId)
+      if (matching.length > 0) {
+        await upsertInKvArray<ShiftAssignment>('shift-assignments', matching.map(a => ({ ...a, comment: commentText })))
       }
-      
-      const isOnVacationToday = (userEmail: string) => {
-        return vacations.some(v => {
-          if (v.userEmail !== userEmail || v.status !== 'approved') return false
-          const start = parseISO(v.startDate)
-          const end = parseISO(v.endDate)
-          return (isSameDay(start, currentDate) || isSameDay(end, currentDate) || (start < currentDate && end > currentDate))
-        })
-      }
-      
-      // Gentagne vagter gemmes ikke som raekker - de skal udfoldes her, ellers
-      // mangler personen bag et moenster i widgeten (opgaven vises, personen ikke).
-      const todaysAssignments = [
-        ...assignments.filter(a => a.date === today),
-        ...expandShiftPatterns(shiftPatterns, assignments, today, email => isSickToday(email) || isOnVacationToday(email)),
-      ]
-      
-      const taskPeopleMap: Record<string, { color: string; people: Array<{ name: string; comment?: string }>; roleId: string }> = {}
-      
-      roles.forEach(role => {
-        taskPeopleMap[role.name] = {
-          color: role.color,
-          people: [],
-          roleId: role.id
-        }
-      })
-      
-      todaysAssignments.forEach(assignment => {
-        const role = roles.find(r => r.id === assignment.roleId)
-        const roleName = role?.name || 'Unknown'
-        
-        const userEmail = Object.keys(usersData).find(email => usersData[email]?.fullName === assignment.employeeName)
-        
-        if (!userEmail) {
-          return
-        }
-        
-        if (isSickToday(userEmail) || isOnVacationToday(userEmail)) {
-          return
-        }
-        
-        if (taskPeopleMap[roleName]) {
-          const existingPerson = taskPeopleMap[roleName].people.find(p => p.name === assignment.employeeName)
-          if (!existingPerson) {
-            taskPeopleMap[roleName].people.push({
-              name: assignment.employeeName,
-              comment: assignment.comment
-            })
-          }
-        }
-      })
-      
-      const teamTasksList = Object.entries(taskPeopleMap).map(([taskName, data]) => ({
-        taskName,
-        taskColor: data.color,
-        people: data.people,
-        roleId: data.roleId
-      }))
-      
-      setTeamTasks(teamTasksList)
+    } catch (error) {
+      console.error('Kunne ikke gemme kommentaren:', error)
+      toast.error(language === 'da' ? 'Kommentaren blev ikke gemt — prøv igen' : language === 'fi' ? 'Kommenttia ei tallennettu — yritä uudelleen' : 'The comment was not saved — please try again')
     }
-    loadOverviewData()
   }
 
   // Tildeler den valgte rolle til den valgte bruger fra Team status-widgeten.
@@ -759,96 +619,25 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
 
   const handleRemoveUserFromTask = async (employeeName: string, roleId: string) => {
     const today = format(new Date(), 'yyyy-MM-dd')
-    const assignments = (await window.kv.get<ShiftAssignment[]>('shift-assignments')) || []
-    
-    const matchingIds = assignments.filter(
-      a => a.date === today && a.employeeName === employeeName && a.roleId === roleId
-    ).map(a => a.id)
-    
-    await removeFromKvArray<ShiftAssignment>('shift-assignments', matchingIds)
-    
+    // Fjern personen fra widgeten straks; skrivningen sker i baggrunden, og
+    // abonnementet paa 'shift-assignments' henter selv det friske billede.
+    const previous = teamTasks
+    setTeamTasks(prev => prev.map(entry => entry.roleId === roleId
+      ? { ...entry, people: entry.people.filter(person => person.name !== employeeName) }
+      : entry))
     toast.success(language === 'da' ? `${employeeName} fjernet fra opgaven` : language === 'fi' ? `${employeeName} poistettu tehtävästä` : `${employeeName} removed from task`)
-    
-    const loadOverviewData = async () => {
-      const today = format(new Date(), 'yyyy-MM-dd')
-      const currentDate = new Date()
-      
+
+    try {
       const assignments = (await window.kv.get<ShiftAssignment[]>('shift-assignments')) || []
-      const shiftPatterns = (await window.kv.get<ShiftPatternRule[]>('shift-patterns')) || []
-      const roles = (await window.kv.get<ShiftRole[]>('shift-roles')) || []
-      const sickLeave = (await window.kv.get<SickLeaveEntry[]>('sick-leave-entries')) || []
-      const vacations = (await window.kv.get<VacationEntry[]>('vacation-entries')) || []
-      const usersData = (await window.kv.get<Record<string, { fullName: string }>>('users')) || {}
-      
-      const isSickToday = (userEmail: string) => {
-        return sickLeave.some(s => 
-          s.userEmail === userEmail && 
-          s.status === 'approved' && 
-          isSameDay(parseISO(s.startDate), currentDate)
-        )
-      }
-      
-      const isOnVacationToday = (userEmail: string) => {
-        return vacations.some(v => {
-          if (v.userEmail !== userEmail || v.status !== 'approved') return false
-          const start = parseISO(v.startDate)
-          const end = parseISO(v.endDate)
-          return (isSameDay(start, currentDate) || isSameDay(end, currentDate) || (start < currentDate && end > currentDate))
-        })
-      }
-      
-      // Gentagne vagter gemmes ikke som raekker - de skal udfoldes her, ellers
-      // mangler personen bag et moenster i widgeten (opgaven vises, personen ikke).
-      const todaysAssignments = [
-        ...assignments.filter(a => a.date === today),
-        ...expandShiftPatterns(shiftPatterns, assignments, today, email => isSickToday(email) || isOnVacationToday(email)),
-      ]
-      
-      const taskPeopleMap: Record<string, { color: string; people: Array<{ name: string; comment?: string }>; roleId: string }> = {}
-      
-      roles.forEach(role => {
-        taskPeopleMap[role.name] = {
-          color: role.color,
-          people: [],
-          roleId: role.id
-        }
-      })
-      
-      todaysAssignments.forEach(assignment => {
-        const role = roles.find(r => r.id === assignment.roleId)
-        const roleName = role?.name || 'Unknown'
-        
-        const userEmail = Object.keys(usersData).find(email => usersData[email]?.fullName === assignment.employeeName)
-        
-        if (!userEmail) {
-          return
-        }
-        
-        if (isSickToday(userEmail) || isOnVacationToday(userEmail)) {
-          return
-        }
-        
-        if (taskPeopleMap[roleName]) {
-          const existingPerson = taskPeopleMap[roleName].people.find(p => p.name === assignment.employeeName)
-          if (!existingPerson) {
-            taskPeopleMap[roleName].people.push({
-              name: assignment.employeeName,
-              comment: assignment.comment
-            })
-          }
-        }
-      })
-      
-      const teamTasksList = Object.entries(taskPeopleMap).map(([taskName, data]) => ({
-        taskName,
-        taskColor: data.color,
-        people: data.people,
-        roleId: data.roleId
-      }))
-      
-      setTeamTasks(teamTasksList)
+      const matchingIds = assignments.filter(
+        a => a.date === today && a.employeeName === employeeName && a.roleId === roleId
+      ).map(a => a.id)
+      await removeFromKvArray<ShiftAssignment>('shift-assignments', matchingIds)
+    } catch (error) {
+      console.error('Kunne ikke fjerne tildelingen:', error)
+      setTeamTasks(previous)
+      toast.error(language === 'da' ? 'Ændringen blev ikke gemt — prøv igen' : language === 'fi' ? 'Muutosta ei tallennettu — yritä uudelleen' : 'The change was not saved — please try again')
     }
-    loadOverviewData()
   }
 
   type AnimationCategory = 'work' | 'social' | 'admin' | 'leisure'
