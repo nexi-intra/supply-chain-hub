@@ -242,20 +242,24 @@ test('a key deleted on the share is dropped from the mirror after revalidation',
   assert.equal(local.get('gone', { skipCache: true }), undefined)
 })
 
-test('revalidateMirror refreshes every mirrored key except chunks and the queue, and reports changes', async (t) => {
+test('revalidateMirror refreshes every mirrored key except stored files and the queue, and reports changes', async (t) => {
   const local = temporaryLocalStore(t)
   const real = temporaryNetworkStore(t)
-  local.set('a', 1); local.set('b', 2); local.set('file_chunk_0', 'blob')
+  local.set('a', 1); local.set('b', 2); local.set('file_1_a_chunk_0', 'blob'); local.set('file_1_a_meta', { size: 1 })
   const writer = createStore(real.dataDir)
-  writer.set('a', 1); writer.set('b', 22); writer.set('file_chunk_0', 'other')
+  writer.set('a', 1); writer.set('b', 22); writer.set('file_1_a_chunk_0', 'other'); writer.set('file_1_a_meta', { size: 2 })
   const revalidated = []
   const resilient = createResilientStore(real, local, { onRevalidated: keys => revalidated.push(...keys) })
   const refreshed = await resilient.revalidateMirror({ concurrency: 2 })
+  // Kun 'a' og 'b'. Billedernes _meta er uforanderlige og maa ALDRIG genhentes:
+  // 95 af 104 langsomme laesninger i en maalt session var netop dem, fordi kun
+  // _chunk_ var udelukket. De maettede drevet, saa gemninger tog sekunder.
   assert.equal(refreshed, 2)
   await flushMicrotasks()
   assert.deepEqual(revalidated, ['b'])
   assert.equal(local.get('b', { skipCache: true }), 22)
-  assert.equal(local.get('file_chunk_0', { skipCache: true }), 'blob')
+  assert.equal(local.get('file_1_a_chunk_0', { skipCache: true }), 'blob')
+  assert.deepEqual(local.get('file_1_a_meta', { skipCache: true }), { size: 1 })
 })
 
 test('revalidateMirror is a no-op while disconnected', async (t) => {

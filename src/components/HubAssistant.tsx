@@ -342,7 +342,9 @@ export function HubAssistant({ token, viewId }: AssistantScope) {
           <input ref={upload} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={event => {
             const file = event.target.files?.[0]; event.target.value = ''
             if (!file) return
-            if (file.size > 5 * 1024 ** 2) { setError('Max 5 MB'); return }
+            // Kun et vaern mod at laese noget absurd stort ind i hukommelsen -
+            // billedet skaleres alligevel ned i hovedprocessen foer modellen.
+            if (file.size > 48 * 1024 ** 2) { setError('Max 48 MB'); return }
             const reader = new FileReader()
             const requestId = sequence.current
             reader.onload = () => { if (requestId === sequence.current) setImage({ data: String(reader.result), name: file.name }) }

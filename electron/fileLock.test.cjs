@@ -82,6 +82,45 @@ test('a genuine filesystem failure is never disguised as lock contention', t => 
   t.mock.method(fs, 'openSync', () => { throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' }) })
   assert.throws(() => withFileLock(target, () => assert.fail('must not run'), { attempts: 2, delayMs: 1 }), { code: 'ENOSPC' })
 })
+// Maalt paa produktionsdrevet: en laas der netop var oprettet af en anden klient
+// rapporterede mtime som 17 aar gammel. Blev den stjaalet, skrev to klienter i
+// den samme fil samtidig.
+test('a freshly created lock with an absurd mtime is NOT stolen', t => {
+  const target = fixture(t)
+  fs.writeFileSync(target, 'live-other-client')
+  const bogus = new Date(Date.now() - 17 * 365 * 24 * 60 * 60 * 1000)
+  fs.utimesSync(target, bogus, bogus)
+  let called = false
+  assert.throws(() => withFileLock(target, () => { called = true }, { attempts: 1, staleMs: 60000 }), { code: 'KV_LOCK_BUSY' })
+  assert.equal(called, false)
+  assert.equal(fs.readFileSync(target, 'utf8'), 'live-other-client', 'laasen skal stadig tilhoere den anden klient')
+})
+test('a lock with an absurd mtime is reclaimed once WE have watched it for staleMs', t => {
+  const target = fixture(t)
+  fs.writeFileSync(target, 'crashed-client')
+  const bogus = new Date(Date.now() - 17 * 365 * 24 * 60 * 60 * 1000)
+  fs.utimesSync(target, bogus, bogus)
+  // Foerste forsoeg starter kun observationen.
+  assert.throws(() => withFileLock(target, () => {}, { attempts: 1, staleMs: 40 }), { code: 'KV_LOCK_BUSY' })
+  const waitUntil = Date.now() + 60
+  while (Date.now() < waitUntil) { /* egen klokke, ikke filens */ }
+  assert.equal(withFileLock(target, () => 42, { attempts: 1, staleMs: 40 }), 42)
+  assert.ok(!fs.existsSync(target))
+})
+// Fundet live 2026-09-22: en laas havde mtime 2 TIMER ude i fremtiden (kollega-pc
+// med forkert ur). `now - mtime` blev negativ, saa den blev aldrig regnet for
+// forladt og blokerede noeglen permanent.
+test('a lock dated in the future is still reclaimed once we have watched it', t => {
+  const target = fixture(t)
+  fs.writeFileSync(target, 'client-with-wrong-clock')
+  const future = new Date(Date.now() + 2 * 60 * 60 * 1000)
+  fs.utimesSync(target, future, future)
+  assert.throws(() => withFileLock(target, () => {}, { attempts: 1, staleMs: 40 }), { code: 'KV_LOCK_BUSY' })
+  const waitUntil = Date.now() + 60
+  while (Date.now() < waitUntil) { /* vores egen klokke */ }
+  assert.equal(withFileLock(target, () => 42, { attempts: 1, staleMs: 40 }), 42)
+  assert.ok(!fs.existsSync(target))
+})
 test('release does not remove a lock now owned by another writer', t => {
   const target = fixture(t)
   withFileLock(target, () => fs.writeFileSync(target, 'replacement-owner'))

@@ -3,6 +3,8 @@ const CREATOR_CHANNELS = new Set(['registry:set-creator-email', 'registry:create
 const GUEST_KEYS = new Set(['app-language-guest', 'user-theme-guest'])
 const PERSONAL_KEY = /^(?:app-language-|user-theme-|active-theme-|hub-dashboard-|todos-personal-)/
 const WRITES = new Set(['kv:set', 'kv:update', 'kv:delete'])
+// En sund gemning mod det delte drev tager ~1 s (maalt). Over dette er der noget galt.
+const SLOW_WRITE_WARNING_MS = 4000
 const IDENTITY_WRITES = new Set(['registry:assign-user', 'registry:set-creator-email', 'registry:create-team', 'registry:update-team', 'registry:create-access-view', 'registry:update-access-view', 'registry:delete-access-view', 'registry:submit-guide-access-request'])
 const RECOVERY_CHANNELS = new Set(['accounts:status', 'accounts:resume', 'accounts:rollback'])
 function denied(code = 'AUTH_FORBIDDEN') { const error = new Error(code); error.code = code; throw error }
@@ -62,7 +64,15 @@ function createSecuredIpc(native, { auth, trusted, currentFolder, listTeams, acc
         if (channel === 'registry:assign-user') accountService?.assertAvailable(args[0])
         return listener(event, ...args)
       }
+      // Brugere har rapporteret gemninger der tog 2-5 minutter. Uden maaling kan
+      // vi kun gaette paa hvad der brugte tiden. Logges kun naar det er galt, saa
+      // den normale drift (~1 s) forbliver stille.
+      const writeStartedAt = WRITES.has(channel) ? Date.now() : 0
       const result = await (accountService && !emailRename && (WRITES.has(channel) || IDENTITY_WRITES.has(channel)) ? accountService.runWriteAsync(invoke) : invoke())
+      if (writeStartedAt) {
+        const elapsedMs = Date.now() - writeStartedAt
+        if (elapsedMs >= SLOW_WRITE_WARNING_MS) console.warn(`TCD Hub: LANGSOM gemning ${elapsedMs} ms  ${channel} "${args[0]}"`)
+      }
       if (!emailRename && accountService?.context() !== accountContext) denied('AUTH_CONTEXT_CHANGED')
       // A completed own-email migration deliberately revokes this session.
       // Only the backend migration result may bypass the ordinary postcheck.

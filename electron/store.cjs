@@ -1,4 +1,4 @@
-// File-based key/value store shared by all app instances via a common data
+﻿// File-based key/value store shared by all app instances via a common data
 // directory (typically a network share). One JSON file per key. Plain Node
 // module with no Electron imports so it can be tested standalone.
 //
@@ -18,13 +18,18 @@ const RETRY_DELAY_MS = 100
 const SLOW_OPERATION_MS = 100
 
 // Fil-laas for asynkrone (IPC) skrivninger. Med ~40 klienter paa et langsomt
-// SMB-share kolliderer flere klienter ofte om samme noegle. attempts×delayMs
+// SMB-share kolliderer flere klienter ofte om samme noegle. attemptsÃ—delayMs
 // giver et generoest vindue (~9s med jitter) saa en travl noegle rider
 // kollisionen af sig i stedet for at fejle. staleMs=30s: en crashet klients
 // laas ville ellers blokere ALLE andres skrivninger til den noegle; 30s er
 // langt over enhver legitim holdetid (<2s), saa vi stjaeler kun beviseligt
-// forladte laase, men genopretter 4× hurtigere end det gamle 2-minutters vindue.
+// forladte laase, men genopretter 4Ã— hurtigere end det gamle 2-minutters vindue.
 const ASYNC_WRITE_LOCK = { createParent: false, staleMs: 30000, attempts: 60, delayMs: 120 }
+// Samme selv-heling for de SYNKRONE skrivninger. Uden staleMs blokerede en
+// laas efterladt af en crashet/draebt klient noeglen PERMANENT - fundet live
+// 2026-09-22: shift-assignments.json.lock var 48 minutter gammel med en ejer-PID
+// der ikke fandtes, saa "tildel opgave" fra widget'en kunne aldrig gemme.
+const SYNC_WRITE_LOCK = { createParent: false, staleMs: 30000 }
 
 // Laesninger mod SMB er latens-bundne (~150-300 ms pr. rundtur uanset
 // filstoerrelse), saa parallelisme er den eneste maade at faa flere noegler
@@ -45,7 +50,7 @@ function releaseReadSlot() {
 }
 
 // Read-cache-levetid. Naar watch() koerer, ved storen praecis hvilke filer der
-// er aendret paa disken (mtime+size hvert tick) og sletter dem fra cachen —
+// er aendret paa disken (mtime+size hvert tick) og sletter dem fra cachen â€”
 // saa cachen kan holdes laenge, og TTL'en er kun et sikkerhedsnet mod en
 // scanning der ikke fanger en aendring. Uden watcher (tests, engangs-stores)
 // bruges den korte TTL som foer.
@@ -63,9 +68,9 @@ function logSlow(operation, target, startedAt, attempts = 1) {
   if (elapsedMs >= SLOW_OPERATION_MS) console.warn(`KV TIMING: ${operation} ${elapsedMs}ms attempts=${attempts} target=${target}`)
 }
 
-// Kryptering på disken (AES-256-GCM) forhindrer utilsigtet klartekstvisning.
-// Den indbyggede fælles nøgle er ikke en adgangsgrænse: filrettigheder og
-// backendens autorisation skal begrænse, hvem der må læse data.
+// Kryptering pÃ¥ disken (AES-256-GCM) forhindrer utilsigtet klartekstvisning.
+// Den indbyggede fÃ¦lles nÃ¸gle er ikke en adgangsgrÃ¦nse: filrettigheder og
+// backendens autorisation skal begrÃ¦nse, hvem der mÃ¥ lÃ¦se data.
 const ENC_KEY = crypto.scryptSync('tcd-hub-storage-v1', 'tcd-hub-static-salt', 32)
 
 function encryptPayload(json) {
@@ -116,8 +121,8 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
 
   // Local read cache. Invalideres af watch() pr. aendret noegle; TTL er sikkerhedsnet.
   const readCache = new Map()
-  // Opdateres af watch()'s polling — true indtil bevist ellers (dvs. optimistisk
-  // ved opstart, før første scanning har kørt).
+  // Opdateres af watch()'s polling â€” true indtil bevist ellers (dvs. optimistisk
+  // ved opstart, fÃ¸r fÃ¸rste scanning har kÃ¸rt).
   let connected = true
   // externallyWatched: en anden store-instans paa SAMME mappe koerer watch() og
   // kalder invalidate() her ved aendringer, saa cachen kan holdes lige saa laenge.
@@ -133,7 +138,7 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
     return path.join(dataDir, keyToFilename(key))
   }
 
-  /** Frisk cache-vaerdi uden I/O — `undefined` ved miss (lader offlineSync vaelge spejl-foerst). */
+  /** Frisk cache-vaerdi uden I/O â€” `undefined` ved miss (lader offlineSync vaelge spejl-foerst). */
   function peekCache(key) {
     const cached = readCache.get(key)
     return cached && isFresh(cached) ? { value: cached.value } : undefined
@@ -216,12 +221,12 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
   function setUnlocked(key, value) {
     let json
     try { json = JSON.stringify(value) } catch {
-      const error = new Error('KV_INVALID_OPERATION: Værdien kan ikke gemmes som JSON')
+      const error = new Error('KV_INVALID_OPERATION: VÃ¦rdien kan ikke gemmes som JSON')
       error.code = 'KV_INVALID_OPERATION'
       throw error
     }
     if (json === undefined) {
-      const error = new Error('KV_INVALID_OPERATION: Værdien mangler')
+      const error = new Error('KV_INVALID_OPERATION: VÃ¦rdien mangler')
       error.code = 'KV_INVALID_OPERATION'
       throw error
     }
@@ -247,7 +252,7 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
   }
 
   function set(key, value) {
-    return withFileLock(filePath(key) + '.lock', () => setUnlocked(key, value), { createParent: false })
+    return withFileLock(filePath(key) + '.lock', () => setUnlocked(key, value), SYNC_WRITE_LOCK)
   }
 
   // Asynkrone tvillinger til IPC-vejen: identisk semantik og samme laasefiler,
@@ -255,12 +260,12 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
   async function setUnlockedAsync(key, value) {
     let json
     try { json = JSON.stringify(value) } catch {
-      const error = new Error('KV_INVALID_OPERATION: Værdien kan ikke gemmes som JSON')
+      const error = new Error('KV_INVALID_OPERATION: VÃ¦rdien kan ikke gemmes som JSON')
       error.code = 'KV_INVALID_OPERATION'
       throw error
     }
     if (json === undefined) {
-      const error = new Error('KV_INVALID_OPERATION: Værdien mangler')
+      const error = new Error('KV_INVALID_OPERATION: VÃ¦rdien mangler')
       error.code = 'KV_INVALID_OPERATION'
       throw error
     }
@@ -319,7 +324,7 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
     return withFileLock(filePath(key) + '.lock', () => {
       try { fs.unlinkSync(filePath(key)) } catch (err) { if (err.code !== 'ENOENT') throw err }
       readCache.delete(key)
-    }, { createParent: false })
+    }, SYNC_WRITE_LOCK)
   }
 
   function keys() {
@@ -332,8 +337,8 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
     return result
   }
 
-  // --- Atomar array-opdatering på tværs af klienter -----------------------
-  // Låsefil pr. nøgle (exclusive create er atomisk, også på SMB-shares).
+  // --- Atomar array-opdatering pÃ¥ tvÃ¦rs af klienter -----------------------
+  // LÃ¥sefil pr. nÃ¸gle (exclusive create er atomisk, ogsÃ¥ pÃ¥ SMB-shares).
   // Ownership is checked on release; a slow remote owner is never evicted
   // merely because the operation has taken longer than ten seconds.
 
@@ -342,20 +347,20 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
   }
 
   /**
-   * Atomar opdatering af et array af objekter med `id` under fil-lås:
-   *   { op: 'append', items }  — tilføj elementer
-   *   { op: 'upsert', items }  — erstat pr. id, ellers tilføj
-   *   { op: 'remove', ids }    — fjern pr. id
-   * Valgfri `path` (array af nøgler) navigerer ned i et objekt til et nested
-   * array, fx { path: ['easy'] } for et leaderboard opdelt pr. sværhedsgrad —
-   * resten af objektet bevares, kun arrayet på den sti opdateres.
+   * Atomar opdatering af et array af objekter med `id` under fil-lÃ¥s:
+   *   { op: 'append', items }  â€” tilfÃ¸j elementer
+   *   { op: 'upsert', items }  â€” erstat pr. id, ellers tilfÃ¸j
+   *   { op: 'remove', ids }    â€” fjern pr. id
+   * Valgfri `path` (array af nÃ¸gler) navigerer ned i et objekt til et nested
+   * array, fx { path: ['easy'] } for et leaderboard opdelt pr. svÃ¦rhedsgrad â€”
+   * resten af objektet bevares, kun arrayet pÃ¥ den sti opdateres.
    *
-   * To ekstra ops arbejder i stedet på et almindeligt objekt (fx 'users', keyet
-   * pr. email) under samme fil-lås:
-   *   { op: 'setField', field, value }  — sæt/erstat én nøgle i objektet
-   *   { op: 'deleteField', field }      — fjern én nøgle fra objektet
+   * To ekstra ops arbejder i stedet pÃ¥ et almindeligt objekt (fx 'users', keyet
+   * pr. email) under samme fil-lÃ¥s:
+   *   { op: 'setField', field, value }  â€” sÃ¦t/erstat Ã©n nÃ¸gle i objektet
+   *   { op: 'deleteField', field }      â€” fjern Ã©n nÃ¸gle fra objektet
    *
-   * Returnerer det opdaterede array/objekt. Kaster hvis nøglen (på stien) ikke
+   * Returnerer det opdaterede array/objekt. Kaster hvis nÃ¸glen (pÃ¥ stien) ikke
    * har den forventede type (array for array-ops, objekt for felt-ops).
    */
   function update(key, operation) {
@@ -364,7 +369,7 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
       const outcome = computeUpdate(key, operation, get(key, { skipCache: true }))
       if (outcome.write) setUnlocked(key, outcome.value)
       return outcome.result
-    }, { createParent: false })
+    }, SYNC_WRITE_LOCK)
   }
 
   // Asynkron tvilling til IPC-vejen: samme laas, samme computeUpdate, men al
@@ -387,15 +392,15 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
     if (operation.path && (!Array.isArray(operation.path) || operation.path.some(segment => typeof segment !== 'string' || unsafe.has(segment)))) invalid('Ugyldig sti')
     if (['renameField', 'setField', 'deleteField'].includes(operation.op) && (typeof operation.field !== 'string' || !operation.field)) invalid('Ugyldigt felt')
     if (operation.op === 'renameField' && (typeof operation.newField !== 'string' || !operation.newField || unsafe.has(operation.newField))) invalid('Ugyldigt nyt felt')
-    if (['renameField', 'setField', 'compareAndSet'].includes(operation.op) && JSON.stringify(operation.value) === undefined) invalid('Værdien kan ikke gemmes')
+    if (['renameField', 'setField', 'compareAndSet'].includes(operation.op) && JSON.stringify(operation.value) === undefined) invalid('VÃ¦rdien kan ikke gemmes')
     if (['append', 'upsert'].includes(operation.op) && (!Array.isArray(operation.items) || operation.items.some(item => !item || typeof item.id !== 'string' || !item.id))) invalid('Ugyldige elementer')
-    if (operation.op === 'remove' && (!Array.isArray(operation.ids) || operation.ids.some(id => typeof id !== 'string'))) invalid('Ugyldige id’er')
+    if (operation.op === 'remove' && (!Array.isArray(operation.ids) || operation.ids.some(id => typeof id !== 'string'))) invalid('Ugyldige idâ€™er')
   }
 
-  /** Ren beregning af en valideret update mod den friske vaerdi — deles af sync/async vej. */
+  /** Ren beregning af en valideret update mod den friske vaerdi â€” deles af sync/async vej. */
   function computeUpdate(key, operation, current) {
     const invalid = message => { const error = new Error(`KV_INVALID_OPERATION: ${message}`); error.code = 'KV_INVALID_OPERATION'; throw error }
-    const conflict = () => { const error = new Error('KV_CONFLICT: Data blev ændret af en anden klient. Genindlæs og prøv igen.'); error.code = 'KV_CONFLICT'; throw error }
+    const conflict = () => { const error = new Error('KV_CONFLICT: Data blev Ã¦ndret af en anden klient. GenindlÃ¦s og prÃ¸v igen.'); error.code = 'KV_CONFLICT'; throw error }
     if (operation.op === 'compareAndSet') {
       if (JSON.stringify(current) !== JSON.stringify(operation.expected)) {
         if (JSON.stringify(current) === JSON.stringify(operation.value)) return { write: false, result: current }
@@ -413,7 +418,7 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
       return { write: true, value: next, result: next }
     }
     if (operation.op === 'renameField') {
-      if (!current || typeof current !== 'object' || Array.isArray(current)) invalid('Flytning kræver et objekt')
+      if (!current || typeof current !== 'object' || Array.isArray(current)) invalid('Flytning krÃ¦ver et objekt')
       if (!Object.hasOwn(current, operation.field) || JSON.stringify(current[operation.field]) !== JSON.stringify(operation.expected)) conflict()
       if (operation.newField !== operation.field && Object.hasOwn(current, operation.newField)) conflict()
       const next = { ...current }
@@ -422,7 +427,7 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
       return { write: true, value: next, result: next }
     }
     if (operation.op === 'setField' || operation.op === 'deleteField') {
-      if (current !== undefined && (!current || typeof current !== 'object' || Array.isArray(current))) invalid('Feltoperation kræver et objekt')
+      if (current !== undefined && (!current || typeof current !== 'object' || Array.isArray(current))) invalid('Feltoperation krÃ¦ver et objekt')
       const root = current && typeof current === 'object' && !Array.isArray(current) ? structuredClone(current) : {}
       if (operation.op === 'setField') root[operation.field] = operation.value
       else delete root[operation.field]
@@ -433,24 +438,24 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
     let root
     let list
     if (opPath) {
-      if (current !== undefined && (!current || typeof current !== 'object' || Array.isArray(current))) invalid('Stien kræver et objekt')
+      if (current !== undefined && (!current || typeof current !== 'object' || Array.isArray(current))) invalid('Stien krÃ¦ver et objekt')
       root = current && typeof current === 'object' && !Array.isArray(current) ? structuredClone(current) : {}
       let parent = root
       for (let i = 0; i < opPath.length - 1; i++) {
         const segment = opPath[i]
-        if (parent[segment] !== undefined && (!parent[segment] || typeof parent[segment] !== 'object' || Array.isArray(parent[segment]))) invalid('Stien kræver et objekt')
+        if (parent[segment] !== undefined && (!parent[segment] || typeof parent[segment] !== 'object' || Array.isArray(parent[segment]))) invalid('Stien krÃ¦ver et objekt')
         if (!parent[segment] || typeof parent[segment] !== 'object' || Array.isArray(parent[segment])) {
           parent[segment] = {}
         }
         parent = parent[segment]
       }
       const lastSegment = opPath[opPath.length - 1]
-      if (parent[lastSegment] !== undefined && !Array.isArray(parent[lastSegment])) invalid('Stien kræver et array')
+      if (parent[lastSegment] !== undefined && !Array.isArray(parent[lastSegment])) invalid('Stien krÃ¦ver et array')
       list = Array.isArray(parent[lastSegment]) ? parent[lastSegment] : []
     } else {
       list = current === undefined ? [] : current
       if (!Array.isArray(list)) {
-        invalid(`kv:update kræver et array i "${key}"`)
+        invalid(`kv:update krÃ¦ver et array i "${key}"`)
       }
     }
     let next
@@ -494,7 +499,7 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
       if (next && typeof next.then === 'function') throw new Error('Mutation callback must be synchronous')
       if (next !== undefined) setUnlocked(key, next)
       return next
-    }, { createParent: false })
+    }, SYNC_WRITE_LOCK)
   }
 
   // Trusted multi-record operations only. No capability is exposed to IPC.
@@ -513,13 +518,13 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
       delete(key) { check(key); try { fs.unlinkSync(filePath(key)) } catch (error) { if (error.code !== 'ENOENT') throw error }; readCache.delete(key) },
     }
     try {
-      const result = withFileLocks(ordered.map(lockPath), () => callback(transaction), { createParent: false })
+      const result = withFileLocks(ordered.map(lockPath), () => callback(transaction), SYNC_WRITE_LOCK)
       if (result && typeof result.then === 'function') throw new Error('KV_INVALID_OPERATION: Transaction must be synchronous')
       return result
     } finally { active = false }
   }
 
-  /** Alle nøgler + værdier (til backup). */
+  /** Alle nÃ¸gler + vÃ¦rdier (til backup). */
   function dumpAll() {
     const result = {}
     for (const key of keys()) {
@@ -527,7 +532,7 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
         const value = get(key)
         if (value !== undefined) result[key] = value
       } catch (err) {
-        console.warn(`Backup: springer ulæselig nøgle over: ${key}`, err.message)
+        console.warn(`Backup: springer ulÃ¦selig nÃ¸gle over: ${key}`, err.message)
       }
     }
     return result
@@ -536,26 +541,30 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
   // Async-tvilling til dumpAll(). En fuld dump er ~650 filer over SMB og tager
   // op mod et minut; den synkrone udgave laaser main-traaden imens, saa HELE
   // appen fryser under en backup. Her giver hver await event-loopet fri.
-  // Til gengaeld er snapshottet konsistent PR. NOEGLE, ikke ét frosset oejeblik
+  // Til gengaeld er snapshottet konsistent PR. NOEGLE, ikke Ã©t frosset oejeblik
   // - acceptabelt for en backup, og langt bedre end en app der gaar i staa.
-  async function dumpAllAsync() {
+  // `include` filtreres FOER laesningen. Det er hele pointen: de store
+  // billed-blobs udgoer ~99% af en dump, og det er laesningen af dem over SMB
+  // der koster minutter - ikke selve skrivningen.
+  async function dumpAllAsync(include) {
     const result = {}
     for (const key of await keysAsync()) {
+      if (include && !include(key)) continue
       try {
         const value = await getAsync(key)
         if (value !== undefined) result[key] = value
       } catch (err) {
-        console.warn(`Backup: springer ulæselig nøgle over: ${key}`, err.message)
+        console.warn(`Backup: springer ulÃ¦selig nÃ¸gle over: ${key}`, err.message)
       }
     }
     return result
   }
 
   /**
-   * Ren, tilstandsløs scanning af dataDir — opdager om mappen overhovedet kan
-   * læses (forbindelsen til fx et netværksdrev) samt hvilke nøgler der er
-   * ændret siden forrige snapshot. Ingen sideeffekter, så den kan testes
-   * uafhængigt af watch()'s timer.
+   * Ren, tilstandslÃ¸s scanning af dataDir â€” opdager om mappen overhovedet kan
+   * lÃ¦ses (forbindelsen til fx et netvÃ¦rksdrev) samt hvilke nÃ¸gler der er
+   * Ã¦ndret siden forrige snapshot. Ingen sideeffekter, sÃ¥ den kan testes
+   * uafhÃ¦ngigt af watch()'s timer.
    */
   function scanDirectory(previousSnapshot) {
     let entries
@@ -571,16 +580,16 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
         const stat = fs.statSync(path.join(dataDir, name))
         next.set(name, stat.mtimeMs + ':' + stat.size)
       } catch {
-        // File vanished between readdir and stat — treated as removed.
+        // File vanished between readdir and stat â€” treated as removed.
       }
     }
     return { reachable: true, snapshot: next, changedKeys: diffSnapshots(previousSnapshot, next) }
   }
 
   // Asynkron udgave til watch()-timeren: synkron scanning mod et langsomt
-  // SMB-netværksdrev blokerede main-processens event-loop hvert 5. sekund —
-  // og i Electron routes AL input (tastatur/mus) gennem main, så spil frøs
-  // periodisk for input mens rendering kørte videre.
+  // SMB-netvÃ¦rksdrev blokerede main-processens event-loop hvert 5. sekund â€”
+  // og i Electron routes AL input (tastatur/mus) gennem main, sÃ¥ spil frÃ¸s
+  // periodisk for input mens rendering kÃ¸rte videre.
   async function scanDirectoryAsync(previousSnapshot) {
     let entries
     try {
@@ -597,7 +606,7 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
             const stat = await fs.promises.stat(path.join(dataDir, name))
             return [name, stat.mtimeMs + ':' + stat.size]
           } catch {
-            return null // File vanished between readdir and stat — treated as removed.
+            return null // File vanished between readdir and stat â€” treated as removed.
           }
         })
     )
@@ -627,7 +636,7 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
    * network share disconnecting/reconnecting). Returns a stop function.
    */
   function watch(onChange, onConnectionChange, intervalMs = DEFAULT_WATCH_INTERVAL_MS) {
-    // Første scan er synkron (sker ved opstart, før vinduet vises) så
+    // FÃ¸rste scan er synkron (sker ved opstart, fÃ¸r vinduet vises) sÃ¥
     // isConnected() er retvisende med det samme.
     const initial = scanDirectory(null)
     let snapshot = initial.snapshot
@@ -636,7 +645,7 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
     let scanning = false
 
     const timer = setInterval(() => {
-      if (scanning) return // forrige scan (langsomt netværk) kører stadig
+      if (scanning) return // forrige scan (langsomt netvÃ¦rk) kÃ¸rer stadig
       scanning = true
       scanDirectoryAsync(snapshot)
         .then((result) => {

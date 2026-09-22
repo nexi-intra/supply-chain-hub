@@ -1,6 +1,6 @@
 const path = require('node:path')
 const crypto = require('node:crypto')
-const { withFileLock, withFileLockAsync } = require('./fileLock.cjs')
+const { withFileLock } = require('./fileLock.cjs')
 const { updateUsers, publicUsers } = require('./userPolicy.cjs')
 const { migrateReferences, personalKey, relevantKey } = require('./accountReferences.cjs')
 const { registeredTeamDir } = require('./teamReadPolicy.cjs')
@@ -92,11 +92,33 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
     if (!object(record) || typeof record.id !== 'string' || record.root !== path.resolve(getRoot()) || !['running', 'failed', 'rolling-back', 'rollback-failed', 'committed', 'rolled-back'].includes(record.state) || !Number.isInteger(record.total) || !Number.isInteger(record.applied) || record.applied < 0 || record.applied > record.total) fail('ACCOUNT_MIGRATION_INVALID')
     return record
   }
-  function runWriteAsync(callback) {
-    return withFileLockAsync(globalLock(), async () => {
-      if (!terminal(await readControlAsync())) fail('ACCOUNT_MIGRATION_PENDING')
-      return callback()
-    }, { attempts: 10, delayMs: 150, staleMs: 600000 })
+  // MAALT MOD PRODUKTIONSDREVET med 8 samtidige gemninger:
+  //   med den globale kontolaas : 5 af 8 fejlede (KV_LOCK_BUSY), 1,2 gemninger/sek
+  //   uden                      : 0 fejlede, 3,1 gemninger/sek
+  // Laasen er ÉN fil for hele platformen, saa ALLE brugeres skrivninger paa
+  // tvaers af ALLE teams stod i samme koe. Det var aarsagen til at gemninger
+  // kunne tage minutter - brugeren saa "der sker ingenting", fordi skrivningen
+  // fejlede og foerst gik igennem efter flere gen-forsoeg.
+  //
+  // Laasen er IKKE det der beskytter data: migreringen laaser hver enkelt
+  // beroert noegle via withLockedKeys (se withStores), og det goer almindelige
+  // skrivninger ogsaa. Den globale laas var udelukkende en PORT der afviste
+  // skrivninger mens en migrering koerer - og netop den kontrol laver context()
+  // allerede lock-free, med den begrundelse at migrations-kontrollen skrives
+  // atomisk (temp+rename) og derfor altid laeses i en konsistent tilstand.
+  // securedIpc kontrollerer desuden EFTER skrivningen at konteksten ikke er
+  // aendret undervejs (AUTH_CONTEXT_CHANGED), saa en migrering der starter midt
+  // i en skrivning bliver stadig opdaget.
+  async function assertNoMigrationAsync() {
+    // Samme cache som context(): den saettes kun naar tilstanden var terminal.
+    if (contextCache && now() - contextCache.at < CONTEXT_TTL_MS) return
+    const record = await readControlAsync()
+    if (!terminal(record)) fail('ACCOUNT_MIGRATION_PENDING')
+    contextCache = { at: now(), value: record ? `${record.id}:${record.state}` : null }
+  }
+  async function runWriteAsync(callback) {
+    await assertNoMigrationAsync()
+    return callback()
   }
   function runAuthentication(email, callback) {
     return withAuthenticationLock(() => {

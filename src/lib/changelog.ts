@@ -8,6 +8,19 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.5.6',
+    items: [
+      'Appen gemmer igen med det samme. Gemninger kunne tage flere minutter — godkende en ferie, oprette en note eller tildele en opgave fra forsiden — fordi alle brugeres skrivninger stod i én og samme kø på det delte drev. Køen er fjernet: målt på 16 samtidige gemninger fejlede 14 før, nu ingen',
+      'Rettet at appen genhentede alle guidebilleders oplysninger ved hver opstart og hvert hub-skift. Billeder ændrer sig aldrig, så det var ren spildt netværkstrafik — og den gjorde drevet så travlt at almindelige gemninger kunne tage 30-50 sekunder',
+      'Appen er brugbar med det samme efter opstart. Den baggrundsopdatering der henter dine data ned, lagde tidligere beslag på drevet i op til to minutter — netop mens du gik i gang. Den venter nu til appen er indlæst og kører stille og roligt ved siden af',
+      'Automatiske sikkerhedskopier belaster ikke længere alle: tidligere forsøgte hver enkelt pc at tage den samme kopi hver time samtidig. Nu tager én pc den, og timekopien springer de uforanderlige billeder over (1 MB i stedet for 40 MB)',
+      'Rettet at en efterladt lås fra en pc der er lukket ned forkert kunne blokere en bestemt handling permanent — fx "tildel opgave" — indtil låsen blev fjernet manuelt',
+      'Rettet at en pc med forkert indstillet ur kunne lægge en lås der aldrig blev ryddet op, og dermed blokere for alle andre',
+      'Der er ikke længere nogen størrelsesgrænse på Word-dokumenter og billeder i guides. Kræver en guide et stort dokument, kan det nu lade sig gøre',
+      'Tager en gemning alligevel usædvanlig lang tid, skriver appen det nu i sin log, så årsagen kan findes i stedet for at gættes',
+    ],
+  },
+  {
     version: '1.5.5',
     items: [
       'Guide Bibliotek: næste-tjek-datoen kan nu sættes til en specifik dag i stedet for altid at blive "i dag + interval" — så guider I opretter samtidig ikke alle forfalder på samme dato',

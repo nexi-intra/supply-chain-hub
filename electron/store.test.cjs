@@ -191,6 +191,24 @@ test('getAsync mirrors get: decrypts, caches, and reports missing keys as undefi
   assert.deepEqual(await store.getAsync('shifts'), value)
 })
 
+test('dumpAllAsync can skip keys BEFORE reading them, so a filtered backup stays cheap', async (t) => {
+  const { store } = temporaryStore(t)
+  store.set('shifts', [{ id: '1' }])
+  store.set('file_a_meta', { size: 1 })
+  store.set('file_a_chunk_0', 'AAAA')
+  const reads = []
+  const counting = key => { reads.push(key); return !key.startsWith('file_') }
+
+  assert.deepEqual(Object.keys(await store.dumpAllAsync()).sort(), ['file_a_chunk_0', 'file_a_meta', 'shifts'])
+
+  reads.length = 0
+  const filtered = await store.dumpAllAsync(counting)
+  assert.deepEqual(Object.keys(filtered), ['shifts'])
+  // Filteret skal spare selve LAESNINGEN - ellers er der ingen gevinst over SMB.
+  assert.deepEqual(reads.sort(), ['file_a_chunk_0', 'file_a_meta', 'shifts'])
+  assert.deepEqual(filtered.shifts, [{ id: '1' }])
+})
+
 test('a watched store serves cached reads long past the short TTL until the watcher sees a change', async (t) => {
   const { directory, store } = temporaryStore(t)
   const other = createStore(directory)
