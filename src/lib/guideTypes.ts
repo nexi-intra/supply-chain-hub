@@ -53,6 +53,8 @@ export interface Guide {
   wordFileName?: string
   fileUrl?: string
   fileSize?: number
+  preserveWordLayout?: boolean
+  previewPdfUrl?: string
   /**
    * Tværgående deling (Fase 3, plans/guide-library-cross-team-links-format.md): ALLE deltagende
    * teams' koder (folderName), INKL. det oprettende team — undefined/tomt = normal lokal guide
@@ -77,6 +79,8 @@ export interface GuideVersionSnapshot {
   fileUrl?: string
   wordFileName?: string
   fileSize?: number
+  preserveWordLayout?: boolean
+  previewPdfUrl?: string
   sharedWithTeamCodes?: string[]
 }
 
@@ -102,6 +106,10 @@ export interface GuideDraft {
   tags: string
   language: 'da' | 'en' | 'fi' | 'auto'
   sections: GuideSection[]
+  preserveWordLayout?: boolean
+  wordFileUrl?: string
+  wordFileName?: string
+  wordFileSize?: number
   coverImageId?: string
   reviewInterval: number | null
   /** yyyy-MM-dd, eller undefined = brug det automatisk foreslaaede naeste-tjek. */

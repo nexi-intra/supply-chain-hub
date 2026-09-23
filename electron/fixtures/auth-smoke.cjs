@@ -53,7 +53,11 @@ app.whenReady().then(async () => {
     for (const action of ['resume', 'rollback']) ipc.handle(`accounts:${action}`, (event, id) => accounts[action](auth.current(event.sender.id), id))
     ipc.handle('kv:get', (_, key) => key === 'users' ? publicUsers(store.get(key, { skipCache: true })) : store.get(key, { skipCache: true }))
     ipc.handle('kv:update', (event, key, op) => {
-      if (key === 'users' && op.op === 'renameField' && op.field !== op.newField) return accounts.rename(auth.current(event.sender.id), folder, op)
+      if (key === 'users' && op.op === 'renameField' && op.field !== op.newField) {
+        const result = accounts.rename(auth.current(event.sender.id), folder, op)
+        auth.invalidateAll()
+        return result
+      }
       return key === 'users' ? updateUsers(store, op, auth.current(event.sender.id), registry.getCreatorEmail(platform)) : store.update(key, op)
     })
     ipc.handle('kv:set', (_, key, value) => store.set(key, value))

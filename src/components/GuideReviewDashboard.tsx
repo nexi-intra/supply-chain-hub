@@ -115,7 +115,7 @@ function GuideDifference({ before, after }: { before?: Guide; after?: Guide }) {
       )}
 
       <div className="space-y-3">
-        <div className="grid grid-cols-2 gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <div className="grid grid-cols-2 gap-2 text-xs font-semibold text-muted-foreground">
           <span>{da ? 'Udgivet version' : fi ? 'Julkaistu versio' : 'Published version'}</span>
           <span>{da ? 'Foreslået version' : fi ? 'Ehdotettu versio' : 'Proposed version'}</span>
         </div>
@@ -174,7 +174,7 @@ export function GuideReviewDashboard({
     const canApprove = canActAsReviewer
     const previewGuide = request.proposedGuide || request.baseGuide
     return (
-      <Card key={request.id} className="p-5 border-2 space-y-4">
+      <Card key={request.id} className="p-5 space-y-4">
         <div className="flex flex-col md:flex-row md:items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2 mb-1">
@@ -209,13 +209,13 @@ export function GuideReviewDashboard({
         </div>
 
         {(request.action === 'update' || request.action === 'restore' || request.action === 'create') && (
-          <details className="rounded-xl border bg-muted/20 p-4" open={reviewMode}>
+              <details className="rounded-md border bg-muted/20 p-4" open={reviewMode}>
             <summary className="cursor-pointer font-semibold">{da ? 'Se ændringer' : fi ? 'Näytä muutokset' : 'View changes'}</summary>
             <div className="mt-4"><GuideDifference before={request.baseGuide} after={request.proposedGuide} /></div>
           </details>
         )}
         {request.action === 'delete' && (
-          <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-4 flex gap-3">
+          <div className="rounded-md border border-destructive/40 bg-destructive/10 p-4 flex gap-3">
             <Warning size={22} className="text-destructive shrink-0" />
             <p className="text-sm">{da ? 'Den udgivne guide bliver arkiveret og fjernet fra biblioteket, hvis anmodningen godkendes.' : fi ? 'Julkaistu opas arkistoidaan ja poistetaan kirjastosta, jos pyyntö hyväksytään.' : 'The published guide will be archived and removed from the library if this request is approved.'}</p>
           </div>
@@ -265,7 +265,7 @@ export function GuideReviewDashboard({
 
         {isReviewer && <TabsContent value="archive" className="space-y-3">
           {archivedGuides.filter((entry) => !entry.restoredAt).length === 0 ? <Card className="p-10 text-center text-muted-foreground">{da ? 'Arkivet er tomt.' : fi ? 'Arkisto on tyhjä.' : 'The archive is empty.'}</Card> : archivedGuides.filter((entry) => !entry.restoredAt).map((entry) => (
-            <Card key={entry.id} className="p-5 border-2 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <Card key={entry.id} className="p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div><h3 className="font-bold">{entry.guide.title}</h3><p className="text-sm text-muted-foreground">v{entry.guide.version || '1.00'} · {new Date(entry.archivedAt).toLocaleString(da ? 'da-DK' : fi ? 'fi-FI' : 'en-US')}</p></div>
               <div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => onPreview(entry.guide)}><Eye size={16} className="mr-1.5" />{da ? 'Vis' : fi ? 'Näytä' : 'View'}</Button><Button size="sm" onClick={() => onRestore(entry)}><ArrowCounterClockwise size={16} className="mr-1.5" />{da ? 'Anmod om gendannelse' : fi ? 'Pyydä palautusta' : 'Request restore'}</Button></div>
             </Card>

@@ -133,6 +133,16 @@ test('roles are reloaded and password reset, expiry and root changes revoke acce
   const h = fixture(); await h.auth.login(1, h.login); h.changeRoot()
   assert.throws(() => h.auth.current(1), code('AUTH_REQUIRED'))
 })
+test('local account migration invalidates cached actors in every open window immediately', async () => {
+  const f = fixture(), actor = await f.auth.login(1, f.login)
+  await f.auth.resume(2, actor.token)
+  f.sessions.update('active-sessions', { op: 'deleteField', field: sessionKey(actor.token) })
+  assert.equal(f.auth.current(1).email, f.login.email)
+  assert.equal(f.auth.current(2).email, f.login.email)
+  f.auth.invalidateAll()
+  assert.throws(() => f.auth.current(1), code('AUTH_REQUIRED'))
+  assert.throws(() => f.auth.current(2), code('AUTH_REQUIRED'))
+})
 test('bursts of authorization checks reuse one session snapshot until the window elapses', async () => {
   const f = fixture(); await f.auth.login(1, f.login)
   let reads = 0; const real = f.sessions.get.bind(f.sessions)

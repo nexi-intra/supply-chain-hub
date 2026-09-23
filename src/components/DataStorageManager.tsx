@@ -117,7 +117,7 @@ export function DataStorageManager() {
     <div className="space-y-6">
       <Card className="p-6 space-y-4">
         <div className="flex items-center gap-3">
-          <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)] flex items-center justify-center">
+          <div className="h-12 w-12 rounded-md bg-secondary text-primary flex items-center justify-center">
             <HardDrives size={24} weight="duotone" className="text-white" />
           </div>
           <div>
@@ -131,7 +131,7 @@ export function DataStorageManager() {
         {isDesktopApp ? (
           <>
             <div className="rounded-lg border bg-muted/40 p-4 space-y-1">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{t.dataStorageManager.currentFolderLabel}</p>
+              <p className="text-xs font-semibold text-muted-foreground">{t.dataStorageManager.currentFolderLabel}</p>
               <p className="font-mono text-sm break-all">{storageInfo?.dataDir || t.common.loading}</p>
               <div className="flex flex-wrap items-center gap-2 mt-1">
                 {storageInfo && (
@@ -200,7 +200,7 @@ export function DataStorageManager() {
 
       <Card className="p-6 space-y-4">
         <div className="flex items-center gap-3">
-          <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-[oklch(0.34_0.14_273)] to-[oklch(0.42_0.13_270)] flex items-center justify-center">
+          <div className="h-12 w-12 rounded-md bg-secondary text-primary flex items-center justify-center">
             <DownloadSimple size={24} weight="duotone" className="text-white" />
           </div>
           <div>

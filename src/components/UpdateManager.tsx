@@ -153,7 +153,7 @@ export function UpdateManager({ userEmail }: UpdateManagerProps) {
   return (
     <Card className="p-6 space-y-4">
       <div className="flex items-center gap-3">
-        <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-[oklch(0.50_0.14_275)] to-[oklch(0.56_0.12_262)] flex items-center justify-center">
+        <div className="h-12 w-12 rounded-md bg-secondary text-primary flex items-center justify-center">
           <RocketLaunch size={24} weight="duotone" className="text-white" />
         </div>
         <div>

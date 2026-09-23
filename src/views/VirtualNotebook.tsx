@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowLeft, Plus, MagnifyingGlass, PencilSimple, Trash, X, Lock, LockOpen, Eye, Bell, PushPin, Tag, Notebook } from '@phosphor-icons/react'
 import { Card } from '@/components/ui/card'
@@ -60,6 +60,9 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
   const [searchQuery, setSearchQuery] = useState(() => consumeNavigationParams()?.search ?? '')
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [showEditDialog, setShowEditDialog] = useState(false)
+  const [savingNote, setSavingNote] = useState<'create' | 'edit' | null>(null)
+  const saveInProgress = useRef(false)
+  const pendingNote = useRef<{ id: string; createdAt: string } | null>(null)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [showViewDialog, setShowViewDialog] = useState(false)
   const [selectedNote, setSelectedNote] = useState<Note | null>(null)
@@ -85,8 +88,8 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       if (showNotifications) { setShowNotifications(false); return }
-      if (showCreateDialog) { setShowCreateDialog(false); return }
-      if (showEditDialog) { setShowEditDialog(false); return }
+      if (showCreateDialog) { if (!saveInProgress.current) setShowCreateDialog(false); return }
+      if (showEditDialog) { if (!saveInProgress.current) setShowEditDialog(false); return }
       if (showViewDialog) { setShowViewDialog(false); setSelectedNote(null); return }
       if (isAnyModalOpen()) return
       onNavigateBack()
@@ -120,33 +123,45 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
     setUnreadCount(userNotifications.filter(n => !n.read).length)
   }
 
+  // Notifikationerne opdateres lokalt med det samme og skrives i baggrunden.
+  // Tidligere kostede hvert klik tre netvaerksrundture (laes, skriv, genlaes)
+  // foer der skete noget paa skaermen.
   const markNotificationAsRead = async (notificationId: string) => {
-    const allNotifications = (await window.kv.get<Notification[]>('notebook-notifications')) || []
-    const updated = allNotifications.map(n => 
-      n.id === notificationId ? { ...n, read: true } : n
-    )
-    await window.kv.set('notebook-notifications', updated)
-    await loadNotifications()
+    setNotifications(current => current.map(n => n.id === notificationId ? { ...n, read: true } : n))
+    setUnreadCount(current => Math.max(0, current - 1))
+    try {
+      await upsertInKvArray<Notification>('notebook-notifications', [{ ...(notifications.find(n => n.id === notificationId) as Notification), read: true }])
+    } catch (error) {
+      console.error('Kunne ikke markere notifikationen som laest:', error)
+      void loadNotifications()
+    }
   }
 
   const markAllAsRead = async () => {
-    const allNotifications = (await window.kv.get<Notification[]>('notebook-notifications')) || []
-    const updated = allNotifications.map(n => {
-      if (n.editedBy !== userEmail && (n.originalCreator === userEmail || !notes.find(note => note.id === n.noteId)?.isPersonal)) {
-        return { ...n, read: true }
-      }
-      return n
-    })
-    await window.kv.set('notebook-notifications', updated)
-    await loadNotifications()
+    const mine = notifications.filter(n => !n.read)
+    if (!mine.length) return
+    setNotifications(current => current.map(n => ({ ...n, read: true })))
+    setUnreadCount(0)
     toast.success(language === 'da' ? 'Alle notifikationer markeret som læst' : language === 'fi' ? 'Kaikki tiedoksi merkityt ilmoitukset' : 'All notifications marked as read')
+    try {
+      await upsertInKvArray<Notification>('notebook-notifications', mine.map(n => ({ ...n, read: true })))
+    } catch (error) {
+      console.error('Kunne ikke markere notifikationerne som laest:', error)
+      void loadNotifications()
+    }
   }
 
   const deleteNotification = async (notificationId: string) => {
-    const allNotifications = (await window.kv.get<Notification[]>('notebook-notifications')) || []
-    const updated = allNotifications.filter(n => n.id !== notificationId)
-    await window.kv.set('notebook-notifications', updated)
-    await loadNotifications()
+    const previous = notifications
+    setNotifications(current => current.filter(n => n.id !== notificationId))
+    setUnreadCount(current => Math.max(0, current - (previous.find(n => n.id === notificationId)?.read ? 0 : 1)))
+    try {
+      await removeFromKvArray<Notification>('notebook-notifications', [notificationId])
+    } catch (error) {
+      console.error('Kunne ikke slette notifikationen:', error)
+      setNotifications(previous)
+      void loadNotifications()
+    }
   }
 
   /** Parser komma-separeret tag-input til en unik, trimmet liste. */
@@ -165,6 +180,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
   }
 
   const handleCreateNote = async () => {
+    if (saveInProgress.current) return
     if (!noteTitle.trim()) {
       toast.error(t.notebook.titleRequired)
       return
@@ -175,30 +191,43 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
     }
 
     const tags = parseTags(noteTags)
+    const creation = pendingNote.current || { id: newId('note'), createdAt: new Date().toISOString() }
+    pendingNote.current = creation
     const newNote: Note = {
-      id: `note_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+      id: creation.id,
       title: noteTitle.trim(),
       content: noteContent.trim(),
       creatorEmail: userEmail,
       creatorName: userName,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: creation.createdAt,
+      updatedAt: creation.createdAt,
       isPersonal: isCreatingPersonal,
       ...(tags.length > 0 ? { tags } : {}),
     }
 
-    const updatedNotes = await appendToKvArray('notebook-notes', [newNote])
-    setNotes(updatedNotes)
-
-    setNoteTitle('')
-    setNoteContent('')
-    setNoteTags('')
-    setShowCreateDialog(false)
-    toast.success(t.notebook.noteCreated)
+    saveInProgress.current = true
+    setSavingNote('create')
+    try {
+      await appendToKvArray('notebook-notes', [newNote])
+      pendingNote.current = null
+      setNotes(current => [...current, newNote])
+      setNoteTitle('')
+      setNoteContent('')
+      setNoteTags('')
+      setShowCreateDialog(false)
+      toast.success(t.notebook.noteCreated)
+    } catch (error) {
+      console.error('Kunne ikke oprette noten:', error)
+      toast.error(language === 'da' ? 'Noten blev ikke gemt — prøv igen' : language === 'fi' ? 'Muistiinpanoa ei tallennettu — yritä uudelleen' : 'The note was not saved — please try again')
+    } finally {
+      saveInProgress.current = false
+      setSavingNote(null)
+    }
   }
 
   const handleEditNote = async () => {
-    if (!selectedNote) return
+    if (saveInProgress.current || !selectedNote) return
+    const selectedNoteSnapshot = selectedNote
     if (!noteTitle.trim()) {
       toast.error(t.notebook.titleRequired)
       return
@@ -219,54 +248,72 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
       lastEditedByName: userName,
     }
 
-    // Atomar pr.-note-opdatering — to brugere der redigerer forskellige noter samtidig taber ikke hinandens ændringer.
-    const updatedNotes = await upsertInKvArray('notebook-notes', [updatedNote])
-    setNotes(updatedNotes)
+    saveInProgress.current = true
+    setSavingNote('edit')
+    try {
+      // Atomar pr.-note-opdatering — to brugere der redigerer forskellige noter samtidig taber ikke hinandens ændringer.
+      await upsertInKvArray('notebook-notes', [updatedNote])
+      setNotes(current => current.map(note => note.id === updatedNote.id ? updatedNote : note))
+      setNoteTitle('')
+      setNoteContent('')
+      setNoteTags('')
+      setSelectedNote(null)
+      setShowEditDialog(false)
+      toast.success(t.notebook.noteUpdated)
+    } catch (error) {
+      console.error('Kunne ikke gemme noten:', error)
+      toast.error(language === 'da' ? 'Noten blev ikke gemt — prøv igen' : language === 'fi' ? 'Muistiinpanoa ei tallennettu — yritä uudelleen' : 'The note was not saved — please try again')
+      return
+    } finally {
+      saveInProgress.current = false
+      setSavingNote(null)
+    }
 
-    if (!selectedNote.isPersonal) {
+    if (!selectedNoteSnapshot.isPersonal) {
       const notification = {
         id: newId('notification'),
         type: 'note-edited' as const,
-        noteId: selectedNote.id,
+        noteId: selectedNoteSnapshot.id,
         noteTitle: updatedNote.title,
         editedBy: userEmail,
         editedByName: userName,
-        originalCreator: selectedNote.creatorEmail,
+        originalCreator: selectedNoteSnapshot.creatorEmail,
         timestamp: new Date().toISOString(),
         read: false,
       }
+      void appendToKvArray('notebook-notifications', [notification]).catch(err => console.error('Kunne ikke sende notifikationen:', err))
 
-      await appendToKvArray('notebook-notifications', [notification])
-      
-      if (selectedNote.creatorEmail !== userEmail) {
+      if (selectedNoteSnapshot.creatorEmail !== userEmail) {
         toast.info(
-          language === 'da' 
-            ? `${userName} redigerede noten "${updatedNote.title}"` 
+          language === 'da'
+            ? `${userName} redigerede noten "${updatedNote.title}"`
             : language === 'fi' ? `${userName} muokattu huomautus "${updatedNote.title}"` : `${userName} edited the note "${updatedNote.title}"`
         )
       }
     }
-
-    setNoteTitle('')
-    setNoteContent('')
-    setNoteTags('')
-    setSelectedNote(null)
-    setShowEditDialog(false)
-    toast.success(t.notebook.noteUpdated)
   }
 
   const handleDeleteNote = async () => {
     if (!selectedNote) return
+    const doomed = selectedNote
+    const previousNotes = notes
 
-    const updatedNotes = await removeFromKvArray<Note>('notebook-notes', [selectedNote.id])
-    setNotes(updatedNotes)
-
+    setNotes(current => current.filter(note => note.id !== doomed.id))
     setSelectedNote(null)
     setShowDeleteDialog(false)
     toast.success(t.notebook.noteDeleted)
+
+    try {
+      await removeFromKvArray<Note>('notebook-notes', [doomed.id])
+    } catch (error) {
+      console.error('Kunne ikke slette noten:', error)
+      setNotes(previousNotes)
+      toast.error(language === 'da' ? 'Noten blev ikke slettet — prøv igen' : language === 'fi' ? 'Muistiinpanoa ei poistettu — yritä uudelleen' : 'The note was not deleted — please try again')
+    }
   }
 
   const openCreateDialog = (isPersonal: boolean) => {
+    pendingNote.current = null
     setIsCreatingPersonal(isPersonal)
     setNoteTitle('')
     setNoteContent('')
@@ -408,7 +455,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
         className="relative"
       >
         <Card className={cn(
-          "p-3 h-[280px] flex flex-col border-2 hover:shadow-lg hover:border-primary/40 transition-all duration-200 hover:scale-[1.02] group",
+          "p-3 h-[280px] flex flex-col hover:border-primary/40 transition-colors group",
           note.pinned && "border-primary/50 bg-primary/[0.04]"
         )}>
           <div className="flex justify-between items-start mb-1.5 gap-2 flex-shrink-0">
@@ -461,7 +508,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
                 <Button
                   variant="outline"
                   size="sm"
-                  className="gap-2 h-7 text-xs shadow-lg"
+                  className="gap-2 h-7 text-xs"
                   onClick={() => openViewDialog(note)}
                 >
                   <Eye size={12} />
@@ -525,14 +572,14 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
               variant="outline"
               size="lg"
               onClick={onNavigateBack}
-              className="bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
+              className="bg-background/90 hover:bg-background transition-colors gap-2 font-semibold px-4"
             >
               <ArrowLeft size={20} />
               {language === 'da' ? 'Tilbage til Hub' : language === 'fi' ? 'Takaisin Hubiin' : 'Back to Hub'}
             </Button>
-            <div className="flex-1 text-center">
-              <h1 className="text-2xl sm:text-3xl font-bold leading-normal bg-gradient-to-br from-primary to-accent bg-clip-text text-transparent pb-1 flex items-center gap-3 justify-center">
-                <Notebook size={32} weight="duotone" className="text-primary" />
+            <div className="flex-1">
+              <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground flex items-center gap-2.5">
+                <Notebook size={26} weight="duotone" className="text-primary" />
                 {t.notebook.title}
               </h1>
             </div>
@@ -540,7 +587,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
               onClick={() => setShowNotifications(true)}
               variant="outline"
               size="lg"
-              className="relative shadow-lg"
+              className="relative"
             >
               <Bell size={20} />
               {unreadCount > 0 && (
@@ -573,7 +620,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
             <Button
               onClick={() => openCreateDialog(activeTab === 'personal')}
               size="lg"
-              className="bg-gradient-to-r from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)] hover:from-[oklch(0.38_0.19_272)] hover:to-[oklch(0.48_0.15_264)] text-white shadow-lg gap-2"
+              className="gap-2"
             >
               <Plus size={20} weight="bold" />
               {t.notebook.addNote}
@@ -657,7 +704,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
             </Tabs>
         </div>
 
-      <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+      <Dialog open={showCreateDialog} onOpenChange={(open) => { if (!saveInProgress.current) setShowCreateDialog(open) }}>
         <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
           <DialogHeader className="shrink-0">
             <DialogTitle>{t.notebook.addNote}</DialogTitle>
@@ -670,14 +717,16 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
               <Input
                 placeholder={t.notebook.enterTitle}
                 value={noteTitle}
-                onChange={(e) => setNoteTitle(e.target.value)}
+                disabled={savingNote !== null}
+                onChange={(e) => { pendingNote.current = null; setNoteTitle(e.target.value) }}
               />
             </div>
             <div>
               <Textarea
                 placeholder={t.notebook.enterContent}
                 value={noteContent}
-                onChange={(e) => setNoteContent(e.target.value)}
+                disabled={savingNote !== null}
+                onChange={(e) => { pendingNote.current = null; setNoteContent(e.target.value) }}
                 rows={12}
                 className="resize-none"
               />
@@ -686,22 +735,23 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
               <Input
                 placeholder={language === 'da' ? 'Tags adskilt med komma — fx procedure, onboarding' : language === 'fi' ? 'Tunnisteet erotettu pilkulla ' : 'Tags separated by comma — e.g. procedure, onboarding'}
                 value={noteTags}
-                onChange={(e) => setNoteTags(e.target.value)}
+                disabled={savingNote !== null}
+                onChange={(e) => { pendingNote.current = null; setNoteTags(e.target.value) }}
               />
             </div>
           </div>
           <DialogFooter className="shrink-0">
-            <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
+            <Button variant="outline" disabled={savingNote !== null} onClick={() => setShowCreateDialog(false)}>
               {t.notebook.cancel}
             </Button>
-            <Button onClick={handleCreateNote}>
-              {t.notebook.create}
+            <Button onClick={handleCreateNote} loading={savingNote === 'create'}>
+              {savingNote === 'create' ? t.notebook.saving : t.notebook.create}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+      <Dialog open={showEditDialog} onOpenChange={(open) => { if (!saveInProgress.current) setShowEditDialog(open) }}>
         <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
           <DialogHeader className="shrink-0">
             <DialogTitle>{t.notebook.editNote}</DialogTitle>
@@ -711,6 +761,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
               <Input
                 placeholder={t.notebook.enterTitle}
                 value={noteTitle}
+                disabled={savingNote !== null}
                 onChange={(e) => setNoteTitle(e.target.value)}
               />
             </div>
@@ -718,6 +769,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
               <Textarea
                 placeholder={t.notebook.enterContent}
                 value={noteContent}
+                disabled={savingNote !== null}
                 onChange={(e) => setNoteContent(e.target.value)}
                 rows={12}
                 className="resize-none"
@@ -727,16 +779,17 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
               <Input
                 placeholder={language === 'da' ? 'Tags adskilt med komma — fx procedure, onboarding' : language === 'fi' ? 'Tunnisteet erotettu pilkulla ' : 'Tags separated by comma — e.g. procedure, onboarding'}
                 value={noteTags}
+                disabled={savingNote !== null}
                 onChange={(e) => setNoteTags(e.target.value)}
               />
             </div>
           </div>
           <DialogFooter className="shrink-0">
-            <Button variant="outline" onClick={() => setShowEditDialog(false)}>
+            <Button variant="outline" disabled={savingNote !== null} onClick={() => setShowEditDialog(false)}>
               {t.notebook.cancel}
             </Button>
-            <Button onClick={handleEditNote}>
-              {t.notebook.save}
+            <Button onClick={handleEditNote} loading={savingNote === 'edit'}>
+              {savingNote === 'edit' ? t.notebook.saving : t.notebook.save}
             </Button>
           </DialogFooter>
         </DialogContent>

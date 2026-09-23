@@ -103,14 +103,14 @@ export function TeamOverview({ onNavigateBack, onLogout }: TeamOverviewProps) {
     switch (role) {
       case 'creator':
         return (
-          <Badge className="bg-gradient-to-r from-accent via-primary to-accent text-white">
+          <Badge variant="secondary">
             <Crown size={14} className="mr-1" weight="fill" />
             {t.teamOverview.roleCreator}
           </Badge>
         )
       case 'manager':
         return (
-          <Badge className="bg-gradient-to-r from-primary to-accent text-white">
+          <Badge>
             <ShieldCheck size={14} className="mr-1" weight="fill" />
             {t.teamOverview.roleManager}
           </Badge>
@@ -134,11 +134,11 @@ export function TeamOverview({ onNavigateBack, onLogout }: TeamOverviewProps) {
             key={employee.id}
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="p-5 rounded-xl border-2 bg-card hover:shadow-md transition-all group"
+            className="p-5 rounded-md border bg-card hover:border-primary/40 transition-colors group"
           >
             <div className="flex items-start gap-3 mb-3">
               <div 
-                className="w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg shadow-md"
+                className="w-12 h-12 rounded-md flex items-center justify-center font-bold text-lg"
                 style={{
                   backgroundColor: employeeColor.bg,
                   color: employeeColor.text
@@ -194,7 +194,7 @@ export function TeamOverview({ onNavigateBack, onLogout }: TeamOverviewProps) {
                 variant="outline"
                 size="lg"
                 onClick={onNavigateBack}
-                className="pointer-events-auto bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
+                className="pointer-events-auto bg-background/90 hover:bg-background transition-colors gap-2 font-semibold px-4"
               >
                 <ArrowLeft size={20} />
                 {t.common.back}
@@ -204,20 +204,14 @@ export function TeamOverview({ onNavigateBack, onLogout }: TeamOverviewProps) {
         </div>
       </div>
       
-      <div className="container mx-auto px-4 sm:px-6 pt-36 pb-12 sm:pb-20 max-w-7xl relative z-10">
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mb-10 text-center"
-        >
-          <div className="flex flex-col items-center gap-6">
-            <h1 className="text-4xl sm:text-5xl font-bold leading-normal bg-gradient-to-br from-primary to-accent bg-clip-text text-transparent pb-1">
-              {t.teamOverview.title}
-            </h1>
-          </div>
-        </motion.div>
+      <div className="container mx-auto px-4 sm:px-6 pt-28 pb-12 sm:pb-20 max-w-7xl relative z-10">
+        <header className="mb-6 border-b pb-4">
+          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground">
+            {t.teamOverview.title}
+          </h1>
+        </header>
 
-        <Card className="p-6 border-2">
+        <Card className="p-6">
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-2">
               <UserCircle size={28} className="text-primary" weight="duotone" />
@@ -251,7 +245,7 @@ export function TeamOverview({ onNavigateBack, onLogout }: TeamOverviewProps) {
         </Card>
 
         {(isLoadingOtherTeams || otherTeams.length > 0) && (
-          <Card className="p-6 border-2 mt-6">
+          <Card className="p-6 mt-6">
             <div className="flex items-center gap-2 mb-6">
               <Buildings size={28} className="text-primary" weight="duotone" />
               <h2 className="text-2xl font-bold">{t.teamOverview.otherTeamsTitle}</h2>

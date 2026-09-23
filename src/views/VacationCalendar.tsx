@@ -112,8 +112,19 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
     const vacation = (vacations || []).find(v => v.id === id)
     if (!vacation) return
 
-    await removeFromKvArray('vacation-entries', [id])
+    // Fjern med det samme i billedet og kvitter; skrivning og mails i baggrunden.
+    const previousVacations = vacations || []
+    setVacations((current) => (current || []).filter(v => v.id !== id))
     toast.success('Ferie anmodning fjernet')
+
+    try {
+      await removeFromKvArray('vacation-entries', [id])
+    } catch (error) {
+      console.error('Error removing vacation:', error)
+      setVacations(previousVacations)
+      toast.error('Kunne ikke fjerne ferie anmodningen')
+      return
+    }
 
     try {
       const emailContent = vacationCancelledByEmployeeEmail(vacation.userEmail, vacation.startDate, vacation.endDate)
@@ -175,16 +186,6 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
     try {
       const emailContent = vacationApprovedEmail(vacation.startDate, vacation.endDate, userEmail, vacation.notes)
 
-      const emails = (await window.kv.get<Array<{
-        id: string
-        from: string
-        to: string
-        subject: string
-        message: string
-        timestamp: number
-        read: boolean
-      }>>('emails')) || []
-
       const newEmail = {
         id: Date.now().toString() + '-approval',
         from: userEmail,
@@ -195,7 +196,9 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
         read: false
       }
 
-      await window.kv.set('emails', [...emails, newEmail])
+      // Atomart append i stedet for at laese og skrive hele arrayet: hurtigere,
+      // og to samtidige godkendelser taber ikke hinandens mail.
+      await appendToKvArray('emails', [newEmail])
 
       const notification = {
         id: Date.now().toString() + '-notif',
@@ -207,8 +210,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
         read: false
       }
 
-      const notifications = (await window.kv.get<any[]>('email-notifications')) || []
-      await window.kv.set('email-notifications', [...notifications, notification])
+      await appendToKvArray('email-notifications', [notification])
     } catch (emailError) {
       console.error('Error sending vacation approval email:', emailError)
       toast.error('Kunne ikke sende email notifikation')
@@ -231,16 +233,6 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
     try {
       const emailContent = vacationRejectedEmail(vacation.startDate, vacation.endDate, userEmail, vacation.notes)
 
-      const emails = (await window.kv.get<Array<{
-        id: string
-        from: string
-        to: string
-        subject: string
-        message: string
-        timestamp: number
-        read: boolean
-      }>>('emails')) || []
-
       const newEmail = {
         id: Date.now().toString() + '-rejection',
         from: userEmail,
@@ -251,7 +243,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
         read: false
       }
 
-      await window.kv.set('emails', [...emails, newEmail])
+      await appendToKvArray('emails', [newEmail])
 
       const notification = {
         id: Date.now().toString() + '-notif-reject',
@@ -263,8 +255,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
         read: false
       }
 
-      const notifications = (await window.kv.get<any[]>('email-notifications')) || []
-      await window.kv.set('email-notifications', [...notifications, notification])
+      await appendToKvArray('email-notifications', [notification])
     } catch (emailError) {
       console.error('Error sending vacation rejection email:', emailError)
       toast.error('Kunne ikke sende email notifikation')
@@ -496,7 +487,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
                 variant="outline"
                 size="lg"
                 onClick={onNavigateBack}
-                className="pointer-events-auto bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
+                className="pointer-events-auto bg-background/90 hover:bg-background transition-colors gap-2 font-semibold px-4"
               >
                 <ArrowLeft size={20} />
                 {t.common?.back || 'Tilbage'}
@@ -506,24 +497,17 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
         </div>
       </div>
 
-      <div className="container mx-auto px-4 sm:px-6 lg:px-8 pt-36 pb-12 sm:pb-20 max-w-7xl relative z-10">
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6 }}
-          className="mb-10 text-center"
-        >
-          <div className="flex flex-col items-center gap-4">
-            <h1 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold leading-normal bg-gradient-to-br from-primary to-accent bg-clip-text text-transparent pb-1">
-              {language === 'da' ? 'Kalender' : language === 'fi' ? 'Kalenteri' : 'Calendar'}
-            </h1>
-            {isManager && (
-              <Badge className="bg-gradient-to-r from-primary to-accent text-white text-xs sm:text-sm">
-                Manager
-              </Badge>
-            )}
-          </div>
-        </motion.div>
+      <div className="container mx-auto px-4 sm:px-6 lg:px-8 pt-28 pb-12 sm:pb-20 max-w-7xl relative z-10">
+        <header className="mb-6 flex flex-wrap items-center gap-3 border-b pb-4">
+          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground">
+            {language === 'da' ? 'Kalender' : language === 'fi' ? 'Kalenteri' : 'Calendar'}
+          </h1>
+          {isManager && (
+            <Badge variant="secondary" className="text-xs">
+              Manager
+            </Badge>
+          )}
+        </header>
 
         <motion.div
           initial={{ opacity: 0 }}
@@ -531,7 +515,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
           transition={{ delay: 0.2, duration: 0.6 }}
           className="space-y-6"
         >
-          <Card className="p-6 border-2">
+          <Card className="p-6">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
               <div className="flex items-center gap-4 flex-wrap">
                 <div className="flex items-center gap-3">
@@ -634,7 +618,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
                   key={day}
                   className={cn(
                     "text-center font-semibold text-sm py-2",
-                    index >= 5 ? "text-muted-foreground/60" : "text-muted-foreground"
+                    index >= 5 ? "text-muted-foreground" : "text-foreground"
                   )}
                 >
                   {day}
@@ -768,7 +752,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
           </Card>
 
           {isManager && pendingRequests.length > 0 && (
-            <Card className="p-6 border-2">
+            <Card className="p-6">
               <div className="flex items-center gap-2 mb-4">
                 <h3 className="text-xl font-bold">Afventende Anmodninger</h3>
                 <Badge className="bg-amber-500/20 text-amber-700 border-amber-500/30">
@@ -783,7 +767,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
             </Card>
           )}
 
-          <Card className="p-6 border-2">
+          <Card className="p-6">
             <Tabs defaultValue="all" className="w-full">
               <TabsList className="grid w-full grid-cols-3">
                 <TabsTrigger value="all"><AutoText text={`Alle (${myVacations.length})`} /></TabsTrigger>
@@ -836,7 +820,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
           </Card>
 
           {allTeamMembers.length > 1 && (
-            <Card className="p-6 border-2">
+            <Card className="p-6">
               <h3 className="text-xl font-bold mb-4"><AutoText text="Alle Team Medlemmer" /></h3>
               <div className="flex flex-wrap gap-3">
                 {allTeamMembers.map((member) => (

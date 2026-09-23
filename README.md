@@ -216,7 +216,8 @@ Videnbase med kategoriserede procedurer og dokumentation.
 
 - **Gennemse guides** i kort med titel, kategori (farvekodet), tags, opdateringsdato og indholds-preview.
 - **Søg** i titel, indhold og tags samt **filtrér** på kategori (Procedurer, Teknisk, HR, Sikkerhed, Generel + egne).
-- **Vis fuld guide** i visning med bevaret formatering, og download vedhæftet Word-dokument (.docx).
+- **Vis fuld guide** i appen. For Word-guides med originalt layout vises en sideopdelt PDF af den uploadede DOCX direkte i guiden; DOCX kan stadig hentes og redigeres i Word.
+- **Import af originalt Word-layout** bruger lokal LibreOffice til at danne PDF ved indsendelse til review. Installer LibreOffice på forfatterens Windows-pc (fx `winget install --id TheDocumentFoundation.LibreOffice --exact`) eller anbring den portable installation i `%LOCALAPPDATA%\TCD Hub\libreoffice`. Læsere behøver ikke LibreOffice, når PDF'en er gemt. Ældre guides uden PDF kan vises via lokal konvertering ved første åbning på en pc med LibreOffice.
 - **AI-chatassistent** — stil spørgsmål og få svar baseret på de gemte guides, med henvisning til relevante guides.
 - **Managere/admins:** opret, rediger og slet guides (titel, kategori, indhold, tags, Word-upload) samt administrere kategorier.
 

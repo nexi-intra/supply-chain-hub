@@ -2,13 +2,20 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { SquaresFour, Trophy, X, Crown, Medal, Star, ArrowLeft, ArrowRight, ArrowClockwise, ArrowLineDown, CaretDown } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { useKV } from '@/hooks/useKV'
+import { toast } from 'sonner'
 import { useLanguage } from '@/contexts/LanguageContext'
-import { upsertInKvArray } from '@/lib/kvArrays'
+import { useLeaderboard } from '@/hooks/useLeaderboard'
+import { useAutoPauseOnBlur } from '@/hooks/useAutoPauseOnBlur'
+import { PauseOverlay } from '@/components/PauseOverlay'
+import { ArcadeReadyOverlay } from '@/components/ArcadeReadyOverlay'
+import { recordGamePlay, scoreSaveFailedMessage, submitHighscore } from '@/lib/leaderboards'
 import { useCrossTeamLeaderboard, mergeFlatLeaderboard } from '@/hooks/useCrossTeamLeaderboard'
 
+const LEADERBOARD_KEY = 'tetris-global-leaderboard'
+const PLAY_COUNTS_KEY = 'tetris-play-counts'
+
 type PieceType = 'I' | 'O' | 'T' | 'S' | 'Z' | 'J' | 'L'
-type GameState = 'menu' | 'playing' | 'ended'
+type GameState = 'menu' | 'ready' | 'playing' | 'paused' | 'ended'
 type Cell = string | null
 
 interface ActivePiece {
@@ -134,52 +141,13 @@ function getStage(lines: number, elapsedMs: number): number {
   return Math.floor(lines / 8) + Math.floor(elapsedMs / 25000)
 }
 
-// Migrerer gammelt leaderboard (opdelt pr. sværhedsgrad) til ét samlet highscores-array.
-// Sørger også for `id` (bruges af den atomare kv:update-upsert) og at listen altid
-// er sorteret højest score først, uanset rækkefølgen data blev skrevet i.
-function migrateLeaderboard(data: unknown): LeaderboardEntry[] {
-  if (Array.isArray(data)) {
-    return (data as LeaderboardEntry[])
-      .map((entry) => ({ ...entry, id: entry.id || entry.email }))
-      .sort((a, b) => b.score - a.score)
-  }
-  if (!data || typeof data !== 'object') return []
-  const combined = new Map<string, LeaderboardEntry>()
-  for (const diff of ['easy', 'medium', 'hard', 'expert']) {
-    const arr = (data as Record<string, LeaderboardEntry[]>)[diff] || []
-    for (const entry of arr) {
-      const existing = combined.get(entry.email)
-      if (!existing || entry.score > existing.score) {
-        combined.set(entry.email, { id: entry.email, email: entry.email, score: entry.score, timestamp: entry.timestamp })
-      }
-    }
-  }
-  return Array.from(combined.values()).sort((a, b) => b.score - a.score).slice(0, 10)
-}
-
-// Migrerer gamle play-counts (opdelt pr. sværhedsgrad) til ét samlet antal spil pr. bruger.
-function migratePlayCounts(data: unknown): Record<string, { all: number }> {
-  if (!data || typeof data !== 'object') return {}
-  const result: Record<string, { all: number }> = {}
-  for (const [email, counts] of Object.entries(data as Record<string, unknown>)) {
-    if (counts && typeof counts === 'object' && 'all' in (counts as Record<string, unknown>)) {
-      result[email] = { all: (counts as { all: number }).all || 0 }
-      continue
-    }
-    const c = counts as Record<string, number> | undefined
-    const total = ['easy', 'medium', 'hard', 'expert'].reduce((sum, d) => sum + (c?.[d] || 0), 0)
-    result[email] = { all: total }
-  }
-  return result
-}
-
 export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
   const { language } = useLanguage()
   const [gameState, setGameState] = useState<GameState>('menu')
   const [score, setScore] = useState(0)
   const [lines, setLines] = useState(0)
   const [users, setUsers] = useState<User[]>([])
-  const [globalLeaderboard, setGlobalLeaderboard] = useKV<GlobalLeaderboard>('tetris-global-leaderboard', [])
+  const { leaderboard: safeLeaderboard, refresh: refreshLeaderboard } = useLeaderboard(LEADERBOARD_KEY)
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const nextCanvasRef = useRef<HTMLCanvasElement>(null)
@@ -210,28 +178,13 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
     loadUsers()
   }, [])
 
-  // Éngangs-migrering: gammelt leaderboard opdelt pr. sværhedsgrad -> ét samlet array.
-  // safeLeaderboard bruges til ALT render/logik, så en legacy-formet værdi fra
-  // KV (før migreringen når at skrive tilbage) aldrig får kaldt array-metoder
-  // på et almindeligt objekt og crasher komponenten.
-  const safeLeaderboard = useMemo(() => migrateLeaderboard(globalLeaderboard), [globalLeaderboard])
-
   // Fase 8/9 "Highscores på tværs": fletter alle andre teams' samme leaderboard-nøgle ind,
   // sorteret samlet efter score. Skriver ALDRIG til andre teams' data, kun læser til visning.
-  const { otherTeams } = useCrossTeamLeaderboard<GlobalLeaderboard>('tetris-global-leaderboard')
+  const { otherTeams } = useCrossTeamLeaderboard<GlobalLeaderboard>(LEADERBOARD_KEY)
   const crossTeamLeaderboard = useMemo(() => {
     const ownUsers = Object.fromEntries(users.map(u => [u.email, { fullName: u.fullName }]))
     return mergeFlatLeaderboard(safeLeaderboard, ownUsers, otherTeams)
   }, [safeLeaderboard, users, otherTeams])
-
-  useEffect(() => {
-    if (!globalLeaderboard) return
-    const needsMigration = !Array.isArray(globalLeaderboard) || globalLeaderboard.some((entry) => !entry.id)
-    if (needsMigration) {
-      setGlobalLeaderboard(safeLeaderboard)
-      window.kv.set('tetris-global-leaderboard', safeLeaderboard)
-    }
-  }, [globalLeaderboard, safeLeaderboard, setGlobalLeaderboard])
 
   const getDisplayName = (email: string) => {
     const user = users.find(u => u.email === email)
@@ -343,29 +296,19 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
     if (!userEmail) return
 
     try {
-      const stored = await window.kv.get<unknown>('tetris-global-leaderboard')
-      const board = migrateLeaderboard(stored)
-      const existing = board.find(entry => entry.email === userEmail)
-
-      if (!existing || finalScore > existing.score) {
-        const updated = await upsertInKvArray<LeaderboardEntry>('tetris-global-leaderboard', [
-          { id: userEmail, email: userEmail, score: finalScore, timestamp: Date.now() },
-        ])
-        setGlobalLeaderboard(updated)
-      }
+      await submitHighscore(LEADERBOARD_KEY, { email: userEmail, score: finalScore, timestamp: Date.now() })
+      refreshLeaderboard()
     } catch (error) {
       console.error('Error saving Tetris score:', error)
+      toast.error(scoreSaveFailedMessage(language))
     }
 
     try {
-      const stored = await window.kv.get<unknown>('tetris-play-counts')
-      const gameStats = migratePlayCounts(stored)
-      gameStats[userEmail] = { all: (gameStats[userEmail]?.all || 0) + 1 }
-      await window.kv.set('tetris-play-counts', gameStats)
+      await recordGamePlay(PLAY_COUNTS_KEY, userEmail)
     } catch (error) {
       console.error('Error tracking Tetris play count:', error)
     }
-  }, [userEmail, setGlobalLeaderboard])
+  }, [userEmail, refreshLeaderboard, language])
 
 
   const draw = useCallback(() => {
@@ -403,7 +346,7 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
     }
 
     const piece = currentPieceRef.current
-    if (piece && gameStateRef.current === 'playing') {
+    if (piece && (gameStateRef.current === 'playing' || gameStateRef.current === 'ready')) {
       const matrix = TETROMINOES[piece.type].rotations[piece.rotation]
 
       let ghostY = piece.y
@@ -542,14 +485,28 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
     softDropRef.current = false
     setScore(0)
     setLines(0)
-    gameStateRef.current = 'playing'
-    setGameState('playing')
+    gameStateRef.current = 'ready'
+    setGameState('ready')
     spawnPiece()
-    draw()
 
     if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current)
+    animationFrameRef.current = null
+  }
+
+  useEffect(() => {
+    if (gameState === 'ready') {
+      draw()
+      drawNextPiece()
+    }
+  }, [gameState, draw, drawNextPiece])
+
+  const launchGame = () => {
+    if (gameStateRef.current !== 'ready') return
+    gameStateRef.current = 'playing'
+    setGameState('playing')
     animationFrameRef.current = requestAnimationFrame((timestamp) => {
       startTimeRef.current = timestamp
+      lastTimeRef.current = timestamp
       step(timestamp)
     })
   }
@@ -563,11 +520,60 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
     }
   }
 
+  const pausedAtRef = useRef(0)
+
+  const pauseGame = useCallback(() => {
+    if (gameStateRef.current !== 'playing') return
+    gameStateRef.current = 'paused'
+    setGameState('paused')
+    pausedAtRef.current = performance.now()
+    softDropRef.current = false
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current)
+      animationFrameRef.current = null
+    }
+  }, [])
+
+  const resumeGame = useCallback(() => {
+    if (gameStateRef.current !== 'paused') return
+    gameStateRef.current = 'playing'
+    setGameState('playing')
+    animationFrameRef.current = requestAnimationFrame((timestamp) => {
+      // Pausen må hverken tælle med i spilletiden (som styrer farten) eller
+      // give ét enormt tidsspring der lader brikken falde flere felter.
+      startTimeRef.current += timestamp - pausedAtRef.current
+      lastTimeRef.current = timestamp
+      dropAccRef.current = 0
+      step(timestamp)
+    })
+  }, [step])
+
+  useAutoPauseOnBlur(gameState === 'playing', pauseGame)
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (gameStateRef.current === 'ready') {
+        if (e.code === 'Space') {
+          e.preventDefault()
+          if (!e.repeat) launchGame()
+        }
+        return
+      }
+      if (gameStateRef.current === 'paused') {
+        if (e.code === 'KeyP' || e.code === 'Space' || e.code === 'Enter') {
+          e.preventDefault()
+          resumeGame()
+        }
+        return
+      }
       if (gameStateRef.current !== 'playing') return
       if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space'].includes(e.code)) {
         e.preventDefault()
+      }
+      if (e.code === 'KeyP') {
+        e.preventDefault()
+        pauseGame()
+        return
       }
       switch (e.code) {
         case 'ArrowLeft':
@@ -602,20 +608,19 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
       window.removeEventListener('keyup', handleKeyUp)
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current)
-      }
-    }
-  }, [moveLeft, moveRight, rotatePiece, softDropStep, hardDrop])
+      }    }
+  }, [moveLeft, moveRight, rotatePiece, softDropStep, hardDrop, pauseGame, resumeGame, launchGame])
 
   return (
     <div className="space-y-6">
-      <Card className="p-6 bg-gradient-to-br from-card via-primary/5 to-accent/5 border-2">
+      <Card className="arcade-menu p-6">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
-            <div className="p-3 rounded-full bg-gradient-to-br from-primary to-accent shadow-lg">
+            <div className="p-3 rounded-full bg-primary">
               <SquaresFour size={32} weight="duotone" className="text-primary-foreground" />
             </div>
             <div>
-              <h2 className="text-2xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+              <h2 className="text-2xl font-semibold text-foreground">
                 Tetris
               </h2>
               <p className="text-sm text-muted-foreground">
@@ -626,7 +631,7 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
             </div>
           </div>
           <div className="flex items-center gap-4">
-            <div className="text-center p-4 rounded-lg bg-gradient-to-br from-accent/10 to-primary/10 border border-accent/20">
+            <div className="text-center p-4 rounded-md bg-secondary border">
               <div className="text-sm text-muted-foreground font-semibold">
                 {language === 'da' ? 'Højeste score' : language === 'fi' ? 'Korkeat tulokset' : 'High Score'}
               </div>
@@ -646,7 +651,7 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
                   ? 'Piletaster til at flytte/rotere, mellemrum for hurtigt fald. Spillet bliver gradvist sværere jo længere du spiller.'
                   : language === 'fi' ? 'Nuolinäppäimiä liikkua / pyörittää, tilaa kova pudota. Peli vaikeutuu koko ajan.' : 'Arrow keys to move/rotate, space for hard drop. The game gets progressively harder the longer you play.'}
               </p>
-              <Button onClick={startGame} size="lg" className="px-8 bg-gradient-to-r from-primary to-accent hover:opacity-90">
+              <Button onClick={startGame} size="lg" className="px-8">
                 {language === 'da' ? 'Start spil' : language === 'fi' ? 'Käynnistä peli' : 'Start Game'}
               </Button>
             </div>
@@ -654,31 +659,31 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
         )}
       </Card>
 
-      {gameState === 'playing' && (
-        <Card className="p-0 overflow-hidden border-2 border-primary/30 shadow-2xl">
-          <div className="relative bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 p-6 border-b-2 border-primary/30">
-            <div className="absolute inset-0 bg-gradient-to-r from-primary/5 via-accent/10 to-primary/5" />
+      {(gameState === 'ready' || gameState === 'playing' || gameState === 'paused') && (
+        <Card className="p-0 overflow-hidden">
+          <div className="relative bg-slate-900 p-6 border-b border-slate-700">
+            <div className="hidden" />
             <div className="relative flex items-center justify-between flex-wrap gap-4">
               <div className="flex items-center gap-6 flex-wrap">
-                <div className="relative px-5 py-3 rounded-xl bg-gradient-to-br from-primary/20 to-accent/30 border-2 border-primary/40 backdrop-blur-sm">
-                  <div className="text-[10px] text-primary-foreground/70 uppercase tracking-widest font-bold mb-1 flex items-center gap-1">
+                <div className="relative px-5 py-3 rounded-md bg-white/10 border border-white/20">
+                  <div className="text-[11px] text-primary-foreground/70 font-semibold mb-1 flex items-center gap-1">
                     <Trophy size={12} weight="fill" />
                     {language === 'da' ? 'Point' : language === 'fi' ? 'Pistemäärä' : 'Score'}
                   </div>
-                  <div className="text-3xl font-black bg-gradient-to-br from-white to-primary-foreground bg-clip-text text-transparent drop-shadow-lg">
+                  <div className="text-3xl font-bold text-white">
                     {score}
                   </div>
                 </div>
-                <div className="relative px-5 py-3 rounded-xl bg-gradient-to-br from-primary/20 to-accent/20 border-2 border-primary/40 backdrop-blur-sm">
-                  <div className="text-[10px] text-primary-foreground/70 uppercase tracking-widest font-bold mb-1">
+                <div className="relative px-5 py-3 rounded-md bg-white/10 border border-white/20">
+                  <div className="text-[11px] text-primary-foreground/70 font-semibold mb-1">
                     {language === 'da' ? 'Linjer' : language === 'fi' ? 'Rivit' : 'Lines'}
                   </div>
-                  <div className="text-3xl font-black text-white drop-shadow-lg">
+                  <div className="text-3xl font-bold text-white">
                     {lines}
                   </div>
                 </div>
-                <div className="px-3 py-2 rounded-xl bg-slate-950/60 border-2 border-primary/30">
-                  <div className="text-[10px] text-primary-foreground/70 uppercase tracking-widest font-bold mb-1 text-center">
+                <div className="px-3 py-2 rounded-md bg-slate-950/60 border border-white/15">
+                  <div className="text-[11px] text-primary-foreground/70 font-semibold mb-1 text-center">
                     {language === 'da' ? 'Næste' : language === 'fi' ? 'Seuraava' : 'Next'}
                   </div>
                   <canvas ref={nextCanvasRef} width={80} height={80} className="block" />
@@ -689,7 +694,7 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
                 onClick={quitGame}
                 variant="destructive"
                 size="lg"
-                className="shadow-xl hover:shadow-2xl transition-shadow font-bold"
+                className="font-bold"
               >
                 <X size={20} weight="bold" className="mr-2" />
                 {language === 'da' ? 'Stop' : language === 'fi' ? 'Lopeta' : 'Quit'}
@@ -698,13 +703,17 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
           </div>
 
           <div className="flex flex-col items-center gap-4 bg-slate-950 py-6">
-            <canvas
-              ref={canvasRef}
-              width={BOARD_WIDTH}
-              height={BOARD_HEIGHT}
-              className="rounded-lg shadow-2xl border-2 border-primary/20"
-              style={{ maxWidth: '100%', height: 'auto' }}
-            />
+            <div className="relative">
+              <canvas
+                ref={canvasRef}
+                width={BOARD_WIDTH}
+                height={BOARD_HEIGHT}
+                className="rounded-md border border-white/15"
+                style={{ maxWidth: '100%', height: 'auto' }}
+              />
+              {gameState === 'ready' && <ArcadeReadyOverlay onStart={launchGame} />}
+              {gameState === 'paused' && <PauseOverlay onResume={resumeGame} />}
+            </div>
 
             <div className="flex items-center gap-2">
               <Button variant="outline" size="icon" onClick={moveLeft} className="bg-background/80">
@@ -728,8 +737,8 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
       )}
 
       {gameState === 'ended' && (
-        <Card className="p-6 text-center bg-gradient-to-br from-primary/10 via-accent/10 to-background border-2 border-primary/20">
-          <h3 className="text-2xl font-bold mb-2 bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+        <Card className="p-6 text-center">
+          <h3 className="text-2xl font-semibold mb-2 text-foreground">
             {language === 'da' ? 'Spil slut!' : language === 'fi' ? 'Peli loppui!' : 'Game Over!'}
           </h3>
           <div className="space-y-4">
@@ -737,7 +746,7 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
               <p className="text-muted-foreground">
                 {language === 'da' ? 'Din sidste score' : language === 'fi' ? 'Lopputulos' : 'Your final score'}
               </p>
-              <p className="text-4xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+              <p className="text-4xl font-semibold text-foreground">
                 {score}
               </p>
               <p className="text-sm text-muted-foreground mt-1">
@@ -752,7 +761,7 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
             </p>
           )}
           <div className="flex items-center justify-center gap-3 mt-6">
-            <Button onClick={startGame} size="lg" className="bg-gradient-to-r from-primary to-accent hover:opacity-90">
+            <Button onClick={startGame} size="lg" className="">
               {language === 'da' ? 'Prøv igen' : language === 'fi' ? 'Toista' : 'Play Again'}
             </Button>
             <Button onClick={() => setGameState('menu')} variant="outline" size="lg">
@@ -762,13 +771,13 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
         </Card>
       )}
 
-      <Card className="p-6 bg-gradient-to-br from-accent/5 via-primary/5 to-card border-2 border-accent/20">
+      <Card className="arcade-leaderboard p-6">
         <div className="flex items-center gap-3 mb-6">
-          <div className="p-3 rounded-full bg-gradient-to-br from-accent to-primary shadow-lg">
+          <div className="p-3 rounded-full bg-primary">
             <Crown size={28} weight="duotone" className="text-accent-foreground" />
           </div>
           <div>
-            <h3 className="text-xl font-bold bg-gradient-to-r from-accent to-primary bg-clip-text text-transparent">
+            <h3 className="text-xl font-semibold text-foreground">
               {language === 'da' ? 'Global resultattavle' : language === 'fi' ? 'Maailmanlaajuinen Leaderboard' : 'Global Leaderboard'}
             </h3>
             <p className="text-sm text-muted-foreground">
@@ -785,7 +794,7 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
             const userEntry = userRank ? leaderboard[userIndex] : undefined
 
             return (
-              <div className="p-4 rounded-lg border-2 border-border bg-gradient-to-br from-card to-muted/20">
+              <div className="arcade-score-column p-4 rounded-md border bg-card">
                 {leaderboard.length > 0 ? (
                   <div className="space-y-2">
                     {leaderboard.slice(0, 10).map((entry, index) => {

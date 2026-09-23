@@ -511,6 +511,10 @@
     "available": "saatavilla",
     "importing": "Tuodaan...",
     "importWordGuide": "Tuo Word-opas",
+    "importModeTitle": "Valitse Word-muoto",
+    "importModeDescription": "Vaiheita voi muokata Hubissa. Säilytä alkuperäinen, jos taulukot ja sivuasettelu on pidettävä tarkkoina Wordissa.",
+    "importEditable": "Muunna muokattaviksi vaiheiksi",
+    "importOriginal": "Säilytä alkuperäinen Word-asettelu",
     "newGuide": "Uusi opas",
     "searchPlaceholder": "Etsi oppaita...",
     "needsReview": "Tarve tarkistaa",
@@ -595,10 +599,20 @@
     "preview": "Esikatselu",
     "untitledPreview": "Nimetön (esikatselu)",
     "removeImage": "Poista kuva",
+    "rotateImage": "Kierrä kuvaa 90 astetta",
+    "rotateImageFailed": "Kuvan kierto epäonnistui",
+    "wordFileRequired": "Liitä Word-tiedosto alkuperäisen asettelun säilyttämiseksi",
+    "originalWordLabel": "Alkuperäinen Word-asiakirja",
+    "downloadForWord": "Lataa Wordiin",
+    "openInWord": "Avaa kopio Wordissa",
+    "replaceWordFile": "Lähetä muokattu DOCX",
+    "wordDownloadFailed": "Word-tiedoston lataus epäonnistui",
+    "onlyDocxAllowed": "Valitse DOCX-tiedosto",
+    "editInWordHint": "Muokkaa Wordissa, tallenna paikallisesti ja lähetä muokattu DOCX tähän. HTML-esikatselu ei ole sama kuin Wordissa.",
     "onlyImagesAllowed": "Vain kuvia voidaan lisätä tähän",
     "uploadImageFailed": "Levykuvaa ei voitu ladata",
     "uploading": "Lähetetään...",
-    "dropImagesHint": "Vedä kuvia tästä tai napsauta",
+    "dropImagesHint": "Vedä kuva tähän, napsauta tai liitä Ctrl+V:llä",
     "restoredFromVersionPrefix": "Palautettu versiosta",
     "versionRestoredPrefix": "Versio",
     "versionRestoredSuffix": "ennallistaa luoda uuden version",
@@ -698,7 +712,11 @@
     "downloadWordDocument": "Lataa Word-asiakirja",
     "extraNotes": "Lisähuomautuksia:",
     "editableViewTab": "Muokattava näkymä",
-    "originalFormatTab": "Alkuperäinen muotoilu",
+    "originalFormatTab": "Yksinkertaistettu esikatselu",
+    "originalFileTab": "Alkuperäinen DOCX",
+    "exactLayoutHint": "Avaa alkuperäinen DOCX Wordissa nähdäksesi sivut, taulukot ja kuvat oikein. Muokkaa kopiota ja lataa muokattu tiedosto uutena versiona.",
+    "openInWord": "Avaa kopio Wordissa",
+    "simplifiedPreviewHint": "Yksinkertaistettu näkymä: kuvien, sivujen ja tekstin sijainti voi poiketa alkuperäisestä. Avaa DOCX Wordissa nähdäksesi oikean asettelun.",
     "loadingOriginalFormat": "Ladataan alkuperäistä muotoilua...",
     "originalFormatFailed": "Alkuperäinen muotoilu ei voitu ladata"
   },
@@ -984,141 +1002,6 @@
     "offlineWorkingLocally": "Offline",
     "pendingSuffix": "vireillä"
   },
-  "themeBuilder": {
-    "previewActivated": "Esikatselutila aktivoitu",
-    "previewDeactivated": "Esikatselutila pois käytöstä",
-    "enterThemeName": "Anna teeman nimi",
-    "themeSavedPrefix": "Teema",
-    "themeSavedSuffix": "tallennettu onnistuneesti",
-    "appliedThemePrefix": "Sovellettu teema:",
-    "themeDeleted": "Teema poistettu",
-    "loadedPresetPrefix": "Ladattu:",
-    "themeExported": "Teema viety",
-    "importedThemePrefix": "Tuotu teema:",
-    "invalidThemeFile": "Virheellinen teematiedosto",
-    "appliedDefaultTheme": "Sovellettu oletusteema",
-    "title": "Teema Rakentaja",
-    "subtitle": "Luo ja muokkaa omia väriohjelmia",
-    "exitPreview": "Poistumisen esikatselu",
-    "preview": "Esikatselu",
-    "createCustomTheme": "Luo oma Teema",
-    "designDescription": "Suunnittele täydellinen väripaletti",
-    "themeNameLabel": "Teemanimi",
-    "themeNamePlaceholder": "Mahtava teemani",
-    "tabs": {
-      "main": "Päävärit",
-      "action": "Toimintavärit",
-      "ui": "Käyttöliittymä",
-      "advanced": "Lisäasetukset"
-    },
-    "colors": {
-      "background": {
-        "label": "Tausta",
-        "description": "Etusivun tausta"
-      },
-      "foreground": {
-        "label": "Tulosaineisto",
-        "description": "Ensisijainen tekstin väri"
-      },
-      "card": {
-        "label": "Kortin tausta",
-        "description": "Kortin ja säiliön tausta"
-      },
-      "cardForeground": {
-        "label": "Kortin teksti",
-        "description": "Korteilla oleva teksti"
-      },
-      "primary": {
-        "label": "Ensisijainen",
-        "description": "Päämerkki/toimintaväri"
-      },
-      "primaryForeground": {
-        "label": "Primaariteksti",
-        "description": "Primaarivärin teksti"
-      },
-      "secondary": {
-        "label": "Toissijainen",
-        "description": "Tuetaan toimintoväriä"
-      },
-      "secondaryForeground": {
-        "label": "Toissijainen teksti",
-        "description": "Teksti toissijaisella värillä"
-      },
-      "accent": {
-        "label": "Aksentti",
-        "description": "Korosta ja korosta väriä"
-      },
-      "accentForeground": {
-        "label": "Aksentti",
-        "description": "Teksti korostuksen värille"
-      },
-      "muted": {
-        "label": "Mutoitu tausta",
-        "description": "Tausta-alueet"
-      },
-      "mutedForeground": {
-        "label": "Mutattu teksti",
-        "description": "Hylätty teksti"
-      },
-      "border": {
-        "label": "Raja",
-        "description": "Rajat ja jakajat"
-      },
-      "input": {
-        "label": "Syöttöraja",
-        "description": "Muotoile syöttörajat"
-      },
-      "ring": {
-        "label": "Keskitä rengas",
-        "description": "Painopisteindikaattorin väri"
-      },
-      "destructive": {
-        "label": "Tuhoava",
-        "description": "Varoitus/vaaralliset toimet"
-      },
-      "destructiveForeground": {
-        "label": "Tuhoava teksti",
-        "description": "Teksti tuhoisalle värille"
-      },
-      "popover": {
-        "label": "Popover- tausta",
-        "description": "Pudotus ja ponnahdusikkunan tausta"
-      },
-      "popoverForeground": {
-        "label": "Popover- teksti",
-        "description": "Teksti ponnahdusikkunoissa"
-      }
-    },
-    "borderRadiusLabel": "Border Sadius",
-    "radiusOptions": {
-      "none": "Ei mikään (Neliö)",
-      "small": "Pieni",
-      "medium": "Keskisuuri",
-      "default": "Oletus",
-      "large": "Suuri",
-      "extraLarge": "Erittäin suuri"
-    },
-    "saveTheme": "Tallenna teema",
-    "export": "Vie",
-    "import": "Tuo",
-    "previewComponentsTitle": "Esikatselukomponentit",
-    "previewComponentsDescription": "Katso miten teema näyttää eri elementtejä",
-    "primaryButton": "Ensisijainen painike",
-    "secondaryButton": "Toissijainen",
-    "outlineButton": "Suunta",
-    "destructiveButton": "Tuhoava",
-    "sampleCard": "Näytekortti",
-    "sampleCardText": "Näin kortit näyttävät teeman.",
-    "sampleInputLabel": "Näytteen syöttö",
-    "sampleInputPlaceholder": "Kirjoita jotain.",
-    "yourThemesTitle": "Sinun teemasi",
-    "yourThemesDescription": "Tallennetut omat teemat",
-    "defaultThemeName": "Oletusteema",
-    "defaultThemeDescription": "Alkuperäinen järjestelmän teema",
-    "noSavedThemes": "Ei tallennettuja teemoja vielä. Luo ensimmäinen teema!",
-    "presetThemesTitle": "Esiaseta teemat",
-    "presetThemesDescription": "Nopea aloitus näillä esiasetuksilla"
-  },
   "hub": {
     "title": "Päätteen asetukset ja keskus",
     "modules": {
@@ -1170,7 +1053,8 @@
       "homeOfficeInSupplyChain": "Etätöissä Supply Chainissa",
       "noOneOffSupplyChain": "Kukaan Supply Chainissa ei ole poissa tänään.",
       "noOneSickSupplyChain": "Kukaan Supply Chainissa ei ole sairaana tänään.",
-      "noOneHomeOfficeSupplyChain": "Kukaan Supply Chainissa ei työskentele etänä tänään."
+      "noOneHomeOfficeSupplyChain": "Kukaan Supply Chainissa ei työskentele etänä tänään.",
+      "crossTeamLoadFailed": "Tiimien yhteenvetoa ei voitu päivittää. Näytetyt tiedot voivat olla vanhentuneita."
     },
     "dashboard": {
       "customize": "Muokkaa koontinäyttöä",
@@ -1755,6 +1639,7 @@
     "cancel": "Peruuta",
     "save": "Tallenna",
     "create": "Luo",
+    "saving": "Tallennetaan…",
     "titleRequired": "Otsikko vaaditaan",
     "contentRequired": "Sisältö vaaditaan",
     "noteCreated": "Huomautus luotu",

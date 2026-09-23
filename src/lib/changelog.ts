@@ -8,6 +8,33 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.5.7',
+    items: [
+      'Hele appen har fået et samlet udtryk med tydeligere kontrast, ens knapper og kort samt roligere farver i alle moduler. Forsidens moduler kan nu også åbnes med tastaturet',
+      'Temabyggeren er fjernet; lys og mørk tilstand kan stadig vælges øverst i appen',
+      'Hele hubben svarer nu med det samme. Knapper, dialoger og kvitteringer venter ikke længere på det delte drev — ændringen vises øjeblikkeligt, og selve gemningen sker i baggrunden. Går gemningen galt, sættes det tilbage og du får besked',
+      'Sygemeld, barn syg og enkelte fridage: dialogen lukker og kvitterer nu med det samme i stedet for først at skulle skrive besked til lederen og vente på svar',
+      'Ferie kan godkendes, afvises og slettes uden ventetid — også når flere ledere sidder i kalenderen samtidig. Før kunne to samtidige godkendelser overskrive hinandens besked',
+      'Noter, notifikationer og e-mails åbner, markeres som læst og slettes med det samme. Hver handling brugte før tre ture frem og tilbage til drevet, nu kun én',
+      'Rettet at redigering af en medarbejders navn ventede på et unødvendigt opslag, før dialogen overhovedet åbnede',
+      'Færre skrivninger til drevet over hele linjen: fx sendes lederbesked og kvittering for en fridag nu samlet i stedet for i fire omgange',
+      'Spillehjørnet er gennemgået fra bunden. Rettet at hele appen kunne falde ned på en rød fejlskærm når man åbnede et arkadespil: den lokale kopi af highscore-listen blev gemt i en forkert form, og så kunne spillet ikke læse den',
+      'Highscores bliver nu altid registreret. Før kunne en score gå tabt uden besked — og sluttede to kolleger samtidig, kunne den ene skrive oven i den andens rekord. Nu vinder den højeste score altid, og en rekord kan aldrig sættes ned',
+      'Fjernet den røde "Data er ændret af en anden bruger"-besked, der kom hver eneste gang man slog sin egen rekord, selvom scoren faktisk var gemt',
+      'Kan din score mod forventning ikke gemmes, får du det nu at vide med det samme i stedet for at tro at rekorden er registreret',
+      'Alle fem spil sætter nu automatisk på pause, når du skifter til et andet vindue. Før kørte spillet videre, så man var død når man kom tilbage. Du kan også selv pause med P og fortsætte med mellemrum',
+      'Pausen tæller ikke med: farten stiger ikke mens du er væk, brikken falder ikke videre i Tetris, og skjold og andre powerups i Brick Break løber ikke ud',
+      'Chickeninvasion tæller nu de spillede runder med i statistikken, som de øvrige spil',
+      'Spil-statistikken tæller pr. spiller, så to der spiller samtidig ikke længere kan slette hinandens antal spil',
+      'Creator-kontoen kommer ikke på highscore-listerne og tælles ikke med i spil-statistikken — den bruges kun til at afprøve spillene',
+      'Originale Word-guides kan nu ses side for side som PDF direkte i appen; DOCX-filen bevares til redigering',
+      'Gemmeknapper i noter, opslag, to-dos og guideoprettelse viser nu tydeligt at der arbejdes, og gentagne klik opretter ikke dubletter',
+      'Færre opslag mod det delte drev ved tværteam-visninger og filovervågning gør appen mere responsiv',
+      'Arcade har fælles start- og highscore-visning i både lys og mørk tilstand; spillene venter på mellemrum eller klik før runden starter',
+      'Ferie-preview i managerpanelet er større og lettere at læse, også på smalle skærme',
+    ],
+  },
+  {
     version: '1.5.6',
     items: [
       'Appen gemmer igen med det samme. Gemninger kunne tage flere minutter — godkende en ferie, oprette en note eller tildele en opgave fra forsiden — fordi alle brugeres skrivninger stod i én og samme kø på det delte drev. Køen er fjernet: målt på 16 samtidige gemninger fejlede 14 før, nu ingen',

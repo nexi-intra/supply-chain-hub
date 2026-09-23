@@ -6,6 +6,17 @@ import type { Guide, GuideVersionEntry, GuideDraft } from './guideTypes'
 import { collectImageIds } from './guideTypes'
 
 const MAX_VERSION_ENTRIES = 50
+const draftWrites = new Map<string, Promise<void>>()
+
+function queueDraftWrite(guideId: string, operation: () => Promise<void>): Promise<void> {
+  const previous = draftWrites.get(guideId) || Promise.resolve()
+  const queued = previous.then(operation, operation)
+  draftWrites.set(guideId, queued)
+  void queued.finally(() => {
+    if (draftWrites.get(guideId) === queued) draftWrites.delete(guideId)
+  }).catch(() => {})
+  return queued
+}
 
 export function versionsKey(guideId: string): string {
   return `guide-versions-${guideId}`
@@ -17,7 +28,7 @@ export function draftKey(guideId: string): string {
 
 /** Autogemmer en kladde af den guide der lige nu redigeres (se GuideEditor.tsx). */
 export async function saveDraft(draft: GuideDraft): Promise<void> {
-  await window.kv.set(draftKey(draft.guideId), draft)
+  await queueDraftWrite(draft.guideId, () => window.kv.set(draftKey(draft.guideId), draft))
 }
 
 export async function getDraft(guideId: string): Promise<GuideDraft | undefined> {
@@ -26,7 +37,7 @@ export async function getDraft(guideId: string): Promise<GuideDraft | undefined>
 
 /** Ryddes ved succesfuldt gem, eller når brugeren aktivt forkaster/annullerer. */
 export async function deleteDraft(guideId: string): Promise<void> {
-  await window.kv.delete(draftKey(guideId))
+  await queueDraftWrite(guideId, () => window.kv.delete(draftKey(guideId)))
 }
 
 /**
@@ -83,6 +94,8 @@ export async function saveVersionSnapshot(guide: Guide, savedBy: string, changeN
       fileUrl: guide.fileUrl,
       wordFileName: guide.wordFileName,
       fileSize: guide.fileSize,
+      preserveWordLayout: guide.preserveWordLayout,
+      previewPdfUrl: guide.previewPdfUrl,
       sharedWithTeamCodes: guide.sharedWithTeamCodes,
     },
   }

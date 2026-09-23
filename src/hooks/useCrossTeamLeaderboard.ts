@@ -66,10 +66,10 @@ export function mergeFlatLeaderboard(
   ownUsers: Record<string, { fullName: string }> | null | undefined,
   otherTeams: Array<OtherTeamLeaderboardData<RawEntry[]>>
 ): CrossTeamEntry[] {
-  const merged: CrossTeamEntry[] = (own || []).map(e => ({ ...e, displayName: ownUsers?.[e.email]?.fullName || e.email }))
+  const merged: CrossTeamEntry[] = asEntries(own).map(e => ({ ...e, displayName: ownUsers?.[e.email]?.fullName || e.email }))
   for (const team of otherTeams) {
-    for (const e of team.leaderboard || []) {
-      merged.push({ ...e, displayName: team.users[e.email]?.fullName || e.email, teamCode: team.teamCode })
+    for (const e of asEntries(team.leaderboard)) {
+      merged.push({ ...e, displayName: team.users?.[e.email]?.fullName || e.email, teamCode: team.teamCode })
     }
   }
   return merged.sort((a, b) => b.score - a.score)
@@ -82,11 +82,26 @@ export function mergeNestedLeaderboard<D extends string>(
   otherTeams: Array<OtherTeamLeaderboardData<Record<D, RawEntry[]>>>,
   category: D
 ): CrossTeamEntry[] {
-  const merged: CrossTeamEntry[] = (own?.[category] || []).map(e => ({ ...e, displayName: ownUsers?.[e.email]?.fullName || e.email }))
+  const merged: CrossTeamEntry[] = asEntries(own?.[category]).map(e => ({ ...e, displayName: ownUsers?.[e.email]?.fullName || e.email }))
   for (const team of otherTeams) {
-    for (const e of team.leaderboard?.[category] || []) {
-      merged.push({ ...e, displayName: team.users[e.email]?.fullName || e.email, teamCode: team.teamCode })
+    for (const e of asEntries(team.leaderboard?.[category])) {
+      merged.push({ ...e, displayName: team.users?.[e.email]?.fullName || e.email, teamCode: team.teamCode })
     }
   }
   return merged.sort((a, b) => b.score - a.score)
+}
+
+/**
+ * Data fra et ANDET team er uden for vores kontrol — en ældre eller nyere udgave
+ * af hubben kan have gemt en anden form. Derfor bruges kun rækker der rent
+ * faktisk er brugbare, i stedet for at lade en fremmed værdi vælte skærmen.
+ */
+function asEntries(value: unknown): RawEntry[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((entry): entry is RawEntry =>
+    !!entry && typeof entry === 'object'
+    && typeof (entry as RawEntry).email === 'string'
+    && typeof (entry as RawEntry).score === 'number'
+    && Number.isFinite((entry as RawEntry).score)
+  )
 }

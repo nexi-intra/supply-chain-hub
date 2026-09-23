@@ -26,16 +26,16 @@ export function personalTodosKey(userEmail: string): string {
 }
 
 /** Kaster hvis titlen er tom. */
-export async function createPersonalTodo(userEmail: string, title: string, description?: string, dueDate?: string): Promise<PersonalTodo> {
+export async function createPersonalTodo(userEmail: string, title: string, description?: string, dueDate?: string, identity?: Pick<PersonalTodo, 'id' | 'createdAt'>): Promise<PersonalTodo> {
   const trimmedTitle = title.trim()
   if (!trimmedTitle) throw new Error('MISSING_TITLE')
 
   const todo: PersonalTodo = {
-    id: newId('todo'),
+    id: identity?.id || newId('todo'),
     title: trimmedTitle,
     description: description?.trim() || undefined,
     status: 'open',
-    createdAt: new Date().toISOString(),
+    createdAt: identity?.createdAt || new Date().toISOString(),
     dueDate: dueDate?.trim() || undefined,
   }
   await appendToKvArray<PersonalTodo>(personalTodosKey(userEmail), [todo])

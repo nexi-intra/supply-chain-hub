@@ -248,7 +248,7 @@ export function OnboardingWizard({ open, onOpenChange, onCompleted }: WizardProp
               <ArrowRight size={16} />
             </Button>
           ) : (
-            <Button onClick={handleConfirm} disabled={isWorking} className="gap-2 bg-gradient-to-r from-accent to-primary hover:from-accent/90 hover:to-primary/90">
+            <Button onClick={handleConfirm} disabled={isWorking} className="gap-2">
               <Check size={16} weight="bold" />
               {isWorking ? t.onboardingWizard.creating : t.onboardingWizard.createEmployee}
             </Button>
@@ -423,7 +423,7 @@ export function OffboardingWizard({ open, onOpenChange, onCompleted, currentUser
         )}
 
         {step === 3 && selectedEmployee && (
-          <div className="p-4 rounded-lg bg-destructive/10 border-2 border-destructive/30 text-center space-y-2">
+          <div className="p-4 rounded-md bg-destructive/10 border border-destructive/30 text-center space-y-2">
             <Warning size={32} className="text-destructive mx-auto" weight="fill" />
             <p className="font-semibold">{t.onboardingWizard.areYouSure}</p>
             <p className="text-sm text-muted-foreground">

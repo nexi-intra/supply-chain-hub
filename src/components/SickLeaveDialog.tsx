@@ -11,6 +11,7 @@ import { da } from 'date-fns/locale'
 import { toast } from 'sonner'
 import { useLanguage } from '@/contexts/LanguageContext'
 import { useUnsavedChanges } from '@/hooks/useUnsavedChanges'
+import { appendToKvArray, updateKvArrayItem } from '@/lib/kvArrays'
 import type { SickLeaveEntry } from '@/lib/types'
 
 interface SickLeaveDialogProps {
@@ -102,17 +103,13 @@ export function SickLeaveDialog({ open, onOpenChange, userEmail, editEntry = nul
     }
   }, [open, userEmail, editEntry])
 
+  // Navnet findes allerede i den liste vi hentede da dialogen blev aabnet,
+  // saa der er ingen grund til endnu et opslag paa drevet.
   useEffect(() => {
-    const fetchSelectedUserName = async () => {
-      if (selectedUserEmail) {
-        const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string }>>('users')
-        if (usersData && usersData[selectedUserEmail]) {
-          setUserName(usersData[selectedUserEmail].fullName || selectedUserEmail)
-        }
-      }
-    }
-    fetchSelectedUserName()
-  }, [selectedUserEmail])
+    if (!selectedUserEmail) return
+    const match = allUsers.find(user => user.email === selectedUserEmail)
+    if (match) setUserName(match.fullName || selectedUserEmail)
+  }, [selectedUserEmail, allUsers])
 
   const handleSubmit = async () => {
     if (!selectedDate) {
@@ -125,117 +122,113 @@ export function SickLeaveDialog({ open, onOpenChange, userEmail, editEntry = nul
       return
     }
 
-    setIsSubmitting(true)
     const dateToUse = selectedDate
-    
-    try {
-      const sickLeaveEntries = await window.kv.get<SickLeaveEntry[]>('sick-leave-entries') || []
-      
-      if (editEntry) {
-        const updatedEntries = sickLeaveEntries.map(entry => 
-          entry.id === editEntry.id
-            ? { ...entry, startDate: dateToUse.toISOString(), reason, userEmail: selectedUserEmail, userName, type: sickLeaveType }
-            : entry
-        )
-        await window.kv.set('sick-leave-entries', updatedEntries)
+    const dateFormatted = format(dateToUse, 'd. MMMM yyyy', { locale: da })
+    const entryReason = reason
+    const entryType = sickLeaveType
+    const entryUserEmail = selectedUserEmail
+    const entryUserName = userName
+    const entryToEdit = editEntry
 
-        toast.success(t.sickLeaveDialog.updated, {
-          description: t.sickLeaveDialog.updatedDescription.replace('{date}', format(dateToUse, 'd. MMMM yyyy', { locale: da })),
-          duration: 5000
+    // Luk dialogen og kvitter med det samme. Selve skrivningen til det delte
+    // drev sker i baggrunden, saa brugeren aldrig venter paa netvaerket.
+    setReason('')
+    setSelectedDate(undefined)
+    onOpenChange(false)
+
+    if (entryToEdit) {
+      toast.success(t.sickLeaveDialog.updated, {
+        description: t.sickLeaveDialog.updatedDescription.replace('{date}', dateFormatted),
+        duration: 5000
+      })
+
+      updateKvArrayItem<SickLeaveEntry>('sick-leave-entries', entryToEdit.id, current => ({
+        ...current,
+        startDate: dateToUse.toISOString(),
+        reason: entryReason,
+        userEmail: entryUserEmail,
+        userName: entryUserName,
+        type: entryType,
+      })).catch(error => {
+        console.error('Error updating sick leave:', error)
+        toast.error(t.sickLeaveDialog.error, {
+          description: t.sickLeaveDialog.errorDescription
         })
+      })
+      return
+    }
 
-        setReason('')
-        setSelectedDate(undefined)
-        onOpenChange(false)
-        setIsSubmitting(false)
+    const reporterIsSelf = entryUserEmail === userEmail
+
+    const newEntry: SickLeaveEntry = {
+      id: `sick-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      userEmail: entryUserEmail,
+      userName: entryUserName,
+      startDate: dateToUse.toISOString(),
+      reason: entryReason,
+      status: 'approved',
+      submittedAt: new Date().toISOString(),
+      reportedBy: reporterIsSelf ? undefined : userEmail,
+      type: entryType,
+    }
+
+    toast.success(`✅ ${t.sickLeaveDialog.registered}`, {
+      description: t.sickLeaveDialog.notificationSent.replace('{date}', dateFormatted),
+      duration: 8000
+    })
+
+    // Navnet paa den der indberetter staar allerede i den liste dialogen hentede.
+    const reporterName = allUsers.find(user => user.email === userEmail)?.fullName || userEmail
+
+    const sickTypeText = entryType === 'child' ? 'Barn syg' : 'Sygemelding'
+    const emailSubject = `${sickTypeText} - ${entryUserName}`
+    const emailBody = reporterIsSelf
+      ? `Hej Jacob,
+
+${entryUserName} (${entryUserEmail}) har meldt ${entryType === 'child' ? 'barn syg' : 'sig syg'}.
+
+Type: ${entryType === 'child' ? 'Barn syg' : 'Egen sygdom'}
+Dato: ${dateFormatted}
+
+${entryReason ? `Bemærkninger:\n${entryReason}\n\n` : ''}Denne notifikation er automatisk genereret fra Supply Chain Hub.`
+      : `Hej Jacob,
+
+${entryUserName} (${entryUserEmail}) ${entryType === 'child' ? 'har fået barn syg registreret' : 'er blevet sygemeldt'} af ${reporterName} (${userEmail}).
+
+Type: ${entryType === 'child' ? 'Barn syg' : 'Egen sygdom'}
+Dato: ${dateFormatted}
+
+${entryReason ? `Bemærkninger:\n${entryReason}\n\n` : ''}Denne notifikation er automatisk genereret fra Supply Chain Hub.`
+
+    void (async () => {
+      try {
+        await appendToKvArray<SickLeaveEntry>('sick-leave-entries', [newEntry])
+      } catch (error) {
+        console.error('Error submitting sick leave:', error)
+        toast.error(t.sickLeaveDialog.error, {
+          description: t.sickLeaveDialog.errorDescription
+        })
         return
       }
 
-      const reporterIsSelf = selectedUserEmail === userEmail
-
-      const newEntry: SickLeaveEntry = {
-        id: `sick-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        userEmail: selectedUserEmail,
-        userName,
-        startDate: dateToUse.toISOString(),
-        reason,
-        status: 'approved',
-        submittedAt: new Date().toISOString(),
-        reportedBy: reporterIsSelf ? undefined : userEmail,
-        type: sickLeaveType,
-      }
-
-      await window.kv.set('sick-leave-entries', [...sickLeaveEntries, newEntry])
-
-      const dateFormatted = format(dateToUse, 'd. MMMM yyyy', { locale: da })
-      
-      const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string }>>('users')
-      const reporterName = usersData && usersData[userEmail] ? usersData[userEmail].fullName : userEmail
-      
-      const sickTypeText = sickLeaveType === 'child' ? 'Barn syg' : 'Sygemelding'
-      const emailSubject = `${sickTypeText} - ${userName}`
-      const emailBody = reporterIsSelf 
-        ? `Hej Jacob,
-
-${userName} (${selectedUserEmail}) har meldt ${sickLeaveType === 'child' ? 'barn syg' : 'sig syg'}.
-
-Type: ${sickLeaveType === 'child' ? 'Barn syg' : 'Egen sygdom'}
-Dato: ${dateFormatted}
-
-${reason ? `Bemærkninger:\n${reason}\n\n` : ''}Denne notifikation er automatisk genereret fra Supply Chain Hub.`
-        : `Hej Jacob,
-
-${userName} (${selectedUserEmail}) ${sickLeaveType === 'child' ? 'har fået barn syg registreret' : 'er blevet sygemeldt'} af ${reporterName} (${userEmail}).
-
-Type: ${sickLeaveType === 'child' ? 'Barn syg' : 'Egen sygdom'}
-Dato: ${dateFormatted}
-
-${reason ? `Bemærkninger:\n${reason}\n\n` : ''}Denne notifikation er automatisk genereret fra Supply Chain Hub.`
-
       try {
-        const emailNotifications = await window.kv.get<Array<{
-          id: string
-          to: string
-          subject: string
-          body: string
-          timestamp: string
-          type: 'sick-leave' | 'vacation-request' | 'vacation-approved' | 'vacation-rejected'
-          read: boolean
-        }>>('email-notifications') || []
-        
-        await window.kv.set('email-notifications', [...emailNotifications, {
+        await appendToKvArray('email-notifications', [{
           id: `email-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
           to: 'Jacob.remmer@nexigroup.com',
           subject: emailSubject,
           body: emailBody,
           timestamp: new Date().toISOString(),
-          type: 'sick-leave',
+          type: 'sick-leave' as const,
           read: false
         }])
-
-        toast.success(`✅ ${t.sickLeaveDialog.registered}`, {
-          description: t.sickLeaveDialog.notificationSent.replace('{date}', format(dateToUse, 'd. MMMM yyyy', { locale: da })),
-          duration: 8000
-        })
       } catch (emailError) {
         console.error('Error saving email notification:', emailError)
         toast.warning(t.sickLeaveDialog.registered, {
-          description: t.sickLeaveDialog.registeredDescription.replace('{date}', format(dateToUse, 'd. MMMM yyyy', { locale: da })),
+          description: t.sickLeaveDialog.registeredDescription.replace('{date}', dateFormatted),
           duration: 5000
         })
       }
-
-      setReason('')
-      setSelectedDate(undefined)
-      onOpenChange(false)
-    } catch (error) {
-      console.error('Error submitting sick leave:', error)
-      toast.error(t.sickLeaveDialog.error, {
-        description: t.sickLeaveDialog.errorDescription
-      })
-    } finally {
-      setIsSubmitting(false)
-    }
+    })()
   }
 
   const handleCancel = () => {
@@ -248,7 +241,7 @@ ${reason ? `Bemærkninger:\n${reason}\n\n` : ''}Denne notifikation er automatisk
       <DialogContent className="sm:max-w-[600px]">
         <DialogHeader>
           <div className="flex items-center gap-3 mb-2">
-            <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-[oklch(0.55_0.16_25)] to-[oklch(0.62_0.13_30)] flex items-center justify-center">
+            <div className="h-12 w-12 rounded-md bg-blocked-surface text-blocked flex items-center justify-center">
               <FirstAidKit size={24} weight="duotone" className="text-white" />
             </div>
             <div>
@@ -349,7 +342,7 @@ ${reason ? `Bemærkninger:\n${reason}\n\n` : ''}Denne notifikation er automatisk
           <Button
             onClick={handleSubmit}
             disabled={isSubmitting}
-            className="bg-gradient-to-r from-[oklch(0.55_0.16_25)] to-[oklch(0.62_0.13_30)] hover:from-[oklch(0.50_0.16_25)] hover:to-[oklch(0.58_0.13_30)] text-white gap-2"
+            className="bg-blocked text-white hover:bg-blocked/90 gap-2"
           >
             <FirstAidKit size={18} weight="duotone" />
             {isSubmitting ? (editEntry ? t.sickLeaveDialog.updating : t.sickLeaveDialog.submitting) : (editEntry ? t.sickLeaveDialog.update : t.sickLeaveDialog.submit)}

@@ -1,5 +1,8 @@
+// Lysheden paa Magenta og Roed er skubbet 0,01 (fra 0.60) i hver sin retning.
+// Ved 0.60 kunne ingen af vores to tekstfarver naa WCAG AA paa dem - se
+// readableText.test.ts, der holder hele paletten oppe paa 4,5:1.
 const colorPalette = [
-  { bg: 'oklch(0.60 0.24 340)', text: 'oklch(0.98 0.015 320)', name: 'Magenta' },
+  { bg: 'oklch(0.59 0.24 340)', text: 'oklch(0.98 0.015 320)', name: 'Magenta' },
   { bg: 'oklch(0.55 0.26 270)', text: 'oklch(0.98 0.015 320)', name: 'Lilla' },
   { bg: 'oklch(0.58 0.25 230)', text: 'oklch(0.98 0.015 320)', name: 'Kongeblå' },
   { bg: 'oklch(0.65 0.22 200)', text: 'oklch(0.98 0.015 320)', name: 'Azurblå' },
@@ -11,7 +14,7 @@ const colorPalette = [
   { bg: 'oklch(0.75 0.18 95)', text: 'oklch(0.12 0.04 280)', name: 'Citron' },
   { bg: 'oklch(0.70 0.20 60)', text: 'oklch(0.12 0.04 280)', name: 'Gylden' },
   { bg: 'oklch(0.65 0.22 35)', text: 'oklch(0.98 0.015 320)', name: 'Orange' },
-  { bg: 'oklch(0.60 0.24 20)', text: 'oklch(0.98 0.015 320)', name: 'Rød' },
+  { bg: 'oklch(0.61 0.24 20)', text: 'oklch(0.98 0.015 320)', name: 'Rød' },
   { bg: 'oklch(0.58 0.23 355)', text: 'oklch(0.98 0.015 320)', name: 'Rose' },
   { bg: 'oklch(0.52 0.22 290)', text: 'oklch(0.98 0.015 320)', name: 'Dyb Lilla' },
   { bg: 'oklch(0.70 0.16 320)', text: 'oklch(0.98 0.015 320)', name: 'Pink' },

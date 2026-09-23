@@ -52,7 +52,7 @@ class GuideImportManager {
     return completion
   }
 
-  async startImport(file: File): Promise<void> {
+  async startImport(file: File, options?: { preserveOriginal?: boolean; language?: 'da' | 'en' | 'fi' }): Promise<void> {
     if (this.job) {
       throw new Error('Der kører allerede en import — vent til den er færdig')
     }
@@ -65,7 +65,7 @@ class GuideImportManager {
         if (!this.job) return
         this.job = { ...this.job, progress }
         this.notify()
-      })
+      }, options)
       this.pendingDraft = draft
       this.lastCompletion = { title: draft.title }
     } catch (error) {

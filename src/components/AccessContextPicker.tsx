@@ -33,7 +33,7 @@ export function AccessContextPicker({ homeTeam, views, teams, onSelectHome, onSe
       <div className="container mx-auto px-4 pt-32 pb-16 max-w-5xl relative z-10">
         <div className="text-center mb-10">
           <UsersThree size={54} weight="duotone" className="text-primary mx-auto mb-4" />
-          <h1 className="text-4xl sm:text-5xl font-bold bg-gradient-to-br from-primary to-accent bg-clip-text text-transparent pb-2">
+          <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-foreground pb-2">
             {da ? 'Vælg din hub' : fi ? 'Valitse hubi' : 'Choose your hub'}
           </h1>
           <p className="text-muted-foreground">
@@ -43,7 +43,7 @@ export function AccessContextPicker({ homeTeam, views, teams, onSelectHome, onSe
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           {homeTeam && (
-            <Card className="p-6 border-2 hover:border-primary/50 transition-colors flex flex-col">
+            <Card className="p-6 hover:border-primary/50 transition-colors flex flex-col">
               <Buildings size={32} weight="duotone" className="text-primary mb-3" />
               <h2 className="text-xl font-bold">{homeTeam.name}</h2>
               <p className="text-sm text-muted-foreground mt-1 mb-5">
@@ -54,7 +54,7 @@ export function AccessContextPicker({ homeTeam, views, teams, onSelectHome, onSe
           )}
 
           {views.map((view) => (
-            <Card key={view.viewId} className="p-6 border-2 hover:border-primary/50 transition-colors flex flex-col">
+            <Card key={view.viewId} className="p-6 hover:border-primary/50 transition-colors flex flex-col">
               <div className="flex items-start justify-between gap-3">
                 <Eye size={32} weight="duotone" className="text-primary" />
                 <Badge variant="secondary">{da ? 'Kun læsning' : fi ? 'Vain luku' : 'Read only'}</Badge>

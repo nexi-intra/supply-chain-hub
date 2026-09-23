@@ -2,11 +2,19 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { Bird, Trophy, X, Lightning, Speedometer, Fire, Flame, Crown, Medal, Star } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { useKV } from '@/hooks/useKV'
+import { toast } from 'sonner'
 import { useLanguage } from '@/contexts/LanguageContext'
-import { upsertInNestedKvArray } from '@/lib/kvArrays'
+import { useNestedLeaderboard } from '@/hooks/useLeaderboard'
+import { useAutoPauseOnBlur } from '@/hooks/useAutoPauseOnBlur'
+import { PauseOverlay } from '@/components/PauseOverlay'
+import { ArcadeReadyOverlay } from '@/components/ArcadeReadyOverlay'
+import { recordGamePlay, scoreSaveFailedMessage, submitHighscore } from '@/lib/leaderboards'
 import { nextParticleId } from '@/lib/utils'
 import { useCrossTeamLeaderboard, mergeNestedLeaderboard, type CrossTeamEntry } from '@/hooks/useCrossTeamLeaderboard'
+
+const LEADERBOARD_KEY = 'nexi-flyer-global-leaderboard'
+const PLAY_COUNTS_KEY = 'nexi-flyer-play-counts'
+const DIFFICULTIES = ['easy', 'medium', 'hard', 'expert'] as const
 
 interface Pipe {
   id: number
@@ -41,7 +49,7 @@ interface GlobalLeaderboard {
 }
 
 type Difficulty = 'easy' | 'medium' | 'hard' | 'expert'
-type GameState = 'menu' | 'playing' | 'ended'
+type GameState = 'menu' | 'playing' | 'paused' | 'ended'
 
 const DIFFICULTY_SETTINGS = {
   easy: {
@@ -127,32 +135,10 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
   const { language } = useLanguage()
   const [difficulty, setDifficulty] = useState<Difficulty>('medium')
   const [gameState, setGameState] = useState<GameState>('menu')
+  const [awaitingFirstFlap, setAwaitingFirstFlap] = useState(false)
   const [score, setScore] = useState(0)
   const [users, setUsers] = useState<User[]>([])
-  const [globalLeaderboard, setGlobalLeaderboard] = useKV<GlobalLeaderboard>('nexi-flyer-global-leaderboard', {
-    easy: [],
-    medium: [],
-    hard: [],
-    expert: []
-  })
-
-  // Éngangs-migrering: gamle entries manglede `id` (indført for atomare opdateringer) —
-  // uden den kan slet/rediger i manager-panelet ikke finde entry'en igen.
-  useEffect(() => {
-    if (!globalLeaderboard) return
-    const needsMigration = (Object.values(globalLeaderboard) as LeaderboardEntry[][]).some((board) =>
-      board.some((entry) => !entry.id)
-    )
-    if (!needsMigration) return
-    const migrated: GlobalLeaderboard = {
-      easy: (globalLeaderboard.easy || []).map((e) => ({ ...e, id: e.id || e.email })),
-      medium: (globalLeaderboard.medium || []).map((e) => ({ ...e, id: e.id || e.email })),
-      hard: (globalLeaderboard.hard || []).map((e) => ({ ...e, id: e.id || e.email })),
-      expert: (globalLeaderboard.expert || []).map((e) => ({ ...e, id: e.id || e.email })),
-    }
-    setGlobalLeaderboard(migrated)
-    window.kv.set('nexi-flyer-global-leaderboard', migrated)
-  }, [globalLeaderboard, setGlobalLeaderboard])
+  const { leaderboard: globalLeaderboard, refresh: refreshLeaderboard } = useNestedLeaderboard(LEADERBOARD_KEY, DIFFICULTIES)
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const animationFrameRef = useRef<number | null>(null)
@@ -203,7 +189,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
   // Storage-rækkefølgen garanteres ikke sorteret (atomar upsert tilføjer bare i
   // slutningen) — sortér altid ved læsning, så rangnumre/medaljer er korrekte.
   // Fase 8/9 "Highscores på tværs": fletter alle andre teams' samme sværhedsgrad ind.
-  const { otherTeams } = useCrossTeamLeaderboard<GlobalLeaderboard>('nexi-flyer-global-leaderboard')
+  const { otherTeams } = useCrossTeamLeaderboard<GlobalLeaderboard>(LEADERBOARD_KEY)
   const getSortedBoard = (diff: Difficulty): CrossTeamEntry[] => {
     const ownUsers = Object.fromEntries(users.map(u => [u.email, { fullName: u.fullName }]))
     return mergeNestedLeaderboard(globalLeaderboard, ownUsers, otherTeams, diff)
@@ -463,37 +449,23 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
     if (!userEmail) return
 
     try {
-      const currentLeaderboard = await window.kv.get<GlobalLeaderboard>('nexi-flyer-global-leaderboard') || {
-        easy: [], medium: [], hard: [], expert: []
-      }
-
-      const diff = difficultyRef.current
-      const board = currentLeaderboard[diff] || []
-      const existing = board.find(entry => entry.email === userEmail)
-
-      if (!existing || finalScore > existing.score) {
-        const updatedBoard = await upsertInNestedKvArray<LeaderboardEntry>(
-          'nexi-flyer-global-leaderboard',
-          [diff],
-          [{ id: userEmail, email: userEmail, score: finalScore, timestamp: Date.now() }],
-        )
-        setGlobalLeaderboard({ ...currentLeaderboard, [diff]: updatedBoard })
-      }
+      await submitHighscore(
+        LEADERBOARD_KEY,
+        { email: userEmail, score: finalScore, timestamp: Date.now() },
+        { path: [difficultyRef.current], categories: DIFFICULTIES },
+      )
+      refreshLeaderboard()
     } catch (error) {
       console.error('Error saving Nexi Flyer score:', error)
+      toast.error(scoreSaveFailedMessage(language))
     }
 
     try {
-      const gameStats = await window.kv.get<Record<string, Record<Difficulty, number>>>('nexi-flyer-play-counts') || {}
-      if (!gameStats[userEmail]) {
-        gameStats[userEmail] = { easy: 0, medium: 0, hard: 0, expert: 0 }
-      }
-      gameStats[userEmail][difficultyRef.current] = (gameStats[userEmail][difficultyRef.current] || 0) + 1
-      await window.kv.set('nexi-flyer-play-counts', gameStats)
+      await recordGamePlay(PLAY_COUNTS_KEY, userEmail, difficultyRef.current)
     } catch (error) {
       console.error('Error tracking Nexi Flyer play count:', error)
     }
-  }, [userEmail, setGlobalLeaderboard])
+  }, [userEmail, refreshLeaderboard, language])
 
   const triggerDeath = useCallback(() => {
     if (!startedRef.current && gameStateRef.current !== 'playing') return
@@ -574,6 +546,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
   const flap = useCallback(() => {
     if (gameStateRef.current !== 'playing') return
     startedRef.current = true
+    setAwaitingFirstFlap(false)
     birdVelocityRef.current = FLAP_VELOCITY
     flapAnimRef.current = 0
     spawnParticles(BIRD_X - 10, birdYRef.current + 6, 4, ['#ffffff', '#ffd93b'], 3, 2)
@@ -591,6 +564,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
     frameCountRef.current = 0
     shakeRef.current = 0
     startedRef.current = false
+    setAwaitingFirstFlap(true)
     flapKeyHeldRef.current = false
     gameStateRef.current = 'playing'
     setGameState('playing')
@@ -608,8 +582,40 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
     }
   }
 
+  const pauseGame = useCallback(() => {
+    if (gameStateRef.current !== 'playing') return
+    gameStateRef.current = 'paused'
+    setGameState('paused')
+    flapKeyHeldRef.current = false
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current)
+      animationFrameRef.current = null
+    }
+  }, [])
+
+  const resumeGame = useCallback(() => {
+    if (gameStateRef.current !== 'paused') return
+    gameStateRef.current = 'playing'
+    setGameState('playing')
+    animationFrameRef.current = requestAnimationFrame(step)
+  }, [step])
+
+  useAutoPauseOnBlur(gameState === 'playing', pauseGame)
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (gameStateRef.current === 'paused') {
+        if (e.code === 'Space' || e.code === 'KeyP' || e.code === 'Enter') {
+          e.preventDefault()
+          resumeGame()
+        }
+        return
+      }
+      if (e.code === 'KeyP' && gameStateRef.current === 'playing') {
+        e.preventDefault()
+        pauseGame()
+        return
+      }
       if (e.code !== 'Space' && e.key !== 'ArrowUp') return
       e.preventDefault()
       // e.repeat daekker OS-gentagelse; flapKeyHeldRef daekker desuden det
@@ -635,18 +641,18 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
         cancelAnimationFrame(animationFrameRef.current)
       }
     }
-  }, [flap])
+  }, [flap, pauseGame, resumeGame])
 
   return (
     <div className="space-y-6">
-      <Card className="p-6 bg-gradient-to-br from-card via-primary/5 to-accent/5 border-2">
+      <Card className="arcade-menu p-6">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
-            <div className="p-3 rounded-full bg-gradient-to-br from-primary to-accent shadow-lg">
+            <div className="p-3 rounded-full bg-primary">
               <Bird size={32} weight="duotone" className="text-primary-foreground" />
             </div>
             <div>
-              <h2 className="text-2xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+              <h2 className="text-2xl font-semibold text-foreground">
                 Nexi Flyer
               </h2>
               <p className="text-sm text-muted-foreground">
@@ -657,7 +663,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
             </div>
           </div>
           <div className="flex items-center gap-4">
-            <div className="text-center p-4 rounded-lg bg-gradient-to-br from-accent/10 to-primary/10 border border-accent/20">
+            <div className="text-center p-4 rounded-md bg-secondary border">
               <div className="text-sm text-muted-foreground font-semibold">
                 {language === 'da' ? 'Højeste score' : language === 'fi' ? 'Korkeat tulokset' : 'High Score'}
               </div>
@@ -677,20 +683,20 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
                   {language === 'da' ? 'Vælg sværhedsgrad' : language === 'fi' ? 'Valitse vaikeudet' : 'Select Difficulty'}
                 </p>
               </div>
-              <div className="flex items-center justify-center gap-4 flex-wrap">
+              <div className="grid grid-cols-2 gap-3 sm:flex sm:items-center sm:justify-center sm:gap-4 sm:flex-wrap">
                 {(Object.keys(DIFFICULTY_SETTINGS) as Difficulty[]).map((diff) => {
                   const setting = DIFFICULTY_SETTINGS[diff]
                   const Icon = setting.icon
                   const isSelected = difficulty === diff
 
                   return (
-                    <div
+                    <button type="button" aria-pressed={isSelected}
                       key={diff}
                       onClick={() => setDifficulty(diff)}
-                      className={`group relative cursor-pointer rounded-xl p-6 transition-all duration-300 min-w-[140px] ${
+                      className={`group relative rounded-md p-4 sm:p-6 transition-colors min-w-0 w-full sm:w-auto sm:min-w-[140px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${
                         isSelected
-                          ? `bg-gradient-to-br ${setting.bgGradient} border-2 ${setting.borderColor} shadow-lg ${setting.glowColor}`
-                          : 'bg-card border-2 border-border hover:border-border/60 hover:shadow-md'
+                          ? `bg-secondary border-2 ${setting.borderColor}`
+                          : 'bg-card border-2 border-border hover:border-primary/40'
                       }`}
                     >
                       <div className="flex flex-col items-center gap-3">
@@ -708,7 +714,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
                           </span>
                         </div>
                       </div>
-                    </div>
+                    </button>
                   )
                 })}
               </div>
@@ -720,7 +726,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
                   ? 'Tryk mellemrum, pil op eller klik for at flyve. Undgå rørene!'
                   : language === 'fi' ? 'Paina tilaa, nuolta ylös tai napsauta läppä. Vältä putkia!' : 'Press space, arrow up, or click to flap. Avoid the pipes!'}
               </p>
-              <Button onClick={startGame} size="lg" className="px-8 bg-gradient-to-r from-primary to-accent hover:opacity-90">
+              <Button onClick={startGame} size="lg" className="px-8">
                 {language === 'da' ? 'Start spil' : language === 'fi' ? 'Käynnistä peli' : 'Start Game'}
               </Button>
             </div>
@@ -728,32 +734,32 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
         )}
       </Card>
 
-      {gameState === 'playing' && (
-        <Card className="p-0 overflow-hidden border-2 border-primary/30 shadow-2xl">
-          <div className="relative bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 p-6 border-b-2 border-primary/30">
-            <div className="absolute inset-0 bg-gradient-to-r from-primary/5 via-accent/10 to-primary/5" />
+      {(gameState === 'playing' || gameState === 'paused') && (
+        <Card className="p-0 overflow-hidden">
+          <div className="relative bg-slate-900 p-6 border-b border-slate-700">
+            <div className="hidden" />
             <div className="relative flex items-center justify-between">
               <div className="flex items-center gap-8">
                 <div className="relative group">
-                  <div className="absolute inset-0 bg-gradient-to-br from-primary to-accent blur-xl opacity-30 group-hover:opacity-50 transition-opacity" />
-                  <div className="relative px-6 py-3 rounded-xl bg-gradient-to-br from-primary/20 to-accent/30 border-2 border-primary/40 backdrop-blur-sm">
-                    <div className="text-[10px] text-primary-foreground/70 uppercase tracking-widest font-bold mb-1 flex items-center gap-1">
+                  <div className="hidden" />
+                  <div className="relative px-6 py-3 rounded-md bg-white/10 border border-white/20">
+                    <div className="text-[11px] text-primary-foreground/70 font-semibold mb-1 flex items-center gap-1">
                       <Trophy size={12} weight="fill" />
                       {language === 'da' ? 'Point' : language === 'fi' ? 'Pistemäärä' : 'Score'}
                     </div>
-                    <div className="text-4xl font-black bg-gradient-to-br from-white to-primary-foreground bg-clip-text text-transparent drop-shadow-lg">
+                    <div className="text-4xl font-bold text-white">
                       {score}
                     </div>
                   </div>
                 </div>
-                <div className="h-14 w-[2px] bg-gradient-to-b from-transparent via-border to-transparent" />
+                <div className="h-14 w-px bg-border" />
                 <div className="relative group">
-                  <div className="relative px-5 py-3 rounded-xl bg-gradient-to-br from-accent/20 to-yellow-500/20 border-2 border-accent/40 backdrop-blur-sm">
-                    <div className="text-[10px] text-accent-foreground/70 uppercase tracking-widest font-bold mb-1 flex items-center gap-1">
+                  <div className="relative px-5 py-3 rounded-md bg-white/10 border border-white/20">
+                    <div className="text-[11px] text-accent-foreground/70 font-semibold mb-1 flex items-center gap-1">
                       <Crown size={12} weight="fill" />
                       {language === 'da' ? 'Bedste' : language === 'fi' ? 'Paras' : 'Best'}
                     </div>
-                    <div className="text-4xl font-black text-yellow-400 drop-shadow-lg">
+                    <div className="text-4xl font-bold text-yellow-400">
                       {getCurrentHighScore()}
                     </div>
                   </div>
@@ -764,7 +770,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
                 onClick={quitGame}
                 variant="destructive"
                 size="lg"
-                className="shadow-xl hover:shadow-2xl transition-shadow font-bold"
+                className="font-bold"
               >
                 <X size={20} weight="bold" className="mr-2" />
                 {language === 'da' ? 'Stop' : language === 'fi' ? 'Lopeta' : 'Quit'}
@@ -773,22 +779,26 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
           </div>
 
           <div className="flex justify-center bg-slate-950 py-4">
-            <canvas
-              ref={canvasRef}
-              width={GAME_WIDTH}
-              height={GAME_HEIGHT}
-              onClick={flap}
-              onTouchStart={(e) => { e.preventDefault(); flap() }}
-              className="cursor-pointer rounded-lg shadow-2xl border-2 border-primary/20 touch-none"
-              style={{ maxWidth: '100%', height: 'auto' }}
-            />
+            <div className="relative">
+              <canvas
+                ref={canvasRef}
+                width={GAME_WIDTH}
+                height={GAME_HEIGHT}
+                onClick={flap}
+                onTouchStart={(e) => { e.preventDefault(); flap() }}
+                className="cursor-pointer rounded-md border border-white/15 touch-none"
+                style={{ maxWidth: '100%', height: 'auto' }}
+              />
+              {gameState === 'playing' && awaitingFirstFlap && <ArcadeReadyOverlay onStart={flap} />}
+              {gameState === 'paused' && <PauseOverlay onResume={resumeGame} />}
+            </div>
           </div>
         </Card>
       )}
 
       {gameState === 'ended' && (
-        <Card className="p-6 text-center bg-gradient-to-br from-primary/10 via-accent/10 to-background border-2 border-primary/20">
-          <h3 className="text-2xl font-bold mb-2 bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+        <Card className="p-6 text-center">
+          <h3 className="text-2xl font-semibold mb-2 text-foreground">
             {language === 'da' ? 'Spil slut!' : language === 'fi' ? 'Peli loppui!' : 'Game Over!'}
           </h3>
           <div className="space-y-4">
@@ -796,7 +806,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
               <p className="text-muted-foreground">
                 {language === 'da' ? 'Din sidste score' : language === 'fi' ? 'Lopputulos' : 'Your final score'}
               </p>
-              <p className="text-4xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+              <p className="text-4xl font-semibold text-foreground">
                 {score}
               </p>
             </div>
@@ -808,7 +818,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
             </p>
           )}
           <div className="flex items-center justify-center gap-3 mt-6">
-            <Button onClick={startGame} size="lg" className="bg-gradient-to-r from-primary to-accent hover:opacity-90">
+            <Button onClick={startGame} size="lg" className="">
               {language === 'da' ? 'Prøv igen' : language === 'fi' ? 'Toista' : 'Play Again'}
             </Button>
             <Button onClick={() => setGameState('menu')} variant="outline" size="lg">
@@ -818,13 +828,13 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
         </Card>
       )}
 
-      <Card className="p-6 bg-gradient-to-br from-accent/5 via-primary/5 to-card border-2 border-accent/20">
+      <Card className="arcade-leaderboard p-6">
         <div className="flex items-center gap-3 mb-6">
-          <div className="p-3 rounded-full bg-gradient-to-br from-accent to-primary shadow-lg">
+          <div className="p-3 rounded-full bg-primary">
             <Crown size={28} weight="duotone" className="text-accent-foreground" />
           </div>
           <div>
-            <h3 className="text-xl font-bold bg-gradient-to-r from-accent to-primary bg-clip-text text-transparent">
+            <h3 className="text-xl font-semibold text-foreground">
               {language === 'da' ? 'Global resultattavle' : language === 'fi' ? 'Maailmanlaajuinen Leaderboard' : 'Global Leaderboard'}
             </h3>
             <p className="text-sm text-muted-foreground">
@@ -843,17 +853,17 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
 
             return (
               <div key={diff} className="space-y-3">
-                <div className={`p-4 rounded-lg border-2 transition-all ${
+                <div className={`arcade-score-column p-4 rounded-md border-2 transition-colors ${
                   userRank === 1
-                    ? 'border-accent bg-gradient-to-br from-accent/10 to-primary/10 shadow-lg'
-                    : 'border-border bg-gradient-to-br from-card to-muted/20'
+                    ? 'border-primary bg-primary/10'
+                    : 'border-border bg-card'
                 }`}>
                   <div className="flex items-center gap-3 mb-3">
                     <div className={`p-2 rounded-lg ${
-                      diff === 'easy' ? 'bg-gradient-to-br from-green-500/20 to-green-600/20' :
-                      diff === 'medium' ? 'bg-gradient-to-br from-yellow-500/20 to-yellow-600/20' :
-                      diff === 'hard' ? 'bg-gradient-to-br from-red-500/20 to-red-600/20' :
-                      'bg-gradient-to-br from-purple-500/20 to-purple-600/20'
+                      diff === 'easy' ? 'bg-green-500/15' :
+                      diff === 'medium' ? 'bg-yellow-500/15' :
+                      diff === 'hard' ? 'bg-red-500/15' :
+                      'bg-purple-500/15'
                     }`}>
                       <Icon size={24} weight="duotone" className={setting.color} />
                     </div>

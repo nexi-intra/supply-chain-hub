@@ -73,7 +73,7 @@ export function VacationRequestDialog({ userEmail }: VacationRequestDialogProps)
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button className="gap-2 bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90">
+        <Button className="gap-2">
           <Plus size={20} weight="bold" />
           {t.vacationRequestDialog.requestVacation}
         </Button>

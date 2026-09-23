@@ -1,6 +1,13 @@
 @import 'tailwindcss';
 @import "tw-animate-css";
 
+/* Skrifterne pakkes MED appen. Hentes de fra nettet, staar hubben uden sin
+   typografi hver gang drevet eller proxyen driller - og det er netop de
+   situationer, appen ellers er bygget til at overleve. */
+@import '@fontsource-variable/ibm-plex-sans/index.css';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+
 @custom-variant dark (&:is(.dark *));
 
 @config '../tailwind.config.js';
@@ -12,19 +19,23 @@
   
   body {
     font-family: var(--font-sans), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
-    font-feature-settings: "ss01", "cv01";
-    @apply text-foreground;
-    background: linear-gradient(
-      180deg,
-      oklch(0.995 0.002 260) 0%,
-      oklch(0.972 0.006 258) 100%
-    );
+    @apply text-foreground bg-background;
     min-height: 100vh;
+  }
+
+  /* Tal skal flugte i kolonner - vagtplan, datoer, antal, scorer. Uden dette
+     hopper tallene vandret fra raekke til raekke, fordi 1 er smallere end 8. */
+  body,
+  input,
+  button,
+  table {
+    font-variant-numeric: tabular-nums;
   }
   
   h1, h2, h3, h4, h5, h6 {
-    font-family: 'Inter', sans-serif;
-    letter-spacing: -0.02em;
+    font-family: var(--font-sans), sans-serif;
+    letter-spacing: -0.015em;
+    text-wrap: balance;
   }
 
   #root {
@@ -32,84 +43,86 @@
   }
 }
 
-/* Baggrunds-animationer: kun transform/opacity, så de kører på compositoren
-   uden main-thread-arbejde. Bruges af AnimatedBackground. */
-@keyframes bg-float {
-  0%, 100% { transform: translateY(0) rotate(0deg) scale(1); }
-  50% { transform: translateY(-80px) rotate(180deg) scale(1.15); }
-}
-
-@keyframes bg-glow {
-  0%, 100% { transform: scale(1); opacity: 0.55; }
-  50% { transform: scale(1.18); opacity: 1; }
-}
-
-.bg-floating-shape {
-  animation: bg-float 30s ease-in-out infinite;
-  will-change: transform;
-}
-
-.bg-glow-orb {
-  animation: bg-glow 12s ease-in-out infinite;
-  will-change: transform, opacity;
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .bg-floating-shape,
-  .bg-glow-orb {
-    animation: none;
+  /* Framer Motion haandteres af <MotionConfig reducedMotion="user"> i main.tsx.
+     Her tager vi de rene css-overgange og -animationer. */
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 
 :root {
-  /* Nexi brand: primary #2D32AA, navy text, clean white surfaces. */
-  --background: oklch(0.985 0.003 260);
-  --foreground: oklch(0.25 0.05 275);
+  /* Vagtbord, ikke reklame: fladerne er papir og streger, og farve er
+     reserveret til noget, der betyder noget. Mærkefarven (Nexi #2D32AA) bruges
+     til EEN ting ad gangen - den primære handling eller den aktive tilstand. */
+  --background: oklch(0.977 0.003 265);
+  --foreground: oklch(0.22 0.035 272);
   
   --card: oklch(1.00 0 0);
-  --card-foreground: oklch(0.25 0.05 275);
+  --card-foreground: oklch(0.22 0.035 272);
   
   --popover: oklch(1.00 0 0);
-  --popover-foreground: oklch(0.25 0.05 275);
+  --popover-foreground: oklch(0.22 0.035 272);
   
-  --primary: oklch(0.40 0.20 272);
+  --primary: oklch(0.395 0.205 273);
   --primary-foreground: oklch(0.99 0 0);
   
-  --secondary: oklch(0.95 0.012 265);
-  --secondary-foreground: oklch(0.32 0.08 272);
+  /* secondary er husets neutrale BEROERINGSFLADE: hover i menuer og lister,
+     ikon-felter, sekundaere knapper. Den skal kunne ses tydeligt oven paa et
+     hvidt kort - derfor et hak moerkere end foer. */
+  --secondary: oklch(0.942 0.009 265);
+  --secondary-foreground: oklch(0.30 0.05 272);
   
-  --muted: oklch(0.965 0.006 260);
-  --muted-foreground: oklch(0.50 0.03 265);
+  --muted: oklch(0.962 0.005 265);
+  --muted-foreground: oklch(0.505 0.022 268);
   
-  --accent: oklch(0.50 0.16 265);
+  /* accent er husets anden maerkefarve ("i dag", afventende) - ikke en hover-flade. */
+  --accent: oklch(0.465 0.175 268);
   --accent-foreground: oklch(0.99 0 0);
   
-  --destructive: oklch(0.55 0.19 25);
+  --destructive: oklch(0.505 0.19 27);
   --destructive-foreground: oklch(0.99 0 0);
   
-  --border: oklch(0.90 0.010 262);
-  --input: oklch(0.90 0.010 262);
-  --ring: oklch(0.40 0.20 272);
+  --border: oklch(0.895 0.008 265);
+  --input: oklch(0.875 0.010 265);
+  --ring: oklch(0.395 0.205 273);
   
-  --radius: 0.625rem;
+  /* Een radius i hele appen: kartotekskort, ikke avispapir. */
+  --radius: 0.375rem;
+
+  /* Signalfarver. Bruges KUN til status - aldrig som dekoration.
+     Det er her farven maa tale, fordi den siger noget. */
+  --signal-attention: oklch(0.545 0.145 62);
+  --signal-attention-surface: oklch(0.965 0.035 78);
+  --signal-ok: oklch(0.505 0.125 152);
+  --signal-ok-surface: oklch(0.962 0.035 155);
+  --signal-blocked: oklch(0.505 0.19 27);
+  --signal-blocked-surface: oklch(0.962 0.03 20);
   
-  --chart-1: oklch(0.40 0.20 272);
+  --chart-1: oklch(0.395 0.205 273);
   --chart-2: oklch(0.55 0.13 255);
   --chart-3: oklch(0.62 0.09 250);
-  --chart-4: oklch(0.55 0.19 25);
-  --chart-5: oklch(0.32 0.12 274);
+  --chart-4: oklch(0.545 0.145 62);
+  --chart-5: oklch(0.505 0.125 152);
   
   --sidebar: oklch(0.99 0.002 260);
-  --sidebar-foreground: oklch(0.25 0.05 275);
-  --sidebar-primary: oklch(0.40 0.20 272);
+  --sidebar-foreground: oklch(0.22 0.035 272);
+  --sidebar-primary: oklch(0.395 0.205 273);
   --sidebar-primary-foreground: oklch(0.99 0 0);
-  --sidebar-accent: oklch(0.95 0.012 265);
-  --sidebar-accent-foreground: oklch(0.32 0.08 272);
-  --sidebar-border: oklch(0.90 0.010 262);
-  --sidebar-ring: oklch(0.40 0.20 272);
+  --sidebar-accent: oklch(0.955 0.008 265);
+  --sidebar-accent-foreground: oklch(0.30 0.05 272);
+  --sidebar-border: oklch(0.895 0.008 265);
+  --sidebar-ring: oklch(0.395 0.205 273);
   
-  --shadow-color: oklch(0.30 0.08 272);
-  --shadow-opacity: 0.08;
+  /* Flader adskilles af en streg, ikke af en skygge. Skygge findes kun til
+     ting der faktisk svaever: dialoger og menuer. */
+  --shadow-color: oklch(0.25 0.05 272);
+  --shadow-opacity: 0.10;
   --shadow-blur: 20px;
   --shadow-spread: 1px;
   --shadow-offset-x: 0px;
@@ -153,9 +166,9 @@
   --size-80: 20rem;
   --size-96: 24rem;
   
-  --font-sans: Inter;
+  --font-sans: 'IBM Plex Sans Variable';
   --font-serif: Georgia;
-  --font-mono: JetBrains Mono;
+  --font-mono: 'IBM Plex Mono';
 }
 
 .dark {
@@ -168,30 +181,39 @@
   --popover: oklch(0.21 0.04 274);
   --popover-foreground: oklch(0.95 0.008 260);
   
-  --primary: oklch(0.62 0.16 268);
+  --primary: oklch(0.68 0.16 268);
   --primary-foreground: oklch(0.12 0.03 274);
   
-  --secondary: oklch(0.27 0.05 272);
+  --secondary: oklch(0.305 0.05 272);
   --secondary-foreground: oklch(0.92 0.01 260);
   
   --muted: oklch(0.25 0.04 272);
   --muted-foreground: oklch(0.68 0.03 262);
   
-  --accent: oklch(0.58 0.14 260);
-  --accent-foreground: oklch(0.12 0.03 274);
+  --accent: oklch(0.675 0.145 265);
+  --accent-foreground: oklch(0.15 0.03 274);
   
-  --destructive: oklch(0.62 0.18 25);
-  --destructive-foreground: oklch(0.99 0 0);
+  /* Hvid tekst paa fuld roed gav 3,9:1 i moerk tilstand; moerk tekst giver over 6. */
+  --destructive: oklch(0.65 0.18 25);
+  --destructive-foreground: oklch(0.14 0.03 274);
   
-  --border: oklch(0.32 0.04 272);
-  --input: oklch(0.32 0.04 272);
-  --ring: oklch(0.62 0.16 268);
+  --border: oklch(0.31 0.035 272);
+  --input: oklch(0.36 0.04 272);
+  --ring: oklch(0.68 0.16 268);
+
+  /* Samme signaler som i lys tilstand, loeftet saa de baerer paa moerk flade. */
+  --signal-attention: oklch(0.775 0.135 72);
+  --signal-attention-surface: oklch(0.32 0.06 68);
+  --signal-ok: oklch(0.745 0.135 155);
+  --signal-ok-surface: oklch(0.29 0.055 158);
+  --signal-blocked: oklch(0.70 0.17 25);
+  --signal-blocked-surface: oklch(0.31 0.07 22);
   
   --chart-1: oklch(0.62 0.16 268);
   --chart-2: oklch(0.66 0.12 255);
   --chart-3: oklch(0.72 0.08 250);
-  --chart-4: oklch(0.62 0.18 25);
-  --chart-5: oklch(0.50 0.14 274);
+  --chart-4: oklch(0.775 0.135 72);
+  --chart-5: oklch(0.745 0.135 155);
   
   --sidebar: oklch(0.19 0.035 274);
   --sidebar-foreground: oklch(0.95 0.008 260);
@@ -207,11 +229,7 @@
 }
 
 .dark body {
-  background: linear-gradient(
-    180deg,
-    oklch(0.17 0.035 274) 0%,
-    oklch(0.13 0.04 276) 100%
-  );
+  background: oklch(0.155 0.032 274);
 }
 
 @theme {
@@ -234,6 +252,16 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+
+  /* Signalfarverne skal kunne bruges som almindelige klasser (text-attention,
+     bg-attention-surface, border-attention) i stedet for at hver skaerm finder
+     paa sin egen gule nuance. */
+  --color-attention: var(--signal-attention);
+  --color-attention-surface: var(--signal-attention-surface);
+  --color-ok: var(--signal-ok);
+  --color-ok-surface: var(--signal-ok-surface);
+  --color-blocked: var(--signal-blocked);
+  --color-blocked-surface: var(--signal-blocked-surface);
   
   --radius-sm: calc(var(--radius) * 0.5);
   --radius-md: var(--radius);
@@ -241,6 +269,18 @@
   --radius-xl: calc(var(--radius) * 2);
   --radius-2xl: calc(var(--radius) * 3);
   --radius-full: 9999px;
+}
+
+/* Modulfelterne paa forsiden faar hver deres farve via --module-color. Paa moerk
+   flade er den samme farve for maerk til at laese, saa den blandes op mod hvid. */
+.module-tile {
+  --module-ink: var(--module-color);
+  --module-wash: color-mix(in oklab, var(--module-color) 9%, transparent);
+}
+
+.dark .module-tile {
+  --module-ink: color-mix(in oklab, var(--module-color) 58%, white);
+  --module-wash: color-mix(in oklab, var(--module-color) 16%, transparent);
 }
 
 .word-content {

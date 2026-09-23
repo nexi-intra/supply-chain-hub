@@ -24,7 +24,7 @@ test('reference migration changes identities in nested modules but never user-wr
   assert.equal(value.userId, `user_${old}`)
 })
 test('personal preference keys migrate only exact identity boundaries', () => {
-  for (const prefix of ['hub-dashboard-', 'active-theme-', 'seen-vacation-requests-', 'announcements-dismissed-']) assert.equal(personalKey(`${prefix}${old}`, old, next), `${prefix}${next}`)
+  for (const prefix of ['hub-dashboard-', 'seen-vacation-requests-', 'announcements-dismissed-']) assert.equal(personalKey(`${prefix}${old}`, old, next), `${prefix}${next}`)
   assert.equal(personalKey(`app-language-user_${old}`, old, next), `app-language-user_${next}`)
   assert.equal(personalKey(`hub-dashboard-${old}.someone`, old, next), `hub-dashboard-${old}.someone`)
   assert.equal(personalKey(`confetti-shown-${old}-09-15-2026`, old, next), `confetti-shown-${next}-09-15-2026`)

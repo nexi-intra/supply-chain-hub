@@ -1,7 +1,7 @@
 const PUBLIC_CHANNELS = new Set(['auth:login', 'auth:signup', 'auth:resume', 'auth:current', 'auth:logout', 'auth:renew', 'auth:select-view', 'auth:profile', 'registry:list-teams', 'registry:get-creator-email', 'registry:lookup-team', 'kv:connection-status', 'updates:status', 'updates:check', 'updates:history'])
 const CREATOR_CHANNELS = new Set(['registry:set-creator-email', 'registry:create-team', 'registry:list-team-administration', 'registry:update-team', 'registry:list-access-views', 'registry:create-access-view', 'registry:update-access-view', 'registry:delete-access-view', 'registry:list-user-options', 'kv:choose-data-dir', 'updates:select-zip', 'updates:publish', 'backup:export'])
 const GUEST_KEYS = new Set(['app-language-guest', 'user-theme-guest'])
-const PERSONAL_KEY = /^(?:app-language-|user-theme-|active-theme-|hub-dashboard-|todos-personal-)/
+const PERSONAL_KEY = /^(?:app-language-|user-theme-|hub-dashboard-|todos-personal-)/
 const WRITES = new Set(['kv:set', 'kv:update', 'kv:delete'])
 // En sund gemning mod det delte drev tager ~1 s (maalt). Over dette er der noget galt.
 const SLOW_WRITE_WARNING_MS = 4000

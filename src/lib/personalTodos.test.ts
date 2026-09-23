@@ -43,4 +43,13 @@ describe('createPersonalTodo', () => {
     expect(todo.title).toBe('Køb kaffe')
     expect(todo.description).toBeUndefined()
   })
+
+  it('reuses a fixed creation identity when retrying a write with an uncertain result', async () => {
+    const { store } = fixture()
+    const identity = { id: 'todo-retry', createdAt: '2026-09-23T12:00:00.000Z' }
+    const first = await createPersonalTodo('a@test', 'Ring til IT', 'Om printeren', undefined, identity)
+    const retried = await createPersonalTodo('a@test', 'Ring til IT', 'Om printeren', undefined, identity)
+    expect(retried).toEqual(first)
+    expect((store.get(personalTodosKey('a@test')) as typeof first[]).map(todo => todo.id)).toEqual([identity.id, identity.id])
+  })
 })

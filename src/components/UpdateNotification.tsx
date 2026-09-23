@@ -132,7 +132,7 @@ export function UpdateNotification({ suppressed = false }: UpdateNotificationPro
           </div>
           {manifest.notes && !isInstalling && (
             <div className="rounded-lg border bg-muted/40 p-3">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">
+              <p className="text-xs font-semibold text-muted-foreground mb-1">
                 {da ? 'Nyt i denne version' : fi ? "Mitä uutta?" : "What's new"}
               </p>
               <p className="text-sm whitespace-pre-wrap">{manifest.notes}</p>

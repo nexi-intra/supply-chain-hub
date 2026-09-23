@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
 import {
   ArrowLeft, Crown, Buildings, Plus, UserPlus, GameController, HardDrives,
@@ -45,6 +45,8 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
   const [userOptions, setUserOptions] = useState<RegistryUserOption[]>([])
 
   const [isCreateTeamOpen, setIsCreateTeamOpen] = useState(false)
+  const [isCreatingTeam, setIsCreatingTeam] = useState(false)
+  const createTeamInProgress = useRef(false)
   const [newTeamName, setNewTeamName] = useState('')
   const [newTeamCode, setNewTeamCode] = useState('')
 
@@ -54,6 +56,8 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
   const [editTeamAbbreviation, setEditTeamAbbreviation] = useState('')
 
   const [isCreateUserOpen, setIsCreateUserOpen] = useState(false)
+  const [isCreatingUser, setIsCreatingUser] = useState(false)
+  const createUserInProgress = useRef(false)
   const [newUserTeamId, setNewUserTeamId] = useState('')
   const [newUserName, setNewUserName] = useState('')
   const [newUserEmail, setNewUserEmail] = useState('')
@@ -61,6 +65,8 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
   const [newUserRole, setNewUserRole] = useState<'user' | 'manager'>('manager')
 
   const [isAccessViewOpen, setIsAccessViewOpen] = useState(false)
+  const [isSavingAccessView, setIsSavingAccessView] = useState(false)
+  const accessViewSaveInProgress = useRef(false)
   const [editingAccessViewId, setEditingAccessViewId] = useState<string | null>(null)
   const [accessViewName, setAccessViewName] = useState('')
   const [accessViewTeamIds, setAccessViewTeamIds] = useState<string[]>([])
@@ -132,6 +138,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
     checked ? [...new Set([...values, value])] : values.filter((item) => item !== value)
 
   const handleSaveAccessView = async () => {
+    if (accessViewSaveInProgress.current) return
     const name = accessViewName.trim()
     if (!name) {
       toast.error(t.creatorPanel.accessViews.nameRequired)
@@ -143,6 +150,8 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
     }
     if (!window.electronRegistry) return
     const input = { name, teamIds: accessViewTeamIds, userEmails: accessViewUserEmails }
+    accessViewSaveInProgress.current = true
+    setIsSavingAccessView(true)
     try {
       if (editingAccessViewId) {
         await window.electronRegistry.updateAccessView(userEmail, editingAccessViewId, input)
@@ -155,6 +164,9 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
     } catch (error) {
       console.error('Kunne ikke gemme samlevisning:', error)
       toast.error(error instanceof Error ? error.message : String(error))
+    } finally {
+      accessViewSaveInProgress.current = false
+      setIsSavingAccessView(false)
     }
   }
 
@@ -171,12 +183,15 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
   }
 
   const handleCreateTeam = async () => {
+    if (createTeamInProgress.current) return
     const name = newTeamName.trim()
     const code = newTeamCode.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '')
     if (!name || !code) {
       toast.error(t.creatorPanel.teams.fieldsRequired)
       return
     }
+    createTeamInProgress.current = true
+    setIsCreatingTeam(true)
     try {
       await window.electronRegistry?.createTeam({ teamId: code, name, folderName: code })
       toast.success(t.creatorPanel.teams.createdToast)
@@ -186,6 +201,9 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
       loadTeams()
     } catch {
       toast.error(t.creatorPanel.teams.codeExists)
+    } finally {
+      createTeamInProgress.current = false
+      setIsCreatingTeam(false)
     }
   }
 
@@ -221,6 +239,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
   }
 
   const handleCreateUser = async () => {
+    if (createUserInProgress.current) return
     const name = newUserName.trim()
     const email = newUserEmail.trim().toLowerCase()
     if (!newUserTeamId || !name || !email || !newUserPassword.trim()) {
@@ -230,30 +249,38 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
     const targetTeam = teams.find(team => team.teamId === newUserTeamId)
     if (!targetTeam || !window.electronRegistry) return
 
-    // Skift midlertidigt til måltets team for at skrive brugeren i DET teams
-    // egen datamappe, og skift altid tilbage til Creators eget team bagefter.
-    const homeTeam = await window.electronRegistry.lookupTeam(userEmail)
+    createUserInProgress.current = true
+    setIsCreatingUser(true)
     try {
-      await window.electronRegistry.switchToTeam(targetTeam.folderName)
-      await window.electronRegistry.assignUser(email, targetTeam.teamId)
-      await setKvObjectField('users', email, {
-        email,
-        password: await hashPassword(newUserPassword),
-        fullName: name,
-        role: newUserRole,
-        isManager: newUserRole === 'manager',
-        status: 'approved',
-      })
-      toast.success(t.creatorPanel.createUserDialog.created)
+      const homeTeam = await window.electronRegistry.lookupTeam(userEmail)
+      try {
+        await window.electronRegistry.switchToTeam(targetTeam.folderName)
+        await window.electronRegistry.assignUser(email, targetTeam.teamId)
+        await setKvObjectField('users', email, {
+          email,
+          password: await hashPassword(newUserPassword),
+          fullName: name,
+          role: newUserRole,
+          isManager: newUserRole === 'manager',
+          status: 'approved',
+        })
+      } finally {
+        if (homeTeam) await window.electronRegistry.switchToTeam(homeTeam.folderName)
+        await Promise.all([loadTeams(), loadUsers(), loadUserOptions()])
+      }
       setIsCreateUserOpen(false)
       setNewUserTeamId('')
       setNewUserName('')
       setNewUserEmail('')
       setNewUserPassword('')
       setNewUserRole('manager')
+      toast.success(t.creatorPanel.createUserDialog.created)
+    } catch (error) {
+      console.error('Kunne ikke oprette bruger i team:', error)
+      toast.error(error instanceof Error ? error.message : String(error))
     } finally {
-      if (homeTeam) await window.electronRegistry.switchToTeam(homeTeam.folderName)
-      await Promise.all([loadTeams(), loadUsers(), loadUserOptions()])
+      createUserInProgress.current = false
+      setIsCreatingUser(false)
     }
   }
 
@@ -262,7 +289,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
   if (!hasAccess) {
     return (
       <div className="min-h-screen bg-background relative overflow-hidden flex items-center justify-center">
-        <Card className="p-8 max-w-md relative z-10 border-2">
+        <Card className="p-8 max-w-md relative z-10">
           <div className="text-center space-y-4">
             <Crown size={64} className="text-destructive mx-auto" weight="duotone" />
             <h2 className="text-2xl font-bold">{t.creatorPanel.noAccess.title}</h2>
@@ -286,7 +313,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
               variant="outline"
               size="lg"
               onClick={onNavigateBack}
-              className="pointer-events-auto bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
+              className="pointer-events-auto bg-background/90 hover:bg-background transition-colors gap-2 font-semibold px-4"
             >
               <ArrowLeft size={20} />
               {t.common.back}
@@ -302,7 +329,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
         <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }} className="mb-8">
           <div className="flex items-center gap-3">
             <Crown size={36} className="text-accent" weight="fill" />
-            <h1 className="text-4xl sm:text-5xl font-bold leading-normal bg-gradient-to-br from-primary to-accent bg-clip-text text-transparent pb-1">
+            <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground">
               {t.creatorPanel.title}
             </h1>
           </div>
@@ -325,7 +352,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
           </TabsList>
 
           <TabsContent value="teams" className="space-y-6">
-            <Card className="p-6 border-2">
+            <Card className="p-6">
               <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
                 <div className="flex items-center gap-2">
                   <Buildings size={28} className="text-primary" weight="duotone" />
@@ -348,7 +375,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {teamAdministrations.map(team => (
-                    <div key={team.teamId} className="p-4 rounded-xl border-2 bg-card space-y-3">
+                    <div key={team.teamId} className="p-4 rounded-md border bg-card space-y-3">
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex items-start gap-2 min-w-0">
                           <ShieldCheck size={20} className="text-primary mt-0.5 shrink-0" weight="duotone" />
@@ -362,7 +389,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
                         </Button>
                       </div>
                       <div className="border-t pt-3">
-                        <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                        <div className="text-xs font-semibold text-muted-foreground mb-2">
                           {team.managers.length === 1 ? t.creatorPanel.teams.manager : t.creatorPanel.teams.managers}
                         </div>
                         {team.managers.length === 0 ? (
@@ -384,7 +411,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
               )}
             </Card>
 
-            <Card className="p-6 border-2">
+            <Card className="p-6">
               <div className="flex items-start justify-between gap-4 mb-6 flex-wrap">
                 <div className="flex items-start gap-3">
                   <UsersThree size={30} className="text-primary mt-0.5" weight="duotone" />
@@ -404,7 +431,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
               ) : (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   {accessViews.map((view) => (
-                    <div key={view.viewId} className="p-4 rounded-xl border-2 bg-card space-y-3">
+                    <div key={view.viewId} className="p-4 rounded-md border bg-card space-y-3">
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <div className="font-bold text-lg">{view.name}</div>
@@ -532,7 +559,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
         </Tabs>
       </div>
 
-      <Dialog open={isCreateTeamOpen} onOpenChange={setIsCreateTeamOpen}>
+      <Dialog open={isCreateTeamOpen} onOpenChange={(open) => { if (!createTeamInProgress.current) setIsCreateTeamOpen(open) }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>{t.creatorPanel.teams.createTeam}</DialogTitle>
@@ -549,10 +576,10 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsCreateTeamOpen(false)}>{t.common.cancel}</Button>
-            <Button onClick={handleCreateTeam} className="gap-2">
+            <Button variant="outline" disabled={isCreatingTeam} onClick={() => setIsCreateTeamOpen(false)}>{t.common.cancel}</Button>
+            <Button onClick={handleCreateTeam} loading={isCreatingTeam} className="gap-2">
               <Plus size={18} weight="bold" />
-              {t.creatorPanel.teams.createTeam}
+              {isCreatingTeam ? language === 'da' ? 'Gemmer…' : language === 'fi' ? 'Tallennetaan…' : 'Saving…' : t.creatorPanel.teams.createTeam}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -586,7 +613,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
         </DialogContent>
       </Dialog>
 
-      <Dialog open={isCreateUserOpen} onOpenChange={setIsCreateUserOpen}>
+      <Dialog open={isCreateUserOpen} onOpenChange={(open) => { if (!createUserInProgress.current) setIsCreateUserOpen(open) }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>{t.creatorPanel.createUserDialog.title}</DialogTitle>
@@ -631,16 +658,16 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsCreateUserOpen(false)}>{t.common.cancel}</Button>
-            <Button onClick={handleCreateUser} className="gap-2">
+            <Button variant="outline" disabled={isCreatingUser} onClick={() => setIsCreateUserOpen(false)}>{t.common.cancel}</Button>
+            <Button onClick={handleCreateUser} loading={isCreatingUser} className="gap-2">
               <UserPlus size={18} weight="bold" />
-              {t.creatorPanel.createUserDialog.submit}
+              {isCreatingUser ? language === 'da' ? 'Gemmer…' : language === 'fi' ? 'Tallennetaan…' : 'Saving…' : t.creatorPanel.createUserDialog.submit}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={isAccessViewOpen} onOpenChange={setIsAccessViewOpen}>
+      <Dialog open={isAccessViewOpen} onOpenChange={(open) => { if (!accessViewSaveInProgress.current) setIsAccessViewOpen(open) }}>
         <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editingAccessViewId ? t.creatorPanel.accessViews.edit : t.creatorPanel.accessViews.create}</DialogTitle>
@@ -684,8 +711,8 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsAccessViewOpen(false)}>{t.common.cancel}</Button>
-            <Button onClick={handleSaveAccessView}>{t.creatorPanel.accessViews.save}</Button>
+            <Button variant="outline" disabled={isSavingAccessView} onClick={() => setIsAccessViewOpen(false)}>{t.common.cancel}</Button>
+            <Button onClick={handleSaveAccessView} loading={isSavingAccessView}>{isSavingAccessView ? language === 'da' ? 'Gemmer…' : language === 'fi' ? 'Tallennetaan…' : 'Saving…' : t.creatorPanel.accessViews.save}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

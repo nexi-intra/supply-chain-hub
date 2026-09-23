@@ -62,7 +62,7 @@ export function WhatsNewDialog() {
           ))}
         </div>
         <DialogFooter>
-          <Button onClick={() => setEntries(null)} className="w-full bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90">
+          <Button onClick={() => setEntries(null)} className="w-full">
             {language === 'da' ? 'Fedt, tak!' : language === 'fi' ? 'Hienoa, kiitos!' : 'Great, thanks!'}
           </Button>
         </DialogFooter>

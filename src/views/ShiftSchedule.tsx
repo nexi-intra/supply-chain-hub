@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Checkbox } from '@/components/ui/checkbox'
 import { DatePickerField } from '@/components/DatePickerField'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -15,6 +16,7 @@ import { toast } from 'sonner'
 import { AutoText } from '@/components/AutoText'
 import { useAutoTranslate } from '@/lib/useAutoTranslate'
 import { cn } from '@/lib/utils'
+import { readableTextOn } from '@/lib/readableText'
 import { isAnyModalOpen } from '@/lib/modalStack'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
@@ -82,6 +84,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
   
   const [newRoleName, setNewRoleName] = useState('')
   const [newRoleColor, setNewRoleColor] = useState('#8b5cf6')
+  const [onlyWhenAssigned, setOnlyWhenAssigned] = useState(false)
 
   const rolePlaceholder = useAutoTranslate('F.eks. Supervisor, Tekniker, Support')
   const selectEmployeePlaceholder = useAutoTranslate('Vælg medarbejder')
@@ -264,12 +267,14 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
     const newRole: ShiftRole = {
       id: Date.now().toString(),
       name: newRoleName.trim(),
-      color: newRoleColor
+      color: newRoleColor,
+      onlyWhenAssigned,
     }
 
     setRoles((current) => [...(current || []), newRole])
     setNewRoleName('')
     setNewRoleColor('#8b5cf6')
+    setOnlyWhenAssigned(false)
     setShowRoleDialog(false)
     toast.success('Rolle tilføjet')
   }
@@ -284,12 +289,13 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
     setRoles((current) => 
       (current || []).map(r => 
         r.id === editingRole.id 
-          ? { ...r, name: newRoleName.trim(), color: newRoleColor }
+          ? { ...r, name: newRoleName.trim(), color: newRoleColor, onlyWhenAssigned }
           : r
       )
     )
     setNewRoleName('')
     setNewRoleColor('#8b5cf6')
+    setOnlyWhenAssigned(false)
     setEditingRole(null)
     setShowRoleDialog(false)
     toast.success('Rolle opdateret')
@@ -362,6 +368,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
     setEditingRole(role)
     setNewRoleName(role.name)
     setNewRoleColor(role.color)
+    setOnlyWhenAssigned(role.onlyWhenAssigned === true)
     setShowRoleDialog(true)
   }
 
@@ -369,6 +376,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
     setEditingRole(null)
     setNewRoleName('')
     setNewRoleColor('#8b5cf6')
+    setOnlyWhenAssigned(false)
     setShowRoleDialog(true)
   }
 
@@ -763,7 +771,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                 variant="outline"
                 size="lg"
                 onClick={onNavigateBack}
-                className="pointer-events-auto bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
+                className="pointer-events-auto bg-background/90 hover:bg-background transition-colors gap-2 font-semibold px-4"
               >
                 <ArrowLeft size={20} />
                 <AutoText text="Tilbage" />
@@ -772,16 +780,10 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
           </div>
         </div>
       </div>
-      <div className="w-full px-4 sm:px-6 pt-40 pb-12 sm:pb-20 relative z-10">
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mb-10 text-center"
-        >
-          <div className="flex flex-col items-center gap-6">
-            <h1 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold leading-normal bg-gradient-to-br from-primary to-accent bg-clip-text text-transparent pb-1"><AutoText text="Vagtplan" /></h1>
-          </div>
-        </motion.div>
+      <div className="w-full px-4 sm:px-6 pt-28 pb-12 sm:pb-20 relative z-10">
+        <header className="mb-6 border-b pb-4">
+          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground"><AutoText text="Vagtplan" /></h1>
+        </header>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TabsList className="grid w-full grid-cols-3 max-w-2xl">
@@ -808,7 +810,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                     value={selectedMonth.toString()}
                     onValueChange={(value) => setSelectedMonth(parseInt(value))}
                   >
-                    <SelectTrigger className="w-[160px] font-semibold shadow-sm border-2 hover:border-primary/50 transition-all">
+                    <SelectTrigger className="w-[160px] font-semibold">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -828,7 +830,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                     value={selectedYear.toString()}
                     onValueChange={(value) => setSelectedYear(parseInt(value))}
                   >
-                    <SelectTrigger className="w-[130px] font-semibold shadow-sm border-2 hover:border-primary/50 transition-all">
+                    <SelectTrigger className="w-[130px] font-semibold">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -844,7 +846,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                   <Button
                     onClick={() => setShowWeekAssignmentDialog(true)}
                     variant="default"
-                    className="gap-2 shadow-md hover:shadow-lg transition-all bg-gradient-to-r from-primary to-primary/90"
+                    className="gap-2"
                   >
                     <Plus size={18} weight="bold" />
                     <AutoText text="Tilføj Opgaver til Hel Uge" />
@@ -852,7 +854,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                   <Button
                     onClick={() => setShowPatternDialog(true)}
                     variant="outline"
-                    className="gap-2 shadow-md hover:shadow-lg transition-all border-2"
+                    className="gap-2"
                   >
                     <ArrowsClockwise size={18} weight="bold" />
                     <AutoText text="Gentagne vagter" />
@@ -860,7 +862,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                   <Button
                     onClick={() => setShowWeekClearDialog(true)}
                     variant="destructive"
-                    className="gap-2 shadow-md hover:shadow-lg transition-all"
+                    className="gap-2"
                   >
                     <Trash size={18} weight="bold" />
                     <AutoText text="Ryd Hel Uge" />
@@ -874,7 +876,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                       setScrollToToday(true)
                     }}
                     variant="outline"
-                    className="gap-2 shadow-md hover:shadow-lg transition-all border-2 hover:border-accent hover:bg-accent/10"
+                    className="gap-2"
                   >
                     <CalendarIcon size={18} weight="bold" />
                     <AutoText text="Gå til i dag" />
@@ -882,10 +884,10 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                 </div>
               </div>
 
-              <div className="shadow-inner rounded-lg border-2 border-border bg-card overflow-hidden">
+              <div className="rounded-md border border-border bg-card overflow-hidden">
                 <div ref={scheduleScrollRef} className="overflow-auto relative" style={{ maxHeight: 'calc(100vh - 200px)', maxWidth: '100%' }}>
                   <table className="w-full border-collapse relative" style={{ tableLayout: 'fixed', width: 'max-content' }}>
-                    <thead className="sticky top-0 z-50 bg-card shadow-lg" style={{ position: 'sticky', top: 0 }}>
+                    <thead className="sticky top-0 z-50 bg-card border-b" style={{ position: 'sticky', top: 0 }}>
                       <tr>
                         <th className="sticky left-0 z-[60] bg-card border-r-2 border-b-2 border-border px-3 py-4 text-left font-bold shadow-[2px_0_8px_rgba(0,0,0,0.15)]" style={{ position: 'sticky', left: 0, width: '160px', minWidth: '160px', maxWidth: '160px' }}>
                           <span className="text-sm font-bold">Dato</span>
@@ -907,10 +909,10 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                               }}
                             >
                               <div 
-                                className="text-xs font-extrabold truncate" 
+                                className="text-xs font-extrabold truncate text-foreground pb-1"
                                 title={employee.name}
                                 style={{ 
-                                  color: employeeColor.bg
+                                  borderBottom: `3px solid ${employeeColor.bg}`
                                 }}
                               >
                                 {firstName}
@@ -949,25 +951,31 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                               <td 
                                 className={cn(
                                   "sticky left-0 z-40 bg-card border-r-2 border-border px-2 py-3 font-semibold transition-all shadow-[2px_0_8px_rgba(0,0,0,0.1)]",
-                                  isWeekend(date) && "text-destructive",
-                                  currentWeek && "bg-primary/10",
-                                  todayDate && "bg-accent/20"
+                                  isWeekend(date) && "text-destructive"
                                 )}
-                                style={{ width: '160px', minWidth: '160px', maxWidth: '160px' }}
+                                style={{
+                                  width: '160px', minWidth: '160px', maxWidth: '160px',
+                                  // Tonen skal ligge OVEN PAA bg-card: en bg-klasse ville erstatte den, og saa ruller cellerne synligt ind under kolonnen.
+                                  backgroundImage: todayDate
+                                    ? 'linear-gradient(color-mix(in oklab, var(--accent) 20%, transparent), color-mix(in oklab, var(--accent) 20%, transparent))'
+                                    : currentWeek
+                                      ? 'linear-gradient(color-mix(in oklab, var(--primary) 10%, transparent), color-mix(in oklab, var(--primary) 10%, transparent))'
+                                      : undefined,
+                                }}
                               >
                                 <div className="flex items-center gap-1.5 flex-wrap">
                                   <Badge 
                                     variant={currentWeek ? "default" : "outline"} 
                                     className={cn(
                                       "text-[10px] px-1.5 py-0.5 font-bold",
-                                      currentWeek && "bg-primary text-primary-foreground shadow-lg",
+                                      currentWeek && "bg-primary text-primary-foreground",
                                       todayDate && "ring-2 ring-accent"
                                     )}
                                   >
                                     U{weekNumber}
                                   </Badge>
-                                  <span className={cn("text-xs", todayDate && "font-extrabold text-accent")}>{dayName}</span>
-                                  <span className={cn("text-xs", todayDate && "font-extrabold text-accent")}>{day}/{selectedMonth + 1}</span>
+                                  <span className={cn("text-xs", todayDate && "font-extrabold text-foreground")}>{dayName}</span>
+                                  <span className={cn("text-xs", todayDate && "font-extrabold text-foreground")}>{day}/{selectedMonth + 1}</span>
                                   {isDanishHoliday(dateString) && (
                                     <Badge variant="destructive" className="text-[9px] px-1 py-0">
                                       <AutoText text="Hel" />
@@ -1111,11 +1119,12 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                                               <div key={assignment.id} className="group relative">
                                                 <div
                                                   className={cn(
-                                                    "px-1.5 py-1.5 rounded text-[11px] font-semibold truncate text-white border transition-all flex items-center justify-center gap-1",
+                                                    "px-1.5 py-1.5 rounded text-[11px] font-semibold truncate border transition-all flex items-center justify-center gap-1",
                                                     assignment.isPattern && "border-dashed"
                                                   )}
                                                   style={{
                                                     backgroundColor: role.color || '#8b5cf6',
+                                                    color: readableTextOn(role.color || '#8b5cf6'),
                                                     borderColor: `${role.color || '#8b5cf6'}CC`,
                                                     boxShadow: `0 2px 6px ${role.color || '#8b5cf6'}40`
                                                   }}
@@ -1145,7 +1154,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                                           {!isEmployeeCellLocked && (roles || []).length > 0 && (
                                             <Popover>
                                               <PopoverTrigger asChild>
-                                                <button className="w-full h-full min-h-[24px] text-muted-foreground/60 hover:text-foreground hover:bg-muted/40 rounded text-[10px] transition-colors flex items-center justify-center gap-1 border border-border/50 hover:border-border font-medium">
+                                                <button className="w-full h-full min-h-[24px] text-muted-foreground hover:text-foreground hover:bg-muted/40 rounded text-[10px] transition-colors flex items-center justify-center gap-1 border border-border/50 hover:border-border font-medium">
                                                   <Plus size={12} weight="regular" />
                                                   <span>Tilføj</span>
                                                 </button>
@@ -1175,7 +1184,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                                         !isEmployeeCellLocked && (roles || []).length > 0 ? (
                                           <Popover>
                                             <PopoverTrigger asChild>
-                                              <button className="w-full h-full min-h-[28px] text-muted-foreground/60 hover:text-foreground hover:bg-muted/40 rounded text-[11px] transition-colors flex items-center justify-center gap-1.5 border border-border/50 hover:border-border font-medium">
+                                              <button className="w-full h-full min-h-[28px] text-muted-foreground hover:text-foreground hover:bg-muted/40 rounded text-[11px] transition-colors flex items-center justify-center gap-1.5 border border-border/50 hover:border-border font-medium">
                                                 <Plus size={13} weight="regular" />
                                                 <span>Tilføj opgave</span>
                                               </button>
@@ -1200,7 +1209,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                                             </PopoverContent>
                                           </Popover>
                                         ) : (
-                                          <div className="text-muted-foreground/40 text-xs">
+                                          <div className="text-muted-foreground text-xs">
                                             {!isLocked ? '−' : ''}
                                           </div>
                                         )
@@ -1212,7 +1221,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                                             "w-full h-full min-h-[24px] rounded text-[10px] font-medium border transition-colors flex items-center justify-center gap-1",
                                             cellComment 
                                               ? "text-foreground/80 hover:text-foreground bg-muted/50 hover:bg-muted border-border" 
-                                              : "text-muted-foreground/70 hover:text-foreground bg-card hover:bg-muted/30 border-border/50 hover:border-border"
+                                              : "text-muted-foreground hover:text-foreground bg-card hover:bg-muted/30 border-border/50 hover:border-border"
                                           )}
                                           title={cellComment ? "Rediger kommentar" : "Tilføj kommentar"}
                                         >
@@ -1237,7 +1246,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
           </TabsContent>
 
           <TabsContent value="employees" className="space-y-6">
-            <Card className="p-6 border-2">
+            <Card className="p-6">
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-2">
                   <UserCircle size={28} className="text-primary" weight="duotone" />
@@ -1271,11 +1280,11 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                         key={employee.id}
                         initial={{ opacity: 0, scale: 0.95 }}
                         animate={{ opacity: 1, scale: 1 }}
-                        className="p-5 rounded-xl border-2 bg-card hover:shadow-md transition-all group"
+                        className="p-5 rounded-md border bg-card hover:border-primary/40 transition-colors group"
                       >
                         <div className="flex items-start gap-3 mb-3">
                           <div 
-                            className="w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg shadow-md"
+                            className="w-12 h-12 rounded-md flex items-center justify-center font-bold text-lg"
                             style={{
                               backgroundColor: employeeColor.bg,
                               color: employeeColor.text
@@ -1308,7 +1317,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
           </TabsContent>
 
           <TabsContent value="tasks" className="space-y-6">
-            <Card className="p-6 border-2">
+            <Card className="p-6">
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-2">
                   <Tag size={28} className="text-accent" weight="duotone" />
@@ -1321,7 +1330,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                   <Button
                     onClick={openAddRoleDialog}
                     size="sm"
-                    className="gap-2 bg-gradient-to-r from-primary to-accent"
+                    className="gap-2"
                   >
                     <Plus size={16} />
                     <AutoText text="Tilføj Opgave" />
@@ -1354,11 +1363,11 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                       key={role.id}
                       initial={{ opacity: 0, x: -10 }}
                       animate={{ opacity: 1, x: 0 }}
-                      className="flex items-center justify-between p-5 rounded-xl border-2 bg-card hover:shadow-md transition-all group"
+                      className="flex items-center justify-between p-5 rounded-md border bg-card hover:border-primary/40 transition-colors group"
                     >
                       <div className="flex items-center gap-4 flex-1">
                         <div
-                          className="w-14 h-14 rounded-xl flex items-center justify-center shadow-md"
+                          className="w-14 h-14 rounded-md flex items-center justify-center"
                           style={{ 
                             backgroundColor: `${role.color}30`,
                             border: `2px solid ${role.color}`
@@ -1433,6 +1442,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
           setEditingRole(null)
           setNewRoleName('')
           setNewRoleColor('#8b5cf6')
+          setOnlyWhenAssigned(false)
         }
       }}>
         <DialogContent>
@@ -1458,20 +1468,24 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                     type="button"
                     onClick={() => setNewRoleColor(color.value)}
                     className={cn(
-                      "relative flex flex-col items-center gap-2 p-3 rounded-lg border-2 transition-all hover:scale-105",
+                      "relative flex flex-col items-center gap-2 p-3 rounded-md border-2 transition-colors",
                       newRoleColor === color.value
-                        ? "border-foreground shadow-lg scale-105"
+                        ? "border-foreground"
                         : "border-border hover:border-muted-foreground"
                     )}
                   >
                     <div
-                      className="w-10 h-10 rounded-full shadow-md"
+                      className="w-10 h-10 rounded-full"
                       style={{ backgroundColor: color.value }}
                     />
                     <span className="text-xs font-medium">{color.name}</span>
                   </button>
                 ))}
               </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <Checkbox id="role-only-when-assigned" checked={onlyWhenAssigned} onCheckedChange={(checked) => setOnlyWhenAssigned(checked === true)} />
+              <Label htmlFor="role-only-when-assigned"><AutoText text="Vis kun i Hub, når nogen er sat på opgaven" /></Label>
             </div>
             <Button onClick={editingRole ? handleUpdateRole : handleAddRole} className="w-full">
               <AutoText text={editingRole ? 'Gem Ændringer' : 'Opret Rolle'} />
@@ -1681,7 +1695,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                     type="button"
                     onClick={() => togglePatternWeekday(day)}
                     className={cn(
-                      "flex-1 py-2 rounded-lg border-2 text-xs font-semibold transition-all",
+                      "flex-1 py-2 rounded-md border-2 text-xs font-semibold transition-colors",
                       patternWeekdays.includes(day) ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/40"
                     )}
                   >

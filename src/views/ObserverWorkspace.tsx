@@ -289,7 +289,7 @@ export function ObserverWorkspace({ userEmail, view, allTeams, onChangeView, onL
             <img src={nexiLogo} alt="Nexi" className="relative h-10 sm:h-12 md:h-14 w-auto dark:hidden" />
             <img src={nexiLogoWhite} alt="Nexi" className="relative h-10 sm:h-12 md:h-14 w-auto hidden dark:block" />
           </motion.div>
-          <motion.h1 className="text-2xl sm:text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight leading-normal bg-gradient-to-br from-primary to-accent bg-clip-text text-transparent pb-1 mb-4" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3, duration: 0.6 }}>
+            <motion.h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground mb-4" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3, duration: 0.6 }}>
             {view.name}
           </motion.h1>
           <div className="flex flex-wrap items-center justify-center gap-2">
@@ -300,7 +300,7 @@ export function ObserverWorkspace({ userEmail, view, allTeams, onChangeView, onL
 
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
           {activeModule === 'hub' ? <div /> : (
-            <Button variant="outline" onClick={() => setActiveModule('hub')} className="fixed top-6 left-4 sm:left-6 z-30 gap-2 w-fit bg-background/80 backdrop-blur-sm shadow-lg">
+            <Button variant="outline" onClick={() => setActiveModule('hub')} className="fixed top-6 left-4 sm:left-6 z-30 gap-2 w-fit bg-background/90">
               <ArrowLeft size={18} />{da ? `Tilbage til ${view.name}` : fi ? `Takaisin hubiin ${view.name}` : `Back to ${view.name}`}
             </Button>
           )}
@@ -363,15 +363,15 @@ function HubOverview({ da, fi, taskGroups, activeVacations, activeSick, homeOffi
   return (
     <>
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }} className="mb-10">
-        <Card className="p-5 md:p-7 bg-card border-2 hover:border-primary/40 transition-all duration-300 mb-4 md:mb-6">
+            <Card className="p-5 md:p-7 bg-card hover:border-primary/40 transition-colors mb-4 md:mb-6">
           <div className="flex items-center gap-3 md:gap-4 mb-5 md:mb-7">
-            <div className="p-2 md:p-2.5 rounded-lg bg-gradient-to-br from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)]"><Users size={28} weight="duotone" className="text-white" /></div>
+              <div className="p-2 md:p-2.5 rounded-md bg-secondary text-primary"><Users size={28} weight="duotone" /></div>
             <h2 className="text-lg md:text-2xl font-bold text-foreground text-center flex-1">{da ? 'Teamopgaver i dag' : fi ? 'Tiimin tehtävät tänään' : 'Team tasks today'}</h2>
           </div>
           {taskGroups.length === 0 ? <p className="text-muted-foreground text-center py-2">{da ? 'Ingen opgaver i dag' : fi ? 'Ei tehtäviä tänään' : 'No tasks today'}</p> : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 md:gap-4">
               {taskGroups.map((group) => (
-                <div key={`${group.team.teamId}-${group.role.id}`} className="flex flex-col gap-2 p-3 rounded-xl border-2 bg-gradient-to-br from-card to-muted/30">
+                <div key={`${group.team.teamId}-${group.role.id}`} className="flex flex-col gap-2 p-3 rounded-md border bg-card">
                   <div className="flex items-center justify-between gap-2 pb-2 border-b">
                     <Badge className="text-white" style={{ backgroundColor: group.role.color }}>{group.role.name}</Badge>{teamBadge(group.team)}
                   </div>
@@ -396,10 +396,10 @@ function HubOverview({ da, fi, taskGroups, activeVacations, activeSick, homeOffi
       <motion.div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-8" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.25 }}>
         {modules.map((module, index) => (
           <motion.div key={module.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 + index * 0.08 }} whileHover={{ y: -8 }} whileTap={{ scale: 0.98 }}>
-            <Card className="relative overflow-hidden border-2 group min-h-[220px] cursor-pointer hover:border-primary/40" onClick={() => onOpenModule(module.id)}>
+            <Card className="relative overflow-hidden group min-h-[180px] cursor-pointer hover:border-primary/40 transition-colors" onClick={() => onOpenModule(module.id)}>
               <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity" style={{ background: `radial-gradient(circle at top right, ${module.color}25, transparent)` }} />
               <div className="relative p-6 flex flex-col flex-1">
-                <div className={`mb-4 inline-flex items-center justify-center rounded-2xl p-3 shadow-lg bg-gradient-to-br ${module.gradient}`}><module.icon size={48} weight="duotone" className="text-white" /></div>
+                <div className="mb-4 inline-flex items-center justify-center rounded-md p-3 bg-secondary text-primary"><module.icon size={40} weight="duotone" /></div>
                 <h3 className="text-lg font-bold mb-2 text-center">{module.title}</h3>
                 <p className="text-muted-foreground text-sm leading-relaxed flex-1">{module.description}</p>
                 <Badge variant="secondary" className="mt-4 self-start gap-1"><Eye size={13} />{da ? 'Kun læsning' : fi ? 'Vain luku' : 'Read only'}</Badge>
@@ -421,8 +421,8 @@ function TodayCard({ title, empty, icon: Icon, people, teamBadge, gradient }: {
   gradient: string
 }) {
   return (
-    <Card className="p-4 md:p-6 bg-card border-2 hover:border-primary/40 transition-all duration-300">
-      <div className="flex items-center justify-center gap-3 mb-4"><div className={`p-2 rounded-lg bg-gradient-to-br ${gradient}`}><Icon size={24} weight="duotone" className="text-white" /></div><h3 className="text-base md:text-lg font-semibold">{title}</h3></div>
+      <Card className="p-4 md:p-6 bg-card hover:border-primary/40 transition-colors">
+        <div className="flex items-center gap-2.5 mb-3"><div className="p-2 rounded-md bg-secondary text-primary"><Icon size={24} weight="duotone" /></div><h3 className="text-base md:text-lg font-semibold">{title}</h3></div>
       {people.length === 0 ? <p className="text-muted-foreground text-sm text-center py-1">{empty}</p> : (
         <div className="flex flex-col gap-2">
           {people.map((person, index) => <div key={`${person.team.teamId}-${person.name}-${index}`} className="flex items-center justify-center gap-2 text-sm"><User size={16} className="text-muted-foreground" /><span>{person.name}</span>{teamBadge(person.team)}</div>)}
@@ -439,7 +439,7 @@ function ShiftsModule({ da, fi, assignments, teamBadge }: {
   teamBadge: (team: RegisteredTeam) => React.ReactNode
 }) {
   return (
-    <Card className="p-5 md:p-7 border-2">
+    <Card className="p-5 md:p-7">
       <div className="flex items-center gap-3 mb-6"><ClipboardText size={30} weight="duotone" className="text-primary" /><h2 className="text-2xl font-bold">{da ? 'Dagens vagtplan' : fi ? "Tämän päivän vuoroaikataulu" : "Today's shift schedule"}</h2></div>
       {assignments.length === 0 ? <p className="text-muted-foreground py-8 text-center">{da ? 'Ingen vagter i dag' : fi ? 'Ei vuoroja tänään' : 'No shifts today'}</p> : (
         <div className="divide-y">
@@ -457,11 +457,11 @@ function PeopleModule({ da, fi, people, teamBadge }: {
   teamBadge: (team: RegisteredTeam) => React.ReactNode
 }) {
   return (
-    <Card className="p-5 md:p-7 border-2">
+    <Card className="p-5 md:p-7">
       <div className="flex items-center gap-3 mb-6"><Buildings size={30} weight="duotone" className="text-primary" /><h2 className="text-2xl font-bold">{da ? 'Personer i teamene' : fi ? 'Joukkueen jäsenet' : 'People in the teams'}</h2></div>
       {people.length === 0 ? <p className="text-muted-foreground py-8 text-center">{da ? 'Ingen personer fundet' : fi ? 'Ei löytynyt ketään' : 'No people found'}</p> : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {people.map((item) => <div key={`${item.team.teamId}-${item.email}`} className="rounded-xl border p-4"><div className="font-medium">{item.name}</div><div className="text-sm text-muted-foreground truncate">{item.email}</div><div className="mt-3 flex gap-2">{teamBadge(item.team)}{item.role === 'manager' && <Badge variant="secondary">Manager</Badge>}</div></div>)}
+            {people.map((item) => <div key={`${item.team.teamId}-${item.email}`} className="rounded-md border p-4"><div className="font-medium">{item.name}</div><div className="text-sm text-muted-foreground truncate">{item.email}</div><div className="mt-3 flex gap-2">{teamBadge(item.team)}{item.role === 'manager' && <Badge variant="secondary">Manager</Badge>}</div></div>)}
         </div>
       )}
     </Card>
@@ -506,7 +506,7 @@ function GuidesModule({ da, fi, guides, teamBadge, userEmail, viewId }: {
 
   return (
     <>
-      <Card className="p-5 md:p-7 border-2">
+      <Card className="p-5 md:p-7">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
           <div className="flex items-center gap-3"><Books size={30} weight="duotone" className="text-primary" /><h2 className="text-2xl font-bold">{da ? 'Guidebibliotek' : fi ? 'Opaskirjasto' : 'Guide library'}</h2></div>
           <div className="relative w-full md:w-80"><MagnifyingGlass size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" /><Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={da ? 'Søg i guides…' : fi ? 'Etsi oppaita...' : 'Search guides…'} className="pl-10" /></div>
@@ -514,7 +514,7 @@ function GuidesModule({ da, fi, guides, teamBadge, userEmail, viewId }: {
         {filtered.length === 0 ? <p className="text-muted-foreground py-8 text-center">{da ? 'Ingen guides fundet' : fi ? 'Oppaat eivät löytyneet' : 'No guides found'}</p> : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filtered.map(({ guide, teams }) => (
-              <button key={guide.id} type="button" onClick={() => setSelectedGuide({ guide, teams })} className="text-left rounded-xl border-2 bg-card p-5 hover:border-primary/50 hover:shadow-md transition-all">
+              <button key={guide.id} type="button" onClick={() => setSelectedGuide({ guide, teams })} className="text-left rounded-md border bg-card p-5 hover:border-primary/50 transition-colors">
                 <div className="flex items-start justify-between gap-3"><Books size={25} weight="duotone" className="text-primary shrink-0" /><Badge variant="secondary">{guide.category}</Badge></div>
                 <h3 className="font-bold text-lg mt-4">{guide.title}</h3>
                 <p className="text-sm text-muted-foreground mt-2 line-clamp-3">{guideExcerpt(guide, 180) || (da ? 'Ingen beskrivelse' : fi ? 'Ei kuvausta' : 'No description')}</p>

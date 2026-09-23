@@ -66,13 +66,43 @@ Fundet ved gennemgangen foer 1.5.5 blev frigivet, men bevidst ikke rettet der:
       en LEVENDE laas som forladt og slettede den. mtime bruges nu kun naar
       alderen er trovaerdig (< 30 dage); ellers skal klienten selv have set
       laasen uroert i staleMs, maalt paa sin egen klokke.
-- [ ] **Flaky test.** `offlineSync.test.cjs` "getAsync serves the local mirror"
-      fejler ca. hver tredje koersel (aegte fs-timing, ikke en reel fejl).
+- [x] **Flaky test — LØST 2026-09-22, og den skjulte en aegte fejl.**
+      `offlineSync.test.cjs` taalte event-loop-tick i stedet for at vente paa tid,
+      selvom baggrundsarbejdet laver rigtige fil-laesninger. Vaerre: jeg havde
+      selv tilfoejet `assert.rejects` UDEN `await` i en synkron test i
+      `accountService.test.cjs`, og afskrev derefter fejlen som "den kendte
+      flaky" i flere koersler. En suite der raaber ulv skjuler de aegte fejl.
+      Begge rettet; 8 fulde koersler i traek: 422/422.
 - [ ] **"Annuller" sletter kladden** i `GuideEditor.tsx`. Uaendret adfaerd, men
       vaerd at genoverveje nu hvor kladder er en rigtig funktion.
 - [ ] **Vision-encoderen kan halveres.** `mmproj` findes ogsaa i Q8_0 (433 MB mod
       797 MB). Ikke valgt i 1.5.5 for at holde opsaetningen identisk med den
       afproevede 8B-konfiguration.
+
+## Regler for baggrundsarbejde — skrevet efter fejlen i 1.5.5
+
+Time-backuppen blev indfoert i 1.5.5 og gjorde appen naesten ubrugelig for alle.
+Én daglig kopi blev til ti i timen, PR. KLIENT, mod ét delt drev med ~40
+brugere. Appen er latens-bundet: **det er antallet af rundture der koster, ikke
+antallet af bytes.**
+
+Foer der tilfoejes periodisk eller baggrundsarbejde, skal alle fire besvares:
+
+1. **Hvad sker der naar 40 klienter goer det samtidig?** Standardsvaret er: drevet
+   knaekker. Regn rundturene ud pr. klient pr. time FOER koden skrives.
+2. **Skal kun ÉN klient goere det?** Saa skal pladsen KRAEVES foerst (laas eller
+   markoer) — og derefter laves det dyre. Aldrig omvendt. Det var praecis fejlen:
+   indholdet blev bygget foerst, og foerst bagefter afgjorde `wx` hvem der vandt.
+3. **Konkurrerer det med brugerens egne handlinger?** Opstart er det VAERSTE
+   tidspunkt — det er netop dér brugeren klikker. Udskyd til efter foerste
+   indlaesning, og skru ned (parallelisme 1 + pause mellem hver post).
+   `scheduleMirrorWarmUp` startede efter 1,5 s, tog 103 s, og fik hver gemning
+   til at tage 30-55 s.
+4. **Hvordan ville jeg OPDAGE at det gik galt igen?** Findes der ingen log eller
+   maaling, skal den bygges foerst. Advarslerne `LANGSOM gemning`,
+   `LANGSOM baggrundsopdatering` og `LANGSOM backup` er altid slaaet til —
+   bevidst, for de laa tidligere bag `TCD_HUB_DEBUG`, og derfor var det brugerne
+   der opdagede problemet foer os.
 
 ## Ændringer til 1.5.6
 

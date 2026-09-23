@@ -380,6 +380,39 @@ test('scanDirectory detects added, modified and removed keys against a previous 
   const afterRemove = store.scanDirectory(afterAdd.snapshot)
   assert.deepEqual(afterRemove.changedKeys, ['projects'])
 })
+test('watch scans mutable keys with bounded stat calls and ignores immutable files', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  for (let index = 0; index < 16; index++) store.set(`setting-${index}`, index)
+  store.set('file_attachment_meta', { size: 1 })
+  store.set('file_attachment_chunk_0', 'data')
+  const first = store.scanDirectory(null)
+  assert.equal(first.snapshot.size, 18)
+  const stat = fs.promises.stat
+  let concurrent = 0
+  let maximum = 0
+  const paths = []
+  t.mock.method(fs.promises, 'stat', async file => {
+    paths.push(path.basename(file))
+    concurrent++
+    maximum = Math.max(maximum, concurrent)
+    try {
+      await new Promise(resolve => setTimeout(resolve, 3))
+      return await stat(file)
+    } finally { concurrent-- }
+  })
+  store.set('setting-1', 'changed')
+  const changed = await store.scanDirectoryAsync(first.snapshot)
+  assert.deepEqual(changed.changedKeys, ['setting-1'])
+  assert.ok(maximum <= 4)
+  assert.ok(maximum > 1)
+  assert.equal(paths.length, 16)
+  assert.ok(paths.every(file => !file.startsWith('file_attachment')))
+  assert.equal(changed.snapshot.size, 18)
+  store.delete('file_attachment_chunk_0')
+  const afterRemoval = await store.scanDirectoryAsync(changed.snapshot)
+  assert.deepEqual(afterRemoval.changedKeys, ['file_attachment_chunk_0'])
+  assert.ok(fs.existsSync(path.join(directory, 'file_attachment_meta.json')))
+})
 
 test('watch reports connection loss and recovery via onConnectionChange', async (t) => {
   const { directory, store } = temporaryStore(t)

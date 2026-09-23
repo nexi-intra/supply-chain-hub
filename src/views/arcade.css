@@ -1,0 +1,82 @@
+.arcade-screen, .arcade-library {
+  background-color: var(--background);
+  background-image: linear-gradient(90deg, color-mix(in srgb, var(--border) 15%, transparent) 1px, transparent 1px), linear-gradient(color-mix(in srgb, var(--border) 15%, transparent) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+:is(.arcade-screen, .arcade-tile)[data-game="endlessdodger"] { --arcade-accent: #1292b8; }
+:is(.arcade-screen, .arcade-tile)[data-game="brickbreak"] { --arcade-accent: #da5572; }
+:is(.arcade-screen, .arcade-tile)[data-game="nexiflyer"] { --arcade-accent: #d99122; }
+:is(.arcade-screen, .arcade-tile)[data-game="tetris"] { --arcade-accent: #498dd4; }
+:is(.arcade-screen, .arcade-tile)[data-game="neonsnake"] { --arcade-accent: #49ac70; }
+
+.arcade-banner {
+  background: color-mix(in srgb, var(--card) 92%, var(--arcade-accent));
+  border-color: var(--border);
+  box-shadow: inset 0 3px var(--arcade-accent);
+}
+
+.arcade-banner h1 { color: var(--foreground); }
+.arcade-banner p { color: var(--muted-foreground); }
+.arcade-banner button { color: var(--foreground); }
+.arcade-banner button:hover { background: color-mix(in srgb, var(--arcade-accent) 13%, var(--card)); }
+.arcade-banner .rounded-md { background: color-mix(in srgb, var(--card) 75%, var(--arcade-accent)); }
+.arcade-banner .rounded-md svg { color: var(--arcade-accent); }
+
+.arcade-menu {
+  border-top: 3px solid var(--arcade-accent);
+  background: color-mix(in srgb, var(--card) 96%, var(--arcade-accent));
+}
+
+.arcade-menu > div:first-child { flex-wrap: wrap; gap: 1rem; }
+.arcade-menu > div:first-child > div:last-child { margin-left: auto; }
+.arcade-menu > div:first-child > div:last-child > div {
+  min-width: 152px;
+  background: color-mix(in srgb, var(--background) 88%, var(--arcade-accent));
+  border-color: color-mix(in srgb, var(--border) 65%, var(--arcade-accent));
+}
+.arcade-menu > div:first-child > div:first-child > div:first-child {
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--card) 72%, var(--arcade-accent));
+}
+.arcade-menu > div:first-child > div:first-child > div:first-child svg { color: var(--arcade-accent); }
+
+.arcade-leaderboard {
+  background: var(--card);
+  border-top: 2px solid color-mix(in srgb, var(--border) 55%, var(--arcade-accent));
+}
+
+.arcade-leaderboard > div:first-child > div:first-child {
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--card) 80%, var(--arcade-accent));
+}
+
+.arcade-leaderboard > div:first-child > div:first-child svg { color: var(--arcade-accent); }
+.arcade-leaderboard .arcade-score-column {
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  padding-inline: 0;
+}
+
+.arcade-tile {
+  border-top: 3px solid var(--arcade-accent);
+  background: color-mix(in srgb, var(--card) 96%, var(--arcade-accent));
+}
+
+.arcade-tile-art {
+  background: linear-gradient(115deg, color-mix(in srgb, var(--arcade-accent) 21%, var(--card)), color-mix(in srgb, var(--arcade-accent) 4%, var(--card)));
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, var(--arcade-accent));
+}
+
+.arcade-tile-icon {
+  color: var(--arcade-accent);
+  transform: scale(1.2);
+  transform-origin: left center;
+  transition: transform 180ms ease;
+}
+
+.arcade-tile:hover .arcade-tile-icon { transform: scale(1.35); }
+@media (prefers-reduced-motion: reduce) { .arcade-tile-icon { transition: none; } }
+.arcade-tile:focus-visible { outline: 2px solid var(--arcade-accent); outline-offset: 3px; }

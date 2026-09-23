@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { saveDraft, getDraft, deleteDraft, draftKey, listDrafts, draftLabel } from './guideStore'
-import type { GuideDraft } from './guideTypes'
+import { saveDraft, getDraft, deleteDraft, draftKey, listDrafts, draftLabel, saveVersionSnapshot, getVersionHistory } from './guideStore'
+import type { Guide, GuideDraft } from './guideTypes'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -51,6 +51,27 @@ describe('guide draft autosave storage', () => {
     expect(await getDraft('g1')).toBeUndefined()
     expect(f.store.has(draftKey('g1'))).toBe(false)
   })
+  it('serializes a newer draft and deletion after an in-flight write', async () => {
+    const { store } = fixture()
+    let finishFirstWrite!: () => void
+    const firstWrite = new Promise<void>((resolve) => { finishFirstWrite = resolve })
+    let calls = 0
+    vi.mocked(window.kv.set).mockImplementation(async (key, value) => {
+      if (++calls === 1) await firstWrite
+      store.set(key, value)
+    })
+
+    const oldWrite = saveDraft(draft)
+    await Promise.resolve()
+    const newWrite = saveDraft({ ...draft, title: 'Nyere' })
+    const deletion = deleteDraft(draft.guideId)
+    expect(window.kv.set).toHaveBeenCalledTimes(1)
+    expect(window.kv.delete).not.toHaveBeenCalled()
+    finishFirstWrite()
+    await Promise.all([oldWrite, newWrite, deletion])
+    expect(window.kv.set).toHaveBeenCalledTimes(2)
+    expect(await getDraft(draft.guideId)).toBeUndefined()
+  })
   it('drafts for different guide ids do not collide', async () => {
     fixture()
     await saveDraft(draft)
@@ -87,5 +108,20 @@ describe('draftLabel', () => {
   })
   it('returns an empty string when the draft is completely empty', () => {
     expect(draftLabel({ ...draft, title: '', sections: [] })).toBe('')
+  })
+})
+
+describe('original Word guide versions', () => {
+  it('keeps the matching PDF preview when saving a version', async () => {
+    fixture()
+    const guide: Guide = {
+      id: 'g1', title: 'Safety guide', category: 'Safety', tags: [], content: '',
+      createdAt: 1, updatedAt: 2, sections: [], preserveWordLayout: true,
+      fileUrl: 'kv://original-docx', previewPdfUrl: 'kv://same-version-pdf',
+    }
+    await saveVersionSnapshot(guide, 'user@example.test')
+    const [version] = await getVersionHistory(guide.id)
+    expect(version.snapshot.fileUrl).toBe(guide.fileUrl)
+    expect(version.snapshot.previewPdfUrl).toBe(guide.previewPdfUrl)
   })
 })
