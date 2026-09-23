@@ -656,17 +656,15 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
     }
   }
 
-  type AnimationCategory = 'work' | 'social' | 'admin' | 'leisure'
-
-  interface ModuleWithCategory extends HubModule {
-    category: AnimationCategory
-  }
+  // Modulerne var foer delt i fire kategorier med hver sin hover-animation, saa
+  // fx Spil Hjoernet vippede og skalerede anderledes end Guide Biblioteket. Det
+  // gjorde gitteret uroligt at koere musen hen over. Nu opfoerer alle felter sig ens.
 
   // Alle tolv moduler havde foer naesten samme blaa (kuloer 240-280), saa gitteret
   // var en mur af ens felter. Nu har hvert modul sin egen farve fra samme familie:
   // samme lyshed og maetning hele vejen rundt, saa de er til at kende fra hinanden
   // uden at blive slik. Vagtplanen beholder maerkefarven - den er den vigtigste.
-  const modules: ModuleWithCategory[] = [
+  const modules: HubModule[] = [
     {
       id: 'shifts',
       title: t.hub.modules.shifts,
@@ -675,7 +673,6 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       color: 'oklch(0.44 0.185 273)',
       gradient: '',
       available: true,
-      category: 'work',
     },
     {
       id: 'calendar',
@@ -685,7 +682,6 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       color: 'oklch(0.50 0.145 240)',
       gradient: '',
       available: true,
-      category: 'work',
     },
     {
       id: 'meals',
@@ -695,7 +691,6 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       color: 'oklch(0.50 0.125 150)',
       gradient: '',
       available: true,
-      category: 'leisure',
     },
     {
       id: 'team',
@@ -705,7 +700,6 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       color: 'oklch(0.51 0.105 200)',
       gradient: '',
       available: true,
-      category: 'social',
     },
     {
       id: 'email',
@@ -715,7 +709,6 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       color: 'oklch(0.49 0.155 300)',
       gradient: '',
       available: true,
-      category: 'social',
     },
     {
       id: 'guides',
@@ -725,7 +718,6 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       color: 'oklch(0.52 0.12 68)',
       gradient: '',
       available: true,
-      category: 'work',
     },
     {
       id: 'documents',
@@ -735,7 +727,6 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       color: 'oklch(0.51 0.075 255)',
       gradient: '',
       available: false,
-      category: 'work',
     },
     {
       id: 'projects',
@@ -745,7 +736,6 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       color: 'oklch(0.50 0.145 20)',
       gradient: '',
       available: true,
-      category: 'work',
     },
     {
       id: 'notebook',
@@ -755,7 +745,6 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       color: 'oklch(0.51 0.115 218)',
       gradient: '',
       available: true,
-      category: 'work',
     },
     {
       id: 'chat',
@@ -765,7 +754,6 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       color: 'oklch(0.52 0.115 176)',
       gradient: '',
       available: false,
-      category: 'social',
     },
     {
       id: 'games',
@@ -775,7 +763,6 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       color: 'oklch(0.53 0.165 350)',
       gradient: '',
       available: true,
-      category: 'leisure',
     },
     {
       id: 'manager',
@@ -785,7 +772,6 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       color: 'oklch(0.42 0.085 268)',
       gradient: '',
       available: isAdminOrManager,
-      category: 'admin',
     },
   ]
 
@@ -800,149 +786,36 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
     { id: 'supplySick', label: t.hub.dashboard.widgets.supplySick },
   ]
 
-  const getIconAnimation = (category: AnimationCategory) => {
-    switch (category) {
-      case 'work':
-        return {
-          initial: {
-            scale: 1,
-            rotate: 0,
-            y: 0,
-          },
-          hover: {
-            scale: 1.15,
-            rotate: [0, -5, 5, -5, 0],
-            y: [-3, 0, -3],
-          },
-          transition: {
-            duration: 0.5,
-            ease: "easeInOut" as const
-          }
-        }
-      case 'social':
-        return {
-          initial: {
-            scale: 1,
-            rotate: 0,
-          },
-          hover: {
-            scale: [1, 1.2, 1.1],
-            rotate: [0, 360],
-          },
-          transition: {
-            duration: 0.6,
-            ease: "easeInOut" as const
-          }
-        }
-      case 'admin':
-        return {
-          initial: {
-            scale: 1,
-            rotateY: 0,
-          },
-          hover: {
-            scale: 1.1,
-            rotateY: [0, 180, 360],
-          },
-          transition: {
-            duration: 0.7,
-            ease: "easeInOut" as const
-          }
-        }
-      case 'leisure':
-        return {
-          initial: {
-            scale: 1,
-            rotate: 0,
-            y: 0,
-          },
-          hover: {
-            scale: [1, 1.3, 1.15],
-            rotate: [0, -15, 15, -10, 10, 0],
-            y: [0, -8, 0],
-          },
-          transition: {
-            duration: 0.8,
-            ease: "easeInOut" as const
-          }
-        }
+  const iconAnimation = {
+    initial: {
+      scale: 1,
+      rotate: 0,
+      y: 0,
+    },
+    hover: {
+      scale: 1.15,
+      rotate: [0, -5, 5, -5, 0],
+      y: [-3, 0, -3],
+    },
+    transition: {
+      duration: 0.5,
+      ease: "easeInOut" as const
     }
   }
 
-  const getCardAnimation = (category: AnimationCategory) => {
-    switch (category) {
-      case 'work':
-        return {
-          initial: {
-            y: 0,
-            boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1)",
-          },
-          hover: {
-            y: -8,
-            boxShadow: "0 20px 40px -12px rgba(0, 0, 0, 0.25)",
-          },
-          tap: { scale: 0.98 },
-          transition: {
-            duration: 0.3,
-            ease: "easeInOut" as const
-          }
-        }
-      case 'social':
-        return {
-          initial: {
-            scale: 1,
-            rotate: 0,
-            boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1)",
-          },
-          hover: {
-            scale: 1.05,
-            rotate: [0, -2, 2, 0],
-            boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.3)",
-          },
-          tap: { scale: 0.95 },
-          transition: {
-            duration: 0.3,
-            ease: "easeInOut" as const
-          }
-        }
-      case 'admin':
-        return {
-          initial: {
-            y: 0,
-            x: 0,
-            boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1)",
-          },
-          hover: {
-            y: -6,
-            x: [0, -3, 3, 0],
-            boxShadow: "0 20px 40px -12px rgba(0, 0, 0, 0.25)",
-          },
-          tap: { scale: 0.97 },
-          transition: {
-            duration: 0.3,
-            ease: "easeInOut" as const
-          }
-        }
-      case 'leisure':
-        return {
-          initial: {
-            scale: 1,
-            y: 0,
-            rotate: 0,
-            boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1)",
-          },
-          hover: {
-            scale: 1.08,
-            y: -10,
-            rotate: [0, 3, -3, 0],
-            boxShadow: "0 30px 60px -15px rgba(0, 0, 0, 0.35)",
-          },
-          tap: { scale: 0.92 },
-          transition: {
-            duration: 0.3,
-            ease: "easeInOut" as const
-          }
-        }
+  const cardAnimation = {
+    initial: {
+      y: 0,
+      boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1)",
+    },
+    hover: {
+      y: -8,
+      boxShadow: "0 20px 40px -12px rgba(0, 0, 0, 0.25)",
+    },
+    tap: { scale: 0.98 },
+    transition: {
+      duration: 0.3,
+      ease: "easeInOut" as const
     }
   }
 
@@ -1575,9 +1448,6 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
           transition={{ delay: 0.5, duration: 0.6 }}
         >
           {modules.filter(module => module.available).map((module, index) => {
-            const cardAnimation = getCardAnimation(module.category)
-            const iconAnimation = getIconAnimation(module.category)
-            
             return (
               <motion.div
                 key={module.id}
