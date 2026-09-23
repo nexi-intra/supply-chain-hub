@@ -72,7 +72,7 @@ export function CrossHubHighscores({ gameTitle, leaderboardKey, categories = DEF
   }, [categories, isFlatMode, ownRaw, ownUsers, otherTeams])
 
   return (
-    <Card className="p-6 border-2">
+    <Card className="p-6">
       <div className="flex items-center gap-3 mb-4">
         <Trophy size={24} weight="duotone" className="text-accent" />
         <div>

@@ -98,7 +98,7 @@ export function SickLeaveManager({ userEmail }: SickLeaveManagerProps) {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
-              className="flex items-center justify-between p-5 rounded-xl border-2 bg-card hover:shadow-md transition-all group"
+              className="flex items-center justify-between p-5 rounded-md border bg-card hover:border-primary/40 transition-colors group"
             >
               <div className="flex items-center gap-4 flex-1">
                 <div className="h-12 w-12 rounded-xl bg-red-100 flex items-center justify-center">

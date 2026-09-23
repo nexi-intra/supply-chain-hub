@@ -172,7 +172,7 @@ export function GameLeaderboardAdmin({ gameTitle, icon, leaderboardKey, playCoun
 
   return (
     <>
-      <Card className="p-6 border-2">
+      <Card className="p-6">
         <div className="flex items-center gap-3 mb-6">
           {icon}
           <h2 className="text-2xl font-bold">{gameTitle} {t.gameLeaderboardAdmin.statsTitleSuffix}</h2>
@@ -222,7 +222,7 @@ export function GameLeaderboardAdmin({ gameTitle, icon, leaderboardKey, playCoun
         )}
       </Card>
 
-      <Card className="p-6 border-2">
+      <Card className="p-6">
         <div className="mb-4 p-4 bg-muted/50 rounded-lg border">
           <p className="text-sm text-muted-foreground">
             {t.gameLeaderboardAdmin.manageDescriptionPrefix} {gameTitle}{t.gameLeaderboardAdmin.manageDescriptionMiddle}{hasLevel ? t.gameLeaderboardAdmin.manageDescriptionLevelInsert : ''} {t.gameLeaderboardAdmin.manageDescriptionSuffix}

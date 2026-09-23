@@ -167,7 +167,7 @@ export function AnnouncementsBoard({ userEmail, userName, canPost }: Announcemen
             <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
               {language === 'da' ? 'Annuller' : language === 'fi' ? 'Peruuta' : 'Cancel'}
             </Button>
-            <Button onClick={handleCreate} className="gap-2 bg-gradient-to-r from-accent to-primary hover:from-accent/90 hover:to-primary/90">
+            <Button onClick={handleCreate} className="gap-2">
               <Megaphone size={16} weight="bold" />
               {language === 'da' ? 'Opslå' : language === 'fi' ? 'Posti' : 'Post'}
             </Button>

@@ -241,7 +241,7 @@ export function ManualVacationGrant({ open, onOpenChange, managerEmail, onSucces
             <Button
               type="submit"
               disabled={isSubmitting || !selectedUser || !startDate || (grantType === 'vacation' && !endDate)}
-              className="gap-2 bg-gradient-to-r from-accent to-primary hover:from-accent/90 hover:to-primary/90"
+              className="gap-2"
             >
               <Gift size={18} weight="bold" />
               {isSubmitting ? t.manualVacationGrant.granting : (grantType === 'single' ? t.manualVacationGrant.grantDayOff : t.manualVacationGrant.grantVacation)}

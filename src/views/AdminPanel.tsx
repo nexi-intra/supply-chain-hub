@@ -292,14 +292,14 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
     switch (role) {
       case 'creator':
         return (
-          <Badge className="bg-gradient-to-r from-accent via-primary to-accent text-white">
+          <Badge variant="secondary">
             <Crown size={14} className="mr-1" weight="fill" />
             {t.teamOverview.roleCreator}
           </Badge>
         )
       case 'manager':
         return (
-          <Badge className="bg-gradient-to-r from-primary to-accent text-white">
+          <Badge>
             <ShieldCheck size={14} className="mr-1" weight="fill" />
             {t.teamOverview.roleManager}
           </Badge>
@@ -323,7 +323,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
                            repeating-linear-gradient(0deg, oklch(0.55 0.22 265 / 0.02) 0px, transparent 1px, transparent 100px, oklch(0.55 0.22 265 / 0.02) 101px)`
         }} />
         
-        <Card className="p-8 max-w-md relative z-10 border-2">
+        <Card className="p-8 max-w-md relative z-10">
           <div className="text-center space-y-4">
             <ShieldCheck size={64} className="text-destructive mx-auto" weight="duotone" />
             <h2 className="text-2xl font-bold">{t.adminPanel.noAccess.title}</h2>
@@ -353,7 +353,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
                 variant="outline"
                 size="lg"
                 onClick={onNavigateBack}
-                className="pointer-events-auto bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
+                className="pointer-events-auto bg-background/90 hover:bg-background transition-colors gap-2 font-semibold px-4"
               >
                 <ArrowLeft size={20} />
                 {t.common.back}
@@ -380,7 +380,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
           className="mb-8"
         >
           <div className="flex items-center gap-6">
-            <h1 className="text-4xl sm:text-5xl font-bold leading-normal bg-gradient-to-br from-primary to-accent bg-clip-text text-transparent pb-1">
+            <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground">
               {t.adminPanel.title}
             </h1>
           </div>
@@ -403,7 +403,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
           </TabsList>
 
           <TabsContent value="users" className="space-y-6">
-            <Card className="p-6 border-2">
+            <Card className="p-6">
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-2">
                   <UserGear size={28} className="text-primary" weight="duotone" />
@@ -425,14 +425,14 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
                     key={user.email}
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="flex items-center justify-between p-5 rounded-xl border-2 bg-card hover:shadow-md transition-all"
+                    className="flex items-center justify-between p-5 rounded-md border bg-card hover:border-primary/40 transition-colors"
                   >
                     <div className="flex items-center gap-4 flex-1 min-w-0">
-                      <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-white font-bold text-lg shadow-lg ${
+                      <div className={`w-12 h-12 rounded-md flex items-center justify-center text-white font-bold text-lg ${
                         user.role === 'creator' 
-                          ? 'bg-gradient-to-br from-accent via-primary to-accent' 
+                          ? 'bg-accent' 
                           : user.role === 'manager'
-                          ? 'bg-gradient-to-br from-primary to-accent'
+                          ? 'bg-primary'
                           : 'bg-muted-foreground'
                       }`}>
                         {user.fullName.charAt(0).toUpperCase()}
@@ -513,7 +513,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
             )}
           </Card>
 
-          <Card className="p-6 border-2 bg-muted/30">
+          <Card className="p-6 bg-muted/30">
             <div className="space-y-4">
               <div className="flex items-start gap-3">
                 <Crown size={24} className="text-accent mt-0.5" weight="fill" />
@@ -541,7 +541,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
           </TabsContent>
 
           <TabsContent value="sick-leave" className="space-y-6">
-            <Card className="p-6 border-2">
+            <Card className="p-6">
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-2">
                   <FirstAidKit size={28} className="text-destructive" weight="duotone" />
@@ -567,10 +567,10 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
                       key={entry.id}
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className="flex items-center justify-between p-5 rounded-xl border-2 bg-card hover:shadow-md transition-all"
+                      className="flex items-center justify-between p-5 rounded-md border bg-card hover:border-primary/40 transition-colors"
                     >
                       <div className="flex items-center gap-4 flex-1">
-                        <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)] flex items-center justify-center text-white font-bold text-lg shadow-lg">
+                        <div className="w-12 h-12 rounded-md bg-primary flex items-center justify-center text-primary-foreground font-bold text-lg">
                           {entry.userName.charAt(0).toUpperCase()}
                         </div>
                         <div className="flex-1">
@@ -603,7 +603,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
           </TabsContent>
 
           <TabsContent value="shift-management" className="space-y-6">
-            <Card className="p-6 border-2">
+            <Card className="p-6">
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-2">
                   <UserCircle size={28} className="text-primary" weight="duotone" />
@@ -616,7 +616,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
                   <Button
                     onClick={() => openEmployeeDialog()}
                     size="sm"
-                    className="gap-2 bg-gradient-to-r from-primary to-accent"
+                    className="gap-2"
                   >
                     <Plus size={16} />
                     {t.adminPanel.employees.add}
@@ -645,14 +645,14 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
                       key={user.email}
                       initial={{ opacity: 0, scale: 0.95 }}
                       animate={{ opacity: 1, scale: 1 }}
-                      className="p-4 rounded-xl border-2 bg-card hover:shadow-md transition-all group relative"
+                      className="p-4 rounded-md border bg-card hover:border-primary/40 transition-colors group relative"
                     >
                       <div className="flex items-center gap-3 mb-2">
-                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold shadow-md ${
+                        <div className={`w-10 h-10 rounded-md flex items-center justify-center text-white font-bold ${
                           user.role === 'creator' 
-                            ? 'bg-gradient-to-br from-accent via-primary to-accent' 
+                            ? 'bg-accent' 
                             : user.role === 'manager'
-                            ? 'bg-gradient-to-br from-primary to-accent'
+                            ? 'bg-primary'
                             : 'bg-muted-foreground'
                         }`}>
                           {user.fullName.charAt(0).toUpperCase()}
@@ -711,7 +711,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
               )}
             </Card>
 
-            <Card className="p-6 border-2">
+            <Card className="p-6">
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-2">
                   <Tag size={28} className="text-accent" weight="duotone" />
@@ -724,7 +724,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
                   <Button
                     onClick={() => setShowRoleDialog(true)}
                     size="sm"
-                    className="gap-2 bg-gradient-to-r from-primary to-accent"
+                    className="gap-2"
                   >
                     <Plus size={16} />
                     {t.adminPanel.roles.add}
@@ -757,11 +757,11 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
                       key={role.id}
                       initial={{ opacity: 0, x: -10 }}
                       animate={{ opacity: 1, x: 0 }}
-                      className="flex items-center justify-between p-4 rounded-xl border-2 bg-card hover:shadow-md transition-all group"
+                      className="flex items-center justify-between p-4 rounded-md border bg-card hover:border-primary/40 transition-colors group"
                     >
                       <div className="flex items-center gap-4 flex-1">
                         <div
-                          className="w-12 h-12 rounded-xl flex items-center justify-center shadow-md"
+                          className="w-12 h-12 rounded-md flex items-center justify-center"
                           style={{ 
                             backgroundColor: `${role.color}30`,
                             border: `2px solid ${role.color}`

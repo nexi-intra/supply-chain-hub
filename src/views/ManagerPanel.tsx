@@ -841,7 +841,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
     switch (role) {
       case 'manager':
         return (
-          <Badge className="bg-gradient-to-r from-primary to-accent text-white">
+          <Badge>
             <ShieldCheck size={14} className="mr-1" weight="fill" />
             {t.teamOverview.roleManager}
           </Badge>
@@ -865,7 +865,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                            repeating-linear-gradient(0deg, oklch(0.55 0.22 265 / 0.02) 0px, transparent 1px, transparent 100px, oklch(0.55 0.22 265 / 0.02) 101px)`
         }} />
         
-        <Card className="p-8 max-w-md relative z-10 border-2">
+        <Card className="p-8 max-w-md relative z-10">
           <div className="text-center space-y-4">
             <ShieldCheck size={64} className="text-destructive mx-auto" weight="duotone" />
             <h2 className="text-2xl font-bold">{t.managerPanel.noAccess.title}</h2>
@@ -895,7 +895,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                 variant="outline"
                 size="lg"
                 onClick={onNavigateBack}
-                className="pointer-events-auto bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
+                className="pointer-events-auto bg-background/90 hover:bg-background transition-colors gap-2 font-semibold px-4"
               >
                 <ArrowLeft size={20} />
                 {t.common.back}
@@ -905,19 +905,12 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
         </div>
       </div>
 
-      <div className="container mx-auto px-4 sm:px-6 lg:px-8 pt-36 pb-12 sm:pb-20 max-w-5xl relative z-10">
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6 }}
-          className="mb-10 text-center"
-        >
-          <div className="flex flex-col items-center gap-6">
-            <h1 className="text-4xl sm:text-5xl font-bold leading-normal bg-gradient-to-br from-primary to-accent bg-clip-text text-transparent pb-1">
-              {t.managerPanel.title}
-            </h1>
-          </div>
-        </motion.div>
+      <div className="container mx-auto px-4 sm:px-6 lg:px-8 pt-28 pb-12 sm:pb-20 max-w-5xl relative z-10">
+        <header className="mb-6 border-b pb-4">
+          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground">
+            {t.managerPanel.title}
+          </h1>
+        </header>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <TabsList className="grid w-full grid-cols-6 max-w-6xl">
@@ -964,7 +957,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
 
           <TabsContent value="permissions" className="space-y-6">
             {pendingUsers.length > 0 && (
-              <Card className="p-6 border-2 border-amber-400 bg-gradient-to-br from-amber-50 to-amber-100/50 dark:from-amber-950/40 dark:to-amber-900/20 dark:border-amber-600">
+              <Card className="p-6 border-attention/40 bg-attention-surface">
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2">
                     <UserIcon size={28} className="text-amber-600 dark:text-amber-400" weight="duotone" />
@@ -983,7 +976,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                       key={user.email}
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-xl border-2 bg-card"
+                      className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-md border bg-card"
                     >
                       <div className="flex-1 min-w-0">
                         <div className="font-bold text-lg">{user.fullName}</div>
@@ -993,7 +986,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                       <div className="flex items-center gap-2">
                         <Button
                           onClick={() => handleApproveUser(user)}
-                          className="gap-2 bg-gradient-to-r from-accent to-primary hover:from-accent/90 hover:to-primary/90"
+                          className="gap-2"
                         >
                           <Check size={18} weight="bold" />
                           {t.managerPanel.permissions.approve}
@@ -1013,7 +1006,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
               </Card>
             )}
 
-            <Card className="p-6 border-2">
+            <Card className="p-6">
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-2">
                   <ShieldCheck size={28} className="text-primary" weight="duotone" />
@@ -1060,7 +1053,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                       key={user.email}
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className="flex items-center justify-between p-5 rounded-xl border-2 bg-card hover:shadow-md transition-all"
+                      className="flex items-center justify-between p-5 rounded-md border bg-card hover:border-primary/40 transition-colors"
                     >
                       <div className="flex items-center gap-4 flex-1 min-w-0">
                         <div className="flex-1 min-w-0">
@@ -1080,7 +1073,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                           <PopoverTrigger asChild>
                             <button
                               type="button"
-                              className="w-10 h-10 rounded-lg flex items-center justify-center font-bold text-sm shadow-md border-2 border-transparent hover:border-primary/40 transition-colors"
+                              className="w-10 h-10 rounded-md flex items-center justify-center font-bold text-sm border border-transparent hover:border-primary/40 transition-colors"
                               style={{
                                 backgroundColor: getEmployeeColorByEmail(user.email, colorOverrides).bg,
                                 color: getEmployeeColorByEmail(user.email, colorOverrides).text,
@@ -1185,7 +1178,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
               )}
             </Card>
 
-            <Card className="p-6 border-2">
+            <Card className="p-6">
               <div className="flex items-start gap-3 mb-5">
                 <Books size={28} className="text-primary shrink-0" weight="duotone" />
                 <div>
@@ -1204,7 +1197,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                   const automaticReviewer = user.role === 'manager' || user.role === 'creator'
                   const checked = automaticReviewer || (guideAdminEmails || []).some((email) => email.toLowerCase() === user.email.toLowerCase())
                   return (
-                    <label key={user.email} className={cn('flex items-center justify-between gap-4 rounded-xl border p-4', !automaticReviewer && 'cursor-pointer hover:border-primary/40')}>
+                    <label key={user.email} className={cn('flex items-center justify-between gap-4 rounded-md border p-4', !automaticReviewer && 'cursor-pointer hover:border-primary/40')}>
                       <div className="min-w-0">
                         <div className="font-semibold truncate">{user.fullName}</div>
                         <div className="text-sm text-muted-foreground truncate">{user.email}</div>
@@ -1220,7 +1213,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
               </div>
             </Card>
 
-            <Card className="p-6 border-2 bg-muted/30">
+            <Card className="p-6 bg-muted/30">
               <div className="space-y-4">
                 <div className="flex items-start gap-3">
                   <ShieldCheck size={24} className="text-primary mt-0.5" weight="fill" />
@@ -1241,7 +1234,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
           </TabsContent>
 
           <TabsContent value="sick-leave" className="space-y-6">
-            <Card className="p-6 border-2">
+            <Card className="p-6">
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-2">
                   <FirstAidKit size={28} className="text-destructive" weight="duotone" />
@@ -1290,7 +1283,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
 
                   return (
                     <>
-                      <Card className="p-4 bg-gradient-to-br from-destructive/10 to-destructive/5 border-destructive/20">
+                      <Card className="p-4 bg-blocked-surface border-blocked/25">
                         <div className="flex items-center justify-between mb-2">
                           <div className="text-sm font-medium text-muted-foreground">{t.managerPanel.sickLeave.selfSickness}</div>
                           <FirstAidKit size={20} className="text-destructive" weight="duotone" />
@@ -1301,7 +1294,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                         </div>
                       </Card>
 
-                      <Card className="p-4 bg-gradient-to-br from-orange-500/10 to-orange-500/5 border-orange-500/20">
+                      <Card className="p-4 bg-attention-surface border-attention/25">
                         <div className="flex items-center justify-between mb-2">
                           <div className="text-sm font-medium text-muted-foreground">{t.managerPanel.sickLeave.childSick}</div>
                           <UserIcon size={20} className="text-orange-600" weight="duotone" />
@@ -1312,7 +1305,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                         </div>
                       </Card>
 
-                      <Card className="p-4 bg-gradient-to-br from-accent/10 to-accent/5 border-accent/20">
+                      <Card className="p-4 bg-accent/10 border-accent/25">
                         <div className="flex items-center justify-between mb-2">
                           <div className="text-sm font-medium text-muted-foreground">{t.managerPanel.sickLeave.totalSickness}</div>
                           <FirstAidKit size={20} className="text-accent" weight="duotone" />
@@ -1323,7 +1316,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                         </div>
                       </Card>
 
-                      <Card className="p-4 bg-gradient-to-br from-primary/10 to-primary/5 border-primary/20">
+                      <Card className="p-4 bg-primary/10 border-primary/25">
                         <div className="flex items-center justify-between mb-2">
                           <div className="text-sm font-medium text-muted-foreground">{t.managerPanel.sickLeave.mostSickness}</div>
                           <Crown size={20} className="text-primary" weight="duotone" />
@@ -1411,7 +1404,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                     </p>
 
                     {frequencyAlerts.length > 0 && (
-                      <div className="p-4 rounded-lg border-2 border-amber-400/60 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-600/60">
+                      <div className="p-4 rounded-md border border-attention/40 bg-attention-surface">
                         <div className="flex items-center gap-2 mb-2">
                           <FirstAidKit size={18} className="text-amber-600 dark:text-amber-400" weight="fill" />
                           <span className="font-semibold text-sm">{t.managerPanel.sickLeave.frequencyAlertTitle}</span>
@@ -1477,7 +1470,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                           className="flex items-center justify-between p-3 rounded-lg bg-card border hover:shadow-sm transition-all"
                         >
                           <div className="flex items-center gap-3">
-                            <div className="flex items-center justify-center w-8 h-8 rounded-full bg-gradient-to-br from-destructive/20 to-destructive/10 text-destructive font-bold text-sm">
+                            <div className="flex items-center justify-center w-8 h-8 rounded-full bg-blocked-surface text-blocked font-bold text-sm">
                               {index + 1}
                             </div>
                             <div>
@@ -1532,10 +1525,10 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                       key={entry.id}
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className="flex items-center justify-between p-5 rounded-xl border-2 bg-card hover:shadow-md transition-all group"
+                      className="flex items-center justify-between p-5 rounded-md border bg-card hover:border-primary/40 transition-colors group"
                     >
                       <div className="flex items-center gap-4 flex-1">
-                        <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)] flex items-center justify-center text-white font-bold text-lg shadow-lg">
+                        <div className="w-12 h-12 rounded-md bg-primary flex items-center justify-center text-primary-foreground font-bold text-lg">
                         </div>
                         <div className="flex-1">
                           <div className="font-bold text-lg mb-1">{entry.userName}</div>
@@ -1611,7 +1604,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
           </TabsContent>
 
           <TabsContent value="vacation-requests" className="space-y-6">
-            <Card className="p-6 border-2">
+            <Card className="p-6">
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-2">
                   <Umbrella size={28} className="text-accent" weight="duotone" />
@@ -1647,7 +1640,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                           size="sm"
                           disabled={isBulkProcessing}
                           onClick={() => handleBulkVacationDecision('approved')}
-                          className="gap-2 bg-gradient-to-r from-accent to-primary hover:from-accent/90 hover:to-primary/90"
+                          className="gap-2"
                         >
                           <Check size={16} weight="bold" />
                           {isBulkProcessing ? t.managerPanel.vacationRequests.processing : `${t.managerPanel.vacationRequests.approveSelectedPrefix} (${selectedVacationIds.length})`}
@@ -1686,7 +1679,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       className={cn(
-                        "flex flex-col gap-4 p-5 rounded-xl border-2 bg-card hover:shadow-md transition-all",
+                        "flex flex-col gap-4 p-5 rounded-md border bg-card hover:border-primary/40 transition-colors",
                         selectedVacationIds.includes(vacation.id) && "border-primary/60 bg-primary/[0.03]"
                       )}
                     >
@@ -1697,7 +1690,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                             onCheckedChange={() => toggleVacationSelected(vacation.id)}
                             className="shrink-0"
                           />
-                          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-accent to-primary flex items-center justify-center text-white font-bold text-lg shadow-lg">
+                          <div className="w-12 h-12 rounded-md bg-primary flex items-center justify-center text-primary-foreground font-bold text-lg">
                             {firstLetter}
                           </div>
                           <div className="flex-1">
@@ -1765,7 +1758,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                         </Button>
                         <Button
                           onClick={() => handleApproveVacation(vacation)}
-                          className="flex-1 gap-2 bg-gradient-to-r from-accent to-primary hover:from-accent/90 hover:to-primary/90"
+                          className="flex-1 gap-2"
                         >
                           <Check size={18} weight="bold" />
                           {t.managerPanel.vacationRequests.approve}
@@ -1787,7 +1780,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
           </TabsContent>
 
           <TabsContent value="vacation-overview" className="space-y-6">
-            <Card className="p-6 border-2">
+            <Card className="p-6">
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-2">
                   <CalendarBlank size={28} className="text-primary" weight="duotone" />
@@ -1796,7 +1789,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                 <div className="flex items-center gap-3">
                   <Button 
                     onClick={() => setIsManualGrantDialogOpen(true)}
-                    className="gap-2 bg-gradient-to-r from-accent to-primary hover:from-accent/90 hover:to-primary/90"
+                    className="gap-2"
                   >
                     <Gift size={18} weight="bold" />
                     {t.managerPanel.vacationOverview.grantButton}
@@ -1841,7 +1834,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                         key={vacation.id}
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
-                        className="flex items-center justify-between p-5 rounded-xl border-2 bg-card hover:shadow-md transition-all group"
+                        className="flex items-center justify-between p-5 rounded-md border bg-card hover:border-primary/40 transition-colors group"
                       >
                         <div className="flex items-center gap-4 flex-1">
                           <div className="flex-1">
@@ -1940,7 +1933,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
           </TabsContent>
 
           <TabsContent value="birthdays" className="space-y-6">
-            <Card className="p-6 border-2">
+            <Card className="p-6">
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-2">
                   <Gift size={28} className="text-accent" weight="duotone" />
@@ -1996,7 +1989,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                         key={user.email}
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
-                        className="flex items-center justify-between p-5 rounded-xl border-2 bg-card hover:shadow-md transition-all cursor-pointer"
+                        className="flex items-center justify-between p-5 rounded-md border bg-card hover:border-primary/40 transition-colors cursor-pointer"
                         onClick={() => openEditBirthdayDialog({
                           email: user.email,
                           fullName: user.fullName,
@@ -2095,7 +2088,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
           </TabsContent>
 
           <TabsContent value="guide-access" className="space-y-6">
-            <Card className="p-6 border-2">
+            <Card className="p-6">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
                   <LockKey size={28} className="text-primary" weight="duotone" />
@@ -2119,7 +2112,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                       key={request.id}
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className="p-4 rounded-xl border-2 bg-card flex items-center justify-between gap-4"
+                      className="p-4 rounded-md border bg-card flex items-center justify-between gap-4"
                     >
                       <div className="min-w-0">
                         <div className="font-bold truncate">{request.guideTitle}</div>
@@ -2487,7 +2480,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                   )}
                 </div>
 
-                <div className="border-2 rounded-lg p-4">
+                <div className="border rounded-md p-4">
                   <div className="grid grid-cols-8 gap-2">
                     <div className="text-center font-semibold text-xs py-2 text-muted-foreground">
                       {t.managerPanel.dialogs.preview.weekLabel}
@@ -2602,7 +2595,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                     setIsPreviewDialogOpen(false)
                     handleApproveVacation(previewVacation)
                   }}
-                  className="gap-2 bg-gradient-to-r from-accent to-primary hover:from-accent/90 hover:to-primary/90"
+                  className="gap-2"
                 >
                   <Check size={18} weight="bold" />
                   {t.managerPanel.dialogs.preview.approveVacation}

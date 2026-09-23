@@ -248,7 +248,7 @@ export function OnboardingWizard({ open, onOpenChange, onCompleted }: WizardProp
               <ArrowRight size={16} />
             </Button>
           ) : (
-            <Button onClick={handleConfirm} disabled={isWorking} className="gap-2 bg-gradient-to-r from-accent to-primary hover:from-accent/90 hover:to-primary/90">
+            <Button onClick={handleConfirm} disabled={isWorking} className="gap-2">
               <Check size={16} weight="bold" />
               {isWorking ? t.onboardingWizard.creating : t.onboardingWizard.createEmployee}
             </Button>

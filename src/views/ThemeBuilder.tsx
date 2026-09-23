@@ -301,12 +301,12 @@ export function ThemeBuilder({ onNavigateBack, userEmail }: ThemeBuilderProps) {
               variant="ghost"
               size="icon"
               onClick={onNavigateBack}
-              className="fixed top-6 left-4 sm:left-6 z-30 rounded-full bg-background/80 backdrop-blur-sm shadow-lg"
+              className="fixed top-6 left-4 sm:left-6 z-30 rounded-full bg-background/90"
             >
               <ArrowLeft size={24} />
             </Button>
             <div>
-              <h1 className="text-4xl font-bold flex items-center gap-3 bg-gradient-to-br from-primary to-accent bg-clip-text text-transparent">
+              <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground flex items-center gap-2.5">
                 <Palette size={40} className="text-primary" />
                 {t.themeBuilder.title}
               </h1>
@@ -556,7 +556,7 @@ export function ThemeBuilder({ onNavigateBack, userEmail }: ThemeBuilderProps) {
               <CardContent className="space-y-3">
                 <motion.div
                   className={cn(
-                    "p-4 rounded-lg border-2 cursor-pointer transition-colors",
+                    "p-4 rounded-md border-2 cursor-pointer transition-colors",
                     activeTheme === 'default' ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/50'
                   )}
                   onClick={() => {
@@ -575,7 +575,7 @@ export function ThemeBuilder({ onNavigateBack, userEmail }: ThemeBuilderProps) {
                   <motion.div
                     key={theme.id}
                     className={cn(
-                      "p-4 rounded-lg border-2 cursor-pointer transition-colors",
+                      "p-4 rounded-md border-2 cursor-pointer transition-colors",
                       activeTheme === theme.id ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/50'
                     )}
                     whileHover={{ scale: 1.02 }}
@@ -625,7 +625,7 @@ export function ThemeBuilder({ onNavigateBack, userEmail }: ThemeBuilderProps) {
                 {presetThemes.map((preset, index) => (
                   <motion.div
                     key={index}
-                    className="p-4 rounded-lg border-2 border-border hover:border-primary/50 cursor-pointer transition-colors"
+                    className="p-4 rounded-md border-2 border-border hover:border-primary/50 cursor-pointer transition-colors"
                     onClick={() => loadPreset(preset)}
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}

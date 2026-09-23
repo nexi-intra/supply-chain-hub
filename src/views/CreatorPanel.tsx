@@ -262,7 +262,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
   if (!hasAccess) {
     return (
       <div className="min-h-screen bg-background relative overflow-hidden flex items-center justify-center">
-        <Card className="p-8 max-w-md relative z-10 border-2">
+        <Card className="p-8 max-w-md relative z-10">
           <div className="text-center space-y-4">
             <Crown size={64} className="text-destructive mx-auto" weight="duotone" />
             <h2 className="text-2xl font-bold">{t.creatorPanel.noAccess.title}</h2>
@@ -286,7 +286,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
               variant="outline"
               size="lg"
               onClick={onNavigateBack}
-              className="pointer-events-auto bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
+              className="pointer-events-auto bg-background/90 hover:bg-background transition-colors gap-2 font-semibold px-4"
             >
               <ArrowLeft size={20} />
               {t.common.back}
@@ -302,7 +302,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
         <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }} className="mb-8">
           <div className="flex items-center gap-3">
             <Crown size={36} className="text-accent" weight="fill" />
-            <h1 className="text-4xl sm:text-5xl font-bold leading-normal bg-gradient-to-br from-primary to-accent bg-clip-text text-transparent pb-1">
+            <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground">
               {t.creatorPanel.title}
             </h1>
           </div>
@@ -325,7 +325,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
           </TabsList>
 
           <TabsContent value="teams" className="space-y-6">
-            <Card className="p-6 border-2">
+            <Card className="p-6">
               <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
                 <div className="flex items-center gap-2">
                   <Buildings size={28} className="text-primary" weight="duotone" />
@@ -348,7 +348,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {teamAdministrations.map(team => (
-                    <div key={team.teamId} className="p-4 rounded-xl border-2 bg-card space-y-3">
+                    <div key={team.teamId} className="p-4 rounded-md border bg-card space-y-3">
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex items-start gap-2 min-w-0">
                           <ShieldCheck size={20} className="text-primary mt-0.5 shrink-0" weight="duotone" />
@@ -384,7 +384,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
               )}
             </Card>
 
-            <Card className="p-6 border-2">
+            <Card className="p-6">
               <div className="flex items-start justify-between gap-4 mb-6 flex-wrap">
                 <div className="flex items-start gap-3">
                   <UsersThree size={30} className="text-primary mt-0.5" weight="duotone" />
@@ -404,7 +404,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
               ) : (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   {accessViews.map((view) => (
-                    <div key={view.viewId} className="p-4 rounded-xl border-2 bg-card space-y-3">
+                    <div key={view.viewId} className="p-4 rounded-md border bg-card space-y-3">
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <div className="font-bold text-lg">{view.name}</div>
