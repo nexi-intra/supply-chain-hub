@@ -88,14 +88,18 @@
   --primary: oklch(0.395 0.205 273);
   --primary-foreground: oklch(0.99 0 0);
   
-  --secondary: oklch(0.955 0.008 265);
+  /* secondary er husets neutrale BEROERINGSFLADE: hover i menuer og lister,
+     ikon-felter, sekundaere knapper. Den skal kunne ses tydeligt oven paa et
+     hvidt kort - derfor et hak moerkere end foer. */
+  --secondary: oklch(0.942 0.009 265);
   --secondary-foreground: oklch(0.30 0.05 272);
   
   --muted: oklch(0.962 0.005 265);
   --muted-foreground: oklch(0.505 0.022 268);
   
-  /* Bruges 67 steder som den anden ende af en gradient. Den bliver fjernet
-     skaerm for skaerm; indtil da skal den vaere en maerketone, ikke slik. */
+  /* accent er husets anden MAERKEFARVE - "i dag", afventende, fremhaevet.
+     Den er ikke en hover-flade, og brugeren kan selv vaelge den i
+     Temabyggeren. Derfor skal den vaere en farve, ogsaa i moerk tilstand. */
   --accent: oklch(0.465 0.175 268);
   --accent-foreground: oklch(0.99 0 0);
   
@@ -198,14 +202,14 @@
   --primary: oklch(0.62 0.16 268);
   --primary-foreground: oklch(0.12 0.03 274);
   
-  --secondary: oklch(0.27 0.05 272);
+  --secondary: oklch(0.305 0.05 272);
   --secondary-foreground: oklch(0.92 0.01 260);
   
   --muted: oklch(0.25 0.04 272);
   --muted-foreground: oklch(0.68 0.03 262);
   
-  --accent: oklch(0.27 0.05 272);
-  --accent-foreground: oklch(0.92 0.01 260);
+  --accent: oklch(0.675 0.145 265);
+  --accent-foreground: oklch(0.15 0.03 274);
   
   --destructive: oklch(0.62 0.18 25);
   --destructive-foreground: oklch(0.99 0 0);

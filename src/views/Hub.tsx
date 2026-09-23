@@ -19,6 +19,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { readableTextOn } from '@/lib/readableText'
 import { hasManagerAccess, hasCreatorAccess, getCreatorEmail } from '@/lib/userRoles'
 import { useKV } from '@/hooks/useKV'
 import { useCachedState } from '@/hooks/useCachedState'
@@ -999,7 +1000,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
         <div className="mb-8 overflow-hidden rounded-lg bg-primary text-primary-foreground">
           <div className="flex flex-wrap items-end justify-between gap-6 px-6 py-6 sm:px-8 sm:py-7">
             <div>
-              <p className="text-sm font-medium text-primary-foreground/60 first-letter:uppercase">
+              <p className="text-sm font-medium text-primary-foreground/90 first-letter:uppercase">
                 {new Date().toLocaleDateString(dateLocale, { weekday: 'long' })}
               </p>
               <p className="mt-0.5 text-3xl sm:text-4xl font-light tracking-tight leading-none">
@@ -1010,21 +1011,21 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
             <div className="flex items-end gap-7 sm:gap-9">
               <div>
                 <p className="text-4xl sm:text-5xl font-light leading-none">{headcountWorking}</p>
-                <p className="mt-1.5 text-xs font-medium text-primary-foreground/60">
+                <p className="mt-1.5 text-xs font-medium text-primary-foreground/90">
                   {language === 'da' ? 'på arbejde' : language === 'fi' ? 'töissä' : 'at work'}
                 </p>
               </div>
               {unassignedTaskCount > 0 && (
                 <div>
                   <p className="text-4xl sm:text-5xl font-light leading-none text-attention">{unassignedTaskCount}</p>
-                  <p className="mt-1.5 text-xs font-medium text-primary-foreground/60">
+                  <p className="mt-1.5 text-xs font-medium text-primary-foreground/90">
                     {language === 'da' ? 'uden bemanding' : language === 'fi' ? 'ilman miehitystä' : 'unstaffed'}
                   </p>
                 </div>
               )}
               {awayToday.length > 0 && (
                 <div className="max-w-xs">
-                  <p className="text-xs font-medium text-primary-foreground/60">
+                  <p className="text-xs font-medium text-primary-foreground/90">
                     {language === 'da' ? 'Fraværende' : language === 'fi' ? 'Poissa' : 'Away'}
                   </p>
                   <p className="mt-1 text-sm leading-snug text-primary-foreground/90">
@@ -1114,8 +1115,8 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                           >
                             <div className="flex items-center gap-1.5 px-1.5 py-1 rounded-lg bg-background/60 hover:bg-background transition-colors duration-200">
                               <div 
-                                className="w-6 h-6 rounded-full flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0"
-                                style={{ backgroundColor: task.taskColor }}
+                                className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0"
+                                style={{ backgroundColor: task.taskColor, color: readableTextOn(task.taskColor) }}
                               >
                                 {person.name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()}
                               </div>
@@ -1264,7 +1265,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                       {row.status === 'working' && row.tasks.length > 0 && (
                         <div className="flex flex-wrap gap-1">
                           {row.tasks.map((tk, i) => (
-                            <Badge key={i} className="text-white text-[10px] font-bold" style={{ backgroundColor: tk.taskColor }}>
+                            <Badge key={i} className="text-[10px] font-bold" style={{ backgroundColor: tk.taskColor, color: readableTextOn(tk.taskColor) }}>
                               {tk.taskName}
                             </Badge>
                           ))}

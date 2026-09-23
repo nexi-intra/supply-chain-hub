@@ -357,6 +357,25 @@ const MAP = [
   ['<Card key={request.id} className="p-5 border-2 space-y-4">', '<Card key={request.id} className="p-5 space-y-4">'],
   ['rounded-xl border border-destructive/40 bg-destructive/10 p-4 flex gap-3', 'rounded-md border border-destructive/40 bg-destructive/10 p-4 flex gap-3'],
   ['p-4 rounded-lg bg-destructive/10 border-2 border-destructive', 'p-4 rounded-md bg-destructive/10 border border-destructive'],
+
+  // --- accent betoed to ting paa en gang ---
+  // I ui-primitiverne var "accent" den neutrale hover-/fokusflade (shadcn).
+  // I resten af appen var "accent" brandfarve nr. 2 - og ThemeBuilder lader
+  // brugeren vaelge den som en FARVE og skriver direkte i --accent.
+  // Derfor blev mustre-markater graa klatter i moerk tilstand og hover blev
+  // naesten usynlig. Vi giver accent tilbage til brandet, og lader hover
+  // ligge paa secondary. Kun de praefiksede former roeres, saa de rigtige
+  // brand-brug (bart "bg-accent") staar uroert.
+  ['focus:bg-accent focus:text-accent-foreground', 'focus:bg-secondary focus:text-secondary-foreground'],
+  ['data-[state=open]:bg-accent data-[state=open]:text-accent-foreground', 'data-[state=open]:bg-secondary data-[state=open]:text-secondary-foreground'],
+  ['data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground', 'data-[selected=true]:bg-secondary data-[selected=true]:text-secondary-foreground'],
+  ['[a&]:hover:bg-accent [a&]:hover:text-accent-foreground', '[a&]:hover:bg-secondary [a&]:hover:text-secondary-foreground'],
+  ['hover:bg-accent hover:text-accent-foreground', 'hover:bg-secondary hover:text-secondary-foreground'],
+  ['data-[active=true]:focus:bg-accent data-[active=true]:hover:bg-accent data-[active=true]:bg-accent/50 data-[active=true]:text-accent-foreground', 'data-[active=true]:focus:bg-secondary data-[active=true]:hover:bg-secondary data-[active=true]:bg-secondary data-[active=true]:text-secondary-foreground'],
+  ['data-[state=open]:hover:bg-accent data-[state=open]:text-accent-foreground data-[state=open]:focus:bg-accent data-[state=open]:bg-accent/50', 'data-[state=open]:hover:bg-secondary data-[state=open]:text-secondary-foreground data-[state=open]:focus:bg-secondary data-[state=open]:bg-secondary'],
+  ['dark:hover:bg-accent/50', 'dark:hover:bg-secondary'],
+  ['aria-selected:opacity-100 hover:bg-accent/50', 'aria-selected:opacity-100 hover:bg-secondary'],
+  ['"bg-accent animate-pulse rounded-md"', '"bg-muted animate-pulse rounded-md"'],
 ]
 
 function walk(dir, out = []) {
