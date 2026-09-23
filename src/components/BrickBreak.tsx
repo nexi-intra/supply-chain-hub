@@ -1794,14 +1794,14 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
   if (gameState === 'menu') {
     return (
       <div className="space-y-6">
-        <Card className="p-6 bg-gradient-to-br from-card via-primary/5 to-accent/5 border-2">
+        <Card className="p-6">
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-3">
-              <div className="p-3 rounded-full bg-gradient-to-br from-primary to-accent shadow-lg">
+              <div className="p-3 rounded-full bg-primary">
                 <Cube size={32} weight="duotone" className="text-primary-foreground" />
               </div>
               <div>
-                <h2 className="text-2xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+                <h2 className="text-2xl font-semibold text-foreground">
                   Brick Break
                 </h2>
                 <p className="text-sm text-muted-foreground">
@@ -1812,7 +1812,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
               </div>
             </div>
             <div className="flex items-center gap-4">
-              <div className="text-center p-4 rounded-lg bg-gradient-to-br from-accent/10 to-primary/10 border border-accent/20">
+              <div className="text-center p-4 rounded-md bg-secondary border">
                 <div className="text-sm text-muted-foreground font-semibold">
                   {language === 'da' ? 'Højeste score' : language === 'fi' ? 'Korkeat tulokset' : 'High Score'}
                 </div>
@@ -1841,10 +1841,10 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                     <div
                       key={diff}
                       onClick={() => setDifficulty(diff)}
-                      className={`group relative cursor-pointer rounded-xl p-6 transition-all duration-300 min-w-[140px] ${
+                      className={`group relative cursor-pointer rounded-md p-6 transition-colors min-w-[140px] ${
                         isSelected 
-                          ? `bg-gradient-to-br ${setting.bgGradient} border-2 ${setting.borderColor} shadow-lg ${setting.glowColor}` 
-                          : 'bg-card border-2 border-border hover:border-border/60 hover:shadow-md'
+                          ? `bg-secondary border-2 ${setting.borderColor}` 
+                          : 'bg-card border-2 border-border hover:border-primary/40'
                       }`}
                     >
                       <div className="flex flex-col items-center gap-3">
@@ -1874,7 +1874,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                   ? 'Brug musen eller tasterne (pil venstre/højre eller A/D) til at styre paddlen. Ødelæg alle brikker!'
                   : language === 'fi' ? 'Käytä hiirtä tai näppäimiä (kavenna vasen/oikea tai A/D) melontaan. Tuhotkaa kaikki tiilet!' : 'Use your mouse or keys (arrow left/right or A/D) to control the paddle. Destroy all bricks!'}
               </p>
-              <Button onClick={startGame} size="lg" className="px-8 bg-gradient-to-r from-primary to-accent hover:opacity-90 gap-2">
+              <Button onClick={startGame} size="lg" className="px-8 gap-2">
                 <Play size={20} weight="fill" />
                 {language === 'da' ? 'Start spil' : language === 'fi' ? 'Käynnistä peli' : 'Start Game'}
               </Button>
@@ -1882,13 +1882,13 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
           </div>
         </Card>
 
-        <Card className="p-6 bg-gradient-to-br from-accent/5 via-primary/5 to-card border-2 border-accent/20">
+        <Card className="p-6">
           <div className="flex items-center gap-3 mb-6">
-            <div className="p-3 rounded-full bg-gradient-to-br from-accent to-primary shadow-lg">
+            <div className="p-3 rounded-full bg-primary">
               <Crown size={28} weight="duotone" className="text-accent-foreground" />
             </div>
             <div>
-              <h3 className="text-xl font-bold bg-gradient-to-r from-accent to-primary bg-clip-text text-transparent">
+              <h3 className="text-xl font-semibold text-foreground">
                 {language === 'da' ? 'Global resultattavle' : language === 'fi' ? 'Maailmanlaajuinen Leaderboard' : 'Global Leaderboard'}
               </h3>
               <p className="text-sm text-muted-foreground">
@@ -1908,17 +1908,17 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
 
               return (
                 <div key={diff} className="space-y-3">
-                  <div className={`p-4 rounded-lg border-2 transition-all ${
+                  <div className={`p-4 rounded-md border-2 transition-colors ${
                     userRank === 1
-                      ? 'border-accent bg-gradient-to-br from-accent/10 to-primary/10 shadow-lg'
-                      : 'border-border bg-gradient-to-br from-card to-muted/20'
+                      ? 'border-primary bg-primary/10'
+                      : 'border-border bg-card'
                   }`}>
                     <div className="flex items-center gap-3 mb-3">
                       <div className={`p-2 rounded-lg ${
-                        diff === 'easy' ? 'bg-gradient-to-br from-green-500/20 to-green-600/20' :
-                        diff === 'medium' ? 'bg-gradient-to-br from-yellow-500/20 to-yellow-600/20' :
-                        diff === 'hard' ? 'bg-gradient-to-br from-red-500/20 to-red-600/20' :
-                        'bg-gradient-to-br from-purple-500/20 to-purple-600/20'
+                        diff === 'easy' ? 'bg-green-500/15' :
+                        diff === 'medium' ? 'bg-yellow-500/15' :
+                        diff === 'hard' ? 'bg-red-500/15' :
+                        'bg-purple-500/15'
                       }`}>
                         <Icon size={24} weight="duotone" className={setting.color} />
                       </div>
@@ -2051,7 +2051,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
             <div>
               <h4 className="font-semibold mb-3">{language === 'da' ? 'Power-Ups' : language === 'fi' ? 'Virrankulutus' : 'Power-Ups'}</h4>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="flex items-center gap-3 p-2 rounded-lg bg-gradient-to-r from-green-500/10 to-green-600/10 border border-green-500/20">
+                <div className="flex items-center gap-3 p-2 rounded-md bg-green-500/10 border border-green-500/25">
                   <div className="flex items-center justify-center w-8 h-8 rounded-full bg-green-500/20 text-xl">
                     {POWERUP_CONFIG.extraLife.symbol}
                   </div>
@@ -2065,7 +2065,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                   </div>
                 </div>
                 
-                <div className="flex items-center gap-3 p-2 rounded-lg bg-gradient-to-r from-cyan-500/10 to-blue-600/10 border border-cyan-500/20">
+                <div className="flex items-center gap-3 p-2 rounded-md bg-cyan-500/10 border border-cyan-500/25">
                   <div className="flex items-center justify-center w-8 h-8 rounded-full bg-cyan-500/20 text-xl">
                     {POWERUP_CONFIG.shield.symbol}
                   </div>
@@ -2079,7 +2079,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                   </div>
                 </div>
                 
-                <div className="flex items-center gap-3 p-2 rounded-lg bg-gradient-to-r from-red-500/10 to-orange-600/10 border border-red-500/20">
+                <div className="flex items-center gap-3 p-2 rounded-md bg-red-500/10 border border-red-500/25">
                   <div className="flex items-center justify-center w-8 h-8 rounded-full bg-red-500/20 text-xl">
                     {POWERUP_CONFIG.fireball.symbol}
                   </div>
@@ -2093,7 +2093,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                   </div>
                 </div>
                 
-                <div className="flex items-center gap-3 p-2 rounded-lg bg-gradient-to-r from-purple-500/10 to-purple-600/10 border border-purple-500/20">
+                <div className="flex items-center gap-3 p-2 rounded-md bg-purple-500/10 border border-purple-500/25">
                   <div className="flex items-center justify-center w-8 h-8 rounded-full bg-purple-500/20 text-xl">
                     {POWERUP_CONFIG.enlargePaddle.symbol}
                   </div>
@@ -2107,7 +2107,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                   </div>
                 </div>
                 
-                <div className="flex items-center gap-3 p-2 rounded-lg bg-gradient-to-r from-yellow-500/10 to-yellow-600/10 border border-yellow-500/20">
+                <div className="flex items-center gap-3 p-2 rounded-md bg-yellow-500/10 border border-yellow-500/25">
                   <div className="flex items-center justify-center w-8 h-8 rounded-full bg-yellow-500/20 text-xl">
                     {POWERUP_CONFIG.shrinkPaddle.symbol}
                   </div>
@@ -2121,7 +2121,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                   </div>
                 </div>
                 
-                <div className="flex items-center gap-3 p-2 rounded-lg bg-gradient-to-r from-indigo-500/10 to-purple-600/10 border border-indigo-500/20">
+                <div className="flex items-center gap-3 p-2 rounded-md bg-indigo-500/10 border border-indigo-500/25">
                   <div className="flex items-center justify-center w-8 h-8 rounded-full bg-indigo-500/20 text-xl">
                     {POWERUP_CONFIG.slowMotion.symbol}
                   </div>
@@ -2135,7 +2135,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                   </div>
                 </div>
                 
-                <div className="flex items-center gap-3 p-2 rounded-lg bg-gradient-to-r from-pink-500/10 to-red-600/10 border border-pink-500/20">
+                <div className="flex items-center gap-3 p-2 rounded-md bg-pink-500/10 border border-pink-500/25">
                   <div className="flex items-center justify-center w-8 h-8 rounded-full bg-pink-500/20 text-xl">
                     {POWERUP_CONFIG.speedBoost.symbol}
                   </div>
@@ -2149,7 +2149,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                   </div>
                 </div>
                 
-                <div className="flex items-center gap-3 p-2 rounded-lg bg-gradient-to-r from-cyan-500/10 to-teal-600/10 border border-cyan-500/20">
+                <div className="flex items-center gap-3 p-2 rounded-md bg-teal-500/10 border border-teal-500/25">
                   <div className="flex items-center justify-center w-8 h-8 rounded-full bg-cyan-500/20 text-xl">
                     {POWERUP_CONFIG.laser.symbol}
                   </div>
@@ -2163,7 +2163,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                   </div>
                 </div>
                 
-                <div className="flex items-center gap-3 p-2 rounded-lg bg-gradient-to-r from-lime-500/10 to-green-600/10 border border-lime-500/20">
+                <div className="flex items-center gap-3 p-2 rounded-md bg-lime-500/10 border border-lime-500/25">
                   <div className="flex items-center justify-center w-8 h-8 rounded-full bg-lime-500/20 text-xl">
                     {POWERUP_CONFIG.stickyPaddle.symbol}
                   </div>
@@ -2177,7 +2177,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                   </div>
                 </div>
                 
-                <div className="flex items-center gap-3 p-2 rounded-lg bg-gradient-to-r from-orange-500/10 to-red-600/10 border border-orange-500/20">
+                <div className="flex items-center gap-3 p-2 rounded-md bg-orange-500/10 border border-orange-500/25">
                   <div className="flex items-center justify-center w-8 h-8 rounded-full bg-orange-500/20 text-xl">
                     {POWERUP_CONFIG.explosiveBall.symbol}
                   </div>
@@ -2191,7 +2191,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                   </div>
                 </div>
                 
-                <div className="flex items-center gap-3 p-2 rounded-lg bg-gradient-to-r from-amber-500/10 to-orange-600/10 border border-amber-500/20">
+                <div className="flex items-center gap-3 p-2 rounded-md bg-amber-500/10 border border-amber-500/25">
                   <div className="flex items-center justify-center w-8 h-8 rounded-full bg-amber-500/20 text-xl">
                     {POWERUP_CONFIG.reverseControls.symbol}
                   </div>
@@ -2264,14 +2264,14 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
             ))}
           </div>
           {hasShield && (
-            <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border-2 border-cyan-500/50 text-cyan-500 animate-pulse">
+            <div className="flex items-center gap-2 px-3 py-1 rounded-md bg-cyan-500/15 border border-cyan-500/50 text-cyan-500">
               <span className="text-xl">🛡</span>
               <span className="font-bold">{language === 'da' ? 'SKJOLD AKTIV' : language === 'fi' ? 'KIDÄN VAIKUTTAVA' : 'SHIELD ACTIVE'}</span>
               <span className="ml-2 px-2 py-0.5 rounded bg-cyan-500 text-white text-sm font-bold">{shieldTimeLeft}s</span>
             </div>
           )}
           {isFireball && (
-            <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-gradient-to-r from-red-500/20 to-orange-500/20 border-2 border-red-500/50 text-red-500 animate-pulse">
+            <div className="flex items-center gap-2 px-3 py-1 rounded-md bg-red-500/15 border border-red-500/50 text-red-500">
               <span className="text-xl">🔥</span>
               <span className="font-bold">{language === 'da' ? 'ILDKUGLE AKTIV' : language === 'fi' ? 'FIREBALL ACTIVE' : 'FIREBALL ACTIVE'}</span>
               <span className="ml-2 px-2 py-0.5 rounded bg-red-500 text-white text-sm font-bold">{fireballTimeLeft}s</span>
@@ -2306,28 +2306,28 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
             </div>
           )}
           {hasLaser && (
-            <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border-2 border-cyan-500/50 text-cyan-500 animate-pulse">
+            <div className="flex items-center gap-2 px-3 py-1 rounded-md bg-cyan-500/15 border border-cyan-500/50 text-cyan-500">
               <span className="text-xl">⚡</span>
               <span className="font-bold">{language === 'da' ? 'LASER AKTIV' : language === 'fi' ? 'LASER ACTIVE' : 'LASER ACTIVE'}</span>
               <span className="ml-2 px-2 py-0.5 rounded bg-cyan-500 text-white text-sm font-bold">{laserTimeLeft}s</span>
             </div>
           )}
           {isExplosiveBall && (
-            <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-gradient-to-r from-orange-500/20 to-red-600/20 border-2 border-orange-500/50 text-orange-500 animate-pulse">
+            <div className="flex items-center gap-2 px-3 py-1 rounded-md bg-orange-500/15 border border-orange-500/50 text-orange-500">
               <span className="text-xl">💣</span>
               <span className="font-bold">{language === 'da' ? 'EKSPLOSIV BOLD AKTIV' : language === 'fi' ? 'RÄJÄHDYSKESKUS' : 'EXPLOSIVE BALL ACTIVE'}</span>
               <span className="ml-2 px-2 py-0.5 rounded bg-orange-500 text-white text-sm font-bold">{explosiveBallTimeLeft}s</span>
             </div>
           )}
           {isStickyPaddle && (
-            <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-gradient-to-r from-lime-500/20 to-green-500/20 border-2 border-lime-500/50 text-lime-500 animate-pulse">
+            <div className="flex items-center gap-2 px-3 py-1 rounded-md bg-lime-500/15 border border-lime-500/50 text-lime-500">
               <span className="text-xl">🟢</span>
               <span className="font-bold">{language === 'da' ? 'KLÆBRIG BAR' : language === 'fi' ? 'Sticky paddle' : 'STICKY PADDLE'}</span>
               <span className="ml-2 px-2 py-0.5 rounded bg-lime-500 text-white text-sm font-bold">{stickyPaddleTimeLeft}s</span>
             </div>
           )}
           {isReverseControls && (
-            <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-gradient-to-r from-amber-500/20 to-orange-500/20 border-2 border-amber-500/50 text-amber-500 animate-pulse">
+            <div className="flex items-center gap-2 px-3 py-1 rounded-md bg-amber-500/15 border border-amber-500/50 text-amber-500">
               <span className="text-xl">↔</span>
               <span className="font-bold">{language === 'da' ? 'OMVENDT KONTROL' : language === 'fi' ? 'PALAUTUKSEN VALVONTA' : 'REVERSE CONTROLS'}</span>
               <span className="ml-2 px-2 py-0.5 rounded bg-amber-500 text-white text-sm font-bold">{reverseControlsTimeLeft}s</span>
@@ -2347,7 +2347,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
             ref={canvasRef}
             width={GAME_WIDTH}
             height={GAME_HEIGHT}
-            className="border-2 border-border rounded-lg bg-gradient-to-b from-gray-900 to-gray-800"
+            className="border border-border rounded-md bg-gray-900"
             style={{ maxWidth: '100%', height: 'auto' }}
           />
           {gameState === 'paused' && <PauseOverlay onResume={resumeGame} />}

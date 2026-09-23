@@ -641,14 +641,14 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
 
   return (
     <div className="space-y-6">
-      <Card className="p-6 bg-gradient-to-br from-card via-primary/5 to-accent/5 border-2">
+      <Card className="p-6">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
-            <div className="p-3 rounded-full bg-gradient-to-br from-primary to-accent shadow-lg">
+            <div className="p-3 rounded-full bg-primary">
               <Bird size={32} weight="duotone" className="text-primary-foreground" />
             </div>
             <div>
-              <h2 className="text-2xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+              <h2 className="text-2xl font-semibold text-foreground">
                 Nexi Flyer
               </h2>
               <p className="text-sm text-muted-foreground">
@@ -659,7 +659,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
             </div>
           </div>
           <div className="flex items-center gap-4">
-            <div className="text-center p-4 rounded-lg bg-gradient-to-br from-accent/10 to-primary/10 border border-accent/20">
+            <div className="text-center p-4 rounded-md bg-secondary border">
               <div className="text-sm text-muted-foreground font-semibold">
                 {language === 'da' ? 'Højeste score' : language === 'fi' ? 'Korkeat tulokset' : 'High Score'}
               </div>
@@ -689,10 +689,10 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
                     <div
                       key={diff}
                       onClick={() => setDifficulty(diff)}
-                      className={`group relative cursor-pointer rounded-xl p-6 transition-all duration-300 min-w-[140px] ${
+                      className={`group relative cursor-pointer rounded-md p-6 transition-colors min-w-[140px] ${
                         isSelected
-                          ? `bg-gradient-to-br ${setting.bgGradient} border-2 ${setting.borderColor} shadow-lg ${setting.glowColor}`
-                          : 'bg-card border-2 border-border hover:border-border/60 hover:shadow-md'
+                          ? `bg-secondary border-2 ${setting.borderColor}`
+                          : 'bg-card border-2 border-border hover:border-primary/40'
                       }`}
                     >
                       <div className="flex flex-col items-center gap-3">
@@ -722,7 +722,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
                   ? 'Tryk mellemrum, pil op eller klik for at flyve. Undgå rørene!'
                   : language === 'fi' ? 'Paina tilaa, nuolta ylös tai napsauta läppä. Vältä putkia!' : 'Press space, arrow up, or click to flap. Avoid the pipes!'}
               </p>
-              <Button onClick={startGame} size="lg" className="px-8 bg-gradient-to-r from-primary to-accent hover:opacity-90">
+              <Button onClick={startGame} size="lg" className="px-8">
                 {language === 'da' ? 'Start spil' : language === 'fi' ? 'Käynnistä peli' : 'Start Game'}
               </Button>
             </div>
@@ -731,31 +731,31 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
       </Card>
 
       {(gameState === 'playing' || gameState === 'paused') && (
-        <Card className="p-0 overflow-hidden border-2 border-primary/30 shadow-2xl">
-          <div className="relative bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 p-6 border-b-2 border-primary/30">
-            <div className="absolute inset-0 bg-gradient-to-r from-primary/5 via-accent/10 to-primary/5" />
+        <Card className="p-0 overflow-hidden">
+          <div className="relative bg-slate-900 p-6 border-b border-slate-700">
+            <div className="hidden" />
             <div className="relative flex items-center justify-between">
               <div className="flex items-center gap-8">
                 <div className="relative group">
-                  <div className="absolute inset-0 bg-gradient-to-br from-primary to-accent blur-xl opacity-30 group-hover:opacity-50 transition-opacity" />
-                  <div className="relative px-6 py-3 rounded-xl bg-gradient-to-br from-primary/20 to-accent/30 border-2 border-primary/40 backdrop-blur-sm">
+                  <div className="hidden" />
+                  <div className="relative px-6 py-3 rounded-md bg-white/10 border border-white/20">
                     <div className="text-[10px] text-primary-foreground/70 uppercase tracking-widest font-bold mb-1 flex items-center gap-1">
                       <Trophy size={12} weight="fill" />
                       {language === 'da' ? 'Point' : language === 'fi' ? 'Pistemäärä' : 'Score'}
                     </div>
-                    <div className="text-4xl font-black bg-gradient-to-br from-white to-primary-foreground bg-clip-text text-transparent drop-shadow-lg">
+                    <div className="text-4xl font-bold text-white">
                       {score}
                     </div>
                   </div>
                 </div>
-                <div className="h-14 w-[2px] bg-gradient-to-b from-transparent via-border to-transparent" />
+                <div className="h-14 w-px bg-border" />
                 <div className="relative group">
-                  <div className="relative px-5 py-3 rounded-xl bg-gradient-to-br from-accent/20 to-yellow-500/20 border-2 border-accent/40 backdrop-blur-sm">
+                  <div className="relative px-5 py-3 rounded-md bg-white/10 border border-white/20">
                     <div className="text-[10px] text-accent-foreground/70 uppercase tracking-widest font-bold mb-1 flex items-center gap-1">
                       <Crown size={12} weight="fill" />
                       {language === 'da' ? 'Bedste' : language === 'fi' ? 'Paras' : 'Best'}
                     </div>
-                    <div className="text-4xl font-black text-yellow-400 drop-shadow-lg">
+                    <div className="text-4xl font-bold text-yellow-400">
                       {getCurrentHighScore()}
                     </div>
                   </div>
@@ -766,7 +766,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
                 onClick={quitGame}
                 variant="destructive"
                 size="lg"
-                className="shadow-xl hover:shadow-2xl transition-shadow font-bold"
+                className="font-bold"
               >
                 <X size={20} weight="bold" className="mr-2" />
                 {language === 'da' ? 'Stop' : language === 'fi' ? 'Lopeta' : 'Quit'}
@@ -782,7 +782,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
                 height={GAME_HEIGHT}
                 onClick={flap}
                 onTouchStart={(e) => { e.preventDefault(); flap() }}
-                className="cursor-pointer rounded-lg shadow-2xl border-2 border-primary/20 touch-none"
+                className="cursor-pointer rounded-md border border-white/15 touch-none"
                 style={{ maxWidth: '100%', height: 'auto' }}
               />
               {gameState === 'paused' && <PauseOverlay onResume={resumeGame} />}
@@ -792,8 +792,8 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
       )}
 
       {gameState === 'ended' && (
-        <Card className="p-6 text-center bg-gradient-to-br from-primary/10 via-accent/10 to-background border-2 border-primary/20">
-          <h3 className="text-2xl font-bold mb-2 bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+        <Card className="p-6 text-center">
+          <h3 className="text-2xl font-semibold mb-2 text-foreground">
             {language === 'da' ? 'Spil slut!' : language === 'fi' ? 'Peli loppui!' : 'Game Over!'}
           </h3>
           <div className="space-y-4">
@@ -801,7 +801,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
               <p className="text-muted-foreground">
                 {language === 'da' ? 'Din sidste score' : language === 'fi' ? 'Lopputulos' : 'Your final score'}
               </p>
-              <p className="text-4xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+              <p className="text-4xl font-semibold text-foreground">
                 {score}
               </p>
             </div>
@@ -813,7 +813,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
             </p>
           )}
           <div className="flex items-center justify-center gap-3 mt-6">
-            <Button onClick={startGame} size="lg" className="bg-gradient-to-r from-primary to-accent hover:opacity-90">
+            <Button onClick={startGame} size="lg" className="">
               {language === 'da' ? 'Prøv igen' : language === 'fi' ? 'Toista' : 'Play Again'}
             </Button>
             <Button onClick={() => setGameState('menu')} variant="outline" size="lg">
@@ -823,13 +823,13 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
         </Card>
       )}
 
-      <Card className="p-6 bg-gradient-to-br from-accent/5 via-primary/5 to-card border-2 border-accent/20">
+      <Card className="p-6">
         <div className="flex items-center gap-3 mb-6">
-          <div className="p-3 rounded-full bg-gradient-to-br from-accent to-primary shadow-lg">
+          <div className="p-3 rounded-full bg-primary">
             <Crown size={28} weight="duotone" className="text-accent-foreground" />
           </div>
           <div>
-            <h3 className="text-xl font-bold bg-gradient-to-r from-accent to-primary bg-clip-text text-transparent">
+            <h3 className="text-xl font-semibold text-foreground">
               {language === 'da' ? 'Global resultattavle' : language === 'fi' ? 'Maailmanlaajuinen Leaderboard' : 'Global Leaderboard'}
             </h3>
             <p className="text-sm text-muted-foreground">
@@ -848,17 +848,17 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
 
             return (
               <div key={diff} className="space-y-3">
-                <div className={`p-4 rounded-lg border-2 transition-all ${
+                <div className={`p-4 rounded-md border-2 transition-colors ${
                   userRank === 1
-                    ? 'border-accent bg-gradient-to-br from-accent/10 to-primary/10 shadow-lg'
-                    : 'border-border bg-gradient-to-br from-card to-muted/20'
+                    ? 'border-primary bg-primary/10'
+                    : 'border-border bg-card'
                 }`}>
                   <div className="flex items-center gap-3 mb-3">
                     <div className={`p-2 rounded-lg ${
-                      diff === 'easy' ? 'bg-gradient-to-br from-green-500/20 to-green-600/20' :
-                      diff === 'medium' ? 'bg-gradient-to-br from-yellow-500/20 to-yellow-600/20' :
-                      diff === 'hard' ? 'bg-gradient-to-br from-red-500/20 to-red-600/20' :
-                      'bg-gradient-to-br from-purple-500/20 to-purple-600/20'
+                      diff === 'easy' ? 'bg-green-500/15' :
+                      diff === 'medium' ? 'bg-yellow-500/15' :
+                      diff === 'hard' ? 'bg-red-500/15' :
+                      'bg-purple-500/15'
                     }`}>
                       <Icon size={24} weight="duotone" className={setting.color} />
                     </div>

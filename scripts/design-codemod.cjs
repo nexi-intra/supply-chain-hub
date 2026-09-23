@@ -18,6 +18,10 @@ const MAP = [
     'pointer-events-auto bg-background/90 hover:bg-background transition-colors gap-2 font-semibold px-4',
   ],
   [
+    'pointer-events-auto bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold',
+    'pointer-events-auto bg-background/90 hover:bg-background transition-colors gap-2 font-semibold',
+  ],
+  [
     'bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4',
     'bg-background/90 hover:bg-background transition-colors gap-2 font-semibold px-4',
   ],
@@ -120,6 +124,156 @@ const MAP = [
     "flex items-center justify-between gap-4 rounded-xl border p-4",
     "flex items-center justify-between gap-4 rounded-md border p-4",
   ],
+
+  // ---------------------------------------------------------------
+  // Spillehjoernet. Rammen (menuer, highscores, slutskaerm) skal se ud
+  // som resten af appen. Selve spillefladen faar lov at vaere moerk og
+  // sin egen verden - men uden gradient-tekst og svaevende skygger.
+  // ---------------------------------------------------------------
+  ['p-6 bg-gradient-to-br from-card via-primary/5 to-accent/5 border-2', 'p-6'],
+  ['p-6 bg-gradient-to-br from-accent/5 via-primary/5 to-card border-2 border-accent/20', 'p-6'],
+  ['p-6 text-center bg-gradient-to-br from-primary/10 via-accent/10 to-background border-2 border-primary/20', 'p-6 text-center'],
+  ['p-3 rounded-full bg-gradient-to-br from-primary to-accent shadow-lg', 'p-3 rounded-full bg-primary'],
+  ['p-3 rounded-full bg-gradient-to-br from-accent to-primary shadow-lg', 'p-3 rounded-full bg-primary'],
+  ['text-2xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent', 'text-2xl font-semibold text-foreground'],
+  ['text-2xl font-bold mb-2 bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent', 'text-2xl font-semibold mb-2 text-foreground'],
+  ['text-4xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent', 'text-4xl font-semibold text-foreground'],
+  ['text-xl font-bold bg-gradient-to-r from-accent to-primary bg-clip-text text-transparent', 'text-xl font-semibold text-foreground'],
+  ['text-center p-4 rounded-lg bg-gradient-to-br from-accent/10 to-primary/10 border border-accent/20', 'text-center p-4 rounded-md bg-secondary border'],
+  ['px-8 bg-gradient-to-r from-primary to-accent hover:opacity-90', 'px-8'],
+  ['bg-gradient-to-r from-primary to-accent hover:opacity-90', ''],
+  ['shadow-xl hover:shadow-2xl transition-shadow font-bold', 'font-bold'],
+  ['bg-background shadow-lg gap-2 font-semibold', 'bg-background gap-2 font-semibold'],
+  [
+    'relative overflow-hidden border-2 transition-all duration-300 group h-full min-h-[180px] sm:min-h-[220px] flex flex-col cursor-pointer hover:border-primary/40',
+    'relative overflow-hidden transition-colors group h-full flex flex-col cursor-pointer hover:border-primary/40',
+  ],
+
+  // Spillefladens ramme og HUD: solid moerk flade frem for gradient og glød
+  ['p-0 overflow-hidden border-2 border-primary/30 shadow-2xl', 'p-0 overflow-hidden'],
+  ['relative bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 p-6 border-b-2 border-primary/30', 'relative bg-slate-900 p-6 border-b border-slate-700'],
+  ['absolute inset-0 bg-gradient-to-r from-primary/5 via-accent/10 to-primary/5', 'hidden'],
+  ['absolute inset-0 bg-gradient-to-br from-primary to-accent blur-xl opacity-30 group-hover:opacity-50 transition-opacity', 'hidden'],
+  ['rounded-lg shadow-2xl border-2 border-primary/20', 'rounded-md border border-white/15'],
+  ['p-3 rounded-2xl bg-white/20 backdrop-blur-sm shadow-xl', 'p-3 rounded-md bg-white/15'],
+  ['text-2xl sm:text-3xl font-bold text-white drop-shadow-lg', 'text-2xl sm:text-3xl font-semibold text-white'],
+  ['text-4xl font-black bg-gradient-to-br from-white to-primary-foreground bg-clip-text text-transparent drop-shadow-lg', 'text-4xl font-bold text-white'],
+  ['text-3xl font-black bg-gradient-to-br from-white to-primary-foreground bg-clip-text text-transparent drop-shadow-lg', 'text-3xl font-bold text-white'],
+  ['text-4xl font-black text-yellow-400 drop-shadow-lg', 'text-4xl font-bold text-yellow-400'],
+  ['text-3xl font-black text-white drop-shadow-lg', 'text-3xl font-bold text-white'],
+  [
+    'relative px-5 py-3 rounded-xl bg-gradient-to-br from-accent/20 to-yellow-500/20 border-2 border-accent/40 backdrop-blur-sm',
+    'relative px-5 py-3 rounded-md bg-white/10 border border-white/20',
+  ],
+  [
+    'relative px-6 py-3 rounded-xl bg-gradient-to-br from-primary/20 to-accent/30 border-2 border-primary/40 backdrop-blur-sm',
+    'relative px-6 py-3 rounded-md bg-white/10 border border-white/20',
+  ],
+  [
+    'relative px-5 py-3 rounded-xl bg-gradient-to-br from-primary/20 to-accent/30 border-2 border-primary/40 backdrop-blur-sm',
+    'relative px-5 py-3 rounded-md bg-white/10 border border-white/20',
+  ],
+  [
+    'relative px-5 py-3 rounded-xl bg-gradient-to-br from-primary/20 to-accent/20 border-2 border-primary/40 backdrop-blur-sm',
+    'relative px-5 py-3 rounded-md bg-white/10 border border-white/20',
+  ],
+  [
+    'flex items-center gap-2 px-3 py-1 rounded-lg bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border-2 border-cyan-500/50 text-cyan-500 animate-pulse',
+    'flex items-center gap-2 px-3 py-1 rounded-md bg-cyan-500/15 border border-cyan-500/50 text-cyan-500',
+  ],
+  [
+    'p-6 rounded-3xl bg-gradient-to-br from-[oklch(0.42_0.19_270)] via-[oklch(0.50_0.16_265)] to-[oklch(0.38_0.19_272)] shadow-2xl',
+    'p-6 rounded-md bg-primary',
+  ],
+  [
+    'text-2xl sm:text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight bg-gradient-to-br from-[oklch(0.42_0.19_270)] via-[oklch(0.50_0.16_265)] to-[oklch(0.38_0.19_272)] bg-clip-text text-transparent mb-4',
+    'text-xl sm:text-2xl font-semibold tracking-tight text-foreground mb-4',
+  ],
+  [
+    'mb-3 md:mb-4 inline-flex items-center justify-center rounded-2xl p-2 md:p-3 shadow-lg bg-gradient-to-br from-[oklch(0.55_0.19_25)] via-[oklch(0.58_0.17_35)] to-[oklch(0.48_0.20_15)]',
+    'mb-3 inline-flex items-center justify-center rounded-md p-2 bg-secondary text-primary',
+  ],
+
+  // Svaerhedsgrad-vaelgeren og highscore-fanerne - ens i alle fem spil
+  [
+    'group relative cursor-pointer rounded-xl p-6 transition-all duration-300 min-w-[140px] ',
+    'group relative cursor-pointer rounded-md p-6 transition-colors min-w-[140px] ',
+  ],
+  [
+    '`bg-gradient-to-br ${setting.bgGradient} border-2 ${setting.borderColor} shadow-lg ${setting.glowColor}`',
+    '`bg-secondary border-2 ${setting.borderColor}`',
+  ],
+  [
+    "'bg-card border-2 border-border hover:border-border/60 hover:shadow-md'",
+    "'bg-card border-2 border-border hover:border-primary/40'",
+  ],
+  ['p-4 rounded-lg border-2 transition-all ', 'p-4 rounded-md border-2 transition-colors '],
+  ["'border-accent bg-gradient-to-br from-accent/10 to-primary/10 shadow-lg'", "'border-primary bg-primary/10'"],
+  ["'border-border bg-gradient-to-br from-card to-muted/20'", "'border-border bg-card'"],
+  ["'bg-gradient-to-br from-green-500/20 to-green-600/20'", "'bg-green-500/15'"],
+  ["'bg-gradient-to-br from-yellow-500/20 to-yellow-600/20'", "'bg-yellow-500/15'"],
+  ["'bg-gradient-to-br from-red-500/20 to-red-600/20'", "'bg-red-500/15'"],
+  ["'bg-gradient-to-br from-purple-500/20 to-purple-600/20'", "'bg-purple-500/15'"],
+  ['p-4 rounded-lg border-2 border-border bg-gradient-to-br from-card to-muted/20', 'p-4 rounded-md border bg-card'],
+  ['px-3 py-2 rounded-xl bg-slate-950/60 border-2 border-primary/30', 'px-3 py-2 rounded-md bg-slate-950/60 border border-white/15'],
+  [
+    'relative px-5 py-3 rounded-xl bg-gradient-to-br from-destructive/20 to-red-500/20 border-2 border-destructive/40 backdrop-blur-sm',
+    'relative px-5 py-3 rounded-md bg-white/10 border border-white/20',
+  ],
+  [
+    'text-5xl font-black bg-gradient-to-r from-yellow-300 via-white to-yellow-300 bg-clip-text text-transparent drop-shadow-lg',
+    'text-5xl font-bold text-yellow-300',
+  ],
+
+  // Spillehjoernets bannere: een solid farve pr. spil i stedet for tre-trins gradient
+  ['relative bg-gradient-to-r from-[oklch(0.50_0.14_275)] via-[oklch(0.56_0.12_262)] to-[oklch(0.46_0.15_276)] py-8 shadow-xl border-b-4 border-white/10', 'relative bg-[oklch(0.50_0.14_275)] py-8 border-b border-white/15'],
+  ['relative bg-gradient-to-r from-[oklch(0.52_0.12_330)] via-[oklch(0.55_0.11_305)] to-[oklch(0.48_0.12_332)] py-8 shadow-xl border-b-4 border-white/10', 'relative bg-[oklch(0.52_0.12_330)] py-8 border-b border-white/15'],
+  ['relative bg-gradient-to-r from-[oklch(0.68_0.11_80)] via-[oklch(0.72_0.10_65)] to-[oklch(0.64_0.11_82)] py-8 shadow-xl border-b-4 border-white/10', 'relative bg-[oklch(0.68_0.11_80)] py-8 border-b border-white/15'],
+  ['relative bg-gradient-to-r from-[oklch(0.52_0.13_248)] via-[oklch(0.56_0.11_240)] to-[oklch(0.48_0.13_250)] py-8 shadow-xl border-b-4 border-white/10', 'relative bg-[oklch(0.52_0.13_248)] py-8 border-b border-white/15'],
+  ['relative bg-gradient-to-r from-[oklch(0.56_0.12_155)] via-[oklch(0.60_0.10_170)] to-[oklch(0.52_0.12_157)] py-8 shadow-xl border-b-4 border-white/10', 'relative bg-[oklch(0.56_0.12_155)] py-8 border-b border-white/15'],
+  ['className="absolute inset-0 bg-gradient-to-br"', 'className="absolute inset-0"'],
+  [
+    '"mb-3 md:mb-4 inline-flex items-center justify-center rounded-2xl p-2 md:p-3 shadow-lg",\n                          `bg-gradient-to-br ${game.gradient}`',
+    '"mb-3 inline-flex items-center justify-center rounded-md p-2 bg-secondary text-primary"',
+  ],
+  [
+    'mb-3 md:mb-4 inline-flex items-center justify-center rounded-2xl p-2 md:p-3 shadow-lg bg-gradient-to-br from-[oklch(0.45_0.17_278)] via-[oklch(0.52_0.15_272)] to-[oklch(0.41_0.17_280)]',
+    'mb-3 inline-flex items-center justify-center rounded-md p-2 bg-secondary text-primary',
+  ],
+  [
+    'mb-3 md:mb-4 inline-flex items-center justify-center rounded-2xl p-2 md:p-3 shadow-lg bg-gradient-to-br from-[oklch(0.50_0.18_295)] via-[oklch(0.55_0.16_305)] to-[oklch(0.42_0.19_285)]',
+    'mb-3 inline-flex items-center justify-center rounded-md p-2 bg-secondary text-primary',
+  ],
+  ['p-6 rounded-3xl bg-gradient-to-br from-[oklch(0.45_0.15_240)] via-[oklch(0.50_0.13_255)] to-[oklch(0.40_0.16_230)] shadow-2xl', 'p-6 rounded-md bg-primary'],
+  [
+    'text-2xl sm:text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight bg-gradient-to-br from-[oklch(0.45_0.15_240)] via-[oklch(0.50_0.13_255)] to-[oklch(0.40_0.16_230)] bg-clip-text text-transparent mb-4',
+    'text-xl sm:text-2xl font-semibold tracking-tight text-foreground mb-4',
+  ],
+  ['border-2 border-border rounded-lg bg-gradient-to-b from-gray-900 to-gray-800', 'border border-border rounded-md bg-gray-900'],
+  ['text-4xl font-black text-white drop-shadow-lg', 'text-4xl font-bold text-white'],
+  ['text-3xl font-black text-yellow-400 drop-shadow-lg', 'text-3xl font-bold text-yellow-400'],
+  ['font-bold shadow-xl', 'font-bold'],
+  ['h-14 w-[2px] bg-gradient-to-b from-transparent via-border to-transparent', 'h-14 w-px bg-border'],
+
+  // Brick Breaks powerup-liste: hver powerup beholder sin egen farve, men som
+  // een flad tone i stedet for en gradient
+  ['p-2 rounded-lg bg-gradient-to-r from-green-500/10 to-green-600/10 border border-green-500/20', 'p-2 rounded-md bg-green-500/10 border border-green-500/25'],
+  ['p-2 rounded-lg bg-gradient-to-r from-cyan-500/10 to-blue-600/10 border border-cyan-500/20', 'p-2 rounded-md bg-cyan-500/10 border border-cyan-500/25'],
+  ['p-2 rounded-lg bg-gradient-to-r from-red-500/10 to-orange-600/10 border border-red-500/20', 'p-2 rounded-md bg-red-500/10 border border-red-500/25'],
+  ['p-2 rounded-lg bg-gradient-to-r from-purple-500/10 to-purple-600/10 border border-purple-500/20', 'p-2 rounded-md bg-purple-500/10 border border-purple-500/25'],
+  ['p-2 rounded-lg bg-gradient-to-r from-yellow-500/10 to-yellow-600/10 border border-yellow-500/20', 'p-2 rounded-md bg-yellow-500/10 border border-yellow-500/25'],
+  ['p-2 rounded-lg bg-gradient-to-r from-indigo-500/10 to-purple-600/10 border border-indigo-500/20', 'p-2 rounded-md bg-indigo-500/10 border border-indigo-500/25'],
+  ['p-2 rounded-lg bg-gradient-to-r from-pink-500/10 to-red-600/10 border border-pink-500/20', 'p-2 rounded-md bg-pink-500/10 border border-pink-500/25'],
+  ['p-2 rounded-lg bg-gradient-to-r from-cyan-500/10 to-teal-600/10 border border-cyan-500/20', 'p-2 rounded-md bg-teal-500/10 border border-teal-500/25'],
+  ['p-2 rounded-lg bg-gradient-to-r from-lime-500/10 to-green-600/10 border border-lime-500/20', 'p-2 rounded-md bg-lime-500/10 border border-lime-500/25'],
+  ['p-2 rounded-lg bg-gradient-to-r from-orange-500/10 to-red-600/10 border border-orange-500/20', 'p-2 rounded-md bg-orange-500/10 border border-orange-500/25'],
+  ['p-2 rounded-lg bg-gradient-to-r from-amber-500/10 to-orange-600/10 border border-amber-500/20', 'p-2 rounded-md bg-amber-500/10 border border-amber-500/25'],
+
+  // Aktive powerups i spillet: samme farve, uden puls og dobbeltkant
+  ['px-3 py-1 rounded-lg bg-gradient-to-r from-red-500/20 to-orange-500/20 border-2 border-red-500/50 text-red-500 animate-pulse', 'px-3 py-1 rounded-md bg-red-500/15 border border-red-500/50 text-red-500'],
+  ['px-3 py-1 rounded-lg bg-gradient-to-r from-orange-500/20 to-red-600/20 border-2 border-orange-500/50 text-orange-500 animate-pulse', 'px-3 py-1 rounded-md bg-orange-500/15 border border-orange-500/50 text-orange-500'],
+  ['px-3 py-1 rounded-lg bg-gradient-to-r from-lime-500/20 to-green-500/20 border-2 border-lime-500/50 text-lime-500 animate-pulse', 'px-3 py-1 rounded-md bg-lime-500/15 border border-lime-500/50 text-lime-500'],
+  ['px-3 py-1 rounded-lg bg-gradient-to-r from-amber-500/20 to-orange-500/20 border-2 border-amber-500/50 text-amber-500 animate-pulse', 'px-3 py-1 rounded-md bg-amber-500/15 border border-amber-500/50 text-amber-500'],
 ]
 
 function walk(dir, out = []) {

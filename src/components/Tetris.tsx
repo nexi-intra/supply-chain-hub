@@ -591,14 +591,14 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
 
   return (
     <div className="space-y-6">
-      <Card className="p-6 bg-gradient-to-br from-card via-primary/5 to-accent/5 border-2">
+      <Card className="p-6">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
-            <div className="p-3 rounded-full bg-gradient-to-br from-primary to-accent shadow-lg">
+            <div className="p-3 rounded-full bg-primary">
               <SquaresFour size={32} weight="duotone" className="text-primary-foreground" />
             </div>
             <div>
-              <h2 className="text-2xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+              <h2 className="text-2xl font-semibold text-foreground">
                 Tetris
               </h2>
               <p className="text-sm text-muted-foreground">
@@ -609,7 +609,7 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
             </div>
           </div>
           <div className="flex items-center gap-4">
-            <div className="text-center p-4 rounded-lg bg-gradient-to-br from-accent/10 to-primary/10 border border-accent/20">
+            <div className="text-center p-4 rounded-md bg-secondary border">
               <div className="text-sm text-muted-foreground font-semibold">
                 {language === 'da' ? 'Højeste score' : language === 'fi' ? 'Korkeat tulokset' : 'High Score'}
               </div>
@@ -629,7 +629,7 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
                   ? 'Piletaster til at flytte/rotere, mellemrum for hurtigt fald. Spillet bliver gradvist sværere jo længere du spiller.'
                   : language === 'fi' ? 'Nuolinäppäimiä liikkua / pyörittää, tilaa kova pudota. Peli vaikeutuu koko ajan.' : 'Arrow keys to move/rotate, space for hard drop. The game gets progressively harder the longer you play.'}
               </p>
-              <Button onClick={startGame} size="lg" className="px-8 bg-gradient-to-r from-primary to-accent hover:opacity-90">
+              <Button onClick={startGame} size="lg" className="px-8">
                 {language === 'da' ? 'Start spil' : language === 'fi' ? 'Käynnistä peli' : 'Start Game'}
               </Button>
             </div>
@@ -638,29 +638,29 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
       </Card>
 
       {(gameState === 'playing' || gameState === 'paused') && (
-        <Card className="p-0 overflow-hidden border-2 border-primary/30 shadow-2xl">
-          <div className="relative bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 p-6 border-b-2 border-primary/30">
-            <div className="absolute inset-0 bg-gradient-to-r from-primary/5 via-accent/10 to-primary/5" />
+        <Card className="p-0 overflow-hidden">
+          <div className="relative bg-slate-900 p-6 border-b border-slate-700">
+            <div className="hidden" />
             <div className="relative flex items-center justify-between flex-wrap gap-4">
               <div className="flex items-center gap-6 flex-wrap">
-                <div className="relative px-5 py-3 rounded-xl bg-gradient-to-br from-primary/20 to-accent/30 border-2 border-primary/40 backdrop-blur-sm">
+                <div className="relative px-5 py-3 rounded-md bg-white/10 border border-white/20">
                   <div className="text-[10px] text-primary-foreground/70 uppercase tracking-widest font-bold mb-1 flex items-center gap-1">
                     <Trophy size={12} weight="fill" />
                     {language === 'da' ? 'Point' : language === 'fi' ? 'Pistemäärä' : 'Score'}
                   </div>
-                  <div className="text-3xl font-black bg-gradient-to-br from-white to-primary-foreground bg-clip-text text-transparent drop-shadow-lg">
+                  <div className="text-3xl font-bold text-white">
                     {score}
                   </div>
                 </div>
-                <div className="relative px-5 py-3 rounded-xl bg-gradient-to-br from-primary/20 to-accent/20 border-2 border-primary/40 backdrop-blur-sm">
+                <div className="relative px-5 py-3 rounded-md bg-white/10 border border-white/20">
                   <div className="text-[10px] text-primary-foreground/70 uppercase tracking-widest font-bold mb-1">
                     {language === 'da' ? 'Linjer' : language === 'fi' ? 'Rivit' : 'Lines'}
                   </div>
-                  <div className="text-3xl font-black text-white drop-shadow-lg">
+                  <div className="text-3xl font-bold text-white">
                     {lines}
                   </div>
                 </div>
-                <div className="px-3 py-2 rounded-xl bg-slate-950/60 border-2 border-primary/30">
+                <div className="px-3 py-2 rounded-md bg-slate-950/60 border border-white/15">
                   <div className="text-[10px] text-primary-foreground/70 uppercase tracking-widest font-bold mb-1 text-center">
                     {language === 'da' ? 'Næste' : language === 'fi' ? 'Seuraava' : 'Next'}
                   </div>
@@ -672,7 +672,7 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
                 onClick={quitGame}
                 variant="destructive"
                 size="lg"
-                className="shadow-xl hover:shadow-2xl transition-shadow font-bold"
+                className="font-bold"
               >
                 <X size={20} weight="bold" className="mr-2" />
                 {language === 'da' ? 'Stop' : language === 'fi' ? 'Lopeta' : 'Quit'}
@@ -686,7 +686,7 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
                 ref={canvasRef}
                 width={BOARD_WIDTH}
                 height={BOARD_HEIGHT}
-                className="rounded-lg shadow-2xl border-2 border-primary/20"
+                className="rounded-md border border-white/15"
                 style={{ maxWidth: '100%', height: 'auto' }}
               />
               {gameState === 'paused' && <PauseOverlay onResume={resumeGame} />}
@@ -714,8 +714,8 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
       )}
 
       {gameState === 'ended' && (
-        <Card className="p-6 text-center bg-gradient-to-br from-primary/10 via-accent/10 to-background border-2 border-primary/20">
-          <h3 className="text-2xl font-bold mb-2 bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+        <Card className="p-6 text-center">
+          <h3 className="text-2xl font-semibold mb-2 text-foreground">
             {language === 'da' ? 'Spil slut!' : language === 'fi' ? 'Peli loppui!' : 'Game Over!'}
           </h3>
           <div className="space-y-4">
@@ -723,7 +723,7 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
               <p className="text-muted-foreground">
                 {language === 'da' ? 'Din sidste score' : language === 'fi' ? 'Lopputulos' : 'Your final score'}
               </p>
-              <p className="text-4xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+              <p className="text-4xl font-semibold text-foreground">
                 {score}
               </p>
               <p className="text-sm text-muted-foreground mt-1">
@@ -738,7 +738,7 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
             </p>
           )}
           <div className="flex items-center justify-center gap-3 mt-6">
-            <Button onClick={startGame} size="lg" className="bg-gradient-to-r from-primary to-accent hover:opacity-90">
+            <Button onClick={startGame} size="lg" className="">
               {language === 'da' ? 'Prøv igen' : language === 'fi' ? 'Toista' : 'Play Again'}
             </Button>
             <Button onClick={() => setGameState('menu')} variant="outline" size="lg">
@@ -748,13 +748,13 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
         </Card>
       )}
 
-      <Card className="p-6 bg-gradient-to-br from-accent/5 via-primary/5 to-card border-2 border-accent/20">
+      <Card className="p-6">
         <div className="flex items-center gap-3 mb-6">
-          <div className="p-3 rounded-full bg-gradient-to-br from-accent to-primary shadow-lg">
+          <div className="p-3 rounded-full bg-primary">
             <Crown size={28} weight="duotone" className="text-accent-foreground" />
           </div>
           <div>
-            <h3 className="text-xl font-bold bg-gradient-to-r from-accent to-primary bg-clip-text text-transparent">
+            <h3 className="text-xl font-semibold text-foreground">
               {language === 'da' ? 'Global resultattavle' : language === 'fi' ? 'Maailmanlaajuinen Leaderboard' : 'Global Leaderboard'}
             </h3>
             <p className="text-sm text-muted-foreground">
@@ -771,7 +771,7 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
             const userEntry = userRank ? leaderboard[userIndex] : undefined
 
             return (
-              <div className="p-4 rounded-lg border-2 border-border bg-gradient-to-br from-card to-muted/20">
+              <div className="p-4 rounded-md border bg-card">
                 {leaderboard.length > 0 ? (
                   <div className="space-y-2">
                     {leaderboard.slice(0, 10).map((entry, index) => {

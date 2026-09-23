@@ -19,10 +19,10 @@ export function PauseOverlay({ onResume }: { onResume: () => void }) {
   return (
     <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-slate-950/80 backdrop-blur-sm rounded-lg">
       <div className="text-center">
-        <div className="text-4xl font-black text-white drop-shadow-lg">{title}</div>
+        <div className="text-4xl font-bold text-white">{title}</div>
         <p className="mt-2 text-sm text-white/70 max-w-xs">{hint}</p>
       </div>
-      <Button onClick={onResume} size="lg" className="font-bold shadow-xl">
+      <Button onClick={onResume} size="lg" className="font-bold">
         <Play size={20} weight="fill" className="mr-2" />
         {resume}
       </Button>

@@ -69,7 +69,7 @@ export function CubeBasherGame({ onNavigateBack }: CubeBasherGameProps) {
           onClick={onNavigateBack}
           variant="outline"
           size="sm"
-          className="bg-background shadow-lg gap-2 font-semibold"
+          className="bg-background gap-2 font-semibold"
         >
           <ArrowLeft size={16} weight="bold" />
           {language === 'da' ? 'Tilbage' : language === 'fi' ? 'Takaisin' : 'Back'}

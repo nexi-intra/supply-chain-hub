@@ -51,7 +51,7 @@ export function GameCorner({ onNavigateBack, userEmail }: GameCornerProps) {
               onClick={onNavigateBack}
               variant="outline"
               size="lg"
-              className="pointer-events-auto bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold"
+              className="pointer-events-auto bg-background/90 hover:bg-background transition-colors gap-2 font-semibold"
             >
               <ArrowLeft size={20} weight="bold" />
               {language === 'da' ? 'Tilbage til Hub' : language === 'fi' ? 'Takaisin Hubiin' : 'Back to Hub'}
@@ -73,12 +73,12 @@ export function GameCorner({ onNavigateBack, userEmail }: GameCornerProps) {
             transition={{ duration: 0.5, delay: 0.2 }}
             className="flex justify-center mb-6"
           >
-            <div className="p-6 rounded-3xl bg-gradient-to-br from-[oklch(0.42_0.19_270)] via-[oklch(0.50_0.16_265)] to-[oklch(0.38_0.19_272)] shadow-2xl">
+            <div className="p-6 rounded-md bg-primary">
               <GameController size={64} weight="duotone" className="text-white" />
             </div>
           </motion.div>
           <motion.h1
-            className="text-2xl sm:text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight bg-gradient-to-br from-[oklch(0.42_0.19_270)] via-[oklch(0.50_0.16_265)] to-[oklch(0.38_0.19_272)] bg-clip-text text-transparent mb-4"
+            className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground mb-4"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.3, duration: 0.6 }}
@@ -115,11 +115,11 @@ export function GameCorner({ onNavigateBack, userEmail }: GameCornerProps) {
               transition={{ duration: 0.3, ease: "easeInOut" }}
             >
               <Card
-                className="relative overflow-hidden border-2 transition-all duration-300 group h-full min-h-[180px] sm:min-h-[220px] flex flex-col cursor-pointer hover:border-primary/40"
+                className="relative overflow-hidden transition-colors group h-full flex flex-col cursor-pointer hover:border-primary/40"
                 onClick={() => setView('arcade')}
               >
                 <motion.div
-                  className="absolute inset-0 bg-gradient-to-br"
+                  className="absolute inset-0"
                   style={{ background: 'radial-gradient(circle at top right, oklch(0.45 0.17 278 / 0.08), transparent)' }}
                   initial={{ opacity: 0 }}
                   whileHover={{ opacity: 1 }}
@@ -128,7 +128,7 @@ export function GameCorner({ onNavigateBack, userEmail }: GameCornerProps) {
 
                 <div className="relative p-4 md:p-6 flex flex-col flex-1">
                   <motion.div
-                    className="mb-3 md:mb-4 inline-flex items-center justify-center rounded-2xl p-2 md:p-3 shadow-lg bg-gradient-to-br from-[oklch(0.45_0.17_278)] via-[oklch(0.52_0.15_272)] to-[oklch(0.41_0.17_280)]"
+                    className="mb-3 inline-flex items-center justify-center rounded-md p-2 bg-secondary text-primary"
                     style={{ color: 'white' }}
                     initial={{ scale: 1, rotate: 0, y: 0 }}
                     whileHover={{ scale: [1, 1.3, 1.15], rotate: [0, -15, 15, -10, 10, 0], y: [0, -8, 0] }}
@@ -165,11 +165,11 @@ export function GameCorner({ onNavigateBack, userEmail }: GameCornerProps) {
               transition={{ duration: 0.3, ease: "easeInOut" }}
             >
               <Card
-                className="relative overflow-hidden border-2 transition-all duration-300 group h-full min-h-[180px] sm:min-h-[220px] flex flex-col cursor-pointer hover:border-primary/40"
+                className="relative overflow-hidden transition-colors group h-full flex flex-col cursor-pointer hover:border-primary/40"
                 onClick={() => setView('modern')}
               >
                 <motion.div
-                  className="absolute inset-0 bg-gradient-to-br"
+                  className="absolute inset-0"
                   style={{ background: 'radial-gradient(circle at top right, oklch(0.55 0.19 25 / 0.08), transparent)' }}
                   initial={{ opacity: 0 }}
                   whileHover={{ opacity: 1 }}
@@ -178,7 +178,7 @@ export function GameCorner({ onNavigateBack, userEmail }: GameCornerProps) {
 
                 <div className="relative p-4 md:p-6 flex flex-col flex-1">
                   <motion.div
-                    className="mb-3 md:mb-4 inline-flex items-center justify-center rounded-2xl p-2 md:p-3 shadow-lg bg-gradient-to-br from-[oklch(0.55_0.19_25)] via-[oklch(0.58_0.17_35)] to-[oklch(0.48_0.20_15)]"
+                    className="mb-3 inline-flex items-center justify-center rounded-md p-2 bg-secondary text-primary"
                     style={{ color: 'white' }}
                     initial={{ scale: 1, rotate: 0, y: 0 }}
                     whileHover={{ scale: [1, 1.3, 1.15], rotate: [0, -15, 15, -10, 10, 0], y: [0, -8, 0] }}

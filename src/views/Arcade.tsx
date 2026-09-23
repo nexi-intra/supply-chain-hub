@@ -205,7 +205,7 @@ export function Arcade({ onNavigateBack, userEmail }: ArcadeProps) {
             )
           `
         }}>
-          <div className="relative bg-gradient-to-r from-[oklch(0.50_0.14_275)] via-[oklch(0.56_0.12_262)] to-[oklch(0.46_0.15_276)] py-8 shadow-xl border-b-4 border-white/10">
+          <div className="relative bg-[oklch(0.50_0.14_275)] py-8 border-b border-white/15">
             <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PHBhdHRlcm4gaWQ9ImdyaWQiIHdpZHRoPSI2MCIgaGVpZ2h0PSI2MCIgcGF0dGVyblVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHBhdGggZD0iTSAxMCAwIEwgMCAwIDAgMTAiIGZpbGw9Im5vbmUiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS1vcGFjaXR5PSIwLjEiIHN0cm9rZS13aWR0aD0iMSIvPjwvcGF0dGVybj48L2RlZnM+PHJlY3Qgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIgZmlsbD0idXJsKCNncmlkKSIvPjwvc3ZnPg==')] opacity-30" />
             <div className="container mx-auto px-4 sm:px-6 relative z-10">
               <div className="flex items-center gap-4">
@@ -218,11 +218,11 @@ export function Arcade({ onNavigateBack, userEmail }: ArcadeProps) {
                   <ArrowLeft size={24} weight="bold" />
                 </Button>
                 <div className="flex items-center gap-4">
-                  <div className="p-3 rounded-2xl bg-white/20 backdrop-blur-sm shadow-xl">
+                  <div className="p-3 rounded-md bg-white/15">
                     <RocketLaunch size={32} weight="duotone" className="text-white" />
                   </div>
                   <div>
-                    <h1 className="text-2xl sm:text-3xl font-bold text-white drop-shadow-lg">
+                    <h1 className="text-2xl sm:text-3xl font-semibold text-white">
                       Chickeninvasion
                     </h1>
                     <p className="text-white/90 text-sm sm:text-base">
@@ -281,7 +281,7 @@ export function Arcade({ onNavigateBack, userEmail }: ArcadeProps) {
             )
           `
         }}>
-          <div className="relative bg-gradient-to-r from-[oklch(0.52_0.12_330)] via-[oklch(0.55_0.11_305)] to-[oklch(0.48_0.12_332)] py-8 shadow-xl border-b-4 border-white/10">
+          <div className="relative bg-[oklch(0.52_0.12_330)] py-8 border-b border-white/15">
             <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PHBhdHRlcm4gaWQ9ImdyaWQiIHdpZHRoPSI2MCIgaGVpZ2h0PSI2MCIgcGF0dGVyblVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHBhdGggZD0iTSAxMCAwIEwgMCAwIDAgMTAiIGZpbGw9Im5vbmUiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS1vcGFjaXR5PSIwLjEiIHN0cm9rZS13aWR0aD0iMSIvPjwvcGF0dGVybj48L2RlZnM+PHJlY3Qgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIgZmlsbD0idXJsKCNncmlkKSIvPjwvc3ZnPg==')] opacity-30" />
             <div className="container mx-auto px-4 sm:px-6 relative z-10">
               <div className="flex items-center gap-4">
@@ -294,11 +294,11 @@ export function Arcade({ onNavigateBack, userEmail }: ArcadeProps) {
                   <ArrowLeft size={24} weight="bold" />
                 </Button>
                 <div className="flex items-center gap-4">
-                  <div className="p-3 rounded-2xl bg-white/20 backdrop-blur-sm shadow-xl">
+                  <div className="p-3 rounded-md bg-white/15">
                     <Cube size={32} weight="duotone" className="text-white" />
                   </div>
                   <div>
-                    <h1 className="text-2xl sm:text-3xl font-bold text-white drop-shadow-lg">
+                    <h1 className="text-2xl sm:text-3xl font-semibold text-white">
                       Brick Break
                     </h1>
                     <p className="text-white/90 text-sm sm:text-base">
@@ -357,7 +357,7 @@ export function Arcade({ onNavigateBack, userEmail }: ArcadeProps) {
             )
           `
         }}>
-          <div className="relative bg-gradient-to-r from-[oklch(0.68_0.11_80)] via-[oklch(0.72_0.10_65)] to-[oklch(0.64_0.11_82)] py-8 shadow-xl border-b-4 border-white/10">
+          <div className="relative bg-[oklch(0.68_0.11_80)] py-8 border-b border-white/15">
             <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PHBhdHRlcm4gaWQ9ImdyaWQiIHdpZHRoPSI2MCIgaGVpZ2h0PSI2MCIgcGF0dGVyblVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHBhdGggZD0iTSAxMCAwIEwgMCAwIDAgMTAiIGZpbGw9Im5vbmUiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS1vcGFjaXR5PSIwLjEiIHN0cm9rZS13aWR0aD0iMSIvPjwvcGF0dGVybj48L2RlZnM+PHJlY3Qgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIgZmlsbD0idXJsKCNncmlkKSIvPjwvc3ZnPg==')] opacity-30" />
             <div className="container mx-auto px-4 sm:px-6 relative z-10">
               <div className="flex items-center gap-4">
@@ -370,11 +370,11 @@ export function Arcade({ onNavigateBack, userEmail }: ArcadeProps) {
                   <ArrowLeft size={24} weight="bold" />
                 </Button>
                 <div className="flex items-center gap-4">
-                  <div className="p-3 rounded-2xl bg-white/20 backdrop-blur-sm shadow-xl">
+                  <div className="p-3 rounded-md bg-white/15">
                     <Bird size={32} weight="duotone" className="text-white" />
                   </div>
                   <div>
-                    <h1 className="text-2xl sm:text-3xl font-bold text-white drop-shadow-lg">
+                    <h1 className="text-2xl sm:text-3xl font-semibold text-white">
                       Nexi Flyer
                     </h1>
                     <p className="text-white/90 text-sm sm:text-base">
@@ -433,7 +433,7 @@ export function Arcade({ onNavigateBack, userEmail }: ArcadeProps) {
             )
           `
         }}>
-          <div className="relative bg-gradient-to-r from-[oklch(0.52_0.13_248)] via-[oklch(0.56_0.11_240)] to-[oklch(0.48_0.13_250)] py-8 shadow-xl border-b-4 border-white/10">
+          <div className="relative bg-[oklch(0.52_0.13_248)] py-8 border-b border-white/15">
             <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PHBhdHRlcm4gaWQ9ImdyaWQiIHdpZHRoPSI2MCIgaGVpZ2h0PSI2MCIgcGF0dGVyblVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHBhdGggZD0iTSAxMCAwIEwgMCAwIDAgMTAiIGZpbGw9Im5vbmUiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS1vcGFjaXR5PSIwLjEiIHN0cm9rZS13aWR0aD0iMSIvPjwvcGF0dGVybj48L2RlZnM+PHJlY3Qgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIgZmlsbD0idXJsKCNncmlkKSIvPjwvc3ZnPg==')] opacity-30" />
             <div className="container mx-auto px-4 sm:px-6 relative z-10">
               <div className="flex items-center gap-4">
@@ -446,11 +446,11 @@ export function Arcade({ onNavigateBack, userEmail }: ArcadeProps) {
                   <ArrowLeft size={24} weight="bold" />
                 </Button>
                 <div className="flex items-center gap-4">
-                  <div className="p-3 rounded-2xl bg-white/20 backdrop-blur-sm shadow-xl">
+                  <div className="p-3 rounded-md bg-white/15">
                     <SquaresFour size={32} weight="duotone" className="text-white" />
                   </div>
                   <div>
-                    <h1 className="text-2xl sm:text-3xl font-bold text-white drop-shadow-lg">
+                    <h1 className="text-2xl sm:text-3xl font-semibold text-white">
                       Tetris
                     </h1>
                     <p className="text-white/90 text-sm sm:text-base">
@@ -509,7 +509,7 @@ export function Arcade({ onNavigateBack, userEmail }: ArcadeProps) {
             )
           `
         }}>
-          <div className="relative bg-gradient-to-r from-[oklch(0.56_0.12_155)] via-[oklch(0.60_0.10_170)] to-[oklch(0.52_0.12_157)] py-8 shadow-xl border-b-4 border-white/10">
+          <div className="relative bg-[oklch(0.56_0.12_155)] py-8 border-b border-white/15">
             <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PHBhdHRlcm4gaWQ9ImdyaWQiIHdpZHRoPSI2MCIgaGVpZ2h0PSI2MCIgcGF0dGVyblVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHBhdGggZD0iTSAxMCAwIEwgMCAwIDAgMTAiIGZpbGw9Im5vbmUiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS1vcGFjaXR5PSIwLjEiIHN0cm9rZS13aWR0aD0iMSIvPjwvcGF0dGVybj48L2RlZnM+PHJlY3Qgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIgZmlsbD0idXJsKCNncmlkKSIvPjwvc3ZnPg==')] opacity-30" />
             <div className="container mx-auto px-4 sm:px-6 relative z-10">
               <div className="flex items-center gap-4">
@@ -522,11 +522,11 @@ export function Arcade({ onNavigateBack, userEmail }: ArcadeProps) {
                   <ArrowLeft size={24} weight="bold" />
                 </Button>
                 <div className="flex items-center gap-4">
-                  <div className="p-3 rounded-2xl bg-white/20 backdrop-blur-sm shadow-xl">
+                  <div className="p-3 rounded-md bg-white/15">
                     <WaveSine size={32} weight="duotone" className="text-white" />
                   </div>
                   <div>
-                    <h1 className="text-2xl sm:text-3xl font-bold text-white drop-shadow-lg">
+                    <h1 className="text-2xl sm:text-3xl font-semibold text-white">
                       Neon Snake
                     </h1>
                     <p className="text-white/90 text-sm sm:text-base">
@@ -563,7 +563,7 @@ export function Arcade({ onNavigateBack, userEmail }: ArcadeProps) {
               onClick={onNavigateBack}
               variant="outline"
               size="lg"
-              className="pointer-events-auto bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold"
+              className="pointer-events-auto bg-background/90 hover:bg-background transition-colors gap-2 font-semibold"
             >
               <ArrowLeft size={20} weight="bold" />
               {language === 'da' ? 'Tilbage til Spilhjørnet' : language === 'fi' ? 'Takaisin pelinurkkaan' : 'Back to Game Corner'}
@@ -585,12 +585,12 @@ export function Arcade({ onNavigateBack, userEmail }: ArcadeProps) {
             transition={{ duration: 0.5, delay: 0.2 }}
             className="flex justify-center mb-6"
           >
-            <div className="p-6 rounded-3xl bg-gradient-to-br from-[oklch(0.42_0.19_270)] via-[oklch(0.50_0.16_265)] to-[oklch(0.38_0.19_272)] shadow-2xl">
+            <div className="p-6 rounded-md bg-primary">
               <GameController size={64} weight="duotone" className="text-white" />
             </div>
           </motion.div>
           <motion.h1 
-            className="text-2xl sm:text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight bg-gradient-to-br from-[oklch(0.42_0.19_270)] via-[oklch(0.50_0.16_265)] to-[oklch(0.38_0.19_272)] bg-clip-text text-transparent mb-4"
+            className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground mb-4"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.3, duration: 0.6 }}
@@ -633,11 +633,11 @@ export function Arcade({ onNavigateBack, userEmail }: ArcadeProps) {
                   transition={cardAnimation.transition}
                 >
                   <Card
-                    className="relative overflow-hidden border-2 transition-all duration-300 group h-full min-h-[180px] sm:min-h-[220px] flex flex-col cursor-pointer hover:border-primary/40"
+                    className="relative overflow-hidden transition-colors group h-full flex flex-col cursor-pointer hover:border-primary/40"
                     onClick={() => setCurrentView(game.id as GameView)}
                   >
                     <motion.div 
-                      className="absolute inset-0 bg-gradient-to-br"
+                      className="absolute inset-0"
                       style={{
                         background: `radial-gradient(circle at top right, ${game.color}15, transparent)`
                       }}
@@ -646,18 +646,15 @@ export function Arcade({ onNavigateBack, userEmail }: ArcadeProps) {
                       transition={{ duration: 0.3 }}
                     />
                     
-                    <div className="relative p-4 md:p-6 flex flex-col flex-1">
+                    <div className="relative p-4 md:p-5 flex flex-col flex-1">
                       <motion.div 
-                        className={cn(
-                          "mb-3 md:mb-4 inline-flex items-center justify-center rounded-2xl p-2 md:p-3 shadow-lg",
-                          `bg-gradient-to-br ${game.gradient}`
-                        )}
-                        style={{ color: 'white' }}
+                        className="mb-3 inline-flex items-center justify-center rounded-md p-2 self-start"
+                        style={{ color: game.color, backgroundColor: `${game.color}16` }}
                         initial={iconAnimation.initial}
                         whileHover={iconAnimation.hover}
                         transition={iconAnimation.transition}
                       >
-                        <div className="[&>svg]:w-8 [&>svg]:h-8 md:[&>svg]:w-12 md:[&>svg]:h-12">
+                        <div className="[&>svg]:w-8 [&>svg]:h-8 md:[&>svg]:w-10 md:[&>svg]:h-10">
                           {game.icon}
                         </div>
                       </motion.div>
