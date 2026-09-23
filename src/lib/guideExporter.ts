@@ -4,6 +4,9 @@
 // Teams-targets (Graph API) uden ændringer i UI- eller domænelaget.
 
 import type { DocModel } from './docModel'
+import { guideToDocModel } from './docModel'
+import { fileStorage } from './fileStorage'
+import type { Guide } from './guideTypes'
 
 export interface GuideLibrarySettings {
   exportRoot: string | null
@@ -65,4 +68,11 @@ export async function exportGuideToLibrary(model: DocModel, authorName: string, 
   const { generateGuideDocx, guideDocxFileName } = await import('./docxGenerator')
   const blob = await generateGuideDocx(model, authorName)
   return getExportTarget().exportDocx(root, model.category, guideDocxFileName(model), blob)
+}
+
+export async function exportOriginalGuideToLibrary(guide: Guide, root: string, loadFile: (url: string) => Promise<Blob> = (url) => fileStorage.downloadFile(url)): Promise<string> {
+  if (!guide.preserveWordLayout || !guide.fileUrl) throw new Error('Originalt Word-dokument mangler')
+  const original = await loadFile(guide.fileUrl)
+  const { guideDocxFileName } = await import('./docxGenerator')
+  return getExportTarget().exportDocx(root, guide.category, guideDocxFileName(guideToDocModel(guide)), original)
 }

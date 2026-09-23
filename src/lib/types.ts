@@ -103,6 +103,7 @@ export interface ShiftRole {
   id: string
   name: string
   color: string
+  onlyWhenAssigned?: boolean
 }
 
 /** KV: 'shift-assignments'. */

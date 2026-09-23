@@ -15,6 +15,8 @@ const { createResilientStore, isImmutableBlobKey } = require('./offlineSync.cjs'
 const { createAuthService, loadDeviceSecret } = require('./authService.cjs')
 const { createAccountService } = require('./accountService.cjs')
 const { createSecuredIpc } = require('./securedIpc.cjs')
+const { openWordGuide } = require('./openWordGuide.cjs')
+const { renderWordGuide } = require('./renderWordGuide.cjs')
 const { publicUsers, updateUsers } = require('./userPolicy.cjs')
 const { createTeamReader, registeredTeamDir } = require('./teamReadPolicy.cjs')
 const { createTrustedWindow } = require('./trustedWindow.cjs')
@@ -73,6 +75,7 @@ function assertNoPendingAccountSync() {
   }
 }
 function accountDataChanged() {
+  authService?.invalidateAll()
   try {
     store.invalidate?.(); sharedStore.invalidate?.()
     assistantBackend?.stop()
@@ -172,38 +175,9 @@ const SHARED_KV_KEYS = new Set(['meal-plan-weeks', 'shared-guides', 'active-sess
 // vinduerne besked praecis som ved en watcher-aendring.
 const broadcastKvChanged = createDebouncedBroadcast(100)
 const resilientOptions = () => ({ onSyncResult: handleSyncResult, guardReplay: guardAccountReplay, onRevalidated: broadcastKvChanged })
-let mirrorWarmUpTimer = null
 // Baggrundsarbejde paa det DELTE drev maa aldrig konkurrere med brugeren. Tager
 // det laengere end dette, skal det staa i loggen - ogsaa i produktion.
 const SLOW_BACKGROUND_WORK_MS = 20000
-/** Ajourfoer det lokale spejl i baggrunden kort efter opstart/team-skift (lav parallelisme, aldrig foran brugerens egne laesninger). */
-function scheduleMirrorWarmUp() {
-  if (mirrorWarmUpTimer) clearTimeout(mirrorWarmUpTimer)
-  const target = store
-  // Maalt live: varmningen tog 103 sekunder for 85 noegler, og i HELE det vindue
-  // var alt andet lammet - almindelige laesninger tog 20-34 s og gemninger 31-55 s.
-  // Umiddelbart efter den var faerdig faldt alt tilbage til ~100 ms. Varmningen er
-  // en ren forbedring af foerste indtryk (useKV viser allerede cachet data med det
-  // samme), saa den maa ALDRIG konkurrere med brugeren: den starter derfor foerst
-  // naar appen er indlaest, og giver drevet luft mellem hver noegle.
-  mirrorWarmUpTimer = setTimeout(() => {
-    mirrorWarmUpTimer = null
-    if (store !== target) return
-    const startedAt = Date.now()
-    Promise.all([target, sharedStore].filter(Boolean).map(s => Promise.resolve(s.revalidateMirror?.({ concurrency: 1, pauseMs: 120 }))))
-      .then(counts => {
-        const elapsedMs = Date.now() - startedAt
-        const keys = counts.reduce((a, b) => a + (b || 0), 0)
-        // Advarslen er ALTID paa. Da den kun fandtes bag TCD_HUB_DEBUG, kunne
-        // varmningen laegge beslag paa drevet i 103 sekunder uden at nogen
-        // opdagede det - det blev brugerne der maerkede det foerst.
-        if (elapsedMs >= SLOW_BACKGROUND_WORK_MS) console.warn(`TCD Hub: LANGSOM baggrundsopdatering ${elapsedMs} ms for ${keys} noegler - den konkurrerer med brugerens egne handlinger`)
-        else if (process.env.TCD_HUB_DEBUG) console.log(`KV: spejl-varmning ${keys} noegler paa ${elapsedMs} ms`)
-      })
-      .catch(err => console.error('TCD Hub: spejl-varmning fejlede', err))
-  }, 20000)
-  mirrorWarmUpTimer.unref?.()
-}
 let updateCheckTimer = null
 let updateInProgress = false
 // Forbindelsesstatus til den delte datamappe — opdateres af store.watch()'s
@@ -541,12 +515,11 @@ function switchToTeamDir(folderName, newDir) {
   storageStartedDisconnected = false
   storageFailedSources = []
   setStorageConnected(true)
-  // Hub-skift skal foeles oejeblikkeligt. Watcher-scanning, spejl-varmning og
+  // Hub-skift skal foeles oejeblikkeligt. Watcher-scanning og
   // noeglelisten er alle SMB-kald, saa de koerer foerst efter skiftet er meldt
   // tilbage - ellers fryser Ctrl+K-skiftet mens de venter paa drevet.
   setImmediate(() => {
     startWatcher()
-    scheduleMirrorWarmUp()
     startAutoBackup({ immediate: false })
     // keysAsync frem for keys(): den synkrone udgave laaser main-traaden mens
     // hele teammappen listes over netvaerket.
@@ -928,6 +901,15 @@ app.whenReady().then(() => {
     })
     if (result.canceled || result.filePaths.length === 0) return null
     return result.filePaths[0]
+  })
+
+  ipcMain.handle('guides:open-in-word', (event, payload) => {
+    authService.current(event.sender.id)
+    return openWordGuide({ dialog, shell, fs, window: BrowserWindow.fromWebContents(event.sender) }, payload)
+  })
+  ipcMain.handle('guides:render-pdf', (event, payload) => {
+    authService.current(event.sender.id)
+    return renderWordGuide(payload)
   })
 
   // --- Neural oversættelse (Bergamot) -------------------------------------

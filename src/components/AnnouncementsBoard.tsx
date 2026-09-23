@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Megaphone, X, Plus, Trash } from '@phosphor-icons/react'
 import { Card } from '@/components/ui/card'
@@ -35,6 +35,9 @@ export function AnnouncementsBoard({ userEmail, userName, canPost }: Announcemen
   const [announcements] = useKV<Announcement[]>('announcements', [])
   const [dismissedIds, setDismissedIds] = useKV<string[]>(`announcements-dismissed-${userEmail}`, [])
   const [showCreateDialog, setShowCreateDialog] = useState(false)
+  const [isCreating, setIsCreating] = useState(false)
+  const createInProgress = useRef(false)
+  const pendingAnnouncement = useRef<{ id: string; createdAt: number } | null>(null)
   const [title, setTitle] = useState('')
   const [message, setMessage] = useState('')
 
@@ -43,23 +46,37 @@ export function AnnouncementsBoard({ userEmail, userName, canPost }: Announcemen
     .sort((a, b) => b.createdAt - a.createdAt)
 
   const handleCreate = async () => {
+    if (createInProgress.current) return
     if (!title.trim() || !message.trim()) {
       toast.error(language === 'da' ? 'Udfyld både titel og besked' : language === 'fi' ? 'Täytä sekä otsikko että viesti' : 'Fill in both title and message')
       return
     }
+    const creation = pendingAnnouncement.current || { id: newId('announcement'), createdAt: Date.now() }
+    pendingAnnouncement.current = creation
     const announcement: Announcement = {
-      id: newId('announcement'),
+      id: creation.id,
       title: title.trim(),
       message: message.trim(),
       createdBy: userEmail,
       createdByName: userName,
-      createdAt: Date.now(),
+      createdAt: creation.createdAt,
     }
-    await appendToKvArray('announcements', [announcement])
-    setTitle('')
-    setMessage('')
-    setShowCreateDialog(false)
-    toast.success(language === 'da' ? 'Opslag oprettet' : language === 'fi' ? 'Julkaistu ilmoitus' : 'Announcement posted')
+    createInProgress.current = true
+    setIsCreating(true)
+    try {
+      await appendToKvArray('announcements', [announcement])
+      pendingAnnouncement.current = null
+      setTitle('')
+      setMessage('')
+      setShowCreateDialog(false)
+      toast.success(language === 'da' ? 'Opslag oprettet' : language === 'fi' ? 'Julkaistu ilmoitus' : 'Announcement posted')
+    } catch (error) {
+      console.error('Kunne ikke oprette opslag:', error)
+      toast.error(language === 'da' ? 'Opslaget blev ikke gemt — prøv igen' : language === 'fi' ? 'Ilmoitusta ei tallennettu — yritä uudelleen' : 'The announcement was not saved — please try again')
+    } finally {
+      createInProgress.current = false
+      setIsCreating(false)
+    }
   }
 
   const handleDeleteGlobally = async (id: string) => {
@@ -135,13 +152,13 @@ export function AnnouncementsBoard({ userEmail, userName, canPost }: Announcemen
       )}
 
       {canPost && (
-        <Button variant="outline" size="sm" className="gap-2" onClick={() => setShowCreateDialog(true)}>
+        <Button variant="outline" size="sm" className="gap-2" onClick={() => { pendingAnnouncement.current = null; setShowCreateDialog(true) }}>
           <Plus size={16} weight="bold" />
           {language === 'da' ? 'Nyt opslag til alle' : language === 'fi' ? 'Uusi ilmoitus' : 'New announcement'}
         </Button>
       )}
 
-      <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+      <Dialog open={showCreateDialog} onOpenChange={(open) => { if (!createInProgress.current) setShowCreateDialog(open) }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -153,23 +170,25 @@ export function AnnouncementsBoard({ userEmail, userName, canPost }: Announcemen
             <Input
               placeholder={language === 'da' ? 'Titel' : language === 'fi' ? 'Osasto' : 'Title'}
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              disabled={isCreating}
+              onChange={(e) => { pendingAnnouncement.current = null; setTitle(e.target.value) }}
             />
             <Textarea
               placeholder={language === 'da' ? 'Besked til alle medarbejdere…' : language === 'fi' ? 'Viesti kaikille työntekijöille.' : 'Message to all employees…'}
               value={message}
-              onChange={(e) => setMessage(e.target.value)}
+              disabled={isCreating}
+              onChange={(e) => { pendingAnnouncement.current = null; setMessage(e.target.value) }}
               rows={5}
               className="resize-none"
             />
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
+            <Button variant="outline" disabled={isCreating} onClick={() => setShowCreateDialog(false)}>
               {language === 'da' ? 'Annuller' : language === 'fi' ? 'Peruuta' : 'Cancel'}
             </Button>
-            <Button onClick={handleCreate} className="gap-2">
+            <Button onClick={handleCreate} loading={isCreating} className="gap-2">
               <Megaphone size={16} weight="bold" />
-              {language === 'da' ? 'Opslå' : language === 'fi' ? 'Posti' : 'Post'}
+              {isCreating ? language === 'da' ? 'Gemmer…' : language === 'fi' ? 'Tallennetaan…' : 'Saving…' : language === 'da' ? 'Opslå' : language === 'fi' ? 'Posti' : 'Post'}
             </Button>
           </DialogFooter>
         </DialogContent>

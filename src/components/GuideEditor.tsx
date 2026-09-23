@@ -23,11 +23,12 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Plus, X, ArrowUp, ArrowDown, Image as ImageIcon, Timer,
-  ClockCounterClockwise, ArrowCounterClockwise, FileDoc, Upload, Trash, Eye, Buildings, FloppyDisk,
+  ClockCounterClockwise, ArrowCounterClockwise, ArrowClockwise, FileDoc, Upload, Trash, Eye, Buildings, FloppyDisk,
 } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import { fileStorage } from '@/lib/fileStorage'
+import { fileStorage, type StoredFile } from '@/lib/fileStorage'
+import { rotateGuideImage } from '@/lib/rotateGuideImage'
 import type { RegisteredTeam } from '@/lib/electronRegistryBridge'
 import { useUnsavedChanges } from '@/hooks/useUnsavedChanges'
 import type { Guide, GuideSection, GuideVersionEntry, GuideDraft } from '@/lib/guideTypes'
@@ -39,7 +40,7 @@ import { detectLanguage, type GuideLanguage } from '@/lib/translator'
 import { bumpVersion, getVersionHistory, saveDraft, getDraft, deleteDraft } from '@/lib/guideStore'
 import type { GuideImportDraft } from '@/lib/docxImporter'
 import { useLanguage } from '@/contexts/LanguageContext'
-import { GuideViewer } from '@/components/GuideViewer'
+import { GuideViewer, downloadBlob } from '@/components/GuideViewer'
 import { DatePickerField } from '@/components/DatePickerField'
 
 interface GuideEditorProps {
@@ -69,10 +70,11 @@ function emptySection(): GuideSection {
 }
 
 /** Miniature af et gemt billede (loader objekt-URL fra chunked KV). */
-function ImageThumb({ imageId, onRemove }: { imageId: string; onRemove?: () => void }) {
+function ImageThumb({ imageId, onRemove, onRotate }: { imageId: string; onRemove?: () => void; onRotate?: () => Promise<void> }) {
   const { t } = useLanguage()
   const [url, setUrl] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
+  const [rotating, setRotating] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -93,10 +95,27 @@ function ImageThumb({ imageId, onRemove }: { imageId: string; onRemove?: () => v
         <button
           type="button"
           onClick={onRemove}
-          className="absolute top-0.5 right-0.5 h-5 w-5 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center opacity-0 group-hover/thumb:opacity-100 transition-opacity"
+          className="absolute top-0.5 right-0.5 h-5 w-5 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center opacity-0 group-hover/thumb:opacity-100 focus-visible:opacity-100 transition-opacity"
           aria-label={t.guideEditor.removeImage}
         >
           <X size={12} weight="bold" />
+        </button>
+      )}
+      {onRotate && (
+        <button
+          type="button"
+          disabled={rotating}
+          onClick={async () => {
+            setRotating(true)
+            try { await onRotate() }
+            catch (error) { toast.error(error instanceof Error ? error.message : t.guideEditor.rotateImageFailed) }
+            finally { setRotating(false) }
+          }}
+          className="absolute bottom-0.5 right-0.5 h-6 w-6 rounded bg-card text-foreground border border-border flex items-center justify-center disabled:opacity-50"
+          aria-label={t.guideEditor.rotateImage}
+          title={t.guideEditor.rotateImage}
+        >
+          <ArrowClockwise size={16} />
         </button>
       )}
     </div>
@@ -132,6 +151,10 @@ function ImageDropZone({ onUploaded, compact }: { onUploaded: (fileIds: string[]
 
   return (
     <div
+      role="button"
+      tabIndex={0}
+      aria-label={t.guideEditor.dropImagesHint}
+      title={t.guideEditor.dropImagesHint}
       onDragOver={(e) => { e.preventDefault(); setIsDragging(true) }}
       onDragLeave={() => setIsDragging(false)}
       onDrop={(e) => {
@@ -139,7 +162,17 @@ function ImageDropZone({ onUploaded, compact }: { onUploaded: (fileIds: string[]
         setIsDragging(false)
         uploadFiles(Array.from(e.dataTransfer.files))
       }}
-      onClick={() => inputRef.current?.click()}
+      onClick={(e) => { if (e.target !== inputRef.current) inputRef.current?.click() }}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inputRef.current?.click() } }}
+      onPaste={(e) => {
+        const images = Array.from(e.clipboardData.items)
+          .filter((item) => item.type.startsWith('image/'))
+          .map((item) => item.getAsFile())
+          .filter((file): file is File => file !== null)
+        if (images.length === 0) return
+        e.preventDefault()
+        void uploadFiles(images)
+      }}
       className={cn(
         'rounded-md border border-dashed transition-colors cursor-pointer flex items-center justify-center gap-2 text-muted-foreground hover:border-primary/50 hover:text-primary',
         compact ? 'h-20 w-20 shrink-0' : 'h-20 px-4',
@@ -181,16 +214,24 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
   const [responsibleEmail, setResponsibleEmail] = useState(userEmail)
   const [changeNote, setChangeNote] = useState('')
   const [wordFile, setWordFile] = useState<File | null>(null)
+  const [stagedWordFile, setStagedWordFile] = useState<StoredFile | null>(null)
+  const stagedUploadRef = useRef<{ file: File; upload: Promise<StoredFile> } | null>(null)
+  const draftGenerationRef = useRef(0)
+  const [preserveWordLayout, setPreserveWordLayout] = useState(false)
   const [removeWordAttachment, setRemoveWordAttachment] = useState(false)
   const [restoredVersionFields, setRestoredVersionFields] = useState<{
     content?: string
     fileUrl?: string
     wordFileName?: string
     fileSize?: number
+    preserveWordLayout?: boolean
+    previewPdfUrl?: string
   } | null>(null)
   const [history, setHistory] = useState<GuideVersionEntry[]>([])
   const [showHistory, setShowHistory] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+  const [isSavingDraft, setIsSavingDraft] = useState(false)
+  const manualSaveInProgress = useRef(false)
   const [previewOpen, setPreviewOpen] = useState(false)
   const [newGuideId, setNewGuideId] = useState(() => newId('guide'))
   // Tværgående deling (Fase 3): andre teams denne guide skal ligge hos, ud over eget team.
@@ -231,6 +272,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
       setSections(migrated.sections && migrated.sections.length > 0
         ? migrated.sections.map((s) => ({ ...s, steps: s.steps.map((st) => ({ ...st, imageIds: [...st.imageIds] })) }))
         : [emptySection()])
+      setPreserveWordLayout(migrated.preserveWordLayout === true)
       setCoverImageId(migrated.coverImageId)
       setReviewInterval(migrated.reviewIntervalMonths ?? null)
       // Forudfyldt med guidens NUVAERENDE naeste-tjek - en almindelig redigering
@@ -246,6 +288,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
       setTags('')
       setLanguage(importDraft?.language || 'auto')
       setSections(importDraft?.sections.length ? importDraft.sections : [emptySection()])
+      setPreserveWordLayout(importDraft?.preserveWordLayout === true)
       setCoverImageId(undefined)
       setReviewInterval(null)
       setNextReviewDate(todayDateString())
@@ -254,6 +297,14 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
     }
     setChangeNote('')
     setWordFile(importDraft?.originalFile || null)
+    setStagedWordFile(resumeDraft?.wordFileUrl ? {
+      url: resumeDraft.wordFileUrl,
+      filename: resumeDraft.wordFileName || 'guide.docx',
+      size: resumeDraft.wordFileSize || 0,
+      uploadedAt: resumeDraft.lastAutoSavedAt,
+    } : null)
+    stagedUploadRef.current = null
+    draftGenerationRef.current++
     setRemoveWordAttachment(false)
     setRestoredVersionFields(null)
     setShowHistory(false)
@@ -272,6 +323,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
       setTags(resumeDraft.tags)
       setLanguage(resumeDraft.language)
       setSections(resumeDraft.sections.length ? resumeDraft.sections : [emptySection()])
+      setPreserveWordLayout(resumeDraft.preserveWordLayout === true)
       setCoverImageId(resumeDraft.coverImageId)
       setReviewInterval(resumeDraft.reviewInterval)
       setNextReviewDate(resumeDraft.nextReviewDate || todayDateString())
@@ -302,13 +354,15 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
         || nextReviewDate !== (migrated.nextReviewAt ? timestampToDateString(migrated.nextReviewAt) : todayDateString())
         || responsibleEmail !== (migrated.responsibleEmail || migrated.author || userEmail)
         || wordFile !== null
+        || stagedWordFile !== null
         || removeWordAttachment
+        || preserveWordLayout !== (migrated.preserveWordLayout === true)
         || restoredVersionFields !== null
         || JSON.stringify([...otherTeamCodes].sort()) !== JSON.stringify([...(migrated.sharedWithTeamCodes || []).filter((code) => code !== currentTeamCode)].sort())
     }
-    return title.trim() !== '' || tags.trim() !== '' || wordFile !== null || otherTeamCodes.length > 0
+    return title.trim() !== '' || tags.trim() !== '' || wordFile !== null || stagedWordFile !== null || otherTeamCodes.length > 0
       || sections.some((s) => s.heading.trim() || s.steps.some((st) => st.text.trim() || st.imageIds.length > 0))
-  }, [open, migrated, title, category, tags, sections, coverImageId, reviewInterval, nextReviewDate, responsibleEmail, wordFile, removeWordAttachment, restoredVersionFields, otherTeamCodes, currentTeamCode, userEmail])
+  }, [open, migrated, title, category, tags, sections, coverImageId, reviewInterval, nextReviewDate, responsibleEmail, wordFile, stagedWordFile, removeWordAttachment, preserveWordLayout, restoredVersionFields, otherTeamCodes, currentTeamCode, userEmail])
 
   const cleanupSessionImages = useCallback(async () => {
     for (const id of sessionImagesRef.current) {
@@ -318,6 +372,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
   }, [])
 
   const discardDraft = useCallback(() => {
+    draftGenerationRef.current++
     setDetectedDraft(null)
     void deleteDraft(draftId)
   }, [draftId])
@@ -329,6 +384,10 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
     tags,
     language,
     sections,
+    preserveWordLayout,
+    wordFileUrl: stagedWordFile?.url,
+    wordFileName: stagedWordFile?.filename,
+    wordFileSize: stagedWordFile?.size,
     coverImageId,
     reviewInterval,
     nextReviewDate,
@@ -336,7 +395,39 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
     otherTeamCodes,
     savedBy: userEmail,
     lastAutoSavedAt: Date.now(),
-  }), [draftId, title, category, tags, language, sections, coverImageId, reviewInterval, nextReviewDate, responsibleEmail, otherTeamCodes, userEmail])
+  }), [draftId, title, category, tags, language, sections, preserveWordLayout, stagedWordFile, coverImageId, reviewInterval, nextReviewDate, responsibleEmail, otherTeamCodes, userEmail])
+
+  const stageWordFile = useCallback(async (file: File): Promise<StoredFile> => {
+    if (stagedUploadRef.current?.file !== file) {
+      stagedUploadRef.current = {
+        file,
+        upload: (async () => {
+          if (preserveWordLayout) await (await import('@/lib/validateDocx')).validateDocx(file)
+          return fileStorage.uploadFile(file)
+        })(),
+      }
+    }
+    try {
+      const stored = await stagedUploadRef.current.upload
+      if (stagedUploadRef.current?.file === file) setStagedWordFile(stored)
+      return stored
+    } catch (error) {
+      if (stagedUploadRef.current?.file === file) stagedUploadRef.current = null
+      throw error
+    }
+  }, [preserveWordLayout])
+
+  const saveCurrentDraft = useCallback(async () => {
+    const generation = draftGenerationRef.current
+    const stored = wordFile ? await stageWordFile(wordFile) : stagedWordFile
+    if (generation !== draftGenerationRef.current) return
+    await saveDraft({
+      ...currentDraft(),
+      wordFileUrl: stored?.url,
+      wordFileName: stored?.filename,
+      wordFileSize: stored?.size,
+    })
+  }, [wordFile, stagedWordFile, stageWordFile, currentDraft])
 
   // Forlader man editoren uden at gemme, skal arbejdet kunne findes igen. Derfor
   // beholdes BAADE kladden og de billeder der er uploadet undervejs - ryddes de
@@ -344,8 +435,8 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
   const keepAsDraft = useCallback(async () => {
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
     sessionImagesRef.current = []
-    await saveDraft(currentDraft())
-  }, [currentDraft])
+    await saveCurrentDraft()
+  }, [saveCurrentDraft])
 
   const restoreDraft = () => {
     if (!detectedDraft) return
@@ -354,6 +445,14 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
     setTags(detectedDraft.tags)
     setLanguage(detectedDraft.language)
     setSections(detectedDraft.sections)
+    setPreserveWordLayout(detectedDraft.preserveWordLayout === true)
+    setWordFile(null)
+    setStagedWordFile(detectedDraft.wordFileUrl ? {
+      url: detectedDraft.wordFileUrl, filename: detectedDraft.wordFileName || 'guide.docx',
+      size: detectedDraft.wordFileSize || 0, uploadedAt: detectedDraft.lastAutoSavedAt,
+    } : null)
+    stagedUploadRef.current = null
+    draftGenerationRef.current++
     setCoverImageId(detectedDraft.coverImageId)
     setReviewInterval(detectedDraft.reviewInterval)
     setNextReviewDate(detectedDraft.nextReviewDate || todayDateString())
@@ -369,10 +468,10 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
     if (!open || detectedDraft) return
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
     autoSaveTimerRef.current = setTimeout(() => {
-      saveDraft(currentDraft()).catch((error) => console.error('Kunne ikke autogemme guide-kladde:', error))
+      saveCurrentDraft().catch((error) => console.error('Kunne ikke autogemme guide-kladde:', error))
     }, 4000)
     return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current) }
-  }, [open, detectedDraft, currentDraft])
+  }, [open, detectedDraft, saveCurrentDraft])
 
   useUnsavedChanges({
     hasUnsavedChanges,
@@ -437,6 +536,13 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
       : s))
   }
 
+  const rotateImage = async (imageId: string): Promise<string> => {
+    const rotated = await rotateGuideImage(await fileStorage.downloadFile(`kv://${imageId}`))
+    const stored = await fileStorage.uploadImage(new File([rotated], `rotated-${Date.now()}.png`, { type: 'image/png' }))
+    sessionImagesRef.current.push(stored.fileId)
+    return stored.fileId
+  }
+
   const removeStepImage = async (sectionId: string, stepId: string, imageId: string) => {
     setSections((prev) => prev.map((s) => s.id === sectionId
       ? { ...s, steps: s.steps.map((st) => (st.id === stepId ? { ...st, imageIds: st.imageIds.filter((i) => i !== imageId) } : st)) }
@@ -465,6 +571,8 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
         fileUrl: entry.snapshot.fileUrl,
         wordFileName: entry.snapshot.wordFileName,
         fileSize: entry.snapshot.fileSize,
+        preserveWordLayout: entry.snapshot.preserveWordLayout,
+        previewPdfUrl: entry.snapshot.previewPdfUrl,
       })
     } else {
       // Ældre historik indeholder kun titel/kategori/tags/sektioner/billede.
@@ -472,6 +580,10 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
       setRestoredVersionFields(null)
     }
     setWordFile(null)
+    setStagedWordFile(null)
+    stagedUploadRef.current = null
+    draftGenerationRef.current++
+    setPreserveWordLayout(entry.snapshot.preserveWordLayout === true)
     setRemoveWordAttachment(false)
     setChangeNote(`${t.guideEditor.restoredFromVersionPrefix} ${entry.version}`)
     setShowHistory(false)
@@ -533,6 +645,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
       language: resolvedLanguage,
       content: restoredVersionFields ? (restoredVersionFields.content || '') : (migrated?.content || ''),
       sections: cleanedSections,
+      preserveWordLayout,
       coverImageId,
       version: migrated ? migrated.version : '1.00',
       author: migrated?.author || userEmail,
@@ -544,14 +657,16 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
       reviewIntervalMonths: reviewInterval,
       nextReviewAt: reviewInterval ? dateStringToTimestamp(nextReviewDate) : null,
       lastReviewedAt: now,
-      fileUrl: removeWordAttachment ? undefined : (restoredVersionFields ? restoredVersionFields.fileUrl : migrated?.fileUrl),
-      wordFileName: removeWordAttachment ? undefined : (restoredVersionFields ? restoredVersionFields.wordFileName : migrated?.wordFileName),
-      fileSize: removeWordAttachment ? undefined : (restoredVersionFields ? restoredVersionFields.fileSize : migrated?.fileSize),
+      fileUrl: stagedWordFile?.url || (removeWordAttachment ? undefined : (restoredVersionFields ? restoredVersionFields.fileUrl : migrated?.fileUrl)),
+      wordFileName: stagedWordFile?.filename || (removeWordAttachment ? undefined : (restoredVersionFields ? restoredVersionFields.wordFileName : migrated?.wordFileName)),
+      fileSize: stagedWordFile?.size || (removeWordAttachment ? undefined : (restoredVersionFields ? restoredVersionFields.fileSize : migrated?.fileSize)),
+      previewPdfUrl: wordFile || stagedWordFile || removeWordAttachment ? undefined : (restoredVersionFields ? restoredVersionFields.previewPdfUrl : migrated?.previewPdfUrl),
       sharedWithTeamCodes: resolveSharedWithTeamCodes(),
     }
   }
 
   const handleSave = async () => {
+    if (manualSaveInProgress.current) return
     if (!title.trim()) {
       toast.error(t.guideEditor.titleRequired)
       return
@@ -566,11 +681,16 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
       }))
       .filter((s) => s.heading || s.steps.length > 0)
 
-    if (cleanedSections.length === 0 && !wordFile && !retainedFileUrl) {
+    if (preserveWordLayout && !wordFile && !stagedWordFile && (removeWordAttachment || !retainedFileUrl)) {
+      toast.error(t.guideEditor.wordFileRequired)
+      return
+    }
+    if (cleanedSections.length === 0 && !wordFile && !stagedWordFile && !retainedFileUrl) {
       toast.error(t.guideEditor.atLeastOneSectionRequired)
       return
     }
 
+    manualSaveInProgress.current = true
     setIsSaving(true)
     try {
       const now = Date.now()
@@ -579,8 +699,16 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
       let fileUrl = removeWordAttachment ? undefined : (restoredVersionFields ? restoredVersionFields.fileUrl : migrated?.fileUrl)
       let wordFileName = removeWordAttachment ? undefined : (restoredVersionFields ? restoredVersionFields.wordFileName : migrated?.wordFileName)
       let fileSize = removeWordAttachment ? undefined : (restoredVersionFields ? restoredVersionFields.fileSize : migrated?.fileSize)
-      if (wordFile) {
-        const stored = await fileStorage.uploadFile(wordFile)
+      let previewPdfUrl = removeWordAttachment ? undefined : (restoredVersionFields ? restoredVersionFields.previewPdfUrl : migrated?.previewPdfUrl)
+      if (preserveWordLayout && (wordFile || stagedWordFile || !previewPdfUrl)) {
+        if (!window.electronGuides?.renderPdf) throw new Error('PDF-visning kræver appens lokale dokumentkonverter')
+        const original = wordFile || await fileStorage.downloadFile(stagedWordFile?.url || retainedFileUrl!)
+        const pdf = await window.electronGuides.renderPdf({ data: await original.arrayBuffer() })
+        const preview = await fileStorage.uploadPdf(new File([pdf], `${title.trim()}.pdf`, { type: 'application/pdf' }))
+        previewPdfUrl = preview.url
+      }
+      const stored = wordFile ? await stageWordFile(wordFile) : stagedWordFile
+      if (stored) {
         // Den gamle vedhæftning tilhører fortsat den udgivne version, indtil
         // revisionen er godkendt, og må derfor ikke slettes her.
         fileUrl = stored.url
@@ -601,6 +729,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
         language: resolvedLanguage,
         content: restoredVersionFields ? (restoredVersionFields.content || '') : (migrated?.content || ''),
         sections: cleanedSections,
+        preserveWordLayout,
         coverImageId,
         version,
         author: migrated?.author || userEmail,
@@ -615,25 +744,45 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
         fileUrl,
         wordFileName,
         fileSize,
+        previewPdfUrl: preserveWordLayout ? previewPdfUrl : undefined,
         sharedWithTeamCodes: resolveSharedWithTeamCodes(),
       }
 
       sessionImagesRef.current = []
       await onSave(guide, changeNote.trim() || undefined)
+      draftGenerationRef.current++
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
       await deleteDraft(draftId)
       onOpenChange(false)
     } catch (error) {
       console.error('Kunne ikke gemme guide:', error)
       toast.error(error instanceof Error ? error.message : t.guideEditor.saveFailed)
     } finally {
+      manualSaveInProgress.current = false
       setIsSaving(false)
+    }
+  }
+
+  const handleSaveDraft = async () => {
+    if (manualSaveInProgress.current) return
+    manualSaveInProgress.current = true
+    setIsSavingDraft(true)
+    try {
+      await keepAsDraft()
+      toast.success(t.guideEditor.draftSaved)
+      onOpenChange(false)
+    } catch {
+      toast.error(t.guideEditor.draftSaveFailed)
+    } finally {
+      manualSaveInProgress.current = false
+      setIsSavingDraft(false)
     }
   }
 
   const nextVersion = migrated ? (preserveVersion ? (migrated.version || '1.00') : bumpVersion(migrated.version)) : '1.00'
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o && hasUnsavedChanges) return; if (!o) cleanupSessionImages(); onOpenChange(o) }}>
+    <Dialog open={open} onOpenChange={(o) => { if (manualSaveInProgress.current || (!o && hasUnsavedChanges)) return; if (!o) cleanupSessionImages(); onOpenChange(o) }}>
       <DialogContent className="max-w-[96vw] xl:max-w-[1400px] w-[96vw] h-[94vh] max-h-[94vh] flex flex-col p-0">
         <DialogHeader className="px-6 pt-6 pb-4 border-b flex-shrink-0">
           <div className="flex items-center justify-between gap-3">
@@ -819,14 +968,14 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
               <Label>{t.guideEditor.coverImageLabel}</Label>
               <div className="flex items-center gap-3">
                 {coverImageId ? (
-                  <ImageThumb imageId={coverImageId} onRemove={() => setCoverImageId(undefined)} />
+                  <ImageThumb imageId={coverImageId} onRemove={() => setCoverImageId(undefined)} onRotate={async () => setCoverImageId(await rotateImage(coverImageId))} />
                 ) : (
                   <ImageDropZone compact onUploaded={(ids) => { sessionImagesRef.current.push(...ids); setCoverImageId(ids[0]) }} />
                 )}
               </div>
             </div>
 
-            <div className="space-y-4">
+            {!preserveWordLayout && <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <Label className="text-base font-bold">{t.guideEditor.sectionsLabel}</Label>
                 <span className="text-xs text-muted-foreground">{t.guideEditor.numberingHint}</span>
@@ -885,6 +1034,14 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
                               key={imageId}
                               imageId={imageId}
                               onRemove={() => removeStepImage(section.id, step.id, imageId)}
+                              onRotate={async () => {
+                                const rotatedId = await rotateImage(imageId)
+                                setSections((current) => current.map((entry) => entry.id === section.id
+                                  ? { ...entry, steps: entry.steps.map((currentStep) => currentStep.id === step.id
+                                    ? { ...currentStep, imageIds: currentStep.imageIds.map((id) => id === imageId ? rotatedId : id) }
+                                    : currentStep) }
+                                  : entry))
+                              }}
                             />
                           ))}
                           <ImageDropZone compact onUploaded={(ids) => addStepImages(section.id, step.id, ids)} />
@@ -903,25 +1060,30 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
                 <Plus size={18} weight="bold" />
                 {t.guideEditor.addSection}
               </Button>
-            </div>
+            </div>}
 
             <div className="space-y-2">
-              <Label>{t.guideEditor.wordAttachmentLabel}</Label>
+              <Label>{preserveWordLayout ? t.guideEditor.originalWordLabel : t.guideEditor.wordAttachmentLabel}</Label>
               {wordFile ? (
                 <div className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30">
                   <FileDoc size={22} className="text-primary shrink-0" />
                   <span className="text-sm truncate flex-1">{wordFile.name}</span>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive shrink-0" onClick={() => setWordFile(null)}>
+                  {!preserveWordLayout && <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive shrink-0" onClick={() => setWordFile(null)}>
                     <X size={16} />
-                  </Button>
+                  </Button>}
+                </div>
+              ) : stagedWordFile ? (
+                <div className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30">
+                  <FileDoc size={22} className="text-primary shrink-0" />
+                  <span className="text-sm truncate flex-1">{stagedWordFile.filename}</span>
                 </div>
               ) : retainedFileUrl && !removeWordAttachment ? (
                 <div className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30">
                   <FileDoc size={22} className="text-primary shrink-0" />
                   <span className="text-sm truncate flex-1">{retainedWordFileName}</span>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive shrink-0" onClick={() => setRemoveWordAttachment(true)}>
+                  {!preserveWordLayout && <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive shrink-0" onClick={() => setRemoveWordAttachment(true)}>
                     <Trash size={16} />
-                  </Button>
+                  </Button>}
                 </div>
               ) : (
                 <Button variant="outline" size="sm" onClick={() => wordInputRef.current?.click()} className="gap-2">
@@ -929,17 +1091,51 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
                   {t.guideEditor.attachWordFile}
                 </Button>
               )}
-              {(wordFile || (retainedFileUrl && !removeWordAttachment)) && (
-                <p className="text-xs text-muted-foreground">{t.guideEditor.wordAttachmentHint}</p>
+              {preserveWordLayout && (
+                <div className="flex flex-wrap gap-2">
+                  {(wordFile || stagedWordFile || retainedFileUrl && !removeWordAttachment) && (
+                    <Button variant="outline" size="sm" onClick={async () => {
+                      try {
+                        if (wordFile) downloadBlob(wordFile, wordFile.name)
+                        else if (stagedWordFile) downloadBlob(await fileStorage.downloadFile(stagedWordFile.url), stagedWordFile.filename)
+                        else if (retainedFileUrl) downloadBlob(await fileStorage.downloadFile(retainedFileUrl), retainedWordFileName || 'guide.docx')
+                      }
+                      catch (error) { toast.error(error instanceof Error ? error.message : t.guideEditor.wordDownloadFailed) }
+                    }}>{t.guideEditor.downloadForWord}</Button>
+                  )}
+                  {window.electronGuides?.openInWord && (wordFile || stagedWordFile || retainedFileUrl && !removeWordAttachment) && (
+                    <Button variant="outline" size="sm" disabled={isSaving} onClick={async () => {
+                      try {
+                        const blob = wordFile || (stagedWordFile
+                          ? await fileStorage.downloadFile(stagedWordFile.url)
+                          : await fileStorage.downloadFile(retainedFileUrl!))
+                        await window.electronGuides!.openInWord({
+                          fileName: wordFile?.name || stagedWordFile?.filename || retainedWordFileName || 'guide.docx',
+                          data: await blob.arrayBuffer(),
+                        })
+                      } catch (error) { toast.error(error instanceof Error ? error.message : t.guideEditor.wordDownloadFailed) }
+                    }}><FileDoc size={16} className="mr-2" />{t.guideEditor.openInWord}</Button>
+                  )}
+                  <Button variant="outline" size="sm" onClick={() => wordInputRef.current?.click()}>
+                    <Upload size={16} className="mr-2" />{wordFile || stagedWordFile || retainedFileUrl ? t.guideEditor.replaceWordFile : t.guideEditor.attachWordFile}
+                  </Button>
+                </div>
+              )}
+              {(wordFile || stagedWordFile || (retainedFileUrl && !removeWordAttachment)) && (
+                <p className="text-xs text-muted-foreground">{preserveWordLayout ? t.guideEditor.editInWordHint : t.guideEditor.wordAttachmentHint}</p>
               )}
               <input
                 ref={wordInputRef}
                 type="file"
-                accept=".doc,.docx"
+                disabled={isSaving}
+                accept={preserveWordLayout ? '.docx' : '.doc,.docx'}
                 className="hidden"
                 onChange={(e) => {
                   const file = e.target.files?.[0]
-                  if (file) { setWordFile(file); setRemoveWordAttachment(false) }
+                  if (file) {
+                    if (preserveWordLayout && !/\.docx$/i.test(file.name)) toast.error(t.guideEditor.onlyDocxAllowed)
+                    else { draftGenerationRef.current++; setWordFile(file); setStagedWordFile(null); stagedUploadRef.current = null; setRemoveWordAttachment(false) }
+                  }
                   e.target.value = ''
                 }}
               />
@@ -990,18 +1186,18 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
         </ScrollArea>
 
         <DialogFooter className="px-6 py-4 border-t flex-shrink-0">
-          <Button variant="outline" onClick={() => { cleanupSessionImages(); void deleteDraft(draftId); onOpenChange(false) }} disabled={isSaving}>
+          <Button variant="outline" onClick={() => { draftGenerationRef.current++; if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); cleanupSessionImages(); void deleteDraft(draftId); onOpenChange(false) }} disabled={isSaving || isSavingDraft}>
             {t.common.cancel}
           </Button>
-          <Button variant="outline" onClick={() => setPreviewOpen(true)} disabled={isSaving} className="gap-2">
+          <Button variant="outline" onClick={() => setPreviewOpen(true)} disabled={isSaving || isSavingDraft} className="gap-2">
             <Eye size={16} />
             {t.guideEditor.preview}
           </Button>
-          <Button variant="secondary" onClick={() => { void keepAsDraft().then(() => { toast.success(t.guideEditor.draftSaved); onOpenChange(false) }).catch(() => toast.error(t.guideEditor.draftSaveFailed)) }} disabled={isSaving} className="gap-2">
+          <Button variant="secondary" onClick={handleSaveDraft} disabled={isSaving} loading={isSavingDraft} className="gap-2">
             <FloppyDisk size={16} />
-            {t.guideEditor.saveAsDraft}
+            {isSavingDraft ? t.guideEditor.saving : t.guideEditor.saveAsDraft}
           </Button>
-          <Button onClick={handleSave} disabled={isSaving} className="gap-2">
+          <Button onClick={handleSave} disabled={isSavingDraft} loading={isSaving} className="gap-2">
             {isSaving ? t.guideEditor.saving : submitLabel || (migrated ? `${t.guideEditor.saveAsVersionPrefix}${nextVersion}` : t.guideEditor.createGuide)}
           </Button>
         </DialogFooter>

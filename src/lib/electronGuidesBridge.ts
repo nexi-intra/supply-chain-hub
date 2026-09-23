@@ -12,6 +12,9 @@ export interface ElectronGuidesApi {
   chooseExportDir(): Promise<string | null>
   /** Skriver DOCX til <root>/<kategori>/<filnavn>; returnerer den fulde sti. */
   exportDocx(payload: GuideExportPayload): Promise<string>
+  /** Gemmer en DOCX-kopi et sted brugeren vaelger og aabner den i Word. */
+  openInWord(payload: { fileName: string; data: ArrayBuffer }): Promise<string | null>
+  renderPdf(payload: { data: ArrayBuffer }): Promise<ArrayBuffer>
 }
 
 // Typer for window.electronTranslation (preload.cjs) — Bergamot-assets og modeller.

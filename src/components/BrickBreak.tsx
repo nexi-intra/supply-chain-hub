@@ -6,6 +6,7 @@ import { useLanguage } from '@/contexts/LanguageContext'
 import { useNestedLeaderboard } from '@/hooks/useLeaderboard'
 import { useAutoPauseOnBlur } from '@/hooks/useAutoPauseOnBlur'
 import { PauseOverlay } from '@/components/PauseOverlay'
+import { ArcadeReadyOverlay } from '@/components/ArcadeReadyOverlay'
 import { recordGamePlay, scoreSaveFailedMessage, submitHighscore } from '@/lib/leaderboards'
 import { nextParticleId } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -263,6 +264,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
   const scoreRef = useRef<number>(0)
   const levelRef = useRef<number>(1)
   const ballAttachedRef = useRef<boolean>(true)
+  const stickyCatchRef = useRef(false)
   const isFireballRef = useRef<boolean>(false)
   const hasShieldRef = useRef<boolean>(false)
   const ballSpeedMultiplierRef = useRef<number>(1)
@@ -478,6 +480,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
     levelRef.current = 1
     paddleRef.current = newPaddle
     ballAttachedRef.current = true
+    stickyCatchRef.current = false
     powerUpsRef.current = []
     ballSpeedMultiplierRef.current = 1
     brickParticlesRef.current = []
@@ -512,10 +515,13 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
     setSpeedPowerupTimeLeft(0)
     setEnlargePaddleTimeLeft(0)
     setShrinkPaddleTimeLeft(0)
+    setIsStickyPaddle(false)
+    setStickyPaddleTimeLeft(0)
     isFireballRef.current = false
     isExplosiveBallRef.current = false
     hasShieldRef.current = false
     hasLaserRef.current = false
+    isStickyPaddleRef.current = false
     lasersRef.current = []
     setHasLaser(false)
     setLaserTimeLeft(0)
@@ -533,6 +539,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
     
     paddleRef.current = newPaddle
     ballAttachedRef.current = true
+    stickyCatchRef.current = false
     powerUpsRef.current = []
     
     const newBalls = [{
@@ -650,6 +657,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
     setBalls([launchedBall])
     setBallAttachedToPaddle(false)
     ballAttachedRef.current = false
+    stickyCatchRef.current = false
     setGameState('playing')
   }
 
@@ -1000,6 +1008,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
       ) {
         if (isStickyPaddleRef.current && currentBalls.length === 1) {
           ballAttachedRef.current = true
+          stickyCatchRef.current = true
           setBallAttachedToPaddle(true)
           newBall.dx = 0
           newBall.dy = 0
@@ -1615,7 +1624,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
       ctx.shadowBlur = 0
     })
 
-    if (ballAttachedRef.current) {
+    if (ballAttachedRef.current && !stickyCatchRef.current) {
       ctx.save()
       ctx.font = 'bold 24px Quicksand, sans-serif'
       ctx.fillStyle = '#FFFFFF'
@@ -1657,18 +1666,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
     const handleClick = (e: MouseEvent) => {
       if (gameState === 'waitingToLaunch') {
         const canvas = canvasRef.current
-        if (!canvas) return
-        
-        const rect = canvas.getBoundingClientRect()
-        const isClickOnCanvas = 
-          e.clientX >= rect.left && 
-          e.clientX <= rect.right && 
-          e.clientY >= rect.top && 
-          e.clientY <= rect.bottom
-        
-        if (isClickOnCanvas) {
-          launchBall()
-        }
+        if (canvas && e.target === canvas) launchBall()
       }
     }
 
@@ -1794,7 +1792,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
   if (gameState === 'menu') {
     return (
       <div className="space-y-6">
-        <Card className="p-6">
+        <Card className="arcade-menu p-6">
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-3">
               <div className="p-3 rounded-full bg-primary">
@@ -1831,17 +1829,17 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                   {language === 'da' ? 'Vælg sværhedsgrad' : language === 'fi' ? 'Valitse vaikeudet' : 'Select Difficulty'}
                 </p>
               </div>
-              <div className="flex items-center justify-center gap-4">
+              <div className="grid grid-cols-2 gap-3 sm:flex sm:items-center sm:justify-center sm:gap-4 sm:flex-wrap">
                 {(Object.keys(DIFFICULTY_SETTINGS) as Difficulty[]).map((diff) => {
                   const setting = DIFFICULTY_SETTINGS[diff]
                   const Icon = setting.icon
                   const isSelected = difficulty === diff
                   
                   return (
-                    <div
+                    <button type="button" aria-pressed={isSelected}
                       key={diff}
                       onClick={() => setDifficulty(diff)}
-                      className={`group relative cursor-pointer rounded-md p-6 transition-colors min-w-[140px] ${
+                      className={`group relative rounded-md p-4 sm:p-6 transition-colors min-w-0 w-full sm:w-auto sm:min-w-[140px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${
                         isSelected 
                           ? `bg-secondary border-2 ${setting.borderColor}` 
                           : 'bg-card border-2 border-border hover:border-primary/40'
@@ -1862,7 +1860,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
                           </span>
                         </div>
                       </div>
-                    </div>
+                    </button>
                   )
                 })}
               </div>
@@ -1882,7 +1880,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
           </div>
         </Card>
 
-        <Card className="p-6">
+        <Card className="arcade-leaderboard p-6">
           <div className="flex items-center gap-3 mb-6">
             <div className="p-3 rounded-full bg-primary">
               <Crown size={28} weight="duotone" className="text-accent-foreground" />
@@ -1908,7 +1906,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
 
               return (
                 <div key={diff} className="space-y-3">
-                  <div className={`p-4 rounded-md border-2 transition-colors ${
+                  <div className={`arcade-score-column p-4 rounded-md border-2 transition-colors ${
                     userRank === 1
                       ? 'border-primary bg-primary/10'
                       : 'border-border bg-card'
@@ -2341,6 +2339,12 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
         </div>
       </div>
 
+      {gameState === 'waitingToLaunch' && stickyCatchRef.current && (
+        <p role="status" className="text-sm font-medium text-lime-700 dark:text-lime-300">
+          {language === 'da' ? 'Bolden sidder fast på den klæbrige bar. Tryk mellemrum eller klik på banen for at slippe den.' : language === 'fi' ? 'Pallo on kiinni mailassa. Vapauta se välilyönnillä tai napsauttamalla kenttää.' : 'Ball caught on the sticky paddle. Press Space or click the board to release it.'}
+        </p>
+      )}
+
       <Card className="p-4 flex justify-center">
         <div className="relative">
           <canvas
@@ -2350,6 +2354,7 @@ export function BrickBreak({ userEmail = 'guest@example.com' }: BrickBreakProps 
             className="border border-border rounded-md bg-gray-900"
             style={{ maxWidth: '100%', height: 'auto' }}
           />
+          {gameState === 'waitingToLaunch' && !stickyCatchRef.current && <ArcadeReadyOverlay onStart={launchBall} />}
           {gameState === 'paused' && <PauseOverlay onResume={resumeGame} />}
         </div>
       </Card>

@@ -12,7 +12,7 @@ import { Guide } from '@/lib/types'
 import { getReviewStatus, REVIEW_INTERVAL_CHOICES, guidePlainText } from '@/lib/guideTypes'
 import { guideToDocModel, resolveAuthorName, type DocModel } from '@/lib/docModel'
 import { detectLanguage, translateTextAsync, type GuideLanguage, type TranslationEngine } from '@/lib/translator'
-import { isExportAvailable, getExportRoot, chooseAndSaveExportRoot, exportGuideToLibrary } from '@/lib/guideExporter'
+import { isExportAvailable, getExportRoot, chooseAndSaveExportRoot, exportGuideToLibrary, exportOriginalGuideToLibrary } from '@/lib/guideExporter'
 import { fileStorage } from '@/lib/fileStorage'
 import { linkifyText } from '@/lib/linkify'
 import { sanitizeHtml } from '@/lib/sanitizeHtml'
@@ -21,7 +21,7 @@ import { cn } from '@/lib/utils'
 import headerLogoUrl from '@/assets/images/docx/header-logo.png'
 import { useLanguage } from '@/contexts/LanguageContext'
 
-function downloadBlob(blob: Blob, filename: string): void {
+export function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = url
@@ -96,21 +96,24 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, tar
   const [authorName, setAuthorName] = useState('')
   const [isGenerating, setIsGenerating] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
+  const [isOpeningInWord, setIsOpeningInWord] = useState(false)
   const [viewLanguage, setViewLanguage] = useState<GuideLanguage | null>(null)
   // "Original formatering"-visning (Fase 2, guide-library-cross-team-links-format.md): viser den
   // vedhæftede originale Word-fils rige HTML (fed/kursiv/tabeller bevaret) i stedet for den flade
   // sektions/trin-visning. Kun relevant når guiden HAR både sektioner og en vedhæftet original.
-  const [viewMode, setViewMode] = useState<'sections' | 'original'>('sections')
+  const [viewMode, setViewMode] = useState<'sections' | 'original' | 'file'>('sections')
   const [originalHtml, setOriginalHtml] = useState<string | null>(null)
   const [isLoadingOriginal, setIsLoadingOriginal] = useState(false)
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null)
+  const [pdfPreviewError, setPdfPreviewError] = useState<string | null>(null)
   useEffect(() => {
     if (!open || !targetReference || !/^\d+\.\d+$/.test(targetReference)) return
-    setViewMode('sections')
+    if (!guide?.preserveWordLayout) setViewMode('sections')
     const timer = setTimeout(() => {
       document.querySelector(`[data-guide-step="${targetReference}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
     }, 350)
     return () => clearTimeout(timer)
-  }, [open, guide?.id, targetReference])
+  }, [open, guide?.id, guide?.preserveWordLayout, targetReference])
 
   const guideLanguage: GuideLanguage = useMemo(
     () => guide?.language || (guide ? detectLanguage(guidePlainText(guide), 'da') : 'da'),
@@ -124,9 +127,9 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, tar
 
   useEffect(() => {
     setViewLanguage(null)
-    setViewMode('sections')
+    setViewMode(guide?.preserveWordLayout ? 'file' : 'sections')
     setOriginalHtml(null)
-  }, [guide?.id])
+  }, [guide?.id, guide?.fileUrl, guide?.preserveWordLayout])
 
   const baseModel = useMemo(() => (guide ? guideToDocModel(guide) : null), [guide])
 
@@ -190,9 +193,11 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, tar
     setIsGenerating(true)
     try {
       // docx-pakken (~350 KB) hentes først når der faktisk genereres.
-      const { generateGuideDocx, guideDocxFileName } = await import('@/lib/docxGenerator')
-      const blob = await generateGuideDocx(model, authorName || model.authorEmail, fileLoader)
-      downloadBlob(blob, guideDocxFileName(model))
+      const { guideDocxFileName } = await import('@/lib/docxGenerator')
+      const blob = guide?.preserveWordLayout && hasOriginalFile
+        ? await getAttachedWordBlob()
+        : await (await import('@/lib/docxGenerator')).generateGuideDocx(model, authorName || model.authorEmail, fileLoader)
+      downloadBlob(blob, guide?.preserveWordLayout && guide.wordFileName || guideDocxFileName(model))
       toast.success(t.guideViewer.docxGenerated)
     } catch (error) {
       console.error('DOCX-generering fejlede:', error)
@@ -211,7 +216,9 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, tar
         root = await chooseAndSaveExportRoot()
         if (!root) return
       }
-      const filePath = await exportGuideToLibrary(model, authorName || model.authorEmail, root)
+      const filePath = guide?.preserveWordLayout
+        ? await exportOriginalGuideToLibrary(guide, root)
+        : await exportGuideToLibrary(model, authorName || model.authorEmail, root)
       toast.success(`${t.guideViewer.exportedToPrefix} ${filePath}`)
     } catch (error) {
       console.error('Eksport fejlede:', error)
@@ -256,7 +263,48 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, tar
     }
   }
 
+  const handleOpenInWord = async () => {
+    if (!guide?.wordFileName || !window.electronGuides?.openInWord) return
+    setIsOpeningInWord(true)
+    try {
+      const blob = await getAttachedWordBlob()
+      await window.electronGuides.openInWord({ fileName: guide.wordFileName, data: await blob.arrayBuffer() })
+    } catch (error) {
+      console.error('Kunne ikke aabne guide i Word:', error)
+      toast.error(error instanceof Error ? error.message : t.guideViewer.wordDownloadFailed)
+    } finally {
+      setIsOpeningInWord(false)
+    }
+  }
+
   const hasOriginalFile = Boolean(guide?.fileUrl || guide?.wordFileData)
+
+  useEffect(() => {
+    if (!open || viewMode !== 'file' || !guide?.preserveWordLayout || !hasOriginalFile) return
+    let cancelled = false
+    let objectUrl: string | null = null
+    setPdfPreviewUrl(null)
+    setPdfPreviewError(null)
+    const load = async () => {
+      let blob: Blob
+      if (guide.previewPdfUrl) {
+        blob = fileLoader ? await fileLoader(guide.previewPdfUrl) : await fileStorage.downloadFile(guide.previewPdfUrl)
+      } else {
+        if (!window.electronGuides?.renderPdf) throw new Error('PDF-visning er ikke tilgængelig på denne computer')
+        const docx = await getAttachedWordBlob()
+        const pdf = await window.electronGuides.renderPdf({ data: await docx.arrayBuffer() })
+        blob = new Blob([pdf], { type: 'application/pdf' })
+      }
+      if (cancelled) return
+      objectUrl = URL.createObjectURL(blob.type === 'application/pdf' ? blob : new Blob([blob], { type: 'application/pdf' }))
+      setPdfPreviewUrl(objectUrl)
+    }
+    void load().catch((error) => { if (!cancelled) setPdfPreviewError(error instanceof Error ? error.message : t.guideViewer.originalFormatFailed) })
+    return () => {
+      cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [open, viewMode, guide?.id, guide?.fileUrl, guide?.wordFileData, guide?.previewPdfUrl, guide?.preserveWordLayout, hasOriginalFile, fileLoader, t.guideViewer.originalFormatFailed])
 
   useEffect(() => {
     if (viewMode !== 'original' || !hasOriginalFile || originalHtml !== null) return
@@ -275,7 +323,8 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, tar
         console.error('Kunne ikke indlæse original formatering:', error)
         if (!cancelled) {
           toast.error(t.guideViewer.originalFormatFailed)
-          setViewMode('sections')
+          if (guide?.preserveWordLayout) setOriginalHtml('')
+          else setViewMode('sections')
         }
       } finally {
         if (!cancelled) setIsLoadingOriginal(false)
@@ -365,7 +414,17 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, tar
                   {t.guideViewer.edit}
                 </Button>
               )}
-              {hasSections && hasOriginalFile && (
+              {guide.preserveWordLayout && hasOriginalFile && (
+                <div className="flex items-center gap-1 rounded-lg border p-0.5 bg-muted/40 self-stretch sm:self-end">
+                  <Button variant={viewMode === 'file' ? 'default' : 'ghost'} size="sm" className="h-7 px-2.5 text-xs flex-1" onClick={() => setViewMode('file')}>
+                    {t.guideViewer.originalFileTab}
+                  </Button>
+                  <Button variant={viewMode === 'original' ? 'default' : 'ghost'} size="sm" className="h-7 px-2.5 text-xs flex-1" onClick={() => setViewMode('original')}>
+                    {t.guideViewer.originalFormatTab}
+                  </Button>
+                </div>
+              )}
+              {!guide.preserveWordLayout && hasSections && hasOriginalFile && (
                 <div className="flex items-center gap-1 rounded-lg border p-0.5 bg-muted/40 self-stretch sm:self-end">
                   <Button
                     variant={viewMode === 'sections' ? 'default' : 'ghost'}
@@ -418,7 +477,7 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, tar
                       : `${t.guideViewer.dictionaryTranslationPrefix} ${languageLabel(guideLanguage).toLowerCase()}`}
                 </p>
               )}
-              {hasSections && (
+              {(hasSections || guide.preserveWordLayout && hasOriginalFile) && (
                 <Button
                   size="sm"
                   onClick={handleDownloadDocx}
@@ -429,7 +488,7 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, tar
                   {isGenerating ? t.guideViewer.generating : t.guideViewer.downloadDocx}
                 </Button>
               )}
-              {hasSections && !fileLoader && isExportAvailable() && (
+              {(hasSections || guide.preserveWordLayout && hasOriginalFile) && !fileLoader && isExportAvailable() && (
                 <Button
                   variant="outline"
                   size="sm"
@@ -452,15 +511,39 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, tar
                   {t.guideViewer.attachedWord}
                 </Button>
               )}
+              {guide.preserveWordLayout && hasOriginalFile && window.electronGuides?.openInWord && (
+                <Button variant="outline" size="sm" onClick={handleOpenInWord} disabled={isOpeningInWord} className="w-full sm:w-auto gap-2">
+                  <FileDoc size={16} />
+                  {t.guideViewer.openInWord}
+                </Button>
+              )}
             </div>
           </div>
         </DialogHeader>
 
         <div className="flex-1 overflow-y-auto min-h-0 px-4 sm:px-6 py-4 sm:py-6 bg-muted/40">
-          {viewMode === 'original' && hasOriginalFile ? (
-            <div className="max-w-[1000px] mx-auto bg-white text-gray-900 rounded-sm shadow-xl border border-gray-300 overflow-hidden px-10 py-8">
+          {viewMode === 'file' && guide.preserveWordLayout && hasOriginalFile ? (
+            <div className="mx-auto h-full min-h-[65vh] max-w-[1200px]">
+              {pdfPreviewUrl ? (
+                <iframe src={pdfPreviewUrl} title={guide.title} className="h-full min-h-[65vh] w-full border-0 bg-white" />
+              ) : (
+                <div className="flex min-h-[65vh] flex-col items-center justify-center gap-4 text-center">
+                  <FileDoc size={48} className="text-primary" />
+                  <p className="text-sm text-muted-foreground">{pdfPreviewError || t.guideViewer.loadingOriginalFormat}</p>
+                  {pdfPreviewError && <Button onClick={window.electronGuides?.openInWord ? handleOpenInWord : handleDownload} disabled={isOpeningInWord} className="gap-2">
+                    <FileDoc size={18} />{window.electronGuides?.openInWord ? t.guideViewer.openInWord : t.guideViewer.downloadWordDocument}
+                  </Button>}
+                </div>
+              )}
+            </div>
+          ) : viewMode === 'original' && hasOriginalFile ? (
+            <div className="max-w-[1000px] mx-auto">
+              {guide.preserveWordLayout && <p className="text-sm text-muted-foreground mb-3">{t.guideViewer.simplifiedPreviewHint}</p>}
+              <div className="bg-white text-gray-900 rounded-sm shadow-xl border border-gray-300 overflow-hidden px-10 py-8">
               {isLoadingOriginal || originalHtml === null ? (
                 <p className="text-sm text-muted-foreground text-center py-12">{t.guideViewer.loadingOriginalFormat}</p>
+              ) : originalHtml === '' ? (
+                <p className="text-sm text-destructive text-center py-12">{t.guideViewer.originalFormatFailed}</p>
               ) : (
                 <div
                   className="docx-original-preview text-sm leading-relaxed [&_h1]:text-xl [&_h1]:font-bold [&_h2]:text-lg [&_h2]:font-bold [&_h3]:text-base [&_h3]:font-bold [&_h1]:mb-3 [&_h2]:mb-3 [&_h3]:mb-2 [&_p]:mb-3 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-6 [&_ol]:pl-6 [&_ul]:mb-3 [&_ol]:mb-3 [&_table]:border-collapse [&_table]:w-full [&_table]:mb-4 [&_td]:border [&_td]:border-gray-300 [&_td]:p-2 [&_th]:border [&_th]:border-gray-300 [&_th]:p-2 [&_img]:max-w-full [&_a]:text-primary [&_a]:underline"
@@ -468,6 +551,7 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, tar
                   dangerouslySetInnerHTML={{ __html: originalHtml }}
                 />
               )}
+              </div>
             </div>
           ) : hasSections ? (
             // A4-lignende ark der spejler den genererede DOCX (lys uanset tema, som Word).

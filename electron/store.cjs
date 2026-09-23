@@ -10,6 +10,7 @@ const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
 const { withFileLock, withFileLocks, withFileLockAsync } = require('./fileLock.cjs')
+const { isImmutableBlobKey } = require('./offlineSync.cjs')
 
 const FILE_EXT = '.json'
 const READ_ATTEMPTS = 5
@@ -37,6 +38,7 @@ const SYNC_WRITE_LOCK = { createParent: false, staleMs: 30000 }
 // parallelt. Graensen holdes moderat, fordi et SMB-share stadig kollapser under
 // ubegraenset parallelisme; alle laesninger er async, saa main-traaden er fri.
 const MAX_CONCURRENT_READS = 6
+const MAX_CONCURRENT_WATCH_STATS = 4
 let activeReads = 0
 const readWaiters = []
 function acquireReadSlot() {
@@ -588,6 +590,7 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
     const next = new Map()
     for (const name of entries) {
       if (!name.endsWith(FILE_EXT)) continue
+      if (isImmutableBlobKey(filenameToKey(name))) { next.set(name, 'immutable'); continue }
       try {
         const stat = fs.statSync(path.join(dataDir, name))
         next.set(name, stat.mtimeMs + ':' + stat.size)
@@ -610,21 +613,23 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
       return { reachable: false, snapshot: null, changedKeys: [] }
     }
     const next = new Map()
-    const stamps = await Promise.all(
-      entries
-        .filter((name) => name.endsWith(FILE_EXT))
-        .map(async (name) => {
-          try {
-            const stat = await fs.promises.stat(path.join(dataDir, name))
-            return [name, stat.mtimeMs + ':' + stat.size]
-          } catch {
-            return null // File vanished between readdir and stat â€” treated as removed.
-          }
-        })
-    )
-    for (const entry of stamps) {
-      if (entry) next.set(entry[0], entry[1])
-    }
+    const files = entries.filter(name => {
+      if (!name.endsWith(FILE_EXT)) return false
+      if (isImmutableBlobKey(filenameToKey(name))) { next.set(name, 'immutable'); return false }
+      return true
+    })
+    let nextFile = 0
+    await Promise.all(Array.from({ length: Math.min(MAX_CONCURRENT_WATCH_STATS, files.length) }, async () => {
+      while (nextFile < files.length) {
+        const name = files[nextFile++]
+        try {
+          const stat = await fs.promises.stat(path.join(dataDir, name))
+          next.set(name, stat.mtimeMs + ':' + stat.size)
+        } catch {
+          // File vanished between readdir and stat - treated as removed.
+        }
+      }
+    }))
     return { reachable: true, snapshot: next, changedKeys: diffSnapshots(previousSnapshot, next) }
   }
 
@@ -687,7 +692,7 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
     return connected
   }
 
-  return { get, getAsync, peekCache, set, setAsync, delete: del, deleteAsync, keys, keysAsync, watch, update, updateAsync, updateDetailed, updateDetailedAsync, mutate, withLockedKeys, invalidate: () => readCache.clear(), dumpAll, dumpAllAsync, dataDir, isConnected, scanDirectory }
+  return { get, getAsync, peekCache, set, setAsync, delete: del, deleteAsync, keys, keysAsync, watch, update, updateAsync, updateDetailed, updateDetailedAsync, mutate, withLockedKeys, invalidate: () => readCache.clear(), dumpAll, dumpAllAsync, dataDir, isConnected, scanDirectory, scanDirectoryAsync }
 }
 
 module.exports = { createStore, parseFileContents, keyToFilename }

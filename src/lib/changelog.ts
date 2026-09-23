@@ -27,6 +27,11 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Chickeninvasion tæller nu de spillede runder med i statistikken, som de øvrige spil',
       'Spil-statistikken tæller pr. spiller, så to der spiller samtidig ikke længere kan slette hinandens antal spil',
       'Creator-kontoen kommer ikke på highscore-listerne og tælles ikke med i spil-statistikken — den bruges kun til at afprøve spillene',
+      'Originale Word-guides kan nu ses side for side som PDF direkte i appen; DOCX-filen bevares til redigering',
+      'Gemmeknapper i noter, opslag, to-dos og guideoprettelse viser nu tydeligt at der arbejdes, og gentagne klik opretter ikke dubletter',
+      'Færre opslag mod det delte drev ved tværteam-visninger og filovervågning gør appen mere responsiv',
+      'Arcade har fælles start- og highscore-visning i både lys og mørk tilstand; spillene venter på mellemrum eller klik før runden starter',
+      'Ferie-preview i managerpanelet er større og lettere at læse, også på smalle skærme',
     ],
   },
   {

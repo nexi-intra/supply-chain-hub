@@ -7,6 +7,7 @@ import { useLanguage } from '@/contexts/LanguageContext'
 import { useLeaderboard } from '@/hooks/useLeaderboard'
 import { useAutoPauseOnBlur } from '@/hooks/useAutoPauseOnBlur'
 import { PauseOverlay } from '@/components/PauseOverlay'
+import { ArcadeReadyOverlay } from '@/components/ArcadeReadyOverlay'
 import { recordGamePlay, scoreSaveFailedMessage, submitHighscore } from '@/lib/leaderboards'
 import { useCrossTeamLeaderboard, mergeFlatLeaderboard } from '@/hooks/useCrossTeamLeaderboard'
 
@@ -14,7 +15,7 @@ const LEADERBOARD_KEY = 'tetris-global-leaderboard'
 const PLAY_COUNTS_KEY = 'tetris-play-counts'
 
 type PieceType = 'I' | 'O' | 'T' | 'S' | 'Z' | 'J' | 'L'
-type GameState = 'menu' | 'playing' | 'paused' | 'ended'
+type GameState = 'menu' | 'ready' | 'playing' | 'paused' | 'ended'
 type Cell = string | null
 
 interface ActivePiece {
@@ -345,7 +346,7 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
     }
 
     const piece = currentPieceRef.current
-    if (piece && gameStateRef.current === 'playing') {
+    if (piece && (gameStateRef.current === 'playing' || gameStateRef.current === 'ready')) {
       const matrix = TETROMINOES[piece.type].rotations[piece.rotation]
 
       let ghostY = piece.y
@@ -484,14 +485,28 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
     softDropRef.current = false
     setScore(0)
     setLines(0)
-    gameStateRef.current = 'playing'
-    setGameState('playing')
+    gameStateRef.current = 'ready'
+    setGameState('ready')
     spawnPiece()
-    draw()
 
     if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current)
+    animationFrameRef.current = null
+  }
+
+  useEffect(() => {
+    if (gameState === 'ready') {
+      draw()
+      drawNextPiece()
+    }
+  }, [gameState, draw, drawNextPiece])
+
+  const launchGame = () => {
+    if (gameStateRef.current !== 'ready') return
+    gameStateRef.current = 'playing'
+    setGameState('playing')
     animationFrameRef.current = requestAnimationFrame((timestamp) => {
       startTimeRef.current = timestamp
+      lastTimeRef.current = timestamp
       step(timestamp)
     })
   }
@@ -537,6 +552,13 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (gameStateRef.current === 'ready') {
+        if (e.code === 'Space') {
+          e.preventDefault()
+          if (!e.repeat) launchGame()
+        }
+        return
+      }
       if (gameStateRef.current === 'paused') {
         if (e.code === 'KeyP' || e.code === 'Space' || e.code === 'Enter') {
           e.preventDefault()
@@ -587,11 +609,11 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current)
       }    }
-  }, [moveLeft, moveRight, rotatePiece, softDropStep, hardDrop, pauseGame, resumeGame])
+  }, [moveLeft, moveRight, rotatePiece, softDropStep, hardDrop, pauseGame, resumeGame, launchGame])
 
   return (
     <div className="space-y-6">
-      <Card className="p-6">
+      <Card className="arcade-menu p-6">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
             <div className="p-3 rounded-full bg-primary">
@@ -637,7 +659,7 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
         )}
       </Card>
 
-      {(gameState === 'playing' || gameState === 'paused') && (
+      {(gameState === 'ready' || gameState === 'playing' || gameState === 'paused') && (
         <Card className="p-0 overflow-hidden">
           <div className="relative bg-slate-900 p-6 border-b border-slate-700">
             <div className="hidden" />
@@ -689,6 +711,7 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
                 className="rounded-md border border-white/15"
                 style={{ maxWidth: '100%', height: 'auto' }}
               />
+              {gameState === 'ready' && <ArcadeReadyOverlay onStart={launchGame} />}
               {gameState === 'paused' && <PauseOverlay onResume={resumeGame} />}
             </div>
 
@@ -748,7 +771,7 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
         </Card>
       )}
 
-      <Card className="p-6">
+      <Card className="arcade-leaderboard p-6">
         <div className="flex items-center gap-3 mb-6">
           <div className="p-3 rounded-full bg-primary">
             <Crown size={28} weight="duotone" className="text-accent-foreground" />
@@ -771,7 +794,7 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
             const userEntry = userRank ? leaderboard[userIndex] : undefined
 
             return (
-              <div className="p-4 rounded-md border bg-card">
+              <div className="arcade-score-column p-4 rounded-md border bg-card">
                 {leaderboard.length > 0 ? (
                   <div className="space-y-2">
                     {leaderboard.slice(0, 10).map((entry, index) => {

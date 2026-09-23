@@ -11,7 +11,7 @@ import { guidePlainText, getReviewStatus, computeNextReviewAt, type ArchivedGuid
 import { GuideSearchIndex } from '@/lib/searchIndex'
 import { bumpVersion, saveVersionSnapshot, listDrafts, deleteDraft, draftLabel } from '@/lib/guideStore'
 import { guideToDocModel, resolveAuthorName } from '@/lib/docModel'
-import { isExportAvailable, getExportRoot, chooseAndSaveExportRoot, exportGuideToLibrary } from '@/lib/guideExporter'
+import { isExportAvailable, getExportRoot, chooseAndSaveExportRoot, exportGuideToLibrary, exportOriginalGuideToLibrary } from '@/lib/guideExporter'
 import { guideImportManager } from '@/lib/guideImportManager'
 import type { GuideImportDraft } from '@/lib/docxImporter'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -77,6 +77,8 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
   const importJob = useSyncExternalStore(guideImportManager.subscribe, guideImportManager.getJob)
   const isImporting = importJob !== null
   const importInputRef = useRef<HTMLInputElement>(null)
+  const [importChoiceOpen, setImportChoiceOpen] = useState(false)
+  const [importMode, setImportMode] = useState<'sections' | 'original'>('sections')
   const [initialNavigation] = useState(() => consumeNavigationParams())
   const [searchQuery, setSearchQuery] = useState(() => initialNavigation?.search ?? '')
   const [activeCategory, setActiveCategory] = useState<string>('All')
@@ -110,6 +112,7 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
   const [otherTeamGuides, setOtherTeamGuides] = useState<Guide[]>([])
   const [otherTeamRequests, setOtherTeamRequests] = useState<GuideAccessRequest[]>([])
   const [isLoadingOtherTeamGuides, setIsLoadingOtherTeamGuides] = useState(false)
+  const otherTeamRequest = useRef(0)
   const [submittingRequestGuideId, setSubmittingRequestGuideId] = useState<string | null>(null)
 
   useEffect(() => {
@@ -147,26 +150,29 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
   }, [dialogOpen, userEmail])
 
   const loadOtherTeamGuides = () => {
-    if (!selectedTeamId) return
+    const request = ++otherTeamRequest.current
+    if (!selectedTeamId) { setIsLoadingOtherTeamGuides(false); return }
     const team = teams.find(tm => tm.teamId === selectedTeamId)
-    if (!team || !window.electronRegistry) return
+    if (!team || !window.electronRegistry) { setIsLoadingOtherTeamGuides(false); return }
     setIsLoadingOtherTeamGuides(true)
-    Promise.all([
-      window.electronRegistry.readTeamKey<Guide[]>(team.folderName, 'guides'),
-      window.electronRegistry.readTeamKey<GuideAccessRequest[]>(team.folderName, 'guide-access-requests'),
-    ]).then(([guidesData, requestsData]) => {
-      setOtherTeamGuides(guidesData || [])
-      setOtherTeamRequests(requestsData || [])
+    window.electronRegistry.readTeamKeys(team.folderName, ['guides', 'guide-access-requests']).then(([guidesData, requestsData]) => {
+      if (request !== otherTeamRequest.current) return
+      setOtherTeamGuides((guidesData as Guide[]) || [])
+      setOtherTeamRequests((requestsData as GuideAccessRequest[]) || [])
     }).catch((error) => {
+      if (request !== otherTeamRequest.current) return
       // Uden dette blev spinneren staaende for evigt hvis drevet svigtede.
       console.error('Kunne ikke hente det andet teams guides:', error)
       setOtherTeamGuides([])
       setOtherTeamRequests([])
       toast.error(t.guideLibrary.loadOtherTeamFailed)
-    }).finally(() => setIsLoadingOtherTeamGuides(false))
+    }).finally(() => { if (request === otherTeamRequest.current) setIsLoadingOtherTeamGuides(false) })
   }
 
-  useEffect(loadOtherTeamGuides, [selectedTeamId, teams])
+  useEffect(() => {
+    loadOtherTeamGuides()
+    return () => { otherTeamRequest.current++ }
+  }, [selectedTeamId, teams])
 
   // Anmodningen gemmes i den EJENDE teams egen store (registry:submit-guide-access-request),
   // så deres manager ser den som en helt normal del af deres eget team.
@@ -633,7 +639,7 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
     if (!file) return
     // Importen kører i den globale guideImportManager (ikke lokal state), så den
     // fortsætter selvom brugeren navigerer væk fra Guide Biblioteket.
-    guideImportManager.startImport(file).catch((error) => {
+    guideImportManager.startImport(file, { preserveOriginal: importMode === 'original', language }).catch((error) => {
       toast.error(error instanceof Error ? error.message : t.guideLibrary.toasts.importStartFailed)
     })
   }
@@ -644,7 +650,7 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
     if (isImporting) return
     const draft = guideImportManager.takePendingDraft()
     if (!draft) return
-    if (draft.sections.length === 0) {
+    if (draft.sections.length === 0 && !draft.preserveWordLayout) {
       toast.error(t.guideLibrary.toasts.importEmptyContent)
     }
     setEditGuide(undefined)
@@ -674,7 +680,7 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
       toast.error(t.guideLibrary.toasts.selectExportFolderFirst)
       return
     }
-    const exportable = myGuides.map(guideToDocModel).filter((m) => m.sections.length > 0)
+    const exportable = myGuides.filter((guide) => guide.preserveWordLayout && guide.fileUrl || guideToDocModel(guide).sections.length > 0)
     if (exportable.length === 0) {
       toast.error(t.guideLibrary.toasts.noExportableGuides)
       return
@@ -683,14 +689,18 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
     let ok = 0
     let failed = 0
     for (let i = 0; i < exportable.length; i++) {
-      const model = exportable[i]
-      setExportProgress(`${t.guideLibrary.toasts.exportingProgress} ${i + 1}/${exportable.length}: ${model.title}`)
+      const guide = exportable[i]
+      setExportProgress(`${t.guideLibrary.toasts.exportingProgress} ${i + 1}/${exportable.length}: ${guide.title}`)
       try {
-        const authorName = await resolveAuthorName(model.authorEmail)
-        await exportGuideToLibrary(model, authorName || model.authorEmail, exportRoot)
+        if (guide.preserveWordLayout) await exportOriginalGuideToLibrary(guide, exportRoot)
+        else {
+          const model = guideToDocModel(guide)
+          const authorName = await resolveAuthorName(model.authorEmail)
+          await exportGuideToLibrary(model, authorName || model.authorEmail, exportRoot)
+        }
         ok++
       } catch (error) {
-        console.error(`Eksport af "${model.title}" fejlede:`, error)
+        console.error(`Eksport af "${guide.title}" fejlede:`, error)
         failed++
       }
     }
@@ -892,12 +902,28 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
                 </Button>
                 <Button
                   variant="outline"
-                  onClick={() => importInputRef.current?.click()}
+                  onClick={() => setImportChoiceOpen(true)}
                   disabled={isImporting}
                 >
                   <FileArrowUp size={20} weight="bold" className="sm:mr-2" />
                   <span className="hidden sm:inline">{isImporting ? t.guideLibrary.importing : t.guideLibrary.importWordGuide}</span>
                 </Button>
+              <Dialog open={importChoiceOpen} onOpenChange={setImportChoiceOpen}>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>{t.guideLibrary.importModeTitle}</DialogTitle>
+                    <DialogDescription>{t.guideLibrary.importModeDescription}</DialogDescription>
+                  </DialogHeader>
+                  <div className="grid gap-2">
+                    <Button variant="outline" className="h-auto py-3 justify-start text-left" onClick={() => { setImportMode('sections'); setImportChoiceOpen(false); importInputRef.current?.click() }}>
+                      {t.guideLibrary.importEditable}
+                    </Button>
+                    <Button variant="outline" className="h-auto py-3 justify-start text-left" onClick={() => { setImportMode('original'); setImportChoiceOpen(false); importInputRef.current?.click() }}>
+                      {t.guideLibrary.importOriginal}
+                    </Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
               <input
                 ref={importInputRef}
                 type="file"

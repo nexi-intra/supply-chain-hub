@@ -27,7 +27,7 @@ function overview(key, value) {
   return value
 }
 function createTeamReader({ getRoot, listTeams, listViews, openStore, now = Date.now }) {
-  const target = folder => registeredTeamDir(getRoot(), listTeams(), folder)
+  const target = (folder, teams = listTeams()) => registeredTeamDir(getRoot(), teams, folder)
   // Uden cache lavede HVER cross-team-laesning (fx en highscore-liste med 6
   // andre teams) en frisk store pr. kald - synkron mkdirSync mod M: pr. kald,
   // og INGEN genbrug af laesecachen, saa selv gentagne aabninger af samme
@@ -35,8 +35,8 @@ function createTeamReader({ getRoot, listTeams, listViews, openStore, now = Date
   // begge; sikkerheds-kritiske laesninger (users/guides/adgangsanmodninger)
   // bruger fortsat skipCache saa de aldrig er stale.
   const storeCache = new Map()
-  const storeFor = folder => {
-    const directory = target(folder).directory
+  const storeFor = (folder, teams) => {
+    const directory = target(folder, teams).directory
     if (!storeCache.has(directory)) storeCache.set(directory, openStore(directory))
     return storeCache.get(directory)
   }
@@ -52,8 +52,8 @@ function createTeamReader({ getRoot, listTeams, listViews, openStore, now = Date
       return { ...pick(guide, ['id', 'title', 'category', 'tags', 'language', 'version', 'author', 'createdAt', 'updatedAt']), content: '', sections: [] }
     })
   }
-  async function readTeam(actor, folder, key) {
-    const store = storeFor(folder)
+  async function readTeam(actor, folder, key, batchStore) {
+    const store = batchStore || storeFor(folder)
     if (OVERVIEW_KEYS.has(key)) return overview(key, await store.getAsync(key, { skipCache: true }))
     // Highscores er ikke adgangs-kritiske - et par sekunders forsinkelse er
     // fint, og den normale cache goer gentagne visninger (skift af
@@ -67,9 +67,10 @@ function createTeamReader({ getRoot, listTeams, listViews, openStore, now = Date
     if (file && (await guides(store, actor)).some(guide => ownsFile(guide, file[1]))) return store.getAsync(key, { skipCache: true })
     fail()
   }
-  async function readTeamMany(actor, folder, keys) {
+  async function readTeamMany(actor, folder, keys, teams) {
     if (!Array.isArray(keys) || !keys.length || keys.length > 20) fail()
-    return Promise.all(keys.map(key => readTeam(actor, folder, key)))
+    const batchStore = storeFor(folder, teams)
+    return Promise.all(keys.map(key => readTeam(actor, folder, key, batchStore)))
   }
   async function readTeamsMany(actor, requests) {
     if (!Array.isArray(requests) || !requests.length || requests.length > 20) fail()
@@ -77,7 +78,12 @@ function createTeamReader({ getRoot, listTeams, listViews, openStore, now = Date
     // Promise.all-kald ville ellers efterlade allerede-startede laesninger for
     // tidligere (gyldige) requests koerende uden nogen der afventer dem.
     for (const request of requests) if (!request || typeof request.folderName !== 'string') fail()
-    return Promise.all(requests.map(request => readTeamMany(actor, request.folderName, request.keys)))
+    const teams = listTeams()
+    for (const request of requests) {
+      if (!Array.isArray(request.keys) || !request.keys.length || request.keys.length > 20) fail()
+      registeredTeamDir(getRoot(), teams, request.folderName)
+    }
+    return Promise.all(requests.map(request => readTeamMany(actor, request.folderName, request.keys, teams)))
   }
   async function readView(actor, viewId, teamId, key) {
     if (actor.viewId !== viewId) fail()
@@ -111,6 +117,6 @@ function createTeamReader({ getRoot, listTeams, listViews, openStore, now = Date
   return { readTeam, readTeamMany, readTeamsMany, readView, submitRequest }
 }
 function ownsFile(guide, id) {
-  return guide.fileUrl === `kv://${id}` || guide.coverImageId === id || (guide.sections || []).some(section => (section.steps || []).some(step => (step.imageIds || []).includes(id)))
+  return guide.fileUrl === `kv://${id}` || guide.previewPdfUrl === `kv://${id}` || guide.coverImageId === id || (guide.sections || []).some(section => (section.steps || []).some(step => (step.imageIds || []).includes(id)))
 }
 module.exports = { createTeamReader, registeredTeamDir, overview }

@@ -7,6 +7,7 @@ import { toast } from 'sonner'
 import { useNestedLeaderboard } from '@/hooks/useLeaderboard'
 import { useAutoPauseOnBlur } from '@/hooks/useAutoPauseOnBlur'
 import { PauseOverlay } from '@/components/PauseOverlay'
+import { ArcadeReadyOverlay } from '@/components/ArcadeReadyOverlay'
 import { recordGamePlay, scoreSaveFailedMessage, submitHighscore } from '@/lib/leaderboards'
 import { useCrossTeamLeaderboard, mergeNestedLeaderboard, type CrossTeamEntry } from '@/hooks/useCrossTeamLeaderboard'
 
@@ -16,7 +17,7 @@ const DIFFICULTIES = ['easy', 'medium', 'hard', 'expert'] as const
 
 type Difficulty = 'easy' | 'medium' | 'hard' | 'expert'
 // 'dying' keeps the render loop alive for the death animation before the results screen.
-type GameState = 'menu' | 'playing' | 'paused' | 'dying' | 'ended'
+type GameState = 'menu' | 'ready' | 'playing' | 'paused' | 'dying' | 'ended'
 type Direction = 'up' | 'down' | 'left' | 'right'
 
 interface Cell {
@@ -500,10 +501,22 @@ export function NeonSnake({ userEmail = 'guest@example.com' }: NeonSnakeProps = 
     lastTickRef.current = 0
     setScore(0)
     setApplesEaten(0)
-    gameStateRef.current = 'playing'
-    setGameState('playing')
+    gameStateRef.current = 'ready'
+    setGameState('ready')
 
     if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    rafRef.current = null
+  }
+
+  useEffect(() => {
+    if (gameState === 'ready') draw()
+  }, [gameState, draw])
+
+  const launchGame = () => {
+    if (gameStateRef.current !== 'ready') return
+    gameStateRef.current = 'playing'
+    setGameState('playing')
+    lastTickRef.current = performance.now()
     rafRef.current = requestAnimationFrame(loop)
   }
 
@@ -540,6 +553,13 @@ export function NeonSnake({ userEmail = 'guest@example.com' }: NeonSnakeProps = 
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (gameStateRef.current === 'ready') {
+        if (e.code === 'Space') {
+          e.preventDefault()
+          if (!e.repeat) launchGame()
+        }
+        return
+      }
       if (gameStateRef.current === 'paused') {
         if (e.code === 'KeyP' || e.code === 'Space' || e.code === 'Enter') {
           e.preventDefault()
@@ -568,13 +588,16 @@ export function NeonSnake({ userEmail = 'guest@example.com' }: NeonSnakeProps = 
     window.addEventListener('keydown', handleKeyDown)
     return () => {
       window.removeEventListener('keydown', handleKeyDown)
-      if (rafRef.current) cancelAnimationFrame(rafRef.current)
     }
-  }, [queueDirection, pauseGame, resumeGame])
+  }, [queueDirection, pauseGame, resumeGame, launchGame])
+
+  useEffect(() => () => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current)
+  }, [])
 
   return (
     <div className="space-y-6">
-      <Card className="p-6">
+      <Card className="arcade-menu p-6">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
             <div className="p-3 rounded-full bg-primary">
@@ -612,17 +635,17 @@ export function NeonSnake({ userEmail = 'guest@example.com' }: NeonSnakeProps = 
                   {language === 'da' ? 'Vælg sværhedsgrad' : language === 'fi' ? 'Valitse vaikeudet' : 'Select Difficulty'}
                 </p>
               </div>
-              <div className="flex items-center justify-center gap-4 flex-wrap">
+              <div className="grid grid-cols-2 gap-3 sm:flex sm:items-center sm:justify-center sm:gap-4 sm:flex-wrap">
                 {(Object.keys(DIFFICULTY_SETTINGS) as Difficulty[]).map((diff) => {
                   const setting = DIFFICULTY_SETTINGS[diff]
                   const Icon = setting.icon
                   const isSelected = difficulty === diff
 
                   return (
-                    <div
+                    <button type="button" aria-pressed={isSelected}
                       key={diff}
                       onClick={() => setDifficulty(diff)}
-                      className={`group relative cursor-pointer rounded-md p-6 transition-colors min-w-[140px] ${
+                      className={`group relative rounded-md p-4 sm:p-6 transition-colors min-w-0 w-full sm:w-auto sm:min-w-[140px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${
                         isSelected
                           ? `bg-secondary border-2 ${setting.borderColor}`
                           : 'bg-card border-2 border-border hover:border-primary/40'
@@ -643,7 +666,7 @@ export function NeonSnake({ userEmail = 'guest@example.com' }: NeonSnakeProps = 
                           </span>
                         </div>
                       </div>
-                    </div>
+                    </button>
                   )
                 })}
               </div>
@@ -663,7 +686,7 @@ export function NeonSnake({ userEmail = 'guest@example.com' }: NeonSnakeProps = 
         )}
       </Card>
 
-      {(gameState === 'playing' || gameState === 'paused') && (
+      {(gameState === 'ready' || gameState === 'playing' || gameState === 'paused') && (
         <Card className="p-0 overflow-hidden">
           <div className="relative bg-slate-900 p-6 border-b border-slate-700">
             <div className="hidden" />
@@ -717,6 +740,7 @@ export function NeonSnake({ userEmail = 'guest@example.com' }: NeonSnakeProps = 
                 className="rounded-md border border-white/15"
                 style={{ maxWidth: '100%', height: 'auto' }}
               />
+              {gameState === 'ready' && <ArcadeReadyOverlay onStart={launchGame} />}
               {gameState === 'paused' && <PauseOverlay onResume={resumeGame} />}
             </div>
 
@@ -775,7 +799,7 @@ export function NeonSnake({ userEmail = 'guest@example.com' }: NeonSnakeProps = 
         </Card>
       )}
 
-      <Card className="p-6">
+      <Card className="arcade-leaderboard p-6">
         <div className="flex items-center gap-3 mb-6">
           <div className="p-3 rounded-full bg-primary">
             <Crown size={28} weight="duotone" className="text-accent-foreground" />
@@ -800,7 +824,7 @@ export function NeonSnake({ userEmail = 'guest@example.com' }: NeonSnakeProps = 
 
             return (
               <div key={diff} className="space-y-3">
-                <div className={`p-4 rounded-md border-2 transition-colors ${
+                <div className={`arcade-score-column p-4 rounded-md border-2 transition-colors ${
                   userRank === 1
                     ? 'border-primary bg-primary/10'
                     : 'border-border bg-card'

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { motion } from 'framer-motion'
 import { ArrowLeft, ShieldCheck, Check, Crown, User as UserIcon, Trash, FirstAidKit, X, Umbrella, ClockCounterClockwise, PencilSimple, Plus, Phone, CalendarBlank, Eye, Gift, WaveSine, LockKey, Books } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
@@ -21,6 +21,7 @@ import { UserRole, hasManagerAccess, getCreatorEmail, getRoleDisplayName, getRol
 import { hashPassword } from '@/lib/passwords'
 import { newId } from '@/lib/utils'
 import { parseLocalDate } from '@/lib/dateUtils'
+import { vacationPreviewEntries } from '@/lib/vacationPreview'
 import { appendToKvArray, updateKvArrayItem, removeFromKvArray, upsertInKvArray, setKvObjectField, deleteKvObjectField, replaceKvObjectField } from '@/lib/kvArrays'
 import { cn } from '@/lib/utils'
 import { isAnyModalOpen } from '@/lib/modalStack'
@@ -74,6 +75,8 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
   const [newPassword, setNewPassword] = useState('')
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
+  const [isCreatingUser, setIsCreatingUser] = useState(false)
+  const createUserInProgress = useRef(false)
   const [newUserName, setNewUserName] = useState('')
   const [newUserEmail, setNewUserEmail] = useState('')
   const [newUserPassword, setNewUserPassword] = useState('')
@@ -502,6 +505,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
   }
 
   const handleCreateUser = async () => {
+    if (createUserInProgress.current) return
     if (!newUserName.trim()) {
       toast.error(t.managerPanel.validation.createNameRequired)
       return
@@ -525,14 +529,14 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
       return
     }
 
-    const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; role: UserRole; isManager: boolean; phone?: string; status?: 'pending' | 'approved' | 'rejected' }>>('users') || {}
-    
-    if (usersData[newUserEmail.toLowerCase()]) {
-      toast.error(t.managerPanel.validation.emailExists)
-      return
-    }
-
+    createUserInProgress.current = true
+    setIsCreatingUser(true)
     try {
+      const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; role: UserRole; isManager: boolean; phone?: string; status?: 'pending' | 'approved' | 'rejected' }>>('users') || {}
+      if (usersData[newUserEmail.toLowerCase()]) {
+        toast.error(t.managerPanel.validation.emailExists)
+        return
+      }
       // Uden dette kan brugeren ikke logge ind bagefter — registret er den ENESTE
       // kilde login-skærmen bruger til at finde ud af hvilket team en email hører til.
       if (window.electronRegistry) {
@@ -549,21 +553,20 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
         // Manager-created accounts skip the approval flow.
         status: 'approved'
       })
+      setIsCreateDialogOpen(false)
+      setNewUserName('')
+      setNewUserEmail('')
+      setNewUserPassword('')
+      setNewUserPhone('')
+      toast.success(t.managerPanel.validation.userCreated)
+      void loadUsers().catch(error => console.error('Kunne ikke opdatere brugerlisten:', error))
     } catch (error) {
       console.error('Failed to save new user:', error)
       toast.error(`${t.managerPanel.validation.createFailedPrefix}: ${error instanceof Error ? error.message : String(error)}`)
-      return
+    } finally {
+      createUserInProgress.current = false
+      setIsCreatingUser(false)
     }
-
-    await loadUsers()
-    
-    setIsCreateDialogOpen(false)
-    setNewUserName('')
-    setNewUserEmail('')
-    setNewUserPassword('')
-    setNewUserPhone('')
-    
-    toast.success(t.managerPanel.validation.userCreated)
   }
 
   const deleteSickLeave = async (id: string) => {
@@ -2181,7 +2184,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => {
+            <Button variant="outline" disabled={isCreatingUser} onClick={() => {
               setIsEditVacationDialogOpen(false)
               setEditingVacation(null)
               setEditVacationStartDate(undefined)
@@ -2282,7 +2285,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
         </DialogContent>
       </Dialog>
 
-      <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+      <Dialog open={isCreateDialogOpen} onOpenChange={(open) => { if (!createUserInProgress.current) setIsCreateDialogOpen(open) }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>{t.managerPanel.dialogs.createUser.title}</DialogTitle>
@@ -2344,17 +2347,17 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
             }}>
               {t.common.cancel}
             </Button>
-            <Button onClick={handleCreateUser} className="gap-2">
+            <Button onClick={handleCreateUser} loading={isCreatingUser} className="gap-2">
               <Plus size={18} weight="bold" />
-              {t.managerPanel.dialogs.createUser.submit}
+              {isCreatingUser ? language === 'da' ? 'Gemmer…' : language === 'fi' ? 'Tallennetaan…' : 'Saving…' : t.managerPanel.dialogs.createUser.submit}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       <Dialog open={isPreviewDialogOpen} onOpenChange={setIsPreviewDialogOpen}>
-        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
+        <DialogContent className="max-h-[90vh] sm:max-w-6xl xl:max-w-7xl flex flex-col overflow-hidden">
+          <DialogHeader className="shrink-0">
             <DialogTitle className="text-2xl flex items-center gap-2">
               <Eye size={24} weight="duotone" className="text-accent" />
               {t.managerPanel.dialogs.preview.title}
@@ -2364,6 +2367,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
             </DialogDescription>
           </DialogHeader>
           
+          <div className="min-h-0 overflow-y-auto">
           {previewVacation && (() => {
             const months = t.managerPanel.birthdays.months
             
@@ -2403,19 +2407,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
             const daysInMonth = getDaysInMonth(previewMonth, previewYear)
             const firstDay = getFirstDayOfMonth(previewMonth, previewYear)
 
-            const approvedVacations = allVacations.filter((v) => {
-              const start = parseLocalDate(v.startDate)
-              const end = parseLocalDate(v.endDate)
-              
-              if (isNaN(start.getTime()) || isNaN(end.getTime())) return false
-              
-              const monthStart = new Date(previewYear, previewMonth, 1)
-              const monthEnd = new Date(previewYear, previewMonth + 1, 0)
-
-              return (start <= monthEnd && end >= monthStart) && v.status === 'approved'
-            })
-
-            const previewVacations = [...approvedVacations, previewVacation]
+            const previewVacations = vacationPreviewEntries(allVacations, previewVacation, previewMonth, previewYear)
 
             return (
               <div className="py-4">
@@ -2471,7 +2463,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                     <span>{getFirstName(previewVacation.userEmail)}</span>
                   </div>
                   <div className="text-sm text-muted-foreground">
-                    {format(new Date(previewVacation.startDate), 'd. MMMM yyyy', { locale: dateLocale })} → {format(new Date(previewVacation.endDate), 'd. MMMM yyyy', { locale: dateLocale })}
+                    {format(parseLocalDate(previewVacation.startDate), 'd. MMMM yyyy', { locale: dateLocale })} → {format(parseLocalDate(previewVacation.endDate), 'd. MMMM yyyy', { locale: dateLocale })}
                   </div>
                   {previewVacation.notes && (
                     <div className="text-sm text-muted-foreground mt-1">
@@ -2480,16 +2472,21 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                   )}
                 </div>
 
-                <div className="border rounded-md p-4">
+                <div className="border rounded-md p-4 overflow-x-auto">
+                  <div className="min-w-[720px]">
+                  <div className="flex flex-wrap gap-3 pb-3 text-xs text-muted-foreground">
+                    <span>{t.managerPanel.vacationOverview.approvedBadge}</span>
+                    <span className="border-b border-dashed border-amber-600 dark:border-amber-400">{t.managerPanel.vacationOverview.pendingBadge}</span>
+                  </div>
                   <div className="grid grid-cols-8 gap-2">
-                    <div className="text-center font-semibold text-xs py-2 text-muted-foreground">
+                    <div className="text-center font-semibold text-sm py-2 text-muted-foreground">
                       {t.managerPanel.dialogs.preview.weekLabel}
                     </div>
                     {t.managerPanel.weekdaysShort.map((day, index) => (
                       <div
                         key={day}
                         className={cn(
-                          "text-center font-semibold text-xs py-2",
+                          "text-center font-semibold text-sm py-2",
                           index >= 5 ? "text-muted-foreground" : "text-foreground"
                         )}
                       >
@@ -2503,7 +2500,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                       
                       return (
                         <React.Fragment key={`week-${weekIndex}`}>
-                          <div className="flex items-center justify-center text-xs font-bold text-muted-foreground border rounded bg-muted/30">
+                          <div className="flex items-center justify-center text-sm font-bold text-muted-foreground border rounded bg-muted/30">
                             {weekNumber}
                           </div>
                           {Array.from({ length: 7 }).map((_, dayIndex) => {
@@ -2516,6 +2513,9 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
 
                             const dayVacations = previewVacations.filter((vacation) =>
                               isDateInVacation(day, vacation, previewMonth, previewYear)
+                            ).sort((first, second) =>
+                              Number(second.id === previewVacation.id) - Number(first.id === previewVacation.id)
+                              || Number(second.status === 'pending') - Number(first.status === 'pending')
                             )
                             const currentDate = new Date(previewYear, previewMonth, day)
                             const dayOfWeek = currentDate.getDay()
@@ -2529,19 +2529,19 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                               <div
                                 key={day}
                                 className={cn(
-                                  "aspect-square border rounded p-1 relative text-xs",
+                                  "min-h-24 border rounded p-2 relative text-sm",
                                   isToday && "ring-2 ring-primary",
                                   isWeekendDay && "bg-muted/50 opacity-60"
                                 )}
                               >
                                 <div className={cn(
-                                  "font-semibold mb-1 text-[10px]",
+                                  "font-semibold mb-1 text-sm",
                                   isWeekendDay && "text-muted-foreground"
                                 )}>
                                   {day}
                                 </div>
-                                {isWeekendDay ? (
-                                  <div className="text-[8px] text-muted-foreground text-center mt-1">
+                                {dayVacations.length === 0 && isWeekendDay ? (
+                                  <div className="text-xs text-muted-foreground text-center mt-1">
                                     {t.managerPanel.dialogs.preview.closedLabel}
                                   </div>
                                 ) : (
@@ -2550,22 +2550,37 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                                       <div
                                         key={vacation.id}
                                         className={cn(
-                                          "text-[9px] leading-[1.6] px-1 py-0.5 rounded truncate font-medium",
-                                          vacation.id === previewVacation.id && "ring-1 ring-amber-500"
+                                          "text-xs leading-normal px-1 py-0.5 rounded truncate font-medium",
+                                          vacation.status === 'pending' && "border border-dashed border-amber-600 dark:border-amber-400",
+                                          vacation.id === previewVacation.id && "ring-2 ring-primary"
                                         )}
                                         style={{ 
                                           backgroundColor: getEmployeeColorByEmail(vacation.userEmail).bg,
                                           color: getEmployeeColorByEmail(vacation.userEmail).text
                                         }}
-                                        title={`${getFirstName(vacation.userEmail)}${vacation.notes ? ': ' + vacation.notes : ''}`}
+                                        title={`${getFirstName(vacation.userEmail)} - ${vacation.status === 'pending' ? t.managerPanel.vacationOverview.pendingBadge : t.managerPanel.vacationOverview.approvedBadge}${vacation.notes ? ': ' + vacation.notes : ''}`}
                                       >
-                                        {getFirstName(vacation.userEmail)}
+                                        {getFirstName(vacation.userEmail)}{vacation.status === 'pending' ? ` (${t.managerPanel.vacationOverview.pendingBadge})` : ''}
                                       </div>
                                     ))}
                                     {dayVacations.length > 3 && (
-                                      <div className="text-[8px] text-muted-foreground">
-                                        +{dayVacations.length - 3}
-                                      </div>
+                                      <Popover>
+                                        <PopoverTrigger asChild>
+                                          <button type="button" className="text-xs font-semibold text-primary underline underline-offset-2" aria-label={`+${dayVacations.length - 3} ${t.managerPanel.vacationOverview.vacationPlural}`}>
+                                            +{dayVacations.length - 3}
+                                          </button>
+                                        </PopoverTrigger>
+                                        <PopoverContent align="start" className="w-60 max-h-64 overflow-y-auto space-y-2">
+                                          {dayVacations.map((vacation) => (
+                                            <div key={vacation.id} className="text-xs flex items-baseline justify-between gap-2">
+                                              <span className="truncate" title={getFirstName(vacation.userEmail)}>{getFirstName(vacation.userEmail)}</span>
+                                              <span className={cn('shrink-0', vacation.status === 'pending' ? 'text-amber-700 dark:text-amber-300' : 'text-muted-foreground')}>
+                                                {vacation.status === 'pending' ? t.managerPanel.vacationOverview.pendingBadge : t.managerPanel.vacationOverview.approvedBadge}
+                                              </span>
+                                            </div>
+                                          ))}
+                                        </PopoverContent>
+                                      </Popover>
                                     )}
                                   </div>
                                 )}
@@ -2576,12 +2591,14 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                       )
                     })}
                   </div>
+                  </div>
                 </div>
               </div>
             )
           })()}
+          </div>
 
-          <DialogFooter className="gap-2">
+          <DialogFooter className="gap-2 shrink-0">
             <Button 
               variant="outline" 
               onClick={() => setIsPreviewDialogOpen(false)}

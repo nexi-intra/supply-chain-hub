@@ -11,12 +11,14 @@ import { newId } from './guideTypes'
 import type { GuideSection } from './guideTypes'
 import { detectLanguage, type GuideLanguage } from './translator'
 import { yieldToBrowser } from './utils'
+import { validateDocx } from './validateDocx'
 
 export interface GuideImportDraft {
   title: string
   language: GuideLanguage
   sections: GuideSection[]
   originalFile: File
+  preserveWordLayout?: boolean
 }
 
 export type ImportStage = 'reading' | 'converting' | 'parsing' | 'uploading-images' | 'done'
@@ -194,9 +196,15 @@ function titleFromFilename(filename: string): string {
 }
 
 /** Konverterer en uploadet .docx-fil til et redigerbart guide-udkast (sektioner/trin + sprog). */
-export async function importGuideFromDocx(file: File, onProgress?: ProgressCallback): Promise<GuideImportDraft> {
+export async function importGuideFromDocx(file: File, onProgress?: ProgressCallback, options?: { preserveOriginal?: boolean; language?: GuideLanguage }): Promise<GuideImportDraft> {
   if (!file.name.match(/\.docx$/i)) {
     throw new Error('Kun .docx-filer kan importeres (gamle .doc-filer understøttes ikke)')
+  }
+
+  if (options?.preserveOriginal) {
+    await validateDocx(file)
+    onProgress?.({ stage: 'done', message: 'Færdig!', imagesUploaded: 0, imagesTotal: 0, percent: STAGE_WEIGHTS.done })
+    return { title: titleFromFilename(file.name), language: options.language || 'da', sections: [], originalFile: file, preserveWordLayout: true }
   }
 
   onProgress?.({ stage: 'reading', message: 'Læser dokument…', imagesUploaded: 0, imagesTotal: 0, percent: STAGE_WEIGHTS.reading })

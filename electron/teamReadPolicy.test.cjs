@@ -14,8 +14,8 @@ function fixture(t) {
   const own = createStore(path.join(root, 'A')), other = createStore(path.join(root, 'B'))
   own.set('users', { [actor.email]: { email: actor.email, fullName: 'Synthetic User' } })
   other.set('users', { 'other@example.test': { email: 'other@example.test', fullName: 'Other User', password: 'SECRET', phone: 'PRIVATE', privateMetadata: 'PRIVATE' } })
-  const guide = { id: 'g1', title: 'Synthetic cloud guide', content: 'SECRET BODY', category: 'Technical', tags: ['cloud'], version: '1.00', language: 'da', wordFileData: 'SECRET WORD', fileUrl: 'kv://file_word', coverImageId: 'file_cover', sections: [{ steps: [{ text: 'SECRET STEP', imageIds: ['file_image'] }] }] }
-  other.set('guides', [guide]); other.set('file_image_meta', { size: 10 }); other.set('file_image_chunk_0', 'IMAGE'); other.set('file_unrelated_meta', { private: 'SECRET' })
+  const guide = { id: 'g1', title: 'Synthetic cloud guide', content: 'SECRET BODY', category: 'Technical', tags: ['cloud'], version: '1.00', language: 'da', wordFileData: 'SECRET WORD', fileUrl: 'kv://file_word', previewPdfUrl: 'kv://file_preview', coverImageId: 'file_cover', sections: [{ steps: [{ text: 'SECRET STEP', imageIds: ['file_image'] }] }] }
+  other.set('guides', [guide]); other.set('file_image_meta', { size: 10 }); other.set('file_image_chunk_0', 'IMAGE'); other.set('file_preview_meta', { size: 7 }); other.set('file_preview_chunk_0', 'PDF'); other.set('file_unrelated_meta', { private: 'SECRET' })
   const request = { id: 'r1', guideId: guide.id, requestingUserEmail: actor.email, requestingTeamCode: 'A', status: 'approved', requestedAt: '2026-09-01T00:00:00Z' }
   const reader = createTeamReader({ getRoot: () => root, listTeams: () => teams, listViews: () => views, openStore: createStore, now: () => Date.parse('2026-09-15T00:00:00Z') })
   return { root, teams, actor, views, own, other, guide, request, reader }
@@ -25,7 +25,8 @@ test('cross-team catalogue excludes all content, embedded documents and asset ID
   const f = fixture(t), result = (await f.reader.readTeam(f.actor, 'B', 'guides'))[0]
   assert.equal(result.title, f.guide.title); assert.deepEqual(result.sections, []); assert.equal(result.content, '')
   assert.equal(JSON.stringify(result).includes('SECRET'), false)
-  for (const key of ['wordFileData', 'fileUrl', 'coverImageId']) assert.equal(result[key], undefined)
+  for (const key of ['wordFileData', 'fileUrl', 'previewPdfUrl', 'coverImageId']) assert.equal(result[key], undefined)
+  await assert.rejects(f.reader.readTeam(f.actor, 'B', 'file_preview_chunk_0'), code('AUTH_FORBIDDEN'))
 })
 test('catalogue reads the grant list once per request, not once per guide', async t => {
   const f = fixture(t); let grantReads = 0
@@ -37,10 +38,29 @@ test('catalogue reads the grant list once per request, not once per guide', asyn
   } })
   assert.equal((await reader.readTeam(f.actor, 'B', 'guides')).length, 400); assert.equal(grantReads, 1)
 })
+test('a cross-team batch resolves the team registry only once', async t => {
+  const f = fixture(t); let registryReads = 0
+  const reader = createTeamReader({ getRoot: () => f.root, listTeams: () => { registryReads++; return f.teams }, listViews: () => f.views, openStore: createStore })
+  const values = await reader.readTeamMany(f.actor, 'B', ['users', 'vacation-entries', 'sick-leave-entries', 'home-office-patterns', 'home-office-exceptions'])
+  assert.equal(values.length, 5)
+  assert.equal(registryReads, 1)
+})
+test('a multi-team batch validates each team with one fresh registry snapshot', async t => {
+  const f = fixture(t); let registryReads = 0
+  const reader = createTeamReader({ getRoot: () => f.root, listTeams: () => { registryReads++; return f.teams }, listViews: () => f.views, openStore: createStore })
+  const requests = [{ folderName: 'A', keys: ['users', 'vacation-entries'] }, { folderName: 'B', keys: ['users', 'sick-leave-entries'] }]
+  assert.equal((await reader.readTeamsMany(f.actor, requests)).length, 2)
+  assert.equal(registryReads, 1)
+  f.teams.splice(1)
+  await assert.rejects(reader.readTeamsMany(f.actor, requests), code('AUTH_FORBIDDEN'))
+  assert.equal(registryReads, 2)
+})
 test('approved own guide request permits content and only referenced files', async t => {
   const f = fixture(t); f.other.set('guide-access-requests', [f.request])
   assert.equal((await f.reader.readTeam(f.actor, 'B', 'guides'))[0].content, 'SECRET BODY')
   assert.equal(await f.reader.readTeam(f.actor, 'B', 'file_image_chunk_0'), 'IMAGE')
+  assert.equal(await f.reader.readTeam(f.actor, 'B', 'file_preview_meta').then(value => value.size), 7)
+  assert.equal(await f.reader.readTeam(f.actor, 'B', 'file_preview_chunk_0'), 'PDF')
   await assert.rejects(f.reader.readTeam(f.actor, 'B', 'file_unrelated_meta'), code('AUTH_FORBIDDEN'))
 })
 for (const change of [{ requestingUserEmail: 'someone@example.test' }, { requestingTeamCode: 'B' }, { status: 'pending' }, { status: 'rejected' }, { expiresAt: '2026-09-14T00:00:00Z' }, { expiresAt: 'not-a-date' }]) {

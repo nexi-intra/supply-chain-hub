@@ -13,13 +13,16 @@ class FileStorageService {
   // at gemme over netvaerksdrevet, men de afvises ikke.
   private readonly objectUrlCache = new Map<string, string>()
 
-  private async storeInKV(file: File): Promise<StoredFile> {
-    if (!file.name.match(/\.(docx?|DOCX?)$/)) {
-      throw new Error('Kun Word-dokumenter (.doc, .docx) understøttes')
+  private async storeInKV(file: File, format: 'word' | 'pdf'): Promise<StoredFile> {
+    if (format === 'word' ? !/\.docx?$/i.test(file.name) : !/\.pdf$/i.test(file.name) || file.type !== 'application/pdf') {
+      throw new Error(format === 'pdf' ? 'Kun PDF-visningskopier understøttes' : 'Kun Word-dokumenter (.doc, .docx) understøttes')
     }
 
     const arrayBuffer = await file.arrayBuffer()
     const bytes = new Uint8Array(arrayBuffer)
+    if (format === 'pdf' && new TextDecoder().decode(bytes.subarray(0, 5)) !== '%PDF-') {
+      throw new Error('Visningskopien er ikke en gyldig PDF')
+    }
     const base64Data = await this.arrayBufferToBase64Async(bytes)
     
     const fileId = `file_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`
@@ -27,7 +30,7 @@ class FileStorageService {
     try {
       const metadata = {
         filename: file.name,
-        contentType: file.type || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        contentType: format === 'pdf' ? 'application/pdf' : file.type || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         size: file.size,
         uploadedAt: Date.now(),
         chunkCount: 0,
@@ -62,11 +65,15 @@ class FileStorageService {
 
   async uploadFile(file: File): Promise<StoredFile> {
     try {
-      return await this.storeInKV(file)
+      return await this.storeInKV(file, 'word')
     } catch (error) {
       console.error('Upload file error:', error)
       throw error
     }
+  }
+
+  async uploadPdf(file: File): Promise<StoredFile> {
+    return this.storeInKV(file, 'pdf')
   }
 
   /** Gemmer et billede (png/jpg/gif/webp/bmp) i KV. Returnerer fileId uden kv://-præfiks. */

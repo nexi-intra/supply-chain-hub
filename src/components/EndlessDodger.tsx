@@ -7,6 +7,7 @@ import { useLanguage } from '@/contexts/LanguageContext'
 import { useNestedLeaderboard } from '@/hooks/useLeaderboard'
 import { useAutoPauseOnBlur } from '@/hooks/useAutoPauseOnBlur'
 import { PauseOverlay } from '@/components/PauseOverlay'
+import { ArcadeReadyOverlay } from '@/components/ArcadeReadyOverlay'
 import { recordGamePlay, scoreSaveFailedMessage, submitHighscore } from '@/lib/leaderboards'
 import { nextParticleId } from '@/lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -72,7 +73,7 @@ interface GlobalLeaderboard {
 }
 
 type Difficulty = 'easy' | 'medium' | 'hard' | 'expert'
-type GameState = 'menu' | 'playing' | 'paused' | 'ended'
+type GameState = 'menu' | 'ready' | 'playing' | 'paused' | 'ended'
 
 const DIFFICULTY_SETTINGS = {
   easy: {
@@ -625,8 +626,8 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
     chickensRef.current = []
     eggsRef.current = []
     bulletsRef.current = []
-    gameStateRef.current = 'playing'
-    setGameState('playing')
+    gameStateRef.current = 'ready'
+    setGameState('ready')
 
     // Canvas/spilområdet monter først når React har committet 'playing'-visningen,
     // så vi kan ikke måle gameAreaRef her endnu. I stedet sætter vi et flag som
@@ -634,6 +635,21 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
     pendingFirstSpawnRef.current = true
 
     if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current)
+    animationFrameRef.current = null
+  }
+
+  useEffect(() => {
+    if (gameState !== 'ready' || !gameAreaRef.current) return
+    const rect = gameAreaRef.current.getBoundingClientRect()
+    syncCanvasSize(rect)
+    spaceshipXRef.current = (rect.width - SPACESHIP_SIZE) / 2
+    draw()
+  }, [gameState])
+
+  const launchGame = () => {
+    if (gameStateRef.current !== 'ready') return
+    gameStateRef.current = 'playing'
+    setGameState('playing')
     animationFrameRef.current = requestAnimationFrame(runGameLoop)
   }
 
@@ -930,6 +946,13 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase()
+      if (gameStateRef.current === 'ready') {
+        if (key === ' ') {
+          e.preventDefault()
+          if (!e.repeat) launchGame()
+        }
+        return
+      }
       if (gameStateRef.current === 'paused') {
         if (key === ' ' || key === 'p' || key === 'enter') {
           e.preventDefault()
@@ -974,7 +997,7 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
 
   return (
     <div className="space-y-6">
-      <Card className="p-6">
+      <Card className="arcade-menu p-6">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
             <div className="p-3 rounded-full bg-primary">
@@ -1012,17 +1035,17 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
                   {language === 'da' ? 'Vælg sværhedsgrad' : language === 'fi' ? 'Valitse vaikeudet' : 'Select Difficulty'}
                 </p>
               </div>
-              <div className="flex items-center justify-center gap-4 flex-wrap">
+              <div className="grid grid-cols-2 gap-3 sm:flex sm:items-center sm:justify-center sm:gap-4 sm:flex-wrap">
                 {(Object.keys(DIFFICULTY_SETTINGS) as Difficulty[]).map((diff) => {
                   const setting = DIFFICULTY_SETTINGS[diff]
                   const Icon = setting.icon
                   const isSelected = difficulty === diff
 
                   return (
-                    <div
+                    <button type="button" aria-pressed={isSelected}
                       key={diff}
                       onClick={() => setDifficulty(diff)}
-                      className={`group relative cursor-pointer rounded-md p-6 transition-colors min-w-[140px] ${
+                      className={`group relative rounded-md p-4 sm:p-6 transition-colors min-w-0 w-full sm:w-auto sm:min-w-[140px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${
                         isSelected
                           ? `bg-secondary border-2 ${setting.borderColor}`
                           : 'bg-card border-2 border-border hover:border-primary/40'
@@ -1043,7 +1066,7 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
                           </span>
                         </div>
                       </div>
-                    </div>
+                    </button>
                   )
                 })}
               </div>
@@ -1073,7 +1096,7 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
         )}
       </Card>
 
-      {(gameState === 'playing' || gameState === 'paused') && (
+      {(gameState === 'ready' || gameState === 'playing' || gameState === 'paused') && (
         <Card className="p-0 overflow-hidden">
           <div className="relative bg-slate-900 p-6 border-b border-slate-700">
             <div className="hidden" />
@@ -1184,6 +1207,8 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
               className="absolute inset-0 pointer-events-none"
             />
 
+            {gameState === 'ready' && <ArcadeReadyOverlay onStart={launchGame} />}
+
             <AnimatePresence>
               {isShaking && (
                 <motion.div
@@ -1252,7 +1277,7 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
         </Card>
       )}
 
-      <Card className="p-6">
+      <Card className="arcade-leaderboard p-6">
         <div className="flex items-center gap-3 mb-6">
           <div className="p-3 rounded-full bg-primary">
             <Crown size={28} weight="duotone" className="text-accent-foreground" />
@@ -1277,7 +1302,7 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
 
             return (
               <div key={diff} className="space-y-3">
-                <div className={`p-4 rounded-md border-2 transition-colors ${
+                <div className={`arcade-score-column p-4 rounded-md border-2 transition-colors ${
                   userRank === 1
                     ? 'border-primary bg-primary/10'
                     : 'border-border bg-card'

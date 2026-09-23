@@ -7,6 +7,7 @@ import { useLanguage } from '@/contexts/LanguageContext'
 import { useNestedLeaderboard } from '@/hooks/useLeaderboard'
 import { useAutoPauseOnBlur } from '@/hooks/useAutoPauseOnBlur'
 import { PauseOverlay } from '@/components/PauseOverlay'
+import { ArcadeReadyOverlay } from '@/components/ArcadeReadyOverlay'
 import { recordGamePlay, scoreSaveFailedMessage, submitHighscore } from '@/lib/leaderboards'
 import { nextParticleId } from '@/lib/utils'
 import { useCrossTeamLeaderboard, mergeNestedLeaderboard, type CrossTeamEntry } from '@/hooks/useCrossTeamLeaderboard'
@@ -134,6 +135,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
   const { language } = useLanguage()
   const [difficulty, setDifficulty] = useState<Difficulty>('medium')
   const [gameState, setGameState] = useState<GameState>('menu')
+  const [awaitingFirstFlap, setAwaitingFirstFlap] = useState(false)
   const [score, setScore] = useState(0)
   const [users, setUsers] = useState<User[]>([])
   const { leaderboard: globalLeaderboard, refresh: refreshLeaderboard } = useNestedLeaderboard(LEADERBOARD_KEY, DIFFICULTIES)
@@ -544,6 +546,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
   const flap = useCallback(() => {
     if (gameStateRef.current !== 'playing') return
     startedRef.current = true
+    setAwaitingFirstFlap(false)
     birdVelocityRef.current = FLAP_VELOCITY
     flapAnimRef.current = 0
     spawnParticles(BIRD_X - 10, birdYRef.current + 6, 4, ['#ffffff', '#ffd93b'], 3, 2)
@@ -561,6 +564,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
     frameCountRef.current = 0
     shakeRef.current = 0
     startedRef.current = false
+    setAwaitingFirstFlap(true)
     flapKeyHeldRef.current = false
     gameStateRef.current = 'playing'
     setGameState('playing')
@@ -641,7 +645,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
 
   return (
     <div className="space-y-6">
-      <Card className="p-6">
+      <Card className="arcade-menu p-6">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
             <div className="p-3 rounded-full bg-primary">
@@ -679,17 +683,17 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
                   {language === 'da' ? 'Vælg sværhedsgrad' : language === 'fi' ? 'Valitse vaikeudet' : 'Select Difficulty'}
                 </p>
               </div>
-              <div className="flex items-center justify-center gap-4 flex-wrap">
+              <div className="grid grid-cols-2 gap-3 sm:flex sm:items-center sm:justify-center sm:gap-4 sm:flex-wrap">
                 {(Object.keys(DIFFICULTY_SETTINGS) as Difficulty[]).map((diff) => {
                   const setting = DIFFICULTY_SETTINGS[diff]
                   const Icon = setting.icon
                   const isSelected = difficulty === diff
 
                   return (
-                    <div
+                    <button type="button" aria-pressed={isSelected}
                       key={diff}
                       onClick={() => setDifficulty(diff)}
-                      className={`group relative cursor-pointer rounded-md p-6 transition-colors min-w-[140px] ${
+                      className={`group relative rounded-md p-4 sm:p-6 transition-colors min-w-0 w-full sm:w-auto sm:min-w-[140px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${
                         isSelected
                           ? `bg-secondary border-2 ${setting.borderColor}`
                           : 'bg-card border-2 border-border hover:border-primary/40'
@@ -710,7 +714,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
                           </span>
                         </div>
                       </div>
-                    </div>
+                    </button>
                   )
                 })}
               </div>
@@ -785,6 +789,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
                 className="cursor-pointer rounded-md border border-white/15 touch-none"
                 style={{ maxWidth: '100%', height: 'auto' }}
               />
+              {gameState === 'playing' && awaitingFirstFlap && <ArcadeReadyOverlay onStart={flap} />}
               {gameState === 'paused' && <PauseOverlay onResume={resumeGame} />}
             </div>
           </div>
@@ -823,7 +828,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
         </Card>
       )}
 
-      <Card className="p-6">
+      <Card className="arcade-leaderboard p-6">
         <div className="flex items-center gap-3 mb-6">
           <div className="p-3 rounded-full bg-primary">
             <Crown size={28} weight="duotone" className="text-accent-foreground" />
@@ -848,7 +853,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
 
             return (
               <div key={diff} className="space-y-3">
-                <div className={`p-4 rounded-md border-2 transition-colors ${
+                <div className={`arcade-score-column p-4 rounded-md border-2 transition-colors ${
                   userRank === 1
                     ? 'border-primary bg-primary/10'
                     : 'border-border bg-card'

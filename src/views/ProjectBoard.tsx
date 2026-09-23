@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
 import { ArrowLeft, Plus, User, CheckCircle, Circle, Clock, FolderOpen, MagnifyingGlass, Funnel, Trash, X, UserPlus, PencilSimple, CalendarBlank } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
@@ -60,6 +60,9 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
   // Skrivninger sker via atomare kvArrays-helpers; useKV holder listen synkroniseret.
   const [projects] = useKV<Project[]>('projects', [])
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
+  const [savingProject, setSavingProject] = useState(false)
+  const createProjectInProgress = useRef(false)
+  const pendingProject = useRef<{ id: string; createdAt: string } | null>(null)
   const [newTitle, setNewTitle] = useState('')
   const [newDescription, setNewDescription] = useState('')
   const [newDueDate, setNewDueDate] = useState('')
@@ -81,6 +84,9 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
   const [newTodoDescription, setNewTodoDescription] = useState('')
   const [newTodoDueDate, setNewTodoDueDate] = useState('')
   const [isPersonalCreateOpen, setIsPersonalCreateOpen] = useState(false)
+  const [savingPersonalTodo, setSavingPersonalTodo] = useState(false)
+  const createPersonalInProgress = useRef(false)
+  const pendingPersonalTodo = useRef<{ id: string; createdAt: string } | null>(null)
   const [editingTodo, setEditingTodo] = useState<PersonalTodo | null>(null)
   const [editTodoTitle, setEditTodoTitle] = useState('')
   const [editTodoDescription, setEditTodoDescription] = useState('')
@@ -99,8 +105,8 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
-      if (isCreateDialogOpen) { setIsCreateDialogOpen(false); return }
-      if (isPersonalCreateOpen) { setIsPersonalCreateOpen(false); return }
+      if (isCreateDialogOpen) { if (!createProjectInProgress.current) setIsCreateDialogOpen(false); return }
+      if (isPersonalCreateOpen) { if (!createPersonalInProgress.current) setIsPersonalCreateOpen(false); return }
       if (isEditProjectOpen) { setIsEditProjectOpen(false); return }
       if (isEditTodoOpen) { setIsEditTodoOpen(false); return }
       if (isAnyModalOpen()) return
@@ -111,30 +117,43 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
   }, [onNavigateBack, isCreateDialogOpen, isPersonalCreateOpen, isEditProjectOpen, isEditTodoOpen])
 
   const handleCreateProject = async () => {
+    if (createProjectInProgress.current) return
     if (!newTitle.trim()) {
       toast.error(language === 'da' ? 'Titel er påkrævet' : language === 'fi' ? 'Otsikko vaaditaan' : 'Title is required')
       return
     }
 
+    const creation = pendingProject.current || { id: newId('project'), createdAt: new Date().toISOString() }
+    pendingProject.current = creation
     const newProject: Project = {
-      id: newId('project'),
+      id: creation.id,
       title: newTitle.trim(),
       description: newDescription.trim(),
       createdBy: userEmail,
       createdByName: currentUserName,
-      createdAt: new Date().toISOString(),
+      createdAt: creation.createdAt,
       status: 'open',
       teamMembers: [],
       dueDate: newDueDate.trim() || undefined,
     }
 
-    await appendToKvArray('projects', [newProject])
-
-    setNewTitle('')
-    setNewDescription('')
-    setNewDueDate('')
-    setIsCreateDialogOpen(false)
-    toast.success(language === 'da' ? 'To-do oprettet' : language === 'fi' ? 'To-do luotu' : 'To-do created')
+    createProjectInProgress.current = true
+    setSavingProject(true)
+    try {
+      await appendToKvArray('projects', [newProject])
+      pendingProject.current = null
+      setNewTitle('')
+      setNewDescription('')
+      setNewDueDate('')
+      setIsCreateDialogOpen(false)
+      toast.success(language === 'da' ? 'To-do oprettet' : language === 'fi' ? 'To-do luotu' : 'To-do created')
+    } catch (error) {
+      console.error('Kunne ikke oprette to-do:', error)
+      toast.error(language === 'da' ? 'To-do blev ikke gemt — prøv igen' : language === 'fi' ? 'To-do ei tallentunut — yritä uudelleen' : 'To-do was not saved — please try again')
+    } finally {
+      createProjectInProgress.current = false
+      setSavingProject(false)
+    }
   }
 
   const handleJoinProject = async (projectId: string) => {
@@ -235,19 +254,29 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
   const completedProjects = getFilteredProjects().filter((p) => p.status === 'completed')
 
   const handleAddTodo = async () => {
+    if (createPersonalInProgress.current) return
     const title = newTodoTitle.trim()
     if (!title) {
       toast.error(language === 'da' ? 'Titel er påkrævet' : language === 'fi' ? 'Otsikko vaaditaan' : 'Title is required')
       return
     }
+    createPersonalInProgress.current = true
+    setSavingPersonalTodo(true)
+    const creation = pendingPersonalTodo.current || { id: newId('todo'), createdAt: new Date().toISOString() }
+    pendingPersonalTodo.current = creation
     try {
-      await createPersonalTodo(userEmail, title, newTodoDescription, newTodoDueDate)
+      await createPersonalTodo(userEmail, title, newTodoDescription, newTodoDueDate, creation)
+      pendingPersonalTodo.current = null
       setNewTodoTitle('')
       setNewTodoDescription('')
       setNewTodoDueDate('')
       setIsPersonalCreateOpen(false)
       toast.success(language === 'da' ? 'To-do oprettet' : language === 'fi' ? 'To-do luotu' : 'To-do created')
     } catch { toast.error(language === 'da' ? 'Kunne ikke tilføje to-do' : language === 'fi' ? 'Lisäys epäonnistui' : 'Could not add to-do') }
+    finally {
+      createPersonalInProgress.current = false
+      setSavingPersonalTodo(false)
+    }
   }
   const todoStatus = (todo: PersonalTodo): ProjectStatus => todo.status ?? (todo.done ? 'completed' : 'open')
   const handleStartTodo = async (id: string) => {
@@ -411,7 +440,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
     return (
       <div>
         <div className="mb-6">
-          <Dialog open={isPersonalCreateOpen} onOpenChange={setIsPersonalCreateOpen}>
+          <Dialog open={isPersonalCreateOpen} onOpenChange={(open) => { if (!createPersonalInProgress.current) { if (open) pendingPersonalTodo.current = null; setIsPersonalCreateOpen(open) } }}>
             <DialogTrigger asChild>
               <Button
                 size="lg"
@@ -432,7 +461,8 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                   <Input
                     id="todo-title"
                     value={newTodoTitle}
-                    onChange={(e) => setNewTodoTitle(e.target.value)}
+                    disabled={savingPersonalTodo}
+                    onChange={(e) => { pendingPersonalTodo.current = null; setNewTodoTitle(e.target.value) }}
                     onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void handleAddTodo() } }}
                     placeholder={language === 'da' ? 'Indtast to-do titel' : language === 'fi' ? 'Anna to-do nimi' : 'Enter to-do title'}
                   />
@@ -442,7 +472,8 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                   <Textarea
                     id="todo-description"
                     value={newTodoDescription}
-                    onChange={(e) => setNewTodoDescription(e.target.value)}
+                    disabled={savingPersonalTodo}
+                    onChange={(e) => { pendingPersonalTodo.current = null; setNewTodoDescription(e.target.value) }}
                     placeholder={language === 'da' ? 'Indtast to-do beskrivelse' : language === 'fi' ? 'Anna to-do kuvaus' : 'Enter to-do description'}
                     rows={4}
                   />
@@ -452,18 +483,20 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                   <DatePickerField
                     id="todo-due-date"
                     value={newTodoDueDate}
-                    onChange={setNewTodoDueDate}
+                    disabled={savingPersonalTodo}
+                    onChange={(date) => { pendingPersonalTodo.current = null; setNewTodoDueDate(date) }}
                   />
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setIsPersonalCreateOpen(false)}>
+                <Button variant="outline" disabled={savingPersonalTodo} onClick={() => setIsPersonalCreateOpen(false)}>
                   {language === 'da' ? 'Annuller' : language === 'fi' ? 'Peruuta' : 'Cancel'}
                 </Button>
                 <Button
                   onClick={() => void handleAddTodo()}
+                  loading={savingPersonalTodo}
                 >
-                  {language === 'da' ? 'Opret' : language === 'fi' ? 'Luo' : 'Create'}
+                  {savingPersonalTodo ? language === 'da' ? 'Gemmer…' : language === 'fi' ? 'Tallennetaan…' : 'Saving…' : language === 'da' ? 'Opret' : language === 'fi' ? 'Luo' : 'Create'}
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -813,7 +846,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
           </TabsList>
           <TabsContent value="team">
         <div className="mb-6 flex flex-col sm:flex-row gap-4">
-          <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+          <Dialog open={isCreateDialogOpen} onOpenChange={(open) => { if (!createProjectInProgress.current) { if (open) pendingProject.current = null; setIsCreateDialogOpen(open) } }}>
             <DialogTrigger asChild>
               <Button
                 size="lg"
@@ -834,7 +867,8 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                   <Input
                     id="title"
                     value={newTitle}
-                    onChange={(e) => setNewTitle(e.target.value)}
+                    disabled={savingProject}
+                    onChange={(e) => { pendingProject.current = null; setNewTitle(e.target.value) }}
                     placeholder={language === 'da' ? 'Indtast to-do titel' : language === 'fi' ? 'Anna to-do nimi' : 'Enter to-do title'}
                   />
                 </div>
@@ -843,7 +877,8 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                   <Textarea
                     id="description"
                     value={newDescription}
-                    onChange={(e) => setNewDescription(e.target.value)}
+                    disabled={savingProject}
+                    onChange={(e) => { pendingProject.current = null; setNewDescription(e.target.value) }}
                     placeholder={language === 'da' ? 'Indtast to-do beskrivelse' : language === 'fi' ? 'Anna to-do kuvaus' : 'Enter to-do description'}
                     rows={4}
                   />
@@ -853,18 +888,20 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                   <DatePickerField
                     id="due-date"
                     value={newDueDate}
-                    onChange={setNewDueDate}
+                    disabled={savingProject}
+                    onChange={(date) => { pendingProject.current = null; setNewDueDate(date) }}
                   />
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
+                <Button variant="outline" disabled={savingProject} onClick={() => setIsCreateDialogOpen(false)}>
                   {language === 'da' ? 'Annuller' : language === 'fi' ? 'Peruuta' : 'Cancel'}
                 </Button>
                 <Button
                   onClick={handleCreateProject}
+                  loading={savingProject}
                 >
-                  {language === 'da' ? 'Opret' : language === 'fi' ? 'Luo' : 'Create'}
+                  {savingProject ? language === 'da' ? 'Gemmer…' : language === 'fi' ? 'Tallennetaan…' : 'Saving…' : language === 'da' ? 'Opret' : language === 'fi' ? 'Luo' : 'Create'}
                 </Button>
               </DialogFooter>
             </DialogContent>

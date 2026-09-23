@@ -263,6 +263,6 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
     })
   }
   function forget(sender) { epochs.set(sender, (epochs.get(sender) || 0) + 1); bindings.delete(sender); attempts.delete(sender); invalidate(sender) }
-  return { login, signup, resume, current, requireRole, renew, logout, selectView, profile, forget }
+  return { login, signup, resume, current, requireRole, renew, logout, selectView, profile, forget, invalidateAll: () => contextCache.clear() }
 }
 module.exports = { createAuthService, hashPassword, verifyPassword, sessionKey, loadDeviceSecret }

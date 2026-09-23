@@ -128,6 +128,8 @@ contextBridge.exposeInMainWorld('electronUpdates', {
 contextBridge.exposeInMainWorld('electronGuides', {
   chooseExportDir: () => ipcRenderer.invoke('guides:choose-export-dir'),
   exportDocx: (payload) => ipcRenderer.invoke('guides:export-docx', payload),
+  openInWord: (payload) => ipcRenderer.invoke('guides:open-in-word', payload),
+  renderPdf: (payload) => ipcRenderer.invoke('guides:render-pdf', payload),
 })
 
 // Åbner en fil/mappe-sti i OS'ets standardprogram/Stifinder — bruges til klikbare

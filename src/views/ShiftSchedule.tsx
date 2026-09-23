@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Checkbox } from '@/components/ui/checkbox'
 import { DatePickerField } from '@/components/DatePickerField'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -83,6 +84,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
   
   const [newRoleName, setNewRoleName] = useState('')
   const [newRoleColor, setNewRoleColor] = useState('#8b5cf6')
+  const [onlyWhenAssigned, setOnlyWhenAssigned] = useState(false)
 
   const rolePlaceholder = useAutoTranslate('F.eks. Supervisor, Tekniker, Support')
   const selectEmployeePlaceholder = useAutoTranslate('Vælg medarbejder')
@@ -265,12 +267,14 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
     const newRole: ShiftRole = {
       id: Date.now().toString(),
       name: newRoleName.trim(),
-      color: newRoleColor
+      color: newRoleColor,
+      onlyWhenAssigned,
     }
 
     setRoles((current) => [...(current || []), newRole])
     setNewRoleName('')
     setNewRoleColor('#8b5cf6')
+    setOnlyWhenAssigned(false)
     setShowRoleDialog(false)
     toast.success('Rolle tilføjet')
   }
@@ -285,12 +289,13 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
     setRoles((current) => 
       (current || []).map(r => 
         r.id === editingRole.id 
-          ? { ...r, name: newRoleName.trim(), color: newRoleColor }
+          ? { ...r, name: newRoleName.trim(), color: newRoleColor, onlyWhenAssigned }
           : r
       )
     )
     setNewRoleName('')
     setNewRoleColor('#8b5cf6')
+    setOnlyWhenAssigned(false)
     setEditingRole(null)
     setShowRoleDialog(false)
     toast.success('Rolle opdateret')
@@ -363,6 +368,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
     setEditingRole(role)
     setNewRoleName(role.name)
     setNewRoleColor(role.color)
+    setOnlyWhenAssigned(role.onlyWhenAssigned === true)
     setShowRoleDialog(true)
   }
 
@@ -370,6 +376,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
     setEditingRole(null)
     setNewRoleName('')
     setNewRoleColor('#8b5cf6')
+    setOnlyWhenAssigned(false)
     setShowRoleDialog(true)
   }
 
@@ -1435,6 +1442,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
           setEditingRole(null)
           setNewRoleName('')
           setNewRoleColor('#8b5cf6')
+          setOnlyWhenAssigned(false)
         }
       }}>
         <DialogContent>
@@ -1474,6 +1482,10 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                   </button>
                 ))}
               </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <Checkbox id="role-only-when-assigned" checked={onlyWhenAssigned} onCheckedChange={(checked) => setOnlyWhenAssigned(checked === true)} />
+              <Label htmlFor="role-only-when-assigned"><AutoText text="Vis kun i Hub, når nogen er sat på opgaven" /></Label>
             </div>
             <Button onClick={editingRole ? handleUpdateRole : handleAddRole} className="w-full">
               <AutoText text={editingRole ? 'Gem Ændringer' : 'Opret Rolle'} />

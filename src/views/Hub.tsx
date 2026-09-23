@@ -37,6 +37,7 @@ import { personalTodosKey, type PersonalTodo } from '@/lib/personalTodos'
 import type { Project } from '@/views/ProjectBoard'
 import { appendToKvArray, removeFromKvArray, upsertInKvArray } from '@/lib/kvArrays'
 import { expandShiftPatterns } from '@/lib/shiftPatterns'
+import { buildHubTasks } from '@/lib/hubTasks'
 
 interface HubModule {
   id: string
@@ -212,10 +213,6 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
     () => teamStatusRows.filter((row) => row.status === 'working' || row.status === 'available').length,
     [teamStatusRows],
   )
-  const unassignedTaskCount = useMemo(
-    () => (teamTasks || []).filter((task) => task.people.length === 0).length,
-    [teamTasks],
-  )
   const awayToday = useMemo(
     () => teamStatusRows.filter((row) => row.status === 'sick' || row.status === 'vacation').map((row) => row.name.split(' ')[0]),
     [teamStatusRows],
@@ -226,6 +223,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
   const [otherTeamsOff, setOtherTeamsOff] = useCachedState<Array<{ name: string; teamCode: string }>>(`hub:otherTeamsOff:${userEmail}`, [])
   const [otherTeamsSick, setOtherTeamsSick] = useCachedState<Array<{ name: string; teamCode: string }>>(`hub:otherTeamsSick:${userEmail}`, [])
   const [otherTeamsHomeOffice, setOtherTeamsHomeOffice] = useCachedState<Array<{ name: string; teamCode: string }>>(`hub:otherTeamsHomeOffice:${userEmail}`, [])
+  const [crossTeamOverviewError, setCrossTeamOverviewError] = useState(false)
   
   const [showQuickAssignDialog, setShowQuickAssignDialog] = useState(false)
   const [selectedTaskForAssign, setSelectedTaskForAssign] = useState<{ roleId: string; roleName: string } | null>(null)
@@ -253,46 +251,59 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
   useEffect(() => {
     // Lav frekvens (kun ved mount + hvert 5. minut) — dette er tværgående læsninger fra ANDRE
     // teams' mapper, ikke lokal reaktiv KV-state, så det giver ikke mening at polle sekundært.
+    let inFlight = false
+    let cancelled = false
     const loadCrossTeamOverview = async () => {
-      if (!window.electronRegistry) return
-      const [allTeams, currentTeam] = await Promise.all([
-        window.electronRegistry.listTeams(),
-        window.electronRegistry.getCurrentTeam(),
-      ])
-      const others = allTeams.filter(team => team.teamId !== currentTeam?.teamId)
-      setHasOtherTeams(others.length > 0)
-      if (others.length === 0) return
+      if (!window.electronRegistry || inFlight || cancelled) return
+      inFlight = true
+      try {
+        const [allTeams, currentTeam] = await Promise.all([
+          window.electronRegistry.listTeams(),
+          window.electronRegistry.getCurrentTeam(),
+        ])
+        if (cancelled) return
+        const others = allTeams.filter(team => team.teamId !== currentTeam?.teamId)
+        setHasOtherTeams(others.length > 0)
+        if (others.length === 0) { setCrossTeamOverviewError(false); return }
 
-      const today = new Date()
-      const off: Array<{ name: string; teamCode: string }> = []
-      const sick: Array<{ name: string; teamCode: string }> = []
-      const homeOffice: Array<{ name: string; teamCode: string }> = []
+        const today = new Date()
+        const off: Array<{ name: string; teamCode: string }> = []
+        const sick: Array<{ name: string; teamCode: string }> = []
+        const homeOffice: Array<{ name: string; teamCode: string }> = []
 
-      // Fri/syg viser fortsat kun de andre teams, mens Home Office-kortet bevidst
-      // samler BÅDE eget team og de andre teams, så hele Supply Chain ses ét sted.
-      const teamResults = await window.electronRegistry.readTeamsKeys(allTeams.map(team => ({
-        folderName: team.folderName,
-        keys: ['users', 'vacation-entries', 'sick-leave-entries', 'home-office-patterns', 'home-office-exceptions'],
-      })))
-      allTeams.forEach((team, index) => {
-        const [teamUsers, teamVacations, teamSickLeave, teamPatterns, teamExceptions] = teamResults[index] as [Record<string, { fullName: string }>, VacationEntry[], SickLeaveEntry[], Record<string, HomeOfficePattern>, HomeOfficeException[]]
-        const isOtherTeam = team.teamId !== currentTeam?.teamId
-        if (isOtherTeam) {
-          for (const name of computeOffToday(teamUsers, teamVacations, today)) off.push({ name, teamCode: team.abbreviation || team.teamId })
-          for (const name of computeSickToday(teamUsers, teamSickLeave, today)) sick.push({ name, teamCode: team.abbreviation || team.teamId })
+        // Fri/syg viser fortsat kun de andre teams, mens Home Office-kortet bevidst
+        // samler BÅDE eget team og de andre teams, så hele Supply Chain ses ét sted.
+        const teamResults = await window.electronRegistry.readTeamsKeys(allTeams.map(team => ({
+          folderName: team.folderName,
+          keys: ['users', 'vacation-entries', 'sick-leave-entries', 'home-office-patterns', 'home-office-exceptions'],
+        })))
+        if (cancelled) return
+        allTeams.forEach((team, index) => {
+          const [teamUsers, teamVacations, teamSickLeave, teamPatterns, teamExceptions] = teamResults[index] as [Record<string, { fullName: string }>, VacationEntry[], SickLeaveEntry[], Record<string, HomeOfficePattern>, HomeOfficeException[]]
+          const isOtherTeam = team.teamId !== currentTeam?.teamId
+          if (isOtherTeam) {
+            for (const name of computeOffToday(teamUsers, teamVacations, today)) off.push({ name, teamCode: team.abbreviation || team.teamId })
+            for (const name of computeSickToday(teamUsers, teamSickLeave, today)) sick.push({ name, teamCode: team.abbreviation || team.teamId })
+          }
+          const homeOfficeEmails = getHomeOfficeUsersForDate(Object.keys(teamUsers || {}), today, teamPatterns, teamExceptions)
+          for (const email of homeOfficeEmails) homeOffice.push({ name: teamUsers?.[email]?.fullName || email, teamCode: team.abbreviation || team.teamId })
+        })
+
+        setOtherTeamsOff(off)
+        setOtherTeamsSick(sick)
+        setOtherTeamsHomeOffice(homeOffice)
+        setCrossTeamOverviewError(false)
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Kunne ikke opdatere tværteam-overblik:', error)
+          setCrossTeamOverviewError(true)
         }
-        const homeOfficeEmails = getHomeOfficeUsersForDate(Object.keys(teamUsers || {}), today, teamPatterns, teamExceptions)
-        for (const email of homeOfficeEmails) homeOffice.push({ name: teamUsers?.[email]?.fullName || email, teamCode: team.abbreviation || team.teamId })
-      })
-
-      setOtherTeamsOff(off)
-      setOtherTeamsSick(sick)
-      setOtherTeamsHomeOffice(homeOffice)
+      } finally { inFlight = false }
     }
 
     loadCrossTeamOverview()
     const interval = setInterval(loadCrossTeamOverview, 5 * 60 * 1000)
-    return () => clearInterval(interval)
+    return () => { cancelled = true; clearInterval(interval) }
   }, [])
 
   useEffect(() => {
@@ -369,49 +380,12 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
         ...expandShiftPatterns(shiftPatterns, assignments, today, email => isSickToday(email) || isOnVacationToday(email)),
       ]
       
-      const taskPeopleMap: Record<string, { color: string; people: Array<{ name: string; comment?: string }>; roleId: string }> = {}
-      
-      roles.forEach(role => {
-        taskPeopleMap[role.name] = {
-          color: role.color,
-          people: [],
-          roleId: role.id
-        }
-      })
-      
-      todaysAssignments.forEach(assignment => {
-        const role = roles.find(r => r.id === assignment.roleId)
-        const roleName = role?.name || 'Unknown'
-        
+      const assignedPeople = todaysAssignments.flatMap(assignment => {
         const userEmail = Object.keys(usersData).find(email => usersData[email]?.fullName === assignment.employeeName)
-        
-        if (!userEmail) {
-          return
-        }
-        
-        if (isSickToday(userEmail) || isOnVacationToday(userEmail)) {
-          return
-        }
-        
-        if (taskPeopleMap[roleName]) {
-          const existingPerson = taskPeopleMap[roleName].people.find(p => p.name === assignment.employeeName)
-          if (!existingPerson) {
-            taskPeopleMap[roleName].people.push({
-              name: assignment.employeeName,
-              comment: assignment.comment
-            })
-          }
-        }
+        if (!userEmail || isSickToday(userEmail) || isOnVacationToday(userEmail)) return []
+        return [{ roleId: assignment.roleId, name: assignment.employeeName, comment: assignment.comment }]
       })
-      
-      const teamTasksList = Object.entries(taskPeopleMap).map(([taskName, data]) => ({
-        taskName,
-        taskColor: data.color,
-        people: data.people,
-        roleId: data.roleId
-      }))
-      
-      setTeamTasks(teamTasksList)
+      setTeamTasks(buildHubTasks(roles, assignedPeople))
       
       const users = Object.entries(usersData).map(([email, data]) => ({
         email,
@@ -1015,14 +989,6 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                   {language === 'da' ? 'på arbejde' : language === 'fi' ? 'töissä' : 'at work'}
                 </p>
               </div>
-              {unassignedTaskCount > 0 && (
-                <div>
-                  <p className="text-4xl sm:text-5xl font-light leading-none text-attention">{unassignedTaskCount}</p>
-                  <p className="mt-1.5 text-xs font-medium text-primary-foreground/90">
-                    {language === 'da' ? 'uden bemanding' : language === 'fi' ? 'ilman miehitystä' : 'unstaffed'}
-                  </p>
-                </div>
-              )}
               {awayToday.length > 0 && (
                 <div className="max-w-xs">
                   <p className="text-xs font-medium text-primary-foreground/90">
@@ -1368,6 +1334,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
             </Card>}
           </div>
 
+          {crossTeamOverviewError && <p role="status" className="mt-4 flex items-center gap-2 text-sm text-destructive"><Warning size={16} aria-hidden="true" />{t.hub.overview.crossTeamLoadFailed}</p>}
           {hasOtherTeams && (dashboardWidget('supplyOff').visible || dashboardWidget('supplyHomeOffice').visible || dashboardWidget('supplySick').visible) && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 mt-4 md:mt-6">
               {dashboardWidget('supplyOff').visible && <Card className={cn("p-4 md:p-5 bg-card", dashboardSizeClass('supplyOff'))}>
