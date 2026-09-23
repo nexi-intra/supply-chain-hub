@@ -24,8 +24,6 @@ function fixture() {
       'guide-versions-g1': [{ version: '1.01', changeNote: 'OLD_CHANGE', snapshot: { content: 'OLD_VERSION_SECRET' } }],
       'hub-dashboard-me@test': { teamTasks: { visible: false, size: 'compact' } },
       'hub-dashboard-peer@test': { teamTasks: { visible: true, size: 'large', content: 'OTHER_SETTINGS_SECRET' } },
-      'active-theme-me@test': 'own-theme',
-      'custom-themes': [{ id: 'own-theme', name: 'Own theme', colors: { primary: '#123456' } }],
       'shift-assignments': [{ id: 'shift1', employeeId: 'me@test', roleId: 'role1', date: '2026-09-02', comment: 'SHIFT_PRIVATE_COMMENT' }],
       'shift-roles': [{ id: 'role1', name: 'Synthetic shift role' }],
     },
@@ -264,14 +262,14 @@ test('guide reviews, archives and version history honor reviewer/author permissi
   stores.ONE['guide-admin-emails'] = []
   assert.throws(() => api.getRecord({ token: 'valid', moduleId: 'reviews', recordId: 'review:r2', teamId: 'ONE' }), /ikke adgang/)
 })
-test('dashboard/theme queries use only own settings and explicitly projected fields', () => {
+test('dashboard queries use only own settings and explicitly projected fields', () => {
   const { query, reads } = fixture()
   const answer = query('dashboard widgets')
   assert.match(answer.text, /Skjult/)
   assert.match(answer.text, /compact/)
-  assert.match(answer.text, /own-theme/)
   assert.ok(!JSON.stringify(answer).includes('OTHER_SETTINGS_SECRET'))
   assert.ok(!reads.includes('ONE:hub-dashboard-peer@test'))
+  assert.ok(!reads.some(key => /active-theme|custom-themes/.test(key)))
 })
 test('announcements, module catalog and not-yet-implemented modules return supported facts', () => {
   const { query } = fixture()

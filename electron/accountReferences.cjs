@@ -4,7 +4,7 @@ const ID_FIELDS = new Set(['userId', 'employeeId', 'ownerId', 'authorId', 'creat
 const EMAIL_LISTS = new Set(['userEmails', 'recipients', 'cc', 'bcc', 'mentionedUsers', 'allowedUsers', 'sharedWith', 'teamMembers'])
 const EMAIL_ROOT_LISTS = new Set(['guide-admin-emails'])
 const KEYED_ROOTS = new Set(['home-office-patterns', 'user-settings', 'client-versions', 'force-update-requests', 'guide-review-notice-log'])
-const PERSONAL_PREFIXES = ['app-language-', 'user-theme-', 'active-theme-', 'hub-dashboard-', 'announcements-dismissed-', 'seen-vacation-requests-']
+const PERSONAL_PREFIXES = ['app-language-', 'user-theme-', 'hub-dashboard-', 'announcements-dismissed-', 'seen-vacation-requests-']
 function conflict() { const error = new Error('ACCOUNT_MIGRATION_CONFLICT'); error.code = 'ACCOUNT_MIGRATION_CONFLICT'; throw error }
 function personalKey(key, oldEmail, newEmail) {
   for (const prefix of PERSONAL_PREFIXES) {

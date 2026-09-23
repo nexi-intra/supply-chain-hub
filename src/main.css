@@ -81,9 +81,7 @@
   --muted: oklch(0.962 0.005 265);
   --muted-foreground: oklch(0.505 0.022 268);
   
-  /* accent er husets anden MAERKEFARVE - "i dag", afventende, fremhaevet.
-     Den er ikke en hover-flade, og brugeren kan selv vaelge den i
-     Temabyggeren. Derfor skal den vaere en farve, ogsaa i moerk tilstand. */
+  /* accent er husets anden maerkefarve ("i dag", afventende) - ikke en hover-flade. */
   --accent: oklch(0.465 0.175 268);
   --accent-foreground: oklch(0.99 0 0);
   
