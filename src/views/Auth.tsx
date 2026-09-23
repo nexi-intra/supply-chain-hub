@@ -288,14 +288,14 @@ export function Auth({ onAuthenticated }: AuthProps) {
               <img src={nexiLogo} alt="Nexi" className="relative h-12 sm:h-14 md:h-16 w-auto dark:hidden" />
               <img src={nexiLogoWhite} alt="Nexi" className="relative h-12 sm:h-14 md:h-16 w-auto hidden dark:block" />
             </motion.div>
-            <h1 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight leading-normal bg-gradient-to-br from-primary to-accent bg-clip-text text-transparent pb-1 mb-2">Supply Chain Hub</h1>
+            <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight text-foreground mb-2">Supply Chain Hub</h1>
             <p className="text-muted-foreground text-sm sm:text-base">
               {mode === 'login' ? t.auth.loginSubtitle : t.auth.signupSubtitle}
             </p>
           </div>
 
-          <Card className="p-8 border-2 shadow-xl relative overflow-hidden">
-            <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-primary via-accent to-primary" />
+          <Card className="p-8 relative overflow-hidden">
+            <div className="absolute top-0 left-0 right-0 h-1 bg-primary" />
             <form onSubmit={handleSubmit} className="space-y-5">
               {mode === 'signup' && (
                 <div className="space-y-2">
@@ -409,7 +409,7 @@ export function Auth({ onAuthenticated }: AuthProps) {
               <Button
                 type="submit"
                 size="lg"
-                className="w-full bg-gradient-to-r from-primary to-accent text-primary-foreground font-semibold shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
+                className="w-full font-semibold"
                 disabled={isLoading}
               >
                 {isLoading ? t.auth.processing : mode === 'login' ? t.auth.login : t.auth.createAccount}

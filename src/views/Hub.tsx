@@ -1092,29 +1092,21 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
         onOpenChange={setShowEmailNotifications}
         userEmail={userEmail}
       />
-      <div className="container mx-auto px-4 sm:px-6 pt-56 sm:pt-60 pb-12 sm:pb-20 max-w-7xl relative z-10">
-        <motion.header 
-          className="text-center mb-10 sm:mb-12"
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6 }}
-        >
-          <motion.div
-            initial={{ scale: 0.8, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={{ duration: 0.5, delay: 0.2 }}
-            className="relative flex justify-center mb-6"
-          >
-            <img src={nexiLogo} alt="Nexi" className="relative h-10 sm:h-12 md:h-14 w-auto dark:hidden" />
-            <img src={nexiLogoWhite} alt="Nexi" className="relative h-10 sm:h-12 md:h-14 w-auto hidden dark:block" />
-          </motion.div>
-          <motion.h1 
-            className="text-2xl sm:text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight leading-normal bg-gradient-to-br from-primary to-accent bg-clip-text text-transparent pb-1 mb-4"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3, duration: 0.6 }}
-          >{teamName}</motion.h1>
-        </motion.header>
+      <div className="container mx-auto px-4 sm:px-6 pt-28 sm:pt-32 pb-12 sm:pb-20 max-w-7xl relative z-10">
+        {/* Her stod tidligere teamets navn i 60 px gradient-tekst med logoet over.
+            Det skubbede det foerste rigtige indhold 578 px ned paa en 747 px
+            skaerm - 77 % af foerste skaermbillede var pynt. Nu er toppen een
+            linje, der ogsaa fortaeller hvad dagen er. */}
+        <header className="mb-8 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 border-b pb-4">
+          <div className="flex items-baseline gap-3">
+            <img src={nexiLogo} alt="Nexi" className="h-5 w-auto translate-y-[2px] dark:hidden" />
+            <img src={nexiLogoWhite} alt="Nexi" className="h-5 w-auto translate-y-[2px] hidden dark:block" />
+            <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground">{teamName}</h1>
+          </div>
+          <p className="text-sm text-muted-foreground first-letter:uppercase">
+            {new Date().toLocaleDateString(language === 'da' ? 'da-DK' : language === 'fi' ? 'fi-FI' : 'en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}
+          </p>
+        </header>
 
         <AnnouncementsBoard userEmail={userEmail} userName={currentUserName} canPost={isAdminOrManager} />
 
@@ -1132,11 +1124,11 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
           </div>
           {dashboardWidget('teamTasks').visible && <Card className={cn("p-5 md:p-7 bg-card border-2 hover:border-primary/40 transition-all duration-300 mb-4 md:mb-6", dashboardSizeClass('teamTasks'))}>
             <div className="flex items-center gap-3 md:gap-4 mb-5 md:mb-7">
-              <div className="p-2 md:p-2.5 rounded-lg bg-gradient-to-br from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)]">
-                <Users size={24} weight="duotone" className="text-white md:hidden" />
-                <Users size={28} weight="duotone" className="text-white hidden md:block" />
+              <div className="p-2 md:p-2.5 rounded-md bg-secondary text-primary">
+                <Users size={24} weight="duotone" className="md:hidden" />
+                <Users size={28} weight="duotone" className="hidden md:block" />
               </div>
-              <h3 className="text-lg md:text-xl lg:text-2xl font-bold text-foreground text-center flex-1">{t.hub.overview.teamTasks || 'Team opgaver i dag'}</h3>
+              <h3 className="text-base md:text-lg font-semibold text-foreground">{t.hub.overview.teamTasks || 'Team opgaver i dag'}</h3>
             </div>
             {teamTasks.length === 0 ? (
               <p className="text-muted-foreground text-sm md:text-base text-center py-2">{t.hub.overview.noTasks}</p>
@@ -1149,28 +1141,22 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: idx * 0.05 }}
                     className={cn(
-                      "flex flex-col gap-2 p-3 rounded-xl border-2 shadow-sm transition-all duration-300",
-                      task.people.length === 0 
-                        ? "bg-gradient-to-br from-amber-50 to-amber-100 border-amber-400 dark:from-amber-950/40 dark:to-amber-900/30 dark:border-amber-600" 
-                        : "bg-gradient-to-br from-card to-muted/30 border-border hover:border-primary/30 hover:shadow-md"
+                      "flex flex-col gap-2 p-3 pl-3.5 rounded-md border transition-colors",
+                      task.people.length === 0
+                        ? "bg-attention-surface border-attention/35"
+                        : "bg-card border-border hover:border-primary/40"
                     )}
+                    // Opgavens egen farve ligger i kanten som fanen paa et kartotekskort,
+                    // i stedet for bag navnet. Saa kan navnet staa i ren tekst og vaere
+                    // laesbart, mens farven stadig kan ses paa en armslaengdes afstand.
+                    style={{ borderLeft: `4px solid ${task.taskColor}` }}
                   >
-                    <div className="flex items-center justify-center gap-3 pb-2 border-b-2"
-                      style={{ borderColor: task.taskColor + '40' }}
-                    >
-                      <Badge
-                        className="text-white text-xs md:text-sm font-bold px-3 py-1 shadow-sm"
-                        style={{ 
-                          backgroundColor: task.taskColor,
-                          boxShadow: `0 2px 8px ${task.taskColor}40`
-                        }}
-                      >
-                        {task.taskName}
-                      </Badge>
+                    <div className="pb-2 border-b">
+                      <span className="text-sm font-semibold text-foreground">{task.taskName}</span>
                     </div>
                     {task.people.length === 0 ? (
                       <div className="flex flex-col gap-1.5">
-                        <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400 py-1 justify-center">
+                        <div className="flex items-center gap-2 text-attention py-1">
                           <Warning size={16} weight="fill" />
                           <span className="text-xs md:text-sm font-semibold">{language === 'da' ? 'Ingen tildelt' : language === 'fi' ? 'Ketään ei ole määrätty.' : 'No one assigned'}</span>
                         </div>
@@ -1263,11 +1249,11 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
 
           {dashboardWidget('teamStatus').visible && <Card className={cn("p-5 md:p-7 bg-card border-2 hover:border-primary/40 transition-all duration-300 mb-4 md:mb-6", dashboardSizeClass('teamStatus'))}>
             <div className="flex items-center gap-3 md:gap-4 mb-5 md:mb-7">
-              <div className="p-2 md:p-2.5 rounded-lg bg-gradient-to-br from-[oklch(0.50_0.15_262)] to-[oklch(0.58_0.12_255)]">
-                <UsersThree size={24} weight="duotone" className="text-white md:hidden" />
-                <UsersThree size={28} weight="duotone" className="text-white hidden md:block" />
+              <div className="p-2 md:p-2.5 rounded-md bg-secondary text-primary">
+                <UsersThree size={24} weight="duotone" className="md:hidden" />
+                <UsersThree size={28} weight="duotone" className="hidden md:block" />
               </div>
-              <h3 className="text-lg md:text-xl lg:text-2xl font-bold text-foreground text-center flex-1">
+              <h3 className="text-base md:text-lg font-semibold text-foreground">
                 {language === 'da' ? 'Team status i dag' : language === 'fi' ? 'Tiimin tilanne tänään' : 'Team status today'}
               </h3>
             </div>
@@ -1392,9 +1378,9 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
             {dashboardWidget('offToday').visible && <Card className={cn("p-4 md:p-6 bg-card border-2 hover:border-primary/40 transition-all duration-300", dashboardSizeClass('offToday'))}>
               <div className="flex items-center justify-center gap-2 md:gap-3 mb-3 md:mb-4">
-                <div className="p-1.5 md:p-2 rounded-lg bg-gradient-to-br from-[oklch(0.50_0.15_262)] to-[oklch(0.58_0.12_255)]">
-                  <Calendar size={20} weight="duotone" className="text-white md:hidden" />
-                  <Calendar size={24} weight="duotone" className="text-white hidden md:block" />
+                <div className="p-1.5 md:p-2 rounded-md bg-secondary text-primary">
+                  <Calendar size={20} weight="duotone" className="md:hidden" />
+                  <Calendar size={24} weight="duotone" className="hidden md:block" />
                 </div>
                 <h3 className="text-base md:text-lg font-semibold text-foreground">{t.hub.overview.offToday}</h3>
               </div>
@@ -1415,9 +1401,9 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
 
             {dashboardWidget('todaysMeal').visible && <Card className={cn("p-4 md:p-6 bg-card border-2 hover:border-primary/40 transition-all duration-300", dashboardSizeClass('todaysMeal'))}>
               <div className="flex items-center justify-center gap-2 md:gap-3 mb-3 md:mb-4">
-                <div className="p-1.5 md:p-2 rounded-lg bg-gradient-to-br from-[oklch(0.55_0.11_245)] to-[oklch(0.60_0.09_240)]">
-                  <ForkKnife size={20} weight="duotone" className="text-white md:hidden" />
-                  <ForkKnife size={24} weight="duotone" className="text-white hidden md:block" />
+                <div className="p-1.5 md:p-2 rounded-md bg-secondary text-primary">
+                  <ForkKnife size={20} weight="duotone" className="md:hidden" />
+                  <ForkKnife size={24} weight="duotone" className="hidden md:block" />
                 </div>
                 <h3 className="text-base md:text-lg font-semibold text-foreground">{t.hub.overview.todaysMeal}</h3>
               </div>
@@ -1430,9 +1416,9 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
 
             {dashboardWidget('sickToday').visible && <Card className={cn("p-4 md:p-6 bg-card border-2 hover:border-primary/40 transition-all duration-300", dashboardSizeClass('sickToday'))}>
               <div className="flex items-center justify-center gap-2 md:gap-3 mb-3 md:mb-4">
-                <div className="p-1.5 md:p-2 rounded-lg bg-gradient-to-br from-[oklch(0.55_0.16_25)] to-[oklch(0.60_0.13_30)]">
-                  <FirstAidKit size={20} weight="duotone" className="text-white md:hidden" />
-                  <FirstAidKit size={24} weight="duotone" className="text-white hidden md:block" />
+                <div className="p-1.5 md:p-2 rounded-md bg-blocked-surface text-blocked">
+                  <FirstAidKit size={20} weight="duotone" className="md:hidden" />
+                  <FirstAidKit size={24} weight="duotone" className="hidden md:block" />
                 </div>
                 <h3 className="text-base md:text-lg font-semibold text-foreground">{t.hub.overview.sickToday}</h3>
               </div>
@@ -1456,9 +1442,9 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 mt-4 md:mt-6">
               {dashboardWidget('supplyOff').visible && <Card className={cn("p-4 md:p-6 bg-card border-2 hover:border-primary/40 transition-all duration-300", dashboardSizeClass('supplyOff'))}>
                 <div className="flex items-center justify-center gap-2 md:gap-3 mb-3 md:mb-4">
-                  <div className="p-1.5 md:p-2 rounded-lg bg-gradient-to-br from-[oklch(0.52_0.13_252)] to-[oklch(0.58_0.11_248)]">
-                    <Buildings size={20} weight="duotone" className="text-white md:hidden" />
-                    <Buildings size={24} weight="duotone" className="text-white hidden md:block" />
+                  <div className="p-1.5 md:p-2 rounded-md bg-secondary text-primary">
+                    <Buildings size={20} weight="duotone" className="md:hidden" />
+                    <Buildings size={24} weight="duotone" className="hidden md:block" />
                   </div>
                   <h3 className="text-base md:text-lg font-semibold text-foreground">{t.hub.overview.offInSupplyChain}</h3>
                 </div>
@@ -1479,9 +1465,9 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
 
               {dashboardWidget('supplyHomeOffice').visible && <Card className={cn("p-4 md:p-6 bg-card border-2 hover:border-primary/40 transition-all duration-300", dashboardSizeClass('supplyHomeOffice'))}>
                 <div className="flex items-center justify-center gap-2 md:gap-3 mb-3 md:mb-4">
-                  <div className="p-1.5 md:p-2 rounded-lg bg-gradient-to-br from-[oklch(0.55_0.11_245)] to-[oklch(0.60_0.09_240)]">
-                    <House size={20} weight="duotone" className="text-white md:hidden" />
-                    <House size={24} weight="duotone" className="text-white hidden md:block" />
+                  <div className="p-1.5 md:p-2 rounded-md bg-secondary text-primary">
+                    <House size={20} weight="duotone" className="md:hidden" />
+                    <House size={24} weight="duotone" className="hidden md:block" />
                   </div>
                   <h3 className="text-base md:text-lg font-semibold text-foreground">{t.hub.overview.homeOfficeInSupplyChain}</h3>
                 </div>
@@ -1502,9 +1488,9 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
 
               {dashboardWidget('supplySick').visible && <Card className={cn("p-4 md:p-6 bg-card border-2 hover:border-primary/40 transition-all duration-300", dashboardSizeClass('supplySick'))}>
                 <div className="flex items-center justify-center gap-2 md:gap-3 mb-3 md:mb-4">
-                  <div className="p-1.5 md:p-2 rounded-lg bg-gradient-to-br from-[oklch(0.55_0.16_25)] to-[oklch(0.60_0.13_30)]">
-                    <Buildings size={20} weight="duotone" className="text-white md:hidden" />
-                    <Buildings size={24} weight="duotone" className="text-white hidden md:block" />
+                  <div className="p-1.5 md:p-2 rounded-md bg-blocked-surface text-blocked">
+                    <Buildings size={20} weight="duotone" className="md:hidden" />
+                    <Buildings size={24} weight="duotone" className="hidden md:block" />
                   </div>
                   <h3 className="text-base md:text-lg font-semibold text-foreground">{t.hub.overview.sickInSupplyChain}</h3>
                 </div>
