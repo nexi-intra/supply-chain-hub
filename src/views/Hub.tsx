@@ -1443,7 +1443,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
         </motion.div>
 
         <motion.div 
-          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"
+          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 auto-rows-fr gap-4"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.5, duration: 0.6 }}
@@ -1452,20 +1452,33 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
             return (
               <motion.div
                 key={module.id}
+                className="h-full"
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.5 + index * 0.05, duration: 0.4 }}
               >
                 <motion.div
+                  className="h-full"
                   initial={cardAnimation.initial}
                   whileHover={cardAnimation.hover}
                   whileTap={cardAnimation.tap}
                   transition={cardAnimation.transition}
                 >
                   <Card
-                    className="module-tile relative overflow-hidden py-0 transition-colors duration-200 group h-full flex flex-col cursor-pointer"
+                    className="module-tile relative overflow-hidden py-0 transition-colors duration-200 group h-full flex flex-col cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                     style={{ ['--module-color' as string]: module.color }}
                     onClick={() => handleModuleClick(module.id)}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={module.title}
+                    onKeyDown={event => {
+                      // Felterne her ER appens hovedmenu. De var rene div'er med
+                      // et klik paa, saa man kunne ikke naa dem med tastaturet.
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        handleModuleClick(module.id)
+                      }
+                    }}
                   >
                     {module.id === 'email' && unreadInboxCount > 0 && (
                       <Badge className="absolute top-4 right-4 md:top-5 md:right-5 z-10 bg-[oklch(0.55_0.16_25)] text-white px-3 py-1.5 md:px-4 md:py-2 text-xs max-w-[calc(100%-2rem)] text-center whitespace-nowrap">

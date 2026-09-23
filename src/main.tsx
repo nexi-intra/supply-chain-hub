@@ -1,5 +1,6 @@
 import { createRoot } from 'react-dom/client'
 import { ErrorBoundary } from "react-error-boundary";
+import { MotionConfig } from 'framer-motion'
 import { localKv } from './lib/localKvStore'
 import { createElectronKv } from './lib/electronKvBridge'
 import { withErrorToast } from './lib/kvErrorToast'
@@ -34,7 +35,11 @@ async function bootstrap() {
 
   createRoot(document.getElementById('root')!).render(
     <ErrorBoundary FallbackComponent={ErrorFallback}>
-      <App />
+      {/* Har brugeren slaaet bevaegelse fra i Windows, skal hele appen
+          respektere det - ikke bare de to baggrundsklasser vi engang havde. */}
+      <MotionConfig reducedMotion="user">
+        <App />
+      </MotionConfig>
     </ErrorBoundary>
   )
 }

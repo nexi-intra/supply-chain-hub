@@ -43,32 +43,16 @@
   }
 }
 
-/* Baggrunds-animationer: kun transform/opacity, så de kører på compositoren
-   uden main-thread-arbejde. Bruges af AnimatedBackground. */
-@keyframes bg-float {
-  0%, 100% { transform: translateY(0) rotate(0deg) scale(1); }
-  50% { transform: translateY(-80px) rotate(180deg) scale(1.15); }
-}
-
-@keyframes bg-glow {
-  0%, 100% { transform: scale(1); opacity: 0.55; }
-  50% { transform: scale(1.18); opacity: 1; }
-}
-
-.bg-floating-shape {
-  animation: bg-float 30s ease-in-out infinite;
-  will-change: transform;
-}
-
-.bg-glow-orb {
-  animation: bg-glow 12s ease-in-out infinite;
-  will-change: transform, opacity;
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .bg-floating-shape,
-  .bg-glow-orb {
-    animation: none;
+  /* Framer Motion haandteres af <MotionConfig reducedMotion="user"> i main.tsx.
+     Her tager vi de rene css-overgange og -animationer. */
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 
