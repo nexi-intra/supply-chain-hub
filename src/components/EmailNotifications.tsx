@@ -140,7 +140,7 @@ export function EmailNotifications({ open, onOpenChange, userEmail }: EmailNotif
       <DialogContent className="sm:max-w-[900px] max-h-[80vh]">
         <DialogHeader>
           <div className="flex items-center gap-3 mb-2">
-            <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)] flex items-center justify-center">
+            <div className="h-12 w-12 rounded-md bg-secondary text-primary flex items-center justify-center">
               <Envelope size={24} weight="duotone" className="text-white" />
             </div>
             <div>

@@ -1082,7 +1082,7 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
                 <div className="relative group">
                   <div className="hidden" />
                   <div className="relative px-6 py-3 rounded-md bg-white/10 border border-white/20">
-                    <div className="text-[10px] text-primary-foreground/70 uppercase tracking-widest font-bold mb-1 flex items-center gap-1">
+                    <div className="text-[11px] text-primary-foreground/70 font-semibold mb-1 flex items-center gap-1">
                       <Trophy size={12} weight="fill" />
                       {language === 'da' ? 'Point' : language === 'fi' ? 'Pistemäärä' : 'Score'}
                     </div>
@@ -1094,7 +1094,7 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
 
                 <div className="relative group">
                   <div className="relative px-5 py-3 rounded-md bg-white/10 border border-white/20">
-                    <div className="text-[10px] text-accent-foreground/70 uppercase tracking-widest font-bold mb-1">
+                    <div className="text-[11px] text-accent-foreground/70 font-semibold mb-1">
                       {language === 'da' ? 'Bølge' : language === 'fi' ? 'Aalto' : 'Wave'}
                     </div>
                     <div className="text-4xl font-bold text-yellow-400">
@@ -1105,7 +1105,7 @@ export function EndlessDodger({ userEmail = 'guest@example.com' }: EndlessDodger
 
                 <div className="relative group">
                   <div className="relative px-5 py-3 rounded-md bg-white/10 border border-white/20">
-                    <div className="text-[10px] text-destructive-foreground/70 uppercase tracking-widest font-bold mb-1">
+                    <div className="text-[11px] text-destructive-foreground/70 font-semibold mb-1">
                       {language === 'da' ? 'Liv' : language === 'fi' ? 'Elämä' : 'Lives'}
                     </div>
                     <div className="flex items-center gap-1 mt-1">

@@ -174,7 +174,7 @@ export function GuideReviewDashboard({
     const canApprove = canActAsReviewer
     const previewGuide = request.proposedGuide || request.baseGuide
     return (
-      <Card key={request.id} className="p-5 border-2 space-y-4">
+      <Card key={request.id} className="p-5 space-y-4">
         <div className="flex flex-col md:flex-row md:items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2 mb-1">
@@ -215,7 +215,7 @@ export function GuideReviewDashboard({
           </details>
         )}
         {request.action === 'delete' && (
-          <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-4 flex gap-3">
+          <div className="rounded-md border border-destructive/40 bg-destructive/10 p-4 flex gap-3">
             <Warning size={22} className="text-destructive shrink-0" />
             <p className="text-sm">{da ? 'Den udgivne guide bliver arkiveret og fjernet fra biblioteket, hvis anmodningen godkendes.' : fi ? 'Julkaistu opas arkistoidaan ja poistetaan kirjastosta, jos pyyntö hyväksytään.' : 'The published guide will be archived and removed from the library if this request is approved.'}</p>
           </div>

@@ -79,7 +79,7 @@ export function SickLeaveManager({ userEmail }: SickLeaveManagerProps) {
       <Card className="p-6">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
-            <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-[oklch(0.55_0.16_25)] to-[oklch(0.62_0.13_30)] flex items-center justify-center">
+            <div className="h-12 w-12 rounded-md bg-blocked-surface text-blocked flex items-center justify-center">
               <FirstAidKit size={24} weight="duotone" className="text-white" />
             </div>
             <div>
@@ -101,7 +101,7 @@ export function SickLeaveManager({ userEmail }: SickLeaveManagerProps) {
               className="flex items-center justify-between p-5 rounded-md border bg-card hover:border-primary/40 transition-colors group"
             >
               <div className="flex items-center gap-4 flex-1">
-                <div className="h-12 w-12 rounded-xl bg-red-100 flex items-center justify-center">
+                <div className="h-12 w-12 rounded-md bg-blocked-surface text-blocked flex items-center justify-center">
                   <CalendarDot size={24} className="text-red-600" weight="duotone" />
                 </div>
                 <div className="flex-1 min-w-0">

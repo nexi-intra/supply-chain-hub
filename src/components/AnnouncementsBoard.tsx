@@ -89,9 +89,9 @@ export function AnnouncementsBoard({ userEmail, userName, canPost }: Announcemen
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, height: 0 }}
               >
-                <Card className="p-4 border-2 border-accent/40 bg-gradient-to-br from-accent/10 to-primary/5">
+                <Card className="p-4 border-accent/40 bg-accent/10">
                   <div className="flex items-start gap-3">
-                    <div className="p-2 rounded-lg bg-gradient-to-br from-accent to-primary shrink-0">
+                    <div className="p-2 rounded-md bg-primary shrink-0">
                       <Megaphone size={20} weight="fill" className="text-accent-foreground" />
                     </div>
                     <div className="flex-1 min-w-0">

@@ -739,7 +739,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
                 <div className="relative group">
                   <div className="hidden" />
                   <div className="relative px-6 py-3 rounded-md bg-white/10 border border-white/20">
-                    <div className="text-[10px] text-primary-foreground/70 uppercase tracking-widest font-bold mb-1 flex items-center gap-1">
+                    <div className="text-[11px] text-primary-foreground/70 font-semibold mb-1 flex items-center gap-1">
                       <Trophy size={12} weight="fill" />
                       {language === 'da' ? 'Point' : language === 'fi' ? 'Pistemäärä' : 'Score'}
                     </div>
@@ -751,7 +751,7 @@ export function NexiFlyer({ userEmail = 'guest@example.com' }: NexiFlyerProps = 
                 <div className="h-14 w-px bg-border" />
                 <div className="relative group">
                   <div className="relative px-5 py-3 rounded-md bg-white/10 border border-white/20">
-                    <div className="text-[10px] text-accent-foreground/70 uppercase tracking-widest font-bold mb-1 flex items-center gap-1">
+                    <div className="text-[11px] text-accent-foreground/70 font-semibold mb-1 flex items-center gap-1">
                       <Crown size={12} weight="fill" />
                       {language === 'da' ? 'Bedste' : language === 'fi' ? 'Paras' : 'Best'}
                     </div>

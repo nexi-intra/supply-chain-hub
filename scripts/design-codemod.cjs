@@ -274,6 +274,89 @@ const MAP = [
   ['px-3 py-1 rounded-lg bg-gradient-to-r from-orange-500/20 to-red-600/20 border-2 border-orange-500/50 text-orange-500 animate-pulse', 'px-3 py-1 rounded-md bg-orange-500/15 border border-orange-500/50 text-orange-500'],
   ['px-3 py-1 rounded-lg bg-gradient-to-r from-lime-500/20 to-green-500/20 border-2 border-lime-500/50 text-lime-500 animate-pulse', 'px-3 py-1 rounded-md bg-lime-500/15 border border-lime-500/50 text-lime-500'],
   ['px-3 py-1 rounded-lg bg-gradient-to-r from-amber-500/20 to-orange-500/20 border-2 border-amber-500/50 text-amber-500 animate-pulse', 'px-3 py-1 rounded-md bg-amber-500/15 border border-amber-500/50 text-amber-500'],
+
+  // Sidste rester: forsidens knapper og widget-kort
+  [
+    'bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold relative px-4 w-full sm:w-auto',
+    'bg-background/90 hover:bg-background transition-colors gap-2 font-semibold relative px-4 w-full sm:w-auto',
+  ],
+  [
+    'bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold relative px-4',
+    'bg-background/90 hover:bg-background transition-colors gap-2 font-semibold relative px-4',
+  ],
+  [
+    'bg-gradient-to-r from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)] hover:from-[oklch(0.38_0.19_272)] hover:to-[oklch(0.48_0.15_264)] text-white shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold w-full sm:w-auto px-6 py-3 text-base',
+    'gap-2 font-semibold w-full sm:w-auto px-6 py-3 text-base',
+  ],
+  [
+    'bg-gradient-to-r from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)] hover:from-[oklch(0.38_0.19_272)] hover:to-[oklch(0.48_0.15_264)] text-white shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4',
+    'gap-2 font-semibold px-4',
+  ],
+  ['className="bg-gradient-to-r from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)] text-white"', ''],
+  [
+    'p-5 md:p-7 bg-card border-2 hover:border-primary/40 transition-all duration-300 mb-4 md:mb-6',
+    'p-5 md:p-7 bg-card hover:border-primary/40 transition-colors mb-4 md:mb-6',
+  ],
+  [
+    'flex flex-col gap-2 p-3 rounded-xl border-2 border-border bg-gradient-to-br from-card to-muted/30 shadow-sm',
+    'flex flex-col gap-2 p-3 rounded-md border border-border bg-card',
+  ],
+  [
+    'flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border p-4',
+    'flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-md border p-4',
+  ],
+
+  // De sidste smaa komponenter: ikon-felter, knapper og svaevende flader
+  ['h-12 w-12 rounded-xl bg-gradient-to-br from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)] flex items-center justify-center', 'h-12 w-12 rounded-md bg-secondary text-primary flex items-center justify-center'],
+  ['h-12 w-12 rounded-xl bg-gradient-to-br from-[oklch(0.34_0.14_273)] to-[oklch(0.42_0.13_270)] flex items-center justify-center', 'h-12 w-12 rounded-md bg-secondary text-primary flex items-center justify-center'],
+  ['h-12 w-12 rounded-xl bg-gradient-to-br from-[oklch(0.50_0.14_275)] to-[oklch(0.56_0.12_262)] flex items-center justify-center', 'h-12 w-12 rounded-md bg-secondary text-primary flex items-center justify-center'],
+  ['h-12 w-12 rounded-xl bg-gradient-to-br from-[oklch(0.55_0.16_25)] to-[oklch(0.62_0.13_30)] flex items-center justify-center', 'h-12 w-12 rounded-md bg-blocked-surface text-blocked flex items-center justify-center'],
+  ['h-12 w-12 rounded-xl bg-red-100 flex items-center justify-center', 'h-12 w-12 rounded-md bg-blocked-surface text-blocked flex items-center justify-center'],
+  ['h-8 w-8 rounded-full bg-gradient-to-br from-primary to-accent flex items-center justify-center', 'h-8 w-8 rounded-full bg-primary flex items-center justify-center'],
+  [
+    'bg-gradient-to-r from-[oklch(0.55_0.16_25)] to-[oklch(0.62_0.13_30)] hover:from-[oklch(0.50_0.16_25)] hover:to-[oklch(0.58_0.13_30)] text-white gap-2',
+    'bg-blocked text-white hover:bg-blocked/90 gap-2',
+  ],
+  ['w-full bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90', 'w-full'],
+  [
+    'gap-2 font-semibold bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 w-full sm:w-auto px-4',
+    'gap-2 font-semibold bg-background/90 hover:bg-background transition-colors w-full sm:w-auto px-4',
+  ],
+  ['p-4 border-2 border-accent/40 bg-gradient-to-br from-accent/10 to-primary/5', 'p-4 border-accent/40 bg-accent/10'],
+  ['p-2 rounded-lg bg-gradient-to-br from-accent to-primary shrink-0', 'p-2 rounded-md bg-primary shrink-0'],
+  ['p-4 rounded-xl border-2 bg-gradient-to-br from-card to-muted/30 hover:shadow-lg transition-all', 'p-4 rounded-md border bg-card hover:border-primary/40 transition-colors'],
+  ['flex items-center justify-center w-8 h-8 rounded-full bg-gradient-to-br from-primary/20 to-accent/20 font-bold text-sm', 'flex items-center justify-center w-8 h-8 rounded-full bg-secondary font-bold text-sm'],
+  ['text-4xl sm:text-5xl font-bold bg-gradient-to-br from-primary to-accent bg-clip-text text-transparent pb-2', 'text-2xl sm:text-3xl font-semibold tracking-tight text-foreground pb-2'],
+  ['w-full max-w-lg rounded-2xl border bg-card p-6 shadow-xl space-y-4', 'w-full max-w-lg rounded-lg border bg-card p-6 shadow-xl space-y-4'],
+  ['fixed bottom-5 right-5 z-40 rounded-full shadow-xl gap-2', 'fixed bottom-5 right-5 z-40 rounded-full shadow-lg gap-2'],
+  ['rounded-xl border border-primary/30 bg-primary/5 p-3 text-xs space-y-2', 'rounded-md border border-primary/30 bg-primary/5 p-3 text-xs space-y-2'],
+  ['rounded-2xl bg-primary/10 p-3 text-primary', 'rounded-md bg-primary/10 p-3 text-primary'],
+  ['ml-auto max-w-[88%] rounded-2xl rounded-br-md bg-primary/15 px-3.5 py-2.5 text-sm whitespace-pre-wrap break-words', 'ml-auto max-w-[88%] rounded-md bg-primary/15 px-3.5 py-2.5 text-sm whitespace-pre-wrap break-words'],
+  ["'mr-3 rounded-2xl rounded-bl-md px-3.5 py-3 text-sm space-y-3'", "'mr-3 rounded-md px-3.5 py-3 text-sm space-y-3'"],
+  ['rounded-xl bg-destructive/10 p-3 text-xs text-destructive whitespace-pre-wrap break-words', 'rounded-md bg-destructive/10 p-3 text-xs text-destructive whitespace-pre-wrap break-words'],
+  ['fixed bottom-5 right-5 z-40 flex flex-col overflow-hidden rounded-2xl border border-border/70 bg-popover text-popover-foreground shadow-[0_20px_70px_rgba(0,0,0,0.35)]', 'fixed bottom-5 right-5 z-40 flex flex-col overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-xl'],
+  ['absolute right-3 top-12 z-10 w-56 rounded-xl border bg-popover p-3 text-popover-foreground shadow-xl', 'absolute right-3 top-12 z-10 w-56 rounded-md border bg-popover p-3 text-popover-foreground shadow-lg'],
+
+  // VERSAL-labels med spaerring er en af de tydeligste skabelon-markoerer.
+  // Almindelig saetningsform i stedet - laeses ogsaa lettere ved 10-11 px.
+  ['text-[10px] text-primary-foreground/70 uppercase tracking-widest font-bold mb-1 flex items-center gap-1', 'text-[11px] text-primary-foreground/70 font-semibold mb-1 flex items-center gap-1'],
+  ['text-[10px] text-accent-foreground/70 uppercase tracking-widest font-bold mb-1 flex items-center gap-1', 'text-[11px] text-accent-foreground/70 font-semibold mb-1 flex items-center gap-1'],
+  ['text-[10px] text-primary-foreground/70 uppercase tracking-widest font-bold mb-1 text-center', 'text-[11px] text-primary-foreground/70 font-semibold mb-1 text-center'],
+  ['text-[10px] text-primary-foreground/70 uppercase tracking-widest font-bold mb-1', 'text-[11px] text-primary-foreground/70 font-semibold mb-1'],
+  ['text-[10px] text-accent-foreground/70 uppercase tracking-widest font-bold mb-1', 'text-[11px] text-accent-foreground/70 font-semibold mb-1'],
+  ['text-[10px] text-destructive-foreground/70 uppercase tracking-widest font-bold mb-1', 'text-[11px] text-destructive-foreground/70 font-semibold mb-1'],
+  ['text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1', 'text-xs font-semibold text-muted-foreground mb-1'],
+  ['text-xs font-semibold text-muted-foreground uppercase tracking-wide', 'text-xs font-semibold text-muted-foreground'],
+  ['text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2', 'text-xs font-semibold text-muted-foreground mb-2'],
+
+  // Sidste doble kanter paa kort
+  ['<Card className="p-6 border-2 hover:border-primary/50 transition-colors ', '<Card className="p-6 hover:border-primary/50 transition-colors '],
+  ['<Card key={view.viewId} className="p-6 border-2 hover:border-primary/50 ', '<Card key={view.viewId} className="p-6 hover:border-primary/50 '],
+  ['<Card className="p-4 sm:p-6 border-2">', '<Card className="p-4 sm:p-6">'],
+  ['<Card className="p-5 sm:p-6 border-2">', '<Card className="p-5 sm:p-6">'],
+  ['<Card key={request.id} className="p-5 border-2 space-y-4">', '<Card key={request.id} className="p-5 space-y-4">'],
+  ['rounded-xl border border-destructive/40 bg-destructive/10 p-4 flex gap-3', 'rounded-md border border-destructive/40 bg-destructive/10 p-4 flex gap-3'],
+  ['p-4 rounded-lg bg-destructive/10 border-2 border-destructive', 'p-4 rounded-md bg-destructive/10 border border-destructive'],
 ]
 
 function walk(dir, out = []) {

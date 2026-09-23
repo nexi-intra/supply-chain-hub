@@ -670,7 +670,7 @@ export function NeonSnake({ userEmail = 'guest@example.com' }: NeonSnakeProps = 
             <div className="relative flex items-center justify-between flex-wrap gap-4">
               <div className="flex items-center gap-6 flex-wrap">
                 <div className="relative px-5 py-3 rounded-md bg-white/10 border border-white/20">
-                  <div className="text-[10px] text-primary-foreground/70 uppercase tracking-widest font-bold mb-1 flex items-center gap-1">
+                  <div className="text-[11px] text-primary-foreground/70 font-semibold mb-1 flex items-center gap-1">
                     <Trophy size={12} weight="fill" />
                     {language === 'da' ? 'Point' : language === 'fi' ? 'Pistemäärä' : 'Score'}
                   </div>
@@ -679,7 +679,7 @@ export function NeonSnake({ userEmail = 'guest@example.com' }: NeonSnakeProps = 
                   </div>
                 </div>
                 <div className="relative px-5 py-3 rounded-md bg-white/10 border border-white/20">
-                  <div className="text-[10px] text-accent-foreground/70 uppercase tracking-widest font-bold mb-1">
+                  <div className="text-[11px] text-accent-foreground/70 font-semibold mb-1">
                     {language === 'da' ? 'Længde' : language === 'fi' ? 'Pituus' : 'Length'}
                   </div>
                   <div className="text-3xl font-bold text-yellow-400">
@@ -687,7 +687,7 @@ export function NeonSnake({ userEmail = 'guest@example.com' }: NeonSnakeProps = 
                   </div>
                 </div>
                 <div className="relative px-5 py-3 rounded-md bg-white/10 border border-white/20">
-                  <div className="text-[10px] text-primary-foreground/70 uppercase tracking-widest font-bold mb-1">
+                  <div className="text-[11px] text-primary-foreground/70 font-semibold mb-1">
                     {language === 'da' ? 'Bedste' : language === 'fi' ? 'Paras' : 'Best'}
                   </div>
                   <div className="text-3xl font-bold text-white">

@@ -147,7 +147,7 @@ export function UserProfile({ userEmail, onLogout, onAdminClick, showAdmin, onCr
             variant="ghost" 
             className="flex items-center gap-2 h-10 px-3 hover:bg-primary/10 transition-colors"
           >
-            <div className="h-8 w-8 rounded-full bg-gradient-to-br from-primary to-accent flex items-center justify-center">
+            <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center">
               <User size={18} weight="bold" className="text-primary-foreground" />
             </div>
             {!hideEmail && <span className="text-sm font-medium hidden sm:inline">{userEmail}</span>}

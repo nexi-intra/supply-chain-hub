@@ -644,7 +644,7 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
             <div className="relative flex items-center justify-between flex-wrap gap-4">
               <div className="flex items-center gap-6 flex-wrap">
                 <div className="relative px-5 py-3 rounded-md bg-white/10 border border-white/20">
-                  <div className="text-[10px] text-primary-foreground/70 uppercase tracking-widest font-bold mb-1 flex items-center gap-1">
+                  <div className="text-[11px] text-primary-foreground/70 font-semibold mb-1 flex items-center gap-1">
                     <Trophy size={12} weight="fill" />
                     {language === 'da' ? 'Point' : language === 'fi' ? 'Pistemäärä' : 'Score'}
                   </div>
@@ -653,7 +653,7 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
                   </div>
                 </div>
                 <div className="relative px-5 py-3 rounded-md bg-white/10 border border-white/20">
-                  <div className="text-[10px] text-primary-foreground/70 uppercase tracking-widest font-bold mb-1">
+                  <div className="text-[11px] text-primary-foreground/70 font-semibold mb-1">
                     {language === 'da' ? 'Linjer' : language === 'fi' ? 'Rivit' : 'Lines'}
                   </div>
                   <div className="text-3xl font-bold text-white">
@@ -661,7 +661,7 @@ export function Tetris({ userEmail = 'guest@example.com' }: TetrisProps = {}) {
                   </div>
                 </div>
                 <div className="px-3 py-2 rounded-md bg-slate-950/60 border border-white/15">
-                  <div className="text-[10px] text-primary-foreground/70 uppercase tracking-widest font-bold mb-1 text-center">
+                  <div className="text-[11px] text-primary-foreground/70 font-semibold mb-1 text-center">
                     {language === 'da' ? 'Næste' : language === 'fi' ? 'Seuraava' : 'Next'}
                   </div>
                   <canvas ref={nextCanvasRef} width={80} height={80} className="block" />

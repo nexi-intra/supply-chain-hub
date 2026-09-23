@@ -157,7 +157,7 @@ export function ObserverVacationCalendar({ view, teams, vacations }: ObserverVac
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
-      <Card className="p-4 sm:p-6 border-2">
+      <Card className="p-4 sm:p-6">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
           <div className="flex items-center gap-3">
             <CalendarBlank size={30} weight="duotone" className="text-primary" />
@@ -303,7 +303,7 @@ export function ObserverVacationCalendar({ view, teams, vacations }: ObserverVac
       </Card>
 
       {members.length > 0 && (
-        <Card className="p-5 sm:p-6 border-2">
+        <Card className="p-5 sm:p-6">
           <h3 className="text-xl font-bold mb-4">{da ? 'Alle teammedlemmer' : fi ? 'Kaikki tiimin jäsenet' : 'All team members'}</h3>
           <div className="flex flex-wrap gap-3">
             {members.map((member) => {

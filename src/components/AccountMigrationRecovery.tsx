@@ -76,7 +76,7 @@ export function AccountMigrationRecovery({ userEmail, onLogout }: { userEmail: s
   }
   return (
     <div className="fixed inset-0 z-[200] bg-background/95 flex items-center justify-center p-6" role="alertdialog" aria-modal="true" aria-labelledby="account-recovery-title">
-      <section className="w-full max-w-lg rounded-2xl border bg-card p-6 shadow-xl space-y-4">
+      <section className="w-full max-w-lg rounded-lg border bg-card p-6 shadow-xl space-y-4">
         <h2 id="account-recovery-title" className="text-xl font-semibold">{text.title}</h2>
         <p className="text-sm text-muted-foreground">{text.body}</p>
         {migration && <div className="text-sm space-y-1"><p className="break-all">{migration.oldEmail} → {migration.newEmail}</p><p>{text.progress}: {migration.applied} / {migration.total}</p></div>}

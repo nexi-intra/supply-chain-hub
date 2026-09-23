@@ -270,7 +270,7 @@ export function HubAssistant({ token, viewId }: AssistantScope) {
 
   if (!enabled) return null
   return <>
-    {(!open || minimized) && <Button onClick={() => { setOpen(true); setMinimized(false) }} className="fixed bottom-5 right-5 z-40 rounded-full shadow-xl gap-2" title={`Hubert · Ctrl+S · ${PREPARE_LABEL[language][preparation]}`}><HubertIcon size={22} />{CHAT_TEXT[language].open}</Button>}
+    {(!open || minimized) && <Button onClick={() => { setOpen(true); setMinimized(false) }} className="fixed bottom-5 right-5 z-40 rounded-full shadow-lg gap-2" title={`Hubert · Ctrl+S · ${PREPARE_LABEL[language][preparation]}`}><HubertIcon size={22} />{CHAT_TEXT[language].open}</Button>}
     {open && !minimized && <div ref={panel} onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); setMinimized(true) } }}>
       <AssistantChatWindow language={language} width={width} onWidthChange={setWidth} onMinimize={() => setMinimized(true)} onClose={() => { setOpen(false); setMinimized(false) }} ready={preparation === 'ready'} status={PREPARE_LABEL[language][preparation]} settings={<>
         <label className="flex gap-2 text-xs items-start"><input type="checkbox" checked={includeImages} onChange={event => setIncludeImages(event.target.checked)} />{t.images}</label>
@@ -279,7 +279,7 @@ export function HubAssistant({ token, viewId }: AssistantScope) {
       </>}>
         <div ref={scroll} className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-5 space-y-4" aria-live="polite">
           {aiStatus && !aiStatus.installed && (aiStatus.sharedAvailable || isProvisioning) && (
-            <div className="rounded-xl border border-primary/30 bg-primary/5 p-3 text-xs space-y-2">
+            <div className="rounded-md border border-primary/30 bg-primary/5 p-3 text-xs space-y-2">
               {isProvisioning ? (
                 <>
                   <div className="font-medium text-foreground">{AI_LABELS[language].downloading}… {provisionPct}%</div>
@@ -294,10 +294,10 @@ export function HubAssistant({ token, viewId }: AssistantScope) {
               )}
             </div>
           )}
-          {!messages.length && <div className="flex h-full flex-col items-center justify-center gap-3 text-center"><span className="rounded-2xl bg-primary/10 p-3 text-primary"><HubertIcon size={30} /></span><p className="text-sm text-muted-foreground">{CHAT_TEXT[language].welcome}</p></div>}
+          {!messages.length && <div className="flex h-full flex-col items-center justify-center gap-3 text-center"><span className="rounded-md bg-primary/10 p-3 text-primary"><HubertIcon size={30} /></span><p className="text-sm text-muted-foreground">{CHAT_TEXT[language].welcome}</p></div>}
           {messages.map(message => <div key={message.id} className="space-y-3">
-            <div className="ml-auto max-w-[88%] rounded-2xl rounded-br-md bg-primary/15 px-3.5 py-2.5 text-sm whitespace-pre-wrap break-words">{message.question}</div>
-            {message.answer && <div className={cn('mr-3 rounded-2xl rounded-bl-md px-3.5 py-3 text-sm space-y-3', message.answer.mode === 'general' ? 'border border-amber-500/40 bg-amber-500/5' : 'bg-muted/55')}>
+            <div className="ml-auto max-w-[88%] rounded-md bg-primary/15 px-3.5 py-2.5 text-sm whitespace-pre-wrap break-words">{message.question}</div>
+            {message.answer && <div className={cn('mr-3 rounded-md px-3.5 py-3 text-sm space-y-3', message.answer.mode === 'general' ? 'border border-amber-500/40 bg-amber-500/5' : 'bg-muted/55')}>
               {message.answer.mode === 'general' && (
                 <p className="flex items-start gap-1.5 text-[11px] font-medium text-amber-600">
                   <Warning size={13} weight="duotone" className="mt-0.5 shrink-0" />
@@ -333,7 +333,7 @@ export function HubAssistant({ token, viewId }: AssistantScope) {
                 )
               )}
             </div>}
-            {message.error && <p className="rounded-xl bg-destructive/10 p-3 text-xs text-destructive whitespace-pre-wrap break-words" role="alert">{message.error}</p>}
+            {message.error && <p className="rounded-md bg-destructive/10 p-3 text-xs text-destructive whitespace-pre-wrap break-words" role="alert">{message.error}</p>}
           </div>)}
           {busy && <div className="flex gap-1.5 py-2 text-muted-foreground" role="status" aria-label={t.wait}>{[0, 1, 2].map(dot => <span key={dot} className="size-1.5 animate-pulse rounded-full bg-current" style={{ animationDelay: `${dot * 160}ms` }} />)}</div>}
           {error && <p className="text-xs text-destructive whitespace-pre-wrap break-words" role="alert">{error}</p>}

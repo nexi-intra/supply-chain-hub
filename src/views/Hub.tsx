@@ -853,7 +853,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                 onClick={() => setShowEmailNotifications(true)}
                 size="lg"
                 variant="outline"
-                className="bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold relative px-4 w-full sm:w-auto"
+                className="bg-background/90 hover:bg-background transition-colors gap-2 font-semibold relative px-4 w-full sm:w-auto"
               >
                 <Envelope size={20} weight="duotone" />
                 {t.email.notifications}
@@ -873,7 +873,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
             <Button
               onClick={() => setShowSickLeaveDialog(true)}
               size="lg"
-              className="bg-gradient-to-r from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)] hover:from-[oklch(0.38_0.19_272)] hover:to-[oklch(0.48_0.15_264)] text-white shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold w-full sm:w-auto px-6 py-3 text-base"
+              className="gap-2 font-semibold w-full sm:w-auto px-6 py-3 text-base"
             >
               <FirstAidKit size={24} weight="duotone" />
               {t.shifts.sickLeave}
@@ -948,7 +948,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                   onClick={() => setShowEmailNotifications(true)}
                   size="lg"
                   variant="outline"
-                  className="bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold relative px-4"
+                  className="bg-background/90 hover:bg-background transition-colors gap-2 font-semibold relative px-4"
                 >
                   <Envelope size={20} weight="duotone" />
                   {unreadInboxCount > 0 && (
@@ -967,7 +967,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
               <Button
                 onClick={() => setShowSickLeaveDialog(true)}
                 size="lg"
-                className="bg-gradient-to-r from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)] hover:from-[oklch(0.38_0.19_272)] hover:to-[oklch(0.48_0.15_264)] text-white shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
+                className="gap-2 font-semibold px-4"
               >
                 <FirstAidKit size={24} weight="duotone" />
               </Button>
@@ -1051,7 +1051,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
               {t.hub.dashboard.customize}
             </Button>
           </div>
-          {dashboardWidget('teamTasks').visible && <Card className={cn("p-5 md:p-7 bg-card border-2 hover:border-primary/40 transition-all duration-300 mb-4 md:mb-6", dashboardSizeClass('teamTasks'))}>
+          {dashboardWidget('teamTasks').visible && <Card className={cn("p-5 md:p-7 bg-card hover:border-primary/40 transition-colors mb-4 md:mb-6", dashboardSizeClass('teamTasks'))}>
             <div className="flex items-center gap-3 md:gap-4 mb-5 md:mb-7">
               <div className="p-2 md:p-2.5 rounded-md bg-secondary text-primary">
                 <Users size={24} weight="duotone" className="md:hidden" />
@@ -1176,7 +1176,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
             )}
           </Card>}
 
-          {dashboardWidget('teamStatus').visible && <Card className={cn("p-5 md:p-7 bg-card border-2 hover:border-primary/40 transition-all duration-300 mb-4 md:mb-6", dashboardSizeClass('teamStatus'))}>
+          {dashboardWidget('teamStatus').visible && <Card className={cn("p-5 md:p-7 bg-card hover:border-primary/40 transition-colors mb-4 md:mb-6", dashboardSizeClass('teamStatus'))}>
             <div className="flex items-center gap-3 md:gap-4 mb-5 md:mb-7">
               <div className="p-2 md:p-2.5 rounded-md bg-secondary text-primary">
                 <UsersThree size={24} weight="duotone" className="md:hidden" />
@@ -1202,7 +1202,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                       key={row.email}
                       initial={{ opacity: 0, y: 20 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className="flex flex-col gap-2 p-3 rounded-xl border-2 border-border bg-gradient-to-br from-card to-muted/30 shadow-sm"
+                      className="flex flex-col gap-2 p-3 rounded-md border border-border bg-card"
                     >
                       <div className="flex items-center gap-2">
                         <div
@@ -1544,7 +1544,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
             {dashboardOptions.map((widget) => {
               const settings = dashboardWidget(widget.id)
               return (
-                <div key={widget.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border p-4">
+                <div key={widget.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-md border p-4">
                   <label htmlFor={`dashboard-${widget.id}`} className="font-medium cursor-pointer">{widget.label}</label>
                   <div className="flex items-center gap-3">
                     <Select value={settings.size} onValueChange={(value) => updateDashboardWidget(widget.id, { size: value as DashboardWidgetSize })} disabled={!settings.visible}>
@@ -1605,7 +1605,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
             </Button>
             <Button
               onClick={() => handleQuickAssign()}
-              className="bg-gradient-to-r from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)] text-white"
+              
             >
               {language === 'da' ? 'Tildel' : language === 'fi' ? 'Valitse' : 'Assign'}
             </Button>
@@ -1645,7 +1645,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
             <Button
               onClick={handleWidgetAssign}
               disabled={!widgetAssignRoleId}
-              className="bg-gradient-to-r from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)] text-white"
+              
             >
               {language === 'da' ? 'Tildel' : language === 'fi' ? 'Valitse' : 'Assign'}
             </Button>
@@ -1696,7 +1696,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
             </Button>
             <Button
               onClick={handleAddOrUpdateComment}
-              className="bg-gradient-to-r from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)] text-white"
+              
             >
               {language === 'da' ? 'Gem' : language === 'fi' ? 'Tallenna' : 'Save'}
             </Button>

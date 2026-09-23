@@ -187,7 +187,7 @@ export function GameLeaderboardAdmin({ gameTitle, icon, leaderboardKey, playCoun
                   key={email}
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="p-4 rounded-xl border-2 bg-gradient-to-br from-card to-muted/30 hover:shadow-lg transition-all"
+                  className="p-4 rounded-md border bg-card hover:border-primary/40 transition-colors"
                 >
                   <div className="flex items-center justify-between mb-3 gap-3">
                     <div className="flex-1 min-w-0">
@@ -270,7 +270,7 @@ export function GameLeaderboardAdmin({ gameTitle, icon, leaderboardKey, playCoun
                             className="flex items-center justify-between p-3 rounded-lg bg-card border hover:shadow-sm transition-all group"
                           >
                             <div className="flex items-center gap-3 flex-1">
-                              <div className="flex items-center justify-center w-8 h-8 rounded-full bg-gradient-to-br from-primary/20 to-accent/20 font-bold text-sm">
+                              <div className="flex items-center justify-center w-8 h-8 rounded-full bg-secondary font-bold text-sm">
                                 #{index + 1}
                               </div>
                               <div className="flex-1 min-w-0">

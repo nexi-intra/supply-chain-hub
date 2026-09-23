@@ -362,7 +362,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
                         </Button>
                       </div>
                       <div className="border-t pt-3">
-                        <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                        <div className="text-xs font-semibold text-muted-foreground mb-2">
                           {team.managers.length === 1 ? t.creatorPanel.teams.manager : t.creatorPanel.teams.managers}
                         </div>
                         {team.managers.length === 0 ? (
