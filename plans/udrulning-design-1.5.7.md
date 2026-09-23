@@ -1,7 +1,7 @@
 # Udrulning af det visuelle udtryk til hele appen
 
-Grundlaget og forsiden er på plads (grenen `design/visuelt-eftersyn`). Det her er
-planen for at få resten med, så udtrykket er ens overalt.
+Udrulningen ligger på `develop/1.5.7`. Temabyggeren blev efterfølgende fjernet
+helt; lys/mørk-temaskiftet er bevaret.
 
 ## Omfang, målt — ikke gættet
 
@@ -34,38 +34,38 @@ planen for at få resten med, så udtrykket er ens overalt.
 
 Rettes her, slår igennem overalt uden at røre en eneste skærm.
 
-- [ ] `ui/dialog`, `ui/sheet`, `ui/popover`, `ui/dropdown-menu`: radius og skygge
-- [ ] `ui/input`, `ui/textarea`, `ui/select`: samme kant og fokusring
-- [ ] `ui/tabs`, `ui/table`, `ui/tooltip`, `ui/alert`, `ui/separator`
-- [ ] Kontrollér at `accent` bruges konsekvent som rolig flade, ikke som mærkefarve
+- [x] `ui/dialog`, `ui/sheet`, `ui/popover`, `ui/dropdown-menu`: radius og skygge
+- [x] `ui/input`, `ui/textarea`, `ui/select`: samme kant og fokusring
+- [x] `ui/tabs`, `ui/table`, `ui/tooltip`, `ui/alert`, `ui/separator`
+- [x] Adskil `accent` som mærkefarve fra `secondary` som neutral hover-flade
 
 ## Fase B — de skærme man er i hver dag
 
-- [ ] `ShiftSchedule` (28) — her kommer tabeltal og opgavefarver for alvor til deres ret
-- [ ] `VacationCalendar` (9)
-- [ ] `TeamOverview` (11)
-- [ ] `MealPlan` (11)
-- [ ] `VirtualNotebook` (10)
-- [ ] `EmailSystem` (11)
-- [ ] `ProjectBoard` (27)
-- [ ] Understøttende: `AnnouncementsBoard`, `SickLeaveDialog`, `SickLeaveManager`,
+- [x] `ShiftSchedule` (28) — her kommer tabeltal og opgavefarver for alvor til deres ret
+- [x] `VacationCalendar` (9)
+- [x] `TeamOverview` (11)
+- [x] `MealPlan` (11)
+- [x] `VirtualNotebook` (10)
+- [x] `EmailSystem` (11)
+- [x] `ProjectBoard` (27)
+- [x] Understøttende: `AnnouncementsBoard`, `SickLeaveDialog`, `SickLeaveManager`,
       `VacationRequestDialog`, `ManualVacationGrant`, `ObserverVacationCalendar`
 
 ## Fase C — guides
 
-- [ ] `GuideLibrary` (49)
-- [ ] `GuideCard` (18)
-- [ ] `GuideEditor` (8), `GuideViewer` (4), `GuideChat` (4)
-- [ ] `GuideReviewDashboard` (5), `GuideImportStatus` (3)
+- [x] `GuideLibrary` (49)
+- [x] `GuideCard` (18)
+- [x] `GuideEditor` (8), `GuideViewer` (4), `GuideChat` (4)
+- [x] `GuideReviewDashboard` (5), `GuideImportStatus` (3)
 
 ## Fase D — paneler
 
-- [ ] `ManagerPanel` (51)
-- [ ] `AdminPanel` (32)
-- [ ] `CreatorPanel` (12)
-- [ ] `ObserverWorkspace` (20)
-- [ ] `ThemeBuilder` (8) — skal stadig virke oven på de nye tokens
-- [ ] `GameLeaderboardAdmin` (7), `DataStorageManager` (5), `ClientVersionManager` (2),
+- [x] `ManagerPanel` (51)
+- [x] `AdminPanel` (32)
+- [x] `CreatorPanel` (12)
+- [x] `ObserverWorkspace` (20)
+- [x] Temabyggeren og dens egne oversættelser/viden fjernet
+- [x] `GameLeaderboardAdmin` (7), `DataStorageManager` (5), `ClientVersionManager` (2),
       `UpdateManager` (2), `CrossHubHighscores` (1)
 
 ## Fase E — spillehjørnet
@@ -74,29 +74,29 @@ Her må der godt være mere leg end i resten — men **rammen** skal være den s
 menuer, highscore-lister og knapper ser ud som resten af appen. Selve spillefladen
 er sit eget rum.
 
-- [ ] `Arcade` (37), `GameCorner` (17), `Modern` (17)
-- [ ] `EndlessDodger` (60), `NeonSnake` (59), `NexiFlyer` (56), `BrickBreak` (52), `Tetris` (46)
-- [ ] `CubeBasherGame`, `TheLibrarian2Game`, `PauseOverlay`
+- [x] `Arcade` (37), `GameCorner` (17), `Modern` (17)
+- [x] `EndlessDodger` (60), `NeonSnake` (59), `NexiFlyer` (56), `BrickBreak` (52), `Tetris` (46)
+- [x] `CubeBasherGame`, `TheLibrarian2Game`, `PauseOverlay`
 
 ## Fase F — resten af de små
 
-- [ ] `HubAssistant` (6), `AssistantChatWindow` (3), `OnboardingWizard` (4),
+- [x] `HubAssistant` (6), `AssistantChatWindow` (3), `OnboardingWizard` (4),
       `AccessContextPicker` (4), `AccountMigrationRecovery` (2), `UserProfile` (1),
       `WhatsNewDialog` (1), `UpdateNotification` (1), `StorageConnectionBanner` (1),
       `EmailNotifications` (1), `LanguageToggle` (2), `ThemeToggle` (2)
 
 ## Fase G — kvalitetsgulv og bevis
 
-- [ ] `node scripts/design-inventory.cjs` skal vise nul tilbage i de mønstre, der skulle væk
-- [ ] Skærmbilleder af hver hovedskærm i både lys og mørk tilstand
-- [ ] Kontrast tjekket mod WCAG AA på tekst og knapper
-- [ ] Synligt tastaturfokus overalt
-- [ ] `prefers-reduced-motion` respekteres
-- [ ] `tsc`, hele testsuiten og en produktionsbygning
-- [ ] ThemeBuilder virker stadig med brugerdefinerede temaer
+- [x] `node scripts/design-inventory.cjs`: 27 bevidste valg-, overlay- og fokusmarkeringer tilbage; ingen gamle gradienter
+- [x] 22 skærmbilleder af forside og 10 hovedskærme i lys og mørk tilstand (lokal QA-mappe)
+- [x] Kontrast tjekket mod WCAG AA på synlig tekst på forside og hovedskærme i begge tilstande
+- [ ] Synligt tastaturfokus kontrolleret på flere moduler (forsidens modulfelt verificeret)
+- [x] `prefers-reduced-motion` respekteres
+- [x] `tsc`, hele testsuiten og en produktionsbygning af den endelige version
+- [x] Lokal ZIP bygget i Windows Temp og kontrolleret (exe og app.asar) uden publicering
 
 ## Rækkefølge og fortrydelse
 
-Hver fase bliver sin egen commit på `design/visuelt-eftersyn`, så en enkelt fase
-kan rulles tilbage uden at tage resten med. `git checkout develop/1.5.7` fortryder
-det hele.
+Faserne er committet og fast-forwardet til `develop/1.5.7`; den oprindelige
+designgren er bevaret til sammenligning. En ny ZIP bygges i en særskilt mappe,
+så den gamle release ikke overskrives.

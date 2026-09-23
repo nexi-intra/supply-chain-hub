@@ -10,6 +10,8 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     version: '1.5.7',
     items: [
+      'Hele appen har fået et samlet udtryk med tydeligere kontrast, ens knapper og kort samt roligere farver i alle moduler. Forsidens moduler kan nu også åbnes med tastaturet',
+      'Temabyggeren er fjernet; lys og mørk tilstand kan stadig vælges øverst i appen',
       'Hele hubben svarer nu med det samme. Knapper, dialoger og kvitteringer venter ikke længere på det delte drev — ændringen vises øjeblikkeligt, og selve gemningen sker i baggrunden. Går gemningen galt, sættes det tilbage og du får besked',
       'Sygemeld, barn syg og enkelte fridage: dialogen lukker og kvitterer nu med det samme i stedet for først at skulle skrive besked til lederen og vente på svar',
       'Ferie kan godkendes, afvises og slettes uden ventetid — også når flere ledere sidder i kalenderen samtidig. Før kunne to samtidige godkendelser overskrive hinandens besked',

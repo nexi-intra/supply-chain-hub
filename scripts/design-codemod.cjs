@@ -376,6 +376,22 @@ const MAP = [
   ['dark:hover:bg-accent/50', 'dark:hover:bg-secondary'],
   ['aria-selected:opacity-100 hover:bg-accent/50', 'aria-selected:opacity-100 hover:bg-secondary'],
   ['"bg-accent animate-pulse rounded-md"', '"bg-muted animate-pulse rounded-md"'],
+
+  // Tekst gjort blegere end den allerede daempede farve faldt under WCAG AA.
+  // Weekend-overskrifter skilles nu ud ved at hverdagene staar i fuld farve.
+  ["index >= 5 ? 'text-muted-foreground/60' : 'text-muted-foreground'", "index >= 5 ? 'text-muted-foreground' : 'text-foreground'"],
+  ['index >= 5 ? "text-muted-foreground/60" : "text-muted-foreground"', 'index >= 5 ? "text-muted-foreground" : "text-foreground"'],
+  ['text-xs gap-1 text-muted-foreground/60 border-border/60', 'text-xs gap-1 text-muted-foreground border-border/60'],
+  ['text-[11px] text-muted-foreground/70', 'text-[11px] text-muted-foreground'],
+  ['text-[11px] font-medium text-muted-foreground/50 select-none', 'text-[11px] font-medium text-muted-foreground select-none'],
+  ['count === 0 ? "text-muted-foreground/40" : "text-foreground"', 'count === 0 ? "text-muted-foreground" : "text-foreground"'],
+  ['min-h-[24px] text-muted-foreground/60 hover:text-foreground', 'min-h-[24px] text-muted-foreground hover:text-foreground'],
+  ['min-h-[28px] text-muted-foreground/60 hover:text-foreground', 'min-h-[28px] text-muted-foreground hover:text-foreground'],
+  ['<div className="text-muted-foreground/40 text-xs">', '<div className="text-muted-foreground text-xs">'],
+  ['"text-muted-foreground/70 hover:text-foreground bg-card', '"text-muted-foreground hover:text-foreground bg-card'],
+  ['outside: "text-muted-foreground/40 [&>button]:text-muted-foreground/40"', 'outside: "text-muted-foreground [&>button]:text-muted-foreground"'],
+  ['text-xs font-semibold text-primary/70 bg-muted/40 rounded-md mr-1', 'text-xs font-semibold text-primary bg-muted/40 rounded-md mr-1'],
+  ['text-[10px] font-bold uppercase text-muted-foreground/60 mr-1', 'text-[11px] font-semibold text-muted-foreground mr-1'],
 ]
 
 function walk(dir, out = []) {

@@ -1390,7 +1390,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                               }}
                               title={`${count} ${count === 1 ? t.managerPanel.sickLeave.entrySingular : t.managerPanel.sickLeave.entryPlural} ${t.managerPanel.sickLeave.weekdayTooltipOn} ${label}`}
                             >
-                              <span className={cn("text-sm font-bold", count === 0 ? "text-muted-foreground/40" : "text-foreground")}>
+                              <span className={cn("text-sm font-bold", count === 0 ? "text-muted-foreground" : "text-foreground")}>
                                 {count}
                               </span>
                             </div>
@@ -2490,7 +2490,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                         key={day}
                         className={cn(
                           "text-center font-semibold text-xs py-2",
-                          index >= 5 ? "text-muted-foreground/60" : "text-muted-foreground"
+                          index >= 5 ? "text-muted-foreground" : "text-foreground"
                         )}
                       >
                         {day}

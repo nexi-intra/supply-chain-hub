@@ -618,7 +618,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
                   key={day}
                   className={cn(
                     "text-center font-semibold text-sm py-2",
-                    index >= 5 ? "text-muted-foreground/60" : "text-muted-foreground"
+                    index >= 5 ? "text-muted-foreground" : "text-foreground"
                   )}
                 >
                   {day}

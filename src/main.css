@@ -181,7 +181,7 @@
   --popover: oklch(0.21 0.04 274);
   --popover-foreground: oklch(0.95 0.008 260);
   
-  --primary: oklch(0.62 0.16 268);
+  --primary: oklch(0.68 0.16 268);
   --primary-foreground: oklch(0.12 0.03 274);
   
   --secondary: oklch(0.305 0.05 272);
@@ -193,12 +193,13 @@
   --accent: oklch(0.675 0.145 265);
   --accent-foreground: oklch(0.15 0.03 274);
   
-  --destructive: oklch(0.62 0.18 25);
-  --destructive-foreground: oklch(0.99 0 0);
+  /* Hvid tekst paa fuld roed gav 3,9:1 i moerk tilstand; moerk tekst giver over 6. */
+  --destructive: oklch(0.65 0.18 25);
+  --destructive-foreground: oklch(0.14 0.03 274);
   
   --border: oklch(0.31 0.035 272);
   --input: oklch(0.36 0.04 272);
-  --ring: oklch(0.62 0.16 268);
+  --ring: oklch(0.68 0.16 268);
 
   /* Samme signaler som i lys tilstand, loeftet saa de baerer paa moerk flade. */
   --signal-attention: oklch(0.775 0.135 72);

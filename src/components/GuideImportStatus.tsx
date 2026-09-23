@@ -72,7 +72,7 @@ export function GuideImportStatus({ onOpenGuideLibrary }: GuideImportStatusProps
             </p>
             <p className="text-xs font-semibold text-primary shrink-0">{Math.round(job.progress?.percent ?? 0)} %</p>
           </div>
-          <p className="text-[11px] text-muted-foreground/70">
+          <p className="text-[11px] text-muted-foreground">
             {t.guideImportStatus.backgroundHint}
           </p>
         </motion.div>

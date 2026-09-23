@@ -15,6 +15,7 @@ import { toast } from 'sonner'
 import { AutoText } from '@/components/AutoText'
 import { useAutoTranslate } from '@/lib/useAutoTranslate'
 import { cn } from '@/lib/utils'
+import { readableTextOn } from '@/lib/readableText'
 import { isAnyModalOpen } from '@/lib/modalStack'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
@@ -901,10 +902,10 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                               }}
                             >
                               <div 
-                                className="text-xs font-extrabold truncate" 
+                                className="text-xs font-extrabold truncate text-foreground pb-1"
                                 title={employee.name}
                                 style={{ 
-                                  color: employeeColor.bg
+                                  borderBottom: `3px solid ${employeeColor.bg}`
                                 }}
                               >
                                 {firstName}
@@ -943,11 +944,17 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                               <td 
                                 className={cn(
                                   "sticky left-0 z-40 bg-card border-r-2 border-border px-2 py-3 font-semibold transition-all shadow-[2px_0_8px_rgba(0,0,0,0.1)]",
-                                  isWeekend(date) && "text-destructive",
-                                  currentWeek && "bg-primary/10",
-                                  todayDate && "bg-accent/20"
+                                  isWeekend(date) && "text-destructive"
                                 )}
-                                style={{ width: '160px', minWidth: '160px', maxWidth: '160px' }}
+                                style={{
+                                  width: '160px', minWidth: '160px', maxWidth: '160px',
+                                  // Tonen skal ligge OVEN PAA bg-card: en bg-klasse ville erstatte den, og saa ruller cellerne synligt ind under kolonnen.
+                                  backgroundImage: todayDate
+                                    ? 'linear-gradient(color-mix(in oklab, var(--accent) 20%, transparent), color-mix(in oklab, var(--accent) 20%, transparent))'
+                                    : currentWeek
+                                      ? 'linear-gradient(color-mix(in oklab, var(--primary) 10%, transparent), color-mix(in oklab, var(--primary) 10%, transparent))'
+                                      : undefined,
+                                }}
                               >
                                 <div className="flex items-center gap-1.5 flex-wrap">
                                   <Badge 
@@ -960,8 +967,8 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                                   >
                                     U{weekNumber}
                                   </Badge>
-                                  <span className={cn("text-xs", todayDate && "font-extrabold text-accent")}>{dayName}</span>
-                                  <span className={cn("text-xs", todayDate && "font-extrabold text-accent")}>{day}/{selectedMonth + 1}</span>
+                                  <span className={cn("text-xs", todayDate && "font-extrabold text-foreground")}>{dayName}</span>
+                                  <span className={cn("text-xs", todayDate && "font-extrabold text-foreground")}>{day}/{selectedMonth + 1}</span>
                                   {isDanishHoliday(dateString) && (
                                     <Badge variant="destructive" className="text-[9px] px-1 py-0">
                                       <AutoText text="Hel" />
@@ -1105,11 +1112,12 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                                               <div key={assignment.id} className="group relative">
                                                 <div
                                                   className={cn(
-                                                    "px-1.5 py-1.5 rounded text-[11px] font-semibold truncate text-white border transition-all flex items-center justify-center gap-1",
+                                                    "px-1.5 py-1.5 rounded text-[11px] font-semibold truncate border transition-all flex items-center justify-center gap-1",
                                                     assignment.isPattern && "border-dashed"
                                                   )}
                                                   style={{
                                                     backgroundColor: role.color || '#8b5cf6',
+                                                    color: readableTextOn(role.color || '#8b5cf6'),
                                                     borderColor: `${role.color || '#8b5cf6'}CC`,
                                                     boxShadow: `0 2px 6px ${role.color || '#8b5cf6'}40`
                                                   }}
@@ -1139,7 +1147,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                                           {!isEmployeeCellLocked && (roles || []).length > 0 && (
                                             <Popover>
                                               <PopoverTrigger asChild>
-                                                <button className="w-full h-full min-h-[24px] text-muted-foreground/60 hover:text-foreground hover:bg-muted/40 rounded text-[10px] transition-colors flex items-center justify-center gap-1 border border-border/50 hover:border-border font-medium">
+                                                <button className="w-full h-full min-h-[24px] text-muted-foreground hover:text-foreground hover:bg-muted/40 rounded text-[10px] transition-colors flex items-center justify-center gap-1 border border-border/50 hover:border-border font-medium">
                                                   <Plus size={12} weight="regular" />
                                                   <span>Tilføj</span>
                                                 </button>
@@ -1169,7 +1177,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                                         !isEmployeeCellLocked && (roles || []).length > 0 ? (
                                           <Popover>
                                             <PopoverTrigger asChild>
-                                              <button className="w-full h-full min-h-[28px] text-muted-foreground/60 hover:text-foreground hover:bg-muted/40 rounded text-[11px] transition-colors flex items-center justify-center gap-1.5 border border-border/50 hover:border-border font-medium">
+                                              <button className="w-full h-full min-h-[28px] text-muted-foreground hover:text-foreground hover:bg-muted/40 rounded text-[11px] transition-colors flex items-center justify-center gap-1.5 border border-border/50 hover:border-border font-medium">
                                                 <Plus size={13} weight="regular" />
                                                 <span>Tilføj opgave</span>
                                               </button>
@@ -1194,7 +1202,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                                             </PopoverContent>
                                           </Popover>
                                         ) : (
-                                          <div className="text-muted-foreground/40 text-xs">
+                                          <div className="text-muted-foreground text-xs">
                                             {!isLocked ? '−' : ''}
                                           </div>
                                         )
@@ -1206,7 +1214,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                                             "w-full h-full min-h-[24px] rounded text-[10px] font-medium border transition-colors flex items-center justify-center gap-1",
                                             cellComment 
                                               ? "text-foreground/80 hover:text-foreground bg-muted/50 hover:bg-muted border-border" 
-                                              : "text-muted-foreground/70 hover:text-foreground bg-card hover:bg-muted/30 border-border/50 hover:border-border"
+                                              : "text-muted-foreground hover:text-foreground bg-card hover:bg-muted/30 border-border/50 hover:border-border"
                                           )}
                                           title={cellComment ? "Rediger kommentar" : "Tilføj kommentar"}
                                         >

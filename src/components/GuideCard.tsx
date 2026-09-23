@@ -145,7 +145,7 @@ export function GuideCard({ guide, authorName, responsibleName, currentTeamCode,
                       {t.guideCard.nextCheckPrefix} {guide.nextReviewAt ? new Date(guide.nextReviewAt).toLocaleDateString(dateLocale, { day: 'numeric', month: 'short', year: 'numeric' }) : ''}
                     </Badge>
                   ) : (
-                    <Badge variant="outline" className="text-xs gap-1 text-muted-foreground/60 border-border/60">
+                    <Badge variant="outline" className="text-xs gap-1 text-muted-foreground border-border/60">
                       {t.guideCard.noInterval}
                     </Badge>
                   )}

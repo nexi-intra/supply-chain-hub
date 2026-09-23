@@ -226,7 +226,7 @@ export function ObserverVacationCalendar({ view, teams, vacations }: ObserverVac
           <div className="grid grid-cols-8 gap-1.5 sm:gap-2 min-w-[720px]">
             <div className="text-center font-semibold text-sm py-2 text-muted-foreground">{weekLabel}</div>
             {weekdays.map((day, index) => (
-              <div key={day} className={cn('text-center font-semibold text-sm py-2', index >= 5 ? 'text-muted-foreground/60' : 'text-muted-foreground')}>{day}</div>
+              <div key={day} className={cn('text-center font-semibold text-sm py-2', index >= 5 ? 'text-muted-foreground' : 'text-foreground')}>{day}</div>
             ))}
 
             {Array.from({ length: weekCount }, (_, weekIndex) => {

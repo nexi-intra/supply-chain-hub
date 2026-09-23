@@ -1541,7 +1541,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       </div>
 
       {appVersion && (
-        <div className="fixed bottom-3 left-3 z-10 text-[11px] font-medium text-muted-foreground/50 select-none pointer-events-none">
+        <div className="fixed bottom-3 left-3 z-10 text-[11px] font-medium text-muted-foreground select-none pointer-events-none">
           v{appVersion}
         </div>
       )}

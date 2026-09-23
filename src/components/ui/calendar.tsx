@@ -52,14 +52,14 @@ function Calendar({
         selected:
           "rounded-md bg-primary text-primary-foreground [&>button]:bg-primary [&>button]:text-primary-foreground [&>button]:hover:bg-primary [&>button]:hover:text-primary-foreground",
         today: "[&>button]:border-2 [&>button]:border-accent [&>button]:font-bold",
-        outside: "text-muted-foreground/40 [&>button]:text-muted-foreground/40",
+        outside: "text-muted-foreground [&>button]:text-muted-foreground",
         disabled: "text-muted-foreground/30 [&>button]:text-muted-foreground/30 [&>button]:opacity-40 [&>button]:pointer-events-none",
         hidden: "invisible",
         range_start: "rounded-l-md bg-primary text-primary-foreground [&>button]:bg-primary [&>button]:text-primary-foreground",
         range_middle: "rounded-none bg-accent/30 [&>button]:bg-transparent",
         range_end: "rounded-r-md bg-primary text-primary-foreground [&>button]:bg-primary [&>button]:text-primary-foreground",
-        week_number: "w-9 h-9 flex items-center justify-center text-xs font-semibold text-primary/70 bg-muted/40 rounded-md mr-1",
-        week_number_header: "w-9 h-9 flex items-center justify-center text-[10px] font-bold uppercase text-muted-foreground/60 mr-1",
+        week_number: "w-9 h-9 flex items-center justify-center text-xs font-semibold text-primary bg-muted/40 rounded-md mr-1",
+        week_number_header: "w-9 h-9 flex items-center justify-center text-[11px] font-semibold text-muted-foreground mr-1",
         ...classNames,
       }}
       components={{

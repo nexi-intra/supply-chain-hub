@@ -129,7 +129,6 @@ export function GameCorner({ onNavigateBack, userEmail }: GameCornerProps) {
                 <div className="relative p-4 md:p-6 flex flex-col flex-1">
                   <motion.div
                     className="mb-3 inline-flex items-center justify-center rounded-md p-2 bg-secondary text-primary"
-                    style={{ color: 'white' }}
                     initial={{ scale: 1, rotate: 0, y: 0 }}
                     whileHover={{ scale: [1, 1.3, 1.15], rotate: [0, -15, 15, -10, 10, 0], y: [0, -8, 0] }}
                     transition={{ duration: 0.8, ease: "easeInOut" }}
@@ -179,7 +178,6 @@ export function GameCorner({ onNavigateBack, userEmail }: GameCornerProps) {
                 <div className="relative p-4 md:p-6 flex flex-col flex-1">
                   <motion.div
                     className="mb-3 inline-flex items-center justify-center rounded-md p-2 bg-secondary text-primary"
-                    style={{ color: 'white' }}
                     initial={{ scale: 1, rotate: 0, y: 0 }}
                     whileHover={{ scale: [1, 1.3, 1.15], rotate: [0, -15, 15, -10, 10, 0], y: [0, -8, 0] }}
                     transition={{ duration: 0.8, ease: "easeInOut" }}
