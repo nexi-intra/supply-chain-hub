@@ -284,6 +284,18 @@
   --radius-full: 9999px;
 }
 
+/* Modulfelterne paa forsiden faar hver deres farve via --module-color. Paa moerk
+   flade er den samme farve for maerk til at laese, saa den blandes op mod hvid. */
+.module-tile {
+  --module-ink: var(--module-color);
+  --module-wash: color-mix(in oklab, var(--module-color) 9%, transparent);
+}
+
+.dark .module-tile {
+  --module-ink: color-mix(in oklab, var(--module-color) 58%, white);
+  --module-wash: color-mix(in oklab, var(--module-color) 16%, transparent);
+}
+
 .word-content {
   color: var(--foreground);
   line-height: 1.8;

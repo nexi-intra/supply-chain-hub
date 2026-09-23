@@ -204,6 +204,22 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       })
   }, [usersForStatus, peopleSick, peopleOff, teamTasks, creatorEmail])
 
+  const dateLocale = language === 'da' ? 'da-DK' : language === 'fi' ? 'fi-FI' : 'en-GB'
+
+  // Tallene i dagens tavle. Afledt af det, der allerede er hentet - ingen ekstra opslag.
+  const headcountWorking = useMemo(
+    () => teamStatusRows.filter((row) => row.status === 'working' || row.status === 'available').length,
+    [teamStatusRows],
+  )
+  const unassignedTaskCount = useMemo(
+    () => (teamTasks || []).filter((task) => task.people.length === 0).length,
+    [teamTasks],
+  )
+  const awayToday = useMemo(
+    () => teamStatusRows.filter((row) => row.status === 'sick' || row.status === 'vacation').map((row) => row.name.split(' ')[0]),
+    [teamStatusRows],
+  )
+
   // Tværgående Fase 9-kort: fri/syge/hjemmearbejde i ANDRE teams. Kun vist når der findes >1 team.
   const [hasOtherTeams, setHasOtherTeams] = useCachedState(`hub:hasOtherTeams:${userEmail}`, false)
   const [otherTeamsOff, setOtherTeamsOff] = useCachedState<Array<{ name: string; teamCode: string }>>(`hub:otherTeamsOff:${userEmail}`, [])
@@ -646,14 +662,18 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
     category: AnimationCategory
   }
 
+  // Alle tolv moduler havde foer naesten samme blaa (kuloer 240-280), saa gitteret
+  // var en mur af ens felter. Nu har hvert modul sin egen farve fra samme familie:
+  // samme lyshed og maetning hele vejen rundt, saa de er til at kende fra hinanden
+  // uden at blive slik. Vagtplanen beholder maerkefarven - den er den vigtigste.
   const modules: ModuleWithCategory[] = [
     {
       id: 'shifts',
       title: t.hub.modules.shifts,
       description: t.hub.descriptions.shifts,
       icon: <ClipboardText size={48} weight="duotone" />,
-      color: 'oklch(0.42 0.19 270)',
-      gradient: 'from-[oklch(0.42_0.19_270)] via-[oklch(0.50_0.16_265)] to-[oklch(0.38_0.19_272)]',
+      color: 'oklch(0.44 0.185 273)',
+      gradient: '',
       available: true,
       category: 'work',
     },
@@ -662,8 +682,8 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       title: t.hub.modules.calendar,
       description: t.hub.descriptions.calendar,
       icon: <Calendar size={48} weight="duotone" />,
-      color: 'oklch(0.50 0.15 262)',
-      gradient: 'from-[oklch(0.50_0.15_262)] via-[oklch(0.56_0.13_258)] to-[oklch(0.46_0.16_265)]',
+      color: 'oklch(0.50 0.145 240)',
+      gradient: '',
       available: true,
       category: 'work',
     },
@@ -672,8 +692,8 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       title: t.hub.modules.meals,
       description: t.hub.descriptions.meals,
       icon: <ForkKnife size={48} weight="duotone" />,
-      color: 'oklch(0.55 0.11 245)',
-      gradient: 'from-[oklch(0.55_0.11_245)] via-[oklch(0.60_0.09_240)] to-[oklch(0.50_0.12_250)]',
+      color: 'oklch(0.50 0.125 150)',
+      gradient: '',
       available: true,
       category: 'leisure',
     },
@@ -682,8 +702,8 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       title: t.hub.modules.team,
       description: t.hub.descriptions.team,
       icon: <Users size={48} weight="duotone" />,
-      color: 'oklch(0.52 0.13 252)',
-      gradient: 'from-[oklch(0.52_0.13_252)] via-[oklch(0.58_0.11_248)] to-[oklch(0.47_0.14_256)]',
+      color: 'oklch(0.51 0.105 200)',
+      gradient: '',
       available: true,
       category: 'social',
     },
@@ -692,8 +712,8 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       title: t.hub.modules.email,
       description: t.hub.descriptions.email,
       icon: <Envelope size={48} weight="duotone" />,
-      color: 'oklch(0.48 0.10 260)',
-      gradient: 'from-[oklch(0.48_0.10_260)] via-[oklch(0.55_0.08_255)] to-[oklch(0.44_0.11_263)]',
+      color: 'oklch(0.49 0.155 300)',
+      gradient: '',
       available: true,
       category: 'social',
     },
@@ -702,8 +722,8 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       title: t.hub.modules.guides,
       description: t.hub.descriptions.guides,
       icon: <Books size={48} weight="duotone" />,
-      color: 'oklch(0.38 0.19 272)',
-      gradient: 'from-[oklch(0.38_0.19_272)] via-[oklch(0.46_0.17_268)] to-[oklch(0.34_0.17_274)]',
+      color: 'oklch(0.52 0.12 68)',
+      gradient: '',
       available: true,
       category: 'work',
     },
@@ -712,8 +732,8 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       title: t.hub.modules.documents,
       description: t.hub.descriptions.documents,
       icon: <FileText size={48} weight="duotone" />,
-      color: 'oklch(0.50 0.09 255)',
-      gradient: 'from-[oklch(0.50_0.09_255)] via-[oklch(0.56_0.07_250)] to-[oklch(0.46_0.10_258)]',
+      color: 'oklch(0.51 0.075 255)',
+      gradient: '',
       available: false,
       category: 'work',
     },
@@ -722,8 +742,8 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       title: t.hub.modules.projects,
       description: t.hub.descriptions.projects,
       icon: <ListChecks size={48} weight="duotone" />,
-      color: 'oklch(0.46 0.15 262)',
-      gradient: 'from-[oklch(0.46_0.15_262)] via-[oklch(0.53_0.13_258)] to-[oklch(0.42_0.16_266)]',
+      color: 'oklch(0.50 0.145 20)',
+      gradient: '',
       available: true,
       category: 'work',
     },
@@ -732,8 +752,8 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       title: t.hub.modules.notebook,
       description: t.hub.descriptions.notebook,
       icon: <Notebook size={48} weight="duotone" />,
-      color: 'oklch(0.53 0.12 240)',
-      gradient: 'from-[oklch(0.53_0.12_240)] via-[oklch(0.58_0.10_236)] to-[oklch(0.48_0.13_244)]',
+      color: 'oklch(0.51 0.115 218)',
+      gradient: '',
       available: true,
       category: 'work',
     },
@@ -742,8 +762,8 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       title: t.hub.modules.chat,
       description: t.hub.descriptions.chat,
       icon: <ChatCircle size={48} weight="duotone" />,
-      color: 'oklch(0.45 0.13 268)',
-      gradient: 'from-[oklch(0.45_0.13_268)] via-[oklch(0.52_0.11_263)] to-[oklch(0.41_0.14_270)]',
+      color: 'oklch(0.52 0.115 176)',
+      gradient: '',
       available: false,
       category: 'social',
     },
@@ -752,8 +772,8 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       title: t.hub.modules.games,
       description: t.hub.descriptions.games,
       icon: <GameController size={48} weight="duotone" />,
-      color: 'oklch(0.45 0.17 278)',
-      gradient: 'from-[oklch(0.45_0.17_278)] via-[oklch(0.52_0.15_272)] to-[oklch(0.41_0.17_280)]',
+      color: 'oklch(0.53 0.165 350)',
+      gradient: '',
       available: true,
       category: 'leisure',
     },
@@ -762,8 +782,8 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       title: t.hub.modules.manager,
       description: isAdminOrManager ? t.hub.descriptions.manager : t.hub.descriptions.managerLocked,
       icon: <ShieldCheck size={48} weight="duotone" />,
-      color: 'oklch(0.34 0.14 273)',
-      gradient: 'from-[oklch(0.34_0.14_273)] via-[oklch(0.42_0.13_270)] to-[oklch(0.30_0.13_275)]',
+      color: 'oklch(0.42 0.085 268)',
+      gradient: '',
       available: isAdminOrManager,
       category: 'admin',
     },
@@ -1093,20 +1113,56 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
         userEmail={userEmail}
       />
       <div className="container mx-auto px-4 sm:px-6 pt-28 sm:pt-32 pb-12 sm:pb-20 max-w-7xl relative z-10">
-        {/* Her stod tidligere teamets navn i 60 px gradient-tekst med logoet over.
-            Det skubbede det foerste rigtige indhold 578 px ned paa en 747 px
-            skaerm - 77 % af foerste skaermbillede var pynt. Nu er toppen een
-            linje, der ogsaa fortaeller hvad dagen er. */}
-        <header className="mb-8 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 border-b pb-4">
+        <header className="mb-6 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
           <div className="flex items-baseline gap-3">
             <img src={nexiLogo} alt="Nexi" className="h-5 w-auto translate-y-[2px] dark:hidden" />
             <img src={nexiLogoWhite} alt="Nexi" className="h-5 w-auto translate-y-[2px] hidden dark:block" />
             <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground">{teamName}</h1>
           </div>
-          <p className="text-sm text-muted-foreground first-letter:uppercase">
-            {new Date().toLocaleDateString(language === 'da' ? 'da-DK' : language === 'fi' ? 'fi-FI' : 'en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}
-          </p>
         </header>
+
+        {/* Dagens tavle. Her - og kun her - faar maerkefarven lov at fylde. Resten
+            af siden er papir og streger, saa det her er det, blikket lander paa. */}
+        <div className="mb-8 overflow-hidden rounded-lg bg-primary text-primary-foreground">
+          <div className="flex flex-wrap items-end justify-between gap-6 px-6 py-6 sm:px-8 sm:py-7">
+            <div>
+              <p className="text-sm font-medium text-primary-foreground/60 first-letter:uppercase">
+                {new Date().toLocaleDateString(dateLocale, { weekday: 'long' })}
+              </p>
+              <p className="mt-0.5 text-3xl sm:text-4xl font-light tracking-tight leading-none">
+                {new Date().toLocaleDateString(dateLocale, { day: 'numeric', month: 'long' })}
+              </p>
+            </div>
+
+            <div className="flex items-end gap-7 sm:gap-9">
+              <div>
+                <p className="text-4xl sm:text-5xl font-light leading-none">{headcountWorking}</p>
+                <p className="mt-1.5 text-xs font-medium text-primary-foreground/60">
+                  {language === 'da' ? 'på arbejde' : language === 'fi' ? 'töissä' : 'at work'}
+                </p>
+              </div>
+              {unassignedTaskCount > 0 && (
+                <div>
+                  <p className="text-4xl sm:text-5xl font-light leading-none text-attention">{unassignedTaskCount}</p>
+                  <p className="mt-1.5 text-xs font-medium text-primary-foreground/60">
+                    {language === 'da' ? 'uden bemanding' : language === 'fi' ? 'ilman miehitystä' : 'unstaffed'}
+                  </p>
+                </div>
+              )}
+              {awayToday.length > 0 && (
+                <div className="max-w-xs">
+                  <p className="text-xs font-medium text-primary-foreground/60">
+                    {language === 'da' ? 'Fraværende' : language === 'fi' ? 'Poissa' : 'Away'}
+                  </p>
+                  <p className="mt-1 text-sm leading-snug text-primary-foreground/90">
+                    {awayToday.slice(0, 4).join(', ')}
+                    {awayToday.length > 4 && ` +${awayToday.length - 4}`}
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
 
         <AnnouncementsBoard userEmail={userEmail} userName={currentUserName} canPost={isAdminOrManager} />
 
@@ -1376,8 +1432,8 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
           </Card>}
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
-            {dashboardWidget('offToday').visible && <Card className={cn("p-4 md:p-6 bg-card border-2 hover:border-primary/40 transition-all duration-300", dashboardSizeClass('offToday'))}>
-              <div className="flex items-center justify-center gap-2 md:gap-3 mb-3 md:mb-4">
+            {dashboardWidget('offToday').visible && <Card className={cn("p-4 md:p-5 bg-card", dashboardSizeClass('offToday'))}>
+              <div className="flex items-center gap-2.5 mb-3">
                 <div className="p-1.5 md:p-2 rounded-md bg-secondary text-primary">
                   <Calendar size={20} weight="duotone" className="md:hidden" />
                   <Calendar size={24} weight="duotone" className="hidden md:block" />
@@ -1385,9 +1441,9 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                 <h3 className="text-base md:text-lg font-semibold text-foreground">{t.hub.overview.offToday}</h3>
               </div>
               {peopleOff.length === 0 ? (
-                <p className="text-muted-foreground text-xs md:text-sm text-center py-1">{t.hub.overview.noOneOff}</p>
+                <p className="text-muted-foreground text-xs md:text-sm py-1">{t.hub.overview.noOneOff}</p>
               ) : (
-                <div className="flex flex-col gap-1.5 md:gap-2 items-center">
+                <div className="flex flex-col gap-1.5">
                   {peopleOff.map((person, idx) => (
                     <div key={idx} className="flex items-center gap-2">
                       <User size={14} className="text-muted-foreground md:hidden" />
@@ -1399,8 +1455,8 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
               )}
             </Card>}
 
-            {dashboardWidget('todaysMeal').visible && <Card className={cn("p-4 md:p-6 bg-card border-2 hover:border-primary/40 transition-all duration-300", dashboardSizeClass('todaysMeal'))}>
-              <div className="flex items-center justify-center gap-2 md:gap-3 mb-3 md:mb-4">
+            {dashboardWidget('todaysMeal').visible && <Card className={cn("p-4 md:p-5 bg-card", dashboardSizeClass('todaysMeal'))}>
+              <div className="flex items-center gap-2.5 mb-3">
                 <div className="p-1.5 md:p-2 rounded-md bg-secondary text-primary">
                   <ForkKnife size={20} weight="duotone" className="md:hidden" />
                   <ForkKnife size={24} weight="duotone" className="hidden md:block" />
@@ -1408,14 +1464,14 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                 <h3 className="text-base md:text-lg font-semibold text-foreground">{t.hub.overview.todaysMeal}</h3>
               </div>
               {!todaysMeal ? (
-                <p className="text-muted-foreground text-xs md:text-sm text-center py-1">{t.hub.overview.noMeal}</p>
+                <p className="text-muted-foreground text-xs md:text-sm py-1">{t.hub.overview.noMeal}</p>
               ) : (
                 <p className="text-xs md:text-sm text-foreground leading-relaxed break-words overflow-wrap-anywhere text-center">{todaysMeal}</p>
               )}
             </Card>}
 
-            {dashboardWidget('sickToday').visible && <Card className={cn("p-4 md:p-6 bg-card border-2 hover:border-primary/40 transition-all duration-300", dashboardSizeClass('sickToday'))}>
-              <div className="flex items-center justify-center gap-2 md:gap-3 mb-3 md:mb-4">
+            {dashboardWidget('sickToday').visible && <Card className={cn("p-4 md:p-5 bg-card", dashboardSizeClass('sickToday'))}>
+              <div className="flex items-center gap-2.5 mb-3">
                 <div className="p-1.5 md:p-2 rounded-md bg-blocked-surface text-blocked">
                   <FirstAidKit size={20} weight="duotone" className="md:hidden" />
                   <FirstAidKit size={24} weight="duotone" className="hidden md:block" />
@@ -1423,9 +1479,9 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                 <h3 className="text-base md:text-lg font-semibold text-foreground">{t.hub.overview.sickToday}</h3>
               </div>
               {peopleSick.length === 0 ? (
-                <p className="text-muted-foreground text-xs md:text-sm text-center py-1">{t.hub.overview.noOneSick}</p>
+                <p className="text-muted-foreground text-xs md:text-sm py-1">{t.hub.overview.noOneSick}</p>
               ) : (
-                <div className="flex flex-col gap-1.5 md:gap-2 items-center">
+                <div className="flex flex-col gap-1.5">
                   {peopleSick.map((person, idx) => (
                     <div key={idx} className="flex items-center gap-2">
                       <User size={14} className="text-muted-foreground md:hidden" />
@@ -1440,8 +1496,8 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
 
           {hasOtherTeams && (dashboardWidget('supplyOff').visible || dashboardWidget('supplyHomeOffice').visible || dashboardWidget('supplySick').visible) && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 mt-4 md:mt-6">
-              {dashboardWidget('supplyOff').visible && <Card className={cn("p-4 md:p-6 bg-card border-2 hover:border-primary/40 transition-all duration-300", dashboardSizeClass('supplyOff'))}>
-                <div className="flex items-center justify-center gap-2 md:gap-3 mb-3 md:mb-4">
+              {dashboardWidget('supplyOff').visible && <Card className={cn("p-4 md:p-5 bg-card", dashboardSizeClass('supplyOff'))}>
+                <div className="flex items-center gap-2.5 mb-3">
                   <div className="p-1.5 md:p-2 rounded-md bg-secondary text-primary">
                     <Buildings size={20} weight="duotone" className="md:hidden" />
                     <Buildings size={24} weight="duotone" className="hidden md:block" />
@@ -1449,9 +1505,9 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                   <h3 className="text-base md:text-lg font-semibold text-foreground">{t.hub.overview.offInSupplyChain}</h3>
                 </div>
                 {otherTeamsOff.length === 0 ? (
-                  <p className="text-muted-foreground text-xs md:text-sm text-center py-1">{t.hub.overview.noOneOffSupplyChain}</p>
+                  <p className="text-muted-foreground text-xs md:text-sm py-1">{t.hub.overview.noOneOffSupplyChain}</p>
                 ) : (
-                  <div className="flex flex-col gap-1.5 md:gap-2 items-center">
+                  <div className="flex flex-col gap-1.5">
                     {otherTeamsOff.map((person, idx) => (
                       <div key={idx} className="flex items-center gap-2">
                         <User size={14} className="text-muted-foreground md:hidden" />
@@ -1463,8 +1519,8 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                 )}
               </Card>}
 
-              {dashboardWidget('supplyHomeOffice').visible && <Card className={cn("p-4 md:p-6 bg-card border-2 hover:border-primary/40 transition-all duration-300", dashboardSizeClass('supplyHomeOffice'))}>
-                <div className="flex items-center justify-center gap-2 md:gap-3 mb-3 md:mb-4">
+              {dashboardWidget('supplyHomeOffice').visible && <Card className={cn("p-4 md:p-5 bg-card", dashboardSizeClass('supplyHomeOffice'))}>
+                <div className="flex items-center gap-2.5 mb-3">
                   <div className="p-1.5 md:p-2 rounded-md bg-secondary text-primary">
                     <House size={20} weight="duotone" className="md:hidden" />
                     <House size={24} weight="duotone" className="hidden md:block" />
@@ -1472,9 +1528,9 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                   <h3 className="text-base md:text-lg font-semibold text-foreground">{t.hub.overview.homeOfficeInSupplyChain}</h3>
                 </div>
                 {otherTeamsHomeOffice.length === 0 ? (
-                  <p className="text-muted-foreground text-xs md:text-sm text-center py-1">{t.hub.overview.noOneHomeOfficeSupplyChain}</p>
+                  <p className="text-muted-foreground text-xs md:text-sm py-1">{t.hub.overview.noOneHomeOfficeSupplyChain}</p>
                 ) : (
-                  <div className="flex flex-col gap-1.5 md:gap-2 items-center">
+                  <div className="flex flex-col gap-1.5">
                     {otherTeamsHomeOffice.map((person, idx) => (
                       <div key={idx} className="flex items-center gap-2">
                         <User size={14} className="text-muted-foreground md:hidden" />
@@ -1486,8 +1542,8 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                 )}
               </Card>}
 
-              {dashboardWidget('supplySick').visible && <Card className={cn("p-4 md:p-6 bg-card border-2 hover:border-primary/40 transition-all duration-300", dashboardSizeClass('supplySick'))}>
-                <div className="flex items-center justify-center gap-2 md:gap-3 mb-3 md:mb-4">
+              {dashboardWidget('supplySick').visible && <Card className={cn("p-4 md:p-5 bg-card", dashboardSizeClass('supplySick'))}>
+                <div className="flex items-center gap-2.5 mb-3">
                   <div className="p-1.5 md:p-2 rounded-md bg-blocked-surface text-blocked">
                     <Buildings size={20} weight="duotone" className="md:hidden" />
                     <Buildings size={24} weight="duotone" className="hidden md:block" />
@@ -1495,9 +1551,9 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                   <h3 className="text-base md:text-lg font-semibold text-foreground">{t.hub.overview.sickInSupplyChain}</h3>
                 </div>
                 {otherTeamsSick.length === 0 ? (
-                  <p className="text-muted-foreground text-xs md:text-sm text-center py-1">{t.hub.overview.noOneSickSupplyChain}</p>
+                  <p className="text-muted-foreground text-xs md:text-sm py-1">{t.hub.overview.noOneSickSupplyChain}</p>
                 ) : (
-                  <div className="flex flex-col gap-1.5 md:gap-2 items-center">
+                  <div className="flex flex-col gap-1.5">
                     {otherTeamsSick.map((person, idx) => (
                       <div key={idx} className="flex items-center gap-2">
                         <User size={14} className="text-muted-foreground md:hidden" />
@@ -1513,7 +1569,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
         </motion.div>
 
         <motion.div 
-          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-8"
+          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.5, duration: 0.6 }}
@@ -1536,7 +1592,8 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                   transition={cardAnimation.transition}
                 >
                   <Card
-                    className="relative overflow-hidden border-2 transition-all duration-300 group h-full min-h-[180px] sm:min-h-[220px] flex flex-col cursor-pointer hover:border-primary/40"
+                    className="module-tile relative overflow-hidden py-0 transition-colors duration-200 group h-full flex flex-col cursor-pointer"
+                    style={{ ['--module-color' as string]: module.color }}
                     onClick={() => handleModuleClick(module.id)}
                   >
                     {module.id === 'email' && unreadInboxCount > 0 && (
@@ -1555,36 +1612,39 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                       </Badge>
                     )}
                     <motion.div 
-                      className="absolute inset-0 bg-gradient-to-br"
+                      className="absolute inset-0"
                       style={{
-                        background: `radial-gradient(circle at top right, ${module.color}25, transparent)`
+                        background: `radial-gradient(120% 90% at 50% 0%, var(--module-wash), transparent 70%)`
                       }}
                       initial={{ opacity: 0 }}
                       whileHover={{ opacity: 1 }}
-                      transition={{ duration: 0.3 }}
+                      transition={{ duration: 0.25 }}
                     />
+                    {/* Modulets farve ligger som en tynd stribe i toppen - nok til at
+                        kende feltet paa, uden at farve hele kortet ind. */}
+                    <div className="absolute inset-x-0 top-0 h-[3px]" style={{ backgroundColor: 'var(--module-ink)' }} />
                     
-                    <div className="relative p-4 md:p-6 flex flex-col flex-1">
+                    <div className="relative px-4 pt-4 pb-4 md:px-5 md:pt-5 md:pb-5 flex flex-col flex-1">
                       <motion.div 
-                        className={cn(
-                          "mb-3 md:mb-4 inline-flex items-center justify-center rounded-2xl p-2 md:p-3 shadow-lg group-hover:shadow-xl transition-shadow duration-300",
-                          `bg-gradient-to-br ${module.gradient}`
-                        )}
-                        style={{ color: 'white' }}
+                        className="mb-3 inline-flex items-center justify-center rounded-lg p-2 self-start"
+                        style={{
+                          color: 'var(--module-ink)',
+                          backgroundColor: 'var(--module-wash)',
+                        }}
                         initial={iconAnimation.initial}
                         whileHover={iconAnimation.hover}
                         transition={iconAnimation.transition}
                       >
-                        <div className="[&>svg]:w-8 [&>svg]:h-8 md:[&>svg]:w-12 md:[&>svg]:h-12">
+                        <div className="[&>svg]:w-7 [&>svg]:h-7 md:[&>svg]:w-8 md:[&>svg]:h-8">
                           {module.icon}
                         </div>
                       </motion.div>
 
-                      <h3 className="text-sm sm:text-base md:text-lg font-bold mb-1.5 md:mb-2 text-foreground text-center">
+                      <h3 className="text-base font-semibold mb-1 text-foreground">
                         {module.title}
                       </h3>
                       
-                      <p className="text-muted-foreground text-xs leading-relaxed mb-3 md:mb-4 flex-1 min-h-[2.5rem] line-clamp-2">
+                      <p className="text-muted-foreground text-xs leading-relaxed line-clamp-2">
                         {module.description}
                       </p>
                     </div>
