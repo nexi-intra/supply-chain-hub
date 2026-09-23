@@ -10,7 +10,11 @@ test('every module tile in the hub has app-guide coverage', () => {
   // Fanger at et NYT modul bliver tilfoejet til forsiden uden app-viden, saa
   // Hubert ikke stille og roligt bliver uvidende om halvdelen af appen.
   const hub = fs.readFileSync(path.join(__dirname, '..', 'src', 'views', 'Hub.tsx'), 'utf8')
-  const catalogue = hub.slice(hub.indexOf('const modules: ModuleWithCategory[]'))
+  // Ankeret maa ikke haenge paa et bestemt typenavn - saa knaekker testen bare
+  // ved naeste omdoebning i stedet for at fange et modul uden app-viden.
+  const start = hub.search(/^\s*const modules: \w+\[\] = \[$/m)
+  assert.notEqual(start, -1, 'kunne ikke finde modul-kataloget i Hub.tsx')
+  const catalogue = hub.slice(start)
   const tileIds = [...catalogue.matchAll(/^\s{6}id: '([a-z-]+)',$/gm)].map(match => match[1])
   assert.ok(tileIds.length >= 10, `forventede at finde modul-felterne i Hub.tsx, fandt ${tileIds.length}`)
   for (const id of tileIds) assert.ok(ids.includes(id), `modulet "${id}" mangler i assistantAppGuide.cjs`)
