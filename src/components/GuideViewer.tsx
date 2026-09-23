@@ -506,7 +506,7 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, tar
                   </div>
                 )}
 
-                <div className="border-t-2 border-dashed border-gray-200 -mx-10 px-10 pt-6 text-[10px] text-gray-400 text-center uppercase tracking-widest">
+                <div className="border-t border-dashed border-gray-200 -mx-10 px-10 pt-6 text-[11px] text-gray-400 text-center">
                   {t.guideViewer.pageBreak}
                 </div>
 
@@ -545,7 +545,7 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, tar
             <div className="flex flex-col items-center justify-center py-8 sm:py-12 px-4 sm:px-6">
               <div className="max-w-2xl w-full space-y-4 sm:space-y-6">
                 <div className="flex flex-col items-center text-center space-y-4">
-                  <div className="h-20 w-20 sm:h-24 sm:w-24 rounded-2xl bg-primary/10 flex items-center justify-center">
+                  <div className="h-20 w-20 sm:h-24 sm:w-24 rounded-md bg-primary/10 flex items-center justify-center">
                     <FileDoc size={40} weight="duotone" className="text-primary sm:w-12 sm:h-12" />
                   </div>
                   <div>

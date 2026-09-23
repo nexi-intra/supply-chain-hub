@@ -51,7 +51,7 @@ export function GuideImportStatus({ onOpenGuideLibrary }: GuideImportStatusProps
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 20 }}
-          className="fixed bottom-6 left-6 z-50 w-80 max-w-[calc(100vw-3rem)] rounded-2xl border-2 border-border bg-card/95 backdrop-blur-md shadow-2xl p-4 space-y-3"
+          className="fixed bottom-6 left-6 z-50 w-80 max-w-[calc(100vw-3rem)] rounded-md border border-border bg-card shadow-lg p-4 space-y-3"
         >
           <div className="flex items-center gap-3">
             <div className="h-9 w-9 rounded-full bg-primary/15 flex items-center justify-center shrink-0">

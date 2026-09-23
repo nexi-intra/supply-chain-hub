@@ -763,7 +763,7 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
                   variant="outline"
                   size="lg"
                   onClick={onNavigateBack}
-                  className="pointer-events-auto bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
+                  className="pointer-events-auto bg-background/90 hover:bg-background transition-colors gap-2 font-semibold px-4"
                 >
                   <ArrowLeft size={20} weight="bold" />
                   {t.common.back}
@@ -773,17 +773,17 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
           </div>
         </div>
 
-        <div className="container mx-auto px-4 sm:px-6 pt-36 pb-12 sm:pb-20 max-w-5xl relative z-10">
-          <header className="mb-10 text-center">
-            <h1 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold leading-normal tracking-tight bg-gradient-to-br from-primary to-accent bg-clip-text text-transparent pb-1 mb-2">
+        <div className="container mx-auto px-4 sm:px-6 pt-28 pb-12 sm:pb-20 max-w-5xl relative z-10">
+          <header className="mb-6 border-b pb-4">
+            <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground">
               {otherTeam?.name}
             </h1>
-            <p className="text-sm text-muted-foreground">{t.guideLibrary.otherTeamGuidesHint}</p>
+            <p className="text-sm text-muted-foreground mt-1">{t.guideLibrary.otherTeamGuidesHint}</p>
           </header>
 
           {renderTeamTabs()}
 
-          <Card className="p-6 border-2">
+          <Card className="p-6">
             {isLoadingOtherTeamGuides ? (
               <p className="text-center py-12 text-muted-foreground">{t.guideLibrary.loadingGuides}</p>
             ) : otherTeamGuides.length === 0 ? (
@@ -798,7 +798,7 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
                   return (
                     <div
                       key={guide.id}
-                      className="flex items-center justify-between gap-3 p-4 rounded-xl border-2 bg-card"
+                      className="flex items-center justify-between gap-3 p-4 rounded-md border bg-card"
                     >
                       <div className="flex items-center gap-3 min-w-0">
                         <Books size={20} className="text-primary flex-shrink-0" weight="duotone" />
@@ -856,7 +856,7 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
                 variant="outline"
                 size="lg"
                 onClick={onNavigateBack}
-                className="pointer-events-auto bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
+                className="pointer-events-auto bg-background/90 hover:bg-background transition-colors gap-2 font-semibold px-4"
               >
                 <ArrowLeft size={20} weight="bold" />
                 {t.common.back}
@@ -866,54 +866,38 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
         </div>
       </div>
       
-      <div className="container mx-auto px-4 sm:px-6 pt-36 pb-12 sm:pb-20 max-w-7xl relative z-10">
-        <header className="mb-10">
-          <div className="flex flex-col items-center justify-center gap-6 text-center">
+      <div className="container mx-auto px-4 sm:px-6 pt-28 pb-12 sm:pb-20 max-w-7xl relative z-10">
+        <header className="mb-6">
+          <div className="flex flex-col gap-4">
             {renderTeamTabs()}
-            <div className="flex flex-col items-center gap-4">
-              <motion.div 
-                className="h-16 w-16 flex-shrink-0 rounded-3xl bg-gradient-to-br from-primary to-accent shadow-2xl shadow-primary/30 flex items-center justify-center relative overflow-hidden"
-                whileHover={{ scale: 1.08, rotate: 5 }}
-                transition={{ type: "spring", stiffness: 400, damping: 17 }}
-              >
-                <div className="absolute inset-0 bg-gradient-to-br from-primary/40 via-transparent to-accent/40 animate-pulse" />
-                <Books size={32} weight="duotone" className="text-primary-foreground relative z-10" />
-              </motion.div>
-              <div className="min-w-0">
-                <h1 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight bg-gradient-to-br from-primary to-accent bg-clip-text text-transparent">
+            <div className="flex flex-wrap items-end justify-between gap-4 border-b pb-4">
+              <div className="min-w-0 flex items-center gap-2.5">
+                <Books size={26} weight="duotone" className="text-primary shrink-0" />
+                <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground">
                   {t.guideLibrary.title}
                 </h1>
-                <p className="text-xs sm:text-sm md:text-base text-muted-foreground mt-2 flex items-center justify-center gap-2">
-                  <span className="inline-flex items-center gap-1.5 px-2 sm:px-3 py-0.5 sm:py-1 rounded-full bg-gradient-to-r from-primary/15 to-accent/15 text-primary font-semibold border border-primary/20 text-xs sm:text-sm">
-                    {guides?.length || 0}
-                  </span>
-                  <span className="text-xs sm:text-sm">{(guides?.length || 0) === 1 ? t.guideLibrary.guideSingular : t.guideLibrary.guidePlural} {t.guideLibrary.available}</span>
-                </p>
+                <span className="text-sm text-muted-foreground">
+                  {guides?.length || 0} {(guides?.length || 0) === 1 ? t.guideLibrary.guideSingular : t.guideLibrary.guidePlural}
+                </span>
               </div>
-            </div>
             <div className="flex gap-2 flex-shrink-0 items-center">
-              <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
                 <Button
                   variant={workflowView === 'workflow' ? 'default' : 'outline'}
                   onClick={() => setWorkflowView((current) => current === 'published' ? 'workflow' : 'published')}
-                  className="h-11 px-4 font-semibold border-2 rounded-xl gap-2"
+                  className="gap-2"
                 >
                   <ClipboardText size={20} weight="duotone" />
                   <span className="hidden sm:inline">{workflowView === 'workflow' ? (language === 'da' ? 'Udgivne guides' : language === 'fi' ? 'Julkaistut oppaat' : 'Published guides') : (language === 'da' ? 'Review og kladder' : language === 'fi' ? 'Tarkistukset ja luonnokset' : 'Reviews and drafts')}</span>
                   {(isGuideReviewer ? pendingReviewCount : myOpenReviewCount) > 0 && <Badge variant="secondary">{isGuideReviewer ? pendingReviewCount : myOpenReviewCount}</Badge>}
                 </Button>
-              </motion.div>
-              <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
                 <Button
                   variant="outline"
                   onClick={() => importInputRef.current?.click()}
                   disabled={isImporting}
-                  className="h-11 px-5 font-semibold border-2 rounded-xl backdrop-blur-md bg-card/80 hover:bg-muted hover:border-primary/40"
                 >
                   <FileArrowUp size={20} weight="bold" className="sm:mr-2" />
                   <span className="hidden sm:inline">{isImporting ? t.guideLibrary.importing : t.guideLibrary.importWordGuide}</span>
                 </Button>
-              </motion.div>
               <input
                 ref={importInputRef}
                 type="file"
@@ -924,12 +908,11 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
                   e.target.value = ''
                 }}
               />
-              <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
-                <Button onClick={handleAddNew} className="h-11 px-5 bg-gradient-to-r from-primary via-accent to-primary hover:from-primary/90 hover:via-accent/90 hover:to-primary/90 shadow-xl shadow-primary/30 font-semibold transition-all">
+                <Button onClick={handleAddNew}>
                   <Plus size={20} weight="bold" className="sm:mr-2" />
                   <span className="hidden sm:inline">{t.guideLibrary.newGuide}</span>
                 </Button>
-              </motion.div>
+            </div>
             </div>
           </div>
 
@@ -944,7 +927,7 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder={t.guideLibrary.searchPlaceholder}
-                className="pl-12 h-14 text-base bg-card/80 backdrop-blur-md border-2 border-border/60 focus:border-primary/60 focus:ring-4 focus:ring-primary/10 rounded-2xl shadow-lg shadow-black/5 transition-all"
+                className="pl-12 h-12 text-base"
               />
             </div>
             <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}>
@@ -952,10 +935,10 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
                 variant={showNeedsReview ? 'default' : 'outline'}
                 onClick={() => setShowNeedsReview((v) => !v)}
                 className={cn(
-                  'h-14 px-5 rounded-2xl border-2 font-semibold gap-2 transition-all backdrop-blur-md',
+                  'h-12 px-5 font-semibold gap-2',
                   showNeedsReview
-                    ? 'bg-gradient-to-r from-destructive to-orange-500 border-destructive shadow-xl shadow-destructive/30 text-white hover:opacity-90'
-                    : 'bg-card/80 hover:border-destructive/50'
+                    ? 'bg-blocked text-white hover:bg-blocked/90'
+                    : 'hover:border-blocked/50'
                 )}
               >
                 <Timer size={20} weight="bold" />
@@ -987,10 +970,10 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
                     size="sm"
                     onClick={() => setActiveCategory(category)}
                     className={cn(
-                      'transition-all backdrop-blur-md font-semibold border-2 rounded-xl px-4 h-10',
+                      'font-semibold px-4 h-10',
                       activeCategory === category 
-                        ? 'shadow-xl shadow-primary/30 bg-gradient-to-r from-primary via-accent to-primary border-primary' 
-                        : 'hover:bg-muted hover:border-primary/40 border-border'
+                        ? '' 
+                        : 'hover:bg-muted hover:border-primary/40'
                     )}
                   >
                     {category}
@@ -1013,7 +996,7 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
                 variant="outline"
                 size="sm"
                 onClick={() => setCategoryManagerOpen(true)}
-                className="h-10 px-4 font-semibold border-2 rounded-xl backdrop-blur-md hover:bg-muted hover:border-primary/40"
+                className="h-10 px-4 font-semibold"
               >
                 <Gear size={18} weight="bold" className="sm:mr-2" />
                 <span className="hidden sm:inline">{t.guideLibrary.manageCategories}</span>
@@ -1026,7 +1009,7 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
                   variant="outline"
                   size="sm"
                   onClick={() => setExportDialogOpen(true)}
-                  className="h-10 px-4 font-semibold border-2 rounded-xl backdrop-blur-md hover:bg-muted hover:border-primary/40"
+                  className="h-10 px-4 font-semibold"
                 >
                   <FolderOpen size={18} weight="bold" className="sm:mr-2" />
                   <span className="hidden sm:inline">{t.guideLibrary.exportLibrary}</span>
@@ -1039,7 +1022,7 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
         </header>
 
         {workflowView !== 'workflow' && drafts.length > 0 && (
-          <div className="mb-6 rounded-2xl border-2 border-dashed border-primary/30 bg-primary/5 p-4">
+          <div className="mb-6 rounded-md border border-dashed border-primary/40 bg-primary/5 p-4">
             <div className="flex items-center gap-2 mb-3">
               <FileDashed size={20} weight="bold" className="text-primary" />
               <h3 className="font-bold">{t.guideEditor.draftsTitle}</h3>
@@ -1048,7 +1031,7 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
             <p className="text-sm text-muted-foreground mb-3">{t.guideEditor.draftsBody}</p>
             <div className="space-y-2">
               {drafts.map((draft) => (
-                <div key={draft.guideId} className="flex items-center gap-3 rounded-xl border bg-card p-3">
+                <div key={draft.guideId} className="flex items-center gap-3 rounded-md border bg-card p-3">
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold truncate">{draftLabel(draft) || t.guideEditor.draftUntitled}</div>
                     <div className="text-xs text-muted-foreground">
@@ -1089,28 +1072,13 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
             animate={{ opacity: 1, y: 0 }}
             className="flex flex-col items-center justify-center py-24 px-4"
           >
-            <motion.div 
-              className="relative mb-8"
-              animate={{ 
-                y: [0, -12, 0],
-              }}
-              transition={{ 
-                duration: 4,
-                repeat: Infinity,
-                ease: "easeInOut"
-              }}
-            >
-              <div className="h-32 w-32 rounded-[2rem] bg-gradient-to-br from-primary to-accent shadow-2xl shadow-primary/40 flex items-center justify-center relative overflow-hidden">
-                {/* Ren opacity-puls uden blur — blur+animation kræver dyr GPU-re-rasterisering hvert frame */}
-                <div className="absolute inset-0 bg-gradient-to-br from-primary/40 to-accent/40 animate-pulse" />
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_30%,white,transparent)] opacity-20" />
-                <Books size={64} weight="duotone" className="text-primary-foreground relative z-10 drop-shadow-lg" />
-              </div>
-            </motion.div>
-            <h2 className="text-4xl font-bold leading-normal bg-gradient-to-br from-primary to-accent bg-clip-text text-transparent pb-1 mb-4 text-center">
+            <div className="mb-6 h-20 w-20 rounded-md bg-secondary flex items-center justify-center">
+              <Books size={44} weight="duotone" className="text-primary" />
+            </div>
+            <h2 className="text-xl font-semibold text-foreground mb-3 text-center">
               {showNeedsReview ? t.guideLibrary.emptyState.allUpToDate : searchQuery || activeCategory !== 'All' ? t.guideLibrary.emptyState.noneFoundFiltered : t.guideLibrary.emptyState.noneYet}
             </h2>
-            <p className="text-muted-foreground text-center max-w-md mb-8 text-lg leading-relaxed">
+            <p className="text-muted-foreground text-center max-w-md mb-8 leading-relaxed">
               {showNeedsReview
                 ? t.guideLibrary.emptyState.allUpToDateDescription
                 : searchQuery || activeCategory !== 'All'
@@ -1122,7 +1090,7 @@ export function GuideLibrary({ onNavigateBack, onLogout, userEmail }: GuideLibra
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
               >
-                <Button onClick={handleAddNew} size="lg" className="h-14 px-8 text-base bg-gradient-to-r from-primary via-accent to-primary hover:from-primary/90 hover:via-accent/90 hover:to-primary/90 shadow-2xl shadow-primary/40 font-semibold rounded-2xl">
+                <Button onClick={handleAddNew} size="lg">
                   <Plus size={24} weight="bold" className="mr-2" />
                   {t.guideLibrary.emptyState.createFirst}
                 </Button>

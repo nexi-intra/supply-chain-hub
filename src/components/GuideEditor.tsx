@@ -83,7 +83,7 @@ function ImageThumb({ imageId, onRemove }: { imageId: string; onRemove?: () => v
   }, [imageId])
 
   return (
-    <div className="relative group/thumb h-20 w-20 rounded-lg border-2 border-border overflow-hidden bg-muted/50 flex items-center justify-center shrink-0">
+    <div className="relative group/thumb h-20 w-20 rounded-md border border-border overflow-hidden bg-muted/50 flex items-center justify-center shrink-0">
       {url ? (
         <img src={url} alt="" className="h-full w-full object-cover" />
       ) : (
@@ -141,7 +141,7 @@ function ImageDropZone({ onUploaded, compact }: { onUploaded: (fileIds: string[]
       }}
       onClick={() => inputRef.current?.click()}
       className={cn(
-        'rounded-lg border-2 border-dashed transition-all cursor-pointer flex items-center justify-center gap-2 text-muted-foreground hover:border-primary/50 hover:text-primary',
+        'rounded-md border border-dashed transition-colors cursor-pointer flex items-center justify-center gap-2 text-muted-foreground hover:border-primary/50 hover:text-primary',
         compact ? 'h-20 w-20 shrink-0' : 'h-20 px-4',
         isDragging && 'border-primary bg-primary/5 text-primary',
         isUploading && 'opacity-50 pointer-events-none'
@@ -657,7 +657,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
         </DialogHeader>
 
         {detectedDraft && (
-          <div className="mx-6 mt-4 flex items-center justify-between gap-4 rounded-xl border-2 border-accent/40 bg-accent/10 p-4 shrink-0">
+          <div className="mx-6 mt-4 flex items-center justify-between gap-4 rounded-md border border-accent/40 bg-accent/10 p-4 shrink-0">
             <div>
               <p className="text-sm font-bold">{t.guideEditor.draftFoundTitle}</p>
               <p className="text-sm text-muted-foreground mt-0.5">{t.guideEditor.draftFoundBody}</p>
@@ -672,7 +672,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
         <ScrollArea className="flex-1 min-h-0">
           <div className="px-6 py-5 space-y-6">
             {showHistory && (
-              <div className="rounded-xl border-2 border-border bg-muted/30 p-4 space-y-2">
+              <div className="rounded-md border border-border bg-muted/30 p-4 space-y-2">
                 <h4 className="text-sm font-bold flex items-center gap-2">
                   <ClockCounterClockwise size={16} />
                   {t.guideEditor.versionHistory}
@@ -833,7 +833,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
               </div>
 
               {sections.map((section, sIndex) => (
-                <div key={section.id} className="rounded-xl border-2 border-border bg-card p-4 space-y-3">
+                <div key={section.id} className="rounded-md border border-border bg-card p-4 space-y-3">
                   <div className="flex items-center gap-2">
                     <Badge variant="outline" className="font-mono shrink-0">{sIndex + 1}.0</Badge>
                     <Input
