@@ -445,7 +445,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
         className="relative"
       >
         <Card className={cn(
-          "p-3 h-[280px] flex flex-col border-2 hover:shadow-lg hover:border-primary/40 transition-all duration-200 hover:scale-[1.02] group",
+          "p-3 h-[280px] flex flex-col hover:border-primary/40 transition-colors group",
           note.pinned && "border-primary/50 bg-primary/[0.04]"
         )}>
           <div className="flex justify-between items-start mb-1.5 gap-2 flex-shrink-0">
@@ -498,7 +498,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
                 <Button
                   variant="outline"
                   size="sm"
-                  className="gap-2 h-7 text-xs shadow-lg"
+                  className="gap-2 h-7 text-xs"
                   onClick={() => openViewDialog(note)}
                 >
                   <Eye size={12} />
@@ -562,14 +562,14 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
               variant="outline"
               size="lg"
               onClick={onNavigateBack}
-              className="bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
+              className="bg-background/90 hover:bg-background transition-colors gap-2 font-semibold px-4"
             >
               <ArrowLeft size={20} />
               {language === 'da' ? 'Tilbage til Hub' : language === 'fi' ? 'Takaisin Hubiin' : 'Back to Hub'}
             </Button>
-            <div className="flex-1 text-center">
-              <h1 className="text-2xl sm:text-3xl font-bold leading-normal bg-gradient-to-br from-primary to-accent bg-clip-text text-transparent pb-1 flex items-center gap-3 justify-center">
-                <Notebook size={32} weight="duotone" className="text-primary" />
+            <div className="flex-1">
+              <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground flex items-center gap-2.5">
+                <Notebook size={26} weight="duotone" className="text-primary" />
                 {t.notebook.title}
               </h1>
             </div>
@@ -577,7 +577,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
               onClick={() => setShowNotifications(true)}
               variant="outline"
               size="lg"
-              className="relative shadow-lg"
+              className="relative"
             >
               <Bell size={20} />
               {unreadCount > 0 && (
@@ -610,7 +610,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
             <Button
               onClick={() => openCreateDialog(activeTab === 'personal')}
               size="lg"
-              className="bg-gradient-to-r from-[oklch(0.42_0.19_270)] to-[oklch(0.52_0.15_262)] hover:from-[oklch(0.38_0.19_272)] hover:to-[oklch(0.48_0.15_264)] text-white shadow-lg gap-2"
+              className="gap-2"
             >
               <Plus size={20} weight="bold" />
               {t.notebook.addNote}

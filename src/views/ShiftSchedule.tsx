@@ -763,7 +763,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                 variant="outline"
                 size="lg"
                 onClick={onNavigateBack}
-                className="pointer-events-auto bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
+                className="pointer-events-auto bg-background/90 hover:bg-background transition-colors gap-2 font-semibold px-4"
               >
                 <ArrowLeft size={20} />
                 <AutoText text="Tilbage" />
@@ -772,16 +772,10 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
           </div>
         </div>
       </div>
-      <div className="w-full px-4 sm:px-6 pt-40 pb-12 sm:pb-20 relative z-10">
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mb-10 text-center"
-        >
-          <div className="flex flex-col items-center gap-6">
-            <h1 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold leading-normal bg-gradient-to-br from-primary to-accent bg-clip-text text-transparent pb-1"><AutoText text="Vagtplan" /></h1>
-          </div>
-        </motion.div>
+      <div className="w-full px-4 sm:px-6 pt-28 pb-12 sm:pb-20 relative z-10">
+        <header className="mb-6 border-b pb-4">
+          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground"><AutoText text="Vagtplan" /></h1>
+        </header>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TabsList className="grid w-full grid-cols-3 max-w-2xl">
@@ -808,7 +802,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                     value={selectedMonth.toString()}
                     onValueChange={(value) => setSelectedMonth(parseInt(value))}
                   >
-                    <SelectTrigger className="w-[160px] font-semibold shadow-sm border-2 hover:border-primary/50 transition-all">
+                    <SelectTrigger className="w-[160px] font-semibold">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -828,7 +822,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                     value={selectedYear.toString()}
                     onValueChange={(value) => setSelectedYear(parseInt(value))}
                   >
-                    <SelectTrigger className="w-[130px] font-semibold shadow-sm border-2 hover:border-primary/50 transition-all">
+                    <SelectTrigger className="w-[130px] font-semibold">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -844,7 +838,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                   <Button
                     onClick={() => setShowWeekAssignmentDialog(true)}
                     variant="default"
-                    className="gap-2 shadow-md hover:shadow-lg transition-all bg-gradient-to-r from-primary to-primary/90"
+                    className="gap-2"
                   >
                     <Plus size={18} weight="bold" />
                     <AutoText text="Tilføj Opgaver til Hel Uge" />
@@ -852,7 +846,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                   <Button
                     onClick={() => setShowPatternDialog(true)}
                     variant="outline"
-                    className="gap-2 shadow-md hover:shadow-lg transition-all border-2"
+                    className="gap-2"
                   >
                     <ArrowsClockwise size={18} weight="bold" />
                     <AutoText text="Gentagne vagter" />
@@ -860,7 +854,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                   <Button
                     onClick={() => setShowWeekClearDialog(true)}
                     variant="destructive"
-                    className="gap-2 shadow-md hover:shadow-lg transition-all"
+                    className="gap-2"
                   >
                     <Trash size={18} weight="bold" />
                     <AutoText text="Ryd Hel Uge" />
@@ -874,7 +868,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                       setScrollToToday(true)
                     }}
                     variant="outline"
-                    className="gap-2 shadow-md hover:shadow-lg transition-all border-2 hover:border-accent hover:bg-accent/10"
+                    className="gap-2"
                   >
                     <CalendarIcon size={18} weight="bold" />
                     <AutoText text="Gå til i dag" />
@@ -882,10 +876,10 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                 </div>
               </div>
 
-              <div className="shadow-inner rounded-lg border-2 border-border bg-card overflow-hidden">
+              <div className="rounded-md border border-border bg-card overflow-hidden">
                 <div ref={scheduleScrollRef} className="overflow-auto relative" style={{ maxHeight: 'calc(100vh - 200px)', maxWidth: '100%' }}>
                   <table className="w-full border-collapse relative" style={{ tableLayout: 'fixed', width: 'max-content' }}>
-                    <thead className="sticky top-0 z-50 bg-card shadow-lg" style={{ position: 'sticky', top: 0 }}>
+                    <thead className="sticky top-0 z-50 bg-card border-b" style={{ position: 'sticky', top: 0 }}>
                       <tr>
                         <th className="sticky left-0 z-[60] bg-card border-r-2 border-b-2 border-border px-3 py-4 text-left font-bold shadow-[2px_0_8px_rgba(0,0,0,0.15)]" style={{ position: 'sticky', left: 0, width: '160px', minWidth: '160px', maxWidth: '160px' }}>
                           <span className="text-sm font-bold">Dato</span>
@@ -960,7 +954,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                                     variant={currentWeek ? "default" : "outline"} 
                                     className={cn(
                                       "text-[10px] px-1.5 py-0.5 font-bold",
-                                      currentWeek && "bg-primary text-primary-foreground shadow-lg",
+                                      currentWeek && "bg-primary text-primary-foreground",
                                       todayDate && "ring-2 ring-accent"
                                     )}
                                   >
@@ -1237,7 +1231,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
           </TabsContent>
 
           <TabsContent value="employees" className="space-y-6">
-            <Card className="p-6 border-2">
+            <Card className="p-6">
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-2">
                   <UserCircle size={28} className="text-primary" weight="duotone" />
@@ -1271,11 +1265,11 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                         key={employee.id}
                         initial={{ opacity: 0, scale: 0.95 }}
                         animate={{ opacity: 1, scale: 1 }}
-                        className="p-5 rounded-xl border-2 bg-card hover:shadow-md transition-all group"
+                        className="p-5 rounded-md border bg-card hover:border-primary/40 transition-colors group"
                       >
                         <div className="flex items-start gap-3 mb-3">
                           <div 
-                            className="w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg shadow-md"
+                            className="w-12 h-12 rounded-md flex items-center justify-center font-bold text-lg"
                             style={{
                               backgroundColor: employeeColor.bg,
                               color: employeeColor.text
@@ -1308,7 +1302,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
           </TabsContent>
 
           <TabsContent value="tasks" className="space-y-6">
-            <Card className="p-6 border-2">
+            <Card className="p-6">
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-2">
                   <Tag size={28} className="text-accent" weight="duotone" />
@@ -1321,7 +1315,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                   <Button
                     onClick={openAddRoleDialog}
                     size="sm"
-                    className="gap-2 bg-gradient-to-r from-primary to-accent"
+                    className="gap-2"
                   >
                     <Plus size={16} />
                     <AutoText text="Tilføj Opgave" />
@@ -1354,11 +1348,11 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                       key={role.id}
                       initial={{ opacity: 0, x: -10 }}
                       animate={{ opacity: 1, x: 0 }}
-                      className="flex items-center justify-between p-5 rounded-xl border-2 bg-card hover:shadow-md transition-all group"
+                      className="flex items-center justify-between p-5 rounded-md border bg-card hover:border-primary/40 transition-colors group"
                     >
                       <div className="flex items-center gap-4 flex-1">
                         <div
-                          className="w-14 h-14 rounded-xl flex items-center justify-center shadow-md"
+                          className="w-14 h-14 rounded-md flex items-center justify-center"
                           style={{ 
                             backgroundColor: `${role.color}30`,
                             border: `2px solid ${role.color}`
@@ -1458,14 +1452,14 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                     type="button"
                     onClick={() => setNewRoleColor(color.value)}
                     className={cn(
-                      "relative flex flex-col items-center gap-2 p-3 rounded-lg border-2 transition-all hover:scale-105",
+                      "relative flex flex-col items-center gap-2 p-3 rounded-md border-2 transition-colors",
                       newRoleColor === color.value
-                        ? "border-foreground shadow-lg scale-105"
+                        ? "border-foreground"
                         : "border-border hover:border-muted-foreground"
                     )}
                   >
                     <div
-                      className="w-10 h-10 rounded-full shadow-md"
+                      className="w-10 h-10 rounded-full"
                       style={{ backgroundColor: color.value }}
                     />
                     <span className="text-xs font-medium">{color.name}</span>
@@ -1681,7 +1675,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                     type="button"
                     onClick={() => togglePatternWeekday(day)}
                     className={cn(
-                      "flex-1 py-2 rounded-lg border-2 text-xs font-semibold transition-all",
+                      "flex-1 py-2 rounded-md border-2 text-xs font-semibold transition-colors",
                       patternWeekdays.includes(day) ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/40"
                     )}
                   >

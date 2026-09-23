@@ -677,7 +677,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
                 variant="outline"
                 size="lg"
                 onClick={onNavigateBack}
-                className="pointer-events-auto bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
+                className="pointer-events-auto bg-background/90 hover:bg-background transition-colors gap-2 font-semibold px-4"
               >
                 <ArrowLeft size={20} />
                 {t.email.back}
@@ -695,7 +695,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
         >
           <div className="flex flex-col items-center gap-6">
             <div>
-              <h1 className="text-4xl font-bold leading-normal bg-gradient-to-br from-primary to-accent bg-clip-text text-transparent pb-1">
+              <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground">
                 {t.email.title}
               </h1>
               <p className="text-muted-foreground mt-2">{t.email.sendAndReceive}</p>
@@ -716,7 +716,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
                   setComposeThreadId(null)
                   setView('compose')
                 }}
-                className="w-full bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90 text-white gap-2"
+                className="w-full gap-2"
                 size="lg"
               >
                 <PaperPlaneTilt size={20} weight="bold" />
@@ -966,7 +966,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
                     <div className="flex gap-2 pt-4">
                       <Button
                         onClick={handleSendEmail}
-                        className="bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90 text-white gap-2"
+                        className="gap-2"
                         size="lg"
                       >
                         <PaperPlaneTilt size={20} weight="bold" />
@@ -1376,7 +1376,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
                           <Separator className="my-6" />
                           <Button
                             onClick={() => navigateTo(detailActionLink.view as AppViewId, { tab: detailActionLink.tab })}
-                            className="gap-2 bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90 text-white"
+                            className="gap-2"
                             size="lg"
                           >
                             <Umbrella size={20} weight="bold" />
@@ -1463,7 +1463,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
                                   <Button
                                     onClick={() => handleApproveVacation(vacation)}
                                     variant="default"
-                                    className="flex-1 gap-2 bg-gradient-to-r from-accent to-primary hover:from-accent/90 hover:to-primary/90"
+                                    className="flex-1 gap-2"
                                   >
                                     <Check size={18} weight="bold" />
                                     {t.email.approve}
@@ -1534,7 +1534,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
                   </Button>
                   <Button
                     onClick={() => handleApproveVacation(selectedVacation)}
-                    className="gap-2 bg-gradient-to-r from-accent to-primary hover:from-accent/90 hover:to-primary/90"
+                    className="gap-2"
                   >
                     <Check size={18} weight="bold" />
                     {t.email.approve}
@@ -1613,7 +1613,6 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
                 </Button>
                 <Button
                   onClick={editingFolder ? handleUpdateFolder : handleCreateFolder}
-                  className="bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90 text-white"
                 >
                   {editingFolder ? t.common.save : <AutoText text="Opret" />}
                 </Button>

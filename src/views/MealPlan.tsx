@@ -180,7 +180,7 @@ export function MealPlan({ onNavigateBack }: MealPlanProps) {
                 variant="outline"
                 size="lg"
                 onClick={onNavigateBack}
-                className="pointer-events-auto bg-background/80 backdrop-blur-sm hover:bg-background shadow-lg hover:shadow-xl transition-all duration-300 gap-2 font-semibold px-4"
+                className="pointer-events-auto bg-background/90 hover:bg-background transition-colors gap-2 font-semibold px-4"
               >
                 <ArrowLeft size={20} />
                 {t.common.back}
@@ -192,23 +192,16 @@ export function MealPlan({ onNavigateBack }: MealPlanProps) {
         </div>
       </div>
       
-      <div className="container mx-auto px-4 sm:px-6 pt-36 pb-12 sm:pb-20 max-w-7xl">
-        <motion.header
-          className="mb-10 text-center"
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4 }}
-        >
-          <div className="flex flex-col items-center">
-            <h1 className="text-4xl sm:text-5xl font-bold tracking-tight bg-gradient-to-br from-primary to-accent bg-clip-text text-transparent flex items-center gap-3 justify-center">
-              <ForkKnife size={40} weight="duotone" className="text-primary" />
-              {t.mealPlan.title}
-            </h1>
-            <p className="text-muted-foreground mt-3">
-              {t.mealPlan.subtitle}
-            </p>
-          </div>
-        </motion.header>
+      <div className="container mx-auto px-4 sm:px-6 pt-28 pb-12 sm:pb-20 max-w-7xl">
+        <header className="mb-6 border-b pb-4">
+          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground flex items-center gap-2.5">
+            <ForkKnife size={26} weight="duotone" className="text-primary" />
+            {t.mealPlan.title}
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            {t.mealPlan.subtitle}
+          </p>
+        </header>
 
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -216,7 +209,7 @@ export function MealPlan({ onNavigateBack }: MealPlanProps) {
           transition={{ delay: 0.1 }}
           className="mb-6"
         >
-          <Card className="border-2 shadow-lg">
+          <Card>
             <CardContent className="p-6">
               <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
                 <div className="flex items-center gap-4">
@@ -278,7 +271,7 @@ export function MealPlan({ onNavigateBack }: MealPlanProps) {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
         >
-          <Card className="border-2 shadow-xl">
+          <Card>
             <CardHeader className="pb-4">
               <div className="flex items-center justify-between">
                 <div>
@@ -317,7 +310,7 @@ export function MealPlan({ onNavigateBack }: MealPlanProps) {
                       </Button>
                       <Button
                         onClick={handleSave}
-                        className="gap-2 bg-gradient-to-r from-primary to-accent"
+                        className="gap-2"
                       >
                         <FloppyDisk size={18} weight="duotone" />
                         {t.common.save}
@@ -385,7 +378,7 @@ export function MealPlan({ onNavigateBack }: MealPlanProps) {
           transition={{ delay: 0.4 }}
           className="mt-8"
         >
-          <Card className="border-2 shadow-lg">
+          <Card>
             <CardHeader>
               <CardTitle className="text-xl">{t.mealPlan.previousPlans}</CardTitle>
               <CardDescription>
