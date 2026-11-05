@@ -8,6 +8,12 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.6.6',
+    items: [
+      'Nyt: Kort over lageret i Placeringer – alle kan se hallen, søge en plads eller et materiale (kortet peger på den ældste palle), se reolen forfra med materialet på hver plads og trykke "Vis på kort" fra pladskort, reolkort og søgning',
+    ],
+  },
+  {
     version: '1.6.5',
     items: [
       'Nyt for TCD og TRR: feltet "Lagerstyring" på forsiden. Det åbner Lagerstyrings egen side med værktøjet "Optælling" – det tidligere program CountPoint er nu en del af Hubben. Du bruger din Hub-konto, og teamet er den hub, du har åben',

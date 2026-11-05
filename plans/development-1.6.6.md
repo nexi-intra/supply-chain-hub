@@ -23,10 +23,10 @@ Oprettet: 2026-11-05. Ingen build, release eller push.
 ## Fase 2 - nye tiltag
 
 - [ ] Aftal næste tiltag fra backloggen.
-- [ ] Placeringer: Tegning af lageret – Fase 2 "Kort over lageret" (kort for alle, reolen forfra med materiale, søgning med ældste palle, "Vis på kort") – design `plans/lager-kort-design.md` (godkendt 05.11), plan `plans/lager-kort-plan.md`.
+- [x] Placeringer: Tegning af lageret – Fase 2 "Kort over lageret" (kort for alle, reolen forfra med materiale, søgning med ældste palle, "Vis på kort") – design `plans/lager-kort-design.md` (godkendt 05.11), plan `plans/lager-kort-plan.md`. (Task 1–6 lokalt committet 05.11; E2E `scripts/verify-layout.cjs` grøn)
 - [ ] Placeringer: Tegning af lageret – Fase 3 (kortet i "Sæt palle på plads": "Vis" ved forslag og valgt plads) – se `plans/lager-tegning-plan.md`.
 - [ ] Overvej: øvrige skjulte standardgenveje (Ctrl+R / Ctrl+Shift+R genindlæser og smider ikke-gemt formulardata væk; Ctrl+M minimerer).
-- [ ] Registrer brugerrettede ændringer i `src/lib/changelog.ts` under 1.6.6 — kun for ting der faktisk er lavet.
+- [ ] Registrer brugerrettede ændringer i `src/lib/changelog.ts` under 1.6.6 — kun for ting der faktisk er lavet. (Kort over lageret registreret 05.11)
 
 ## Fase 3 - senere, kun efter godkendelse
 

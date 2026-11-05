@@ -682,10 +682,10 @@ it('decide marks a list place as outside or to remove, and null clears it', () =
 
 Detaljeret 05.11.2026 (Hub 1.6.6): design `plans/lager-kort-design.md`, plan `plans/lager-kort-plan.md` (Task 1–6 der).
 
-- [ ] **Task 17: Kort over lageret** – `LocationsTarget { kind: 'map'; id?: string }`, felt på Placeringer-forsiden; `LayoutCanvas readOnly` med etagefilter, zoom og søgefelt (plads/materiale) der fremhæver; data fra `layout()` + `list()`; caches pr. `drawing.version`.
-- [ ] **Task 18: Reolen forfra med belægning** – `RackFront mode="view"` med `status` ud fra paller/lager/formål/ejer; klik → `LocationCard`.
-- [ ] **Task 19: "Vis på kort"** – knap på `LocationCard`, `RackCard` og plads-søgeresultater → `{ kind: 'map', id }` med pladsen fremhævet og reolen forfra.
-- [ ] **Task 20: E2E + changelog** – udvid `scripts/verify-layout.cjs`.
+- [x] **Task 17: Kort over lageret** – `LocationsTarget { kind: 'map'; id?: string }`, felt på Placeringer-forsiden; `LayoutCanvas readOnly` med etagefilter, zoom og søgefelt (plads/materiale) der fremhæver; data fra `layout()` + `list()`; caches pr. `drawing.version`.
+- [x] **Task 18: Reolen forfra med belægning** – `RackFront mode="view"` med `status` ud fra paller/lager/formål/ejer; klik → `LocationCard`.
+- [x] **Task 19: "Vis på kort"** – knap på `LocationCard`, `RackCard` og plads-søgeresultater → `{ kind: 'map', id }` med pladsen fremhævet og reolen forfra.
+- [x] **Task 20: E2E + changelog** – udvid `scripts/verify-layout.cjs`.
 
 # Fase 3 – Kortet i hverdagen (detaljeres før start)
 

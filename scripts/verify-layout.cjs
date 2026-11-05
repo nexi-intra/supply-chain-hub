@@ -1,6 +1,7 @@
 // Tegning af lageret in the Hub on a temporary platform (manager chef@example.test, employee anna@example.test); M: is
 // never touched. `--open` signs the manager in and leaves the window open for manual checks; without flags a smoke flow
-// runs the whole Phase 1 flow (draw, reconcile, publish, rename with a pallet, employee locked out) with fixed assertions and
+// runs the whole Phase 1 flow (draw, reconcile, publish, rename with a pallet, employee locked out) and the Phase 2 map flow
+// ("Kort over lageret" for the employee: search a material, the rack front, "Vis på kort") with fixed assertions and
 // leaves screenshots in the evidence folder. Prints "ALLE TJEK OK" at the end; any failed check exits with code 1.
 // Needs Vite:  npm run dev -- --host 127.0.0.1 --port 5066 --strictPort   then  WAREHOUSE_VERIFY_URL=http://127.0.0.1:5066 node scripts/verify-layout.cjs [--open]
 const assert = require('node:assert/strict')
@@ -594,6 +595,98 @@ async function employeeLockedOut(page) {
   console.log('ok - medarbejderen anna ser ingen "Tegning af lageret", og layoutDraft() afvises med LOCATIONS_MANAGER_ONLY')
 }
 
+/** The cell of a place in the map's rack front: its title starts with the place name. */
+const mapCell = name => `[data-testid="map-front"] button[data-slot][title^="${name} "]`
+/** Waits until the place's cell carries the highlight outline (and, with `visible`, is scrolled into the window). */
+async function mapHighlighted(page, name, visible = false) {
+  await page.waitForFunction(([selector, inView]) => {
+    const cell = document.querySelector(selector)
+    if (!cell || !cell.classList.contains('outline-amber-500')) return false
+    if (!inView) return true
+    const box = cell.getBoundingClientRect()
+    return box.bottom > 0 && box.top < innerHeight
+  }, [mapCell(name), visible], { timeout: 15000 })
+}
+
+/** "Kort over lageret" for everyone: anna finds R162-0717 on the map, sees the rack front and lands on A1.9 from "Vis på kort". */
+async function mapForEveryone(page) {
+  const hits = page.getByTestId('map-hits')
+  const mapFront = page.getByTestId('map-front')
+  const search = page.getByLabel('Søg på kortet')
+  const showOnMap = page.getByRole('button', { name: 'Vis på kort', exact: true })
+
+  await page.getByRole('button', { name: /Kort over lageret/ }).click({ timeout: 30000 })
+  await page.locator(CANVAS).waitFor({ timeout: 30000 })
+  await search.waitFor()
+  console.log('ok - kort: anna (medarbejder) ser "Kort over lageret" på Placeringers forside, og tegningen åbner')
+
+  await search.pressSequentially('r162-0717')
+  await hits.getByText('R162-0717', { exact: false }).first().waitFor({ timeout: 15000 })
+  // Two pallets of R162-0717: K9.9 (10, put away first, so the oldest – the one Tag points to) and A1.9 (5).
+  const a19Hit = hits.getByRole('button', { name: /^A1\.9/ })
+  const k99Hit = hits.getByRole('button', { name: /^K9\.9/ })
+  await a19Hit.waitFor()
+  assert.match(await k99Hit.textContent(), /ældste/, 'K9.9 holds the oldest pallet of R162-0717')
+  assert.doesNotMatch(await a19Hit.textContent(), /ældste/)
+  await mapFront.waitFor({ timeout: 15000 })
+  await mapHighlighted(page, 'K9.9')
+  const box = await search.boundingBox()
+  const height = (page.viewportSize() ?? await page.evaluate(() => ({ height: innerHeight }))).height
+  assert.ok(box && box.y >= 0 && box.y + box.height <= height, `the search field stays on screen while typing (y ${box?.y}, height ${height})`)
+  const contents = (await api(page, 'mapContents')).result
+  const k99 = (await api(page, 'list')).result.locations.find(location => location.name === 'K9.9')
+  assert.equal(contents.oldest['R162-0717'], k99.id, 'mapContents points R162-0717 to K9.9')
+  assert.equal(String(contents.oldest['R162-0717']).toUpperCase(), 'K9.9')
+  assert.ok(contents.places['A1.9'].materials.some(item => item.material === 'R162-0717' && item.quantity === 5), 'mapContents has R162-0717 × 5 on A1.9')
+  await shot(page, '30-kort-soeg-materiale')
+  console.log('ok - kort: "r162-0717" i "Søg på kortet" viser A1.9 og K9.9 (K9.9 "ældste", som Tag); K9.9 fremhæves i reolen forfra; søgefeltet bliver på skærmen; mapContents.oldest peger på K9.9')
+
+  await a19Hit.click()
+  await mapFront.waitFor()
+  await mapHighlighted(page, 'A1.9', true)
+  const cell = page.locator(mapCell('A1.9'))
+  assert.match(await cell.textContent(), /R162-0717/)
+  assert.match(await cell.getAttribute('title'), /^A1\.9/)
+  await frontShot(page, '31-kort-reol-forfra')
+  console.log('ok - kort: klik på A1.9 i hitlisten ruller reolen forfra frem med A1.9 fremhævet og "R162-0717" i cellen')
+
+  await search.fill('K1.1')
+  await hits.getByRole('button', { name: /^K1\.1/ }).getByText('ikke på kortet').waitFor({ timeout: 15000 })
+  await search.fill('zz-findes-ikke')
+  await hits.getByText('Ingen plads eller materiale på kortet matcher').waitFor({ timeout: 15000 })
+  console.log('ok - kort: K1.1 (uden for tegningen) står som "ikke på kortet"; en ukendt søgning giver "Ingen plads eller materiale på kortet matcher"')
+
+  await page.locator(mapCell('A1.9')).click()
+  await page.getByRole('heading', { name: 'A1.9', exact: true }).waitFor({ timeout: 30000 })
+  await showOnMap.click({ timeout: 30000 })
+  await page.locator(CANVAS).waitFor({ timeout: 30000 })
+  await mapFront.waitFor({ timeout: 30000 })
+  await mapHighlighted(page, 'A1.9', true)
+  await shot(page, '32-vis-paa-kort')
+  console.log('ok - kort: klik på cellen A1.9 åbner pladskortet; "Vis på kort" åbner kortet med A1.9 fremhævet')
+
+  await page.keyboard.press('Escape')
+  const homeSearch = page.getByLabel('Søg i placeringer')
+  await homeSearch.waitFor({ timeout: 30000 })
+  await homeSearch.fill('A1.9')
+  const a19Row = page.locator('div')
+    .filter({ has: page.getByRole('button', { name: /^A1\.9/ }) })
+    .filter({ has: showOnMap })
+    .last()
+  await a19Row.getByRole('button', { name: 'Vis på kort', exact: true }).click({ timeout: 30000 })
+  await page.locator(CANVAS).waitFor({ timeout: 30000 })
+  await mapHighlighted(page, 'A1.9', true)
+  console.log('ok - kort: "Vis på kort" på søgerækken A1.9 på forsiden åbner kortet med A1.9 fremhævet')
+
+  await page.keyboard.press('Escape')
+  await homeSearch.waitFor({ timeout: 30000 })
+  await homeSearch.fill('K1.1')
+  await page.getByRole('button', { name: /^K1\.1/ }).first().click({ timeout: 30000 })
+  await page.getByRole('heading', { name: 'K1.1', exact: true }).waitFor({ timeout: 30000 })
+  assert.equal(await showOnMap.count(), 0, 'K1.1 is not on the drawing: no "Vis på kort"')
+  console.log('ok - kort: pladskortet for K1.1 (uden for tegningen) har ingen "Vis på kort"')
+}
+
 async function main() {
   makePlatform()
   const chef = await launch('chef')
@@ -611,6 +704,7 @@ async function main() {
     await adminAfterPublish(chef.page)
     await renameFollows(chef.page, rack)
     await employeeLockedOut(chef.page)
+    await mapForEveryone(chef.page)
   } finally {
     await chef.app.close().catch(() => {})
   }

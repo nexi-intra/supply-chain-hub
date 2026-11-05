@@ -57,7 +57,7 @@
   ```
 - Produces (backend): `service.mapContents(user) -> Promise<MapContents>`; bridge `window.electronWarehouse.locations.mapContents()`.
 
-- [ ] **Step 1: Skriv de fejlende tests** i `service.test.cjs` (brug `setup()`, `place()`, `shelf()` og `seed()` som de øvrige tests):
+- [x] **Step 1: Skriv de fejlende tests** i `service.test.cjs` (brug `setup()`, `place()`, `shelf()` og `seed()` som de øvrige tests):
 
 ```js
 test('mapContents: what stands on every place, merged per material, oldest pallet first', async () => {
@@ -94,21 +94,21 @@ test('mapContents: fixed materials of a reserve place are not shown as content',
 
 Tilføj `'map-contents'` til `LOCATION_CHANNELS` i `register.test.cjs:87`.
 
-- [ ] **Step 2: Kør og se dem fejle**
+- [x] **Step 2: Kør og se dem fejle**
 
 Run: `node --test electron/warehouse/locations/service.test.cjs electron/warehouse/register.test.cjs`
 Expected: FAIL – `pc1.service.mapContents is not a function` og den manglende kanal.
 
-- [ ] **Step 3: Implementér `async function mapContents(user)` i `service.cjs`**
+- [x] **Step 3: Implementér `async function mapContents(user)` i `service.cjs`**
 
 Én `repo.read(teamOf(user))`; saml pr. plads-id et `Map<material, MapMaterial>` fra `state.pallets` (pallets++, quantity += tal, oldestAt = min receivedAt), `state.stock` (quantity += line.quantity) og `fixedMaterials` kun for formål `pick`/`station` (`fixed: true`, quantity forbliver `null` hvis intet andet). Rækkefølge pr. plads: `oldestAt` stigende (null sidst), så `quantity` faldende, så faste i listens rækkefølge. `oldest[material] = rules.fifo(state, material)[0]?.location` for materialer med paller. Én `describe()` for alle materialer. Registrér i `LOCATION_READS`, preload og bridge-typen.
 
-- [ ] **Step 4: Kør og se dem bestå**
+- [x] **Step 4: Kør og se dem bestå**
 
 Run: `node --test electron/warehouse/locations/service.test.cjs electron/warehouse/register.test.cjs`
 Expected: PASS (alle).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 `git add electron/warehouse/locations/service.cjs electron/warehouse/locations/service.test.cjs electron/warehouse/register.cjs electron/warehouse/register.test.cjs electron/preload.cjs src/types/warehouse.ts`
 `git commit -m "Placeringer: mapContents – what stands on every place for the map"`
@@ -149,7 +149,7 @@ Regler fra spec'en (afsnit "Reolen forfra – hver plads" og "Søgning på korte
 - `slotStatus` rækkefølge: andet team → `other-team`; ingen plads (`placeOfSlot` null) → `none`; `!active` → `none`; formål `reserved` → `reserved`; `pick` → `pick`; `used > 0 || stockCount > 0` → `used`; ellers `empty`.
 - `searchMap`: under 2 tegn (efter trim) → tom. Plads: `locationKeyOf(name)` starter med `locationKeyOf(query)`; præcist match først. Materiale: nummer starter med (store bogstaver) eller beskrivelse indeholder (små bogstaver). Højst 8 hits. `items` = alle `itemId`'er i hits (til gul ramme). `focus`: præcist plads-træf; ellers første materiale-træfs `oldest`-plads; ellers dets pluk-plads (fast materiale); ellers dets største `quantity`. `itemId/slotId = null` for pladser, der ikke er på tegningen ("ikke på kortet").
 
-- [ ] **Step 1: Skriv de fejlende tests** i `map.test.ts`. Byg en lille tegning med en TCD-reol `A` (2 fag × 2 niveauer: slots `A1.1, A1.2, A2.1, A2.2`, ét af dem `pick-unnamed`), en TRR-reol `D` med en slot ved navn `A2.2`, og en liste/contents i hånden. Tests (navne og kerne-asserts):
+- [x] **Step 1: Skriv de fejlende tests** i `map.test.ts`. Byg en lille tegning med en TCD-reol `A` (2 fag × 2 niveauer: slots `A1.1, A1.2, A2.1, A2.2`, ét af dem `pick-unnamed`), en TRR-reol `D` med en slot ved navn `A2.2`, og en liste/contents i hånden. Tests (navne og kerne-asserts):
 
 ```ts
 it('slotStatus follows the order other-team, none, inactive, reserved, pick, used, empty', () => {
@@ -204,19 +204,19 @@ it('findSlot finds the item and slot of a place, null for another team or an unk
 })
 ```
 
-- [ ] **Step 2: Kør og se dem fejle**
+- [x] **Step 2: Kør og se dem fejle**
 
 Run: `node node_modules/vitest/vitest.mjs run src/lib/warehouse/layout/map.test.ts`
 Expected: FAIL – modulet findes ikke.
 
-- [ ] **Step 3: Implementér `map.ts`** med signaturerne ovenfor. Pluralis: "1 palle"/"N paller", "N stk"; "1 materiale"/"N materialer" (via `t`).
+- [x] **Step 3: Implementér `map.ts`** med signaturerne ovenfor. Pluralis: "1 palle"/"N paller", "N stk"; "1 materiale"/"N materialer" (via `t`).
 
-- [ ] **Step 4: Kør og se dem bestå**
+- [x] **Step 4: Kør og se dem bestå**
 
 Run: `node node_modules/vitest/vitest.mjs run src/lib/warehouse/layout/map.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 `git add src/lib/warehouse/layout/map.ts src/lib/warehouse/layout/map.test.ts`
 `git commit -m "Placeringer: map rules – status, cell text, search with the oldest pallet"`
@@ -230,13 +230,13 @@ Expected: PASS.
 - Consumes: intet nyt.
 - Produces: ny valgfri prop på `RackFront`: `content?: Record<string, { text: string; title: string }>` (pr. slot id). Kun brugt når `mode === 'view'`.
 
-- [ ] **Step 1: Udvid `RackFront`**: i `mode="view"` med `content` vises cellen i to linjer – `cellText(slot, column)` (pladsens navn, som i dag) og under den `content[slot.id].text` i monospace (eller "tom" for en plads uden indhold med status `empty`); `title`/`aria-label` = `content[slot.id].title` når den findes. Cellen bliver `h-10 min-w-20` i view-mode; edit-mode uændret (`h-6 min-w-9`). `highlight` (gul outline) virker som i dag.
-- [ ] **Step 2: Typer og eksisterende tests**
+- [x] **Step 1: Udvid `RackFront`**: i `mode="view"` med `content` vises cellen i to linjer – `cellText(slot, column)` (pladsens navn, som i dag) og under den `content[slot.id].text` i monospace (eller "tom" for en plads uden indhold med status `empty`); `title`/`aria-label` = `content[slot.id].title` når den findes. Cellen bliver `h-10 min-w-20` i view-mode; edit-mode uændret (`h-6 min-w-9`). `highlight` (gul outline) virker som i dag.
+- [x] **Step 2: Typer og eksisterende tests**
 
 Run: `node node_modules/typescript/bin/tsc --noEmit -p .` og `node node_modules/vitest/vitest.mjs run src/lib/warehouse/layout`
 Expected: 0 fejl; alle grønne (editorens tests uændrede).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 `git commit -am "Placeringer: the rack front shows what stands on each place (view mode)"`
 
@@ -257,7 +257,7 @@ Expected: 0 fejl; alle grønne (editorens tests uændrede).
 - Consumes: Task 1 (`mapContents`), Task 2 (alle eksporter), Task 3 (`content`-prop); `LayoutCanvas` (`readOnly`, `highlight`, `floorView`, `zoom`, `team`, `onPointer`), `FloorView`.
 - Produces: `LocationsMap({ user, focus, drawing, version, onOpen }: { user: WarehouseUser; focus?: string; drawing: LocationList['drawing']; version: number; onOpen: (target: LocationsTarget) => void })`. `Locations.tsx` holder `drawing: LocationList['drawing']` (i stedet for kun admins' `drawn`) og giver den videre til `LocationsHome`, `LocationCard`, `RackCard`, `SearchResults` (Task 5) og `LocationsMap`; `drawn = Boolean(drawing)` bevares for de eksisterende brugere.
 
-- [ ] **Step 1: Fejlende test** i `locations.test.ts`:
+- [x] **Step 1: Fejlende test** i `locations.test.ts`:
 
 ```ts
 it('targetFromItem opens the map, also on a place', () => {
@@ -268,9 +268,9 @@ it('targetFromItem opens the map, also on a place', () => {
 
 Run: `node node_modules/vitest/vitest.mjs run src/lib/warehouse/locations.test.ts` → FAIL; implementér `LocationsTarget`/`targetFromItem` → PASS.
 
-- [ ] **Step 2: `Locations.tsx`**: hent `list()` for alle (ikke kun `canAdmin`) og gem `result.drawing`; route `target.kind === 'map'` → `<LocationsMap key={target.id || ''} … focus={target.id} />`.
-- [ ] **Step 3: `LocationsHome.tsx`**: ny prop `drawing`; når den findes, et felt "Kort over lageret" / "Map of the warehouse" (ikon `MapTrifold`, hint "Find en plads eller et materiale på tegningen" / "Find a place or a material on the drawing") sidst i opgavelisten → `{ kind: 'map' }`. Admins' knap "Tegning af lageret" bliver.
-- [ ] **Step 4: `LocationsMap.tsx`** (layout A fra skitsen):
+- [x] **Step 2: `Locations.tsx`**: hent `list()` for alle (ikke kun `canAdmin`) og gem `result.drawing`; route `target.kind === 'map'` → `<LocationsMap key={target.id || ''} … focus={target.id} />`.
+- [x] **Step 3: `LocationsHome.tsx`**: ny prop `drawing`; når den findes, et felt "Kort over lageret" / "Map of the warehouse" (ikon `MapTrifold`, hint "Find en plads eller et materiale på tegningen" / "Find a place or a material on the drawing") sidst i opgavelisten → `{ kind: 'map' }`. Admins' knap "Tegning af lageret" bliver.
+- [x] **Step 4: `LocationsMap.tsx`** (layout A fra skitsen):
   - Henter `layout()` når `drawing?.version` ændres; `list()` + `mapContents()` når `version` ændres; `contextOf(list, contents, user.team)`.
   - Ingen `drawing` eller `layout === null`: "Tegningen er ikke udgivet endnu" / "The drawing has not been published yet". Fejl: `errorMessage` som resten af Placeringer.
   - Linje øverst: søgefelt (`aria-label` "Søg på kortet", placeholder "Søg eller scan: plads eller materiale"), etagefilter (Alle/Gulv/Ovenpå), zoom −/+.
@@ -278,12 +278,12 @@ Run: `node node_modules/vitest/vitest.mjs run src/lib/warehouse/locations.test.t
   - Under kortet når en ting er valgt: overskrift "Reol {navn} · {n} pladser · {optaget} optaget" og `RackFront mode="view" status={…} content={…} highlight={focusSlot} onSlot={id => placeOfSlot … && onOpen({ kind: 'location', id })}` samt forklaring (tom/optaget/pluk/reserveret/TRR eller ingen plads) med `STATUS_FILL`-farverne. `data-testid="map-front"` på panelet.
   - Søgelinje under feltet (`data-testid="map-hits"`): pr. hit materialenummer · beskrivelse og pladserne som knapper; "ældste" ved `oldest`; "ikke på kortet" ved `itemId === null` (åbner pladskortet). Ingen hits (≥ 2 tegn): "Ingen plads eller materiale på kortet matcher" / "No place or material on the map matches".
   - `focus` (prop eller søgningens `focus`) vælger tingen og fremhæver sloten; reolen forfra rulles i syne.
-- [ ] **Step 5: Typer + tests**
+- [x] **Step 5: Typer + tests**
 
 Run: `node node_modules/typescript/bin/tsc --noEmit -p .` og `node node_modules/vitest/vitest.mjs run src/lib/warehouse`
 Expected: 0 fejl; alle grønne.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 `git add src/views/warehouse/locations src/lib/warehouse/locations.ts src/lib/warehouse/locations.test.ts`
 `git commit -m "Placeringer: Kort over lageret for everyone"`
@@ -297,11 +297,11 @@ Expected: 0 fejl; alle grønne.
 - Consumes: `canShowOnMap(placeId, drawing)` (Task 2); `{ kind: 'map', id }` (Task 4).
 - Produces: ny prop `drawing: LocationList['drawing']` på de tre komponenter.
 
-- [ ] **Step 1:** `LocationCard`: knap "Vis på kort" / "Show on map" (ikon `MapTrifold`, `size="sm" variant="outline"`) i overskriftslinjen når `canShowOnMap(place.id, drawing)`.
-- [ ] **Step 2:** `RackCard`: samme knap når en af `card.shelves` er på tegningen; `id` = første sådan hylde.
-- [ ] **Step 3:** `SearchResults`: lille knap "Vis på kort" til højre i hver plads-række, når `canShowOnMap`; `onClick` stopper rækkens eget klik.
-- [ ] **Step 4:** Run: `node node_modules/typescript/bin/tsc --noEmit -p .` → 0 fejl.
-- [ ] **Step 5: Commit** `git commit -am "Placeringer: Vis på kort from the place card, rack card and search"`
+- [x] **Step 1:** `LocationCard`: knap "Vis på kort" / "Show on map" (ikon `MapTrifold`, `size="sm" variant="outline"`) i overskriftslinjen når `canShowOnMap(place.id, drawing)`.
+- [x] **Step 2:** `RackCard`: samme knap når en af `card.shelves` er på tegningen; `id` = første sådan hylde.
+- [x] **Step 3:** `SearchResults`: lille knap "Vis på kort" til højre i hver plads-række, når `canShowOnMap`; `onClick` stopper rækkens eget klik.
+- [x] **Step 4:** Run: `node node_modules/typescript/bin/tsc --noEmit -p .` → 0 fejl.
+- [x] **Step 5: Commit** `git commit -am "Placeringer: Vis på kort from the place card, rack card and search"`
 
 ---
 
@@ -317,23 +317,23 @@ Expected: 0 fejl; alle grønne.
 **Interfaces:**
 - Consumes: tilstanden efter `renameFollows` (udgivet version 2; A1.9 med 1 palle R162-0717 × 5; K1.1 uden for tegningen) og anna logget ind fra `employeeLockedOut`.
 
-- [ ] **Step 1: Skriv `mapForEveryone(page)`** med faste tjek (som anna, almindelig medarbejder):
+- [x] **Step 1: Skriv `mapForEveryone(page)`** med faste tjek (som anna, almindelig medarbejder):
   1. Placeringers forside har "Kort over lageret"; klik → `svg[aria-label="Tegning af lageret"]` synligt.
   2. Søg "r162-0717" i "Søg på kortet" → `map-hits` viser "A1.9" og "ældste"; `map-front` er synligt; cellen for A1.9 (`[data-slot]` med title der starter med "A1.9") indeholder "R162-0717".
   3. Søg "K1.1" → "ikke på kortet".
   4. Klik cellen A1.9 → overskriften `A1.9` (pladskortet); knappen "Vis på kort" findes; klik → kortet med `map-front` og A1.9 fremhævet.
   5. Skærmbilleder `30-kort-soeg-materiale`, `31-kort-reol-forfra`, `32-vis-paa-kort`.
   Hver blok slutter med en `console.log('ok - …')`-linje som resten af filen.
-- [ ] **Step 2: Kør E2E**
+- [x] **Step 2: Kør E2E**
 
 Run: Vite i terminal 1 (se Global Constraints), så `node scripts/verify-layout.cjs`
 Expected: sidste linje "ALLE TJEK OK", inkl. de nye `ok - kort …`-linjer.
 
-- [ ] **Step 3: Hele suiten**
+- [x] **Step 3: Hele suiten**
 
 Run: `node --test electron/*.test.cjs electron/warehouse/*.test.cjs electron/warehouse/core/*.test.cjs electron/warehouse/locations/*.test.cjs`, `node node_modules/vitest/vitest.mjs run`, `node node_modules/typescript/bin/tsc --noEmit -p .`
 Expected: alle grønne (kendt ustabil: `assistantWorker.test.cjs` timeout – kør igen).
 
-- [ ] **Step 4: Changelog 1.6.6** – ét punkt: "Nyt: Kort over lageret i Placeringer – alle kan se hallen, søge en plads eller et materiale (kortet peger på den ældste palle), se reolen forfra med materialet på hver plads og trykke "Vis på kort" fra pladskort, reolkort og søgning".
-- [ ] **Step 5: Planer** – afkryds her og i `plans/development-1.6.6.md` (Fase 2-linjen) og `plans/lager-tegning-plan.md` (Task 17–20).
-- [ ] **Step 6: Commit** `git commit -am "Placeringer: E2E for the map, changelog 1.6.6"`
+- [x] **Step 4: Changelog 1.6.6** – ét punkt: "Nyt: Kort over lageret i Placeringer – alle kan se hallen, søge en plads eller et materiale (kortet peger på den ældste palle), se reolen forfra med materialet på hver plads og trykke "Vis på kort" fra pladskort, reolkort og søgning".
+- [x] **Step 5: Planer** – afkryds her og i `plans/development-1.6.6.md` (Fase 2-linjen) og `plans/lager-tegning-plan.md` (Task 17–20).
+- [x] **Step 6: Commit** `git commit -am "Placeringer: E2E for the map, changelog 1.6.6"`
