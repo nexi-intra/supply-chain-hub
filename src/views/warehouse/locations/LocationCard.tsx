@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Trash } from '@phosphor-icons/react'
+import { MapTrifold, Trash } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -7,14 +7,15 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { formatNumber } from '@/lib/warehouse/format'
+import { canShowOnMap } from '@/lib/warehouse/layout/map'
 import { formatAge, formatDate, isShelfPlace, materialLabel, purposeLabel, typeLabel, type LocationsTarget } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
-import type { LocationCard as LocationCardData } from '@/types/warehouse'
+import type { LocationCard as LocationCardData, LocationList } from '@/types/warehouse'
 import { HistoryList } from './HistoryList'
 import { ShelfLines } from './ShelfLines'
 
 /** One place: what it is for, what stands there and what happened there. */
-export function LocationCard({ location, version, canAdmin, onOpen, onChanged }: { location: string; version: number; canAdmin: boolean; onOpen: (target: LocationsTarget) => void; onChanged: () => void }) {
+export function LocationCard({ location, version, canAdmin, drawing, onOpen, onChanged }: { location: string; version: number; canAdmin: boolean; drawing: LocationList['drawing']; onOpen: (target: LocationsTarget) => void; onChanged: () => void }) {
   const [card, setCard] = useState<LocationCardData | null>(null)
   useEffect(() => {
     let current = true
@@ -53,6 +54,7 @@ export function LocationCard({ location, version, canAdmin, onOpen, onChanged }:
         {!place.active && <Badge variant="outline" className="border-destructive/50 text-destructive">{t('Deaktiveret', 'Deactivated')}</Badge>}
         {place.rack && <button type="button" className="text-sm text-primary hover:underline" onClick={() => onOpen({ kind: 'rack', id: place.rack! })}>{t(`Reol ${place.rack}`, `Rack ${place.rack}`)}</button>}
         {(place.purpose === 'reserve' || place.purpose === 'pick') && <span className="ml-auto text-sm">{occupancyText}</span>}
+        {canShowOnMap(place.id, drawing) && <Button size="sm" variant="outline" onClick={() => onOpen({ kind: 'map', id: place.id })}><MapTrifold size={16} /> {t('Vis på kort', 'Show on map')}</Button>}
         {canAdmin && (
           <Button size="sm" variant="ghost" className="text-destructive" disabled={card.pallets.length > 0 || card.stock.length > 0}
             title={card.pallets.length || card.stock.length ? t('Kun en tom placering kan slettes', 'Only an empty location can be deleted') : undefined}

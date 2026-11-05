@@ -1,18 +1,21 @@
 import { useEffect, useState } from 'react'
+import { MapTrifold } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { formatNumber } from '@/lib/warehouse/format'
+import { canShowOnMap } from '@/lib/warehouse/layout/map'
 import { materialLabel, purposeLabel, type LocationsTarget } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
-import type { RackCard as RackCardData } from '@/types/warehouse'
+import type { LocationList, RackCard as RackCardData } from '@/types/warehouse'
 import { HistoryList } from './HistoryList'
 import { RackAdmin } from './RackAdmin'
 
 /** A rack: its shelves from the top down with what stands on each; admins add, remove and delete shelves. */
-export function RackCard({ rack, version, canAdmin, drawn, onOpen, onChanged }: { rack: string; version: number; canAdmin: boolean; drawn: boolean; onOpen: (target: LocationsTarget) => void; onChanged: () => void }) {
+export function RackCard({ rack, version, canAdmin, drawn, drawing, onOpen, onChanged }: { rack: string; version: number; canAdmin: boolean; drawn: boolean; drawing: LocationList['drawing']; onOpen: (target: LocationsTarget) => void; onChanged: () => void }) {
   const [card, setCard] = useState<RackCardData | null>(null)
   useEffect(() => {
     let current = true
@@ -21,6 +24,7 @@ export function RackCard({ rack, version, canAdmin, drawn, onOpen, onChanged }: 
   }, [rack, version])
 
   if (!card) return <Skeleton className="h-80 rounded-xl" />
+  const onMap = card.shelves.find(({ location }) => canShowOnMap(location.id, drawing))?.location.id
 
   return (
     <div className="mx-auto max-w-5xl space-y-4">
@@ -28,6 +32,7 @@ export function RackCard({ rack, version, canAdmin, drawn, onOpen, onChanged }: 
         <h1 className="text-2xl font-semibold tracking-tight">{t('Reol', 'Rack')} <span className="font-mono">{card.rack}</span></h1>
         <Badge variant="secondary">{card.purpose === 'reserve' ? t('Lager', 'Storage') : purposeLabel(card.purpose)}</Badge>
         <span className="text-sm text-muted-foreground">{t(`Område ${card.area} · ${card.shelves.length} hylder`, `Area ${card.area} · ${card.shelves.length} shelves`)}</span>
+        {onMap && <Button size="sm" variant="outline" onClick={() => onOpen({ kind: 'map', id: onMap })}><MapTrifold size={16} /> {t('Vis på kort', 'Show on map')}</Button>}
         {canAdmin && <RackAdmin card={card} drawn={drawn} onOpen={onOpen} onChanged={onChanged} />}
       </div>
 

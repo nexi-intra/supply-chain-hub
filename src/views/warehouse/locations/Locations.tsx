@@ -104,8 +104,8 @@ export function Locations({ user, initial }: { user: WarehouseUser; initial: Loc
       {target.kind === 'log' && <LocationsLog key={target.id || ''} query={target.id} version={version} onOpen={setTarget} onChanged={() => setVersion(value => value + 1)} />}
       {target.kind === 'move' && <MovePallet pallet={target.id} version={version} onDone={() => setVersion(value => value + 1)} />}
       {target.kind === 'material' && <MaterialCard material={target.id} version={version} onOpen={setTarget} />}
-      {target.kind === 'location' && <LocationCard location={target.id} version={version} canAdmin={canAdmin} onOpen={setTarget} onChanged={() => setVersion(value => value + 1)} />}
-      {target.kind === 'rack' && <RackCard rack={target.id} version={version} canAdmin={canAdmin} drawn={drawn} onOpen={setTarget} onChanged={() => setVersion(value => value + 1)} />}
+      {target.kind === 'location' && <LocationCard location={target.id} version={version} canAdmin={canAdmin} drawing={drawing} onOpen={setTarget} onChanged={() => setVersion(value => value + 1)} />}
+      {target.kind === 'rack' && <RackCard rack={target.id} version={version} canAdmin={canAdmin} drawn={drawn} drawing={drawing} onOpen={setTarget} onChanged={() => setVersion(value => value + 1)} />}
       {target.kind === 'pallet' && <PalletCard pallet={target.id} version={version} tags={tags} onOpen={setTarget} onChanged={() => setVersion(value => value + 1)} />}
       {target.kind === 'admin' && <Admin user={user} version={version} onOpen={setTarget} onChanged={() => setVersion(value => value + 1)} />}
       {target.kind === 'import' && <ImportSheet onDone={() => { setVersion(value => value + 1); setTarget({ kind: 'home' }) }} />}

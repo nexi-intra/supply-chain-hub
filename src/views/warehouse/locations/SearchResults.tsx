@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react'
-import { Cube, MapPin, Package, Rows } from '@phosphor-icons/react'
+import { Cube, MapPin, MapTrifold, Package, Rows } from '@phosphor-icons/react'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { formatNumber } from '@/lib/warehouse/format'
+import { canShowOnMap } from '@/lib/warehouse/layout/map'
 import { formatAge, materialLabel, purposeLabel, type LocationsTarget } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
-import type { LocationSearch } from '@/types/warehouse'
+import type { LocationList, LocationSearch } from '@/types/warehouse'
 
 /** Search as you type; with a scanner (Enter after the code) a single hit opens at once. */
-export function SearchResults({ query, version, onOpen }: { query: string; version: number; onOpen: (target: LocationsTarget) => void }) {
+export function SearchResults({ query, version, drawing, onOpen }: { query: string; version: number; drawing: LocationList['drawing']; onOpen: (target: LocationsTarget) => void }) {
   const [result, setResult] = useState<LocationSearch | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
 
@@ -65,11 +67,18 @@ export function SearchResults({ query, version, onOpen }: { query: string; versi
         <section>
           <h2 className="mb-1 flex items-center gap-1.5 text-sm font-medium text-muted-foreground"><MapPin size={16} /> {t('Placeringer', 'Locations')}</h2>
           {result.locations.map(location => (
-            <button key={location.id} type="button" className={row} onClick={() => onOpen({ kind: 'location', id: location.id })}>
-              <span className="font-mono font-semibold">{location.name}</span>
-              <span className="text-xs text-muted-foreground">{purposeLabel(location.purpose)}</span>
-              {!location.active && <Badge variant="outline">{t('Deaktiveret', 'Deactivated')}</Badge>}
-            </button>
+            <div key={location.id} className="flex items-center gap-1">
+              <button type="button" className={row} onClick={() => onOpen({ kind: 'location', id: location.id })}>
+                <span className="font-mono font-semibold">{location.name}</span>
+                <span className="text-xs text-muted-foreground">{purposeLabel(location.purpose)}</span>
+                {!location.active && <Badge variant="outline">{t('Deaktiveret', 'Deactivated')}</Badge>}
+              </button>
+              {canShowOnMap(location.id, drawing) && (
+                <Button size="sm" variant="ghost" className="shrink-0" onClick={event => { event.stopPropagation(); onOpen({ kind: 'map', id: location.id }) }}>
+                  <MapTrifold size={16} /> {t('Vis på kort', 'Show on map')}
+                </Button>
+              )}
+            </div>
           ))}
         </section>
       )}

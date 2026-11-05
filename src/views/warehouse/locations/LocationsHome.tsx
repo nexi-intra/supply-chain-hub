@@ -56,7 +56,7 @@ export function LocationsHome({ user, canAdmin, drawn, drawing, version, onOpen 
         />
       </div>
 
-      {query.trim() ? <SearchResults query={query} version={version} onOpen={onOpen} /> : (
+      {query.trim() ? <SearchResults query={query} version={version} drawing={drawing} onOpen={onOpen} /> : (
         <>
           {empty && (
             <Card className="border-dashed">
