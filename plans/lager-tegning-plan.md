@@ -678,7 +678,9 @@ it('decide marks a list place as outside or to remove, and null clears it', () =
 
 ---
 
-# Fase 2 – Kortet for alle (detaljeres før start)
+# Fase 2 – Kortet for alle
+
+Detaljeret 05.11.2026 (Hub 1.6.6): design `plans/lager-kort-design.md`, plan `plans/lager-kort-plan.md` (Task 1–6 der).
 
 - [ ] **Task 17: Kort over lageret** – `LocationsTarget { kind: 'map'; id?: string }`, felt på Placeringer-forsiden; `LayoutCanvas readOnly` med etagefilter, zoom og søgefelt (plads/materiale) der fremhæver; data fra `layout()` + `list()`; caches pr. `drawing.version`.
 - [ ] **Task 18: Reolen forfra med belægning** – `RackFront mode="view"` med `status` ud fra paller/lager/formål/ejer; klik → `LocationCard`.
