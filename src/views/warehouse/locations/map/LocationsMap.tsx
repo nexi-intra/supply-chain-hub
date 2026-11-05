@@ -43,7 +43,7 @@ export function LocationsMap({ user, focus, drawing, version, onOpen }: { user: 
   const [query, setQuery] = useState('')
   const [floorView, setFloorView] = useState<FloorView>('all')
   const [zoom, setZoom] = useState(1)
-  const [chosen, setChosen] = useState<{ itemId: string; slotId?: string } | null>(null)
+  const [chosen, setChosen] = useState<{ itemId: string; slotId?: string; scroll?: boolean } | null>(null)
   const pressed = useRef<string | undefined>(undefined)
   const pendingFocus = useRef(focus)
   const front = useRef<HTMLDivElement>(null)
@@ -74,17 +74,18 @@ export function LocationsMap({ user, focus, drawing, version, onOpen }: { user: 
     if (!layout || !ctx || !pendingFocus.current) return
     const found = findSlot(layout, pendingFocus.current, ctx)
     pendingFocus.current = undefined
-    if (found) setChosen(found)
+    if (found) setChosen({ ...found, scroll: true })
   }, [layout, ctx])
 
   const searchFocus = search?.focus ? `${search.focus.itemId}\n${search.focus.slotId}` : ''
   useEffect(() => {
     if (!searchFocus) return
     const [itemId, slotId] = searchFocus.split('\n')
+    // Typing or scanning keeps the field and the hit list in view: the map highlights, but nothing scrolls.
     setChosen({ itemId, slotId })
   }, [searchFocus])
 
-  useEffect(() => { if (chosen) front.current?.scrollIntoView({ block: 'nearest' }) }, [chosen])
+  useEffect(() => { if (chosen?.scroll) front.current?.scrollIntoView({ block: 'nearest' }) }, [chosen])
 
   if (failed && (!layout || !data)) return <p className="rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm">{failed}</p>
   if (layout === null) return <p className="rounded-lg border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">{t('Tegningen er ikke udgivet endnu', 'The drawing has not been published yet')}</p>
@@ -101,7 +102,7 @@ export function LocationsMap({ user, focus, drawing, version, onOpen }: { user: 
     pressed.current = undefined
     const target = itemId ? layout!.items.find(entry => entry.id === itemId) : undefined
     if (!target) return
-    if (FRONTED.includes(target.type) && target.slots.length) { setChosen({ itemId: target.id }); return }
+    if (FRONTED.includes(target.type) && target.slots.length) { setChosen({ itemId: target.id, scroll: true }); return }
     if (!SINGLE.includes(target.type)) return
     const id = target.slots.map(slot => placeOfSlot(target, slot, ctx!)).find(Boolean)
     if (id) onOpen({ kind: 'location', id })
@@ -109,7 +110,9 @@ export function LocationsMap({ user, focus, drawing, version, onOpen }: { user: 
 
   function onHit(place: MapHitPlace) {
     if (place.itemId === null || place.slotId === null) { onOpen({ kind: 'location', id: place.id }); return }
-    setChosen({ itemId: place.itemId, slotId: place.slotId })
+    const target = layout!.items.find(entry => entry.id === place.itemId)
+    if (target && SINGLE.includes(target.type)) { onOpen({ kind: 'location', id: place.id }); return }
+    setChosen({ itemId: place.itemId, slotId: place.slotId, scroll: true })
   }
 
   const status: Record<string, SlotStatus> = {}
