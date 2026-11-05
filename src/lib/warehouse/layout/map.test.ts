@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import type { LayoutItem, LayoutSlot, LocationList, MapContents, MapMaterial, WarehouseLayout } from '@/types/warehouse'
-import { canShowOnMap, cellText, contentTitle, contextOf, dayMonth, findSlot, placeOfSlot, searchMap, slotStatus } from './map'
+import type { LayoutItem, LayoutSlot, LocationList, MapContents, WarehouseLayout } from '@/types/warehouse'
+import { canShowOnMap, cellText, contentTitle, contextOf, dayMonth, findSlot, frontData, placeOfSlot, searchMap, slotStatus } from './map'
+import { m, place } from './testFixtures'
 
 const base: LayoutItem = { id: 'r1', type: 'rack', x: 0, y: 0, w: 10, h: 2, name: '', note: '', slots: [] }
 const rackSlot = (name: string, pos: number, level: number, extra: Partial<LayoutSlot> = {}): LayoutSlot => ({ id: `A-${pos}-${level}`, name, kind: 'pallet', purpose: 'reserve', pos, level, ...extra })
@@ -16,11 +17,6 @@ const slot = (name: string) => rackA.slots.find(s => s.name === name)!
 const slotIdOf = (name: string) => slot(name).id
 
 type Place = LocationList['locations'][number]
-const place = (name: string, extra: Partial<Place> = {}): Place => ({
-  id: `id-${name}`, name, area: 'A', type: 'Palle', purpose: 'reserve', capacity: 1, fixedMaterials: [], active: true, note: '',
-  updatedAt: 0, updatedBy: { email: '', name: '' }, used: 0, stockCount: 0, ...extra,
-})
-const m = (material: string, extra: Partial<MapMaterial> = {}): MapMaterial => ({ material, description: '', pallets: 0, quantity: null, oldestAt: null, fixed: false, ...extra })
 
 const listOf = (overrides: Record<string, Partial<Place>> = {}): LocationList => ({
   locations: [place('A1.1'), place('A1.2'), place('A2.1', { purpose: 'pick', fixedMaterials: ['X9'] }), place('A2.2'), place('K1.1')].map(p => ({ ...p, ...overrides[p.name] })),
@@ -54,6 +50,18 @@ describe('map rules', () => {
   it('a TRR slot named like a TCD place is never that place', () => {
     expect(placeOfSlot(trrRack, trrRack.slots[0], ctx)).toBeNull()
     expect(searchMap('A2.2', layout, ctx).focus).toEqual({ itemId: 'A', slotId: slotIdOf('A2.2'), placeId: 'A2.2' })
+  })
+
+  it('frontData gives the front its status and content: every slot a status, every place content (empty too)', () => {
+    const contentsWithEmpty: MapContents = { ...contents, places: { ...contents.places, 'A1.2': { materials: [] } } }
+    const front = frontData(rackA, contextOf(listOf({ 'A1.1': { stockCount: 1 } }), contentsWithEmpty, 'TCD'))
+    expect(front.places).toBe(4)
+    expect(front.used).toBe(1)
+    expect(front.status).toEqual({ [slotIdOf('A1.1')]: 'used', [slotIdOf('A1.2')]: 'empty', [slotIdOf('A2.1')]: 'pick', [slotIdOf('A2.2')]: 'empty', [unnamed.id]: 'none' })
+    expect(front.content[slotIdOf('A1.2')]).toEqual({ text: '', title: 'A1.2 · tom\nKlik → pladskortet' })
+    expect(front.content[slotIdOf('A1.1')]).toEqual({ text: 'R162-0717 +2', title: contentTitle('A1.1', contents.places['A1.1']) })
+    expect(front.content[unnamed.id]).toBeUndefined()
+    expect(Object.keys(front.content)).toHaveLength(4)
   })
 
   it('cellText shows the first material and +N', () => {

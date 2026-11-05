@@ -94,6 +94,23 @@ export function canShowOnMap(placeId: string, drawing: LocationList['drawing']):
   return !!drawing && !!id && drawing.linked.some(linked => locationKeyOf(linked) === id)
 }
 
+export interface FrontData { status: Record<string, SlotStatus>; content: Record<string, { text: string; title: string }>; places: number; used: number }
+
+/** The front's colours and cell texts: every slot gets a status, every place (empty too) its content; `places`/`used` count the places. */
+export function frontData(item: LayoutItem, ctx: MapContext): FrontData {
+  const out: FrontData = { status: {}, content: {}, places: 0, used: 0 }
+  for (const slot of item.slots) {
+    out.status[slot.id] = slotStatus(item, slot, ctx)
+    const id = placeOfSlot(item, slot, ctx)
+    if (!id) continue
+    out.places += 1
+    if (out.status[slot.id] === 'used') out.used += 1
+    const entry = ctx.contents.places[id]
+    out.content[slot.id] = { text: cellText(entry), title: contentTitle(ctx.places.get(id)?.name ?? slot.name, entry) }
+  }
+  return out
+}
+
 /** Place id → its first slot on the drawing (same pick as findSlot), built in one pass over the layout. */
 function slotIndex(layout: Pick<WarehouseLayout, 'items'>, ctx: MapContext): Map<string, { itemId: string; slotId: string }> {
   const index = new Map<string, { itemId: string; slotId: string }>()

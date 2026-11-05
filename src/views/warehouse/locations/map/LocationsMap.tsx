@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import { errorMessage } from '@/lib/warehouse/errors'
-import { cellText, contentTitle, contextOf, findSlot, placeOfSlot, searchMap, slotStatus, type MapHitPlace } from '@/lib/warehouse/layout/map'
+import { contextOf, findSlot, frontData, placeOfSlot, searchMap, type MapHitPlace } from '@/lib/warehouse/layout/map'
 import type { LocationsTarget } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
 import type { LayoutItem, LayoutItemType, LocationList, MapContents, WarehouseLayout, WarehouseUser } from '@/types/warehouse'
@@ -127,19 +127,7 @@ export function LocationsMap({ user, focus, drawing, version, onOpen }: { user: 
     setChosen({ itemId, slotId, scroll: true })
   }
 
-  const status: Record<string, SlotStatus> = {}
-  const content: Record<string, { text: string; title: string }> = {}
-  let places = 0
-  let used = 0
-  for (const slot of shown?.slots ?? []) {
-    status[slot.id] = slotStatus(shown!, slot, ctx)
-    const id = placeOfSlot(shown!, slot, ctx)
-    if (!id) continue
-    places += 1
-    if (status[slot.id] === 'used') used += 1
-    const entry = ctx.contents.places[id]
-    content[slot.id] = { text: cellText(entry), title: contentTitle(ctx.places.get(id)?.name ?? slot.name, entry) }
-  }
+  const { status, content, places, used } = shown ? frontData(shown, ctx) : { status: {}, content: {}, places: 0, used: 0 }
 
   const highlight = [...search.items, ...(item ? [item.id] : [])]
   const zoomAt = ZOOMS.indexOf(zoom)
