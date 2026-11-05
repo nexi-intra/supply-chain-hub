@@ -687,7 +687,9 @@ Detaljeret 05.11.2026 (Hub 1.6.6): design `plans/lager-kort-design.md`, plan `pl
 - [x] **Task 19: "Vis på kort"** – knap på `LocationCard`, `RackCard` og plads-søgeresultater → `{ kind: 'map', id }` med pladsen fremhævet og reolen forfra.
 - [x] **Task 20: E2E + changelog** – udvid `scripts/verify-layout.cjs`.
 
-# Fase 3 – Kortet i hverdagen (detaljeres før start)
+# Fase 3 – Kortet i hverdagen
+
+Detaljeret 05.11.2026 (Hub 1.6.6): design `plans/lager-kort-fase3-design.md`, plan `plans/lager-kort-fase3-plan.md` (Task 1–4 der).
 
 - [ ] **Task 21: Mockup** i brainstorm-vinduet af "Vis" ved forslag i "Sæt palle på plads" – godkendes af brugeren.
 - [ ] **Task 22: "Vis" ved forslag og valgt plads** – lille `RackFront mode="view"` med pladsen fremhævet, niveau ("3. niveau fra gulvet") og naboer.
