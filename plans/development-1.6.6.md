@@ -17,7 +17,8 @@ Oprettet: 2026-11-05. Ingen build, release eller push.
 - [x] Opdater package.json og begge rodversioner i package-lock.json til 1.6.6.
 - [x] Afklar git: klon `nexi-intra/supply-chain-hub`, snapshot-commit af 1.6.5 på `develop/1.6.5`, worktree `develop/1.6.6` fra `develop/1.6.5`.
 - [x] Commit "Prepare development for version 1.6.6" (lokalt).
-- [ ] Verifikation: `tsc`, vitest og electron-tests grønne i 1.6.6.
+- [x] Verifikation (05.11): tsc 0 fejl, node-tests 1369/1369, vitest 1486 grønne (1 skipped). Bemærk: `electron/assistantWorker.test.cjs` ("actual subprocess RPC …") er ustabil – timeout på 30 s under belastning, består ved genkørsel.
+- Tip: `npm.ps1` er blokeret af execution policy – brug `npm.cmd` (fx `npm.cmd test`).
 
 ## Fase 2 - nye tiltag
 
