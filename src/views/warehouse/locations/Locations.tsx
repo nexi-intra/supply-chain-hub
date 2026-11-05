@@ -6,7 +6,7 @@ import { isAnyModalOpen } from '@/lib/modalStack'
 import { errorMessage } from '@/lib/warehouse/errors'
 import type { LocationsTarget } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
-import type { WarehouseUser } from '@/types/warehouse'
+import type { LocationList, WarehouseUser } from '@/types/warehouse'
 import { Admin } from './Admin'
 import { FetchGuide } from './FetchGuide'
 import { ImportSheet } from './ImportSheet'
@@ -22,6 +22,7 @@ import { LocationsLog } from './LocationsLog'
 import { MovePallet } from './MovePallet'
 import { TakePallet } from './TakePallet'
 import { LayoutEditor } from './layout/LayoutEditor'
+import { LocationsMap } from './map/LocationsMap'
 
 /**
  * Placeringer: where every pallet of the hub stands. The front page leads to the daily tasks and the cards; a change on
@@ -35,12 +36,12 @@ export function Locations({ user, initial }: { user: WarehouseUser; initial: Loc
   const [canAdmin, setCanAdmin] = useState(user.role === 'manager')
   const toHome = useCallback(() => setTarget({ kind: 'home' }), [])
   const [tags, setTags] = useState<string[]>([])
-  useEffect(() => { window.electronWarehouse!.locations.overview().then(result => setTags(result.tags)).catch(() => {}) }, [version])
-  // A published drawing makes the places: the create and import entries give way to it.
-  const [drawn, setDrawn] = useState(false)
+  // A published drawing makes the places (the create and import entries give way to it) and opens the map for everyone.
+  const [drawing, setDrawing] = useState<LocationList['drawing']>(null)
   useEffect(() => {
-    if (canAdmin) window.electronWarehouse!.locations.list().then(result => setDrawn(Boolean(result.drawing))).catch(() => {})
-  }, [canAdmin, version])
+    window.electronWarehouse!.locations.overview().then(result => { setTags(result.tags); setDrawing(result.drawing) }).catch(() => {})
+  }, [version])
+  const drawn = Boolean(drawing)
 
   useEffect(() => {
     window.electronWarehouse?.roles.me().then(result => setCanAdmin(result.locationAdmin)).catch(() => {})
@@ -94,7 +95,7 @@ export function Locations({ user, initial }: { user: WarehouseUser; initial: Loc
           )}
         </div>
       )}
-      {target.kind === 'home' && <LocationsHome user={user} canAdmin={canAdmin} drawn={drawn} version={version} onOpen={setTarget} />}
+      {target.kind === 'home' && <LocationsHome user={user} canAdmin={canAdmin} drawn={drawn} drawing={drawing} version={version} onOpen={setTarget} />}
       {target.kind === 'putaway' && <PutAway tags={tags} onDone={() => setVersion(value => value + 1)} />}
       {target.kind === 'shelf' && <ShelfPut key={target.id || ''} shelf={target.id} version={version} onDone={() => setVersion(value => value + 1)} />}
       {target.kind === 'take' && <TakePallet material={target.id} version={version} onDone={() => setVersion(value => value + 1)} />}
@@ -109,6 +110,7 @@ export function Locations({ user, initial }: { user: WarehouseUser; initial: Loc
       {target.kind === 'admin' && <Admin user={user} version={version} onOpen={setTarget} onChanged={() => setVersion(value => value + 1)} />}
       {target.kind === 'import' && <ImportSheet onDone={() => { setVersion(value => value + 1); setTarget({ kind: 'home' }) }} />}
       {target.kind === 'layout' && canAdmin && <LayoutEditor user={user} onDone={toHome} />}
+      {target.kind === 'map' && <LocationsMap key={target.id || ''} user={user} focus={target.id} drawing={drawing} version={version} onOpen={setTarget} />}
     </div>
   )
 }

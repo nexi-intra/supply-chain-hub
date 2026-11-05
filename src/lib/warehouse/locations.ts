@@ -19,6 +19,7 @@ export type LocationsTarget =
   | { kind: 'admin' }
   | { kind: 'import' }
   | { kind: 'layout' }
+  | { kind: 'map'; id?: string }
 
 /** A lagerhylde: holds material + quantity (hyldelager), never pallets. Mirrors the backend's isShelf. */
 export const isShelfPlace = (location: Pick<Location, 'type' | 'purpose'>) => location.type === 'Hylde' && location.purpose === 'reserve'
@@ -156,7 +157,7 @@ export function targetFromItem(item: string | undefined): LocationsTarget {
   const [kind, ...rest] = String(item || '').split(':')
   const id = rest.join(':')
   if ((kind === 'material' || kind === 'location' || kind === 'pallet' || kind === 'rack') && id) return { kind, id }
-  if (kind === 'putaway' || kind === 'shelf' || kind === 'take' || kind === 'refill' || kind === 'fetch' || kind === 'move' || kind === 'log') return id ? { kind, id } : { kind }
+  if (kind === 'putaway' || kind === 'shelf' || kind === 'take' || kind === 'refill' || kind === 'fetch' || kind === 'move' || kind === 'log' || kind === 'map') return id ? { kind, id } : { kind }
   if (kind === 'admin' || kind === 'import' || kind === 'layout') return { kind }
   return { kind: 'home' }
 }

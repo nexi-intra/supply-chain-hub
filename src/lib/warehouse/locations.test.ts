@@ -116,6 +116,11 @@ describe('Placeringer helpers', () => {
     expect(targetFromItem('layout')).toEqual({ kind: 'layout' })
   })
 
+  it('targetFromItem opens the map, also on a place', () => {
+    expect(targetFromItem('map')).toEqual({ kind: 'map' })
+    expect(targetFromItem('map:A1.9')).toEqual({ kind: 'map', id: 'A1.9' })
+  })
+
   it('"Tag alt" and an empty quantity mean the quantity shown, not whatever is there when it runs', () => {
     expect(shownQuantity('', 40)).toBe(40)
     expect(shownQuantity('5', 40)).toBe(5)

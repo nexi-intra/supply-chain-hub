@@ -8,13 +8,13 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { errorMessage } from '@/lib/warehouse/errors'
 import type { LocationsTarget } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
-import type { LocationsOverview, WarehouseUser } from '@/types/warehouse'
+import type { LocationList, LocationsOverview, WarehouseUser } from '@/types/warehouse'
 import { SearchResults } from './SearchResults'
 
 interface TaskButton { target: LocationsTarget | 'search'; title: string; hint: string; icon: ReactNode }
 
 /** Placeringer's front page: search first, the four daily tasks and how full each area is. */
-export function LocationsHome({ user, canAdmin, drawn, version, onOpen }: { user: WarehouseUser; canAdmin: boolean; drawn: boolean; version: number; onOpen: (target: LocationsTarget) => void }) {
+export function LocationsHome({ user, canAdmin, drawn, drawing, version, onOpen }: { user: WarehouseUser; canAdmin: boolean; drawn: boolean; drawing: LocationList['drawing']; version: number; onOpen: (target: LocationsTarget) => void }) {
   const [overview, setOverview] = useState<LocationsOverview | null>(null)
   const [query, setQuery] = useState('')
   const search = useRef<HTMLInputElement>(null)
@@ -36,6 +36,7 @@ export function LocationsHome({ user, canAdmin, drawn, version, onOpen }: { user
     { target: { kind: 'move' }, title: t('Flyt', 'Move'), hint: t('En palle, eller varer fra en hylde til en anden', 'A pallet, or goods from one shelf to another'), icon: <ArrowsLeftRight weight="duotone" /> },
     { target: 'search', title: t('Find materiale', 'Find a material'), hint: t('Hvor står det, og hvor meget er der?', 'Where is it, and how much is there?'), icon: <BookOpen weight="duotone" /> },
   ]
+  if (drawing) tasks.push({ target: { kind: 'map' }, title: t('Kort over lageret', 'Map of the warehouse'), hint: t('Find en plads eller et materiale på tegningen', 'Find a place or a material on the drawing'), icon: <MapTrifold weight="duotone" /> })
 
   if (!overview) return <Skeleton className="h-96 rounded-xl" />
   const empty = overview.counts.locations === 0

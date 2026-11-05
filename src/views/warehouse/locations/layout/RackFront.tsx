@@ -32,7 +32,7 @@ type Column = { label: string; spacer?: boolean }
 type Block = { key: string; axis?: string; cols: Column[]; rows: { label: string; cells: (LayoutSlot | null)[] }[] }
 
 const LINK_FILL: Record<SlotLink, string> = { linked: '#10b981', new: '#3b82f6', blocked: '#ef4444' }
-const STATUS_FILL: Record<SlotStatus, string> = { empty: '#10b981', used: '#3b82f6', pick: '#f59e0b', reserved: '#8b5cf6', 'other-team': '#94a3b8', none: '#cbd5e1' }
+export const STATUS_FILL: Record<SlotStatus, string> = { empty: '#10b981', used: '#3b82f6', pick: '#f59e0b', reserved: '#8b5cf6', 'other-team': '#94a3b8', none: '#cbd5e1' }
 const CLICK_MS = 500
 const range = (n: number) => Array.from({ length: Math.max(1, n) }, (_, i) => i + 1)
 
