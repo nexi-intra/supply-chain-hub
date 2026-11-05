@@ -20,6 +20,8 @@ type Props = {
   link?: Record<string, SlotLink>
   /** By slot id. */
   status?: Record<string, SlotStatus>
+  /** By slot id. What stands on the place (view mode only): a short cell text and a longer title. */
+  content?: Record<string, { text: string; title: string }>
   highlight?: string
   /** In edit mode it takes over a click (the slot is being picked). */
   onSlot?: (slotId: string) => void
@@ -123,7 +125,7 @@ function cellText(slot: LayoutSlot, column: string): string {
 const cyclable = (item: LayoutItem, slot: LayoutSlot) => item.type === 'rack' && slot.unit == null && slot.level != null && slot.kind !== 'aisle'
 
 /** A rack, shelf rack or floor row seen from the front: levels (top first) × bays, with every slot. */
-export function RackFront({ item, mode, duplicates, link, status, highlight, onSlot, dispatch }: Props) {
+export function RackFront({ item, mode, duplicates, link, status, content, highlight, onSlot, dispatch }: Props) {
   const [chosen, setChosen] = useState<Set<string>>(() => new Set())
   const [picking, setPicking] = useState(false)
   const [editing, setEditing] = useState<string | null>(null)
@@ -134,6 +136,7 @@ export function RackFront({ item, mode, duplicates, link, status, highlight, onS
   useEffect(() => () => window.clearTimeout(timer.current), [])
 
   const edit = mode === 'edit' && !!dispatch
+  const shown = mode === 'view' ? content : undefined
   const blocks = blocksOf(item)
   const selected = item.slots.filter(slot => chosen.has(slot.id))
   const tooLong = asking == null ? 0 : selected.filter(slot => !isUnnamed(slot) && fillPattern(asking.trim(), slotValues(item, slot)).length > NAME_MAX).length
@@ -204,6 +207,12 @@ export function RackFront({ item, mode, duplicates, link, status, highlight, onS
     return parts.join(' – ')
   }
 
+  function contentText(slot: LayoutSlot): string | null {
+    const entry = shown?.[slot.id]
+    if (!entry) return null
+    return entry.text || (status?.[slot.id] === 'empty' ? t('tom', 'empty') : '')
+  }
+
   return (
     <div className="space-y-2" data-testid="rack-front">
       {edit && (
@@ -237,6 +246,14 @@ export function RackFront({ item, mode, duplicates, link, status, highlight, onS
                     const column = block.cols[index].label
                     const duplicate = isDuplicate(slot)
                     const clickable = edit && !onSlot ? picking || cyclable(item, slot) || !isUnnamed(slot) : !!onSlot
+                    const title = shown?.[slot.id]?.title ?? titleOf(slot)
+                    const below = contentText(slot)
+                    const label = (
+                      <>
+                        {cellText(slot, column)}
+                        {item.type === 'floorrow' && <span className="ml-0.5 font-normal opacity-70">×{slot.capacity ?? 1}</span>}
+                      </>
+                    )
                     return (
                       <td key={slot.id} className="p-0">
                         {editing === slot.id
@@ -250,9 +267,10 @@ export function RackFront({ item, mode, duplicates, link, status, highlight, onS
                             }}
                           />
                           : <button
-                            type="button" data-slot={slot.id} title={titleOf(slot)} aria-label={titleOf(slot)} aria-pressed={edit ? chosen.has(slot.id) : undefined}
+                            type="button" data-slot={slot.id} title={title} aria-label={title} aria-pressed={edit ? chosen.has(slot.id) : undefined}
                             className={cn(
-                              'flex h-6 min-w-9 items-center justify-center whitespace-nowrap rounded px-1 font-semibold',
+                              'flex items-center justify-center whitespace-nowrap rounded px-1 font-semibold',
+                              shown ? 'h-10 min-w-20 flex-col leading-tight' : 'h-6 min-w-9',
                               clickable ? 'cursor-pointer' : 'cursor-default',
                               chosen.has(slot.id) && 'ring-2 ring-primary ring-offset-1',
                               highlight === slot.id && 'outline-2 outline-offset-1 outline-amber-500',
@@ -261,8 +279,14 @@ export function RackFront({ item, mode, duplicates, link, status, highlight, onS
                             onClick={event => onClick(slot, event)}
                             onDoubleClick={() => onDoubleClick(slot)}
                           >
-                            {cellText(slot, column)}
-                            {item.type === 'floorrow' && <span className="ml-0.5 font-normal opacity-70">×{slot.capacity ?? 1}</span>}
+                            {shown
+                              ? (
+                                <>
+                                  <span>{label}</span>
+                                  {below && <span className="font-mono font-normal">{below}</span>}
+                                </>
+                              )
+                              : label}
                           </button>}
                       </td>
                     )
