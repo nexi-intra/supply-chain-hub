@@ -1,4 +1,4 @@
-import { useState, useEffect, lazy, Suspense } from 'react'
+import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react'
 import { Hub } from '@/views/Hub'
 import { Auth } from '@/views/Auth'
 import { LanguageProvider } from '@/contexts/LanguageContext'
@@ -10,14 +10,21 @@ import { GuideImportStatus } from '@/components/GuideImportStatus'
 import { LoginDigest } from '@/components/LoginDigest'
 import { WhatsNewDialog } from '@/components/WhatsNewDialog'
 import { CommandPalette } from '@/components/CommandPalette'
-import { AccessContextPicker } from '@/components/AccessContextPicker'
 import { StorageConnectionBanner } from '@/components/StorageConnectionBanner'
 import { HubAssistant } from '@/components/HubAssistant'
 import { AccountMigrationRecovery } from '@/components/AccountMigrationRecovery'
+import { DesktopNotificationBridge } from '@/components/DesktopNotificationBridge'
+import { HubNotificationsProvider } from '@/contexts/HubNotificationsContext'
 import { toast, Toaster } from 'sonner'
 import { setKvObjectField, deleteKvObjectField } from '@/lib/kvArrays'
-import { NAVIGATE_EVENT, type AppViewId } from '@/lib/appNavigation'
-import type { AccessView, RegisteredTeam } from '@/lib/electronRegistryBridge'
+import { NAVIGATE_EVENT, peekNavigationParams, type AppViewId } from '@/lib/appNavigation'
+import { watchInactivity } from '@/lib/inactivityWatcher'
+import { HubPicker } from '@/components/HubPicker'
+import { HubSwitchController } from '@/components/HubSwitchController'
+import { HUB_SWITCHED_EVENT, rememberHub, rememberedHub } from '@/lib/hubSwitch'
+import type { MyHub } from '@/lib/electronRegistryBridge'
+import { clearKvSnapshotCache } from '@/hooks/useKV'
+import { clearCachedState } from '@/hooks/useCachedState'
 
 // Lazy-loadet: Hub og Auth vises altid lige efter opstart/login, så de
 // forbliver i hoved-bundlen. Alle andre views hentes først når brugeren
@@ -33,8 +40,10 @@ const EmailSystem = lazy(() => import('@/views/EmailSystem').then(m => ({ defaul
 const MealPlan = lazy(() => import('@/views/MealPlan').then(m => ({ default: m.MealPlan })))
 const GameCorner = lazy(() => import('@/views/GameCorner').then(m => ({ default: m.GameCorner })))
 const ProjectBoard = lazy(() => import('@/views/ProjectBoard').then(m => ({ default: m.ProjectBoard })))
+const Improvements = lazy(() => import('@/views/Improvements').then(m => ({ default: m.Improvements })))
 const VirtualNotebook = lazy(() => import('@/views/VirtualNotebook').then(m => ({ default: m.VirtualNotebook })))
-const ObserverWorkspace = lazy(() => import('@/views/ObserverWorkspace').then(m => ({ default: m.ObserverWorkspace })))
+const LinkLibrary = lazy(() => import('@/views/LinkLibrary').then(m => ({ default: m.LinkLibrary })))
+const Warehouse = lazy(() => import('@/views/warehouse/Warehouse').then(m => ({ default: m.Warehouse })))
 
 /** Vises kortvarigt mens et views kode hentes ved første besøg. */
 function ViewLoadingFallback() {
@@ -45,7 +54,7 @@ function ViewLoadingFallback() {
   )
 }
 
-type View = 'hub' | 'guides' | 'calendar' | 'shifts' | 'admin' | 'manager' | 'creator' | 'team' | 'email' | 'meals' | 'games' | 'projects' | 'notebook'
+type View = 'hub' | 'guides' | 'knowledge' | 'calendar' | 'shifts' | 'admin' | 'manager' | 'creator' | 'team' | 'email' | 'meals' | 'games' | 'projects' | 'improvements' | 'notebook' | 'links' | 'warehouse'
 
 interface UserSession {
   userId: string
@@ -135,34 +144,54 @@ async function deleteSession(token: string): Promise<void> {
 
 function App() {
   const [currentView, setCurrentView] = useState<View>('hub')
+  const currentViewRef = useRef<View>(currentView)
+  currentViewRef.current = currentView
+  const [viewNonce, setViewNonce] = useState(0)
   const [userSession, setUserSession] = useState<UserSession | null>(null)
   const [isCheckingAuth, setIsCheckingAuth] = useState(true)
-  const [lastActivity, setLastActivity] = useState(Date.now())
+  // Ref, not state: input events must not re-render the whole app.
+  const lastActivityRef = useRef(Date.now())
   // Se checkForcedUpdate herunder: undertrykker den globale opdaterings-popup
   // mens en manager-paatvunget version installeres i baggrunden.
   const [suppressUpdatePopup, setSuppressUpdatePopup] = useState(false)
-  const [accessViews, setAccessViews] = useState<AccessView[]>([])
-  const [registeredTeams, setRegisteredTeams] = useState<RegisteredTeam[]>([])
-  const [homeTeam, setHomeTeam] = useState<RegisteredTeam | null>(null)
-  const [activeAccessView, setActiveAccessView] = useState<AccessView | null>(null)
-  const [isAccessPickerOpen, setIsAccessPickerOpen] = useState(false)
+  // Hubs this person may open; the picker shows after login when there is more than one.
+  const [hubChoice, setHubChoice] = useState<{ token: string; hubs: MyHub[]; choosing: boolean } | null>(null)
+  // Bumped on every hub switch so all modules remount on the new team's data.
+  const [hubNonce, setHubNonce] = useState(0)
 
-  const loadAccessOptions = async (email: string, openPicker: boolean) => {
-    if (!window.electronRegistry) return
+  const loadHubChoice = useCallback(async (token: string, choosing: boolean) => {
+    let hubs: MyHub[] = []
+    try { hubs = await window.electronRegistry?.listMyHubs() || [] } catch (error) { console.error('Kunne ikke hente hubs:', error) }
+    setHubChoice({ token, hubs, choosing: choosing && hubs.length > 1 })
+  }, [])
+
+  useEffect(() => {
+    if (!userSession) { setHubChoice(null); return }
+    void loadHubChoice(userSession.token, true)
+  }, [userSession?.token, loadHubChoice]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const switchHub = useCallback(async (folderName: string) => {
+    if (!userSession) return false
     try {
-      const [views, teams, primaryTeam] = await Promise.all([
-        window.electronRegistry.listMyAccessViews(email),
-        window.electronRegistry.listTeams(),
-        window.electronRegistry.lookupTeam(email),
-      ])
-      setAccessViews(views)
-      setRegisteredTeams(teams)
-      setHomeTeam(primaryTeam)
-      if (openPicker && views.length > 0) setIsAccessPickerOpen(true)
+      const current = await window.electronRegistry?.getCurrentTeam()
+      if (current?.folderName !== folderName) await window.electronRegistry?.switchToTeam(folderName)
+      clearKvSnapshotCache()
+      clearCachedState()
+      rememberHub(userSession.userId, folderName)
+      setHubChoice(choice => choice && { ...choice, choosing: false })
+      setCurrentView('hub')
+      setHubNonce(nonce => nonce + 1)
+      window.dispatchEvent(new Event(HUB_SWITCHED_EVENT))
+      return true
     } catch (error) {
-      console.error('Kunne ikke hente brugerens samlevisninger:', error)
+      console.error('Kunne ikke skifte hub:', error)
+      return false
     }
-  }
+  }, [userSession])
+
+  const openHubPicker = useCallback(() => {
+    if (userSession) void loadHubChoice(userSession.token, true)
+  }, [userSession, loadHubChoice])
 
   useEffect(() => {
     // Éngangs-migrering: ældre ferie-poster med fulde ISO-datoer ('...T00:00:00.000Z')
@@ -303,7 +332,6 @@ function App() {
             expiresAt: Date.now() + REMEMBERED_SESSION_DURATION,
             remembered: true,
           })
-          await loadAccessOptions(session.email, true)
           return true
         }
         // En reelt afventende/afvist konto rydder tokenet — men aldrig når den
@@ -340,37 +368,20 @@ function App() {
   useEffect(() => {
     if (!userSession) return
 
-    const handleActivity = () => {
-      setLastActivity(Date.now())
-    }
-
-    const events = ['mousedown', 'keydown', 'scroll', 'touchstart']
-    events.forEach(event => {
-      document.addEventListener(event, handleActivity)
-    })
-
-    return () => {
-      events.forEach(event => {
-        document.removeEventListener(event, handleActivity)
-      })
-    }
-  }, [userSession])
-
-  useEffect(() => {
-    // Huskede sessioner logges ikke ud ved inaktivitet — maskinen er personlig.
-    if (!userSession || userSession.remembered) return
-
-    const checkSessionTimeout = setInterval(() => {
-      const timeSinceActivity = Date.now() - lastActivity
-      
-      if (timeSinceActivity > SESSION_TIMEOUT) {
+    return watchInactivity({
+      target: document,
+      events: ['mousedown', 'keydown', 'scroll', 'touchstart'],
+      lastActivity: lastActivityRef,
+      // Huskede sessioner logges ikke ud ved inaktivitet — maskinen er personlig.
+      enforce: !userSession.remembered,
+      timeoutMs: SESSION_TIMEOUT,
+      checkEveryMs: 60000,
+      onTimeout: () => {
         toast.info('Din session er udløbet på grund af inaktivitet')
         handleLogout()
-      }
-    }, 60000)
-
-    return () => clearInterval(checkSessionTimeout)
-  }, [userSession, lastActivity])
+      },
+    })
+  }, [userSession])
 
   const handleAuthenticated = async (userId: string, email: string, rememberMe: boolean) => {
     const duration = rememberMe ? REMEMBERED_SESSION_DURATION : SESSION_DURATION
@@ -396,9 +407,8 @@ function App() {
       localStorage.removeItem(REMEMBER_TOKEN_KEY)
     }
 
+    lastActivityRef.current = Date.now()
     setUserSession({ userId, email, token, expiresAt, remembered: rememberMe })
-    setLastActivity(Date.now())
-    await loadAccessOptions(email, true)
   }
 
   const handleLogout = async () => {
@@ -407,16 +417,13 @@ function App() {
     
     setUserSession(null)
     setCurrentView('hub')
-    setAccessViews([])
-    setRegisteredTeams([])
-    setHomeTeam(null)
-    setActiveAccessView(null)
-    setIsAccessPickerOpen(false)
   }
 
   const handleNavigate = (moduleId: string) => {
     if (moduleId === 'guides') {
       setCurrentView('guides')
+    } else if (moduleId === 'knowledge') {
+      setCurrentView('knowledge')
     } else if (moduleId === 'calendar') {
       setCurrentView('calendar')
     } else if (moduleId === 'shifts') {
@@ -437,8 +444,14 @@ function App() {
       setCurrentView('games')
     } else if (moduleId === 'projects') {
       setCurrentView('projects')
+    } else if (moduleId === 'improvements') {
+      setCurrentView('improvements')
     } else if (moduleId === 'notebook') {
       setCurrentView('notebook')
+    } else if (moduleId === 'links') {
+      setCurrentView('links')
+    } else if (moduleId === 'warehouse') {
+      setCurrentView('warehouse')
     }
   }
 
@@ -451,7 +464,10 @@ function App() {
     if (!userSession) return
     const handleDeepLink = (e: Event) => {
       const view = (e as CustomEvent).detail?.view as AppViewId | undefined
-      if (view) setCurrentView(view)
+      if (!view) return
+      // Views read their params on mount, so a deep link into the open view (not Game Corner, which listens itself) remounts it.
+      if (view === currentViewRef.current && view !== 'games' && peekNavigationParams()) setViewNonce(nonce => nonce + 1)
+      setCurrentView(view)
     }
     window.addEventListener(NAVIGATE_EVENT, handleDeepLink)
     return () => window.removeEventListener(NAVIGATE_EVENT, handleDeepLink)
@@ -480,45 +496,18 @@ function App() {
     )
   }
 
-  if (isAccessPickerOpen && accessViews.length > 0) {
-    return (
-      <ThemeProvider userId={userSession.userId}>
-        <LanguageProvider userId={userSession.userId}>
-          <Toaster position="top-center" richColors />
-          <AnimatedBackground />
-          <AccessContextPicker
-            homeTeam={homeTeam}
-            views={accessViews}
-            teams={registeredTeams}
-            onSelectHome={async () => { try { await window.electronAuth?.selectView(null); setActiveAccessView(null); setCurrentView('hub'); setIsAccessPickerOpen(false) } catch { toast.error('Adgangen til hubben kunne ikke bekræftes') } }}
-            onSelectView={async (view) => { try { await window.electronAuth?.selectView(view.viewId); setActiveAccessView(view); setCurrentView('hub'); setIsAccessPickerOpen(false) } catch { toast.error('Adgangen til hubben kunne ikke bekræftes') } }}
-            onLogout={handleLogout}
-          />
-          <AccountMigrationRecovery userEmail={userSession.email} onLogout={handleLogout} />
-        </LanguageProvider>
-      </ThemeProvider>
-    )
+  if (!hubChoice || hubChoice.token !== userSession.token) {
+    return null
   }
 
-  if (activeAccessView) {
+  if (hubChoice.choosing) {
     return (
       <ThemeProvider userId={userSession.userId}>
         <LanguageProvider userId={userSession.userId}>
           <Toaster position="top-center" richColors />
           <AnimatedBackground />
-          <UpdateNotification suppressed={suppressUpdatePopup} />
           <StorageConnectionBanner />
-          <Suspense fallback={<ViewLoadingFallback />}>
-            <ObserverWorkspace
-              userEmail={userSession.email}
-              view={activeAccessView}
-              allTeams={registeredTeams}
-              onChangeView={() => setIsAccessPickerOpen(true)}
-              onLogout={handleLogout}
-            />
-          </Suspense>
-          <HubAssistant key={activeAccessView.viewId} token={userSession.token} viewId={activeAccessView.viewId} />
-          <AccountMigrationRecovery userEmail={userSession.email} onLogout={handleLogout} />
+          <HubPicker hubs={hubChoice.hubs} preferred={rememberedHub(userSession.userId)} onChoose={hub => switchHub(hub.folderName)} onLogout={handleLogout} />
         </LanguageProvider>
       </ThemeProvider>
     )
@@ -527,20 +516,25 @@ function App() {
   return (
     <ThemeProvider userId={userSession.userId}>
       <LanguageProvider userId={userSession.userId}>
+        {/* Outside the remounted tree, so a message sent during a hub switch is not lost. */}
         <Toaster position="top-center" richColors />
+        <HubNotificationsProvider key={hubNonce} userEmail={userSession.email}>
+        <HubSwitchController onSwitch={switchHub} onOpenPicker={openHubPicker} />
         <AnimatedBackground />
         <UpdateNotification suppressed={suppressUpdatePopup} />
         <StorageConnectionBanner />
-        <GuideImportStatus onOpenGuideLibrary={() => handleNavigate('guides')} />
+        <GuideImportStatus onOpenGuideLibrary={(kind) => handleNavigate(kind)} />
         <BirthdayCelebration userEmail={userSession.email} />
         <LoginDigest userEmail={userSession.email} />
         <WhatsNewDialog />
         <CommandPalette userEmail={userSession.email} />
+        <DesktopNotificationBridge />
         <HubAssistant key={userSession.token} token={userSession.token} />
         <AccountMigrationRecovery userEmail={userSession.email} onLogout={handleLogout} />
-        {currentView === 'hub' && <Hub onNavigate={handleNavigate} onLogout={handleLogout} userEmail={userSession.email} onChooseAccessView={accessViews.length > 0 ? () => setIsAccessPickerOpen(true) : undefined} />}
-        <Suspense fallback={<ViewLoadingFallback />}>
+        {currentView === 'hub' && <Hub onNavigate={handleNavigate} onLogout={handleLogout} userEmail={userSession.email} />}
+        <Suspense key={viewNonce} fallback={<ViewLoadingFallback />}>
           {currentView === 'guides' && <GuideLibrary onNavigateBack={handleNavigateBack} onLogout={handleLogout} userEmail={userSession.email} />}
+          {currentView === 'knowledge' && <GuideLibrary key="knowledge" kind="knowledge" onNavigateBack={handleNavigateBack} onLogout={handleLogout} userEmail={userSession.email} />}
           {currentView === 'calendar' && <VacationCalendar onNavigateBack={handleNavigateBack} onLogout={handleLogout} userEmail={userSession.email} />}
           {currentView === 'shifts' && <ShiftSchedule onNavigateBack={handleNavigateBack} onLogout={handleLogout} userEmail={userSession.email} />}
           {currentView === 'admin' && <AdminPanel onNavigateBack={handleNavigateBack} onLogout={handleLogout} userEmail={userSession.email} />}
@@ -551,8 +545,12 @@ function App() {
           {currentView === 'meals' && <MealPlan onNavigateBack={handleNavigateBack} />}
           {currentView === 'games' && <GameCorner onNavigateBack={handleNavigateBack} userEmail={userSession.email} />}
           {currentView === 'projects' && <ProjectBoard onNavigateBack={handleNavigateBack} userEmail={userSession.email} />}
+          {currentView === 'improvements' && <Improvements onNavigateBack={handleNavigateBack} userEmail={userSession.email} />}
           {currentView === 'notebook' && <VirtualNotebook onNavigateBack={handleNavigateBack} userEmail={userSession.email} />}
+          {currentView === 'links' && <LinkLibrary onNavigateBack={handleNavigateBack} userEmail={userSession.email} />}
+          {currentView === 'warehouse' && <Warehouse onNavigateBack={handleNavigateBack} />}
         </Suspense>
+        </HubNotificationsProvider>
       </LanguageProvider>
     </ThemeProvider>
   )

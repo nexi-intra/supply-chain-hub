@@ -30,6 +30,18 @@ interface VacationCalendarProps {
   userEmail: string
 }
 
+const CALENDAR_LABELS = {
+  da: { locale: 'da-DK', week: 'Uge', today: 'I dag', jumped: 'Sprang til i dag', closed: 'Lukket' },
+  en: { locale: 'en-GB', week: 'Week', today: 'Today', jumped: 'Jumped to today', closed: 'Closed' },
+  fi: { locale: 'fi-FI', week: 'Viikko', today: 'Tänään', jumped: 'Siirryttiin tähän päivään', closed: 'Suljettu' },
+  sv: { locale: 'sv-SE', week: 'Vecka', today: 'Idag', jumped: 'Hoppade till idag', closed: 'Stängt' },
+}
+// 2026-01-05 is a Monday, so the list starts on Monday like the grid.
+const weekdayNames = (locale: string) => Array.from({ length: 7 }, (_, day) => {
+  const name = new Intl.DateTimeFormat(locale, { weekday: 'short' }).format(new Date(2026, 0, 5 + day)).replace('.', '')
+  return name.charAt(0).toUpperCase() + name.slice(1)
+})
+
 export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUserEmail }: VacationCalendarProps) {
   const [vacations, setVacations] = useKV<VacationEntry[]>('vacation-entries', [])
   const [colorOverrides] = useKV<EmployeeColorOverrides>(EMPLOYEE_COLOR_OVERRIDES_KEY, {})
@@ -44,6 +56,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
   const [birthdays, setBirthdays] = useState<BirthdayEntry[]>([])
   const userEmail = propUserEmail
   const { t, language } = useLanguage()
+  const labels = CALENDAR_LABELS[language as keyof typeof CALENDAR_LABELS] ?? CALENDAR_LABELS.da
 
   const months = [
     t.shifts.months.january, t.shifts.months.february, t.shifts.months.march, t.shifts.months.april,
@@ -361,7 +374,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
     const today = new Date()
     setSelectedMonth(today.getMonth())
     setSelectedYear(today.getFullYear())
-    toast.success('Sprang til i dag')
+    toast.success(labels.jumped)
   }
 
   const getStatusBadge = (status: VacationStatus) => {
@@ -428,8 +441,11 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
               Anmodet af: {vacation.userEmail}
             </div>
           )}
-          <div className="mt-2">
+          <div className="mt-2 flex flex-wrap items-center gap-2">
             {getStatusBadge(vacation.status)}
+            {vacation.type === 'parental' && (
+              <Badge variant="outline" className="border-violet-500/40 text-violet-700 dark:text-violet-300">{t.parentalLeave.badge}</Badge>
+            )}
           </div>
           {vacation.reviewedBy && (
             <div className="text-xs text-muted-foreground mt-1">
@@ -500,7 +516,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
       <div className="container mx-auto px-4 sm:px-6 lg:px-8 pt-28 pb-12 sm:pb-20 max-w-7xl relative z-10">
         <header className="mb-6 flex flex-wrap items-center gap-3 border-b pb-4">
           <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground">
-            {language === 'da' ? 'Kalender' : language === 'fi' ? 'Kalenteri' : 'Calendar'}
+            {language === 'da' ? 'Kalender' : language === 'fi' ? 'Kalenteri' : language === 'sv' ? 'Semesterkalender' : 'Calendar'}
           </h1>
           {isManager && (
             <Badge variant="secondary" className="text-xs">
@@ -561,7 +577,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
                   className="gap-2"
                 >
                   <CalendarDot size={18} weight="fill" />
-                  I dag
+                  {labels.today}
                 </Button>
               </div>
               <div className="flex items-center gap-3 flex-wrap">
@@ -576,7 +592,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
                 <DialogHeader>
                   <DialogTitle>
                     {detailDay !== null && new Date(selectedYear, selectedMonth, detailDay).toLocaleDateString(
-                      language === 'da' ? 'da-DK' : language === 'fi' ? 'fi-FI' : 'en-US',
+                      language === 'da' ? 'da-DK' : language === 'fi' ? 'fi-FI' : language === 'sv' ? 'sv-SE' : 'en-US',
                       { weekday: 'long', day: 'numeric', month: 'long' }
                     )}
                   </DialogTitle>
@@ -591,6 +607,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
                         style={{ backgroundColor: userColor.bg, color: userColor.text }}
                       >
                         <span className="flex-1">{getFirstName(vacation.userEmail)}</span>
+                        {vacation.type === 'parental' && <span className="text-xs font-semibold">{t.parentalLeave.badge}</span>}
                         {vacation.notes && <span className="text-xs opacity-80 truncate">{vacation.notes}</span>}
                       </div>
                     )
@@ -602,7 +619,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
                     >
                       <House size={16} weight="fill" className="flex-shrink-0" />
                       <span className="flex-1">{member.name}</span>
-                      <span className="text-xs opacity-80">{language === 'da' ? 'Hjemmearbejde' : language === 'fi' ? 'Etätyö' : 'Home office'}</span>
+                      <span className="text-xs opacity-80">{language === 'da' ? 'Hjemmearbejde' : language === 'fi' ? 'Etätyö' : language === 'sv' ? 'Hemarbete' : 'Home office'}</span>
                     </div>
                   ))}
                 </div>
@@ -611,9 +628,9 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
 
             <div className="grid grid-cols-8 gap-2">
               <div className="text-center font-semibold text-sm py-2 text-muted-foreground">
-                Uge
+                {labels.week}
               </div>
-              {['Man', 'Tir', 'Ons', 'Tor', 'Fre', 'Lør', 'Søn'].map((day, index) => (
+              {weekdayNames(labels.locale).map((day, index) => (
                 <div
                   key={day}
                   className={cn(
@@ -696,7 +713,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
                             )}
                             {isWeekendDay && dayBirthdays.length === 0 ? (
                               <div className="text-[8px] text-muted-foreground text-center mt-2">
-                                Lukket
+                                {labels.closed}
                               </div>
                             ) : !isWeekendDay && (
                               <>
@@ -710,7 +727,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
                                         backgroundColor: userColor.bg,
                                         color: userColor.text
                                       }}
-                                      title={`${getFirstName(vacation.userEmail)}${vacation.notes ? ': ' + vacation.notes : ''}`}
+                                      title={`${getFirstName(vacation.userEmail)}${vacation.type === 'parental' ? ` (${t.parentalLeave.badge})` : ''}${vacation.notes ? ': ' + vacation.notes : ''}`}
                                     >
                                       {getFirstName(vacation.userEmail)}
                                     </div>
@@ -718,14 +735,14 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
                                 })}
                                 {dayVacations.length > (dayBirthdays.length > 0 ? 2 : 3) && (
                                   <div className="text-[9px] text-muted-foreground underline">
-                                    +{dayVacations.length - (dayBirthdays.length > 0 ? 2 : 3)} {language === 'da' ? 'se alle' : language === 'fi' ? 'katso kaikki' : 'see all'}
+                                    +{dayVacations.length - (dayBirthdays.length > 0 ? 2 : 3)} {language === 'da' ? 'se alle' : language === 'fi' ? 'katso kaikki' : language === 'sv' ? 'visa alla' : 'see all'}
                                   </div>
                                 )}
                                 {dayHomeOffice.slice(0, 3).map((member) => (
                                   <div
                                     key={member.email}
                                     className="text-[10px] px-1.5 py-0.5 rounded truncate font-semibold bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300 flex items-center gap-0.5"
-                                    title={`${member.name}${language === 'da' ? ' arbejder hjemme' : language === 'fi' ? ' työskentelee etänä' : ' works from home'}`}
+                                    title={`${member.name}${language === 'da' ? ' arbejder hjemme' : language === 'fi' ? ' työskentelee etänä' : language === 'sv' ? ' arbetar hemifrån' : ' works from home'}`}
                                   >
                                     <House size={10} weight="fill" className="flex-shrink-0" />
                                     <span className="truncate">{getFirstName(member.email)}</span>
@@ -736,7 +753,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
                                     className="text-[9px] text-sky-700 dark:text-sky-300 underline"
                                     title={dayHomeOffice.map(m => m.name).join(', ')}
                                   >
-                                    +{dayHomeOffice.length - 3} {language === 'da' ? 'hjemme' : language === 'fi' ? 'etänä' : 'home'}
+                                    +{dayHomeOffice.length - 3} {language === 'da' ? 'hjemme' : language === 'fi' ? 'etänä' : language === 'sv' ? 'hemma' : 'home'}
                                   </div>
                                 )}
                               </>

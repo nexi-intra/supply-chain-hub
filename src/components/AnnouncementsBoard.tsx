@@ -12,7 +12,7 @@ import { useLanguage } from '@/contexts/LanguageContext'
 import { newId } from '@/lib/utils'
 import { appendToKvArray, removeFromKvArray } from '@/lib/kvArrays'
 import { formatDistanceToNow } from 'date-fns'
-import { da, enUS, fi } from 'date-fns/locale'
+import { da, enUS, fi, sv } from 'date-fns/locale'
 
 export interface Announcement {
   id: string
@@ -48,7 +48,7 @@ export function AnnouncementsBoard({ userEmail, userName, canPost }: Announcemen
   const handleCreate = async () => {
     if (createInProgress.current) return
     if (!title.trim() || !message.trim()) {
-      toast.error(language === 'da' ? 'Udfyld både titel og besked' : language === 'fi' ? 'Täytä sekä otsikko että viesti' : 'Fill in both title and message')
+      toast.error(language === 'da' ? 'Udfyld både titel og besked' : language === 'fi' ? 'Täytä sekä otsikko että viesti' : language === 'sv' ? 'Fyll i både rubrik och meddelande' : 'Fill in both title and message')
       return
     }
     const creation = pendingAnnouncement.current || { id: newId('announcement'), createdAt: Date.now() }
@@ -69,10 +69,10 @@ export function AnnouncementsBoard({ userEmail, userName, canPost }: Announcemen
       setTitle('')
       setMessage('')
       setShowCreateDialog(false)
-      toast.success(language === 'da' ? 'Opslag oprettet' : language === 'fi' ? 'Julkaistu ilmoitus' : 'Announcement posted')
+      toast.success(language === 'da' ? 'Opslag oprettet' : language === 'fi' ? 'Julkaistu ilmoitus' : language === 'sv' ? 'Inlägg publicerat' : 'Announcement posted')
     } catch (error) {
       console.error('Kunne ikke oprette opslag:', error)
-      toast.error(language === 'da' ? 'Opslaget blev ikke gemt — prøv igen' : language === 'fi' ? 'Ilmoitusta ei tallennettu — yritä uudelleen' : 'The announcement was not saved — please try again')
+      toast.error(language === 'da' ? 'Opslaget blev ikke gemt — prøv igen' : language === 'fi' ? 'Ilmoitusta ei tallennettu — yritä uudelleen' : language === 'sv' ? 'Inlägget sparades inte — försök igen' : 'The announcement was not saved — please try again')
     } finally {
       createInProgress.current = false
       setIsCreating(false)
@@ -115,7 +115,7 @@ export function AnnouncementsBoard({ userEmail, userName, canPost }: Announcemen
                       <div className="flex items-center justify-between gap-2">
                         <h3 className="font-bold">{a.title}</h3>
                         <span className="text-xs text-muted-foreground shrink-0">
-                          {formatDistanceToNow(a.createdAt, { addSuffix: true, locale: language === 'da' ? da : language === 'fi' ? fi : enUS })}
+                          {formatDistanceToNow(a.createdAt, { addSuffix: true, locale: language === 'da' ? da : language === 'fi' ? fi : language === 'sv' ? sv : enUS })}
                         </span>
                       </div>
                       <p className="text-sm text-muted-foreground mt-1 whitespace-pre-wrap">{a.message}</p>
@@ -128,7 +128,7 @@ export function AnnouncementsBoard({ userEmail, userName, canPost }: Announcemen
                           size="icon"
                           className="h-7 w-7 text-destructive hover:text-destructive"
                           onClick={() => handleDeleteGlobally(a.id)}
-                          title={language === 'da' ? 'Slet opslag for alle' : language === 'fi' ? 'Poista kaikki' : 'Delete for everyone'}
+                          title={language === 'da' ? 'Slet opslag for alle' : language === 'fi' ? 'Poista kaikki' : language === 'sv' ? 'Ta bort för alla' : 'Delete for everyone'}
                         >
                           <Trash size={14} />
                         </Button>
@@ -138,7 +138,7 @@ export function AnnouncementsBoard({ userEmail, userName, canPost }: Announcemen
                         size="icon"
                         className="h-7 w-7"
                         onClick={() => handleDismiss(a.id)}
-                        title={language === 'da' ? 'Skjul for mig' : language === 'fi' ? 'Poistu puolestani.' : 'Dismiss for me'}
+                        title={language === 'da' ? 'Skjul for mig' : language === 'fi' ? 'Poistu puolestani.' : language === 'sv' ? 'Dölj för mig' : 'Dismiss for me'}
                       >
                         <X size={14} />
                       </Button>
@@ -154,7 +154,7 @@ export function AnnouncementsBoard({ userEmail, userName, canPost }: Announcemen
       {canPost && (
         <Button variant="outline" size="sm" className="gap-2" onClick={() => { pendingAnnouncement.current = null; setShowCreateDialog(true) }}>
           <Plus size={16} weight="bold" />
-          {language === 'da' ? 'Nyt opslag til alle' : language === 'fi' ? 'Uusi ilmoitus' : 'New announcement'}
+          {language === 'da' ? 'Nyt opslag til alle' : language === 'fi' ? 'Uusi ilmoitus' : language === 'sv' ? 'Nytt inlägg till alla' : 'New announcement'}
         </Button>
       )}
 
@@ -163,18 +163,18 @@ export function AnnouncementsBoard({ userEmail, userName, canPost }: Announcemen
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Megaphone size={22} weight="fill" className="text-accent" />
-              {language === 'da' ? 'Nyt firmaopslag' : language === 'fi' ? 'Uusi yrityksen ilmoitus' : 'New company announcement'}
+              {language === 'da' ? 'Nyt firmaopslag' : language === 'fi' ? 'Uusi yrityksen ilmoitus' : language === 'sv' ? 'Nytt företagsinlägg' : 'New company announcement'}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <Input
-              placeholder={language === 'da' ? 'Titel' : language === 'fi' ? 'Osasto' : 'Title'}
+              placeholder={language === 'da' ? 'Titel' : language === 'fi' ? 'Osasto' : language === 'sv' ? 'Rubrik' : 'Title'}
               value={title}
               disabled={isCreating}
               onChange={(e) => { pendingAnnouncement.current = null; setTitle(e.target.value) }}
             />
             <Textarea
-              placeholder={language === 'da' ? 'Besked til alle medarbejdere…' : language === 'fi' ? 'Viesti kaikille työntekijöille.' : 'Message to all employees…'}
+              placeholder={language === 'da' ? 'Besked til alle medarbejdere…' : language === 'fi' ? 'Viesti kaikille työntekijöille.' : language === 'sv' ? 'Meddelande till alla medarbetare…' : 'Message to all employees…'}
               value={message}
               disabled={isCreating}
               onChange={(e) => { pendingAnnouncement.current = null; setMessage(e.target.value) }}
@@ -184,11 +184,11 @@ export function AnnouncementsBoard({ userEmail, userName, canPost }: Announcemen
           </div>
           <DialogFooter>
             <Button variant="outline" disabled={isCreating} onClick={() => setShowCreateDialog(false)}>
-              {language === 'da' ? 'Annuller' : language === 'fi' ? 'Peruuta' : 'Cancel'}
+              {language === 'da' ? 'Annuller' : language === 'fi' ? 'Peruuta' : language === 'sv' ? 'Avbryt' : 'Cancel'}
             </Button>
             <Button onClick={handleCreate} loading={isCreating} className="gap-2">
               <Megaphone size={16} weight="bold" />
-              {isCreating ? language === 'da' ? 'Gemmer…' : language === 'fi' ? 'Tallennetaan…' : 'Saving…' : language === 'da' ? 'Opslå' : language === 'fi' ? 'Posti' : 'Post'}
+              {isCreating ? language === 'da' ? 'Gemmer…' : language === 'fi' ? 'Tallennetaan…' : language === 'sv' ? 'Sparar…' : 'Saving…' : language === 'da' ? 'Opslå' : language === 'fi' ? 'Posti' : language === 'sv' ? 'Publicera' : 'Post'}
             </Button>
           </DialogFooter>
         </DialogContent>

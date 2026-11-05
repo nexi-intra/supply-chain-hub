@@ -11,7 +11,7 @@ function fixture(t) {
   const store = createStore(root), creator = 'creator@example.test', email = 'user@example.test'
   const user = { email, password: 'legacy secret', fullName: 'Synthetic User', role: 'user', status: 'approved', customMetadata: { keep: true } }
   store.set('users', { [email]: user, [creator]: { email: creator, password: 'creator secret', role: 'creator' } })
-  const actor = { email: 'manager@example.test', role: 'manager', viewId: null }
+  const actor = { email: 'manager@example.test', role: 'manager' }
   return { root, store, creator, email, user, actor, update: operation => updateUsers(store, operation, actor, creator) }
 }
 const code = expected => error => error.code === expected
@@ -27,10 +27,9 @@ test('public account reads omit all password hashes without mutating stored data
   assert.equal(publicValue[f.email].password, undefined)
   assert.equal(f.store.get('users')[f.email].password, 'legacy secret')
 })
-test('ordinary accounts and selected read-only hubs cannot mutate accounts', t => {
+test('ordinary accounts cannot mutate accounts', t => {
   const f = fixture(t), op = { op: 'deleteField', field: f.email }
   f.actor.role = 'user'; assert.throws(() => f.update(op), code('AUTH_FORBIDDEN'))
-  f.actor.role = 'manager'; f.actor.viewId = 'both'; assert.throws(() => f.update(op), code('AUTH_FORBIDDEN'))
 })
 test('profile edits with no password preserve stored credentials and metadata', t => {
   const f = fixture(t)

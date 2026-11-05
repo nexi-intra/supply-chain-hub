@@ -22,7 +22,6 @@ function fixture() {
   const team = { teamId: 'a', folderName: 'A' }, second = { teamId: 'b', folderName: 'B' }
   const teams = [team], assignments = new Map([['user@example.test', 'a'], ['creator@example.test', 'a']])
   const stores = new Map([['a', memory()], ['b', memory()]]), sessions = memory()
-  const views = [{ viewId: 'both', teamIds: ['a', 'b'], userEmails: ['user@example.test'] }]
   let clock = 1000000, root = 'synthetic-root', selected
   stores.get('a').mutate('users', () => ({
     'user@example.test': { email: 'user@example.test', username: 'sample', fullName: 'Synthetic User', password: 'secret123', status: 'approved', role: 'user', phone: '123' },
@@ -33,13 +32,12 @@ function fixture() {
       listTeams: () => structuredClone(teams),
       lookupTeamForEmail: (_, email) => teams.find(item => item.teamId === assignments.get(email)),
       getCreatorEmail: () => 'creator@example.test',
-      listAccessViewsForEmail: (_, email) => structuredClone(views.filter(view => view.userEmails.includes(email))),
       assignUserToTeam: (_, email, id) => assignments.set(email, id),
     },
     getRoot: () => root, openTeam: item => stores.get(item.teamId), openSessions: () => sessions,
     switchTeam: item => { selected = item.teamId }, deviceSecret: Buffer.alloc(32, 7), now: () => clock,
   }
-  return { auth: createAuthService(deps), deps, sessions, teams, second, assignments, views, users: stores.get('a'), stores,
+  return { auth: createAuthService(deps), deps, sessions, teams, second, assignments, users: stores.get('a'), stores,
     changeUser(change) { stores.get('a').mutate('users', users => ({ ...users, 'user@example.test': { ...users['user@example.test'], ...change } })) },
     advance: value => { clock += value }, changeRoot: () => { root = 'other-root' }, selected: () => selected,
     login: { email: 'user@example.test', password: 'secret123' },
@@ -150,13 +148,6 @@ test('bursts of authorization checks reuse one session snapshot until the window
   for (let i = 0; i < 10; i++) f.auth.current(1)
   assert.equal(reads, 0)
   f.advance(500); f.auth.current(1); assert.equal(reads, 1)
-})
-test('selected access views must be assigned and never grant manager privileges', async () => {
-  const f = fixture(); f.changeUser({ role: 'manager' }); await f.auth.login(1, f.login)
-  assert.throws(() => f.auth.selectView(1, 'unassigned'), code('AUTH_FORBIDDEN'))
-  assert.equal(f.auth.selectView(1, 'both').viewId, 'both')
-  assert.throws(() => f.auth.requireRole(1, 'manager'), code('AUTH_FORBIDDEN'))
-  f.views.splice(0); f.advance(500); assert.throws(() => f.auth.current(1), code('AUTH_FORBIDDEN'))
 })
 test('logout during asynchronous login prevents a late login from recreating the session', async () => {
   const f = fixture(), pending = f.auth.login(1, f.login)

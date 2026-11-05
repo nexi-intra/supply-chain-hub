@@ -28,9 +28,11 @@ function fixture(t, options = {}) {
   own.set('file_image_chunk_0', 'BINARY IMAGE MUST NOT CHANGE')
   other.set('users', {}); other.set('guide-access-requests', [{ id: 'grant', requestingUserEmail: oldEmail, requestingTeamCode: 'A', guideId: 'external', status: 'approved' }])
   shared.set('shared-guides', [{ id: 'shared', createdBy: oldEmail, content: 'SHARED GUIDE BODY', sharedWithTeamCodes: ['A', 'B'] }])
+  own.set('knowledge-articles', [{ id: 'k', createdBy: oldEmail, content: oldEmail, sections: [] }])
+  other.set('knowledge-access-requests', [{ id: 'kgrant', requestingUserEmail: oldEmail, requestingTeamCode: 'A', guideId: 'external-k', status: 'approved' }])
+  shared.set('shared-knowledge-articles', [{ id: 'shared-k', createdBy: oldEmail, content: 'SHARED KNOWLEDGE BODY', sharedWithTeamCodes: ['A', 'B'] }])
   shared.set('active-sessions', { old: { email: oldEmail, token: 'SYNTHETIC OLD TOKEN' }, creator: { email: creator, token: 'SYNTHETIC CREATOR TOKEN' } })
-  registry.createAccessView(root, { viewId: 'both', name: 'Synthetic Combined', teamIds: ['A', 'B'], userEmails: [oldEmail, creator] })
-  const actor = { email: creator, role: 'creator', viewId: null, home: registry.lookupTeamForEmail(root, creator) }
+  const actor = { email: creator, role: 'creator', home: registry.lookupTeamForEmail(root, creator), activeTeam: registry.lookupTeamForEmail(root, creator) }
   const service = createAccountService({ getRoot: () => root, registry, openStore: createStore, ...options })
   const operation = { op: 'renameField', field: oldEmail, newField: newEmail, expected: publicUsers({ user }).user, value: { email: newEmail, fullName: 'Changed Name', password: '' } }
   return { root, oldEmail, newEmail, creator, own, other, shared, user, actor, service, operation, rename: () => service.rename(actor, 'A', operation), read: (store, key) => store.get(key, { skipCache: true }) }
@@ -151,10 +153,12 @@ test('one journalled email migration preserves credentials and migrates all fixt
   assert.deepEqual(f.read(f.own, 'guide-admin-emails'), [f.newEmail]); assert.equal(f.read(f.other, 'guide-access-requests')[0].requestingUserEmail, f.newEmail)
   const guide = f.read(f.own, 'guides')[0]; assert.equal(guide.createdBy, f.newEmail); assert.equal(guide.content, f.oldEmail); assert.equal(guide.sections[0].steps[0].text, f.oldEmail)
   assert.equal(f.read(f.shared, 'shared-guides')[0].createdBy, f.newEmail); assert.equal(f.read(f.own, 'file_image_chunk_0'), 'BINARY IMAGE MUST NOT CHANGE')
+  assert.equal(f.read(f.own, 'knowledge-articles')[0].createdBy, f.newEmail); assert.equal(f.read(f.own, 'knowledge-articles')[0].content, f.oldEmail)
+  assert.equal(f.read(f.other, 'knowledge-access-requests')[0].requestingUserEmail, f.newEmail)
+  assert.equal(f.read(f.shared, 'shared-knowledge-articles')[0].createdBy, f.newEmail)
   assert.equal(f.read(f.own, `app-language-user_${f.oldEmail}`), undefined); assert.equal(f.read(f.own, `app-language-user_${f.newEmail}`), 'fi')
   assert.equal(f.read(f.own, `hub-dashboard-${f.newEmail}`).tasks.size, 'compact')
   assert.equal(f.read(f.shared, 'active-sessions').old, undefined); assert.ok(f.read(f.shared, 'active-sessions').creator)
-  assert.deepEqual(registry.listAccessViewsForEmail(f.root, f.newEmail)[0].teamIds, ['A', 'B']); assert.equal(registry.listAccessViewsForEmail(f.root, f.oldEmail).length, 0)
   assert.equal(f.service.pending(), null); assert.throws(() => f.service.assertAvailable(f.oldEmail), code('ACCOUNT_EMAIL_RETIRED'))
 })
 test('a stale account snapshot stops the entire migration before any changes', t => {
@@ -206,19 +210,21 @@ for (const reverse of [false, true]) test(`${reverse ? 'rollback' : 'resume'} de
   assert.deepEqual(f.read(f.own, 'vacation-entries'), [{ id: 'third-party', keep: 'NEVER OVERWRITE' }])
   assert.deepEqual(f.read(f.own, 'users'), usersBefore); assert.deepEqual(f.read(f.own, 'home-office-patterns'), patternsBefore)
 })
-test('recovery and journal status never disclose private snapshots or allow ordinary users/read-only views', t => {
+test('recovery and journal status never disclose private snapshots or allow ordinary users', t => {
   const f = fixture(t, { beforeStep: () => { throw new Error('SYNTHETIC FAILURE') } }); assert.throws(f.rename)
   assert.equal(JSON.stringify(f.service.status(f.actor)).includes('PASSWORD'), false)
-  for (const actor of [{ ...f.actor, role: 'user' }, { ...f.actor, viewId: 'both' }]) {
+  for (const actor of [{ ...f.actor, role: 'user' }]) {
     assert.throws(() => f.service.status(actor), code('AUTH_FORBIDDEN'))
     assert.throws(() => f.service.resume(actor, f.service.pending().id), code('AUTH_FORBIDDEN'))
   }
 })
 test('manager can migrate own team but never a different team or the creator account', t => {
   const f = fixture(t), manager = { ...f.actor, email: 'manager@example.test', role: 'manager' }
-  assert.throws(() => f.service.rename({ ...manager, home: { teamId: 'B' } }, 'A', f.operation), code('AUTH_FORBIDDEN'))
+  assert.throws(() => f.service.rename({ ...manager, activeTeam: { teamId: 'B' } }, 'A', f.operation), code('AUTH_FORBIDDEN'))
   assert.throws(() => f.service.rename(manager, 'A', { ...f.operation, field: f.creator }), code('AUTH_FORBIDDEN'))
+  registry.setManagerAccess(f.root, f.oldEmail, ['B'])
   assert.ok(f.service.rename(manager, 'A', f.operation)[f.newEmail])
+  assert.deepEqual(registry.listManagerAccess(f.root).map(({ email, teamIds }) => ({ email, teamIds })), [{ email: f.newEmail, teamIds: ['B'] }])
 })
 test('journal size limit rejects a migration before writing any data', t => {
   const f = fixture(t, { maxJournalBytes: 1 })
@@ -229,4 +235,21 @@ test('failed snapshot reads do not initialize or replace malformed real-store da
   const f = fixture(t)
   fs.writeFileSync(path.join(f.root, 'B', 'projects.json'), 'synthetic corrupted JSON')
   assert.throws(f.rename); assert.equal(f.service.pending(), null); assert.ok(f.read(f.own, 'users')[f.oldEmail])
+})
+test('a rename migrates the shared multiplayer index and rejects retired identities in commands', t => {
+  const f = fixture(t)
+  f.shared.set('multiplayer-index', {
+    games: [{ id: 'g1', players: [{ email: f.oldEmail, name: 'Synthetic User', teamCode: 'A' }, { email: f.creator, name: 'C', teamCode: 'A' }], status: 'active', turn: f.oldEmail, winner: null }],
+    notifications: [{ id: 'n1', gameId: 'g1', recipientEmail: f.oldEmail, actorEmail: f.creator, type: 'turn', readAt: null }],
+    operations: [{ operationId: 'op1', fingerprint: 'f', actorEmail: f.oldEmail, gameId: 'g1' }],
+  })
+  f.rename()
+  const index = f.read(f.shared, 'multiplayer-index')
+  assert.equal(index.games[0].players[0].email, f.newEmail)
+  assert.equal(index.games[0].players[0].name, 'Synthetic User')
+  assert.equal(index.games[0].turn, f.newEmail)
+  assert.equal(index.notifications[0].recipientEmail, f.newEmail)
+  assert.equal(index.operations[0].actorEmail, f.newEmail)
+  assert.throws(() => f.service.assertReferences('multiplayer-index', { type: 'challenge', opponentEmail: f.oldEmail }), code('ACCOUNT_RETIRED_REFERENCE'))
+  assert.doesNotThrow(() => f.service.assertReferences('multiplayer-index', { type: 'challenge', opponentEmail: f.newEmail }))
 })

@@ -39,8 +39,9 @@ import { toast } from 'sonner'
 import { AutoText } from '@/components/AutoText'
 import { cn, newId } from '@/lib/utils'
 import { appendToKvArray } from '@/lib/kvArrays'
+import { sendInternalMessage } from '@/lib/moduleWrites'
 import { isAnyModalOpen } from '@/lib/modalStack'
-import { consumeNavigationParams, navigateTo, type AppViewId } from '@/lib/appNavigation'
+import { consumeNavigationParams, navigateTo, peekNavigationParams, type AppViewId } from '@/lib/appNavigation'
 import { useLanguage } from '@/contexts/LanguageContext'
 import type { Email, EmailFolder, VacationEntry, VacationStatus } from '@/lib/types'
 
@@ -58,13 +59,16 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
   const [users, setUsers] = useState<Array<{ email: string; name: string }>>([])
   const [isManager, setIsManager] = useState(false)
   const userEmail = propUserEmail
-  const [view, setView] = useState<'inbox' | 'sent' | 'compose' | 'vacation-requests' | 'folder'>('inbox')
+  const [initialNavigation] = useState(() => peekNavigationParams())
+  const [view, setView] = useState<'inbox' | 'sent' | 'compose' | 'vacation-requests' | 'folder'>(() =>
+    initialNavigation?.tab === 'sent' ? 'sent' : initialNavigation?.tab === 'folder' && initialNavigation.itemId ? 'folder' : 'inbox')
   const [refreshTrigger, setRefreshTrigger] = useState(0)
-  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null)
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(() => initialNavigation?.tab === 'folder' ? initialNavigation.itemId ?? null : null)
   const [selectedVacation, setSelectedVacation] = useState<VacationEntry | null>(null)
   const [showCalendarPreview, setShowCalendarPreview] = useState(false)
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null)
-  const [searchQuery, setSearchQuery] = useState(() => consumeNavigationParams()?.search ?? '')
+  const [searchQuery, setSearchQuery] = useState(() => peekNavigationParams()?.search ?? '')
+  useEffect(() => { consumeNavigationParams() }, [])
   const [dateFilter, setDateFilter] = useState<string>('all')
   const [senderFilter, setSenderFilter] = useState<string>('all')
   const [showFilters, setShowFilters] = useState(false)
@@ -146,12 +150,12 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
     const diffHours = Math.floor(diffMs / 3600000)
     const diffDays = Math.floor(diffMs / 86400000)
 
-    if (diffMins < 1) return language === 'da' ? 'Lige nu' : language === 'fi' ? 'Juuri nyt' : 'Just now'
-    if (diffMins < 60) return language === 'da' ? `${diffMins} min siden` : language === 'fi' ? `${diffMins} min sitten` : `${diffMins} min ago`
-    if (diffHours < 24) return language === 'da' ? `${diffHours} time${diffHours > 1 ? 'r' : ''} siden` : language === 'fi' ? `${diffHours} tuntia sitten` : `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`
-    if (diffDays < 7) return language === 'da' ? `${diffDays} dag${diffDays > 1 ? 'e' : ''} siden` : language === 'fi' ? `${diffDays} päivää sitten` : `${diffDays} day${diffDays > 1 ? 's' : ''} ago`
+    if (diffMins < 1) return language === 'da' ? 'Lige nu' : language === 'fi' ? 'Juuri nyt' : language === 'sv' ? 'Just nu' : 'Just now'
+    if (diffMins < 60) return language === 'da' ? `${diffMins} min siden` : language === 'fi' ? `${diffMins} min sitten` : language === 'sv' ? `${diffMins} min sedan` : `${diffMins} min ago`
+    if (diffHours < 24) return language === 'da' ? `${diffHours} time${diffHours > 1 ? 'r' : ''} siden` : language === 'fi' ? `${diffHours} tuntia sitten` : language === 'sv' ? `${diffHours} timm${diffHours > 1 ? 'ar' : 'e'} sedan` : `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`
+    if (diffDays < 7) return language === 'da' ? `${diffDays} dag${diffDays > 1 ? 'e' : ''} siden` : language === 'fi' ? `${diffDays} päivää sitten` : language === 'sv' ? `${diffDays} dag${diffDays > 1 ? 'ar' : ''} sedan` : `${diffDays} day${diffDays > 1 ? 's' : ''} ago`
     
-    return date.toLocaleDateString(language === 'da' ? 'da-DK' : language === 'fi' ? 'fi-FI' : 'en-US', { day: 'numeric', month: 'short', year: 'numeric' })
+    return date.toLocaleDateString(language === 'da' ? 'da-DK' : language === 'fi' ? 'fi-FI' : language === 'sv' ? 'sv-SE' : 'en-US', { day: 'numeric', month: 'short', year: 'numeric' })
   }
 
   const filterByDate = (email: Email) => {
@@ -275,31 +279,8 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
       return
     }
 
-    const newEmail: Email = {
-      id: newId('email'),
-      from: userEmail,
-      to: composeData.to,
-      subject: composeData.subject,
-      message: composeData.message,
-      timestamp: Date.now(),
-      read: false,
-      ...(composeThreadId ? { threadId: composeThreadId } : {})
-    }
-
     // Atomar append — to brugere der sender samtidig taber ikke længere hinandens mails.
-    await appendToKvArray('emails', [newEmail])
-
-    const notification = {
-      id: newId('notif'),
-      type: 'email' as const,
-      message: `Ny email fra ${userEmail}: ${composeData.subject}`,
-      timestamp: Date.now(),
-      read: false,
-      from: userEmail,
-      emailId: newEmail.id
-    }
-
-    await appendToKvArray('email-notifications', [notification])
+    await sendInternalMessage({ from: userEmail, to: composeData.to, subject: composeData.subject, message: composeData.message, threadId: composeThreadId })
 
     toast.success(t.email.emailSent)
     setComposeData({ to: '', subject: '', message: '' })
@@ -556,7 +537,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
   }
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString(language === 'da' ? 'da-DK' : language === 'fi' ? 'fi-FI' : 'en-US', {
+    return new Date(dateString).toLocaleDateString(language === 'da' ? 'da-DK' : language === 'fi' ? 'fi-FI' : language === 'sv' ? 'sv-SE' : 'en-US', {
       day: 'numeric',
       month: 'long',
       year: 'numeric'
@@ -590,13 +571,15 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
 
     const daysInMonth = getDaysInMonth(monthToShow, yearToShow)
     const firstDay = getFirstDayOfMonth(monthToShow, yearToShow)
-    const monthName = new Date(yearToShow, monthToShow).toLocaleDateString(language === 'da' ? 'da-DK' : language === 'fi' ? 'fi-FI' : 'en-US', { month: 'long', year: 'numeric' })
+    const monthName = new Date(yearToShow, monthToShow).toLocaleDateString(language === 'da' ? 'da-DK' : language === 'fi' ? 'fi-FI' : language === 'sv' ? 'sv-SE' : 'en-US', { month: 'long', year: 'numeric' })
 
     const weekdays = language === 'da'
       ? ['Søn', 'Man', 'Tir', 'Ons', 'Tor', 'Fre', 'Lør']
       : language === 'fi'
         ? ['Su', 'Ma', 'Ti', 'Ke', 'To', 'Pe', 'La']
-        : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+        : language === 'sv'
+          ? ['Sön', 'Mån', 'Tis', 'Ons', 'Tor', 'Fre', 'Lör']
+          : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
     const days: ReactElement[] = []
 
     for (let i = 0; i < firstDay; i++) {

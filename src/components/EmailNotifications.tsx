@@ -8,7 +8,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Envelope, Trash, ArrowBendUpLeft, PaperPlaneTilt, CheckCircle } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
-import { da, enUS, fi } from 'date-fns/locale'
+import { da, enUS, fi, sv } from 'date-fns/locale'
 import { useLanguage } from '@/contexts/LanguageContext'
 import { appendToKvArray, removeFromKvArray, upsertInKvArray } from '@/lib/kvArrays'
 import type { Email } from '@/lib/types'
@@ -66,7 +66,7 @@ export function EmailNotifications({ open, onOpenChange, userEmail }: EmailNotif
     const target = emails.find(e => e.id === id)
     setEmails(prevEmails => prevEmails.filter(e => e.id !== id))
     if (selectedEmail?.id === id) setSelectedEmail(null)
-    toast.success(language === 'da' ? 'Markeret som læst' : language === 'fi' ? 'Merkitty luetuksi' : 'Marked as read')
+    toast.success(language === 'da' ? 'Markeret som læst' : language === 'fi' ? 'Merkitty luetuksi' : language === 'sv' ? 'Markerat som läst' : 'Marked as read')
     if (target) {
       await upsertInKvArray<Email>('emails', [{ ...target, read: true }]).catch(error => console.error('Kunne ikke markere mailen som laest:', error))
     }
@@ -81,7 +81,7 @@ export function EmailNotifications({ open, onOpenChange, userEmail }: EmailNotif
 
   const handleSendReply = async () => {
     if (!selectedEmail || !replyMessage.trim()) {
-      toast.error(language === 'da' ? 'Skriv en besked' : language === 'fi' ? 'Kirjoita viesti' : 'Write a message')
+      toast.error(language === 'da' ? 'Skriv en besked' : language === 'fi' ? 'Kirjoita viesti' : language === 'sv' ? 'Skriv ett meddelande' : 'Write a message')
       return
     }
 
@@ -98,13 +98,13 @@ export function EmailNotifications({ open, onOpenChange, userEmail }: EmailNotif
         read: false
       }
 
-      toast.success(language === 'da' ? 'Svar sendt' : language === 'fi' ? 'Vastaus' : 'Reply sent')
+      toast.success(language === 'da' ? 'Svar sendt' : language === 'fi' ? 'Vastaus' : language === 'sv' ? 'Svar skickat' : 'Reply sent')
       setReplyMessage('')
       setIsReplying(false)
 
       await appendToKvArray<Email>('emails', [newEmail])
     } catch (error) {
-      toast.error(language === 'da' ? 'Kunne ikke sende svar' : language === 'fi' ? 'Vastauksen lähettäminen epäonnistui' : 'Failed to send reply')
+      toast.error(language === 'da' ? 'Kunne ikke sende svar' : language === 'fi' ? 'Vastauksen lähettäminen epäonnistui' : language === 'sv' ? 'Det gick inte att skicka svaret' : 'Failed to send reply')
     } finally {
       setIsSending(false)
     }
@@ -122,18 +122,18 @@ export function EmailNotifications({ open, onOpenChange, userEmail }: EmailNotif
     const diffHours = Math.floor(diffMs / 3600000)
     const diffDays = Math.floor(diffMs / 86400000)
 
-    if (diffMins < 1) return language === 'da' ? 'Lige nu' : language === 'fi' ? 'Juuri nyt' : 'Just now'
-    if (diffMins < 60) return language === 'da' ? `${diffMins} min siden` : language === 'fi' ? `${diffMins} min sitten` : `${diffMins} min ago`
-    if (diffHours < 24) return language === 'da' ? `${diffHours} time${diffHours > 1 ? 'r' : ''} siden` : language === 'fi' ? `${diffHours} hour${diffHours > 1 ? 's' : ''} sitten` : `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`
-    if (diffDays < 7) return language === 'da' ? `${diffDays} dag${diffDays > 1 ? 'e' : ''} siden` : language === 'fi' ? `${diffDays} day${diffDays > 1 ? 's' : ''} sitten` : `${diffDays} day${diffDays > 1 ? 's' : ''} ago`
+    if (diffMins < 1) return language === 'da' ? 'Lige nu' : language === 'fi' ? 'Juuri nyt' : language === 'sv' ? 'Just nu' : 'Just now'
+    if (diffMins < 60) return language === 'da' ? `${diffMins} min siden` : language === 'fi' ? `${diffMins} min sitten` : language === 'sv' ? `${diffMins} min sedan` : `${diffMins} min ago`
+    if (diffHours < 24) return language === 'da' ? `${diffHours} time${diffHours > 1 ? 'r' : ''} siden` : language === 'fi' ? `${diffHours} hour${diffHours > 1 ? 's' : ''} sitten` : language === 'sv' ? `${diffHours} timm${diffHours > 1 ? 'ar' : 'e'} sedan` : `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`
+    if (diffDays < 7) return language === 'da' ? `${diffDays} dag${diffDays > 1 ? 'e' : ''} siden` : language === 'fi' ? `${diffDays} day${diffDays > 1 ? 's' : ''} sitten` : language === 'sv' ? `${diffDays} dag${diffDays > 1 ? 'ar' : ''} sedan` : `${diffDays} day${diffDays > 1 ? 's' : ''} ago`
     
-    return format(date, 'd. MMM yyyy', { locale: language === 'da' ? da : language === 'fi' ? fi : enUS })
+    return format(date, 'd. MMM yyyy', { locale: language === 'da' ? da : language === 'fi' ? fi : language === 'sv' ? sv : enUS })
   }
 
   const unreadCount = emails.filter(e => !e.read).length
   const unreadEmails = emails.filter(e => !e.read)
 
-  const dateLocale = language === 'da' ? da : language === 'fi' ? fi : enUS
+  const dateLocale = language === 'da' ? da : language === 'fi' ? fi : language === 'sv' ? sv : enUS
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -155,7 +155,7 @@ export function EmailNotifications({ open, onOpenChange, userEmail }: EmailNotif
         {unreadCount === 0 ? (
           <div className="py-12 text-center text-muted-foreground">
             <Envelope size={64} weight="duotone" className="mx-auto mb-4 opacity-20" />
-            <p className="text-lg font-medium">{language === 'da' ? 'Ingen nye beskeder' : language === 'fi' ? 'Ei uusia viestejä' : 'No new messages'}</p>
+            <p className="text-lg font-medium">{language === 'da' ? 'Ingen nye beskeder' : language === 'fi' ? 'Ei uusia viestejä' : language === 'sv' ? 'Inga nya meddelanden' : 'No new messages'}</p>
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-4">
@@ -226,7 +226,7 @@ export function EmailNotifications({ open, onOpenChange, userEmail }: EmailNotif
                     size="lg"
                   >
                     <CheckCircle size={20} weight="duotone" />
-                    {language === 'da' ? 'Marker som læst' : language === 'fi' ? 'Merkitse luetuksi' : 'Mark as read'}
+                    {language === 'da' ? 'Marker som læst' : language === 'fi' ? 'Merkitse luetuksi' : language === 'sv' ? 'Markera som läst' : 'Mark as read'}
                   </Button>
 
                   {isReplying ? (
@@ -235,10 +235,10 @@ export function EmailNotifications({ open, onOpenChange, userEmail }: EmailNotif
                       <div>
                         <div className="flex items-center gap-2 mb-2">
                           <ArrowBendUpLeft size={16} className="text-muted-foreground" />
-                          <p className="text-sm font-medium">{language === 'da' ? 'Svar til' : language === 'fi' ? 'Vastaa' : 'Reply to'} {getSenderName(selectedEmail.from)}</p>
+                          <p className="text-sm font-medium">{language === 'da' ? 'Svar til' : language === 'fi' ? 'Vastaa' : language === 'sv' ? 'Svara till' : 'Reply to'} {getSenderName(selectedEmail.from)}</p>
                         </div>
                         <Textarea
-                          placeholder={language === 'da' ? 'Skriv dit svar her...' : language === 'fi' ? 'Kirjoita vastauksesi tähän.' : 'Write your reply here...'}
+                          placeholder={language === 'da' ? 'Skriv dit svar her...' : language === 'fi' ? 'Kirjoita vastauksesi tähän.' : language === 'sv' ? 'Skriv ditt svar här...' : 'Write your reply here...'}
                           value={replyMessage}
                           onChange={(e) => setReplyMessage(e.target.value)}
                           className="min-h-[120px] resize-none"
@@ -252,7 +252,7 @@ export function EmailNotifications({ open, onOpenChange, userEmail }: EmailNotif
                           className="flex-1 gap-2"
                         >
                           <PaperPlaneTilt size={18} />
-                          {isSending ? (language === 'da' ? 'Sender...' : language === 'fi' ? 'Lähetetään...' : 'Sending...') : (language === 'da' ? 'Send svar' : language === 'fi' ? 'Lähetä vastaus' : 'Send reply')}
+                          {isSending ? (language === 'da' ? 'Sender...' : language === 'fi' ? 'Lähetetään...' : language === 'sv' ? 'Skickar...' : 'Sending...') : (language === 'da' ? 'Send svar' : language === 'fi' ? 'Lähetä vastaus' : language === 'sv' ? 'Skicka svar' : 'Send reply')}
                         </Button>
                         <Button
                           onClick={() => {
@@ -261,7 +261,7 @@ export function EmailNotifications({ open, onOpenChange, userEmail }: EmailNotif
                           }}
                           variant="outline"
                         >
-                          {language === 'da' ? 'Annuller' : language === 'fi' ? 'Peruuta' : 'Cancel'}
+                          {language === 'da' ? 'Annuller' : language === 'fi' ? 'Peruuta' : language === 'sv' ? 'Avbryt' : 'Cancel'}
                         </Button>
                       </div>
                     </div>
@@ -273,7 +273,7 @@ export function EmailNotifications({ open, onOpenChange, userEmail }: EmailNotif
                         variant="default"
                       >
                         <ArrowBendUpLeft size={18} />
-                        {language === 'da' ? 'Svar' : language === 'fi' ? 'Vastaus' : 'Reply'}
+                        {language === 'da' ? 'Svar' : language === 'fi' ? 'Vastaus' : language === 'sv' ? 'Svara' : 'Reply'}
                       </Button>
                       <Button
                         onClick={() => handleDelete(selectedEmail.id)}

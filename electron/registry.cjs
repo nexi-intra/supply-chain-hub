@@ -25,10 +25,6 @@ function platformConfigPath(platformRoot) {
   return path.join(registryDir(platformRoot), 'platform-config.json')
 }
 
-function accessViewsPath(platformRoot) {
-  return path.join(registryDir(platformRoot), 'access-views.json')
-}
-
 function readJsonSafe(filePath, fallback) {
   try {
     const value = JSON.parse(fs.readFileSync(filePath, 'utf8'))
@@ -79,79 +75,6 @@ function writeUserDirectory(platformRoot, userDirectory) {
   writeJsonAtomic(userDirectoryPath(platformRoot), userDirectory)
 }
 
-/**
- * Skrivebeskyttede samlevisninger. De er ikke teams og har derfor ingen egen
- * datamappe eller brugerliste. En person kan være tildelt flere visninger uden
- * at blive oprettet som medlem i de teams, visningen læser fra.
- * @returns {Record<string, { name: string, teamIds: string[], userEmails: string[], createdAt: string, updatedAt: string }>}
- */
-function readAccessViews(platformRoot) {
-  return readJsonSafe(accessViewsPath(platformRoot), {})
-}
-
-function writeAccessViews(platformRoot, views) {
-  writeJsonAtomic(accessViewsPath(platformRoot), views)
-}
-
-function normalizeAccessViewInput(platformRoot, input, existing) {
-  const name = String(input?.name || '').trim()
-  if (!name) throw new Error('Samlevisningen skal have et navn')
-
-  const teams = readTeams(platformRoot)
-  const teamIds = [...new Set((input?.teamIds || []).map((id) => String(id).trim()).filter(Boolean))]
-  if (teamIds.length < 2) throw new Error('En samlevisning skal indeholde mindst to teams')
-  const unknownTeam = teamIds.find((teamId) => !teams[teamId])
-  if (unknownTeam) throw new Error(`Ukendt team: ${unknownTeam}`)
-
-  const userEmails = [...new Set((input?.userEmails || [])
-    .map((email) => String(email).trim().toLowerCase())
-    .filter(Boolean))]
-
-  const now = new Date().toISOString()
-  return {
-    name,
-    teamIds,
-    userEmails,
-    createdAt: existing?.createdAt || now,
-    updatedAt: now,
-  }
-}
-
-function listAccessViews(platformRoot) {
-  return Object.entries(readAccessViews(platformRoot)).map(([viewId, view]) => ({ viewId, ...view }))
-}
-
-function listAccessViewsForEmail(platformRoot, email) {
-  const normalizedEmail = String(email || '').trim().toLowerCase()
-  if (!normalizedEmail) return []
-  return listAccessViews(platformRoot).filter((view) => Array.isArray(view.userEmails) && view.userEmails.includes(normalizedEmail))
-}
-
-function createAccessView(platformRoot, input) {
-  const views = readAccessViews(platformRoot)
-  const viewId = String(input?.viewId || crypto.randomUUID())
-  if (views[viewId]) throw new Error(`Samlevisningen "${viewId}" findes allerede`)
-  views[viewId] = normalizeAccessViewInput(platformRoot, input)
-  writeAccessViews(platformRoot, views)
-  return { viewId, ...views[viewId] }
-}
-
-function updateAccessView(platformRoot, viewId, input) {
-  const views = readAccessViews(platformRoot)
-  if (!views[viewId]) throw new Error('Samlevisningen findes ikke')
-  views[viewId] = normalizeAccessViewInput(platformRoot, input, views[viewId])
-  writeAccessViews(platformRoot, views)
-  return { viewId, ...views[viewId] }
-}
-
-function deleteAccessView(platformRoot, viewId) {
-  const views = readAccessViews(platformRoot)
-  if (!views[viewId]) return false
-  delete views[viewId]
-  writeAccessViews(platformRoot, views)
-  return true
-}
-
 function normalizeTeam(teamId, team) {
   return {
     teamId,
@@ -189,6 +112,62 @@ function assignUserToTeam(platformRoot, email, teamId) {
   if (Object.hasOwn(userDirectory, normalizedEmail) && userDirectory[normalizedEmail] !== teamId) throw new Error('Emailen er allerede tilknyttet et andet team')
   userDirectory[normalizedEmail] = teamId
   writeUserDirectory(platformRoot, userDirectory)
+}
+
+function forgetUser(platformRoot, email) {
+  const normalizedEmail = String(email || '').trim().toLowerCase()
+  if (!normalizedEmail) return false
+  const access = readManagerAccess(platformRoot)
+  if (Object.hasOwn(access, normalizedEmail)) {
+    delete access[normalizedEmail]
+    writeJsonAtomic(managerAccessPath(platformRoot), access)
+  }
+  const userDirectory = readUserDirectory(platformRoot)
+  if (!Object.hasOwn(userDirectory, normalizedEmail)) return false
+  delete userDirectory[normalizedEmail]
+  writeUserDirectory(platformRoot, userDirectory)
+  return true
+}
+
+// Manager rights in teams other than the person's home team. Only the creator writes this;
+// the person's account, password and profile stay in the home team.
+function managerAccessPath(platformRoot) {
+  return path.join(registryDir(platformRoot), 'manager-access.json')
+}
+
+/** @returns {Record<string, { teamIds: string[], updatedAt: string }>} */
+function readManagerAccess(platformRoot) {
+  return readJsonSafe(managerAccessPath(platformRoot), {})
+}
+
+function listManagerAccess(platformRoot) {
+  return Object.entries(readManagerAccess(platformRoot))
+    .map(([email, entry]) => ({ email, teamIds: Array.isArray(entry?.teamIds) ? entry.teamIds : [], updatedAt: entry?.updatedAt || null }))
+    .sort((a, b) => a.email.localeCompare(b.email))
+}
+
+function managerTeamsForEmail(platformRoot, email) {
+  const normalizedEmail = String(email || '').trim().toLowerCase()
+  const teamIds = readManagerAccess(platformRoot)[normalizedEmail]?.teamIds
+  if (!normalizedEmail || !Array.isArray(teamIds)) return []
+  const home = readUserDirectory(platformRoot)[normalizedEmail]
+  return listTeams(platformRoot).filter(team => team.teamId !== home && teamIds.includes(team.teamId))
+}
+
+function setManagerAccess(platformRoot, email, teamIds) {
+  const normalizedEmail = String(email || '').trim().toLowerCase()
+  const home = readUserDirectory(platformRoot)[normalizedEmail]
+  if (!normalizedEmail || !home) throw new Error('Personen er ikke oprettet i et team')
+  const wanted = [...new Set((Array.isArray(teamIds) ? teamIds : []).map(id => String(id).trim()).filter(Boolean))]
+  const teams = readTeams(platformRoot)
+  const unknown = wanted.find(teamId => !Object.hasOwn(teams, teamId))
+  if (unknown) throw new Error(`Ukendt team: ${unknown}`)
+  if (wanted.includes(home)) throw new Error('Personens eget team kan ikke tilføjes som ekstra team')
+  const access = readManagerAccess(platformRoot)
+  if (wanted.length) access[normalizedEmail] = { teamIds: wanted, updatedAt: new Date().toISOString() }
+  else delete access[normalizedEmail]
+  writeJsonAtomic(managerAccessPath(platformRoot), access)
+  return { email: normalizedEmail, teamIds: wanted }
 }
 
 /** Opretter et nyt team i registret og returnerer dets teamId. */
@@ -250,7 +229,7 @@ function withIdentityTransaction(platformRoot, callback) {
   if (typeof callback !== 'function' || require('node:util').types.isAsyncFunction(callback)) throw new Error('Registry transaction must be synchronous')
   return withFileLock(path.join(registryDir(platformRoot), 'mutation.lock'), () => {
     let active = true
-    const files = { directory: userDirectoryPath(platformRoot), views: accessViewsPath(platformRoot) }
+    const files = { directory: userDirectoryPath(platformRoot), managerAccess: managerAccessPath(platformRoot) }
     const target = key => { if (!active || !Object.hasOwn(files, key)) throw new Error('Invalid registry transaction capability'); return files[key] }
     try {
       const result = callback({ get: key => readJsonSafe(target(key), {}), set: (key, value) => writeJsonAtomic(target(key), value) })
@@ -265,21 +244,19 @@ module.exports = {
   teamsPath,
   userDirectoryPath,
   platformConfigPath,
-  accessViewsPath,
   readTeams,
   writeTeams: locked(writeTeams),
   readUserDirectory,
   writeUserDirectory: locked(writeUserDirectory),
-  readAccessViews,
-  writeAccessViews: locked(writeAccessViews),
-  listAccessViews,
-  listAccessViewsForEmail,
-  createAccessView: locked(createAccessView),
-  updateAccessView: locked(updateAccessView),
-  deleteAccessView: locked(deleteAccessView),
   lookupTeamForEmail,
   listTeams,
   assignUserToTeam: locked(assignUserToTeam),
+  /** Removes a deleted account from the e-mail -> team directory and its extra manager access. */
+  forgetUser: locked(forgetUser),
+  managerAccessPath,
+  listManagerAccess,
+  managerTeamsForEmail,
+  setManagerAccess: locked(setManagerAccess),
   createTeam: locked(createTeam),
   updateTeam: locked(updateTeam),
   getCreatorEmail,

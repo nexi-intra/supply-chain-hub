@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
-import { ArrowLeft, Plus, MagnifyingGlass, PencilSimple, Trash, X, Lock, LockOpen, Eye, Bell, PushPin, Tag, Notebook } from '@phosphor-icons/react'
+import { motion } from 'framer-motion'
+import { ArrowLeft, Plus, MagnifyingGlass, PencilSimple, Trash, X, Lock, LockOpen, Eye, PushPin, Tag, Notebook } from '@phosphor-icons/react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -11,16 +11,18 @@ import { Badge } from '@/components/ui/badge'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { toast } from 'sonner'
 import { AutoText } from '@/components/AutoText'
+import { TranslationNote, TranslationScope } from '@/components/TranslationScope'
 import { useLanguage } from '@/contexts/LanguageContext'
 import { newId, cn } from '@/lib/utils'
 import { appendToKvArray, upsertInKvArray, removeFromKvArray } from '@/lib/kvArrays'
+import { createNote } from '@/lib/moduleWrites'
 import { isAnyModalOpen } from '@/lib/modalStack'
-import { consumeNavigationParams } from '@/lib/appNavigation'
-import { format, parseISO, formatDistanceToNow } from 'date-fns'
-import { da, enUS, fi } from 'date-fns/locale'
+import { consumeNavigationParams, peekNavigationParams } from '@/lib/appNavigation'
+import { format, parseISO } from 'date-fns'
+import { da, enUS, fi, sv } from 'date-fns/locale'
 import { getUserRole, type UserRole } from '@/lib/userRoles'
 
-interface Note {
+export interface Note {
   id: string
   title: string
   content: string
@@ -35,18 +37,6 @@ interface Note {
   pinned?: boolean
 }
 
-interface Notification {
-  id: string
-  type: 'note-edited'
-  noteId: string
-  noteTitle: string
-  editedBy: string
-  editedByName: string
-  originalCreator: string
-  timestamp: string
-  read: boolean
-}
-
 interface VirtualNotebookProps {
   onNavigateBack: () => void
   userEmail: string
@@ -57,7 +47,8 @@ const PREVIEW_LINES = 8
 export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookProps) {
   const { t, language } = useLanguage()
   const [notes, setNotes] = useState<Note[]>([])
-  const [searchQuery, setSearchQuery] = useState(() => consumeNavigationParams()?.search ?? '')
+  const [searchQuery, setSearchQuery] = useState(() => peekNavigationParams()?.search ?? '')
+  useEffect(() => { consumeNavigationParams() }, [])
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [showEditDialog, setShowEditDialog] = useState(false)
   const [savingNote, setSavingNote] = useState<'create' | 'edit' | null>(null)
@@ -70,24 +61,19 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
   const [noteContent, setNoteContent] = useState('')
   const [noteTags, setNoteTags] = useState('')
   const [activeTagFilter, setActiveTagFilter] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<'shared' | 'personal'>('shared')
+  const [activeTab, setActiveTab] = useState<'shared' | 'personal'>(() => peekNavigationParams()?.tab === 'personal' ? 'personal' : 'shared')
   const [isCreatingPersonal, setIsCreatingPersonal] = useState(false)
   const [userName, setUserName] = useState('')
   const [userRole, setUserRole] = useState<UserRole>('user')
-  const [notifications, setNotifications] = useState<Notification[]>([])
-  const [showNotifications, setShowNotifications] = useState(false)
-  const [unreadCount, setUnreadCount] = useState(0)
 
   useEffect(() => {
     loadNotes()
     loadUserInfo()
-    loadNotifications()
   }, [userEmail])
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
-      if (showNotifications) { setShowNotifications(false); return }
       if (showCreateDialog) { if (!saveInProgress.current) setShowCreateDialog(false); return }
       if (showEditDialog) { if (!saveInProgress.current) setShowEditDialog(false); return }
       if (showViewDialog) { setShowViewDialog(false); setSelectedNote(null); return }
@@ -96,7 +82,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
     }
     window.addEventListener('keydown', handleKeyDown, true)
     return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [onNavigateBack, showNotifications, showCreateDialog, showEditDialog, showViewDialog])
+  }, [onNavigateBack, showCreateDialog, showEditDialog, showViewDialog])
 
   const loadNotes = async () => {
     const allNotes = (await window.kv.get<Note[]>('notebook-notes')) || []
@@ -110,58 +96,6 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
     const role = await getUserRole(userEmail)
     setUserName(name)
     setUserRole(role)
-  }
-
-  const loadNotifications = async () => {
-    const allNotifications = (await window.kv.get<Notification[]>('notebook-notifications')) || []
-    const userNotifications = allNotifications.filter(n => 
-      n.editedBy !== userEmail && 
-      (n.originalCreator === userEmail || activeTab === 'shared')
-    ).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-    
-    setNotifications(userNotifications)
-    setUnreadCount(userNotifications.filter(n => !n.read).length)
-  }
-
-  // Notifikationerne opdateres lokalt med det samme og skrives i baggrunden.
-  // Tidligere kostede hvert klik tre netvaerksrundture (laes, skriv, genlaes)
-  // foer der skete noget paa skaermen.
-  const markNotificationAsRead = async (notificationId: string) => {
-    setNotifications(current => current.map(n => n.id === notificationId ? { ...n, read: true } : n))
-    setUnreadCount(current => Math.max(0, current - 1))
-    try {
-      await upsertInKvArray<Notification>('notebook-notifications', [{ ...(notifications.find(n => n.id === notificationId) as Notification), read: true }])
-    } catch (error) {
-      console.error('Kunne ikke markere notifikationen som laest:', error)
-      void loadNotifications()
-    }
-  }
-
-  const markAllAsRead = async () => {
-    const mine = notifications.filter(n => !n.read)
-    if (!mine.length) return
-    setNotifications(current => current.map(n => ({ ...n, read: true })))
-    setUnreadCount(0)
-    toast.success(language === 'da' ? 'Alle notifikationer markeret som læst' : language === 'fi' ? 'Kaikki tiedoksi merkityt ilmoitukset' : 'All notifications marked as read')
-    try {
-      await upsertInKvArray<Notification>('notebook-notifications', mine.map(n => ({ ...n, read: true })))
-    } catch (error) {
-      console.error('Kunne ikke markere notifikationerne som laest:', error)
-      void loadNotifications()
-    }
-  }
-
-  const deleteNotification = async (notificationId: string) => {
-    const previous = notifications
-    setNotifications(current => current.filter(n => n.id !== notificationId))
-    setUnreadCount(current => Math.max(0, current - (previous.find(n => n.id === notificationId)?.read ? 0 : 1)))
-    try {
-      await removeFromKvArray<Notification>('notebook-notifications', [notificationId])
-    } catch (error) {
-      console.error('Kunne ikke slette notifikationen:', error)
-      setNotifications(previous)
-      void loadNotifications()
-    }
   }
 
   /** Parser komma-separeret tag-input til en unik, trimmet liste. */
@@ -193,22 +127,11 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
     const tags = parseTags(noteTags)
     const creation = pendingNote.current || { id: newId('note'), createdAt: new Date().toISOString() }
     pendingNote.current = creation
-    const newNote: Note = {
-      id: creation.id,
-      title: noteTitle.trim(),
-      content: noteContent.trim(),
-      creatorEmail: userEmail,
-      creatorName: userName,
-      createdAt: creation.createdAt,
-      updatedAt: creation.createdAt,
-      isPersonal: isCreatingPersonal,
-      ...(tags.length > 0 ? { tags } : {}),
-    }
 
     saveInProgress.current = true
     setSavingNote('create')
     try {
-      await appendToKvArray('notebook-notes', [newNote])
+      const newNote = await createNote({ userEmail, userName, title: noteTitle, content: noteContent, isPersonal: isCreatingPersonal, tags, identity: creation })
       pendingNote.current = null
       setNotes(current => [...current, newNote])
       setNoteTitle('')
@@ -218,7 +141,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
       toast.success(t.notebook.noteCreated)
     } catch (error) {
       console.error('Kunne ikke oprette noten:', error)
-      toast.error(language === 'da' ? 'Noten blev ikke gemt — prøv igen' : language === 'fi' ? 'Muistiinpanoa ei tallennettu — yritä uudelleen' : 'The note was not saved — please try again')
+      toast.error(language === 'da' ? 'Noten blev ikke gemt — prøv igen' : language === 'fi' ? 'Muistiinpanoa ei tallennettu — yritä uudelleen' : language === 'sv' ? 'Anteckningen sparades inte — försök igen' : 'The note was not saved — please try again')
     } finally {
       saveInProgress.current = false
       setSavingNote(null)
@@ -262,7 +185,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
       toast.success(t.notebook.noteUpdated)
     } catch (error) {
       console.error('Kunne ikke gemme noten:', error)
-      toast.error(language === 'da' ? 'Noten blev ikke gemt — prøv igen' : language === 'fi' ? 'Muistiinpanoa ei tallennettu — yritä uudelleen' : 'The note was not saved — please try again')
+      toast.error(language === 'da' ? 'Noten blev ikke gemt — prøv igen' : language === 'fi' ? 'Muistiinpanoa ei tallennettu — yritä uudelleen' : language === 'sv' ? 'Anteckningen sparades inte — försök igen' : 'The note was not saved — please try again')
       return
     } finally {
       saveInProgress.current = false
@@ -282,14 +205,6 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
         read: false,
       }
       void appendToKvArray('notebook-notifications', [notification]).catch(err => console.error('Kunne ikke sende notifikationen:', err))
-
-      if (selectedNoteSnapshot.creatorEmail !== userEmail) {
-        toast.info(
-          language === 'da'
-            ? `${userName} redigerede noten "${updatedNote.title}"`
-            : language === 'fi' ? `${userName} muokattu huomautus "${updatedNote.title}"` : `${userName} edited the note "${updatedNote.title}"`
-        )
-      }
     }
   }
 
@@ -308,7 +223,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
     } catch (error) {
       console.error('Kunne ikke slette noten:', error)
       setNotes(previousNotes)
-      toast.error(language === 'da' ? 'Noten blev ikke slettet — prøv igen' : language === 'fi' ? 'Muistiinpanoa ei poistettu — yritä uudelleen' : 'The note was not deleted — please try again')
+      toast.error(language === 'da' ? 'Noten blev ikke slettet — prøv igen' : language === 'fi' ? 'Muistiinpanoa ei poistettu — yritä uudelleen' : language === 'sv' ? 'Anteckningen togs inte bort — försök igen' : 'The note was not deleted — please try again')
     }
   }
 
@@ -364,8 +279,8 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
     setNotes(updatedNotes)
     toast.success(
       note.pinned
-        ? (language === 'da' ? 'Note frigjort' : language === 'fi' ? 'Muistiinpano ilman pinnoitusta' : 'Note unpinned')
-        : (language === 'da' ? 'Note fastgjort' : language === 'fi' ? 'Huomautus kiinnitetty' : 'Note pinned')
+        ? (language === 'da' ? 'Note frigjort' : language === 'fi' ? 'Muistiinpano ilman pinnoitusta' : language === 'sv' ? 'Anteckningen är inte längre fäst' : 'Note unpinned')
+        : (language === 'da' ? 'Note fastgjort' : language === 'fi' ? 'Huomautus kiinnitetty' : language === 'sv' ? 'Anteckningen har fästs' : 'Note pinned')
     )
   }
 
@@ -402,7 +317,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
   const formatDate = (dateString: string) => {
     try {
       const date = parseISO(dateString)
-      return format(date, 'PPp', { locale: language === 'da' ? da : language === 'fi' ? fi : enUS })
+      return format(date, 'PPp', { locale: language === 'da' ? da : language === 'fi' ? fi : language === 'sv' ? sv : enUS })
     } catch {
       return dateString
     }
@@ -411,7 +326,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
   const formatShortDate = (dateString: string) => {
     try {
       const date = parseISO(dateString)
-      return format(date, 'PP', { locale: language === 'da' ? da : language === 'fi' ? fi : enUS })
+      return format(date, 'PP', { locale: language === 'da' ? da : language === 'fi' ? fi : language === 'sv' ? sv : enUS })
     } catch {
       return dateString
     }
@@ -454,6 +369,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
         exit={{ opacity: 0, scale: 0.9 }}
         className="relative"
       >
+        <TranslationScope>
         <Card className={cn(
           "p-3 h-[280px] flex flex-col hover:border-primary/40 transition-colors group",
           note.pinned && "border-primary/50 bg-primary/[0.04]"
@@ -475,7 +391,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
                   size="icon"
                   className={cn("h-6 w-6", note.pinned && "text-primary")}
                   onClick={() => togglePin(note)}
-                  title={note.pinned ? (language === 'da' ? 'Frigør note' : language === 'fi' ? 'Avaa viesti' : 'Unpin note') : (language === 'da' ? 'Fastgør note' : language === 'fi' ? 'Pin note' : 'Pin note')}
+                  title={note.pinned ? (language === 'da' ? 'Frigør note' : language === 'fi' ? 'Avaa viesti' : language === 'sv' ? 'Lossa anteckning' : 'Unpin note') : (language === 'da' ? 'Fastgør note' : language === 'fi' ? 'Pin note' : language === 'sv' ? 'Fäst anteckning' : 'Pin note')}
                 >
                   <PushPin size={12} weight={note.pinned ? 'fill' : 'regular'} />
                 </Button>
@@ -512,11 +428,13 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
                   onClick={() => openViewDialog(note)}
                 >
                   <Eye size={12} />
-                  {language === 'da' ? 'Læs mere' : language === 'fi' ? 'Lue lisää' : 'Read More'}
+                  {language === 'da' ? 'Læs mere' : language === 'fi' ? 'Lue lisää' : language === 'sv' ? 'Läs mer' : 'Read More'}
                 </Button>
               </div>
             )}
           </div>
+
+          <TranslationNote className="mb-1.5 flex-shrink-0" />
 
           {note.tags && note.tags.length > 0 && (
             <div className="flex flex-wrap gap-1 mb-1.5 flex-shrink-0">
@@ -542,23 +460,24 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
               </div>
             )}
             <div className="flex items-center gap-1">
-              <span className="font-medium">{language === 'da' ? 'Oprettet:' : language === 'fi' ? 'Luotu:' : 'Created:'}</span>
+              <span className="font-medium">{language === 'da' ? 'Oprettet:' : language === 'fi' ? 'Luotu:' : language === 'sv' ? 'Skapad:' : 'Created:'}</span>
               <span>{formatShortDate(note.createdAt)}</span>
             </div>
             {note.lastEditedBy && note.createdAt !== note.updatedAt && (
               <div className="flex flex-col gap-0.5">
                 <div className="flex items-center gap-1">
-                  <span className="font-medium">{language === 'da' ? 'Redigeret af:' : language === 'fi' ? 'Muokkaa:' : 'Edited by:'}</span>
+                  <span className="font-medium">{language === 'da' ? 'Redigeret af:' : language === 'fi' ? 'Muokkaa:' : language === 'sv' ? 'Redigerad av:' : 'Edited by:'}</span>
                   <span>{note.lastEditedByName || note.lastEditedBy}</span>
                 </div>
                 <div className="flex items-center gap-1">
-                  <span className="font-medium">{language === 'da' ? 'Dato:' : language === 'fi' ? 'Päiväys:' : 'Date:'}</span>
+                  <span className="font-medium">{language === 'da' ? 'Dato:' : language === 'fi' ? 'Päiväys:' : language === 'sv' ? 'Datum:' : 'Date:'}</span>
                   <span>{formatShortDate(note.updatedAt)}</span>
                 </div>
               </div>
             )}
           </div>
         </Card>
+        </TranslationScope>
       </motion.div>
     )
   }
@@ -575,7 +494,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
               className="bg-background/90 hover:bg-background transition-colors gap-2 font-semibold px-4"
             >
               <ArrowLeft size={20} />
-              {language === 'da' ? 'Tilbage til Hub' : language === 'fi' ? 'Takaisin Hubiin' : 'Back to Hub'}
+              {language === 'da' ? 'Tilbage til Hub' : language === 'fi' ? 'Takaisin Hubiin' : language === 'sv' ? 'Tillbaka till Hub' : 'Back to Hub'}
             </Button>
             <div className="flex-1">
               <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground flex items-center gap-2.5">
@@ -583,22 +502,6 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
                 {t.notebook.title}
               </h1>
             </div>
-            <Button
-              onClick={() => setShowNotifications(true)}
-              variant="outline"
-              size="lg"
-              className="relative"
-            >
-              <Bell size={20} />
-              {unreadCount > 0 && (
-                <Badge
-                  variant="destructive"
-                  className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center p-0 text-xs"
-                >
-                  {unreadCount}
-                </Badge>
-              )}
-            </Button>
           </div>
         </div>
       </div>
@@ -672,7 +575,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
                       onClick={() => setActiveTagFilter(null)}
                     >
                       <X size={12} className="mr-1" />
-                      {language === 'da' ? 'Ryd tag-filter' : language === 'fi' ? 'Tyhjennä tagisuodin' : 'Clear tag filter'}
+                      {language === 'da' ? 'Ryd tag-filter' : language === 'fi' ? 'Tyhjennä tagisuodin' : language === 'sv' ? 'Rensa taggfilter' : 'Clear tag filter'}
                     </Button>
                   )}
                 </div>
@@ -733,7 +636,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
             </div>
             <div>
               <Input
-                placeholder={language === 'da' ? 'Tags adskilt med komma — fx procedure, onboarding' : language === 'fi' ? 'Tunnisteet erotettu pilkulla ' : 'Tags separated by comma — e.g. procedure, onboarding'}
+                placeholder={language === 'da' ? 'Tags adskilt med komma — fx procedure, onboarding' : language === 'fi' ? 'Tunnisteet erotettu pilkulla ' : language === 'sv' ? 'Taggar separerade med komma — t.ex. rutin, onboarding' : 'Tags separated by comma — e.g. procedure, onboarding'}
                 value={noteTags}
                 disabled={savingNote !== null}
                 onChange={(e) => { pendingNote.current = null; setNoteTags(e.target.value) }}
@@ -777,7 +680,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
             </div>
             <div>
               <Input
-                placeholder={language === 'da' ? 'Tags adskilt med komma — fx procedure, onboarding' : language === 'fi' ? 'Tunnisteet erotettu pilkulla ' : 'Tags separated by comma — e.g. procedure, onboarding'}
+                placeholder={language === 'da' ? 'Tags adskilt med komma — fx procedure, onboarding' : language === 'fi' ? 'Tunnisteet erotettu pilkulla ' : language === 'sv' ? 'Taggar separerade med komma — t.ex. rutin, onboarding' : 'Tags separated by comma — e.g. procedure, onboarding'}
                 value={noteTags}
                 disabled={savingNote !== null}
                 onChange={(e) => setNoteTags(e.target.value)}
@@ -797,6 +700,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
 
       <Dialog open={showViewDialog} onOpenChange={setShowViewDialog}>
         <DialogContent className="max-w-3xl max-h-[80vh]">
+          <TranslationScope key={selectedNote?.id}>
           <DialogHeader>
             <DialogTitle className="text-2xl"><AutoText text={selectedNote?.title} /></DialogTitle>
             <DialogDescription className="flex items-center gap-2 mt-2">
@@ -810,6 +714,8 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
               <AutoText text={selectedNote?.content} />
             </p>
           </div>
+          <TranslationNote />
+          </TranslationScope>
           {selectedNote?.tags && selectedNote.tags.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {selectedNote.tags.map(tag => (
@@ -820,7 +726,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
           {selectedNote && selectedNote.lastEditedBy && selectedNote.createdAt !== selectedNote.updatedAt && (
             <div className="text-xs text-muted-foreground border-t pt-3">
               <div className="flex items-center gap-2">
-                <span className="font-medium">{language === 'da' ? 'Sidst redigeret af:' : language === 'fi' ? 'Viimeksi muokannut:' : 'Last edited by:'}</span>
+                <span className="font-medium">{language === 'da' ? 'Sidst redigeret af:' : language === 'fi' ? 'Viimeksi muokannut:' : language === 'sv' ? 'Senast redigerad av:' : 'Last edited by:'}</span>
                 <span>{selectedNote.lastEditedByName || selectedNote.lastEditedBy}</span>
                 <span>•</span>
                 <span>{formatDate(selectedNote.updatedAt)}</span>
@@ -839,7 +745,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
                   className="gap-2"
                 >
                   <PencilSimple size={16} />
-                  {language === 'da' ? 'Rediger' : language === 'fi' ? 'Muokkaa' : 'Edit'}
+                  {language === 'da' ? 'Rediger' : language === 'fi' ? 'Muokkaa' : language === 'sv' ? 'Redigera' : 'Edit'}
                 </Button>
                 <Button
                   variant="outline"
@@ -850,12 +756,12 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
                   className="gap-2 text-destructive hover:text-destructive"
                 >
                   <Trash size={16} />
-                  {language === 'da' ? 'Slet' : language === 'fi' ? 'Poista' : 'Delete'}
+                  {language === 'da' ? 'Slet' : language === 'fi' ? 'Poista' : language === 'sv' ? 'Ta bort' : 'Delete'}
                 </Button>
               </>
             )}
             <Button onClick={() => setShowViewDialog(false)}>
-              {language === 'da' ? 'Luk' : language === 'fi' ? 'Sulje' : 'Close'}
+              {language === 'da' ? 'Luk' : language === 'fi' ? 'Sulje' : language === 'sv' ? 'Stäng' : 'Close'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -877,100 +783,6 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      <Dialog open={showNotifications} onOpenChange={setShowNotifications}>
-        <DialogContent className="max-w-2xl max-h-[80vh]">
-          <DialogHeader>
-            <div className="flex items-center justify-between">
-              <DialogTitle>
-                {language === 'da' ? 'Notifikationer' : language === 'fi' ? 'Ilmoitukset' : 'Notifications'}
-              </DialogTitle>
-              {notifications.length > 0 && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={markAllAsRead}
-                  className="text-xs"
-                >
-                  {language === 'da' ? 'Markér alle som læst' : language === 'fi' ? 'Merkitse kaikki luetuiksi' : 'Mark all as read'}
-                </Button>
-              )}
-            </div>
-            <DialogDescription>
-              {language === 'da' ? 'Se hvem der har redigeret delte noter' : language === 'fi' ? 'Katso kuka on muokannut jaettuja muistiinpanoja' : 'See who has edited shared notes'}
-            </DialogDescription>
-          </DialogHeader>
-          
-          <div className="overflow-y-auto max-h-[50vh] space-y-2">
-            {notifications.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">
-                {language === 'da' ? 'Ingen notifikationer' : language === 'fi' ? 'Ei ilmoituksia' : 'No notifications'}
-              </div>
-            ) : (
-              <AnimatePresence>
-                {notifications.map((notification) => (
-                  <motion.div
-                    key={notification.id}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: 20 }}
-                  >
-                    <Card 
-                      className={`p-4 ${!notification.read ? 'bg-accent/10 border-accent' : ''}`}
-                      onClick={() => !notification.read && markNotificationAsRead(notification.id)}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            {!notification.read && (
-                              <div className="w-2 h-2 rounded-full bg-accent"></div>
-                            )}
-                            <p className="font-medium text-sm">
-                              {notification.editedByName}
-                            </p>
-                            <Badge variant="secondary" className="text-xs">
-                              {language === 'da' ? 'Redigeret' : language === 'fi' ? 'Muokattu' : 'Edited'}
-                            </Badge>
-                          </div>
-                          <p className="text-sm text-muted-foreground">
-                            {language === 'da' 
-                              ? `redigerede noten "${notification.noteTitle}"`
-                              : language === 'fi' ? `muokattu huomautus "${notification.noteTitle}"` : `edited the note "${notification.noteTitle}"`
-                            }
-                          </p>
-                          <p className="text-xs text-muted-foreground mt-1">
-                            {formatDistanceToNow(parseISO(notification.timestamp), {
-                              addSuffix: true,
-                              locale: language === 'da' ? da : language === 'fi' ? fi : enUS
-                            })}
-                          </p>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6 flex-shrink-0"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            deleteNotification(notification.id)
-                          }}
-                        >
-                          <X size={14} />
-                        </Button>
-                      </div>
-                    </Card>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
-            )}
-          </div>
-
-          <DialogFooter>
-            <Button onClick={() => setShowNotifications(false)}>
-              {language === 'da' ? 'Luk' : language === 'fi' ? 'Sulje' : 'Close'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }

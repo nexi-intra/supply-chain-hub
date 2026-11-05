@@ -1,23 +1,54 @@
 import { motion } from 'framer-motion'
-import { useState, useEffect } from 'react'
-import { GameController, ArrowLeft, Joystick, Headset } from '@phosphor-icons/react'
-import { Card } from '@/components/ui/card'
+import { useState, useEffect, useCallback, lazy, Suspense, type ReactNode } from 'react'
+import { GameController, ArrowLeft } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
+import { SectionTile, ArcadeArt, ModernArt, MultiplayerArt } from '@/components/arcade/SectionTile'
 import { useLanguage } from '@/contexts/LanguageContext'
+import { NAVIGATE_EVENT, consumeNavigationParams, peekNavigationParams } from '@/lib/appNavigation'
+import { getMultiplayerLabels } from '@/lib/multiplayerLabels'
 import { isAnyModalOpen } from '@/lib/modalStack'
 import { Arcade } from '@/views/Arcade'
 import { Modern } from '@/views/Modern'
+
+const MultiplayerHub = lazy(() => import('@/views/MultiplayerHub').then(m => ({ default: m.MultiplayerHub })))
 
 interface GameCornerProps {
   onNavigateBack: () => void
   userEmail?: string
 }
 
-type GameCornerView = 'hub' | 'arcade' | 'modern'
+type GameCornerView = 'hub' | 'arcade' | 'modern' | 'multiplayer'
 
 export function GameCorner({ onNavigateBack, userEmail }: GameCornerProps) {
   const { language } = useLanguage()
-  const [view, setView] = useState<GameCornerView>('hub')
+  const multiplayerLabels = getMultiplayerLabels(language)
+  // A deep link ({ view: 'games', tab: 'multiplayer', itemId }) opens the section, and a game when itemId is set.
+  // Read without clearing: a render React discards (lazy chunk, newer update) must not eat the link.
+  const [deepLink] = useState(() => {
+    const params = peekNavigationParams()
+    return params?.tab === 'multiplayer' ? { gameId: params.itemId ?? null } : null
+  })
+  useEffect(() => { consumeNavigationParams() }, [])
+  const [view, setView] = useState<GameCornerView>(deepLink ? 'multiplayer' : 'hub')
+  const [initialGameId, setInitialGameId] = useState<string | null>(deepLink?.gameId ?? null)
+  const [startInGame, setStartInGame] = useState(Boolean(deepLink))
+  const [openGameId, setOpenGameId] = useState<string | null>(null)
+  const clearOpenGame = useCallback(() => setOpenGameId(null), [])
+
+  useEffect(() => {
+    // App.tsx only passes the view in the event detail; the one-shot params are read here.
+    const handleNavigate = (event: Event) => {
+      if ((event as CustomEvent).detail?.view !== 'games') return
+      const params = consumeNavigationParams()
+      if (params?.tab !== 'multiplayer') return
+      setView('multiplayer')
+      setStartInGame(true)
+      setInitialGameId(params.itemId ?? null)
+      setOpenGameId(params.itemId ?? null)
+    }
+    window.addEventListener(NAVIGATE_EVENT, handleNavigate)
+    return () => window.removeEventListener(NAVIGATE_EVENT, handleNavigate)
+  }, [])
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -37,6 +68,46 @@ export function GameCorner({ onNavigateBack, userEmail }: GameCornerProps) {
   if (view === 'modern') {
     return <Modern onNavigateBack={() => setView('hub')} userEmail={userEmail} />
   }
+  if (view === 'multiplayer') {
+    return (
+      <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><div className="h-10 w-10 rounded-full border-4 border-primary/20 border-t-primary animate-spin" /></div>}>
+        <MultiplayerHub
+          onNavigateBack={() => { setView('hub'); setStartInGame(false); setInitialGameId(null); setOpenGameId(null) }}
+          userEmail={userEmail}
+          startInGame={startInGame}
+          initialGameId={initialGameId}
+          openGameId={openGameId}
+          onOpenGameConsumed={clearOpenGame}
+        />
+      </Suspense>
+    )
+  }
+
+  const openLabel = language === 'da' ? 'Åbn' : language === 'fi' ? 'Avaa' : language === 'sv' ? 'Öppna' : 'Open'
+  const sections: { view: Exclude<GameCornerView, 'hub'>; title: string; description: string; art: ReactNode }[] = [
+    {
+      view: 'arcade',
+      title: 'Arcade',
+      description: language === 'da'
+        ? 'Klassiske arkadespil — konkurrér med kollegaer om de bedste scores!'
+        : language === 'fi' ? 'Klassisia arcade-pelejä — kilpaile kollegoiden kanssa parhaista tuloksista!' : language === 'sv' ? 'Klassiska arkadspel — tävla med kollegorna om de bästa poängen!' : 'Classic arcade games — compete with colleagues for the best scores!',
+      art: <ArcadeArt />,
+    },
+    {
+      view: 'modern',
+      title: 'Modern',
+      description: language === 'da'
+        ? 'Større 3D-spil i moderne stil — mere end blot en hurtig omgang.'
+        : language === 'fi' ? 'Suurempia, moderneja 3D-pelejä — enemmän kuin vain nopea kierros.' : language === 'sv' ? 'Större, moderna 3D-spel — mer än bara en snabb runda.' : 'Bigger, modern 3D games — more than just a quick round.',
+      art: <ModernArt />,
+    },
+    {
+      view: 'multiplayer',
+      title: multiplayerLabels.sectionName,
+      description: multiplayerLabels.sectionTagline,
+      art: <MultiplayerArt />,
+    },
+  ]
 
   return (
     <div className="min-h-screen relative overflow-hidden">
@@ -54,7 +125,7 @@ export function GameCorner({ onNavigateBack, userEmail }: GameCornerProps) {
               className="pointer-events-auto bg-background/90 hover:bg-background transition-colors gap-2 font-semibold"
             >
               <ArrowLeft size={20} weight="bold" />
-              {language === 'da' ? 'Tilbage til Hub' : language === 'fi' ? 'Takaisin Hubiin' : 'Back to Hub'}
+              {language === 'da' ? 'Tilbage til Hub' : language === 'fi' ? 'Takaisin Hubiin' : language === 'sv' ? 'Tillbaka till Hub' : 'Back to Hub'}
             </Button>
           </motion.div>
         </div>
@@ -83,7 +154,7 @@ export function GameCorner({ onNavigateBack, userEmail }: GameCornerProps) {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.3, duration: 0.6 }}
           >
-            {language === 'da' ? 'Spilhjørnet' : language === 'fi' ? 'Pelikulma' : 'Game Corner'}
+            {language === 'da' ? 'Spilhjørnet' : language === 'fi' ? 'Pelikulma' : language === 'sv' ? 'Spelhörnan' : 'Game Corner'}
           </motion.h1>
           <motion.p
             className="text-lg text-muted-foreground max-w-2xl mx-auto"
@@ -93,113 +164,34 @@ export function GameCorner({ onNavigateBack, userEmail }: GameCornerProps) {
           >
             {language === 'da'
               ? 'Tag en pause og test dine færdigheder.'
-              : language === 'fi' ? 'Pidä tauko ja testaa taitojasi.' : 'Take a break and test your skills.'}
+              : language === 'fi' ? 'Pidä tauko ja testaa taitojasi.' : language === 'sv' ? 'Ta en paus och testa dina färdigheter.' : 'Take a break and test your skills.'}
           </motion.p>
         </motion.header>
 
         <motion.div
-          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-8"
+          className="grid auto-rows-fr grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 md:gap-6"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.5, duration: 0.6 }}
         >
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.5, duration: 0.4 }}
-          >
+          {sections.map((section, index) => (
             <motion.div
-              initial={{ scale: 1, y: 0, rotate: 0, boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1)" }}
-              whileHover={{ scale: 1.08, y: -10, rotate: [0, 3, -3, 0], boxShadow: "0 30px 60px -15px rgba(0, 0, 0, 0.35)" }}
-              whileTap={{ scale: 0.92 }}
-              transition={{ duration: 0.3, ease: "easeInOut" }}
+              key={section.view}
+              className="h-full"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.5 + index * 0.05, duration: 0.4 }}
             >
-              <Card
-                className="relative overflow-hidden transition-colors group h-full flex flex-col cursor-pointer hover:border-primary/40"
-                onClick={() => setView('arcade')}
-              >
-                <motion.div
-                  className="absolute inset-0"
-                  style={{ background: 'radial-gradient(circle at top right, oklch(0.45 0.17 278 / 0.08), transparent)' }}
-                  initial={{ opacity: 0 }}
-                  whileHover={{ opacity: 1 }}
-                  transition={{ duration: 0.3 }}
-                />
-
-                <div className="relative p-4 md:p-6 flex flex-col flex-1">
-                  <motion.div
-                    className="mb-3 inline-flex items-center justify-center rounded-md p-2 bg-secondary text-primary"
-                    initial={{ scale: 1, rotate: 0, y: 0 }}
-                    whileHover={{ scale: [1, 1.3, 1.15], rotate: [0, -15, 15, -10, 10, 0], y: [0, -8, 0] }}
-                    transition={{ duration: 0.8, ease: "easeInOut" }}
-                  >
-                    <div className="[&>svg]:w-8 [&>svg]:h-8 md:[&>svg]:w-12 md:[&>svg]:h-12">
-                      <Joystick size={48} weight="duotone" />
-                    </div>
-                  </motion.div>
-
-                  <h3 className="text-sm sm:text-base md:text-lg font-bold mb-1.5 md:mb-2 text-foreground text-center">
-                    Arcade
-                  </h3>
-
-                  <p className="text-muted-foreground text-xs leading-relaxed mb-3 md:mb-4 flex-1">
-                    {language === 'da'
-                      ? 'Klassiske arkadespil — konkurrér med kollegaer om de bedste scores!'
-                      : language === 'fi' ? 'Classic arcade Pelit ... kilpailla kollegoiden kanssa parhaista tuloksista!' : 'Classic arcade games — compete with colleagues for the best scores!'}
-                  </p>
-                </div>
-              </Card>
+              <SectionTile
+                game={`section-${section.view}`}
+                title={section.title}
+                description={section.description}
+                cta={openLabel}
+                art={section.art}
+                onClick={() => setView(section.view)}
+              />
             </motion.div>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.55, duration: 0.4 }}
-          >
-            <motion.div
-              initial={{ scale: 1, y: 0, rotate: 0, boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1)" }}
-              whileHover={{ scale: 1.08, y: -10, rotate: [0, 3, -3, 0], boxShadow: "0 30px 60px -15px rgba(0, 0, 0, 0.35)" }}
-              whileTap={{ scale: 0.92 }}
-              transition={{ duration: 0.3, ease: "easeInOut" }}
-            >
-              <Card
-                className="relative overflow-hidden transition-colors group h-full flex flex-col cursor-pointer hover:border-primary/40"
-                onClick={() => setView('modern')}
-              >
-                <motion.div
-                  className="absolute inset-0"
-                  style={{ background: 'radial-gradient(circle at top right, oklch(0.55 0.19 25 / 0.08), transparent)' }}
-                  initial={{ opacity: 0 }}
-                  whileHover={{ opacity: 1 }}
-                  transition={{ duration: 0.3 }}
-                />
-
-                <div className="relative p-4 md:p-6 flex flex-col flex-1">
-                  <motion.div
-                    className="mb-3 inline-flex items-center justify-center rounded-md p-2 bg-secondary text-primary"
-                    initial={{ scale: 1, rotate: 0, y: 0 }}
-                    whileHover={{ scale: [1, 1.3, 1.15], rotate: [0, -15, 15, -10, 10, 0], y: [0, -8, 0] }}
-                    transition={{ duration: 0.8, ease: "easeInOut" }}
-                  >
-                    <div className="[&>svg]:w-8 [&>svg]:h-8 md:[&>svg]:w-12 md:[&>svg]:h-12">
-                      <Headset size={48} weight="duotone" />
-                    </div>
-                  </motion.div>
-
-                  <h3 className="text-sm sm:text-base md:text-lg font-bold mb-1.5 md:mb-2 text-foreground text-center">
-                    Modern
-                  </h3>
-
-                  <p className="text-muted-foreground text-xs leading-relaxed mb-3 md:mb-4 flex-1">
-                    {language === 'da'
-                      ? 'Større 3D-spil i moderne stil — mere end blot en hurtig omgang.'
-                      : language === 'fi' ? 'Suurempi, moderni 3D-pelit ... enemmän kuin vain nopea kierros.' : 'Bigger, modern 3D games — more than just a quick round.'}
-                  </p>
-                </div>
-              </Card>
-            </motion.div>
-          </motion.div>
+          ))}
         </motion.div>
       </div>
     </div>

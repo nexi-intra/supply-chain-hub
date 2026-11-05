@@ -124,11 +124,11 @@ class FileStorageService {
     return url
   }
 
-  async downloadFile(fileUrl: string): Promise<Blob> {
+  async downloadFile(fileUrl: string, read: <T>(key: string) => Promise<T | undefined> = key => window.kv.get(key)): Promise<Blob> {
     if (fileUrl.startsWith('kv://')) {
       const fileId = fileUrl.replace('kv://', '')
       
-      const metadata = await window.kv.get<{
+      const metadata = await read<{
         filename: string
         contentType: string
         size: number
@@ -138,7 +138,7 @@ class FileStorageService {
       }>(`${fileId}_meta`)
 
       if (!metadata) {
-        const legacyData = await window.kv.get<{
+        const legacyData = await read<{
           data: string
           filename: string
           contentType: string
@@ -163,7 +163,7 @@ class FileStorageService {
 
       const chunks: string[] = []
       for (let i = 0; i < metadata.chunkCount; i++) {
-        const chunk = await window.kv.get<string>(`${fileId}_chunk_${i}`)
+        const chunk = await read<string>(`${fileId}_chunk_${i}`)
         if (!chunk) {
           throw new Error(`Missing chunk ${i} for file ${fileId}`)
         }

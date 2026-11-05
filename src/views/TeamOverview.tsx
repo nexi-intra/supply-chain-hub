@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { ArrowLeft, UserCircle, EnvelopeSimple, Crown, ShieldCheck, Phone, Buildings } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion'
@@ -9,6 +10,8 @@ import { UserProfile } from '@/components/UserProfile'
 import { UserRole, getRoleDisplayName, excludeCreator } from '@/lib/userRoles'
 import { getEmployeeColorByEmail, EMPLOYEE_COLOR_OVERRIDES_KEY, type EmployeeColorOverrides } from '@/lib/employeeColors'
 import { isAnyModalOpen } from '@/lib/modalStack'
+import { consumeNavigationParams, peekNavigationParams } from '@/lib/appNavigation'
+import { foldSearchText } from '@/lib/commandSearch'
 import { useLanguage } from '@/contexts/LanguageContext'
 import { useKV } from '@/hooks/useKV'
 import type { RegisteredTeam } from '@/lib/electronRegistryBridge'
@@ -48,6 +51,19 @@ export function TeamOverview({ onNavigateBack, onLogout }: TeamOverviewProps) {
   const [isLoading, setIsLoading] = useState(true)
   const [otherTeams, setOtherTeams] = useState<Array<{ team: RegisteredTeam; employees: TeamEmployee[] }>>([])
   const [isLoadingOtherTeams, setIsLoadingOtherTeams] = useState(true)
+  const [searchQuery, setSearchQuery] = useState(() => peekNavigationParams()?.search ?? '')
+  useEffect(() => { consumeNavigationParams() }, [])
+  const [openTeams, setOpenTeams] = useState<string[]>([])
+  const foldedQuery = foldSearchText(searchQuery)
+  const matchesSearch = (employee: TeamEmployee) => !foldedQuery || foldSearchText(`${employee.name} ${employee.email}`).includes(foldedQuery)
+  const visibleEmployees = employees.filter(matchesSearch)
+  const visibleOtherTeams = foldedQuery ? otherTeams.filter(({ employees: list }) => list.some(matchesSearch)) : otherTeams
+
+  // Searching opens the other teams that have a match.
+  useEffect(() => {
+    if (!foldedQuery) return
+    setOpenTeams(otherTeams.filter(({ employees: list }) => list.some(employee => foldSearchText(`${employee.name} ${employee.email}`).includes(foldedQuery))).map(({ team }) => team.teamId))
+  }, [foldedQuery, otherTeams])
 
   useEffect(() => {
     loadRegisteredUsers()
@@ -209,6 +225,14 @@ export function TeamOverview({ onNavigateBack, onLogout }: TeamOverviewProps) {
           <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground">
             {t.teamOverview.title}
           </h1>
+          <Input
+            type="search"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder={t.teamOverview.searchPlaceholder}
+            aria-label={t.teamOverview.searchPlaceholder}
+            className="mt-4 max-w-md"
+          />
         </header>
 
         <Card className="p-6">
@@ -219,7 +243,7 @@ export function TeamOverview({ onNavigateBack, onLogout }: TeamOverviewProps) {
             </div>
             <div className="flex items-center gap-3">
               <Badge variant="outline" className="text-sm">
-                {employees.length} {employees.length === 1 ? t.teamOverview.userSingular : t.teamOverview.userPlural}
+                {visibleEmployees.length} {visibleEmployees.length === 1 ? t.teamOverview.userSingular : t.teamOverview.userPlural}
               </Badge>
             </div>
           </div>
@@ -241,10 +265,12 @@ export function TeamOverview({ onNavigateBack, onLogout }: TeamOverviewProps) {
               <p className="text-muted-foreground">{t.teamOverview.noUsers}</p>
               <p className="text-sm text-muted-foreground mt-2">{t.teamOverview.noUsersHint}</p>
             </div>
-          ) : renderEmployeeGrid(employees)}
+          ) : !visibleEmployees.length ? (
+            <p className="text-muted-foreground text-center py-8">{t.teamOverview.noMatches}</p>
+          ) : renderEmployeeGrid(visibleEmployees)}
         </Card>
 
-        {(isLoadingOtherTeams || otherTeams.length > 0) && (
+        {(isLoadingOtherTeams || visibleOtherTeams.length > 0) && (
           <Card className="p-6 mt-6">
             <div className="flex items-center gap-2 mb-6">
               <Buildings size={28} className="text-primary" weight="duotone" />
@@ -254,21 +280,21 @@ export function TeamOverview({ onNavigateBack, onLogout }: TeamOverviewProps) {
             {isLoadingOtherTeams ? (
               <p className="text-muted-foreground text-center py-8">{t.teamOverview.loadingUsers}</p>
             ) : (
-              <Accordion type="multiple" className="w-full">
-                {otherTeams.map(({ team, employees: teamEmployees }) => (
+              <Accordion type="multiple" value={openTeams} onValueChange={setOpenTeams} className="w-full">
+                {visibleOtherTeams.map(({ team, employees: teamEmployees }) => (
                   <AccordionItem key={team.teamId} value={team.teamId}>
                     <AccordionTrigger>
                       <span className="flex items-center gap-2">
                         <span className="font-semibold">{team.name}</span>
                         <Badge variant="outline" className="text-xs">
-                          {teamEmployees.length} {teamEmployees.length === 1 ? t.teamOverview.userSingular : t.teamOverview.userPlural}
+                          {teamEmployees.filter(matchesSearch).length} {teamEmployees.filter(matchesSearch).length === 1 ? t.teamOverview.userSingular : t.teamOverview.userPlural}
                         </Badge>
                       </span>
                     </AccordionTrigger>
                     <AccordionContent>
                       {teamEmployees.length === 0 ? (
                         <p className="text-muted-foreground text-sm py-4">{t.teamOverview.noUsers}</p>
-                      ) : renderEmployeeGrid(teamEmployees)}
+                      ) : renderEmployeeGrid(teamEmployees.filter(matchesSearch))}
                     </AccordionContent>
                   </AccordionItem>
                 ))}

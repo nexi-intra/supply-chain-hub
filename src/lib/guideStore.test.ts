@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { saveDraft, getDraft, deleteDraft, draftKey, listDrafts, draftLabel, saveVersionSnapshot, getVersionHistory } from './guideStore'
+import { saveDraft, getDraft, deleteDraft, draftKey, versionsKey, listDrafts, draftLabel, saveVersionSnapshot, getVersionHistory, deleteGuideArtifacts } from './guideStore'
 import type { Guide, GuideDraft } from './guideTypes'
 
 afterEach(() => vi.unstubAllGlobals())
@@ -34,6 +34,26 @@ const draft: GuideDraft = {
 describe('guide draft autosave storage', () => {
   it('draftKey namespaces by guide id, separate from published guides/versions', () => {
     expect(draftKey('g1')).toBe('guide-draft-g1')
+  })
+  it('Knowledge Base drafts and versions use their own keys and never mix with guides', async () => {
+    const { store } = fixture()
+    expect(draftKey('k1', 'knowledge')).toBe('knowledge-draft-k1')
+    expect(versionsKey('k1', 'knowledge')).toBe('knowledge-versions-k1')
+    await saveDraft({ ...draft, guideId: 'k1' }, 'knowledge')
+    await saveDraft(draft)
+    expect(store.has('knowledge-draft-k1')).toBe(true)
+    expect((await listDrafts('user@example.test', 'knowledge')).map((entry) => entry.guideId)).toEqual(['k1'])
+    expect((await listDrafts('user@example.test')).map((entry) => entry.guideId)).toEqual(['g1'])
+    expect(await getDraft('k1')).toBeUndefined()
+    await deleteDraft('k1', 'knowledge')
+    expect(await getDraft('k1', 'knowledge')).toBeUndefined()
+    const article = { id: 'k1', title: 'LocalMode', category: 'Error Codes', tags: [], content: '', createdAt: 1, updatedAt: 1, version: '1.00', sections: [] } as Guide
+    await saveVersionSnapshot(article, 'user@example.test', undefined, 'knowledge')
+    expect(store.has('knowledge-versions-k1')).toBe(true)
+    expect(await getVersionHistory('k1')).toEqual([])
+    expect((await getVersionHistory('k1', 'knowledge'))[0].version).toBe('1.00')
+    await deleteGuideArtifacts(article, 'knowledge')
+    expect(store.has('knowledge-versions-k1')).toBe(false)
   })
   it('saveDraft then getDraft round-trips the exact draft', async () => {
     fixture()

@@ -17,8 +17,10 @@ export interface GuideImportDraft {
   title: string
   language: GuideLanguage
   sections: GuideSection[]
-  originalFile: File
+  originalFile?: File
   preserveWordLayout?: boolean
+  /** Already stored original of an imported PDF (Knowledge Base). */
+  originalPdf?: { url: string; filename: string; size: number }
 }
 
 export type ImportStage = 'reading' | 'converting' | 'parsing' | 'uploading-images' | 'done'

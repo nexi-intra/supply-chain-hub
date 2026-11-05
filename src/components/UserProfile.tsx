@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { SignOut, User, UserGear, Gear, Crown } from '@phosphor-icons/react'
+import { SignOut, User, UserGear, Gear, Crown, ArrowsLeftRight } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -21,9 +21,15 @@ import { Label } from '@/components/ui/label'
 import { toast } from 'sonner'
 import { hashPassword, verifyPassword } from '@/lib/passwords'
 import { useLanguage } from '@/contexts/LanguageContext'
+import { DesktopNotificationsSetting } from '@/components/DesktopNotificationsSetting'
+import { useMyHubs } from '@/hooks/useMyHubs'
+import { getHubAccessLabels } from '@/lib/hubAccessLabels'
+import { requestHubSwitch } from '@/lib/hubSwitch'
 
 interface UserProfileProps {
   userEmail: string
+  /** The user's full name; until it is known, a name is read from the e-mail ("jacob.remmer@..." -> "Jacob Remmer"). */
+  displayName?: string
   onLogout: () => void
   onAdminClick?: () => void
   showAdmin?: boolean
@@ -40,8 +46,21 @@ interface UserData {
   isManager?: boolean
 }
 
-export function UserProfile({ userEmail, onLogout, onAdminClick, showAdmin, onCreatorClick, showCreator, hideEmail = false }: UserProfileProps) {
-  const { t } = useLanguage()
+/** The full name when known and not just the e-mail again, otherwise the e-mail's local part written as a name. */
+export function shownName(email: string, fullName?: string): string {
+  const name = fullName?.trim()
+  if (name && name.toLowerCase() !== email.trim().toLowerCase()) return name
+  return email.split('@')[0]
+    .split(/[._-]+/)
+    .filter(Boolean)
+    .map(part => part.charAt(0).toLocaleUpperCase() + part.slice(1))
+    .join(' ')
+}
+
+export function UserProfile({ userEmail, displayName, onLogout, onAdminClick, showAdmin, onCreatorClick, showCreator, hideEmail = false }: UserProfileProps) {
+  const { t, language } = useLanguage()
+  const { hubs } = useMyHubs()
+  const waitingElsewhere = hubs.filter(hub => !hub.active).reduce((sum, hub) => sum + hub.pending, 0)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [phoneNumber, setPhoneNumber] = useState('')
   const [currentPassword, setCurrentPassword] = useState('')
@@ -150,7 +169,7 @@ export function UserProfile({ userEmail, onLogout, onAdminClick, showAdmin, onCr
             <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center">
               <User size={18} weight="bold" className="text-primary-foreground" />
             </div>
-            {!hideEmail && <span className="text-sm font-medium hidden sm:inline">{userEmail}</span>}
+            {!hideEmail && <span className="text-sm font-medium hidden sm:inline">{shownName(userEmail, displayName)}</span>}
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56">
@@ -167,6 +186,13 @@ export function UserProfile({ userEmail, onLogout, onAdminClick, showAdmin, onCr
             <Gear size={16} className="mr-2" />
             {t.profile.menuSettings}
           </DropdownMenuItem>
+          {hubs.length > 1 && (
+            <DropdownMenuItem onClick={() => requestHubSwitch()} className="cursor-pointer">
+              <ArrowsLeftRight size={16} className="mr-2" />
+              <span className="flex-1">{getHubAccessLabels(language).switchHub}</span>
+              {waitingElsewhere > 0 && <span className="ml-2 rounded-full bg-[oklch(0.55_0.16_25)] px-2 text-xs font-semibold text-white">{waitingElsewhere}</span>}
+            </DropdownMenuItem>
+          )}
           {showCreator && onCreatorClick && (
             <DropdownMenuItem 
               onClick={onCreatorClick}
@@ -215,6 +241,8 @@ export function UserProfile({ userEmail, onLogout, onAdminClick, showAdmin, onCr
                 onChange={(e) => setPhoneNumber(e.target.value)}
               />
             </div>
+
+            <DesktopNotificationsSetting />
 
             <div className="border-t pt-4">
               <h4 className="text-sm font-medium mb-4">{t.profile.changePassword}</h4>

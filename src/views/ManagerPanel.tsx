@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowLeft, ShieldCheck, Check, Crown, User as UserIcon, Trash, FirstAidKit, X, Umbrella, ClockCounterClockwise, PencilSimple, Plus, Phone, CalendarBlank, Eye, Gift, WaveSine, LockKey, Books } from '@phosphor-icons/react'
+import { ArrowLeft, ShieldCheck, Check, User as UserIcon, Trash, X, Umbrella, ClockCounterClockwise, PencilSimple, Plus, Phone, CalendarBlank, Eye, Gift, LockKey, Books, Brain, Baby } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -16,26 +16,31 @@ import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { format } from 'date-fns'
-import { da, enUS, fi } from 'date-fns/locale'
+import { da, enUS, fi, sv } from 'date-fns/locale'
 import { UserRole, hasManagerAccess, getCreatorEmail, getRoleDisplayName, getRoleDescription } from '@/lib/userRoles'
 import { hashPassword } from '@/lib/passwords'
 import { newId } from '@/lib/utils'
 import { parseLocalDate } from '@/lib/dateUtils'
 import { vacationPreviewEntries } from '@/lib/vacationPreview'
 import { appendToKvArray, updateKvArrayItem, removeFromKvArray, upsertInKvArray, setKvObjectField, deleteKvObjectField, replaceKvObjectField } from '@/lib/kvArrays'
+import { loadAccessRequests, reviewAccessRequest } from '@/lib/libraryAccess'
+import type { LibraryKind } from '@/lib/libraryConfig'
 import { cn } from '@/lib/utils'
 import { isAnyModalOpen } from '@/lib/modalStack'
-import { consumeNavigationParams } from '@/lib/appNavigation'
+import { consumeNavigationParams, peekNavigationParams } from '@/lib/appNavigation'
 import { getEmployeeColorByEmail, EMPLOYEE_COLOR_OVERRIDES_KEY, EMPLOYEE_COLOR_PALETTE, type EmployeeColorOverrides } from '@/lib/employeeColors'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { getWeekNumber as getISOWeekNumber } from '@/lib/dateUtils'
 import { useLanguage } from '@/contexts/LanguageContext'
 import React from 'react'
 import { ManualVacationGrant } from '@/components/ManualVacationGrant'
+import { ExtraManagersCard } from '@/components/ExtraManagersCard'
+import { WarehouseRolesCard } from '@/components/warehouse/WarehouseRolesCard'
+import { ParentalLeaveDialog } from '@/components/ParentalLeaveDialog'
 import { OnboardingWizard, OffboardingWizard } from '@/components/OnboardingWizard'
 import { Checkbox } from '@/components/ui/checkbox'
 import { vacationApprovedEmail, vacationRejectedEmail, vacationEditedEmail, vacationDeletedEmail, userApprovedEmail, userRejectedEmail } from '@/lib/emailTemplates'
-import type { BirthdayEntry, SickLeaveEntry, VacationEntry, VacationStatus, GuideAccessRequest } from '@/lib/types'
+import type { BirthdayEntry, VacationEntry, VacationStatus, GuideAccessRequest } from '@/lib/types'
 
 interface User {
   email: string
@@ -54,15 +59,15 @@ interface ManagerPanelProps {
 
 export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPanelProps) {
   const { t, language } = useLanguage()
-  const dateLocale = language === 'en' ? enUS : language === 'fi' ? fi : da
+  const dateLocale = language === 'en' ? enUS : language === 'fi' ? fi : language === 'sv' ? sv : da
   // Deep-link (fx knappen i ferieanmodnings-mails) kan bede om en bestemt fane.
-  const [initialTab] = useState(() => consumeNavigationParams()?.tab ?? 'permissions')
+  const [initialTab] = useState(() => peekNavigationParams()?.tab ?? 'permissions')
+  useEffect(() => { consumeNavigationParams() }, [])
   const [activeTab, setActiveTab] = useState(initialTab)
   const [users, setUsers] = useState<User[]>([])
   // Manager-satte farveoverstyringer (delt KV) — vinder over den automatiske hash-farve.
   const [colorOverrides] = useKV<EmployeeColorOverrides>(EMPLOYEE_COLOR_OVERRIDES_KEY, {})
   const [pendingUsers, setPendingUsers] = useState<User[]>([])
-  const [sickLeaveEntries, setSickLeaveEntries] = useState<SickLeaveEntry[]>([])
   const [vacationEntries, setVacationEntries] = useState<VacationEntry[]>([])
   const [allVacations, setAllVacations] = useState<VacationEntry[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -86,12 +91,14 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
   const [editVacationStartDate, setEditVacationStartDate] = useState<Date | undefined>()
   const [editVacationEndDate, setEditVacationEndDate] = useState<Date | undefined>()
   const [editVacationNotes, setEditVacationNotes] = useState('')
+  const [editVacationType, setEditVacationType] = useState<'vacation' | 'parental'>('vacation')
   const [vacationFilter, setVacationFilter] = useState<'all' | 'pending' | 'approved'>('all')
   const [previewVacation, setPreviewVacation] = useState<VacationEntry | null>(null)
   const [isPreviewDialogOpen, setIsPreviewDialogOpen] = useState(false)
   const [previewMonth, setPreviewMonth] = useState(new Date().getMonth())
   const [previewYear, setPreviewYear] = useState(new Date().getFullYear())
   const [isManualGrantDialogOpen, setIsManualGrantDialogOpen] = useState(false)
+  const [isParentalDialogOpen, setIsParentalDialogOpen] = useState(false)
   const [birthdays, setBirthdays] = useState<BirthdayEntry[]>([])
   const [isEditBirthdayDialogOpen, setIsEditBirthdayDialogOpen] = useState(false)
   const [editingBirthday, setEditingBirthday] = useState<BirthdayEntry | null>(null)
@@ -111,10 +118,14 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
   // repo-hukommelsen) — almindelig load-ved-mount/efter-handling er sikkert her.
   const [guideAccessRequests, setGuideAccessRequests] = useState<GuideAccessRequest[]>([])
   const pendingGuideAccessRequests = useMemo(() => guideAccessRequests.filter(r => r.status === 'pending'), [guideAccessRequests])
+  const [knowledgeAccessRequests, setKnowledgeAccessRequests] = useState<GuideAccessRequest[]>([])
+  const pendingKnowledgeAccessRequests = useMemo(() => knowledgeAccessRequests.filter(r => r.status === 'pending'), [knowledgeAccessRequests])
+  const pendingLibraryAccessCount = pendingGuideAccessRequests.length + pendingKnowledgeAccessRequests.length
 
   const loadGuideAccessRequests = async () => {
-    const requests = await window.kv.get<GuideAccessRequest[]>('guide-access-requests')
-    setGuideAccessRequests(requests || [])
+    const [guideRequests, knowledgeRequests] = await Promise.all([loadAccessRequests('guides'), loadAccessRequests('knowledge')])
+    setGuideAccessRequests(guideRequests)
+    setKnowledgeAccessRequests(knowledgeRequests)
   }
 
   useEffect(() => {
@@ -123,7 +134,6 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
       setHasAccess(access)
       if (access) {
         loadUsers()
-        loadSickLeaveEntries()
         loadVacationEntries()
         loadBirthdays()
         loadGuideAccessRequests()
@@ -232,16 +242,6 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
     toast.success(`${t.managerPanel.permissions.userRequestRejectedPrefix} ${user.fullName} ${t.managerPanel.permissions.userRequestRejectedSuffix}`)
   }
 
-  const loadSickLeaveEntries = async () => {
-    const entries = await window.kv.get<SickLeaveEntry[]>('sick-leave-entries') || []
-    setSickLeaveEntries(entries.sort((a, b) => {
-      const dateA = new Date(b.submittedAt)
-      const dateB = new Date(a.submittedAt)
-      if (isNaN(dateA.getTime()) || isNaN(dateB.getTime())) return 0
-      return dateA.getTime() - dateB.getTime()
-    }))
-  }
-
   const loadVacationEntries = async () => {
     const entries = await window.kv.get<VacationEntry[]>('vacation-entries') || []
     setVacationEntries(entries.filter(e => e.status === 'pending').sort((a, b) => {
@@ -327,18 +327,18 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
   const setUserColor = async (email: string, paletteIndex: number) => {
     try {
       await setKvObjectField(EMPLOYEE_COLOR_OVERRIDES_KEY, email.trim().toLowerCase(), paletteIndex)
-      toast.success(language === 'da' ? 'Farve opdateret' : language === 'fi' ? 'Väri päivitetty' : 'Color updated')
+      toast.success(language === 'da' ? 'Farve opdateret' : language === 'fi' ? 'Väri päivitetty' : language === 'sv' ? 'Färg uppdaterad' : 'Color updated')
     } catch {
-      toast.error(language === 'da' ? 'Kunne ikke ændre farve' : language === 'fi' ? 'Värin muutos epäonnistui' : 'Could not change color')
+      toast.error(language === 'da' ? 'Kunne ikke ændre farve' : language === 'fi' ? 'Värin muutos epäonnistui' : language === 'sv' ? 'Kunde inte ändra färg' : 'Could not change color')
     }
   }
 
   const resetUserColor = async (email: string) => {
     try {
       await deleteKvObjectField(EMPLOYEE_COLOR_OVERRIDES_KEY, email.trim().toLowerCase())
-      toast.success(language === 'da' ? 'Farve nulstillet' : language === 'fi' ? 'Väri palautettu' : 'Color reset')
+      toast.success(language === 'da' ? 'Farve nulstillet' : language === 'fi' ? 'Väri palautettu' : language === 'sv' ? 'Färg återställd' : 'Color reset')
     } catch {
-      toast.error(language === 'da' ? 'Kunne ikke nulstille farve' : language === 'fi' ? 'Värin palautus epäonnistui' : 'Could not reset color')
+      toast.error(language === 'da' ? 'Kunne ikke nulstille farve' : language === 'fi' ? 'Värin palautus epäonnistui' : language === 'sv' ? 'Kunde inte återställa färg' : 'Could not reset color')
     }
   }
 
@@ -351,15 +351,10 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
 
     const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; role: UserRole; isManager: boolean }>>('users')
     if (usersData && usersData[email]) {
-      const userFullName = usersData[email].fullName
-      
+      // The backend also removes the person's shifts, absences, messages, notes and personal settings.
       await deleteKvObjectField('users', email)
       setGuideAdminEmails((current) => (current || []).filter((item) => item.toLowerCase() !== email.toLowerCase()))
-      
-      const assignments = (await window.kv.get<Array<{ id: string; employeeId: string; employeeName: string; roleId: string; date: string; comment?: string }>>('shift-assignments')) || []
-      const assignmentIdsToRemove = assignments.filter(a => a.employeeName === userFullName).map(a => a.id)
-      await removeFromKvArray('shift-assignments', assignmentIdsToRemove)
-      
+
       await loadUsers()
       toast.success(t.managerPanel.permissions.deleted)
     }
@@ -372,32 +367,14 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
       return enabled ? [...withoutUser, normalizedEmail] : withoutUser
     })
     toast.success(enabled
-      ? (language === 'da' ? 'Brugeren er nu Guide Admin' : language === 'fi' ? 'Käyttäjä on nyt opasvastaava' : 'User is now a Guide Admin')
-      : (language === 'da' ? 'Guide Admin-adgangen er fjernet' : language === 'fi' ? 'Opasvastaavan käyttöoikeus poistettiin' : 'Guide Admin access removed'))
+      ? (language === 'da' ? 'Brugeren er nu Guide Admin' : language === 'fi' ? 'Käyttäjä on nyt opasvastaava' : language === 'sv' ? 'Användaren är nu Guide Admin' : 'User is now a Guide Admin')
+      : (language === 'da' ? 'Guide Admin-adgangen er fjernet' : language === 'fi' ? 'Opasvastaavan käyttöoikeus poistettiin' : language === 'sv' ? 'Guide Admin-behörigheten har tagits bort' : 'Guide Admin access removed'))
   }
 
-  const handleApproveGuideAccessRequest = async (request: GuideAccessRequest) => {
-    const expiresAt = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString()
-    await upsertInKvArray<GuideAccessRequest>('guide-access-requests', [{
-      ...request,
-      status: 'approved',
-      reviewedBy: userEmail,
-      reviewedAt: new Date().toISOString(),
-      expiresAt,
-    }])
+  const handleReviewLibraryAccessRequest = async (kind: LibraryKind, request: GuideAccessRequest, status: 'approved' | 'rejected') => {
+    await reviewAccessRequest(kind, request, status, userEmail)
     await loadGuideAccessRequests()
-    toast.success(t.managerPanel.guideAccessRequests.approved)
-  }
-
-  const handleRejectGuideAccessRequest = async (request: GuideAccessRequest) => {
-    await upsertInKvArray<GuideAccessRequest>('guide-access-requests', [{
-      ...request,
-      status: 'rejected',
-      reviewedBy: userEmail,
-      reviewedAt: new Date().toISOString(),
-    }])
-    await loadGuideAccessRequests()
-    toast.success(t.managerPanel.guideAccessRequests.rejected)
+    toast.success(status === 'approved' ? t.managerPanel.guideAccessRequests.approved : t.managerPanel.guideAccessRequests.rejected)
   }
 
   // Telefon og brugernavn er allerede hentet af loadUsers, saa dialogen aabner
@@ -569,21 +546,6 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
     }
   }
 
-  const deleteSickLeave = async (id: string) => {
-    const previous = sickLeaveEntries
-    setSickLeaveEntries(current => current.filter(entry => entry.id !== id))
-    toast.success(t.managerPanel.sickLeave.deletedToast)
-
-    try {
-      await removeFromKvArray('sick-leave-entries', [id])
-    } catch (error) {
-      console.error('Failed to delete sick leave:', error)
-      setSickLeaveEntries(previous)
-      toast.error(t.managerPanel.vacationRequests.notFoundError)
-      void loadSickLeaveEntries()
-    }
-  }
-
   /** Sender kvitterings-mail og notifikation. Maa aldrig forsinke selve beslutningen. */
   const sendVacationDecisionEmail = async (vacation: VacationEntry, approved: boolean) => {
     try {
@@ -647,6 +609,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
     setEditVacationStartDate(parseLocalDate(vacation.startDate))
     setEditVacationEndDate(parseLocalDate(vacation.endDate))
     setEditVacationNotes(vacation.notes || '')
+    setEditVacationType(vacation.type === 'parental' ? 'parental' : 'vacation')
     setIsEditVacationDialogOpen(true)
   }
 
@@ -736,6 +699,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
       startDate: format(editVacationStartDate, 'yyyy-MM-dd'),
       endDate: format(editVacationEndDate, 'yyyy-MM-dd'),
       notes: editVacationNotes.trim() || undefined,
+      type: editVacationType === 'parental' ? 'parental' : undefined,
     }))
     if (!editedEntry) {
       toast.error(t.managerPanel.vacationRequests.notFoundError)
@@ -746,7 +710,9 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
     setVacationEntries(current => current.map(entry => entry.id === editedEntry.id ? editedEntry : entry))
     setIsEditVacationDialogOpen(false)
 
-    try {
+    // Barsel sender ingen ferie-mails.
+    const involvesParental = editingVacation.type === 'parental' || editVacationType === 'parental'
+    if (!involvesParental) try {
       const emailContent = vacationEditedEmail(
         editingVacation.startDate,
         editingVacation.endDate,
@@ -803,6 +769,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
     await loadVacationEntries()
     toast.success(t.managerPanel.vacationOverview.deletedToast)
 
+    if (vacationToDelete.type === 'parental') return
     try {
       const emailContent = vacationDeletedEmail(
         vacationToDelete.startDate,
@@ -916,7 +883,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
         </header>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-6 max-w-6xl">
+          <TabsList className="grid w-full grid-cols-5 max-w-6xl">
             <TabsTrigger value="permissions" className="gap-2">
               <ShieldCheck size={18} />
               {t.managerPanel.tabs.permissions}
@@ -925,10 +892,6 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                   {pendingUsers.length}
                 </Badge>
               )}
-            </TabsTrigger>
-            <TabsTrigger value="sick-leave" className="gap-2">
-              <FirstAidKit size={18} />
-              {t.managerPanel.tabs.sickLeave}
             </TabsTrigger>
             <TabsTrigger value="vacation-requests" className="gap-2">
               <Umbrella size={18} />
@@ -950,9 +913,9 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
             <TabsTrigger value="guide-access" className="gap-2">
               <LockKey size={18} />
               {t.managerPanel.tabs.guideAccess}
-              {pendingGuideAccessRequests.length > 0 && (
+              {pendingLibraryAccessCount > 0 && (
                 <Badge className="ml-1 h-5 px-1.5 bg-accent text-accent-foreground">
-                  {pendingGuideAccessRequests.length}
+                  {pendingLibraryAccessCount}
                 </Badge>
               )}
             </TabsTrigger>
@@ -1081,7 +1044,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                                 backgroundColor: getEmployeeColorByEmail(user.email, colorOverrides).bg,
                                 color: getEmployeeColorByEmail(user.email, colorOverrides).text,
                               }}
-                              title={language === 'da' ? 'Skift farve' : language === 'fi' ? 'Vaihda väri' : 'Change color'}
+                              title={language === 'da' ? 'Skift farve' : language === 'fi' ? 'Vaihda väri' : language === 'sv' ? 'Byt färg' : 'Change color'}
                             >
                               {user.fullName.charAt(0).toUpperCase()}
                             </button>
@@ -1089,7 +1052,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                           <PopoverContent className="w-64">
                             <div className="space-y-3">
                               <div className="text-sm font-semibold">
-                                {language === 'da' ? 'Vælg farve' : language === 'fi' ? 'Valitse väri' : 'Choose color'}
+                                {language === 'da' ? 'Vælg farve' : language === 'fi' ? 'Valitse väri' : language === 'sv' ? 'Välj färg' : 'Choose color'}
                               </div>
                               <div className="grid grid-cols-8 gap-2">
                                 {EMPLOYEE_COLOR_PALETTE.map((color, index) => {
@@ -1115,7 +1078,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                                 className="w-full"
                                 onClick={() => resetUserColor(user.email)}
                               >
-                                {language === 'da' ? 'Nulstil til automatisk' : language === 'fi' ? 'Palauta automaattiseksi' : 'Reset to automatic'}
+                                {language === 'da' ? 'Nulstil til automatisk' : language === 'fi' ? 'Palauta automaattiseksi' : language === 'sv' ? 'Återställ till automatiskt' : 'Reset to automatic'}
                               </Button>
                             </div>
                           </PopoverContent>
@@ -1191,7 +1154,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                       ? 'Vælg brugere, som må reviewe, redigere og godkende andre brugeres guideforslag. De får ingen øvrige managerrettigheder og kan ikke godkende deres egne indsendelser.'
                       : language === 'fi'
                         ? 'Valitse käyttäjät, jotka voivat tarkistaa, muokata ja hyväksyä muiden opasehdotuksia. He eivät saa muita esihenkilöoikeuksia eivätkä voi hyväksyä omia lähetyksiään.'
-                        : 'Choose users who may review, edit and approve other users’ guide proposals. They receive no other manager permissions and cannot approve their own submissions.'}
+                        : language === 'sv' ? 'Välj användare som får granska, redigera och godkänna andra användares guideförslag. De får inga andra chefsbehörigheter och kan inte godkänna sina egna inlämningar.' : 'Choose users who may review, edit and approve other users’ guide proposals. They receive no other manager permissions and cannot approve their own submissions.'}
                   </p>
                 </div>
               </div>
@@ -1206,7 +1169,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                         <div className="text-sm text-muted-foreground truncate">{user.email}</div>
                       </div>
                       <div className="flex items-center gap-3 shrink-0">
-                        {automaticReviewer && <Badge variant="secondary">{language === 'da' ? 'Automatisk via managerrolle' : language === 'fi' ? 'Automaattinen esihenkilöroolin kautta' : 'Automatic through manager role'}</Badge>}
+                        {automaticReviewer && <Badge variant="secondary">{language === 'da' ? 'Automatisk via managerrolle' : language === 'fi' ? 'Automaattinen esihenkilöroolin kautta' : language === 'sv' ? 'Automatiskt via chefsroll' : 'Automatic through manager role'}</Badge>}
                         {!automaticReviewer && checked && <Badge variant="outline">Guide Admin</Badge>}
                         <Checkbox checked={checked} disabled={automaticReviewer} onCheckedChange={(value) => setGuideAdmin(user.email, value === true)} />
                       </div>
@@ -1215,6 +1178,8 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                 })}
               </div>
             </Card>
+
+            <WarehouseRolesCard />
 
             <Card className="p-6 bg-muted/30">
               <div className="space-y-4">
@@ -1234,376 +1199,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                 </div>
               </div>
             </Card>
-          </TabsContent>
-
-          <TabsContent value="sick-leave" className="space-y-6">
-            <Card className="p-6">
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-2">
-                  <FirstAidKit size={28} className="text-destructive" weight="duotone" />
-                  <h2 className="text-2xl font-bold">{t.managerPanel.sickLeave.title}</h2>
-                </div>
-                <Badge variant="outline" className="text-sm">
-                  {sickLeaveEntries.length} {sickLeaveEntries.length === 1 ? t.managerPanel.sickLeave.entrySingular : t.managerPanel.sickLeave.entryPlural}
-                </Badge>
-              </div>
-
-              <div className="mb-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                {(() => {
-                  const employeeStats = new Map<string, { 
-                    name: string
-                    email: string
-                    count: number
-                    lastDate: string 
-                  }>()
-
-                  const selfSickEntries = sickLeaveEntries.filter(e => e.type !== 'child')
-                  const childSickEntries = sickLeaveEntries.filter(e => e.type === 'child')
-
-                  sickLeaveEntries.forEach((entry) => {
-                    const existing = employeeStats.get(entry.userEmail)
-                    if (existing) {
-                      existing.count++
-                      const existingDate = new Date(existing.lastDate)
-                      const currentDate = parseLocalDate(entry.startDate)
-                      if (currentDate > existingDate) {
-                        existing.lastDate = entry.startDate
-                      }
-                    } else {
-                      employeeStats.set(entry.userEmail, {
-                        name: entry.userName,
-                        email: entry.userEmail,
-                        count: 1,
-                        lastDate: entry.startDate
-                      })
-                    }
-                  })
-
-                  const sortedStats = Array.from(employeeStats.values()).sort((a, b) => b.count - a.count)
-                  const totalEmployees = users.length
-                  const employeesWithSickLeave = employeeStats.size
-                  const totalSickDays = sickLeaveEntries.length
-
-                  return (
-                    <>
-                      <Card className="p-4 bg-blocked-surface border-blocked/25">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="text-sm font-medium text-muted-foreground">{t.managerPanel.sickLeave.selfSickness}</div>
-                          <FirstAidKit size={20} className="text-destructive" weight="duotone" />
-                        </div>
-                        <div className="text-3xl font-bold text-destructive">{selfSickEntries.length}</div>
-                        <div className="text-xs text-muted-foreground mt-1">
-                          {t.managerPanel.sickLeave.selfSicknessUnit}
-                        </div>
-                      </Card>
-
-                      <Card className="p-4 bg-attention-surface border-attention/25">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="text-sm font-medium text-muted-foreground">{t.managerPanel.sickLeave.childSick}</div>
-                          <UserIcon size={20} className="text-orange-600" weight="duotone" />
-                        </div>
-                        <div className="text-3xl font-bold text-orange-600">{childSickEntries.length}</div>
-                        <div className="text-xs text-muted-foreground mt-1">
-                          {t.managerPanel.sickLeave.childSickUnit}
-                        </div>
-                      </Card>
-
-                      <Card className="p-4 bg-accent/10 border-accent/25">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="text-sm font-medium text-muted-foreground">{t.managerPanel.sickLeave.totalSickness}</div>
-                          <FirstAidKit size={20} className="text-accent" weight="duotone" />
-                        </div>
-                        <div className="text-3xl font-bold text-accent">{totalSickDays}</div>
-                        <div className="text-xs text-muted-foreground mt-1">
-                          {employeesWithSickLeave} {t.managerPanel.sickLeave.ofEmployees} {totalEmployees} {t.managerPanel.sickLeave.employeesUnit}
-                        </div>
-                      </Card>
-
-                      <Card className="p-4 bg-primary/10 border-primary/25">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="text-sm font-medium text-muted-foreground">{t.managerPanel.sickLeave.mostSickness}</div>
-                          <Crown size={20} className="text-primary" weight="duotone" />
-                        </div>
-                        {sortedStats.length > 0 ? (
-                          <>
-                            <div className="text-sm leading-snug font-bold text-primary break-words line-clamp-2" title={sortedStats[0].name}>{sortedStats[0].name}</div>
-                            <div className="text-xs text-muted-foreground mt-1">
-                              {sortedStats[0].count} {sortedStats[0].count === 1 ? t.managerPanel.sickLeave.entrySingular : t.managerPanel.sickLeave.entryPlural}
-                            </div>
-                          </>
-                        ) : (
-                          <div className="text-lg font-bold text-muted-foreground">{t.managerPanel.sickLeave.noData}</div>
-                        )}
-                      </Card>
-                    </>
-                  )
-                })()}
-              </div>
-
-              {sickLeaveEntries.length > 0 && (() => {
-                // Mønster-analyse: ugedags-heatmap (90 dage) + alarm ved ≥3 sygemeldinger på 30 dage.
-                const now = Date.now()
-                const DAY_MS = 86400000
-                const last90 = sickLeaveEntries.filter(e => {
-                  const d = parseLocalDate(e.startDate)
-                  return !isNaN(d.getTime()) && now - d.getTime() <= 90 * DAY_MS
-                })
-
-                const weekdayLabels = t.managerPanel.weekdaysShort
-                const weekdayCounts = new Array(7).fill(0)
-                last90.forEach(e => {
-                  const d = parseLocalDate(e.startDate)
-                  if (isNaN(d.getTime())) return
-                  weekdayCounts[(d.getDay() + 6) % 7]++
-                })
-                const maxWeekday = Math.max(...weekdayCounts, 1)
-
-                const last30ByEmployee = new Map<string, { name: string; count: number }>()
-                sickLeaveEntries.forEach(e => {
-                  const d = parseLocalDate(e.startDate)
-                  if (isNaN(d.getTime()) || now - d.getTime() > 30 * DAY_MS) return
-                  const existing = last30ByEmployee.get(e.userEmail)
-                  if (existing) existing.count++
-                  else last30ByEmployee.set(e.userEmail, { name: e.userName, count: 1 })
-                })
-                const frequencyAlerts = Array.from(last30ByEmployee.values())
-                  .filter(s => s.count >= 3)
-                  .sort((a, b) => b.count - a.count)
-
-                return (
-                  <Card className="p-4 mb-6 border">
-                    <div className="flex items-center gap-2 mb-4">
-                      <WaveSine size={20} className="text-primary" weight="duotone" />
-                      <h3 className="font-bold text-lg">{t.managerPanel.sickLeave.patternsTitle}</h3>
-                      <span className="text-xs text-muted-foreground ml-1">{t.managerPanel.sickLeave.patternsSubtitle}</span>
-                    </div>
-
-                    <div className="grid grid-cols-7 gap-2 mb-2">
-                      {weekdayLabels.map((label, i) => {
-                        const count = weekdayCounts[i]
-                        const intensity = count / maxWeekday
-                        return (
-                          <div key={label} className="flex flex-col items-center gap-1.5">
-                            <div
-                              className="w-full h-16 rounded-lg border flex items-end justify-center pb-1 transition-colors"
-                              style={{
-                                backgroundColor: count === 0
-                                  ? 'transparent'
-                                  : `oklch(0.55 0.18 25 / ${0.12 + intensity * 0.55})`
-                              }}
-                              title={`${count} ${count === 1 ? t.managerPanel.sickLeave.entrySingular : t.managerPanel.sickLeave.entryPlural} ${t.managerPanel.sickLeave.weekdayTooltipOn} ${label}`}
-                            >
-                              <span className={cn("text-sm font-bold", count === 0 ? "text-muted-foreground" : "text-foreground")}>
-                                {count}
-                              </span>
-                            </div>
-                            <span className="text-xs text-muted-foreground font-medium">{label}</span>
-                          </div>
-                        )
-                      })}
-                    </div>
-                    <p className="text-xs text-muted-foreground mb-4">
-                      {t.managerPanel.sickLeave.patternsHint}
-                    </p>
-
-                    {frequencyAlerts.length > 0 && (
-                      <div className="p-4 rounded-md border border-attention/40 bg-attention-surface">
-                        <div className="flex items-center gap-2 mb-2">
-                          <FirstAidKit size={18} className="text-amber-600 dark:text-amber-400" weight="fill" />
-                          <span className="font-semibold text-sm">{t.managerPanel.sickLeave.frequencyAlertTitle}</span>
-                        </div>
-                        <div className="space-y-1.5">
-                          {frequencyAlerts.map(alert => (
-                            <div key={alert.name} className="flex items-center justify-between text-sm">
-                              <span className="font-medium">{alert.name}</span>
-                              <Badge className="bg-amber-500/20 text-amber-700 dark:text-amber-300 border-amber-500/30">
-                                {alert.count} {t.managerPanel.sickLeave.entryPlural}
-                              </Badge>
-                            </div>
-                          ))}
-                        </div>
-                        <p className="text-xs text-muted-foreground mt-2">
-                          {t.managerPanel.sickLeave.frequencyAlertHint}
-                        </p>
-                      </div>
-                    )}
-                  </Card>
-                )
-              })()}
-
-              {sickLeaveEntries.length > 0 && (() => {
-                const employeeStats = new Map<string, { 
-                  name: string
-                  email: string
-                  count: number
-                  lastDate: string 
-                }>()
-
-                sickLeaveEntries.forEach((entry) => {
-                  const existing = employeeStats.get(entry.userEmail)
-                  if (existing) {
-                    existing.count++
-                    const existingDate = new Date(existing.lastDate)
-                    const currentDate = parseLocalDate(entry.startDate)
-                    if (currentDate > existingDate) {
-                      existing.lastDate = entry.startDate
-                    }
-                  } else {
-                    employeeStats.set(entry.userEmail, {
-                      name: entry.userName,
-                      email: entry.userEmail,
-                      count: 1,
-                      lastDate: entry.startDate
-                    })
-                  }
-                })
-
-                const sortedStats = Array.from(employeeStats.values()).sort((a, b) => b.count - a.count)
-
-                return (
-                  <Card className="p-4 mb-6 bg-muted/30 border">
-                    <div className="flex items-center gap-2 mb-4">
-                      <UserIcon size={20} className="text-primary" weight="duotone" />
-                      <h3 className="font-bold text-lg">{t.managerPanel.sickLeave.employeeStatsTitle}</h3>
-                    </div>
-                    <div className="space-y-2">
-                      {sortedStats.map((stat, index) => (
-                        <div 
-                          key={stat.email}
-                          className="flex items-center justify-between p-3 rounded-lg bg-card border hover:shadow-sm transition-all"
-                        >
-                          <div className="flex items-center gap-3">
-                            <div className="flex items-center justify-center w-8 h-8 rounded-full bg-blocked-surface text-blocked font-bold text-sm">
-                              {index + 1}
-                            </div>
-                            <div>
-                              <div className="font-semibold">{stat.name}</div>
-                              <div className="text-xs text-muted-foreground">{stat.email}</div>
-                            </div>
-                          </div>
-                            <div className="flex items-center gap-4">
-                            <div className="text-right">
-                              <div className="font-bold text-lg text-destructive">{stat.count}</div>
-                              <div className="text-xs text-muted-foreground">
-                                {stat.count === 1 ? t.managerPanel.sickLeave.entrySingular : t.managerPanel.sickLeave.entryPlural}
-                              </div>
-                            </div>
-                            <div className="text-right min-w-[100px]">
-                              <div className="text-xs text-muted-foreground">{t.managerPanel.sickLeave.latestLabel}</div>
-                              <div className="text-sm font-medium">
-                                {(() => {
-                                  try {
-                                    const date = new Date(stat.lastDate)
-                                    if (isNaN(date.getTime())) return t.managerPanel.sickLeave.invalidDate
-                                    return format(date, 'd. MMM', { locale: dateLocale })
-                                  } catch {
-                                    return t.managerPanel.sickLeave.invalidDate
-                                  }
-                                })()}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </Card>
-                )
-              })()}
-
-              <div className="mb-4 p-4 bg-muted/50 rounded-lg border">
-                <p className="text-sm text-muted-foreground">
-                  {t.managerPanel.sickLeave.managementDescription}
-                </p>
-              </div>
-
-              {sickLeaveEntries.length === 0 ? (
-                <div className="text-center py-12">
-                  <FirstAidKit size={64} className="text-muted-foreground mx-auto mb-4" weight="duotone" />
-                  <p className="text-muted-foreground">{t.managerPanel.sickLeave.none}</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {sickLeaveEntries.map((entry) => (
-                    <motion.div
-                      key={entry.id}
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="flex items-center justify-between p-5 rounded-md border bg-card hover:border-primary/40 transition-colors group"
-                    >
-                      <div className="flex items-center gap-4 flex-1">
-                        <div className="w-12 h-12 rounded-md bg-primary flex items-center justify-center text-primary-foreground font-bold text-lg">
-                        </div>
-                        <div className="flex-1">
-                          <div className="font-bold text-lg mb-1">{entry.userName}</div>
-                          <div className="text-sm text-muted-foreground">{entry.userEmail}</div>
-                          <div className="flex flex-col gap-1 mt-2 text-sm">
-                            <span className="font-medium">
-                              {(() => {
-                                try {
-                                  const startDate = parseLocalDate(entry.startDate)
-                                  if (isNaN(startDate.getTime())) return t.managerPanel.sickLeave.invalidDateFull
-                                  return format(startDate, 'd. MMM yyyy', { locale: dateLocale })
-                                } catch {
-                                  return t.managerPanel.sickLeave.invalidDateFull
-                                }
-                              })()}
-                            </span>
-                            <span className="text-xs text-muted-foreground">
-                              {t.managerPanel.sickLeave.submittedPrefix}: {(() => {
-                                try {
-                                  const date = new Date(entry.submittedAt)
-                                  if (isNaN(date.getTime())) return t.managerPanel.sickLeave.invalidDateFull
-                                  return format(date, 'd. MMM yyyy HH:mm', { locale: dateLocale })
-                                } catch {
-                                  return t.managerPanel.sickLeave.invalidDateFull
-                                }
-                              })()}
-                            </span>
-                            {entry.reason && (
-                              <span className="text-muted-foreground mt-1">{t.managerPanel.sickLeave.notesPrefix}: {entry.reason}</span>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <Badge className={entry.type === 'child' ? "bg-orange-500 text-white" : "bg-green-500 text-white"}>
-                            <Check size={14} className="mr-1" />
-                            {entry.type === 'child' ? t.managerPanel.sickLeave.childSickBadge : t.managerPanel.sickLeave.sickBadge}
-                          </Badge>
-                        </div>
-                      </div>
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            className="text-destructive hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-opacity"
-                          >
-                            <Trash size={20} />
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>{t.managerPanel.sickLeave.deleteTitle}</AlertDialogTitle>
-                            <AlertDialogDescription>
-                              {t.managerPanel.sickLeave.deleteConfirmPrefix} <strong>{entry.userName}</strong>{t.managerPanel.sickLeave.deleteConfirmSuffix}
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
-                            <AlertDialogAction
-                              onClick={() => deleteSickLeave(entry.id)}
-                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                            >
-                              {t.managerPanel.sickLeave.deleteAction}
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
-                    </motion.div>
-                  ))}
-                </div>
-              )}
-            </Card>
+            <ExtraManagersCard />
           </TabsContent>
 
           <TabsContent value="vacation-requests" className="space-y-6">
@@ -1797,6 +1393,14 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                     <Gift size={18} weight="bold" />
                     {t.managerPanel.vacationOverview.grantButton}
                   </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => setIsParentalDialogOpen(true)}
+                    className="gap-2"
+                  >
+                    <Baby size={18} weight="bold" />
+                    {t.parentalLeave.registerButton}
+                  </Button>
                   <Select value={vacationFilter} onValueChange={(value: 'all' | 'pending' | 'approved') => setVacationFilter(value)}>
                     <SelectTrigger className="w-40">
                       <SelectValue />
@@ -1875,6 +1479,12 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                             )}
                           </div>
                           <div className="flex items-center gap-3">
+                            {vacation.type === 'parental' && (
+                              <Badge variant="outline" className="border-violet-500/40 text-violet-700 dark:text-violet-300">
+                                <Baby size={14} className="mr-1" />
+                                {t.parentalLeave.badge}
+                              </Badge>
+                            )}
                             {vacation.status === 'pending' && (
                               <Badge className="bg-amber-500/20 text-amber-700 border-amber-500/30">
                                 <ClockCounterClockwise size={14} className="mr-1" />
@@ -2091,26 +1701,30 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
           </TabsContent>
 
           <TabsContent value="guide-access" className="space-y-6">
-            <Card className="p-6">
+            {([
+              { kind: 'guides' as const, Icon: LockKey, title: t.managerPanel.guideAccessRequests.title, description: t.managerPanel.guideAccessRequests.description, none: t.managerPanel.guideAccessRequests.none, pending: pendingGuideAccessRequests },
+              { kind: 'knowledge' as const, Icon: Brain, title: t.managerPanel.knowledgeAccessRequests.title, description: t.managerPanel.knowledgeAccessRequests.description, none: t.managerPanel.knowledgeAccessRequests.none, pending: pendingKnowledgeAccessRequests },
+            ]).map(({ kind, Icon, title, description, none, pending }) => (
+            <Card key={kind} className="p-6">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
-                  <LockKey size={28} className="text-primary" weight="duotone" />
-                  <h2 className="text-2xl font-bold">{t.managerPanel.guideAccessRequests.title}</h2>
+                  <Icon size={28} className="text-primary" weight="duotone" />
+                  <h2 className="text-2xl font-bold">{title}</h2>
                 </div>
-                {pendingGuideAccessRequests.length > 0 && (
+                {pending.length > 0 && (
                   <Badge className="bg-amber-500/20 text-amber-700 border-amber-500/30">
-                    {pendingGuideAccessRequests.length}
+                    {pending.length}
                   </Badge>
                 )}
               </div>
               <div className="mb-4 p-3 bg-background/60 rounded-lg border text-sm text-muted-foreground">
-                {t.managerPanel.guideAccessRequests.description}
+                {description}
               </div>
-              {pendingGuideAccessRequests.length === 0 ? (
-                <p className="text-muted-foreground text-center py-8">{t.managerPanel.guideAccessRequests.none}</p>
+              {pending.length === 0 ? (
+                <p className="text-muted-foreground text-center py-8">{none}</p>
               ) : (
                 <div className="space-y-3">
-                  {pendingGuideAccessRequests.map((request) => (
+                  {pending.map((request) => (
                     <motion.div
                       key={request.id}
                       initial={{ opacity: 0, y: 10 }}
@@ -2128,12 +1742,12 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                           size="sm"
                           variant="outline"
                           className="gap-1.5 text-destructive hover:bg-destructive/10"
-                          onClick={() => handleRejectGuideAccessRequest(request)}
+                          onClick={() => handleReviewLibraryAccessRequest(kind, request, 'rejected')}
                         >
                           <X size={16} weight="bold" />
                           {t.managerPanel.guideAccessRequests.reject}
                         </Button>
-                        <Button size="sm" className="gap-1.5" onClick={() => handleApproveGuideAccessRequest(request)}>
+                        <Button size="sm" className="gap-1.5" onClick={() => handleReviewLibraryAccessRequest(kind, request, 'approved')}>
                           <Check size={16} weight="bold" />
                           {t.managerPanel.guideAccessRequests.approve}
                         </Button>
@@ -2143,6 +1757,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                 </div>
               )}
             </Card>
+            ))}
           </TabsContent>
 
         </Tabs>
@@ -2157,6 +1772,18 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>{t.parentalLeave.typeLabel}</Label>
+              <Select value={editVacationType} onValueChange={(value: 'vacation' | 'parental') => setEditVacationType(value)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="vacation">{t.parentalLeave.typeVacation}</SelectItem>
+                  <SelectItem value="parental">{t.parentalLeave.typeParental}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <div className="space-y-2">
               <Label>{t.managerPanel.dialogs.editVacation.startDate}</Label>
               <DatePickerField
@@ -2349,7 +1976,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
             </Button>
             <Button onClick={handleCreateUser} loading={isCreatingUser} className="gap-2">
               <Plus size={18} weight="bold" />
-              {isCreatingUser ? language === 'da' ? 'Gemmer…' : language === 'fi' ? 'Tallennetaan…' : 'Saving…' : t.managerPanel.dialogs.createUser.submit}
+              {isCreatingUser ? language === 'da' ? 'Gemmer…' : language === 'fi' ? 'Tallennetaan…' : language === 'sv' ? 'Sparar…' : 'Saving…' : t.managerPanel.dialogs.createUser.submit}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2637,6 +2264,13 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
       <ManualVacationGrant 
         open={isManualGrantDialogOpen}
         onOpenChange={setIsManualGrantDialogOpen}
+        managerEmail={userEmail}
+        onSuccess={loadVacationEntries}
+      />
+
+      <ParentalLeaveDialog
+        open={isParentalDialogOpen}
+        onOpenChange={setIsParentalDialogOpen}
         managerEmail={userEmail}
         onSuccess={loadVacationEntries}
       />

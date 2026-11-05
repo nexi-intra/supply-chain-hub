@@ -154,7 +154,7 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
   function status(actor) {
     const record = readControl()
     if (terminal(record)) return null
-    if (actor.viewId || (actor.role !== 'creator' && (actor.role !== 'manager' || actor.home.teamId !== record.teamId))) fail('AUTH_FORBIDDEN')
+    if (actor.role !== 'creator' && (actor.role !== 'manager' || actor.activeTeam?.teamId !== record.teamId)) fail('AUTH_FORBIDDEN')
     const { id, state, oldEmail, newEmail, applied, total, teamId } = record
     return { id, state, oldEmail, newEmail, applied, total, teamId }
   }
@@ -220,7 +220,7 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
       if (operation?.op !== 'renameField' || !oldEmail || oldEmail === newEmail) fail('KV_INVALID_OPERATION')
       const root = getRoot(), teams = registry.listTeams(root)
       const target = registeredTeamDir(root, teams, folder).team
-      if (actor.viewId || !['creator', 'manager'].includes(actor.role) || (actor.role !== 'creator' && actor.home.teamId !== target.teamId)) fail('AUTH_FORBIDDEN')
+      if (!['creator', 'manager'].includes(actor.role) || (actor.role !== 'creator' && actor.activeTeam?.teamId !== target.teamId)) fail('AUTH_FORBIDDEN')
       if (normalize(registry.getCreatorEmail(root)) === oldEmail) fail('AUTH_FORBIDDEN')
       return registry.withIdentityTransaction(root, identity => {
         const meta = metadata(), scopes = [{ id: '_metadata', directory: meta.dataDir, store: meta, keys: [JOURNAL, CONTROL, RETIRED] }]
@@ -260,10 +260,13 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
               } else add(scope.id, key, before, after)
             }
           }
-          const views = identity.get('views')
-          add('_identity', 'views', views, migrateReferences('access-views', views, oldEmail, newEmail))
           const nextDirectory = { ...directory, [newEmail]: target.teamId }; delete nextDirectory[oldEmail]
           add('_identity', 'directory', directory, nextDirectory)
+          const managerAccess = identity.get('managerAccess')
+          if (managerAccess[oldEmail]) {
+            const nextManagerAccess = { ...managerAccess, [newEmail]: managerAccess[oldEmail] }; delete nextManagerAccess[oldEmail]
+            add('_identity', 'managerAccess', managerAccess, nextManagerAccess)
+          }
           const nextRetired = { ...retired, [oldEmail]: { accountId, replacement: newEmail } }; delete nextRetired[newEmail]
           add('_metadata', RETIRED, retiredBefore, nextRetired)
           add(`team:${target.teamId}`, 'users', users, nextUsers)
@@ -282,7 +285,7 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
     })
   }
   function recover(actor, id, reverse) {
-    if (actor.role !== 'creator' || actor.viewId) fail('AUTH_FORBIDDEN')
+    if (actor.role !== 'creator') fail('AUTH_FORBIDDEN')
     invalidateContext()
     return withAccountLock(() => {
       const record = pending(), root = getRoot()

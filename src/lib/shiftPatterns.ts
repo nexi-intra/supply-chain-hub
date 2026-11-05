@@ -39,6 +39,8 @@ export function expandShiftPatterns(
       roleId: pattern.roleId,
       date: dateString,
       comment: pattern.comment,
+      startTime: pattern.startTime,
+      endTime: pattern.endTime,
       isPattern: true as const,
     }))
 }

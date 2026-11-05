@@ -351,7 +351,6 @@ const MAP = [
 
   // Sidste doble kanter paa kort
   ['<Card className="p-6 border-2 hover:border-primary/50 transition-colors ', '<Card className="p-6 hover:border-primary/50 transition-colors '],
-  ['<Card key={view.viewId} className="p-6 border-2 hover:border-primary/50 ', '<Card key={view.viewId} className="p-6 hover:border-primary/50 '],
   ['<Card className="p-4 sm:p-6 border-2">', '<Card className="p-4 sm:p-6">'],
   ['<Card className="p-5 sm:p-6 border-2">', '<Card className="p-5 sm:p-6">'],
   ['<Card key={request.id} className="p-5 border-2 space-y-4">', '<Card key={request.id} className="p-5 space-y-4">'],

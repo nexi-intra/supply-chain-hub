@@ -7,11 +7,12 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { DownloadSimple, FileDoc, Timer, Image as ImageIcon, FileArrowDown, FolderOpen, PencilSimple } from '@phosphor-icons/react'
+import { DownloadSimple, FileDoc, FilePdf, Timer, Image as ImageIcon, FileArrowDown, FolderOpen, PencilSimple, ArrowLeft, Link } from '@phosphor-icons/react'
 import { Guide } from '@/lib/types'
-import { getReviewStatus, REVIEW_INTERVAL_CHOICES, guidePlainText } from '@/lib/guideTypes'
+import { getReviewStatus, reviewIntervalLabel, guidePlainText } from '@/lib/guideTypes'
 import { guideToDocModel, resolveAuthorName, type DocModel } from '@/lib/docModel'
-import { detectLanguage, translateTextAsync, type GuideLanguage, type TranslationEngine } from '@/lib/translator'
+import { detectLanguage, translateTextAsync, GUIDE_LANGUAGES, type GuideLanguage, type TranslationEngine } from '@/lib/translator'
+import { wordPdfErrorMessage } from '@/lib/wordPdfErrors'
 import { isExportAvailable, getExportRoot, chooseAndSaveExportRoot, exportGuideToLibrary, exportOriginalGuideToLibrary } from '@/lib/guideExporter'
 import { fileStorage } from '@/lib/fileStorage'
 import { linkifyText } from '@/lib/linkify'
@@ -19,7 +20,11 @@ import { sanitizeHtml } from '@/lib/sanitizeHtml'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import headerLogoUrl from '@/assets/images/docx/header-logo.png'
-import { useLanguage } from '@/contexts/LanguageContext'
+import { useLibraryLanguage } from '@/contexts/LibraryContext'
+import { GuideRichText } from '@/components/GuideRichText'
+import { GuideLinkPreview } from '@/components/GuideLinkPreview'
+import { findGuideBacklinks, resolveGuideLink, type GuideLinkEntry, type GuideLinkTarget } from '@/lib/guideLinks'
+import { GUIDE_RICH_TEXT_LABELS } from '@/lib/guideRichTextLabels'
 
 export function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob)
@@ -44,6 +49,7 @@ interface GuideViewerProps {
   fileLoader?: (fileUrl: string) => Promise<Blob>
   /** Source reference from the assistant, e.g. 2.3 (same version only). */
   targetReference?: string
+  linkTargets?: GuideLinkEntry[]
 }
 
 const categoryColors: Record<string, string> = {
@@ -56,7 +62,7 @@ const categoryColors: Record<string, string> = {
 
 /** Billede i preview — loader objekt-URL fra chunked KV. */
 function StepImage({ imageId, className, fileLoader }: { imageId: string; className?: string; fileLoader?: (fileUrl: string) => Promise<Blob> }) {
-  const { t } = useLanguage()
+  const { t } = useLibraryLanguage()
   const [url, setUrl] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
 
@@ -91,8 +97,31 @@ function StepImage({ imageId, className, fileLoader }: { imageId: string; classN
   return <img src={url} alt="" className={cn('max-h-96 rounded border border-gray-200 shadow-sm object-contain mx-auto', className)} />
 }
 
-export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, targetReference }: GuideViewerProps) {
-  const { t, language: appLanguage } = useLanguage()
+export function GuideViewer({ guide: sourceGuide, open, onOpenChange, onEdit, fileLoader: sourceFileLoader, targetReference, linkTargets = [] }: GuideViewerProps) {
+  const { t, language: appLanguage, kind } = useLibraryLanguage()
+  const richLabels = GUIDE_RICH_TEXT_LABELS[appLanguage]
+  const [navigation, setNavigation] = useState<Array<{ guide: Guide; target: GuideLinkTarget }>>([])
+  const currentNavigation = navigation[navigation.length - 1]
+  const guide = currentNavigation?.guide || sourceGuide
+  useEffect(() => { setNavigation([]) }, [sourceGuide?.id, open])
+  const navigateGuide = (target: GuideLinkTarget) => {
+    const result = resolveGuideLink(target, linkTargets)
+    if (!('guide' in result)) {
+      toast.error(result.status === 'archived' ? richLabels.archived : richLabels.unavailable)
+      return
+    }
+    if (result.status !== 'available') toast.warning(richLabels.missingAnchor)
+    const destination = { ...target }
+    if (result.status === 'missing-section') { delete destination.sectionId; delete destination.stepId }
+    if (result.status === 'missing-step') delete destination.stepId
+    setNavigation(previous => [...previous, { guide: result.guide, target: destination }])
+  }
+  const currentEntry = linkTargets.find(entry => !entry.archived && entry.guide.id === guide?.id
+    && (!currentNavigation || entry.scope === currentNavigation.target.scope
+      && (entry.scope === 'shared' || entry.teamCode === currentNavigation.target.teamCode)))
+  const fileLoader = currentNavigation ? currentEntry?.fileLoader : sourceFileLoader
+  const backlinks = useMemo(() => currentEntry ? findGuideBacklinks({ guideId: currentEntry.guide.id,
+    scope: currentEntry.scope, ...(currentEntry.teamCode ? { teamCode: currentEntry.teamCode } : {}) }, linkTargets) : [], [currentEntry, linkTargets])
   const [authorName, setAuthorName] = useState('')
   const [isGenerating, setIsGenerating] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
@@ -101,11 +130,21 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, tar
   // "Original formatering"-visning (Fase 2, guide-library-cross-team-links-format.md): viser den
   // vedhæftede originale Word-fils rige HTML (fed/kursiv/tabeller bevaret) i stedet for den flade
   // sektions/trin-visning. Kun relevant når guiden HAR både sektioner og en vedhæftet original.
-  const [viewMode, setViewMode] = useState<'sections' | 'original' | 'file'>('sections')
+  const [viewMode, setViewMode] = useState<'sections' | 'original' | 'file' | 'pdf'>('sections')
   const [originalHtml, setOriginalHtml] = useState<string | null>(null)
   const [isLoadingOriginal, setIsLoadingOriginal] = useState(false)
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null)
   const [pdfPreviewError, setPdfPreviewError] = useState<string | null>(null)
+  useEffect(() => {
+    if (!open || !currentNavigation) return
+    setViewMode('sections')
+    const timer = setTimeout(() => {
+      const { sectionId, stepId } = currentNavigation.target
+      const selector = stepId ? `[data-guide-step-id="${stepId}"]` : sectionId ? `[data-guide-section-id="${sectionId}"]` : undefined
+      if (selector) document.querySelector(selector)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    }, 350)
+    return () => clearTimeout(timer)
+  }, [open, currentNavigation])
   useEffect(() => {
     if (!open || !targetReference || !/^\d+\.\d+$/.test(targetReference)) return
     if (!guide?.preserveWordLayout) setViewMode('sections')
@@ -123,13 +162,14 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, tar
     da: t.guideEditor.languageDanish,
     en: t.guideEditor.languageEnglish,
     fi: t.guideEditor.languageFinnish,
+    sv: t.guideEditor.languageSwedish,
   })[language]
 
   useEffect(() => {
     setViewLanguage(null)
-    setViewMode(guide?.preserveWordLayout ? 'file' : 'sections')
+    setViewMode(currentNavigation?.target.sectionId || currentNavigation?.target.stepId ? 'sections' : guide?.preserveWordLayout ? 'file' : 'sections')
     setOriginalHtml(null)
-  }, [guide?.id, guide?.fileUrl, guide?.preserveWordLayout])
+  }, [guide?.id, guide?.fileUrl, guide?.preserveWordLayout, currentNavigation?.target.sectionId, currentNavigation?.target.stepId])
 
   const baseModel = useMemo(() => (guide ? guideToDocModel(guide) : null), [guide])
 
@@ -211,9 +251,9 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, tar
     if (!model) return
     setIsExporting(true)
     try {
-      let root = await getExportRoot()
+      let root = await getExportRoot(kind)
       if (!root) {
-        root = await chooseAndSaveExportRoot()
+        root = await chooseAndSaveExportRoot(kind)
         if (!root) return
       }
       const filePath = guide?.preserveWordLayout
@@ -278,6 +318,40 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, tar
   }
 
   const hasOriginalFile = Boolean(guide?.fileUrl || guide?.wordFileData)
+  const originalPdfUrl = guide?.originalPdfUrl
+  const [originalPdfObjectUrl, setOriginalPdfObjectUrl] = useState<string | null>(null)
+  const [originalPdfError, setOriginalPdfError] = useState(false)
+
+  useEffect(() => {
+    if (!open || viewMode !== 'pdf' || !originalPdfUrl) return
+    let cancelled = false
+    let objectUrl: string | null = null
+    setOriginalPdfObjectUrl(null)
+    setOriginalPdfError(false)
+    void (fileLoader ? fileLoader(originalPdfUrl) : fileStorage.downloadFile(originalPdfUrl)).then((blob) => {
+      if (cancelled) return
+      objectUrl = URL.createObjectURL(blob.type === 'application/pdf' ? blob : new Blob([blob], { type: 'application/pdf' }))
+      setOriginalPdfObjectUrl(objectUrl)
+    }).catch((error) => {
+      console.error('Kunne ikke indlæse original PDF:', error)
+      if (!cancelled) setOriginalPdfError(true)
+    })
+    return () => {
+      cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [open, viewMode, originalPdfUrl, fileLoader])
+
+  const handleDownloadOriginalPdf = async () => {
+    if (!originalPdfUrl) return
+    try {
+      const blob = fileLoader ? await fileLoader(originalPdfUrl) : await fileStorage.downloadFile(originalPdfUrl)
+      downloadBlob(blob, guide?.originalPdfName || `${guide?.title || 'document'}.pdf`)
+    } catch (error) {
+      console.error('Kunne ikke downloade original PDF:', error)
+      toast.error(t.guideViewer.originalFormatFailed)
+    }
+  }
 
   useEffect(() => {
     if (!open || viewMode !== 'file' || !guide?.preserveWordLayout || !hasOriginalFile) return
@@ -299,12 +373,12 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, tar
       objectUrl = URL.createObjectURL(blob.type === 'application/pdf' ? blob : new Blob([blob], { type: 'application/pdf' }))
       setPdfPreviewUrl(objectUrl)
     }
-    void load().catch((error) => { if (!cancelled) setPdfPreviewError(error instanceof Error ? error.message : t.guideViewer.originalFormatFailed) })
+    void load().catch((error) => { if (!cancelled) setPdfPreviewError(wordPdfErrorMessage(error, appLanguage) || (error instanceof Error ? error.message : t.guideViewer.originalFormatFailed)) })
     return () => {
       cancelled = true
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [open, viewMode, guide?.id, guide?.fileUrl, guide?.wordFileData, guide?.previewPdfUrl, guide?.preserveWordLayout, hasOriginalFile, fileLoader, t.guideViewer.originalFormatFailed])
+  }, [open, viewMode, guide?.id, guide?.fileUrl, guide?.wordFileData, guide?.previewPdfUrl, guide?.preserveWordLayout, hasOriginalFile, fileLoader, appLanguage, t.guideViewer.originalFormatFailed])
 
   useEffect(() => {
     if (viewMode !== 'original' || !hasOriginalFile || originalHtml !== null) return
@@ -347,6 +421,8 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, tar
           <div className="flex flex-col sm:flex-row items-start justify-between gap-3 sm:gap-4">
             <div className="flex-1 min-w-0 w-full">
               <div className="flex items-start justify-between gap-2 mb-3">
+                {navigation.length > 0 && <Button type="button" variant="ghost" size="icon" title={richLabels.back} aria-label={richLabels.back}
+                  onClick={() => setNavigation(previous => previous.slice(0, -1))}><ArrowLeft size={20} /></Button>}
                 <DialogTitle className="text-xl sm:text-2xl break-words pr-2">
                   {guide.title}
                 </DialogTitle>
@@ -377,12 +453,12 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, tar
                     {reviewStatus === 'overdue'
                       ? t.guideCard.overdueBadge
                       : guide.nextReviewAt
-                        ? `${t.guideCard.dueSoonPrefix} ${new Date(guide.nextReviewAt).toLocaleDateString(appLanguage === 'en' ? 'en-US' : appLanguage === 'fi' ? 'fi-FI' : 'da-DK')}`
-                        : REVIEW_INTERVAL_CHOICES.find((c) => c.value === guide.reviewIntervalMonths)?.label}
+                        ? `${t.guideCard.dueSoonPrefix} ${new Date(guide.nextReviewAt).toLocaleDateString(appLanguage === 'en' ? 'en-US' : appLanguage === 'fi' ? 'fi-FI' : appLanguage === 'sv' ? 'sv-SE' : 'da-DK')}`
+                        : reviewIntervalLabel(guide.reviewIntervalMonths, appLanguage)}
                   </Badge>
                 ) : null}
                 <span className="text-xs text-muted-foreground">
-                  {t.guideViewer.updatedPrefix}: {new Date(guide.updatedAt).toLocaleDateString(appLanguage === 'en' ? 'en-US' : appLanguage === 'fi' ? 'fi-FI' : 'da-DK', {
+                  {t.guideViewer.updatedPrefix}: {new Date(guide.updatedAt).toLocaleDateString(appLanguage === 'en' ? 'en-US' : appLanguage === 'fi' ? 'fi-FI' : appLanguage === 'sv' ? 'sv-SE' : 'da-DK', {
                     year: 'numeric',
                     month: 'long',
                     day: 'numeric',
@@ -400,7 +476,7 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, tar
               )}
             </div>
             <div className="flex flex-col gap-2 flex-shrink-0 w-full sm:w-auto">
-              {onEdit && (
+              {onEdit && navigation.length === 0 && (
                 <Button
                   variant="outline"
                   size="sm"
@@ -413,6 +489,16 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, tar
                   <PencilSimple size={16} weight="bold" />
                   {t.guideViewer.edit}
                 </Button>
+              )}
+              {originalPdfUrl && (
+                <div className="flex items-center gap-1 rounded-lg border p-0.5 bg-muted/40 self-stretch sm:self-end">
+                  <Button variant={viewMode !== 'pdf' ? 'default' : 'ghost'} size="sm" className="h-7 px-2.5 text-xs flex-1" onClick={() => setViewMode('sections')}>
+                    {t.guideViewer.textViewTab}
+                  </Button>
+                  <Button variant={viewMode === 'pdf' ? 'default' : 'ghost'} size="sm" className="h-7 px-2.5 text-xs flex-1 gap-1" onClick={() => setViewMode('pdf')}>
+                    <FilePdf size={14} />{t.guideViewer.originalPdfTab}
+                  </Button>
+                </div>
               )}
               {guide.preserveWordLayout && hasOriginalFile && (
                 <div className="flex items-center gap-1 rounded-lg border p-0.5 bg-muted/40 self-stretch sm:self-end">
@@ -446,7 +532,7 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, tar
               )}
               {hasSections && (
                 <div className="flex flex-wrap items-center gap-1 rounded-lg border p-0.5 bg-muted/40 self-stretch sm:self-end">
-                  {(['da', 'en', 'fi'] as GuideLanguage[]).map((targetLanguage) => (
+                  {GUIDE_LANGUAGES.map((targetLanguage) => (
                     <Button
                       key={targetLanguage}
                       variant={targetLanguage === guideLanguage ? (!isTranslated ? 'default' : 'ghost') : (viewLanguage === targetLanguage ? 'default' : 'ghost')}
@@ -488,7 +574,7 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, tar
                   {isGenerating ? t.guideViewer.generating : t.guideViewer.downloadDocx}
                 </Button>
               )}
-              {(hasSections || guide.preserveWordLayout && hasOriginalFile) && !fileLoader && isExportAvailable() && (
+              {(hasSections || guide.preserveWordLayout && hasOriginalFile) && (!fileLoader || currentEntry?.scope === 'shared') && isExportAvailable() && (
                 <Button
                   variant="outline"
                   size="sm"
@@ -498,6 +584,12 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, tar
                 >
                   <FolderOpen size={16} weight="regular" />
                   {isExporting ? t.guideViewer.exporting : t.guideViewer.exportToLibrary}
+                </Button>
+              )}
+              {originalPdfUrl && (
+                <Button variant="outline" size="sm" onClick={handleDownloadOriginalPdf} className="w-full sm:w-auto gap-2">
+                  <FilePdf size={16} />
+                  {t.guideViewer.downloadOriginalPdf}
                 </Button>
               )}
               {(guide.fileUrl || guide.wordFileData) && (
@@ -522,7 +614,18 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, tar
         </DialogHeader>
 
         <div className="flex-1 overflow-y-auto min-h-0 px-4 sm:px-6 py-4 sm:py-6 bg-muted/40">
-          {viewMode === 'file' && guide.preserveWordLayout && hasOriginalFile ? (
+          {viewMode === 'pdf' && originalPdfUrl ? (
+            <div className="mx-auto h-full min-h-[65vh] max-w-[1200px]">
+              {originalPdfObjectUrl ? (
+                <iframe src={originalPdfObjectUrl} title={guide.originalPdfName || guide.title} className="h-full min-h-[65vh] w-full border-0 bg-white" />
+              ) : (
+                <div className="flex min-h-[65vh] flex-col items-center justify-center gap-4 text-center">
+                  <FilePdf size={48} className="text-primary" />
+                  <p className="text-sm text-muted-foreground">{originalPdfError ? t.guideViewer.originalFormatFailed : t.guideViewer.loadingOriginalFormat}</p>
+                </div>
+              )}
+            </div>
+          ) : viewMode === 'file' && guide.preserveWordLayout && hasOriginalFile ? (
             <div className="mx-auto h-full min-h-[65vh] max-w-[1200px]">
               {pdfPreviewUrl ? (
                 <iframe src={pdfPreviewUrl} title={guide.title} className="h-full min-h-[65vh] w-full border-0 bg-white" />
@@ -594,25 +697,31 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, tar
                   {t.guideViewer.pageBreak}
                 </div>
 
-                {model.sections.map((section) => (
-                  <section key={section.number}>
+                {model.sections.map((section, sectionIndex) => (
+                  <section key={section.number} data-guide-section-id={guide.sections?.[sectionIndex]?.id}>
                     <h3
-                      className="text-base font-bold mb-3 pb-1 border-b border-gray-100"
+                      className={cn('text-base mb-3 pb-1 border-b border-gray-100', !isTranslated && guide.sections?.[sectionIndex]?.headingRichContent ? 'font-normal' : 'font-bold')}
                       style={{ color: '#1F3763', fontFamily: "'Calibri Light', Calibri, sans-serif" }}
                     >
-                      {section.number} {section.heading}
+                      {section.number}{' '}
+                      {!isTranslated && guide.sections?.[sectionIndex]?.headingRichContent
+                        ? <GuideRichText inline step={{ text: guide.sections[sectionIndex].heading, richContent: guide.sections[sectionIndex].headingRichContent }}
+                            renderGuideLink={(target, children) => <GuideLinkPreview target={target} entries={linkTargets} onNavigate={navigateGuide}>{children}</GuideLinkPreview>} />
+                        : section.heading}
                     </h3>
                     <ol className="space-y-3">
-                      {section.steps.map((step) => (
-                        <li key={step.number} data-guide-step={step.number} className={cn('flex gap-3 scroll-mt-6', targetReference === step.number && 'bg-amber-100 ring-2 ring-amber-400 rounded p-2')}>
+                      {section.steps.map((step, stepIndex) => (
+                        <li key={step.number} data-guide-step={step.number} data-guide-step-id={guide.sections?.[sectionIndex]?.steps[stepIndex]?.id}
+                          className={cn('flex gap-3 scroll-mt-6', (targetReference === step.number || currentNavigation?.target.stepId === guide.sections?.[sectionIndex]?.steps[stepIndex]?.id && !!currentNavigation?.target.stepId) && 'bg-amber-100 ring-2 ring-amber-400 rounded p-2')}>
                           <span className="font-semibold text-sm text-gray-600 shrink-0 w-9 tabular-nums">
                             {step.number}
                           </span>
                           <div className="flex-1 min-w-0 space-y-3">
                             {step.text && (
-                              <p className="whitespace-pre-wrap break-words text-sm leading-relaxed" style={{ fontFamily: 'Calibri, sans-serif' }}>
-                                {linkifyText(step.text)}
-                              </p>
+                              !isTranslated && guide.sections?.[sectionIndex]?.steps[stepIndex]?.richContent
+                                ? <GuideRichText step={guide.sections[sectionIndex].steps[stepIndex]}
+                                    renderGuideLink={(target, children) => <GuideLinkPreview target={target} entries={linkTargets} onNavigate={navigateGuide}>{children}</GuideLinkPreview>} />
+                                : <p className="whitespace-pre-wrap break-words text-sm leading-relaxed" style={{ fontFamily: 'Calibri, sans-serif' }}>{linkifyText(step.text)}</p>
                             )}
                             {step.imageIds.map((imageId) => (
                               <StepImage key={imageId} imageId={imageId} fileLoader={fileLoader} />
@@ -673,6 +782,20 @@ export function GuideViewer({ guide, open, onOpenChange, onEdit, fileLoader, tar
               <p className="whitespace-pre-wrap break-words">{linkifyText(guide.content)}</p>
             </div>
           )}
+          {isTranslated && guide.sections?.some(section => section.steps.some(step => step.richContent)) && (
+            <p className="text-xs text-muted-foreground">{richLabels.translatedPlainText}</p>
+          )}
+          {backlinks.length > 0 && <section className="border-t border-border pt-4 space-y-2">
+            <h3 className="text-sm font-semibold">{richLabels.references}</h3>
+            <ul className="space-y-1">
+              {backlinks.map(entry => <li key={`${entry.scope}:${entry.teamCode || ''}:${entry.guide.id}`}>
+                <Button type="button" variant="ghost" size="sm" className="h-auto max-w-full justify-start gap-2 whitespace-normal text-left"
+                  onClick={() => navigateGuide({ guideId: entry.guide.id, scope: entry.scope, ...(entry.teamCode ? { teamCode: entry.teamCode } : {}) })}>
+                  <Link size={16} className="shrink-0" />{entry.guide.title}
+                </Button>
+              </li>)}
+            </ul>
+          </section>}
         </div>
       </DialogContent>
     </Dialog>

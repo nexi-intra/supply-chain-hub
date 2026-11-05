@@ -16,41 +16,52 @@ function cacheKey(from: GuideLanguage, to: GuideLanguage, text: string): string 
  * Returnerer `text` oversat til appens aktuelle sprog, hvis det afviger fra det
  * detekterede kildesprog. Viser originalen mens oversættelsen (neural, async) kører.
  */
-export function useAutoTranslate(text: string | undefined | null): string {
+export function useAutoTranslate(text: string | undefined | null, sourceLanguage?: GuideLanguage): string {
+  return useAutoTranslation(text, sourceLanguage).text
+}
+
+/**
+ * Som useAutoTranslate, men fortæller også hvilket sprog teksten er oversat fra (null = ikke oversat).
+ * `sourceLanguage` springer sprogdetektionen over — til faste UI-tekster hvor korte ord som "Tilbage" ellers gættes forkert.
+ */
+export function useAutoTranslation(text: string | undefined | null, sourceLanguage?: GuideLanguage): { text: string; from: GuideLanguage | null } {
   const { language } = useLanguage()
   const original = text ?? ''
-  const [translated, setTranslated] = useState(original)
+  const [state, setState] = useState<{ text: string; from: GuideLanguage | null }>({ text: original, from: null })
 
   useEffect(() => {
+    const untranslated = { text: original, from: null }
     if (!original.trim()) {
-      setTranslated(original)
+      setState(untranslated)
       return
     }
     const target = (language || 'da') as GuideLanguage
-    const source = detectLanguage(original, target)
+    const source = sourceLanguage ?? detectLanguage(original, target)
     if (source === target) {
-      setTranslated(original)
+      setState(untranslated)
       return
     }
+    const show = (result: string) => setState({ text: result, from: result.trim() !== original.trim() ? source : null })
     const key = cacheKey(source, target, original)
     const cached = cache.get(key)
     if (cached !== undefined) {
-      setTranslated(cached)
+      show(cached)
       return
     }
     let cancelled = false
-    setTranslated(original)
+    setState(untranslated)
     translateTextAsync(original, source, target).then((result) => {
       if (cancelled) return
-      cache.set(key, result.text)
-      setTranslated(result.text)
+      // A word-list fallback is not kept, so the neural translation replaces it once it is available.
+      if (result.engine === 'neural') cache.set(key, result.text)
+      show(result.text)
     }).catch((error) => {
       console.error('Auto-oversættelse fejlede, viser original tekst:', error)
     })
     return () => {
       cancelled = true
     }
-  }, [original, language])
+  }, [original, language, sourceLanguage])
 
-  return translated
+  return state
 }

@@ -10,6 +10,11 @@ type SetValue<T> = T | ((current: T) => T)
 // empty widget for seconds while the slow network read completes.
 const kvSnapshotCache = new Map<string, unknown>()
 
+/** After a hub switch the remembered values belong to the previous team. */
+export function clearKvSnapshotCache() {
+  kvSnapshotCache.clear()
+}
+
 // Under aktivt spil (data-game-active paa <body>) udskydes KV-genindlaesninger,
 // saa den store re-render-kaede ikke blokerer spillets mus/tastatur-input. Naar
 // spillet slutter og attributten fjernes, genindlaeses de udskudte noegler.

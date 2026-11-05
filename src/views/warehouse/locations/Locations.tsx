@@ -1,0 +1,114 @@
+import { useCallback, useEffect, useState } from 'react'
+import { ArrowLeft, CloudSlash } from '@phosphor-icons/react'
+import { toast } from 'sonner'
+import { Button } from '@/components/ui/button'
+import { isAnyModalOpen } from '@/lib/modalStack'
+import { errorMessage } from '@/lib/warehouse/errors'
+import type { LocationsTarget } from '@/lib/warehouse/locations'
+import { t } from '@/lib/warehouse/text'
+import type { WarehouseUser } from '@/types/warehouse'
+import { Admin } from './Admin'
+import { FetchGuide } from './FetchGuide'
+import { ImportSheet } from './ImportSheet'
+import { LocationCard } from './LocationCard'
+import { LocationsHome } from './LocationsHome'
+import { MaterialCard } from './MaterialCard'
+import { PalletCard } from './PalletCard'
+import { PutAway } from './PutAway'
+import { RackCard } from './RackCard'
+import { ShelfPut } from './ShelfPut'
+import { Refill } from './Refill'
+import { LocationsLog } from './LocationsLog'
+import { MovePallet } from './MovePallet'
+import { TakePallet } from './TakePallet'
+import { LayoutEditor } from './layout/LayoutEditor'
+
+/**
+ * Placeringer: where every pallet of the hub stands. The front page leads to the daily tasks and the cards; a change on
+ * this PC re-reads the open view at once, a change on another PC within 15 seconds (the change stamp is polled).
+ */
+export function Locations({ user, initial }: { user: WarehouseUser; initial: LocationsTarget }) {
+  const [target, setTarget] = useState<LocationsTarget>(initial)
+  const [version, setVersion] = useState(0)
+  const [pending, setPending] = useState(0)
+  // Managers and Placerings admins maintain locations and undo (roles.me: a status manager is not one by that alone).
+  const [canAdmin, setCanAdmin] = useState(user.role === 'manager')
+  const toHome = useCallback(() => setTarget({ kind: 'home' }), [])
+  const [tags, setTags] = useState<string[]>([])
+  useEffect(() => { window.electronWarehouse!.locations.overview().then(result => setTags(result.tags)).catch(() => {}) }, [version])
+  // A published drawing makes the places: the create and import entries give way to it.
+  const [drawn, setDrawn] = useState(false)
+  useEffect(() => {
+    if (canAdmin) window.electronWarehouse!.locations.list().then(result => setDrawn(Boolean(result.drawing))).catch(() => {})
+  }, [canAdmin, version])
+
+  useEffect(() => {
+    window.electronWarehouse?.roles.me().then(result => setCanAdmin(result.locationAdmin)).catch(() => {})
+  }, [user.role, user.email])
+
+  useEffect(() => {
+    const bridge = window.electronWarehouse!.locations
+    // Failures of replayed actions are shown once on this PC (also another person's, by name) and then acknowledged.
+    const checkPending = () => bridge.pending().then(result => {
+      setPending(result.pending)
+      if (!result.failures.length) return
+      for (const failure of result.failures) {
+        const who = failure.email === user.email ? '' : ` (${failure.name || failure.email})`
+        toast.error(t(`En handling gemt på denne PC kunne ikke gennemføres${who}`, `An action saved on this PC could not be completed${who}`), { description: `${failure.label || failure.method}: ${errorMessage(new Error(failure.code))}`, duration: Infinity })
+      }
+      void bridge.acknowledgeFailures(result.failures.map(failure => failure.id)).catch(() => {})
+    }).catch(() => {})
+    let seen: number | null = null
+    const checkStamp = () => bridge.stamp().then(({ changedAt }) => {
+      if (seen !== null && changedAt !== seen) setVersion(value => value + 1)
+      seen = changedAt
+    }).catch(() => {})
+    checkPending()
+    void checkStamp()
+    const timer = window.setInterval(() => { checkPending(); void checkStamp() }, 15000)
+    const offChanged = bridge.onChanged(payload => { if (payload.team === user.team) { setVersion(value => value + 1); checkPending() } })
+    const offFailed = bridge.onSyncFailed(payload => { if (payload.teams.includes(user.team)) checkPending() })
+    return () => { window.clearInterval(timer); offChanged(); offFailed() }
+  }, [user.team, user.email])
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      // Escape inside Placeringer goes back to its front page; Warehouse.tsx handles the front page itself.
+      // An open suggestion list closes first.
+      if ((event.target as HTMLElement | null)?.getAttribute?.('aria-expanded') === 'true') return
+      if (event.key === 'Escape' && target.kind !== 'home' && !event.defaultPrevented && !isAnyModalOpen()) { event.preventDefault(); toHome() }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [target.kind, toHome])
+
+  return (
+    <div className="container mx-auto space-y-5 px-4 py-6 sm:px-6">
+      {(target.kind !== 'home' || pending > 0) && (
+        <div className="flex flex-wrap items-center gap-3">
+          {target.kind !== 'home' && <Button variant="ghost" size="sm" onClick={toHome}><ArrowLeft size={16} /> {t('Placeringer', 'Locations')}</Button>}
+          {pending > 0 && (
+            <span className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-xs">
+              <CloudSlash size={14} /> {t(`${pending} handling(er) venter på M:`, `${pending} action(s) waiting for M:`)}
+            </span>
+          )}
+        </div>
+      )}
+      {target.kind === 'home' && <LocationsHome user={user} canAdmin={canAdmin} drawn={drawn} version={version} onOpen={setTarget} />}
+      {target.kind === 'putaway' && <PutAway tags={tags} onDone={() => setVersion(value => value + 1)} />}
+      {target.kind === 'shelf' && <ShelfPut key={target.id || ''} shelf={target.id} version={version} onDone={() => setVersion(value => value + 1)} />}
+      {target.kind === 'take' && <TakePallet material={target.id} version={version} onDone={() => setVersion(value => value + 1)} />}
+      {target.kind === 'refill' && <Refill id={target.id} version={version} onDone={() => setVersion(value => value + 1)} />}
+      {target.kind === 'fetch' && <FetchGuide key={target.id || ''} material={target.id} version={version} onOpen={setTarget} />}
+      {target.kind === 'log' && <LocationsLog key={target.id || ''} query={target.id} version={version} onOpen={setTarget} onChanged={() => setVersion(value => value + 1)} />}
+      {target.kind === 'move' && <MovePallet pallet={target.id} version={version} onDone={() => setVersion(value => value + 1)} />}
+      {target.kind === 'material' && <MaterialCard material={target.id} version={version} onOpen={setTarget} />}
+      {target.kind === 'location' && <LocationCard location={target.id} version={version} canAdmin={canAdmin} onOpen={setTarget} onChanged={() => setVersion(value => value + 1)} />}
+      {target.kind === 'rack' && <RackCard rack={target.id} version={version} canAdmin={canAdmin} drawn={drawn} onOpen={setTarget} onChanged={() => setVersion(value => value + 1)} />}
+      {target.kind === 'pallet' && <PalletCard pallet={target.id} version={version} tags={tags} onOpen={setTarget} onChanged={() => setVersion(value => value + 1)} />}
+      {target.kind === 'admin' && <Admin user={user} version={version} onOpen={setTarget} onChanged={() => setVersion(value => value + 1)} />}
+      {target.kind === 'import' && <ImportSheet onDone={() => { setVersion(value => value + 1); setTarget({ kind: 'home' }) }} />}
+      {target.kind === 'layout' && canAdmin && <LayoutEditor user={user} onDone={toHome} />}
+    </div>
+  )
+}

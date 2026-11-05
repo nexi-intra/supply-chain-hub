@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowLeft, UserGear, Check, Crown, ShieldCheck, User as UserIcon, Trash, FirstAidKit, Plus, Tag, UserCircle, PencilSimple } from '@phosphor-icons/react'
+import { ArrowLeft, UserGear, Check, Crown, ShieldCheck, User as UserIcon, Trash, Plus, Tag, UserCircle, PencilSimple } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -15,11 +15,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { format } from 'date-fns'
-import { da, enUS, fi } from 'date-fns/locale'
+import { da, enUS, fi, sv } from 'date-fns/locale'
 import { UserRole, hasManagerAccess, getCreatorEmail, getRoleDisplayName, getRoleDescription } from '@/lib/userRoles'
 import { hashPassword } from '@/lib/passwords'
 import { useLanguage } from '@/contexts/LanguageContext'
-import type { SickLeaveEntry, ShiftRole } from '@/lib/types'
+import type { ShiftRole } from '@/lib/types'
 
 interface User {
   email: string
@@ -35,9 +35,8 @@ interface AdminPanelProps {
 
 export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEmail }: AdminPanelProps) {
   const { t, language } = useLanguage()
-  const dateLocale = language === 'en' ? enUS : language === 'fi' ? fi : da
+  const dateLocale = language === 'en' ? enUS : language === 'fi' ? fi : language === 'sv' ? sv : da
   const [users, setUsers] = useState<User[]>([])
-  const [sickLeaveEntries, setSickLeaveEntries] = useState<SickLeaveEntry[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [hasAccess, setHasAccess] = useState(false)
   const [userEmail, setUserEmail] = useState<string>('')
@@ -67,7 +66,6 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
       setHasAccess(access)
       if (access) {
         loadUsers()
-        loadSickLeaveEntries()
         loadShiftRoles()
       }
     }
@@ -115,13 +113,6 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
       setUsers(userList)
     }
     setIsLoading(false)
-  }
-
-  const loadSickLeaveEntries = async () => {
-    const entries = await window.kv.get<SickLeaveEntry[]>('sick-leave-entries') || []
-    setSickLeaveEntries(entries.sort((a, b) => 
-      new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()
-    ))
   }
 
   const loadShiftRoles = async () => {
@@ -387,7 +378,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
         </motion.div>
 
         <Tabs defaultValue="users" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-3 max-w-2xl">
+          <TabsList className="grid w-full grid-cols-2 max-w-2xl">
             <TabsTrigger value="users" className="gap-2">
               <UserGear size={18} />
               {t.adminPanel.tabs.users}
@@ -395,10 +386,6 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
             <TabsTrigger value="shift-management" className="gap-2">
               <UserIcon size={18} />
               {t.adminPanel.tabs.shiftManagement}
-            </TabsTrigger>
-            <TabsTrigger value="sick-leave" className="gap-2">
-              <FirstAidKit size={18} />
-              {t.adminPanel.tabs.sickLeave}
             </TabsTrigger>
           </TabsList>
 
@@ -538,68 +525,6 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
               </div>
             </div>
           </Card>
-          </TabsContent>
-
-          <TabsContent value="sick-leave" className="space-y-6">
-            <Card className="p-6">
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-2">
-                  <FirstAidKit size={28} className="text-destructive" weight="duotone" />
-                  <h2 className="text-2xl font-bold">{t.adminPanel.tabs.sickLeave}</h2>
-                </div>
-                <Badge variant="outline" className="text-sm">
-                  {sickLeaveEntries.length} {sickLeaveEntries.length === 1 ? t.adminPanel.sickLeave.entrySingular : t.adminPanel.sickLeave.entryPlural}
-                </Badge>
-              </div>
-
-              <div className="mb-4 p-4 bg-muted/50 rounded-lg border">
-                <p className="text-sm text-muted-foreground">
-                  {t.adminPanel.sickLeave.description}
-                </p>
-              </div>
-
-              {sickLeaveEntries.length === 0 ? (
-                <p className="text-muted-foreground text-center py-12">{t.adminPanel.sickLeave.none}</p>
-              ) : (
-                <div className="space-y-3">
-                  {sickLeaveEntries.map((entry) => (
-                    <motion.div
-                      key={entry.id}
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="flex items-center justify-between p-5 rounded-md border bg-card hover:border-primary/40 transition-colors"
-                    >
-                      <div className="flex items-center gap-4 flex-1">
-                        <div className="w-12 h-12 rounded-md bg-primary flex items-center justify-center text-primary-foreground font-bold text-lg">
-                          {entry.userName.charAt(0).toUpperCase()}
-                        </div>
-                        <div className="flex-1">
-                          <div className="font-bold text-lg mb-1">{entry.userName}</div>
-                          <div className="text-sm text-muted-foreground">{entry.userEmail}</div>
-                          <div className="flex flex-col gap-1 mt-2 text-sm">
-                            <span className="font-medium">
-                              {format(new Date(entry.startDate), 'd. MMM', { locale: dateLocale })} - {format(new Date(entry.endDate || entry.startDate), 'd. MMM yyyy', { locale: dateLocale })}
-                            </span>
-                            <span className="text-xs text-muted-foreground">
-                              {t.adminPanel.sickLeave.submittedPrefix}: {format(new Date(entry.submittedAt), 'd. MMM yyyy HH:mm', { locale: dateLocale })}
-                            </span>
-                            {entry.reason && (
-                              <span className="text-muted-foreground mt-1">{t.adminPanel.sickLeave.notesPrefix}: {entry.reason}</span>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <Badge className="bg-green-500 text-white">
-                            <Check size={14} className="mr-1" />
-                            {t.adminPanel.sickLeave.registered}
-                          </Badge>
-                        </div>
-                      </div>
-                    </motion.div>
-                  ))}
-                </div>
-              )}
-            </Card>
           </TabsContent>
 
           <TabsContent value="shift-management" className="space-y-6">

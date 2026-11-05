@@ -9,7 +9,6 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -23,7 +22,7 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Plus, X, ArrowUp, ArrowDown, Image as ImageIcon, Timer,
-  ClockCounterClockwise, ArrowCounterClockwise, ArrowClockwise, FileDoc, Upload, Trash, Eye, Buildings, FloppyDisk,
+  ClockCounterClockwise, ArrowCounterClockwise, ArrowClockwise, FileDoc, FilePdf, Upload, Trash, Eye, Buildings, FloppyDisk,
 } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -33,15 +32,20 @@ import type { RegisteredTeam } from '@/lib/electronRegistryBridge'
 import { useUnsavedChanges } from '@/hooks/useUnsavedChanges'
 import type { Guide, GuideSection, GuideVersionEntry, GuideDraft } from '@/lib/guideTypes'
 import {
-  REVIEW_INTERVAL_CHOICES, newId, migrateGuide, computeNextReviewAt, guidePlainText,
+  REVIEW_INTERVAL_CHOICES, reviewIntervalLabel, newId, migrateGuide, computeNextReviewAt, guidePlainText,
   dateStringToTimestamp, timestampToDateString, todayDateString,
 } from '@/lib/guideTypes'
 import { detectLanguage, type GuideLanguage } from '@/lib/translator'
 import { bumpVersion, getVersionHistory, saveDraft, getDraft, deleteDraft } from '@/lib/guideStore'
 import type { GuideImportDraft } from '@/lib/docxImporter'
-import { useLanguage } from '@/contexts/LanguageContext'
+import { wordPdfErrorMessage } from '@/lib/wordPdfErrors'
+import { useLibraryLanguage } from '@/contexts/LibraryContext'
 import { GuideViewer, downloadBlob } from '@/components/GuideViewer'
 import { DatePickerField } from '@/components/DatePickerField'
+import { GuideStepEditor, type GuideLinkOption } from '@/components/GuideStepEditor'
+import { prepareSectionHeading, prepareStepContent, type GuideRichContent } from '@/lib/guideRichText'
+import { collectGuideLinks, resolveGuideLink, type GuideLinkEntry } from '@/lib/guideLinks'
+import { GUIDE_RICH_TEXT_LABELS } from '@/lib/guideRichTextLabels'
 
 interface GuideEditorProps {
   open: boolean
@@ -58,6 +62,8 @@ interface GuideEditorProps {
   userEmail: string
   /** Til "Ansvarlig for gennemgang"-vælgeren - samme kilde som GuideLibrary allerede læser. */
   users?: Array<{ email: string; fullName: string }>
+  linkTargets?: GuideLinkOption[]
+  linkCatalog?: GuideLinkEntry[]
   /** Bevarer revisionsnummeret når en allerede oprettet review-revision redigeres. */
   preserveVersion?: boolean
   submitLabel?: string
@@ -71,7 +77,7 @@ function emptySection(): GuideSection {
 
 /** Miniature af et gemt billede (loader objekt-URL fra chunked KV). */
 function ImageThumb({ imageId, onRemove, onRotate }: { imageId: string; onRemove?: () => void; onRotate?: () => Promise<void> }) {
-  const { t } = useLanguage()
+  const { t } = useLibraryLanguage()
   const [url, setUrl] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
   const [rotating, setRotating] = useState(false)
@@ -124,7 +130,7 @@ function ImageThumb({ imageId, onRemove, onRotate }: { imageId: string; onRemove
 
 /** Drop-zone + fil-vælger, der uploader billeder til fileStorage og returnerer fileIds. */
 function ImageDropZone({ onUploaded, compact }: { onUploaded: (fileIds: string[]) => void; compact?: boolean }) {
-  const { t } = useLanguage()
+  const { t } = useLibraryLanguage()
   const [isDragging, setIsDragging] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -197,8 +203,9 @@ function ImageDropZone({ onUploaded, compact }: { onUploaded: (fileIds: string[]
   )
 }
 
-export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories, onCreateCategory, importDraft, resumeDraft, userEmail, users = [], preserveVersion = false, submitLabel, titleOverride, descriptionOverride }: GuideEditorProps) {
-  const { t, language: appLanguage } = useLanguage()
+export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories, onCreateCategory, importDraft, resumeDraft, userEmail, users = [], linkTargets = [], linkCatalog = linkTargets, preserveVersion = false, submitLabel, titleOverride, descriptionOverride }: GuideEditorProps) {
+  const { t, language: appLanguage, kind } = useLibraryLanguage()
+  const richLabels = GUIDE_RICH_TEXT_LABELS[appLanguage]
   const [title, setTitle] = useState('')
   const [category, setCategory] = useState<string>(categories[0] || 'General')
   const [tags, setTags] = useState('')
@@ -206,6 +213,9 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
   const [isCreatingCategory, setIsCreatingCategory] = useState(false)
   const [newCategoryName, setNewCategoryName] = useState('')
   const [sections, setSections] = useState<GuideSection[]>([emptySection()])
+  const [activeStepId, setActiveStepId] = useState('')
+  const linkWarnings = useMemo(() => collectGuideLinks({ sections }).map(target => resolveGuideLink(target, linkCatalog))
+    .filter(result => result.status !== 'available'), [sections, linkCatalog])
   const [coverImageId, setCoverImageId] = useState<string | undefined>()
   const [reviewInterval, setReviewInterval] = useState<number | null>(null)
   // yyyy-MM-dd - kun relevant naar reviewInterval er sat. Lader brugeren staggere
@@ -218,6 +228,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
   const stagedUploadRef = useRef<{ file: File; upload: Promise<StoredFile> } | null>(null)
   const draftGenerationRef = useRef(0)
   const [preserveWordLayout, setPreserveWordLayout] = useState(false)
+  const [originalPdf, setOriginalPdf] = useState<{ url: string; name: string } | null>(null)
   const [removeWordAttachment, setRemoveWordAttachment] = useState(false)
   const [restoredVersionFields, setRestoredVersionFields] = useState<{
     content?: string
@@ -244,6 +255,8 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
   const [detectedDraft, setDetectedDraft] = useState<GuideDraft | null>(null)
   // Billeder uploadet i denne session — slettes igen hvis brugeren annullerer.
   const sessionImagesRef = useRef<string[]>([])
+  // Original PDF stored by an import in this session — removed again if the import is cancelled.
+  const sessionPdfRef = useRef<string | null>(null)
   const wordInputRef = useRef<HTMLInputElement>(null)
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
@@ -263,6 +276,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
 
   useEffect(() => {
     if (!open) return
+    setActiveStepId('')
     let newId_ = newGuideId
     if (migrated) {
       setTitle(migrated.title)
@@ -273,13 +287,14 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
         ? migrated.sections.map((s) => ({ ...s, steps: s.steps.map((st) => ({ ...st, imageIds: [...st.imageIds] })) }))
         : [emptySection()])
       setPreserveWordLayout(migrated.preserveWordLayout === true)
+      setOriginalPdf(migrated.originalPdfUrl ? { url: migrated.originalPdfUrl, name: migrated.originalPdfName || `${migrated.title}.pdf` } : null)
       setCoverImageId(migrated.coverImageId)
       setReviewInterval(migrated.reviewIntervalMonths ?? null)
       // Forudfyldt med guidens NUVAERENDE naeste-tjek - en almindelig redigering
       // (fx en tekstrettelse) flytter derfor ikke automatisk gennemgangs-fristen.
       setNextReviewDate(migrated.nextReviewAt ? timestampToDateString(migrated.nextReviewAt) : todayDateString())
       setResponsibleEmail(migrated.responsibleEmail || migrated.author || userEmail)
-      getVersionHistory(migrated.id).then(setHistory).catch(() => setHistory([]))
+      getVersionHistory(migrated.id, kind).then(setHistory).catch(() => setHistory([]))
     } else {
       newId_ = newId('guide')
       setNewGuideId(newId_)
@@ -289,6 +304,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
       setLanguage(importDraft?.language || 'auto')
       setSections(importDraft?.sections.length ? importDraft.sections : [emptySection()])
       setPreserveWordLayout(importDraft?.preserveWordLayout === true)
+      setOriginalPdf(importDraft?.originalPdf ? { url: importDraft.originalPdf.url, name: importDraft.originalPdf.filename } : null)
       setCoverImageId(undefined)
       setReviewInterval(null)
       setNextReviewDate(todayDateString())
@@ -324,6 +340,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
       setLanguage(resumeDraft.language)
       setSections(resumeDraft.sections.length ? resumeDraft.sections : [emptySection()])
       setPreserveWordLayout(resumeDraft.preserveWordLayout === true)
+      setOriginalPdf(resumeDraft.originalPdfUrl ? { url: resumeDraft.originalPdfUrl, name: resumeDraft.originalPdfName || `${resumeDraft.title}.pdf` } : null)
       setCoverImageId(resumeDraft.coverImageId)
       setReviewInterval(resumeDraft.reviewInterval)
       setNextReviewDate(resumeDraft.nextReviewDate || todayDateString())
@@ -335,10 +352,11 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
     // eksplicit vælge, ellers kunne en kladde overraskende overskrive frisk
     // indhold der lige er hentet fra den udgivne guide. Genoptager man bevidst
     // en kladde, er indholdet allerede lagt ind, saa banneret ville være støj.
-    if (!resumeDraft) getDraft(migrated?.id || newId_).then((draft) => { if (draft) setDetectedDraft(draft) }).catch(() => {})
+    if (!resumeDraft) getDraft(migrated?.id || newId_, kind).then((draft) => { if (draft) setDetectedDraft(draft) }).catch(() => {})
     // Billeder fra et importeret dokument uploades allerede før editoren åbner —
     // de skal ryddes op på lige fod med session-billeder, hvis brugeren fortryder.
     sessionImagesRef.current = importDraft ? importDraft.sections.flatMap((s) => s.steps.flatMap((st) => st.imageIds)) : []
+    sessionPdfRef.current = importDraft?.originalPdf?.url ?? null
   }, [open, migrated, categories, importDraft, resumeDraft, currentTeamCode, userEmail])
 
   const hasUnsavedChanges = useMemo(() => {
@@ -357,24 +375,29 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
         || stagedWordFile !== null
         || removeWordAttachment
         || preserveWordLayout !== (migrated.preserveWordLayout === true)
+        || (originalPdf?.url ?? undefined) !== migrated.originalPdfUrl
         || restoredVersionFields !== null
         || JSON.stringify([...otherTeamCodes].sort()) !== JSON.stringify([...(migrated.sharedWithTeamCodes || []).filter((code) => code !== currentTeamCode)].sort())
     }
-    return title.trim() !== '' || tags.trim() !== '' || wordFile !== null || stagedWordFile !== null || otherTeamCodes.length > 0
+    return title.trim() !== '' || tags.trim() !== '' || wordFile !== null || stagedWordFile !== null || originalPdf !== null || otherTeamCodes.length > 0
       || sections.some((s) => s.heading.trim() || s.steps.some((st) => st.text.trim() || st.imageIds.length > 0))
-  }, [open, migrated, title, category, tags, sections, coverImageId, reviewInterval, nextReviewDate, responsibleEmail, wordFile, stagedWordFile, removeWordAttachment, preserveWordLayout, restoredVersionFields, otherTeamCodes, currentTeamCode, userEmail])
+  }, [open, migrated, title, category, tags, sections, coverImageId, reviewInterval, nextReviewDate, responsibleEmail, wordFile, stagedWordFile, removeWordAttachment, preserveWordLayout, originalPdf, restoredVersionFields, otherTeamCodes, currentTeamCode, userEmail])
 
   const cleanupSessionImages = useCallback(async () => {
     for (const id of sessionImagesRef.current) {
       try { await fileStorage.deleteFile(`kv://${id}`) } catch { /* allerede væk */ }
     }
     sessionImagesRef.current = []
+    if (sessionPdfRef.current) {
+      try { await fileStorage.deleteFile(sessionPdfRef.current) } catch { /* allerede væk */ }
+      sessionPdfRef.current = null
+    }
   }, [])
 
   const discardDraft = useCallback(() => {
     draftGenerationRef.current++
     setDetectedDraft(null)
-    void deleteDraft(draftId)
+    void deleteDraft(draftId, kind)
   }, [draftId])
 
   const currentDraft = useCallback((): GuideDraft => ({
@@ -388,6 +411,8 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
     wordFileUrl: stagedWordFile?.url,
     wordFileName: stagedWordFile?.filename,
     wordFileSize: stagedWordFile?.size,
+    originalPdfUrl: originalPdf?.url,
+    originalPdfName: originalPdf?.name,
     coverImageId,
     reviewInterval,
     nextReviewDate,
@@ -395,7 +420,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
     otherTeamCodes,
     savedBy: userEmail,
     lastAutoSavedAt: Date.now(),
-  }), [draftId, title, category, tags, language, sections, preserveWordLayout, stagedWordFile, coverImageId, reviewInterval, nextReviewDate, responsibleEmail, otherTeamCodes, userEmail])
+  }), [draftId, title, category, tags, language, sections, preserveWordLayout, stagedWordFile, originalPdf, coverImageId, reviewInterval, nextReviewDate, responsibleEmail, otherTeamCodes, userEmail])
 
   const stageWordFile = useCallback(async (file: File): Promise<StoredFile> => {
     if (stagedUploadRef.current?.file !== file) {
@@ -426,8 +451,8 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
       wordFileUrl: stored?.url,
       wordFileName: stored?.filename,
       wordFileSize: stored?.size,
-    })
-  }, [wordFile, stagedWordFile, stageWordFile, currentDraft])
+    }, kind)
+  }, [wordFile, stagedWordFile, stageWordFile, currentDraft, kind])
 
   // Forlader man editoren uden at gemme, skal arbejdet kunne findes igen. Derfor
   // beholdes BAADE kladden og de billeder der er uploadet undervejs - ryddes de
@@ -435,6 +460,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
   const keepAsDraft = useCallback(async () => {
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
     sessionImagesRef.current = []
+    sessionPdfRef.current = null
     await saveCurrentDraft()
   }, [saveCurrentDraft])
 
@@ -458,6 +484,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
     setNextReviewDate(detectedDraft.nextReviewDate || todayDateString())
     setResponsibleEmail(detectedDraft.responsibleEmail || userEmail)
     setOtherTeamCodes(detectedDraft.otherTeamCodes)
+    setOriginalPdf(detectedDraft.originalPdfUrl ? { url: detectedDraft.originalPdfUrl, name: detectedDraft.originalPdfName || `${detectedDraft.title}.pdf` } : null)
     setDetectedDraft(null)
   }
 
@@ -500,9 +527,9 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
     setSections((prev) => (prev.length > 1 ? prev.filter((s) => s.id !== sectionId) : prev))
   }
 
-  const updateStep = (sectionId: string, stepId: string, text: string) => {
+  const updateStep = (sectionId: string, stepId: string, richContent: GuideRichContent) => {
     setSections((prev) => prev.map((s) => s.id === sectionId
-      ? { ...s, steps: s.steps.map((st) => (st.id === stepId ? { ...st, text } : st)) }
+      ? { ...s, steps: s.steps.map((st) => (st.id === stepId ? { ...st, text: richContent.text, richContent } : st)) }
       : s))
   }
 
@@ -574,6 +601,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
         preserveWordLayout: entry.snapshot.preserveWordLayout,
         previewPdfUrl: entry.snapshot.previewPdfUrl,
       })
+      setOriginalPdf(entry.snapshot.originalPdfUrl ? { url: entry.snapshot.originalPdfUrl, name: entry.snapshot.originalPdfName || `${entry.snapshot.title}.pdf` } : null)
     } else {
       // Ældre historik indeholder kun titel/kategori/tags/sektioner/billede.
       // Ukendte felter bevares derfor fra den aktive version.
@@ -625,10 +653,10 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
     const cleanedSections = sections
       .map((s) => ({
         ...s,
-        heading: s.heading.trim(),
+        ...prepareSectionHeading(s),
         steps: s.steps
-          .map((st) => ({ ...st, text: st.text.trim() }))
-          .filter((st) => st.text || st.imageIds.length > 0),
+          .map((st) => ({ ...st, ...prepareStepContent(st) }))
+          .filter((st) => st.text.trim() || st.imageIds.length > 0),
       }))
       .filter((s) => s.heading || s.steps.length > 0)
     const tagArray = tags.split(',').map((t) => t.trim()).filter(Boolean)
@@ -661,6 +689,8 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
       wordFileName: stagedWordFile?.filename || (removeWordAttachment ? undefined : (restoredVersionFields ? restoredVersionFields.wordFileName : migrated?.wordFileName)),
       fileSize: stagedWordFile?.size || (removeWordAttachment ? undefined : (restoredVersionFields ? restoredVersionFields.fileSize : migrated?.fileSize)),
       previewPdfUrl: wordFile || stagedWordFile || removeWordAttachment ? undefined : (restoredVersionFields ? restoredVersionFields.previewPdfUrl : migrated?.previewPdfUrl),
+      originalPdfUrl: originalPdf?.url,
+      originalPdfName: originalPdf?.name,
       sharedWithTeamCodes: resolveSharedWithTeamCodes(),
     }
   }
@@ -671,13 +701,14 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
       toast.error(t.guideEditor.titleRequired)
       return
     }
+    if (linkWarnings.length > 0 && !window.confirm(richLabels.continueWithLinks)) return
     const cleanedSections = sections
       .map((s) => ({
         ...s,
-        heading: s.heading.trim(),
+        ...prepareSectionHeading(s),
         steps: s.steps
-          .map((st) => ({ ...st, text: st.text.trim() }))
-          .filter((st) => st.text || st.imageIds.length > 0),
+          .map((st) => ({ ...st, ...prepareStepContent(st) }))
+          .filter((st) => st.text.trim() || st.imageIds.length > 0),
       }))
       .filter((s) => s.heading || s.steps.length > 0)
 
@@ -685,7 +716,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
       toast.error(t.guideEditor.wordFileRequired)
       return
     }
-    if (cleanedSections.length === 0 && !wordFile && !stagedWordFile && !retainedFileUrl) {
+    if (cleanedSections.length === 0 && !wordFile && !stagedWordFile && !retainedFileUrl && !originalPdf) {
       toast.error(t.guideEditor.atLeastOneSectionRequired)
       return
     }
@@ -745,18 +776,21 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
         wordFileName,
         fileSize,
         previewPdfUrl: preserveWordLayout ? previewPdfUrl : undefined,
+        originalPdfUrl: originalPdf?.url,
+        originalPdfName: originalPdf?.name,
         sharedWithTeamCodes: resolveSharedWithTeamCodes(),
       }
 
       sessionImagesRef.current = []
+      sessionPdfRef.current = null
       await onSave(guide, changeNote.trim() || undefined)
       draftGenerationRef.current++
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
-      await deleteDraft(draftId)
+      await deleteDraft(draftId, kind)
       onOpenChange(false)
     } catch (error) {
       console.error('Kunne ikke gemme guide:', error)
-      toast.error(error instanceof Error ? error.message : t.guideEditor.saveFailed)
+      toast.error(wordPdfErrorMessage(error, appLanguage) || (error instanceof Error ? error.message : t.guideEditor.saveFailed))
     } finally {
       manualSaveInProgress.current = false
       setIsSaving(false)
@@ -818,8 +852,8 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
           </div>
         )}
 
-        <ScrollArea className="flex-1 min-h-0">
-          <div className="px-6 py-5 space-y-6">
+        <ScrollArea className="flex-1 min-h-0 min-w-0 w-full [&_[data-radix-scroll-area-viewport]>div]:!block">
+          <div className="min-w-0 max-w-full px-4 sm:px-6 py-5 space-y-6">
             {showHistory && (
               <div className="rounded-md border border-border bg-muted/30 p-4 space-y-2">
                 <h4 className="text-sm font-bold flex items-center gap-2">
@@ -831,7 +865,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
                     <Badge variant="outline" className="font-mono shrink-0">v{entry.version}</Badge>
                     <div className="flex-1 min-w-0">
                       <div className="text-xs font-medium truncate">
-                        {new Date(entry.savedAt).toLocaleString(appLanguage === 'en' ? 'en-US' : appLanguage === 'fi' ? 'fi-FI' : 'da-DK')} · {entry.savedBy}
+                        {new Date(entry.savedAt).toLocaleString(appLanguage === 'en' ? 'en-US' : appLanguage === 'fi' ? 'fi-FI' : appLanguage === 'sv' ? 'sv-SE' : 'da-DK')} · {entry.savedBy}
                       </div>
                       {entry.changeNote && <div className="text-xs text-muted-foreground truncate">{entry.changeNote}</div>}
                     </div>
@@ -906,6 +940,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
                     <SelectItem value="da">{t.guideEditor.languageDanish}</SelectItem>
                     <SelectItem value="en">{t.guideEditor.languageEnglish}</SelectItem>
                     <SelectItem value="fi">{t.guideEditor.languageFinnish}</SelectItem>
+                    <SelectItem value="sv">{t.guideEditor.languageSwedish}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -929,14 +964,14 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
                   <SelectContent>
                     {REVIEW_INTERVAL_CHOICES.map((choice) => (
                       <SelectItem key={choice.label} value={choice.value === null ? 'none' : String(choice.value)}>
-                        {choice.label}
+                        {reviewIntervalLabel(choice.value, appLanguage)}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
                   {reviewInterval
-                    ? `${t.guideEditor.reviewIntervalHintPrefix} ${REVIEW_INTERVAL_CHOICES.find((c) => c.value === reviewInterval)?.label.toLowerCase()} ${t.guideEditor.reviewIntervalHintSuffix}`
+                    ? `${t.guideEditor.reviewIntervalHintPrefix} ${reviewIntervalLabel(reviewInterval, appLanguage).toLowerCase()} ${t.guideEditor.reviewIntervalHintSuffix}`
                     : t.guideEditor.reviewIntervalHintNone}
                 </p>
               </div>
@@ -983,15 +1018,22 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
 
               {sections.map((section, sIndex) => (
                 <div key={section.id} className="rounded-md border border-border bg-card p-4 space-y-3">
-                  <div className="flex items-center gap-2">
-                    <Badge variant="outline" className="font-mono shrink-0">{sIndex + 1}.0</Badge>
-                    <Input
-                      value={section.heading}
-                      onChange={(e) => updateSection(section.id, { heading: e.target.value })}
-                      placeholder={t.guideEditor.sectionHeadingPlaceholder}
-                      className="font-semibold"
-                    />
-                    <div className="flex items-center gap-1 shrink-0">
+                  <div className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-2 sm:grid-cols-[auto_minmax(0,1fr)_auto]">
+                    <Badge variant="outline" className="mt-7 font-mono shrink-0">{sIndex + 1}.0</Badge>
+                    <div className="flex-1 min-w-0">
+                      <GuideStepEditor
+                        step={{ id: `heading:${section.id}`, text: section.heading, richContent: section.headingRichContent, imageIds: [] }}
+                        label={richLabels.heading}
+                        placeholder={t.guideEditor.sectionHeadingPlaceholder}
+                        variant="heading"
+                        active={activeStepId === `section:${section.id}`}
+                        onActivate={() => setActiveStepId(`section:${section.id}`)}
+                        onChange={(content) => updateSection(section.id, { heading: content.text, headingRichContent: content })}
+                        linkTargets={linkTargets}
+                        disabled={isSaving}
+                      />
+                    </div>
+                    <div className="col-start-2 flex items-center gap-1 sm:col-auto sm:mt-6">
                       <Button variant="ghost" size="icon" className="h-8 w-8" disabled={sIndex === 0} onClick={() => moveSection(sIndex, -1)}>
                         <ArrowUp size={16} />
                       </Button>
@@ -1008,15 +1050,19 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
                     {section.steps.map((step, stIndex) => (
                       <div key={step.id} className="space-y-2">
                         <div className="flex items-start gap-2">
-                          <Badge variant="secondary" className="font-mono mt-2 shrink-0">{sIndex + 1}.{stIndex + 1}</Badge>
-                          <Textarea
-                            value={step.text}
-                            onChange={(e) => updateStep(section.id, step.id, e.target.value)}
-                            placeholder={t.guideEditor.stepPlaceholder}
-                            rows={2}
-                            className="resize-y min-h-[60px]"
-                          />
-                          <div className="flex flex-col gap-1 shrink-0">
+                          <Badge variant="secondary" className="font-mono mt-7 shrink-0">{sIndex + 1}.{stIndex + 1}</Badge>
+                          <div className="flex-1 min-w-0">
+                            <GuideStepEditor
+                              step={step}
+                              placeholder={t.guideEditor.stepPlaceholder}
+                              active={activeStepId === `step:${step.id}`}
+                              onActivate={() => setActiveStepId(`step:${step.id}`)}
+                              onChange={(content) => updateStep(section.id, step.id, content)}
+                              linkTargets={linkTargets}
+                              disabled={isSaving}
+                            />
+                          </div>
+                          <div className="mt-6 flex flex-col gap-1 shrink-0">
                             <Button variant="ghost" size="icon" className="h-7 w-7" disabled={stIndex === 0} onClick={() => moveStep(section.id, stIndex, -1)}>
                               <ArrowUp size={14} />
                             </Button>
@@ -1061,6 +1107,26 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
                 {t.guideEditor.addSection}
               </Button>
             </div>}
+
+            <div className="space-y-2">
+              {originalPdf && (
+                <>
+                  <Label>{t.guideEditor.originalPdfLabel}</Label>
+                  <div className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30">
+                    <FilePdf size={22} className="text-primary shrink-0" />
+                    <span className="text-sm truncate flex-1">{originalPdf.name}</span>
+                    <Button variant="outline" size="sm" className="shrink-0" onClick={async () => {
+                      try { downloadBlob(await fileStorage.downloadFile(originalPdf.url), originalPdf.name) }
+                      catch (error) { toast.error(error instanceof Error ? error.message : t.guideEditor.wordDownloadFailed) }
+                    }}>{t.guideEditor.downloadPdf}</Button>
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive shrink-0" onClick={() => setOriginalPdf(null)}>
+                      <Trash size={16} />
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">{t.guideEditor.originalPdfHint}</p>
+                </>
+              )}
+            </div>
 
             <div className="space-y-2">
               <Label>{preserveWordLayout ? t.guideEditor.originalWordLabel : t.guideEditor.wordAttachmentLabel}</Label>
@@ -1186,7 +1252,8 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
         </ScrollArea>
 
         <DialogFooter className="px-6 py-4 border-t flex-shrink-0">
-          <Button variant="outline" onClick={() => { draftGenerationRef.current++; if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); cleanupSessionImages(); void deleteDraft(draftId); onOpenChange(false) }} disabled={isSaving || isSavingDraft}>
+          {linkWarnings.length > 0 && <p role="status" className="mr-auto text-xs text-amber-700 dark:text-amber-300">{richLabels.linkWarnings}: {linkWarnings.length}</p>}
+          <Button variant="outline" onClick={() => { draftGenerationRef.current++; if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); cleanupSessionImages(); void deleteDraft(draftId, kind); onOpenChange(false) }} disabled={isSaving || isSavingDraft}>
             {t.common.cancel}
           </Button>
           <Button variant="outline" onClick={() => setPreviewOpen(true)} disabled={isSaving || isSavingDraft} className="gap-2">
@@ -1205,6 +1272,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
 
       <GuideViewer
         guide={previewOpen ? buildDraftGuide() : null}
+        linkTargets={linkCatalog}
         open={previewOpen}
         onOpenChange={setPreviewOpen}
       />

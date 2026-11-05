@@ -1,0 +1,140 @@
+// Placeringer's local queue for when M: is down: a daily action that cannot reach the shared folder is kept in a JSON
+// file on this PC and replayed in order when the folder is back. An action that is no longer possible then (the
+// pallet was taken by someone else) is kept as a failure until a window has shown it, never retried. Every action id
+// is applied at most once. After a storage error new actions are only queued for a while, so the Hub does not keep
+// hanging on a dead share; the timer's flush is the retry.
+const fs = require('node:fs')
+const path = require('node:path')
+
+const QUEUED_METHODS = Object.freeze(new Set(['putAway', 'take', 'refill', 'move', 'changeSloc', 'editPallet', 'undo', 'shelfPut', 'shelfTake', 'shelfMove', 'shelfSet']))
+const FILE = 'locations-outbox.json'
+const KEEP_APPLIED = 1000
+const KEEP_FAILURES = 200
+const PAUSE_MS = 30000
+
+function codeError(code) {
+  return Object.assign(new Error(code), { code })
+}
+
+function createOutbox({ dir, run, isStorageError, now = Date.now, onFailed = () => {}, pauseMs = PAUSE_MS }) {
+  const file = path.join(dir, FILE)
+  let state = load()
+  let flushing = null
+  let downUntil = 0
+  // What happened to an action replayed while its own submit() waits on the flush.
+  const outcomes = new Map()
+
+  function load() {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(file, 'utf8'))
+      const list = value => (Array.isArray(value) ? value : [])
+      return { queue: list(parsed.queue), applied: list(parsed.applied), failures: list(parsed.failures) }
+    } catch {
+      return { queue: [], applied: [], failures: [] }
+    }
+  }
+
+  function save() {
+    fs.mkdirSync(dir, { recursive: true })
+    const temp = `${file}.${process.pid}.tmp`
+    fs.writeFileSync(temp, JSON.stringify(state), 'utf8')
+    fs.renameSync(temp, file)
+  }
+
+  const applied = id => state.applied.includes(id)
+  const queued = id => state.queue.some(action => action.id === id)
+  function markApplied(id) {
+    state.applied = [...state.applied, id].slice(-KEEP_APPLIED)
+    state.queue = state.queue.filter(action => action.id !== id)
+    save()
+  }
+  const wentDown = () => { downUntil = now() + pauseMs }
+
+  /** Replays the queue in order; stops at the first storage error so the order is kept. */
+  function flush() {
+    if (flushing) return flushing
+    flushing = (async () => {
+      let done = 0
+      const failed = []
+      const seen = []
+      while (state.queue.length) {
+        const action = state.queue[0]
+        seen.push(action.id)
+        if (applied(action.id)) { state.queue.shift(); save(); continue }
+        try {
+          outcomes.set(action.id, { result: await run(action) })
+          markApplied(action.id)
+          downUntil = 0
+          done++
+        } catch (error) {
+          if (isStorageError(error)) { wentDown(); break }
+          outcomes.set(action.id, { error })
+          const failure = { id: action.id, method: action.method, request: action.request, label: action.label || '', email: action.user?.email || '', team: action.user?.team || '', name: action.user?.fullName || '', code: typeof error?.code === 'string' ? error.code : 'UNEXPECTED_ERROR', message: String(error?.message || ''), at: now() }
+          failed.push({ action, ...failure })
+          // Kept until a window has shown it: whichever flush finds it, and also when Placeringer is not open.
+          state.failures = [...state.failures, failure].slice(-KEEP_FAILURES)
+          markApplied(action.id)
+        }
+      }
+      // A waiting submit() reads its outcome right after this resolves; the rest is dropped.
+      setTimeout(() => { for (const id of seen) outcomes.delete(id) }, 0)
+      if (failed.length) { try { onFailed(failed) } catch {} }
+      return { done, failed: failed.map(({ action, code, message }) => ({ action, code, message })) }
+    })().finally(() => { flushing = null })
+    return flushing
+  }
+
+  async function submit(action) {
+    if (!action || typeof action.id !== 'string' || !action.id) throw codeError('OUTBOX_ID_INVALID')
+    if (!QUEUED_METHODS.has(action.method)) throw codeError('OUTBOX_METHOD_NOT_ALLOWED')
+    if (applied(action.id)) return { queued: false, duplicate: true }
+    if (queued(action.id)) return { queued: true }
+    const entry = { id: action.id, method: action.method, user: action.user, request: action.request, label: action.label || '', at: now() }
+    if (now() < downUntil) {
+      // M: failed a moment ago: keep the action here and let the timer's retry find out when it is back.
+      state.queue.push(entry)
+      save()
+      return { queued: true }
+    }
+    if (state.queue.length || flushing) {
+      // Behind the queue, so a take never overtakes the put-away it depends on.
+      state.queue.push(entry)
+      save()
+      await flush()
+      const outcome = outcomes.get(entry.id)
+      outcomes.delete(entry.id)
+      if (!outcome) return { queued: true }
+      if (outcome.error) {
+        // The person is waiting and sees the error, so it is not kept as a failure to report later.
+        state.failures = state.failures.filter(item => item.id !== entry.id)
+        save()
+        throw outcome.error
+      }
+      return { queued: false, result: outcome.result }
+    }
+    try {
+      const result = await run(entry)
+      state.applied = [...state.applied, entry.id].slice(-KEEP_APPLIED)
+      save()
+      return { queued: false, result }
+    } catch (error) {
+      if (!isStorageError(error)) throw error
+      wentDown()
+      state.queue.push(entry)
+      save()
+      return { queued: true }
+    }
+  }
+
+  /** Replayed actions that could not be done and have not been shown yet; `filter` picks a person's own. */
+  const failures = (filter = () => true) => state.failures.filter(filter)
+  function acknowledge(ids) {
+    const gone = new Set(ids)
+    state.failures = state.failures.filter(item => !gone.has(item.id))
+    save()
+  }
+
+  return { submit, flush, pending: () => state.queue.length, failures, acknowledge }
+}
+
+module.exports = { createOutbox, QUEUED_METHODS }

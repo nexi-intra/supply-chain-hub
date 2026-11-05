@@ -51,6 +51,19 @@ test('an unreadable existing registry is not replaced with an empty registry', (
   assert.ok(!fs.existsSync(path.join(root, '_registry', 'mutation.lock')))
 })
 
+test('a deleted account is forgotten, so the address can later join another team', (t) => {
+  const root = temporaryPlatformRoot(t)
+  registry.createTeam(root, { teamId: 'TCD', name: 'Test A', folderName: 'TCD' })
+  registry.createTeam(root, { teamId: 'TRR', name: 'Test B', folderName: 'TRR' })
+  registry.assignUserToTeam(root, 'gone@example.com', 'TCD')
+  registry.assignUserToTeam(root, 'stay@example.com', 'TCD')
+  assert.equal(registry.forgetUser(root, ' GONE@example.com '), true)
+  assert.equal(registry.lookupTeamForEmail(root, 'gone@example.com'), null)
+  assert.equal(registry.lookupTeamForEmail(root, 'stay@example.com').teamId, 'TCD')
+  assert.equal(registry.forgetUser(root, 'gone@example.com'), false)
+  registry.assignUserToTeam(root, 'gone@example.com', 'TRR')
+})
+
 function temporaryPlatformRoot(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-hub-registry-test-'))
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
@@ -60,47 +73,6 @@ function temporaryPlatformRoot(t) {
 test('lookupTeamForEmail returns null when nothing is registered', (t) => {
   const root = temporaryPlatformRoot(t)
   assert.equal(registry.lookupTeamForEmail(root, 'nobody@example.com'), null)
-})
-
-test('access views are reusable read-only group assignments and do not change team membership', (t) => {
-  const root = temporaryPlatformRoot(t)
-  registry.createTeam(root, { teamId: 'TCD', name: 'TCD', folderName: 'TCD' })
-  registry.createTeam(root, { teamId: 'TRR', name: 'TRR', folderName: 'TRR' })
-  registry.assignUserToTeam(root, 'johnny@example.com', 'TCD')
-
-  const created = registry.createAccessView(root, {
-    viewId: 'operations',
-    name: 'TCD + TRR',
-    teamIds: ['TCD', 'TRR', 'TCD'],
-    userEmails: [' Johnny@Example.com ', 'other@example.com'],
-  })
-
-  assert.equal(created.viewId, 'operations')
-  assert.deepEqual(created.teamIds, ['TCD', 'TRR'])
-  assert.deepEqual(registry.listAccessViewsForEmail(root, 'JOHNNY@example.com').map((view) => view.viewId), ['operations'])
-  assert.equal(registry.lookupTeamForEmail(root, 'johnny@example.com').teamId, 'TCD')
-  assert.equal(registry.lookupTeamForEmail(root, 'other@example.com'), null)
-
-  const updated = registry.updateAccessView(root, 'operations', {
-    name: 'Nordic operations',
-    teamIds: ['TRR', 'TCD'],
-    userEmails: ['johnny@example.com'],
-  })
-  assert.equal(updated.name, 'Nordic operations')
-  assert.deepEqual(updated.userEmails, ['johnny@example.com'])
-  assert.equal(registry.deleteAccessView(root, 'operations'), true)
-  assert.deepEqual(registry.listAccessViews(root), [])
-})
-
-test('access views reject unknown or single-team configurations', (t) => {
-  const root = temporaryPlatformRoot(t)
-  registry.createTeam(root, { teamId: 'TCD', name: 'TCD', folderName: 'TCD' })
-  assert.throws(() => registry.createAccessView(root, {
-    name: 'Not a group', teamIds: ['TCD'], userEmails: [],
-  }), /mindst to teams/)
-  assert.throws(() => registry.createAccessView(root, {
-    name: 'Unknown team', teamIds: ['TCD', 'NOPE'], userEmails: [],
-  }), /Ukendt team/)
 })
 
 test('createTeam + assignUserToTeam + lookupTeamForEmail round-trips', (t) => {

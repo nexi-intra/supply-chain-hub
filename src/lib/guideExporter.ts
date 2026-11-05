@@ -7,12 +7,14 @@ import type { DocModel } from './docModel'
 import { guideToDocModel } from './docModel'
 import { fileStorage } from './fileStorage'
 import type { Guide } from './guideTypes'
+import type { LibraryKind } from './libraryConfig'
 
 export interface GuideLibrarySettings {
   exportRoot: string | null
 }
 
 export const GUIDE_LIBRARY_SETTINGS_KEY = 'guide-library-settings'
+const SETTINGS_KEYS: Record<LibraryKind, string> = { guides: GUIDE_LIBRARY_SETTINGS_KEY, knowledge: 'knowledge-library-settings' }
 
 export interface ExportTarget {
   /** Menneskelæsbart navn, fx 'Lokal mappe'. */
@@ -47,19 +49,19 @@ export function isExportAvailable(): boolean {
   return typeof window !== 'undefined' && !!window.electronGuides
 }
 
-export async function getExportRoot(): Promise<string | null> {
-  const settings = await window.kv.get<GuideLibrarySettings>(GUIDE_LIBRARY_SETTINGS_KEY)
+export async function getExportRoot(kind: LibraryKind = 'guides'): Promise<string | null> {
+  const settings = await window.kv.get<GuideLibrarySettings>(SETTINGS_KEYS[kind])
   return settings?.exportRoot || null
 }
 
-export async function setExportRoot(exportRoot: string | null): Promise<void> {
-  await window.kv.set(GUIDE_LIBRARY_SETTINGS_KEY, { exportRoot } satisfies GuideLibrarySettings)
+export async function setExportRoot(exportRoot: string | null, kind: LibraryKind = 'guides'): Promise<void> {
+  await window.kv.set(SETTINGS_KEYS[kind], { exportRoot } satisfies GuideLibrarySettings)
 }
 
 /** Åbner mappe-dialog og gemmer valget. Returnerer den nye rod eller null. */
-export async function chooseAndSaveExportRoot(): Promise<string | null> {
+export async function chooseAndSaveExportRoot(kind: LibraryKind = 'guides'): Promise<string | null> {
   const root = await getExportTarget().chooseRoot()
-  if (root) await setExportRoot(root)
+  if (root) await setExportRoot(root, kind)
   return root
 }
 

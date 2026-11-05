@@ -4,14 +4,13 @@ const fs = require('fs')
 const path = require('path')
 
 const FILES = [
-  'components/EndlessDodger.tsx',
-  'components/NeonSnake.tsx',
-  'components/NexiFlyer.tsx',
-  'components/BrickBreak.tsx',
-  'components/Tetris.tsx',
+  'games/chickenInvaders/ChickenInvaders.tsx',
+  'games/routeRunner/RouteRunner.tsx',
+  'games/parcelPilot/ParcelPilot.tsx',
+  'games/brickBreak/PrismBreak.tsx',
+  'games/cargoStack/CargoStack.tsx',
   'components/PauseOverlay.tsx',
   'components/CubeBasherGame.tsx',
-  'components/TheLibrarian2Game.tsx',
   'views/Arcade.tsx',
   'views/GameCorner.tsx',
   'views/Modern.tsx',

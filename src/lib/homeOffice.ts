@@ -1,5 +1,6 @@
 import type { HomeOfficeException, HomeOfficePattern } from '@/lib/types'
 import { format } from 'date-fns'
+import { matchesShiftInterval, parseLocalDate, toIsoDateString } from '@/lib/dateUtils'
 
 /**
  * Afgør om en bruger arbejder hjemme på en given dato: en enkelt-dags-undtagelse
@@ -15,7 +16,14 @@ export function isHomeOfficeOnDate(
   const dateStr = format(date, 'yyyy-MM-dd')
   const exception = (exceptions || []).find(e => e.userEmail === userEmail && e.date === dateStr)
   if (exception) return exception.isHomeOffice
-  return (patterns?.[userEmail]?.weekdays || []).includes(date.getDay())
+  const pattern = patterns?.[userEmail]
+  if (!pattern?.weekdays.includes(date.getDay())) return false
+  const repeat = pattern.repeat?.[date.getDay()]
+  if (!repeat) return true
+  if (!Number.isInteger(repeat.intervalWeeks) || repeat.intervalWeeks < 1 || !/^\d{4}-\d{2}-\d{2}$/.test(repeat.startDate)) return false
+  const first = parseLocalDate(repeat.startDate)
+  return toIsoDateString(first) === repeat.startDate && first.getDay() === date.getDay()
+    && matchesShiftInterval(dateStr, repeat.startDate, repeat.intervalWeeks)
 }
 
 /** Alle brugere (af en given liste email'er) der arbejder hjemme på en given dato. */

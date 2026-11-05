@@ -177,7 +177,7 @@ export function UpdateManager({ userEmail }: UpdateManagerProps) {
         </div>
         {status?.manifest && (
           <p className="text-xs text-muted-foreground">
-            {t.updateManager.publishedPrefix} {new Date(status.manifest.publishedAt).toLocaleString(language === 'en' ? 'en-US' : language === 'fi' ? 'fi-FI' : 'da-DK')}
+            {t.updateManager.publishedPrefix} {new Date(status.manifest.publishedAt).toLocaleString(language === 'en' ? 'en-US' : language === 'fi' ? 'fi-FI' : language === 'sv' ? 'sv-SE' : 'da-DK')}
             {status.manifest.publishedBy && <> {t.updateManager.byPrefix} {status.manifest.publishedBy}</>} · {status.manifest.file} ({formatMB(status.manifest.size)})
           </p>
         )}
@@ -301,7 +301,7 @@ export function UpdateManager({ userEmail }: UpdateManagerProps) {
                   {entry.notes && <div className="text-xs text-muted-foreground truncate">{entry.notes}</div>}
                 </div>
                 <div className="text-xs text-muted-foreground shrink-0">
-                  {new Date(entry.publishedAt).toLocaleDateString(language === 'en' ? 'en-US' : language === 'fi' ? 'fi-FI' : 'da-DK')} · {formatMB(entry.size)}
+                  {new Date(entry.publishedAt).toLocaleDateString(language === 'en' ? 'en-US' : language === 'fi' ? 'fi-FI' : language === 'sv' ? 'sv-SE' : 'da-DK')} · {formatMB(entry.size)}
                 </div>
               </div>
             ))}

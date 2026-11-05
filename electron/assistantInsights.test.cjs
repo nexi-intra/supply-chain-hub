@@ -3,6 +3,7 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const { createAssistantContext } = require('./assistantContext.cjs')
+const { localize: D } = require('./assistantDateReference.cjs')
 
 const now = new Date(2026, 8, 15, 12) // tirsdag 2026-09-15
 
@@ -39,7 +40,6 @@ function fixture() {
   const api = createAssistantContext({
     listTeams: () => teams,
     lookupTeam: () => teams[0],
-    listViews: () => [],
     creatorEmail: () => 'creator@test',
     currentFolder: () => 'TCD',
     readShared: key => { reads.push(`shared:${key}`); return shared[key] },
@@ -53,8 +53,8 @@ test('whereIs: kombinerer ferie, sygdom, hjemmearbejde og vagter for en navngive
   const { api } = fixture()
   const answer = ask(api, 'hvor er Anne på torsdag?')
   assert.equal(answer.mode, 'data')
-  assert.match(answer.text, /Status for Anne Holm \(2026-09-17\)/)
-  assert.match(answer.text, /2026-09-17: Ferie/)
+  assert.match(answer.text, D(/Status for Anne Holm \(2026-09-17\)/, 'da'))
+  assert.match(answer.text, D(/2026-09-17: Ferie/, 'da'))
   assert.ok(!JSON.stringify(answer).includes('SECRET_NOTES'))
   assert.ok(!JSON.stringify(answer).includes('PASSWORD'))
 })
@@ -64,7 +64,7 @@ test('whereIs: viser vagt + hjemmearbejde kombineret og svarer på engelsk', () 
   const answer = ask(api, 'where is Bo today?', 'en')
   assert.equal(answer.mode, 'data')
   // Bo har hjemmearbejdsmønster tirsdag OG en vagt i dag -> arbejder hjemmefra med opgave
-  assert.match(answer.text, /Status for Bo Berg \(2026-09-15\)/)
+  assert.match(answer.text, D(/Status for Bo Berg \(2026-09-15\)/, 'en'))
   assert.match(answer.text, /Working from home — Task: Packing/)
 })
 
@@ -72,7 +72,7 @@ test('whereIs: finsk spørgsmål giver finsk svar', () => {
   const { api } = fixture()
   const answer = ask(api, 'missä Anne on huomenna?', 'da')
   assert.equal(answer.mode, 'data')
-  assert.match(answer.text, /Tilanne: Anne Holm \(2026-09-16\)/)
+  assert.match(answer.text, D(/Tilanne: Anne Holm \(2026-09-16\)/, 'fi'))
   assert.match(answer.text, /Loma/)
 })
 
@@ -88,7 +88,7 @@ test('available: grupperer på arbejde / hjemmearbejde / fravær og respekterer 
   const { api } = fixture()
   const answer = ask(api, 'hvem er ledige på torsdag?')
   assert.equal(answer.mode, 'data')
-  assert.match(answer.text, /Tilgængelighed \(2026-09-17\)/)
+  assert.match(answer.text, D(/Tilgængelighed \(2026-09-17\)/, 'da'))
   assert.match(answer.text, /Fraværende \(1\):\n• Anne Holm \(Ferie\)/)
   assert.match(answer.text, /På arbejde \(2\)/) // me + Bo (torsdag er ikke Bos hjemmedag)
   // pending ferie (Bo i oktober) må ALDRIG tælle som fravær
@@ -107,7 +107,46 @@ test('back: aktiv ferie giver slutdato og tilbage-dato', () => {
   const { api } = fixture()
   const answer = ask(api, 'hvornår er Anne tilbage?')
   assert.equal(answer.mode, 'data')
-  assert.match(answer.text, /Anne Holm har ferie fra 2026-09-16 til 2026-09-18 og er tilbage 2026-09-19\.|Anne Holm er på ferie til og med 2026-09-18 og er tilbage 2026-09-19\./)
+  assert.match(answer.text, /Anne Holm har ferie fra onsdag 16\. sep\. til fredag 18\. sep\. og er tilbage mandag 21\. sep\.|Anne Holm er på ferie til og med fredag 18\. sep\. og er tilbage mandag 21\. sep\./)
+})
+
+test('back: springer weekenden over og navngiver barsel', () => {
+  const { api, stores } = fixture()
+  stores.TCD.users['xuan@test'] = { email: 'xuan@test', fullName: 'Xuan Nguyen', status: 'approved' }
+  stores.TCD['vacation-entries'].push({ userEmail: 'xuan@test', startDate: '2026-09-07', endDate: '2026-09-18', status: 'approved', type: 'parental' })
+  assert.match(ask(api, 'hvornår er Xuan tilbage?').text, /Xuan Nguyen er på barsel til og med fredag 18\. sep\. og er tilbage mandag 21\. sep\./)
+  assert.match(ask(api, 'when is Xuan back?', 'en').text, /Xuan Nguyen is on parental leave through Fri 18 Sep and is back on Mon 21 Sep\./)
+})
+
+test('back: sammenhængende ferie og barsel slås sammen over weekend', () => {
+  const { api, stores } = fixture()
+  stores.TCD['vacation-entries'].push({ userEmail: 'anne@test', startDate: '2026-09-21', endDate: '2026-09-30', status: 'approved', type: 'parental' })
+  assert.match(ask(api, 'hvornår er Anne tilbage?').text, /Anne Holm har barsel fra onsdag 16\. sep\. til onsdag 30\. sep\. og er tilbage torsdag 1\. okt\./)
+})
+
+test('back: helligdage springes over', () => {
+  const { api, stores } = fixture()
+  stores.TCD['vacation-entries'].push({ userEmail: 'bo@test', startDate: '2026-12-21', endDate: '2026-12-23', status: 'approved' })
+  assert.match(ask(api, 'when is Bo back?', 'en').text, /Bo Berg has vacation from Mon 21 Dec to Wed 23 Dec and is back on Mon 28 Dec\./)
+})
+
+test('barsel vises som barsel i status og tilgængelighed', () => {
+  const { api, stores } = fixture()
+  stores.TCD.users['xuan@test'] = { email: 'xuan@test', fullName: 'Xuan Nguyen', status: 'approved' }
+  stores.TCD['vacation-entries'].push({ userEmail: 'xuan@test', startDate: '2026-09-07', endDate: '2026-09-18', status: 'approved', type: 'parental' })
+  assert.match(ask(api, 'hvor er Xuan i dag?').text, D(/2026-09-15: Barsel/, 'da'))
+  assert.match(ask(api, 'who is available today?', 'en').text, /Xuan Nguyen \(Parental leave\)/)
+})
+
+test('nextVacation: barsel tælles ikke som kommende ferie', () => {
+  const { api, stores } = fixture()
+  stores.TCD['vacation-entries'].push(
+    { userEmail: 'me@test', startDate: '2026-10-05', endDate: '2026-10-09', status: 'approved' },
+    { userEmail: 'me@test', startDate: '2026-10-12', endDate: '2026-12-18', status: 'approved', type: 'parental' },
+  )
+  const text = ask(api, 'hvornår har jeg ferie?').text
+  assert.match(text, D(/2026-10-05 – 2026-10-09/, 'da'))
+  assert.ok(!text.includes('12. okt'))
 })
 
 test('back: engelsk + ingen fravær', () => {
@@ -121,7 +160,7 @@ test('workload: tæller vagter pr. person i perioden og rangerer', () => {
   const { api } = fixture()
   const answer = ask(api, 'hvem har flest opgaver i næste uge?')
   assert.equal(answer.mode, 'data')
-  assert.match(answer.text, /Flest registrerede opgaver \(2026-09-21 – 2026-09-27\)/)
+  assert.match(answer.text, D(/Flest registrerede opgaver \(2026-09-21 – 2026-09-27\)/, 'da'))
   const meIndex = answer.text.indexOf('Test User — 2 opgaver')
   const boIndex = answer.text.indexOf('Bo Berg — 1 opgave')
   assert.ok(meIndex > 0 && boIndex > meIndex)
@@ -137,7 +176,7 @@ test('conflicts: finder vagter der overlapper godkendt fravær', () => {
   const { api } = fixture()
   const answer = ask(api, 'kolliderer nogen vagter med ferie i denne uge?')
   assert.equal(answer.mode, 'data')
-  assert.match(answer.text, /2026-09-17 · Anne Holm: Receiving — samtidig på ferie/)
+  assert.match(answer.text, D(/2026-09-17 · Anne Holm: Receiving — samtidig på ferie/, 'da'))
 })
 
 test('conflicts: melder rent når intet overlapper', () => {
@@ -185,14 +224,14 @@ test('opfølgning "og Bo?" skifter person men beholder intent og dato', () => {
   const { api } = fixture()
   const answer = api.query({ token: 'valid', question: 'og Bo?', language: 'da', previousQuestion: 'hvor er Anne på torsdag?' }, now)
   assert.equal(answer.mode, 'data')
-  assert.match(answer.text, /Status for Bo Berg \(2026-09-17\)/)
+  assert.match(answer.text, D(/Status for Bo Berg \(2026-09-17\)/, 'da'))
 })
 
 test('opfølgning "og fredag?" skifter dato men beholder personen', () => {
   const { api } = fixture()
   const answer = api.query({ token: 'valid', question: 'og fredag?', language: 'da', previousQuestion: 'hvor er Anne på torsdag?' }, now)
   assert.equal(answer.mode, 'data')
-  assert.match(answer.text, /Anne Holm \(2026-09-18\)/)
+  assert.match(answer.text, D(/Anne Holm \(2026-09-18\)/, 'da'))
 })
 
 test('opfølgning på tilbage-spørgsmål: "and Bo?"', () => {

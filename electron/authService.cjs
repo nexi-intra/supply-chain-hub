@@ -41,7 +41,7 @@ async function verifyPassword(password, stored) {
 // Only the backend can mint sessions. Persistent keys are token hashes: the
 // shared file does not contain reusable plaintext bearer tokens. Every use
 // checks the account and directory afresh (no cached privilege fallback).
-function createAuthService({ registry, getRoot, openTeam, openSessions, switchTeam, deviceSecret, now = Date.now, runWrite = callback => callback(), runAuthentication = (_, callback) => callback({ recovering: false }), assertAvailable = () => {} }) {
+function createAuthService({ registry, getRoot, openTeam, openSessions, switchTeam, getActiveFolder = () => null, deviceSecret, now = Date.now, runWrite = callback => callback(), runAuthentication = (_, callback) => callback({ recovering: false }), assertAvailable = () => {} }) {
   if (!Buffer.isBuffer(deviceSecret) || deviceSecret.length !== 32) fail('AUTH_DEVICE_KEY_INVALID')
   const bindings = new Map(), busy = new Set(), attempts = new Map(), epochs = new Map()
   // Coalesces the many synchronous session/role reads that arrive in a burst
@@ -66,9 +66,9 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
   }
   function current(sender) {
     const cached = contextCache.get(sender)
-    if (cached && cached.root === getRoot() && now() - cached.at < CONTEXT_TTL_MS) return structuredClone(cached.actor)
+    if (cached && cached.root === getRoot() && cached.folder === getActiveFolder() && now() - cached.at < CONTEXT_TTL_MS) return structuredClone(cached.actor)
     const actor = resolveCurrent(sender)
-    contextCache.set(sender, { at: now(), root: getRoot(), actor: structuredClone(actor) })
+    contextCache.set(sender, { at: now(), root: getRoot(), folder: getActiveFolder(), actor: structuredClone(actor) })
     return structuredClone(actor)
   }
   function resolveCurrent(sender) {
@@ -81,14 +81,18 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
     approved(user)
     if (typeof user.password !== 'string' || !user.password || session.credentialHash !== sessionKey(user.password)) fail('AUTH_REQUIRED')
     if (home.teamId !== session.teamId) fail('AUTH_REQUIRED')
-    if (bound.viewId && !registry.listAccessViewsForEmail(getRoot(), email).some(view => view.viewId === bound.viewId)) fail('AUTH_FORBIDDEN')
     const creator = normalize(registry.getCreatorEmail(getRoot()))
-    const role = email === creator ? 'creator' : user.role === 'manager' || user.role === 'admin' || (!user.role && user.isManager) ? 'manager' : 'user'
-    return { token: bound.token, email, userId: session.userId, teamId: session.teamId, expiresAt: session.expiresAt, createdAt: session.createdAt, role, home, viewId: bound.viewId || null }
+    const homeRole = email === creator ? 'creator' : user.role === 'manager' || user.role === 'admin' || (!user.role && user.isManager) ? 'manager' : 'user'
+    // The open hub decides the role: own role at home, manager in an extra team, nothing elsewhere.
+    const teams = [home, ...(homeRole === 'creator' ? [] : registry.managerTeamsForEmail?.(getRoot(), email) || [])]
+    const folder = getActiveFolder()
+    const activeTeam = !folder ? home : (homeRole === 'creator' ? registry.listTeams(getRoot()) : teams).find(team => team.folderName === folder) || null
+    const role = homeRole === 'creator' ? 'creator' : activeTeam?.teamId === home.teamId ? homeRole : activeTeam ? 'manager' : 'user'
+    return { token: bound.token, email, userId: session.userId, teamId: session.teamId, expiresAt: session.expiresAt, createdAt: session.createdAt, role, homeRole, home, activeTeam, teams }
   }
   function requireRole(sender, role) {
     const actor = current(sender)
-    if (actor.viewId || (actor.role !== 'creator' && (role === 'creator' || actor.role !== 'manager'))) fail('AUTH_FORBIDDEN')
+    if (actor.role !== 'creator' && (role === 'creator' || actor.role !== 'manager')) fail('AUTH_FORBIDDEN')
     return actor
   }
   async function exclusive(sender, callback, throttle = false) {
@@ -143,7 +147,7 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
         next[sessionKey(token)] = record
         return next
       })
-      bindings.set(sender, { token, root: getRoot(), viewId: null })
+      bindings.set(sender, { token, root: getRoot() })
       invalidate(sender)
       return current(sender)
       })
@@ -185,7 +189,7 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
       // Notifications are constructed here, never accepted as privileged
       // status/recipient payloads from the signup form.
       const managers = Object.values(target.get('users', { skipCache: true }) || {}).filter(user => (!user.status || user.status === 'approved') && (user.role === 'manager' || user.role === 'admin' || (!user.role && user.isManager)))
-      const labels = request.language === 'en' ? ['New signup request', 'A user requests access'] : request.language === 'fi' ? ['Uusi rekisteröitymispyyntö', 'Käyttäjä pyytää käyttöoikeutta'] : ['Ny tilmeldingsanmodning', 'En bruger anmoder om adgang']
+      const labels = request.language === 'en' ? ['New signup request', 'A user requests access'] : request.language === 'fi' ? ['Uusi rekisteröitymispyyntö', 'Käyttäjä pyytää käyttöoikeutta'] : request.language === 'sv' ? ['Ny registreringsbegäran', 'En användare begär åtkomst'] : ['Ny tilmeldingsanmodning', 'En bruger anmoder om adgang']
       try { for (const manager of managers) {
         const id = crypto.randomUUID(), message = `${labels[1]}: ${request.fullName.trim()} (${email}), ${request.phone.trim()}`
         target.update('emails', { op: 'append', items: [{ id, from: email, to: manager.email, subject: labels[0], message, timestamp: now(), read: false }] })
@@ -199,7 +203,7 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
     return exclusive(sender, async () => {
       if (typeof token !== 'string' || !/^session_[a-f0-9]{64}$/.test(token)) fail('AUTH_REQUIRED')
       const previous = bindings.get(sender)
-      bindings.set(sender, { token, root: getRoot(), viewId: null })
+      bindings.set(sender, { token, root: getRoot() })
       invalidate(sender)
       try { const actor = current(sender); runAuthentication(actor.email, () => actor); switchTeam(actor.home); return current(sender) } catch (error) {
         if (previous) bindings.set(sender, previous); else bindings.delete(sender)
@@ -228,15 +232,6 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
     invalidate(sender)
     if (bound && bound.root === getRoot()) runWrite(() => openSessions().update('active-sessions', { op: 'deleteField', field: sessionKey(bound.token) }))
   }
-  function selectView(sender, viewId) {
-    return runWrite(() => {
-    const actor = current(sender)
-    if (viewId !== null && (typeof viewId !== 'string' || !registry.listAccessViewsForEmail(getRoot(), actor.email).some(view => view.viewId === viewId))) fail('AUTH_FORBIDDEN')
-    bindings.get(sender).viewId = viewId
-    invalidate(sender)
-    return current(sender)
-    })
-  }
   async function profile(sender, request) {
     return exclusive(sender, async check => {
       const actor = current(sender), original = account(actor.email)
@@ -263,6 +258,6 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
     })
   }
   function forget(sender) { epochs.set(sender, (epochs.get(sender) || 0) + 1); bindings.delete(sender); attempts.delete(sender); invalidate(sender) }
-  return { login, signup, resume, current, requireRole, renew, logout, selectView, profile, forget, invalidateAll: () => contextCache.clear() }
+  return { login, signup, resume, current, requireRole, renew, logout, profile, forget, invalidateAll: () => contextCache.clear() }
 }
 module.exports = { createAuthService, hashPassword, verifyPassword, sessionKey, loadDeviceSecret }

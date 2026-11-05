@@ -695,4 +695,4 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
   return { get, getAsync, peekCache, set, setAsync, delete: del, deleteAsync, keys, keysAsync, watch, update, updateAsync, updateDetailed, updateDetailedAsync, mutate, withLockedKeys, invalidate: () => readCache.clear(), dumpAll, dumpAllAsync, dataDir, isConnected, scanDirectory, scanDirectoryAsync }
 }
 
-module.exports = { createStore, parseFileContents, keyToFilename }
+module.exports = { createStore, parseFileContents, keyToFilename, encryptPayload }

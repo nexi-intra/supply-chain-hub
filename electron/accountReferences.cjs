@@ -4,7 +4,9 @@ const ID_FIELDS = new Set(['userId', 'employeeId', 'ownerId', 'authorId', 'creat
 const EMAIL_LISTS = new Set(['userEmails', 'recipients', 'cc', 'bcc', 'mentionedUsers', 'allowedUsers', 'sharedWith', 'teamMembers'])
 const EMAIL_ROOT_LISTS = new Set(['guide-admin-emails'])
 const KEYED_ROOTS = new Set(['home-office-patterns', 'user-settings', 'client-versions', 'force-update-requests', 'guide-review-notice-log'])
-const PERSONAL_PREFIXES = ['app-language-', 'user-theme-', 'hub-dashboard-', 'announcements-dismissed-', 'seen-vacation-requests-']
+const PERSONAL_PREFIXES = ['app-language-', 'user-theme-', 'hub-dashboard-', 'announcements-dismissed-', 'seen-vacation-requests-', 'hub-notifications-dismissed-', 'link-favorites-']
+// Extra identity fields that only hold emails inside one specific shared record.
+const KEY_EMAIL_FIELDS = { 'improvement-cases': ['invitedBy'], 'multiplayer-index': ['actorEmail', 'turn', 'winner', 'opponentEmail'], 'high-fives': ['senderEmail', 'actorEmail'], 'link-library': ['by', 'resolvedBy', 'actorEmail'] }
 function conflict() { const error = new Error('ACCOUNT_MIGRATION_CONFLICT'); error.code = 'ACCOUNT_MIGRATION_CONFLICT'; throw error }
 function personalKey(key, oldEmail, newEmail) {
   for (const prefix of PERSONAL_PREFIXES) {
@@ -20,7 +22,7 @@ function migrateReferences(key, value, oldEmail, newEmail) {
   const identity = value => value === `user_${oldEmail}` ? `user_${newEmail}` : email(value)
   function visit(value, field = '') {
     if (Array.isArray(value)) return value.map(item => typeof item === 'string' && EMAIL_LISTS.has(field) ? identity(item) : visit(item))
-    if (!value || typeof value !== 'object') return EMAIL_FIELDS.has(field) ? email(value) : ID_FIELDS.has(field) ? identity(value) : value
+    if (!value || typeof value !== 'object') return EMAIL_FIELDS.has(field) || KEY_EMAIL_FIELDS[key]?.includes(field) ? email(value) : ID_FIELDS.has(field) ? identity(value) : value
     return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, visit(item, name)]))
   }
   if (EMAIL_ROOT_LISTS.has(key) && Array.isArray(value)) return value.map(email)

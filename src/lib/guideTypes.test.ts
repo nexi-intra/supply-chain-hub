@@ -1,5 +1,19 @@
 import { describe, it, expect } from 'vitest'
-import { computeNextReviewAt, getReviewStatus, migrateGuide, dateStringToTimestamp, timestampToDateString, type Guide } from './guideTypes'
+import { computeNextReviewAt, getReviewStatus, migrateGuide, dateStringToTimestamp, timestampToDateString, reviewIntervalLabel, type Guide } from './guideTypes'
+
+describe('reviewIntervalLabel', () => {
+  it('follows the app language', () => {
+    expect(reviewIntervalLabel(6, 'en')).toBe('6 months')
+    expect(reviewIntervalLabel(1, 'en')).toBe('1 month')
+    expect(reviewIntervalLabel(12, 'sv')).toBe('1 år')
+    expect(reviewIntervalLabel(3, 'fi')).toBe('3 kuukautta')
+    expect(reviewIntervalLabel(null, 'en')).toBe('No interval')
+  })
+
+  it('falls back to Danish for an unknown language', () => {
+    expect(reviewIntervalLabel(6, 'xx')).toBe('6 måneder')
+  })
+})
 
 function makeGuide(overrides: Partial<Guide> = {}): Guide {
   return {

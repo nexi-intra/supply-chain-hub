@@ -8,7 +8,7 @@ function publicUsers(value) {
   }))
 }
 function updateUsers(store, operation, actor, creatorEmail, trusted = {}) {
-  if (actor.viewId || !['creator', 'manager'].includes(actor.role)) fail()
+  if (!['creator', 'manager'].includes(actor.role)) fail()
   const allowed = new Set(['setField', 'deleteField', 'renameField'])
   if (!allowed.has(operation?.op) || typeof operation.field !== 'string' || !operation.field) fail()
   const unsafe = new Set(['__proto__', 'constructor', 'prototype'])

@@ -28,6 +28,14 @@ const labels = {
     failed: 'Palautusta ei voitu suorittaa. Siirto on edelleen lukittu. Yritä uudelleen, kun tallennustila on käytettävissä.',
     confirm: 'Palautetaanko tili ja siihen liittyvät tiedot siirtoa edeltävään tilaan?',
   },
+  sv: {
+    title: 'En kontoflytt måste återställas',
+    body: 'Hubbens data är tillfälligt spärrad för att undvika arbete med en ofullständig flytt. Kontakta Creator om du inte själv kan återställa den.',
+    resume: 'Fortsätt flytten', rollback: 'Ångra flytten', logout: 'Logga ut',
+    progress: 'Slutförda steg', conflict: 'Data har ändrats sedan flytten. Inget skrivs över automatiskt. Kontakta hubbens ansvarige.',
+    failed: 'Återställningen kunde inte slutföras. Flytten är fortfarande spärrad. Försök igen när lagringen är tillgänglig.',
+    confirm: 'Vill du återställa kontot och berörda data till läget före flytten?',
+  },
 }
 
 // Independently available in every logged-in view, even when ordinary KV
@@ -55,7 +63,7 @@ export function AccountMigrationRecovery({ userEmail, onLogout }: { userEmail: s
       try {
         const record = await accounts.status()
         const actor = record ? await window.electronAuth?.current() : undefined
-        if (active) { setMigration(record); setBlocked(!!record); setCanRecover(actor?.role === 'creator' && !actor.viewId) }
+        if (active) { setMigration(record); setBlocked(!!record); setCanRecover(actor?.role === 'creator') }
       } catch (failure) {
         if (active && String(failure).includes('AUTH_FORBIDDEN')) { setMigration(null); setBlocked(true); setCanRecover(false) }
       } finally { checking = false }

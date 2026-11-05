@@ -92,6 +92,15 @@ test('the keyword collisions from the baseline now route correctly', () => {
   assert.equal(storage.topic?.id, 'storage')
 })
 
+test('how-to questions about the arcade games, new and old names, reach the games guide', () => {
+  for (const name of ['Route Runner', 'Neon Snake', 'Cargo Stack', 'Tetris', 'Parcel Pilot', 'Nexi Flyer', 'Prism Break', 'Brick Break', 'Chicken Invaders']) {
+    for (const question of [`Hvordan spiller jeg ${name}?`, `How do I play ${name}?`]) {
+      const [best] = matchAppGuide(question)
+      assert.equal(best?.module?.id, 'games', question)
+    }
+  }
+})
+
 test('"what can you help me with" is answered instead of refused', () => {
   const [best] = matchAppGuide('Hvad kan du hjaelpe mig med?')
   assert.equal(best.topic?.id, 'assistant')

@@ -14,7 +14,7 @@ const logout = vi.fn()
 function render() { harness.index = 0; harness.buttons = []; return renderToStaticMarkup(<AccountMigrationRecovery userEmail="creator@example.test" onLogout={logout} />) }
 async function mount(role = 'creator', status = vi.fn(async () => record)) {
   const unsubscribe = vi.fn(), accounts = { status, resume: vi.fn(async () => ({ state: 'committed' })), rollback: vi.fn(async () => ({ state: 'rolled-back' })) }
-  vi.stubGlobal('window', { electronAccounts: accounts, electronAuth: { current: vi.fn(async () => ({ role, viewId: null })) }, electronKv: { onChanged: vi.fn(() => unsubscribe) }, confirm: vi.fn(() => true) })
+  vi.stubGlobal('window', { electronAccounts: accounts, electronAuth: { current: vi.fn(async () => ({ role })) }, electronKv: { onChanged: vi.fn(() => unsubscribe) }, confirm: vi.fn(() => true) })
   harness.capture = true; render(); harness.capture = false
   for (const effect of harness.effects) { const cleanup = effect(); if (cleanup) harness.cleanups.push(cleanup) }
   await flush()
