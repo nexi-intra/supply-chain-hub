@@ -1,0 +1,103 @@
+import { describe, expect, it } from 'vitest'
+import type { LayoutItem, LayoutSlot, LocationList, MapContents, MapMaterial, WarehouseLayout } from '@/types/warehouse'
+import { canShowOnMap, cellText, contentTitle, contextOf, findSlot, placeOfSlot, searchMap, slotStatus } from './map'
+
+const base: LayoutItem = { id: 'r1', type: 'rack', x: 0, y: 0, w: 10, h: 2, name: '', note: '', slots: [] }
+const rackSlot = (name: string, pos: number, level: number, extra: Partial<LayoutSlot> = {}): LayoutSlot => ({ id: `A-${pos}-${level}`, name, kind: 'pallet', purpose: 'reserve', pos, level, ...extra })
+// Bay 3 holds the pick place without a name.
+const rackA: LayoutItem = {
+  ...base, id: 'A', name: 'A', bays: 3, levels: 2,
+  slots: [rackSlot('A1.1', 1, 1), rackSlot('A1.2', 1, 2), rackSlot('A2.1', 2, 1, { purpose: 'pick' }), rackSlot('A2.2', 2, 2), rackSlot('', 3, 1, { kind: 'pick-unnamed', purpose: 'pick' })],
+}
+const unnamed = rackA.slots[4]
+const trrRack: LayoutItem = { ...base, id: 'D', name: 'D', owner: 'TRR', bays: 1, levels: 1, slots: [{ id: 'D-1-1', name: 'A2.2', kind: 'pallet', purpose: 'reserve', pos: 1, level: 1 }] }
+const layout: Pick<WarehouseLayout, 'items'> = { items: [trrRack, rackA] }
+const slot = (name: string) => rackA.slots.find(s => s.name === name)!
+const slotIdOf = (name: string) => slot(name).id
+
+type Place = LocationList['locations'][number]
+const place = (name: string, extra: Partial<Place> = {}): Place => ({
+  id: `id-${name}`, name, area: 'A', type: 'Palle', purpose: 'reserve', capacity: 1, fixedMaterials: [], active: true, note: '',
+  updatedAt: 0, updatedBy: { email: '', name: '' }, used: 0, stockCount: 0, ...extra,
+})
+const m = (material: string, extra: Partial<MapMaterial> = {}): MapMaterial => ({ material, description: '', pallets: 0, quantity: null, oldestAt: null, fixed: false, ...extra })
+
+const listOf = (overrides: Record<string, Partial<Place>> = {}): LocationList => ({
+  locations: [place('A1.1'), place('A1.2'), place('A2.1', { purpose: 'pick', fixedMaterials: ['X9'] }), place('A2.2'), place('K1.1')].map(p => ({ ...p, ...overrides[p.name] })),
+  tags: [], canAdmin: false, imported: true, live: true,
+  drawing: { version: 2, linked: ['A1.1', 'A1.2', 'A2.1', 'A2.2'] },
+})
+const contents: MapContents = {
+  places: {
+    'A1.1': { materials: [m('R162-0717', { description: 'Universal RJ45 kabel', pallets: 1, oldestAt: 200 }), m('X9', { quantity: 30 }), m('X8', { quantity: 5 })] },
+    'A1.2': { materials: [m('X8', { quantity: 30 })] },
+    'A2.1': { materials: [m('X9', { fixed: true })] },
+    'A2.2': { materials: [m('R162-0717', { description: 'Universal RJ45 kabel', pallets: 1, oldestAt: 100 })] },
+  },
+  oldest: { 'R162-0717': 'A2.2' },
+}
+const ctx = contextOf(listOf(), contents, 'TCD')
+const ctxWith = (overrides: Record<string, Partial<Place>>) => contextOf(listOf(overrides), contents, 'TCD')
+const ctxNoOldest = contextOf(listOf(), { ...contents, oldest: {} }, 'TCD')
+
+describe('map rules', () => {
+  it('slotStatus follows the order other-team, none, inactive, reserved, pick, used, empty', () => {
+    expect(slotStatus(trrRack, trrRack.slots[0], ctx)).toBe('other-team')
+    expect(slotStatus(rackA, unnamed, ctx)).toBe('none')
+    expect(slotStatus(rackA, slot('A1.1'), ctxWith({ 'A1.1': { active: false, used: 1 } }))).toBe('none')
+    expect(slotStatus(rackA, slot('A1.1'), ctxWith({ 'A1.1': { purpose: 'reserved' } }))).toBe('reserved')
+    expect(slotStatus(rackA, slot('A1.1'), ctxWith({ 'A1.1': { purpose: 'pick', used: 0 } }))).toBe('pick')
+    expect(slotStatus(rackA, slot('A1.1'), ctxWith({ 'A1.1': { stockCount: 1 } }))).toBe('used')
+    expect(slotStatus(rackA, slot('A1.1'), ctx)).toBe('empty')
+  })
+
+  it('a TRR slot named like a TCD place is never that place', () => {
+    expect(placeOfSlot(trrRack, trrRack.slots[0], ctx)).toBeNull()
+    expect(searchMap('A2.2', layout, ctx).focus).toEqual({ itemId: 'A', slotId: slotIdOf('A2.2'), placeId: 'A2.2' })
+  })
+
+  it('cellText shows the first material and +N', () => {
+    expect(cellText(undefined)).toBe('')
+    expect(cellText({ materials: [m('R330-0001')] })).toBe('R330-0001')
+    expect(cellText({ materials: [m('R330-0001'), m('R412-0090'), m('R550-1203')] })).toBe('R330-0001 +2')
+  })
+
+  it('contentTitle never shows undefined or an empty description', () => {
+    const text = contentTitle('A2.3', { materials: [m('R330-0001', { description: '', pallets: 1 }), m('R550-1203', { description: 'Strips', pallets: 0, quantity: 40 })] })
+    expect(text).toBe('A2.3 · 2 materialer\nR330-0001 (1 palle)\nR550-1203 · Strips (40 stk)\nKlik → pladskortet')
+    expect(text).not.toMatch(/undefined| · \(/)
+  })
+
+  it('searchMap finds a typed or scanned place however it is written', () => {
+    expect(searchMap(' a1.2 ', layout, ctx).focus?.placeId).toBe('A1.2')
+    expect(searchMap('a', layout, ctx).hits).toEqual([])
+  })
+
+  it('searchMap points a material at the oldest pallet (same as Tag) and marks it', () => {
+    const found = searchMap('R162', layout, ctx) // R162-0717 on A1.1 and A2.2; oldest: A2.2
+    expect(found.focus?.placeId).toBe('A2.2')
+    expect(found.hits[0].places.find(p => p.oldest)?.id).toBe('A2.2')
+    expect(found.items).toEqual(['A'])
+  })
+
+  it('searchMap falls back to the pick place, then the largest quantity, when there is no oldest pallet', () => {
+    // X9: fixed on the pick place A2.1 and 30 pcs on A1.1's shelf lines; X8: only 5 on A1.1 and 30 on A1.2; neither in `oldest`.
+    expect(searchMap('X9', layout, ctxNoOldest).focus?.placeId).toBe('A2.1')
+    expect(searchMap('X8', layout, ctxNoOldest).focus?.placeId).toBe('A1.2')
+  })
+
+  it('a place outside the drawing is "ikke på kortet": no slot and no Vis på kort', () => {
+    const found = searchMap('K1.1', layout, ctx)
+    expect(found.hits[0].places[0]).toMatchObject({ id: 'K1.1', itemId: null, slotId: null })
+    expect(found.focus).toBeNull()
+    expect(canShowOnMap('K1.1', { version: 2, linked: ['A1.1'] })).toBe(false)
+    expect(canShowOnMap('a1.1', { version: 2, linked: ['A1.1'] })).toBe(true)
+    expect(canShowOnMap('A1.1', null)).toBe(false)
+  })
+
+  it('findSlot finds the item and slot of a place, null for another team or an unknown place', () => {
+    expect(findSlot(layout, 'A1.1', ctx)).toEqual({ itemId: 'A', slotId: slotIdOf('A1.1') })
+    expect(findSlot(layout, 'NOPE', ctx)).toBeNull()
+    expect(findSlot({ items: [trrRack] }, 'A2.2', ctx)).toBeNull()
+  })
+})
