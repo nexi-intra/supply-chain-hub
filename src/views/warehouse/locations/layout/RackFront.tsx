@@ -23,6 +23,8 @@ type Props = {
   /** By slot id. What stands on the place (view mode only): a short cell text and a longer title. */
   content?: Record<string, { text: string; title: string }>
   highlight?: string
+  /** View mode only: show just the columns (and blocks) holding one of these slot ids; every level stays. */
+  visibleSlots?: Set<string>
   /** In edit mode it takes over a click (the slot is being picked). */
   onSlot?: (slotId: string) => void
   dispatch?: Dispatch<EditorAction>
@@ -94,6 +96,19 @@ function blocksOf(item: LayoutItem): Block[] {
   return []
 }
 
+/** Keeps the columns with a visible slot and the blocks with such a column; every row of a kept block stays. */
+function cutBlocks(blocks: Block[], visible: Set<string>): Block[] {
+  return blocks.flatMap(block => {
+    const keep = block.cols.map((_, index) => block.rows.some(row => { const slot = row.cells[index]; return !!slot && visible.has(slot.id) }))
+    if (!keep.some(Boolean)) return []
+    return [{
+      ...block,
+      cols: block.cols.filter((_, index) => keep[index]),
+      rows: block.rows.map(row => ({ ...row, cells: row.cells.filter((_, index) => keep[index]) })),
+    }]
+  })
+}
+
 function countsText(item: LayoutItem): string {
   const of = (test: (slot: LayoutSlot) => boolean) => item.slots.filter(test).length
   if (item.type === 'floorrow') {
@@ -125,7 +140,7 @@ function cellText(slot: LayoutSlot, column: string): string {
 const cyclable = (item: LayoutItem, slot: LayoutSlot) => item.type === 'rack' && slot.unit == null && slot.level != null && slot.kind !== 'aisle'
 
 /** A rack, shelf rack or floor row seen from the front: levels (top first) × bays, with every slot. */
-export function RackFront({ item, mode, duplicates, link, status, content, highlight, onSlot, dispatch }: Props) {
+export function RackFront({ item, mode, duplicates, link, status, content, highlight, visibleSlots, onSlot, dispatch }: Props) {
   const [chosen, setChosen] = useState<Set<string>>(() => new Set())
   const [picking, setPicking] = useState(false)
   const [editing, setEditing] = useState<string | null>(null)
@@ -137,7 +152,7 @@ export function RackFront({ item, mode, duplicates, link, status, content, highl
 
   const edit = mode === 'edit' && !!dispatch
   const shown = mode === 'view' ? content : undefined
-  const blocks = blocksOf(item)
+  const blocks = mode === 'view' && visibleSlots ? cutBlocks(blocksOf(item), visibleSlots) : blocksOf(item)
   const selected = item.slots.filter(slot => chosen.has(slot.id))
   const tooLong = asking == null ? 0 : selected.filter(slot => !isUnnamed(slot) && fillPattern(asking.trim(), slotValues(item, slot)).length > NAME_MAX).length
   const isDuplicate = (slot: LayoutSlot) => !!duplicates?.size && !isUnnamed(slot) && duplicates.has(locationKeyOf(slot.name))
