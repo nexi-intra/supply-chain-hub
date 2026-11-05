@@ -37,7 +37,7 @@ export function PlacePeek({ peek, ctx, layout, chosen, onChoose, onShowOnMap }: 
       </div>
       <div className="flex flex-wrap items-start gap-3">
         <div className="w-60 flex-none overflow-hidden rounded border bg-card">
-          <LayoutCanvas layout={layout} highlight={[peek.item.id]} floorView={peek.floor} zoom={1} readOnly team={ctx.team} />
+          <LayoutCanvas layout={layout} highlight={[peek.item.id]} strongHighlight floorView={peek.floor} zoom={1} readOnly team={ctx.team} />
         </div>
         {fronted && front && (
           <div className="min-w-0 flex-1 overflow-x-auto">

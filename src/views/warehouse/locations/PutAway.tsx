@@ -31,7 +31,7 @@ interface Draft {
   slots: SlotSuggestion[]
   /** The material has been looked up: its description and place suggestions are known. */
   checked: boolean
-  /** The suggestion last shown with "Vis"; null shows the chosen place. Any change of `location` clears it. */
+  /** The suggestion last shown with "Vis"; null shows the chosen place. Any change of `location` or `material`, or a suggestion list without it, clears it. */
   shown: string | null
 }
 
@@ -54,8 +54,14 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
   const [saving, setSaving] = useState(false)
   const [mapData, setMapData] = useState<{ layout: WarehouseLayout | null; list: LocationList; contents: MapContents } | null>(null)
   const [mapFailed, setMapFailed] = useState(false)
-  // A new place clears the suggestion being looked at, so the view shows what will be saved.
-  const update = (key: number, patch: Partial<Draft>) => setDrafts(list => list.map(item => (item.key === key ? { ...item, ...('location' in patch ? { shown: null } : {}), ...patch } : item)))
+  // A new place or material clears the suggestion being looked at, and so does a suggestion list without it, so the view shows what will be saved.
+  const update = (key: number, patch: Partial<Draft>) => setDrafts(list => list.map(item => {
+    if (item.key !== key) return item
+    const next = { ...item, ...patch }
+    const stale = 'location' in patch || next.material !== item.material
+      || (next.shown !== null && !next.slots.some(slot => locationKeyOf(slot.location) === locationKeyOf(next.shown!)))
+    return stale && !('shown' in patch) ? { ...next, shown: null } : next
+  }))
   const bridge = window.electronWarehouse!.locations
 
   const drawingVersion = drawing?.version ?? null
@@ -96,7 +102,7 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
       // One pallet per material on the document.
       const [first, ...rest] = found.materials
       const extra = rest.map(item => ({ ...blank(), document: found.document, material: item.material, description: item.description, quantity: String(item.quantity), serials: item.serials, sloc: draft.sloc, date: draft.date }))
-      setDrafts(list => list.flatMap(item => (item.key === draft.key ? [{ ...item, document: found.document, material: first.material, description: first.description, quantity: String(first.quantity), serials: first.serials }, ...extra] : [item])))
+      setDrafts(list => list.flatMap(item => (item.key === draft.key ? [{ ...item, shown: null, document: found.document, material: first.material, description: first.description, quantity: String(first.quantity), serials: first.serials }, ...extra] : [item])))
       for (const item of [{ key: draft.key, material: first.material }, ...extra]) void describe(item.key, item.material)
     } catch (error) {
       toast.error(errorMessage(error))
@@ -171,7 +177,9 @@ function DraftCard({ draft, index, tags, canRemove, map, mapFailed, onShowOnMap,
   // "Vis" only for suggestions that are on the drawing.
   const onMap = useMemo(() => new Set(map ? draft.slots.filter(slot => peekOf(map.layout, slot.location, map.ctx)).map(slot => slot.location) : []), [map, draft.slots])
   const showSlot = (location: string) => {
-    if (locationKeyOf(location) === locationKeyOf(draft.location)) { if (draft.shown !== null) onChange({ shown: null }); return }
+    // A second press on the pressed "Vis" goes back to the chosen place.
+    const again = draft.shown !== null && locationKeyOf(draft.shown) === locationKeyOf(location)
+    if (again || locationKeyOf(location) === locationKeyOf(draft.location)) { if (draft.shown !== null) onChange({ shown: null }); return }
     onChange({ shown: location })
   }
 

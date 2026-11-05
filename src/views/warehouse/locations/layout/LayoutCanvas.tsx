@@ -194,9 +194,9 @@ function Label({ item }: { item: LayoutItem }) {
   )
 }
 
-type ItemProps = { item: LayoutItem; hatch: string; team: LayoutOwner; selected: boolean; duplicate: boolean; highlighted: boolean; editable: boolean; cursor?: string }
+type ItemProps = { item: LayoutItem; hatch: string; team: LayoutOwner; selected: boolean; duplicate: boolean; highlighted: boolean; strong?: boolean; editable: boolean; cursor?: string }
 
-function Item({ item, hatch, team, selected, duplicate, highlighted, editable, cursor }: ItemProps) {
+function Item({ item, hatch, team, selected, duplicate, highlighted, strong, editable, cursor }: ItemProps) {
   const { x, y, w, h } = item
   const base = TYPE_COLORS[item.type]
   const mezz = item.floor === 'mezz'
@@ -224,7 +224,9 @@ function Item({ item, hatch, team, selected, duplicate, highlighted, editable, c
         </>
       )}
       {duplicate && <rect x={x - 0.15} y={y - 0.15} width={w + 0.3} height={h + 0.3} fill="none" stroke="#ef4444" strokeWidth={0.16} />}
-      {highlighted && <rect x={x - 0.25} y={y - 0.25} width={w + 0.5} height={h + 0.5} rx={0.2} fill="none" stroke="#f59e0b" strokeWidth={0.22} />}
+      {highlighted && (strong
+        ? <rect x={x - 0.25} y={y - 0.25} width={w + 0.5} height={h + 0.5} rx={0.2} fill="#f59e0b" fillOpacity={0.5} stroke="#f59e0b" strokeWidth={3} vectorEffect="non-scaling-stroke" />
+        : <rect x={x - 0.25} y={y - 0.25} width={w + 0.5} height={h + 0.5} rx={0.2} fill="none" stroke="#f59e0b" strokeWidth={0.22} />)}
       {selected && (
         <>
           <rect x={x - 0.1} y={y - 0.1} width={w + 0.2} height={h + 0.2} fill="none" stroke="var(--primary)" strokeWidth={0.14} strokeDasharray=".4 .25" />
@@ -240,6 +242,8 @@ type Props = {
   selected?: string | null
   /** Item ids drawn with a highlight. */
   highlight?: string[]
+  /** Highlighted items get a solid amber fill and a 3 px outline, for a small canvas. */
+  strongHighlight?: boolean
   /** Place ids (locationKey) used twice; items holding one get a red outline. */
   duplicates?: Set<string>
   floorView: FloorView
@@ -253,7 +257,7 @@ type Props = {
 }
 
 /** The hall as SVG, 1 unit = 1 grid cell. Pointer positions are reported in cells (not rounded). */
-export function LayoutCanvas({ layout, selected, highlight, duplicates, floorView, zoom, readOnly, team = 'TCD', cursor, preview, onPointer }: Props) {
+export function LayoutCanvas({ layout, selected, highlight, strongHighlight, duplicates, floorView, zoom, readOnly, team = 'TCD', cursor, preview, onPointer }: Props) {
   const svgRef = useRef<SVGSVGElement>(null)
   const uid = useId().replace(/[^a-zA-Z0-9_-]/g, '')
   const hatch = `hatch${uid}`
@@ -273,7 +277,7 @@ export function LayoutCanvas({ layout, selected, highlight, duplicates, floorVie
 
   const isDuplicate = (item: LayoutItem) => !!duplicates?.size && !item.visual && item.slots.some(slot => duplicates.has(locationKeyOf(slot.name)))
   const draw = (item: LayoutItem) => (
-    <Item key={item.id} item={item} hatch={hatch} team={team} selected={item.id === selected} duplicate={isDuplicate(item)} highlighted={!!highlight?.includes(item.id)} editable={!readOnly} cursor={cursor} />
+    <Item key={item.id} item={item} hatch={hatch} team={team} selected={item.id === selected} duplicate={isDuplicate(item)} highlighted={!!highlight?.includes(item.id)} strong={strongHighlight} editable={!readOnly} cursor={cursor} />
   )
 
   return (
