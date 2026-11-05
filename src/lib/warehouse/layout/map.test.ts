@@ -100,4 +100,32 @@ describe('map rules', () => {
     expect(findSlot(layout, 'NOPE', ctx)).toBeNull()
     expect(findSlot({ items: [trrRack] }, 'A2.2', ctx)).toBeNull()
   })
+
+  it('searchMap shows at most 8 hits, the exact place first, and scans the drawing once', () => {
+    const names = Array.from({ length: 12 }, (_, i) => `A1.${i + 1}`)
+    const big: LocationList = { ...listOf(), locations: names.map(name => place(name)), drawing: { version: 2, linked: names } }
+    let reads = 0
+    const rack: LayoutItem = { ...base, id: 'B', name: 'A', bays: 12, levels: 1, slots: [] }
+    const slots = names.map((name, i) => rackSlot(name, i + 1, 1))
+    Object.defineProperty(rack, 'slots', { get: () => (reads++, slots) })
+    const bigCtx = contextOf(big, { places: {}, oldest: {} }, 'TCD')
+
+    const found = searchMap('A1', { items: [rack] }, bigCtx)
+    expect(found.hits).toHaveLength(8)
+    expect(found.hits.map(hit => hit.places[0].id)).toEqual(names.slice(0, 8))
+    expect(found.hits.every(hit => hit.places[0].itemId === 'B')).toBe(true)
+    expect(reads).toBe(1)
+
+    const exact = searchMap('A1.12', { items: [rack] }, bigCtx)
+    expect(exact.hits[0].places[0].id).toBe('A1.12')
+    expect(exact.focus).toEqual({ itemId: 'B', slotId: slots[11].id, placeId: 'A1.12' })
+  })
+
+  it('searchMap caps material hits after the place hits', () => {
+    const many: MapContents = { places: { 'A1.1': { materials: Array.from({ length: 10 }, (_, i) => m(`A1-${i}`)) } }, oldest: {} }
+    const found = searchMap('A1', layout, contextOf(listOf(), many, 'TCD'))
+    expect(found.hits).toHaveLength(8)
+    expect(found.hits.slice(0, 2).map(hit => hit.kind)).toEqual(['place', 'place'])
+    expect(found.hits.slice(2).map(hit => hit.material)).toEqual(['A1-0', 'A1-1', 'A1-2', 'A1-3', 'A1-4', 'A1-5'])
+  })
 })

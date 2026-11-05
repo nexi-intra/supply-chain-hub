@@ -87,6 +87,18 @@ export function canShowOnMap(placeId: string, drawing: LocationList['drawing']):
   return !!drawing && !!id && drawing.linked.some(linked => locationKeyOf(linked) === id)
 }
 
+/** Place id → its first slot on the drawing (same pick as findSlot), built in one pass over the layout. */
+function slotIndex(layout: Pick<WarehouseLayout, 'items'>, ctx: MapContext): Map<string, { itemId: string; slotId: string }> {
+  const index = new Map<string, { itemId: string; slotId: string }>()
+  for (const item of layout.items) {
+    for (const slot of item.slots) {
+      const id = placeOfSlot(item, slot, ctx)
+      if (id && !index.has(id)) index.set(id, { itemId: item.id, slotId: slot.id })
+    }
+  }
+  return index
+}
+
 const byName = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true })
 
 export function searchMap(query: string, layout: Pick<WarehouseLayout, 'items'>, ctx: MapContext): MapSearch {
@@ -94,12 +106,15 @@ export function searchMap(query: string, layout: Pick<WarehouseLayout, 'items'>,
   if (text.length < MIN_QUERY) return { hits: [], focus: null, items: [] }
   const key = locationKeyOf(text)
   const lower = text.toLowerCase()
+  let slots: Map<string, { itemId: string; slotId: string }> | null = null
   const hitPlace = (id: string, oldest = false): MapHitPlace => {
-    const at = findSlot(layout, id, ctx)
+    slots ??= slotIndex(layout, ctx)
+    const at = slots.get(id)
     return { id, name: ctx.places.get(id)?.name ?? id, itemId: at?.itemId ?? null, slotId: at?.slotId ?? null, oldest }
   }
 
-  const placeIds = [...ctx.places.keys()].filter(id => id.startsWith(key)).sort((a, b) => Number(b === key) - Number(a === key) || byName(a, b))
+  // Rank first, cut to MAX_HITS, then resolve slots – only for the hits that are shown.
+  const placeIds = [...ctx.places.keys()].filter(id => id.startsWith(key)).sort((a, b) => Number(b === key) - Number(a === key) || byName(a, b)).slice(0, MAX_HITS)
   const placeHits: MapHit[] = placeIds.map(id => ({ kind: 'place', places: [hitPlace(id)] }))
 
   const found = new Map<string, { description: string; ids: string[] }>()
@@ -112,14 +127,14 @@ export function searchMap(query: string, layout: Pick<WarehouseLayout, 'items'>,
       found.set(material, entry)
     }
   }
-  const materialHits: MapHit[] = [...found.keys()].sort(byName).map(material => {
+  const materialHits: MapHit[] = [...found.keys()].sort(byName).slice(0, MAX_HITS - placeHits.length).map(material => {
     const { description, ids } = found.get(material)!
     const oldest = ctx.contents.oldest[material]
     const places = ids.sort((a, b) => Number(b === oldest) - Number(a === oldest) || byName(a, b)).map(id => hitPlace(id, id === oldest))
     return { kind: 'material', material, description, places }
   })
 
-  const hits = [...placeHits, ...materialHits].slice(0, MAX_HITS)
+  const hits = [...placeHits, ...materialHits]
   const items = [...new Set(hits.flatMap(hit => hit.places.map(p => p.itemId)).filter((id): id is string => id != null))]
   return { hits, focus: focusOf(hits, key, ctx), items }
 }
