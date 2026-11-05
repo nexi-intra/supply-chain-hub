@@ -39,7 +39,9 @@ function titleOf(item: LayoutItem): string {
 export function LocationsMap({ user, focus, drawing, version, onOpen }: { user: WarehouseUser; focus?: string; drawing: LocationList['drawing']; version: number; onOpen: (target: LocationsTarget) => void }) {
   const [layout, setLayout] = useState<WarehouseLayout | null | undefined>(undefined)
   const [data, setData] = useState<{ list: LocationList; contents: MapContents } | null>(null)
-  const [failed, setFailed] = useState<string | null>(null)
+  const [layoutFailed, setLayoutFailed] = useState<string | null>(null)
+  const [dataFailed, setDataFailed] = useState<string | null>(null)
+  const [layoutTry, setLayoutTry] = useState(0)
   const [query, setQuery] = useState('')
   const [floorView, setFloorView] = useState<FloorView>('all')
   const [zoom, setZoom] = useState(1)
@@ -52,17 +54,21 @@ export function LocationsMap({ user, focus, drawing, version, onOpen }: { user: 
   useEffect(() => {
     let current = true
     window.electronWarehouse!.locations.layout()
-      .then(result => { if (current) setLayout(result.layout) })
-      .catch(error => { if (current) { setFailed(errorMessage(error)); toast.error(errorMessage(error)) } })
+      .then(result => { if (current) { setLayout(result.layout); setLayoutFailed(null) } })
+      .catch(error => { if (current) { setLayoutFailed(errorMessage(error)); toast.error(errorMessage(error)) } })
     return () => { current = false }
-  }, [drawingVersion])
+  }, [drawingVersion, layoutTry])
+
+  // A failed read of the drawing is tried again on the next change, as long as there is no drawing to show.
+  const layoutMissing = layout === undefined && !!layoutFailed
+  useEffect(() => { if (layoutMissing) setLayoutTry(count => count + 1) }, [version]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     let current = true
     const bridge = window.electronWarehouse!.locations
     Promise.all([bridge.list(), bridge.mapContents()])
-      .then(([list, contents]) => { if (current) setData({ list, contents }) })
-      .catch(error => { if (current) { setFailed(errorMessage(error)); toast.error(errorMessage(error)) } })
+      .then(([list, contents]) => { if (current) { setData({ list, contents }); setDataFailed(null) } })
+      .catch(error => { if (current) { setDataFailed(errorMessage(error)); toast.error(errorMessage(error)) } })
     return () => { current = false }
   }, [version])
 
@@ -87,7 +93,8 @@ export function LocationsMap({ user, focus, drawing, version, onOpen }: { user: 
 
   useEffect(() => { if (chosen?.scroll) front.current?.scrollIntoView({ block: 'nearest' }) }, [chosen])
 
-  if (failed && (!layout || !data)) return <p className="rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm">{failed}</p>
+  const failed = (layout === undefined && layoutFailed) || (!data && dataFailed)
+  if (failed) return <p className="rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm">{failed}</p>
   if (layout === null) return <p className="rounded-lg border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">{t('Tegningen er ikke udgivet endnu', 'The drawing has not been published yet')}</p>
   if (!layout || !ctx || !search) return <Skeleton className="h-96 rounded-xl" />
 
@@ -109,10 +116,15 @@ export function LocationsMap({ user, focus, drawing, version, onOpen }: { user: 
   }
 
   function onHit(place: MapHitPlace) {
-    if (place.itemId === null || place.slotId === null) { onOpen({ kind: 'location', id: place.id }); return }
-    const target = layout!.items.find(entry => entry.id === place.itemId)
-    if (target && SINGLE.includes(target.type)) { onOpen({ kind: 'location', id: place.id }); return }
-    setChosen({ itemId: place.itemId, slotId: place.slotId, scroll: true })
+    goTo(place.id, place.itemId, place.slotId)
+  }
+
+  // A floor area, a special place or a place off the drawing opens its place card; a slot in a rack comes into view.
+  function goTo(placeId: string, itemId: string | null, slotId: string | null) {
+    if (itemId === null || slotId === null) { onOpen({ kind: 'location', id: placeId }); return }
+    const target = layout!.items.find(entry => entry.id === itemId)
+    if (target && SINGLE.includes(target.type)) { onOpen({ kind: 'location', id: placeId }); return }
+    setChosen({ itemId, slotId, scroll: true })
   }
 
   const status: Record<string, SlotStatus> = {}
@@ -142,6 +154,13 @@ export function LocationsMap({ user, focus, drawing, version, onOpen }: { user: 
             autoFocus
             value={query}
             onChange={event => setQuery(event.target.value)}
+            onKeyDown={event => {
+              if (event.key !== 'Enter') return
+              event.preventDefault()
+              // Enter (a scanner ends with it) shows the found place, and selects the text so the next scan replaces it.
+              event.currentTarget.select()
+              if (search.focus) goTo(search.focus.placeId, search.focus.itemId, search.focus.slotId)
+            }}
             placeholder={t('Søg eller scan: plads eller materiale', 'Search or scan: place or material')}
             aria-label={t('Søg på kortet', 'Search the map')}
             className="h-10 pl-9"
@@ -160,7 +179,7 @@ export function LocationsMap({ user, focus, drawing, version, onOpen }: { user: 
         </div>
       </div>
 
-      {query.trim().length >= 2 && <MapHits hits={search.hits} onPlace={onHit} />}
+      {query.trim().length >= 2 && <MapHits hits={search.hits} contents={ctx.contents} onPlace={onHit} />}
 
       <div className="max-h-[70vh] overflow-auto rounded-lg border bg-card">
         <LayoutCanvas layout={layout} highlight={highlight} floorView={floorView} zoom={zoom} readOnly team={user.team} cursor="pointer" onPointer={onPointer} />

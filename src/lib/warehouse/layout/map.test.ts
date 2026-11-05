@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { LayoutItem, LayoutSlot, LocationList, MapContents, MapMaterial, WarehouseLayout } from '@/types/warehouse'
-import { canShowOnMap, cellText, contentTitle, contextOf, findSlot, placeOfSlot, searchMap, slotStatus } from './map'
+import { canShowOnMap, cellText, contentTitle, contextOf, dayMonth, findSlot, placeOfSlot, searchMap, slotStatus } from './map'
 
 const base: LayoutItem = { id: 'r1', type: 'rack', x: 0, y: 0, w: 10, h: 2, name: '', note: '', slots: [] }
 const rackSlot = (name: string, pos: number, level: number, extra: Partial<LayoutSlot> = {}): LayoutSlot => ({ id: `A-${pos}-${level}`, name, kind: 'pallet', purpose: 'reserve', pos, level, ...extra })
@@ -66,6 +66,17 @@ describe('map rules', () => {
     const text = contentTitle('A2.3', { materials: [m('R330-0001', { description: '', pallets: 1 }), m('R550-1203', { description: 'Strips', pallets: 0, quantity: 40 })] })
     expect(text).toBe('A2.3 · 2 materialer\nR330-0001 (1 palle)\nR550-1203 · Strips (40 stk)\nKlik → pladskortet')
     expect(text).not.toMatch(/undefined| · \(/)
+  })
+
+  it('contentTitle calls a place without content "tom", not "0 materialer"', () => {
+    expect(contentTitle('A1.4', undefined)).toBe('A1.4 · tom\nKlik → pladskortet')
+    expect(contentTitle('A1.4', { materials: [] })).toBe('A1.4 · tom\nKlik → pladskortet')
+  })
+
+  it('dayMonth writes a date as "dd.mm" like the spec\'s "ældste, 14.09"', () => {
+    expect(dayMonth(new Date(2026, 8, 14, 9, 5).getTime())).toBe('14.09')
+    expect(dayMonth(new Date(2026, 0, 3).getTime())).toBe('03.01')
+    expect(dayMonth(null)).toBe('')
   })
 
   it('searchMap finds a typed or scanned place however it is written', () => {

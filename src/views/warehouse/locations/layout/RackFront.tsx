@@ -141,6 +141,8 @@ export function RackFront({ item, mode, duplicates, link, status, content, highl
   const selected = item.slots.filter(slot => chosen.has(slot.id))
   const tooLong = asking == null ? 0 : selected.filter(slot => !isUnnamed(slot) && fillPattern(asking.trim(), slotValues(item, slot)).length > NAME_MAX).length
   const isDuplicate = (slot: LayoutSlot) => !!duplicates?.size && !isUnnamed(slot) && duplicates.has(locationKeyOf(slot.name))
+  // On the map (view mode with content) only a slot that is a place can be clicked; the editor is unchanged.
+  const hasPlace = (slot: LayoutSlot) => !shown || !!shown[slot.id]
 
   function toggle(slotId: string) {
     setChosen(current => {
@@ -151,7 +153,7 @@ export function RackFront({ item, mode, duplicates, link, status, content, highl
   }
 
   function onClick(slot: LayoutSlot, event: ReactMouseEvent) {
-    if (!edit || onSlot) { onSlot?.(slot.id); return }
+    if (!edit || onSlot) { if (hasPlace(slot)) onSlot?.(slot.id); return }
     if (picking || event.shiftKey || event.ctrlKey || event.metaKey) { toggle(slot.id); return }
     window.clearTimeout(timer.current)
     // A double-click renames, so the first click waits a moment before it changes the kind.
@@ -245,7 +247,7 @@ export function RackFront({ item, mode, duplicates, link, status, content, highl
                     const { fill, dashed } = fillOf(slot)
                     const column = block.cols[index].label
                     const duplicate = isDuplicate(slot)
-                    const clickable = edit && !onSlot ? picking || cyclable(item, slot) || !isUnnamed(slot) : !!onSlot
+                    const clickable = edit && !onSlot ? picking || cyclable(item, slot) || !isUnnamed(slot)                     : !!onSlot && hasPlace(slot)
                     const title = shown?.[slot.id]?.title ?? titleOf(slot)
                     const below = contentText(slot)
                     const label = (

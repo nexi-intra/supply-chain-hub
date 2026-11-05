@@ -39,7 +39,9 @@ export function Locations({ user, initial }: { user: WarehouseUser; initial: Loc
   // A published drawing makes the places (the create and import entries give way to it) and opens the map for everyone.
   const [drawing, setDrawing] = useState<LocationList['drawing']>(null)
   useEffect(() => {
-    window.electronWarehouse!.locations.overview().then(result => { setTags(result.tags); setDrawing(result.drawing) }).catch(() => {})
+    let current = true
+    window.electronWarehouse!.locations.overview().then(result => { if (current) { setTags(result.tags); setDrawing(result.drawing) } }).catch(() => {})
+    return () => { current = false }
   }, [version])
   const drawn = Boolean(drawing)
 

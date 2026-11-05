@@ -1,7 +1,8 @@
 // Tegning af lageret in the Hub on a temporary platform (manager chef@example.test, employee anna@example.test); M: is
 // never touched. `--open` signs the manager in and leaves the window open for manual checks; without flags a smoke flow
 // runs the whole Phase 1 flow (draw, reconcile, publish, rename with a pallet, employee locked out) and the Phase 2 map flow
-// ("Kort over lageret" for the employee: search a material, the rack front, "Vis på kort") with fixed assertions and
+// ("Kort over lageret" for the employee: click a rack on the drawing, search a material, Enter and a second scan, the rack
+// front, "Vis på kort") with fixed assertions and
 // leaves screenshots in the evidence folder. Prints "ALLE TJEK OK" at the end; any failed check exits with code 1.
 // Needs Vite:  npm run dev -- --host 127.0.0.1 --port 5066 --strictPort   then  WAREHOUSE_VERIFY_URL=http://127.0.0.1:5066 node scripts/verify-layout.cjs [--open]
 const assert = require('node:assert/strict')
@@ -614,11 +615,46 @@ async function mapForEveryone(page) {
   const mapFront = page.getByTestId('map-front')
   const search = page.getByLabel('Søg på kortet')
   const showOnMap = page.getByRole('button', { name: 'Vis på kort', exact: true })
+  const floorButton = name => page.getByRole('group', { name: 'Vis etage' }).getByRole('button', { name, exact: true })
 
   await page.getByRole('button', { name: /Kort over lageret/ }).click({ timeout: 30000 })
   await page.locator(CANVAS).waitFor({ timeout: 30000 })
   await search.waitFor()
   console.log('ok - kort: anna (medarbejder) ser "Kort over lageret" på Placeringers forside, og tegningen åbner')
+
+  // A click on the rack on the drawing (no search) shows it from the front below the map.
+  const published = (await api(page, 'layout')).result.layout
+  const rackA = published.items.find(item => item.type === 'rack' && item.slots.some(slot => String(slot.name).toUpperCase() === 'A1.9'))
+  assert.ok(rackA, 'the published drawing has the rack with A1.9')
+  assert.equal(await mapFront.count(), 0, 'no rack front before anything is chosen')
+  await floorButton(rackA.floor === 'mezz' ? 'Ovenpå' : 'Gulv').click()
+  const point = await page.evaluate(([x, y, selector]) => {
+    const svg = document.querySelector(selector)
+    const toScreen = () => new DOMPoint(x, y).matrixTransform(svg.getScreenCTM())
+    const scroller = svg.parentElement
+    const at = toScreen()
+    const view = scroller.getBoundingClientRect()
+    scroller.scrollBy(at.x - (view.left + view.width / 2), at.y - (view.top + view.height / 2))
+    const { x: px, y: py } = toScreen()
+    return { x: px, y: py, onCanvas: svg.contains(document.elementFromPoint(px, py)) }
+  }, [rackA.x + rackA.w / 2, rackA.y + rackA.h / 2, CANVAS])
+  assert.ok(point.onCanvas, `the middle of rack ${rackA.name} is on the drawing at (${Math.round(point.x)}, ${Math.round(point.y)})`)
+  await page.mouse.click(point.x, point.y)
+  await mapFront.waitFor({ timeout: 15000 })
+  const heading = await mapFront.getByRole('heading').textContent()
+  assert.ok(heading.includes(`Reol ${rackA.name}`), `the rack front heading names rack ${rackA.name}: "${heading}"`)
+  assert.match(await page.locator(mapCell('A1.9')).textContent(), /R162-0717/)
+  // A slot without a place (A2 level 1, "–") does not look clickable, and a click on it stays on the map.
+  const idle = mapFront.locator('button[data-slot].cursor-default')
+  assert.ok(await idle.count() > 0, 'the slot without a place has no pointer cursor')
+  assert.equal(await mapFront.locator(`${mapCell('A1.9').replace('[data-testid="map-front"] ', '')}.cursor-pointer`).count(), 1, 'A1.9 has the pointer cursor')
+  await idle.first().click()
+  await page.waitForTimeout(300)
+  assert.equal(await mapFront.count(), 1, 'a click on a slot without a place stays on the map')
+  await shot(page, '29b-kort-klik-paa-reol')
+  await floorButton('Alle').click()
+  await search.evaluate(element => element.scrollIntoView({ block: 'nearest' }))
+  console.log(`ok - kort: klik på reol ${rackA.name} på tegningen (uden søgning) viser "${heading.trim()}" forfra med "R162-0717" i A1.9; en slot uden plads kan ikke klikkes`)
 
   await search.pressSequentially('r162-0717')
   await hits.getByText('R162-0717', { exact: false }).first().waitFor({ timeout: 15000 })
@@ -626,7 +662,7 @@ async function mapForEveryone(page) {
   const a19Hit = hits.getByRole('button', { name: /^A1\.9/ })
   const k99Hit = hits.getByRole('button', { name: /^K9\.9/ })
   await a19Hit.waitFor()
-  assert.match(await k99Hit.textContent(), /ældste/, 'K9.9 holds the oldest pallet of R162-0717')
+  assert.match(await k99Hit.textContent(), /ældste, \d\d\.\d\d/, 'K9.9 holds the oldest pallet of R162-0717, with its date')
   assert.doesNotMatch(await a19Hit.textContent(), /ældste/)
   await mapFront.waitFor({ timeout: 15000 })
   await mapHighlighted(page, 'K9.9')
@@ -639,7 +675,7 @@ async function mapForEveryone(page) {
   assert.equal(String(contents.oldest['R162-0717']).toUpperCase(), 'K9.9')
   assert.ok(contents.places['A1.9'].materials.some(item => item.material === 'R162-0717' && item.quantity === 5), 'mapContents has R162-0717 × 5 on A1.9')
   await shot(page, '30-kort-soeg-materiale')
-  console.log('ok - kort: "r162-0717" i "Søg på kortet" viser A1.9 og K9.9 (K9.9 "ældste", som Tag); K9.9 fremhæves i reolen forfra; søgefeltet bliver på skærmen; mapContents.oldest peger på K9.9')
+  console.log('ok - kort: "r162-0717" i "Søg på kortet" viser A1.9 og K9.9 (K9.9 "ældste" med dato, som Tag); K9.9 fremhæves i reolen forfra; søgefeltet bliver på skærmen; mapContents.oldest peger på K9.9')
 
   await a19Hit.click()
   await mapFront.waitFor()
@@ -649,6 +685,32 @@ async function mapForEveryone(page) {
   assert.match(await cell.getAttribute('title'), /^A1\.9/)
   await frontShot(page, '31-kort-reol-forfra')
   console.log('ok - kort: klik på A1.9 i hitlisten ruller reolen forfra frem med A1.9 fremhævet og "R162-0717" i cellen')
+
+  // A scanner ends with Enter: the found place comes into view and the text is selected, so the next scan replaces it.
+  const inView = selector => page.evaluate(sel => {
+    const box = document.querySelector(sel)?.getBoundingClientRect()
+    return !!box && box.bottom > 0 && box.top < innerHeight
+  }, selector)
+  const selectedAll = () => search.evaluate(input => input.selectionStart === 0 && input.selectionEnd === input.value.length && input.value.length > 0)
+  await search.fill('')
+  await search.fill('r162-0717')
+  await mapHighlighted(page, 'K9.9')
+  // Back to the top of the page, as after a scan: the rack front is below the map, out of the window.
+  await page.evaluate(() => { for (const element of document.querySelectorAll('*')) if (element.scrollTop > 0) element.scrollTop = 0 })
+  assert.ok(!(await inView(mapCell('K9.9'))), 'before Enter, K9.9 in the rack front is out of the window')
+  await search.press('Enter')
+  await mapHighlighted(page, 'K9.9', true)
+  assert.ok(await selectedAll(), 'Enter selects the whole text in "Søg på kortet"')
+  await shot(page, '31b-kort-enter-scan')
+  await page.keyboard.type('A1.9')
+  assert.equal(await search.inputValue(), 'A1.9', 'the second scan replaces the first')
+  await hits.getByRole('button', { name: /^A1\.9/ }).waitFor({ timeout: 15000 })
+  assert.equal(await hits.getByRole('button', { name: /^K9\.9/ }).count(), 0, 'the hits follow the second scan')
+  await mapHighlighted(page, 'A1.9')
+  await search.press('Enter')
+  await mapHighlighted(page, 'A1.9', true)
+  assert.ok(await selectedAll(), 'Enter selects the text again after the second scan')
+  console.log('ok - kort: "r162-0717" + Enter ruller K9.9 frem (fra uden for skærmen) og markerer teksten; næste scan "A1.9" erstatter teksten, hitlisten følger med, og Enter viser A1.9')
 
   await search.fill('K1.1')
   await hits.getByRole('button', { name: /^K1\.1/ }).getByText('ikke på kortet').waitFor({ timeout: 15000 })

@@ -62,15 +62,22 @@ function amountOf({ pallets, quantity, fixed }: MapPlaceContent['materials'][num
   return stk || (fixed ? t('fast', 'fixed') : '')
 }
 
-/** Tooltip: "A2.3 · 3 materialer\nR330-0001 · Kabelbakke 2m (1 palle)\n…\nKlik → pladskortet". */
+/** Tooltip: "A2.3 · 3 materialer\nR330-0001 · Kabelbakke 2m (1 palle)\n…\nKlik → pladskortet"; an empty place: "A1.4 · tom". */
 export function contentTitle(name: string, content: MapPlaceContent | undefined): string {
   const materials = content?.materials ?? []
-  const count = materials.length === 1 ? t('1 materiale', '1 material') : t(`${materials.length} materialer`, `${materials.length} materials`)
+  const count = !materials.length ? t('tom', 'empty') : materials.length === 1 ? t('1 materiale', '1 material') : t(`${materials.length} materialer`, `${materials.length} materials`)
   const lines = materials.map(item => {
     const amount = amountOf(item)
     return `${item.material}${item.description ? ` · ${item.description}` : ''}${amount ? ` (${amount})` : ''}`
   })
   return [`${name} · ${count}`, ...lines, t('Klik → pladskortet', 'Click → the place card')].join('\n')
+}
+
+/** "14.09" – the short date after "ældste" in the map's hit line. */
+export function dayMonth(ms: number | null | undefined): string {
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return ''
+  const date = new Date(ms)
+  return `${String(date.getDate()).padStart(2, '0')}.${String(date.getMonth() + 1).padStart(2, '0')}`
 }
 
 export function findSlot(layout: Pick<WarehouseLayout, 'items'>, placeId: string, ctx: MapContext): { itemId: string; slotId: string } | null {
