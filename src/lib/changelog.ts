@@ -11,7 +11,8 @@ export const CHANGELOG: ChangelogEntry[] = [
     version: '1.6.6',
     items: [
       'Nyt: Kort over lageret i Placeringer – alle kan se hallen, søge en plads eller et materiale (kortet peger på den ældste palle), se reolen forfra med materialet på hver plads og trykke "Vis på kort" fra pladskort, reolkort og søgning',
-    ],
+            'Nyt: Sæt palle på plads viser pladsen på et lille kort over hallen og reolen forfra med niveauet (fx "3. niveau fra gulvet") – tryk "Vis" ved et forslag for at se det, før du vælger',
+          ],
   },
   {
     version: '1.6.5',

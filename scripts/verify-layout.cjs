@@ -2,7 +2,7 @@
 // never touched. `--open` signs the manager in and leaves the window open for manual checks; without flags a smoke flow
 // runs the whole Phase 1 flow (draw, reconcile, publish, rename with a pallet, employee locked out) and the Phase 2 map flow
 // ("Kort over lageret" for the employee: click a rack on the drawing, search a material, Enter and a second scan, the rack
-// front, "Vis på kort") with fixed assertions and
+// front, "Vis på kort") and the Phase 3 place view in "Sæt palle på plads" (small map, rack front, "Vis" on a suggestion) with fixed assertions and
 // leaves screenshots in the evidence folder. Prints "ALLE TJEK OK" at the end; any failed check exits with code 1.
 // Needs Vite:  npm run dev -- --host 127.0.0.1 --port 5066 --strictPort   then  WAREHOUSE_VERIFY_URL=http://127.0.0.1:5066 node scripts/verify-layout.cjs [--open]
 const assert = require('node:assert/strict')
@@ -749,6 +749,111 @@ async function mapForEveryone(page) {
   console.log('ok - kort: pladskortet for K1.1 (uden for tegningen) har ingen "Vis på kort"')
 }
 
+/** "Sæt palle på plads" shows the place on a small map and the rack front: anna types a place, looks at a suggestion with "Vis", chooses it and saves. */
+async function putAwayPeek(page) {
+  const peek = page.getByTestId('place-peek')
+  const heading = peek.locator('h3')
+  const notChosen = peek.getByText('Forslag – ikke valgt', { exact: true })
+  const material = page.getByLabel('Materiale', { exact: true })
+  const place = page.getByLabel('Plads', { exact: true })
+  const show = name => page.getByRole('button', { name: `Vis ${name}`, exact: true })
+  const peekCell = name => `[data-testid="place-peek"] [data-testid="rack-front"] button[data-slot][title^="${name} "]`
+  const headingIs = name => page.waitForFunction(text => (document.querySelector('[data-testid="place-peek"] h3')?.textContent || '').startsWith(`${text} ·`), name, { timeout: 15000 })
+  const peekHighlighted = name => page.waitForFunction(selector => !!document.querySelector(selector)?.classList.contains('outline-amber-500'), peekCell(name), { timeout: 15000 })
+
+  await page.getByRole('button', { name: 'Placeringer', exact: true }).click({ timeout: 30000 })
+  await page.getByLabel('Søg i placeringer').waitFor({ timeout: 30000 })
+  await page.getByRole('button', { name: /Sæt palle på plads/ }).first().click({ timeout: 30000 })
+  await page.getByRole('heading', { name: 'Sæt palle på plads', exact: true }).waitFor({ timeout: 30000 })
+  assert.match(await material.getAttribute('id'), /^putaway-\d+-material$/)
+  await material.fill('R162-0717')
+  await material.press('Enter')
+  const showButtons = page.locator('button[aria-pressed][aria-label^="Vis "]')
+  await showButtons.first().waitFor({ timeout: 30000 })
+  const suggested = (await showButtons.evaluateAll(buttons => buttons.map(button => button.getAttribute('aria-label').slice(4))))
+  assert.ok(!suggested.includes('A1.9') && !suggested.includes('K9.9'), `full places are not suggested: ${suggested.join(', ')}`)
+  console.log(`ok - sæt på plads: anna åbner "Sæt palle på plads"; R162-0717 + Enter giver forslag med "Vis" (${suggested.join(', ')})`)
+
+  await place.pressSequentially(' a1.9 ')
+  assert.equal(await place.inputValue(), ' A1.9 ')
+  await headingIs('A1.9')
+  assert.match(await heading.textContent(), /niveau|gulv|hylde/)
+  assert.match(await heading.textContent(), /Reol A/)
+  assert.equal(await peek.locator(CANVAS).count(), 1, 'the small map is in the view')
+  assert.equal(await peek.locator(`${CANVAS} rect[vector-effect="non-scaling-stroke"][fill="#f59e0b"]`).count(), 1, 'the small map highlights the rack strongly')
+  await peekHighlighted('A1.9')
+  assert.match(await page.locator(peekCell('A1.9')).textContent(), /R162-0717/)
+  assert.equal(await notChosen.count(), 0, 'the typed place is the chosen one')
+  await shot(page, '33-saet-paa-plads-visning')
+  console.log(`ok - sæt på plads: " a1.9 " i "Plads" viser "${(await heading.textContent()).trim()}", det lille kort med reolen fremhævet og A1.9 fremhævet i reolen forfra`)
+
+  // A suggestion other than A1.2, so typing A1.2 afterwards is a visible change.
+  const other = suggested.find(name => name !== 'A1.2') || suggested[0]
+  await show(other).click()
+  await headingIs(other)
+  await notChosen.waitFor({ timeout: 15000 })
+  await peek.getByRole('button', { name: 'Vælg', exact: true }).waitFor()
+  assert.equal(await show(other).getAttribute('aria-pressed'), 'true')
+  assert.equal(await place.inputValue(), ' A1.9 ', '"Vis" does not change the place field')
+  await shot(page, '34-saet-paa-plads-forslag')
+  console.log(`ok - sæt på plads: "Vis ${other}" skifter visningen til ${other} med "Forslag – ikke valgt" og "Vælg"; feltet står stadig på A1.9`)
+
+  await show(other).click()
+  await headingIs('A1.9')
+  assert.equal(await show(other).getAttribute('aria-pressed'), 'false')
+  assert.equal(await notChosen.count(), 0)
+  console.log(`ok - sæt på plads: andet tryk på "Vis ${other}" går tilbage til den valgte plads A1.9`)
+
+  await show(other).click()
+  await notChosen.waitFor({ timeout: 15000 })
+  const typed = other === 'A1.2' ? 'A2.2' : 'A1.2'
+  await place.fill('')
+  await place.pressSequentially(typed.toLowerCase())
+  await headingIs(typed)
+  assert.equal(await notChosen.count(), 0, 'typing again drops the suggestion')
+  assert.equal(await show(other).getAttribute('aria-pressed'), 'false')
+  console.log(`ok - sæt på plads: efter "Vis ${other}" og ny tekst i feltet er "Forslag – ikke valgt" væk, og den skrevne plads ${typed} vises`)
+
+  await show(other).click()
+  await notChosen.waitFor({ timeout: 15000 })
+  await material.fill('R162-071')
+  await notChosen.waitFor({ state: 'detached', timeout: 15000 })
+  await headingIs(typed)
+  await material.fill('R162-0717')
+  await material.press('Enter')
+  await show(other).waitFor({ timeout: 30000 })
+  console.log('ok - sæt på plads: et nyt materiale efter "Vis" fjerner forslaget fra visningen')
+
+  let asked = null
+  page.once('dialog', dialog => { asked = dialog.message(); void dialog.dismiss() })
+  await peek.getByRole('button', { name: 'Vis på kort', exact: true }).click()
+  await page.waitForTimeout(500)
+  assert.equal(asked, 'Forlad uden at gemme?')
+  await page.getByRole('heading', { name: 'Sæt palle på plads', exact: true }).waitFor()
+  assert.equal(await place.inputValue(), typed, 'the form is kept after "Annuller"')
+  assert.equal(await peek.count(), 1)
+  console.log('ok - sæt på plads: "Vis på kort" spørger "Forlad uden at gemme?", og Annuller bliver på formularen')
+
+  await show(other).click()
+  await notChosen.waitFor({ timeout: 15000 })
+  await peek.getByRole('button', { name: 'Vælg', exact: true }).click()
+  await notChosen.waitFor({ state: 'detached', timeout: 15000 })
+  assert.equal(await place.inputValue(), other, '"Vælg" puts the suggestion in the field')
+  await headingIs(other)
+  await page.getByRole('button', { name: 'Gem', exact: true }).click()
+  await page.getByText(`Pallen står nu på ${other}`).first().waitFor({ timeout: 30000 })
+  const card = (await api(page, 'locationCard', { location: other })).result
+  assert.ok(card.pallets.some(pallet => pallet.material === 'R162-0717'), `${other} holds R162-0717 after the save`)
+  console.log(`ok - sæt på plads: "Vælg" på det viste forslag sætter "Plads" til ${other}; Gem giver "Pallen står nu på ${other}", og pladskortet viser pallen`)
+
+  await place.waitFor()
+  assert.equal(await place.inputValue(), '', 'the form is empty after the save')
+  await place.pressSequentially('K1.1')
+  await page.getByText('Pladsen er ikke på kortet', { exact: true }).waitFor({ timeout: 15000 })
+  assert.equal(await peek.count(), 0)
+  console.log('ok - sæt på plads: K1.1 (uden for tegningen) giver "Pladsen er ikke på kortet"')
+}
+
 async function main() {
   makePlatform()
   const chef = await launch('chef')
@@ -767,6 +872,7 @@ async function main() {
     await renameFollows(chef.page, rack)
     await employeeLockedOut(chef.page)
     await mapForEveryone(chef.page)
+    await putAwayPeek(chef.page)
   } finally {
     await chef.app.close().catch(() => {})
   }

@@ -56,7 +56,7 @@
 
 Regler (spec "Niveau-tekst", "Reolen forfra (udsnit)"): `levelText` – rack-slot med `level`: 1 → "gulvniveau", ellers "`N`. niveau fra gulvet"; slot med `unit` eller `section`: "hylde `shelf` fra oven"; floorrow: "gulvplads (plads til `capacity` paller)" ("1 palle" ved 1); floor: "gulvområde"; special: "". `neighbourSlots` – samme blok som sloten: pallefag (pos ± 1 i fysisk rækkefølge), udtræk (unit ± 1), sektion (section ± 1), gulvrække (pos ± 1); alle slots i de kolonner. `peekOf` – `locationKeyOf(place)`; `findSlot`; null når ikke på tegningen; `floor = item.floor ?? 'ground'`; `name` = listens navn.
 
-- [ ] **Step 1: Fejlende tests** i `peek.test.ts` (byg en rack C med 5 fag × 4 niveauer + udtræk med 2 enheder × 3 hylder, en floorrow S med depth 2, en shelfrack, et gulvområde, en ting `floor: 'mezz'`):
+- [x] **Step 1: Fejlende tests** i `peek.test.ts` (byg en rack C med 5 fag × 4 niveauer + udtræk med 2 enheder × 3 hylder, en floorrow S med depth 2, en shelfrack, et gulvområde, en ting `floor: 'mezz'`):
 
 ```ts
 it('levelText names the level in plain words', () => {
@@ -81,10 +81,10 @@ it('peekOf finds a typed place however it is written, and gives null off the dra
 ```
 Og i `map.test.ts`: `frontData` giver samme `status`/`content` som før for reol A (flyt den eksisterende forventning fra skærmen hertil: `places`, `used`, en tom plads med `text: ''`, en slot uden plads uden `content`).
 
-- [ ] **Step 2:** `node node_modules/vitest/vitest.mjs run src/lib/warehouse/layout` → FAIL (moduler/funktioner mangler).
-- [ ] **Step 3:** Implementér; `LocationsMap.tsx` bruger `frontData` i stedet for sin egen løkke (samme resultat).
-- [ ] **Step 4:** Samme kommando + `tsc` → PASS / 0 fejl.
-- [ ] **Step 5: Commit** `Placeringer: peek rules – level text, neighbour slots, shared frontData`
+- [x] **Step 2:** `node node_modules/vitest/vitest.mjs run src/lib/warehouse/layout` → FAIL (moduler/funktioner mangler).
+- [x] **Step 3:** Implementér; `LocationsMap.tsx` bruger `frontData` i stedet for sin egen løkke (samme resultat).
+- [x] **Step 4:** Samme kommando + `tsc` → PASS / 0 fejl.
+- [x] **Step 5: Commit** `Placeringer: peek rules – level text, neighbour slots, shared frontData`
 
 ### Task 2: `RackFront` viser et udsnit
 
@@ -94,9 +94,9 @@ Og i `map.test.ts`: `frontData` giver samme `status`/`content` som før for reol
 **Interfaces:**
 - Produces: ny valgfri prop `visibleSlots?: Set<string>` (kun `mode="view"`): kolonner uden synlige slots og blokke uden synlige slots udelades; rækker (niveauer) uden synlige slots udelades ikke (niveauet skal kunne aflæses). Uden prop: uændret.
 
-- [ ] **Step 1:** Implementér filtreringen i/efter `blocksOf` (view-mode); edit-mode uændret.
-- [ ] **Step 2:** `tsc` → 0 fejl; `node node_modules/vitest/vitest.mjs run src/lib/warehouse/layout` → grøn.
-- [ ] **Step 3: Commit** `Placeringer: the rack front can show a cut-out (view mode)`
+- [x] **Step 1:** Implementér filtreringen i/efter `blocksOf` (view-mode); edit-mode uændret.
+- [x] **Step 2:** `tsc` → 0 fejl; `node node_modules/vitest/vitest.mjs run src/lib/warehouse/layout` → grøn.
+- [x] **Step 3: Commit** `Placeringer: the rack front can show a cut-out (view mode)`
 
 ---
 
@@ -120,10 +120,10 @@ Regler (spec "Visningen"):
 - "Vis på kort": hvis nogen palle har materiale/plads/dokument udfyldt → `window.confirm(t('Forlad uden at gemme?', 'Leave without saving?'))` før `onOpen({ kind: 'map', id })`.
 - Feltet ikke tomt og `peekOf` null → "Pladsen er ikke på kortet" / "The place is not on the map". Tomt felt → intet.
 
-- [ ] **Step 1:** Implementér.
-- [ ] **Step 2:** `tsc` → 0 fejl; `node node_modules/vitest/vitest.mjs run src/lib/warehouse` → grøn.
-- [ ] **Step 3:** (anbefalet) manuelt: Vite + `node scripts/verify-layout.cjs --open`.
-- [ ] **Step 4: Commit** `Placeringer: Sæt palle på plads shows the place on a small map and the rack front`
+- [x] **Step 1:** Implementér.
+- [x] **Step 2:** `tsc` → 0 fejl; `node node_modules/vitest/vitest.mjs run src/lib/warehouse` → grøn.
+- [x] **Step 3:** (anbefalet) manuelt: Vite + `node scripts/verify-layout.cjs --open`.
+- [x] **Step 4: Commit** `Placeringer: Sæt palle på plads shows the place on a small map and the rack front`
 
 ---
 
@@ -134,8 +134,8 @@ Regler (spec "Visningen"):
 **Files:**
 - Modify: `scripts/verify-layout.cjs` (ny `putAwayPeek(page)` efter `mapForEveryone`), `src/lib/changelog.ts` (tilføj punkt til 1.6.6-posten), `plans/development-1.6.6.md`, `plans/lager-tegning-plan.md` (Task 21–23), denne plan.
 
-- [ ] **Step 1: `putAwayPeek(page)`** som anna: Placeringer → "Sæt palle på plads"; materiale `R162-0717` + Enter → forslag; skriv `a1.9` (små bogstaver) i "Plads" → `place-peek` viser "A1.9", et niveau-tekst-match (`/niveau|gulv|hylde/`), et `svg[aria-label="Tegning af lageret"]` i visningen og cellen A1.9 med `outline-amber-500`; "Vis <andet forslag>" → overskriften skifter, "Forslag – ikke valgt" synlig; skriv i feltet igen → "Forslag – ikke valgt" væk og den skrevne plads vises; "Vælg" på et vist forslag sætter feltet; skriv `K1.1` → "Pladsen er ikke på kortet"; skærmbilleder `33-saet-paa-plads-visning`, `34-saet-paa-plads-forslag`. `console.log('ok - sæt på plads: …')` pr. blok.
-- [ ] **Step 2:** Kør E2E → "ALLE TJEK OK"; se skærmbillederne.
-- [ ] **Step 3:** Hele suiten: `node --test electron/*.test.cjs electron/warehouse/*.test.cjs electron/warehouse/core/*.test.cjs electron/warehouse/locations/*.test.cjs`, `node node_modules/vitest/vitest.mjs run`, `tsc` (kendt ustabil: `assistantWorker.test.cjs` – kør alene igen).
-- [ ] **Step 4:** Changelog 1.6.6: "Nyt: Sæt palle på plads viser pladsen på et lille kort over hallen og reolen forfra med niveauet (fx "3. niveau fra gulvet") – tryk "Vis" ved et forslag for at se det, før du vælger".
-- [ ] **Step 5:** Afkryds planer; **Commit** `Placeringer: E2E for the put-away peek, changelog 1.6.6`
+- [x] **Step 1: `putAwayPeek(page)`** som anna: Placeringer → "Sæt palle på plads"; materiale `R162-0717` + Enter → forslag; skriv `a1.9` (små bogstaver) i "Plads" → `place-peek` viser "A1.9", et niveau-tekst-match (`/niveau|gulv|hylde/`), et `svg[aria-label="Tegning af lageret"]` i visningen og cellen A1.9 med `outline-amber-500`; "Vis <andet forslag>" → overskriften skifter, "Forslag – ikke valgt" synlig; skriv i feltet igen → "Forslag – ikke valgt" væk og den skrevne plads vises; "Vælg" på et vist forslag sætter feltet; skriv `K1.1` → "Pladsen er ikke på kortet"; skærmbilleder `33-saet-paa-plads-visning`, `34-saet-paa-plads-forslag`. `console.log('ok - sæt på plads: …')` pr. blok.
+- [x] **Step 2:** Kør E2E → "ALLE TJEK OK"; se skærmbillederne.
+- [x] **Step 3:** Hele suiten: `node --test electron/*.test.cjs electron/warehouse/*.test.cjs electron/warehouse/core/*.test.cjs electron/warehouse/locations/*.test.cjs`, `node node_modules/vitest/vitest.mjs run`, `tsc` (kendt ustabil: `assistantWorker.test.cjs` – kør alene igen).
+- [x] **Step 4:** Changelog 1.6.6: "Nyt: Sæt palle på plads viser pladsen på et lille kort over hallen og reolen forfra med niveauet (fx "3. niveau fra gulvet") – tryk "Vis" ved et forslag for at se det, før du vælger".
+- [x] **Step 5:** Afkryds planer; **Commit** `Placeringer: E2E for the put-away peek, changelog 1.6.6`
