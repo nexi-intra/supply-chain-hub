@@ -81,6 +81,19 @@ describe('map rules', () => {
     expect(contentTitle('A1.4', { materials: [] })).toBe('A1.4 · tom\nKlik → pladskortet')
   })
 
+  it('contentTitle and frontData leave out "Klik → pladskortet" where a click does nothing (the put-away peek)', () => {
+    expect(contentTitle('A1.4', undefined, { click: false })).toBe('A1.4 · tom')
+    expect(contentTitle('A2.3', { materials: [m('R330-0001', { pallets: 1 })] }, { click: false })).not.toMatch(/Klik/)
+    const contentsWithEmpty: MapContents = { ...contents, places: { ...contents.places, 'A1.2': { materials: [] } } }
+    const peekCtx = contextOf(listOf({ 'A1.1': { stockCount: 1 } }), contentsWithEmpty, 'TCD')
+    const front = frontData(rackA, peekCtx, { clickable: false })
+    expect(front.content[slotIdOf('A1.2')]).toEqual({ text: '', title: 'A1.2 · tom' })
+    expect(front.content[slotIdOf('A1.1')].title).toBe(contentTitle('A1.1', contents.places['A1.1'], { click: false }))
+    expect(Object.values(front.content).every(entry => !entry.title.includes('Klik'))).toBe(true)
+    expect(frontData(rackA, peekCtx)).toEqual({ ...front, content: frontData(rackA, peekCtx, { clickable: true }).content })
+    expect(frontData(rackA, peekCtx).content[slotIdOf('A1.2')].title).toBe('A1.2 · tom\nKlik → pladskortet')
+  })
+
   it('dayMonth writes a date as "dd.mm" like the spec\'s "ældste, 14.09"', () => {
     expect(dayMonth(new Date(2026, 8, 14, 9, 5).getTime())).toBe('14.09')
     expect(dayMonth(new Date(2026, 0, 3).getTime())).toBe('03.01')

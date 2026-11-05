@@ -63,14 +63,16 @@ function amountOf({ pallets, quantity, fixed }: MapPlaceContent['materials'][num
 }
 
 /** Tooltip: "A2.3 · 3 materialer\nR330-0001 · Kabelbakke 2m (1 palle)\n…\nKlik → pladskortet"; an empty place: "A1.4 · tom". */
-export function contentTitle(name: string, content: MapPlaceContent | undefined): string {
+export function contentTitle(name: string, content: MapPlaceContent | undefined, options: { click?: boolean } = {}): string {
   const materials = content?.materials ?? []
   const count = !materials.length ? t('tom', 'empty') : materials.length === 1 ? t('1 materiale', '1 material') : t(`${materials.length} materialer`, `${materials.length} materials`)
   const lines = materials.map(item => {
     const amount = amountOf(item)
     return `${item.material}${item.description ? ` · ${item.description}` : ''}${amount ? ` (${amount})` : ''}`
   })
-  return [`${name} · ${count}`, ...lines, t('Klik → pladskortet', 'Click → the place card')].join('\n')
+  // Where a click does nothing (the put-away peek) the tooltip does not promise one.
+  const click = options.click === false ? [] : [t('Klik → pladskortet', 'Click → the place card')]
+  return [`${name} · ${count}`, ...lines, ...click].join('\n')
 }
 
 /** "14.09" – the short date after "ældste" in the map's hit line. */
@@ -97,7 +99,7 @@ export function canShowOnMap(placeId: string, drawing: LocationList['drawing']):
 export interface FrontData { status: Record<string, SlotStatus>; content: Record<string, { text: string; title: string }>; places: number; used: number }
 
 /** The front's colours and cell texts: every slot gets a status, every place (empty too) its content; `places`/`used` count the places. */
-export function frontData(item: LayoutItem, ctx: MapContext): FrontData {
+export function frontData(item: LayoutItem, ctx: MapContext, options: { clickable?: boolean } = {}): FrontData {
   const out: FrontData = { status: {}, content: {}, places: 0, used: 0 }
   for (const slot of item.slots) {
     out.status[slot.id] = slotStatus(item, slot, ctx)
@@ -106,7 +108,7 @@ export function frontData(item: LayoutItem, ctx: MapContext): FrontData {
     out.places += 1
     if (out.status[slot.id] === 'used') out.used += 1
     const entry = ctx.contents.places[id]
-    out.content[slot.id] = { text: cellText(entry), title: contentTitle(ctx.places.get(id)?.name ?? slot.name, entry) }
+    out.content[slot.id] = { text: cellText(entry), title: contentTitle(ctx.places.get(id)?.name ?? slot.name, entry, { click: options.clickable !== false }) }
   }
   return out
 }

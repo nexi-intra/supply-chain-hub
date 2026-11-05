@@ -824,10 +824,13 @@ async function putAwayPeek(page) {
   await show(other).waitFor({ timeout: 30000 })
   console.log('ok - sæt på plads: et nyt materiale efter "Vis" fjerner forslaget fra visningen')
 
-  let asked = null
-  page.once('dialog', dialog => { asked = dialog.message(); void dialog.dismiss() })
-  await peek.getByRole('button', { name: 'Vis på kort', exact: true }).click()
-  await page.waitForTimeout(500)
+  // The click only finishes once the confirm is answered, so it is awaited after the dismiss.
+  const asking = page.waitForEvent('dialog', { timeout: 15000 })
+  const clicking = peek.getByRole('button', { name: 'Vis på kort', exact: true }).click()
+  const dialog = await asking
+  const asked = dialog.message()
+  await dialog.dismiss()
+  await clicking
   assert.equal(asked, 'Forlad uden at gemme?')
   await page.getByRole('heading', { name: 'Sæt palle på plads', exact: true }).waitFor()
   assert.equal(await place.inputValue(), typed, 'the form is kept after "Annuller"')

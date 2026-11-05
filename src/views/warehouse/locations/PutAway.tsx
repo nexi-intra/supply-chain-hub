@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowsClockwise, FloppyDisk, Plus, Trash } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
@@ -52,8 +52,11 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
 }) {
   const [drafts, setDrafts] = useState<Draft[]>([blank()])
   const [saving, setSaving] = useState(false)
-  const [mapData, setMapData] = useState<{ layout: WarehouseLayout | null; list: LocationList; contents: MapContents } | null>(null)
-  const [mapFailed, setMapFailed] = useState(false)
+  const [layout, setLayout] = useState<WarehouseLayout | null | undefined>(undefined)
+  const [data, setData] = useState<{ list: LocationList; contents: MapContents } | null>(null)
+  const [layoutFailed, setLayoutFailed] = useState(false)
+  const [dataFailed, setDataFailed] = useState(false)
+  const [layoutTry, setLayoutTry] = useState(0)
   // A new place or material clears the suggestion being looked at, and so does a suggestion list without it, so the view shows what will be saved.
   const update = (key: number, patch: Partial<Draft>) => setDrafts(list => list.map(item => {
     if (item.key !== key) return item
@@ -64,19 +67,40 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
   }))
   const bridge = window.electronWarehouse!.locations
 
+  // As on the map: the drawing is read when it changes, what stands on the places when Placeringer changes. A failed
+  // re-read keeps the last good data, so the view never vanishes mid-registration.
   const drawingVersion = drawing?.version ?? null
+  const published = drawingVersion !== null
   useEffect(() => {
-    if (drawingVersion === null) { setMapData(null); setMapFailed(false); return }
+    if (!published) return
     let current = true
-    const api = window.electronWarehouse!.locations
-    Promise.all([api.layout(), api.list(), api.mapContents()])
-      .then(([read, list, contents]) => { if (current) { setMapData({ layout: read.layout, list, contents }); setMapFailed(false) } })
-      .catch(() => { if (current) { setMapData(null); setMapFailed(true) } })
+    window.electronWarehouse!.locations.layout()
+      .then(result => { if (current) { setLayout(result.layout); setLayoutFailed(false) } })
+      .catch(() => { if (current) setLayoutFailed(true) })
     return () => { current = false }
-  }, [drawingVersion, version])
+  }, [published, drawingVersion, layoutTry])
 
-  const map = useMemo<PeekMap | null>(() => (drawingVersion !== null && mapData?.layout ? { layout: mapData.layout, ctx: contextOf(mapData.list, mapData.contents, user.team) } : null), [drawingVersion, mapData, user.team])
-  const showMapFailed = drawingVersion !== null && mapFailed
+  // A failed read of the drawing is tried again on the next change, as long as there is no drawing to show.
+  const layoutMissing = layout === undefined && layoutFailed
+  useEffect(() => { if (layoutMissing) setLayoutTry(count => count + 1) }, [version]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Bumps can come faster than M: answers: a newer read wins, but an older one still lands while nothing newer has.
+  const dataRead = useRef({ started: 0, landed: 0 })
+  const alive = useRef(true)
+  useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
+  useEffect(() => {
+    if (!published) return
+    const reads = dataRead.current
+    const seq = ++reads.started
+    const api = window.electronWarehouse!.locations
+    Promise.all([api.list(), api.mapContents()])
+      .then(([list, contents]) => { if (alive.current && seq > reads.landed) { reads.landed = seq; setData({ list, contents }); setDataFailed(false) } })
+      .catch(() => { if (alive.current && seq > reads.landed) setDataFailed(true) })
+  }, [published, version])
+
+  const map = useMemo<PeekMap | null>(() => (published && layout && data ? { layout, ctx: contextOf(data.list, data.contents, user.team) } : null), [published, layout, data, user.team])
+  // The quiet failure line only while nothing could be loaded at all.
+  const mapFailed = published && ((layout === undefined && layoutFailed) || (!data && dataFailed))
 
   function showOnMap(placeId: string) {
     const typed = drafts.some(item => item.material.trim() || item.location.trim() || item.document.trim())
@@ -143,7 +167,7 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
         <p className="text-sm text-muted-foreground">{t('Scan 49/50-nummeret, så henter Hubben materiale, antal og serienumre fra SAP. Uden SAP: skriv materiale og antal.', 'Scan the 49/50 number and the Hub fetches material, quantity and serial numbers from SAP. Without SAP: type material and quantity.')}</p>
       </div>
       {drafts.map((draft, index) => (
-        <DraftCard key={draft.key} draft={draft} index={index} tags={tags} canRemove={drafts.length > 1} map={map} mapFailed={showMapFailed} onShowOnMap={showOnMap}
+        <DraftCard key={draft.key} draft={draft} index={index} tags={tags} canRemove={drafts.length > 1} map={map} mapFailed={mapFailed} onShowOnMap={showOnMap}
           onChange={patch => update(draft.key, patch)} onLookup={() => lookup(draft)} onDescribe={material => void describe(draft.key, material)}
           onRemove={() => setDrafts(list => list.filter(item => item.key !== draft.key))} />
       ))}
@@ -241,7 +265,7 @@ function DraftCard({ draft, index, tags, canRemove, map, mapFailed, onShowOnMap,
             })}
             {draft.checked && !draft.slots.length && <span className="text-xs text-muted-foreground">{t('Ingen ledige pladser at foreslå', 'No free places to suggest')}</span>}
           </div>
-          {mapFailed && <p className="text-xs text-muted-foreground">{t('Kortet kunne ikke hentes', 'The map could not be loaded')}</p>}
+          {mapFailed && draft.location.trim() && <p className="text-xs text-muted-foreground">{t('Kortet kunne ikke hentes', 'The map could not be loaded')}</p>}
           {map && looked.trim() && (
             <div className={cn(pending && 'invisible')} aria-hidden={pending || undefined}>
               {peek

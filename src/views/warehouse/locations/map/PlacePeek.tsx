@@ -1,15 +1,28 @@
-import { useMemo } from 'react'
+import { memo, useMemo } from 'react'
 import { MapTrifold } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { frontData, type MapContext } from '@/lib/warehouse/layout/map'
 import type { Peek } from '@/lib/warehouse/layout/peek'
 import { t } from '@/lib/warehouse/text'
 import type { LayoutItemType, WarehouseLayout } from '@/types/warehouse'
-import { LayoutCanvas } from '../layout/LayoutCanvas'
+import { LayoutCanvas, type FloorView } from '../layout/LayoutCanvas'
 import { RackFront } from '../layout/RackFront'
 
 // Items with several places show their front; a floor area or a special place only the small map.
 const FRONTED: LayoutItemType[] = ['rack', 'floorrow', 'shelfrack']
+
+/** The small hall map. The whole hall SVG redraws only when the drawing, the item, its floor or the team change – not on every keystroke in the form. Its height is capped; the hall keeps its shape. */
+const MiniMap = memo(function MiniMap({ layout, itemId, floor, team }: { layout: WarehouseLayout; itemId: string; floor: FloorView; team: MapContext['team'] }) {
+  const highlight = useMemo(() => [itemId], [itemId])
+  return (
+    <div className="w-60 flex-none overflow-hidden rounded border bg-card [&>svg]:max-h-48">
+      <LayoutCanvas layout={layout} highlight={highlight} strongHighlight floorView={floor} zoom={1} readOnly team={team} />
+    </div>
+  )
+})
+
+// Its props are the peek's memoised values, so the front redraws only when the place or what stands there changes.
+const PeekFront = memo(RackFront)
 
 /** One place in "Sæt palle på plads": where in the hall (small map) and where in the rack (the front cut down to the place ± 1). Read only. */
 export function PlacePeek({ peek, ctx, layout, chosen, onChoose, onShowOnMap }: {
@@ -17,7 +30,7 @@ export function PlacePeek({ peek, ctx, layout, chosen, onChoose, onShowOnMap }: 
 }) {
   const item = peek?.item
   const fronted = !!item && FRONTED.includes(item.type) && item.slots.length > 0
-  const front = useMemo(() => (item && fronted ? frontData(item, ctx) : null), [item, fronted, ctx])
+  const front = useMemo(() => (item && fronted ? frontData(item, ctx, { clickable: false }) : null), [item, fronted, ctx])
   if (!peek) return null
 
   return (
@@ -36,12 +49,10 @@ export function PlacePeek({ peek, ctx, layout, chosen, onChoose, onShowOnMap }: 
         )}
       </div>
       <div className="flex flex-wrap items-start gap-3">
-        <div className="w-60 flex-none overflow-hidden rounded border bg-card">
-          <LayoutCanvas layout={layout} highlight={[peek.item.id]} strongHighlight floorView={peek.floor} zoom={1} readOnly team={ctx.team} />
-        </div>
+        <MiniMap layout={layout} itemId={peek.item.id} floor={peek.floor} team={ctx.team} />
         {fronted && front && (
           <div className="min-w-0 flex-1 overflow-x-auto">
-            <RackFront item={peek.item} mode="view" status={front.status} content={front.content} highlight={peek.slotId} visibleSlots={peek.visible} />
+            <PeekFront item={peek.item} mode="view" status={front.status} content={front.content} highlight={peek.slotId} visibleSlots={peek.visible} />
           </div>
         )}
       </div>

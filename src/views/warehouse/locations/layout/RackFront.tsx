@@ -285,6 +285,7 @@ export function RackFront({ item, mode, duplicates, link, status, content, highl
                           />
                           : <button
                             type="button" data-slot={slot.id} title={title} aria-label={title} aria-pressed={edit ? chosen.has(slot.id) : undefined}
+                            tabIndex={mode === 'view' && !onSlot ? -1 : undefined}
                             className={cn(
                               'flex items-center justify-center whitespace-nowrap rounded px-1 font-semibold',
                               shown ? 'h-10 min-w-20 flex-col leading-tight' : 'h-6 min-w-9',
