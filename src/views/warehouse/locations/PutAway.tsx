@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ArrowsClockwise, FloppyDisk, Plus, Trash } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
@@ -9,9 +9,12 @@ import { Label } from '@/components/ui/label'
 import { SapActionButton } from '@/components/warehouse/SapActionButton'
 import { cn } from '@/lib/utils'
 import { errorMessage } from '@/lib/warehouse/errors'
-import { deferredText, isDeferred, newActionId, reasonLabel } from '@/lib/warehouse/locations'
+import { contextOf, type MapContext } from '@/lib/warehouse/layout/map'
+import { peekOf } from '@/lib/warehouse/layout/peek'
+import { deferredText, isDeferred, locationKeyOf, newActionId, reasonLabel, type LocationsTarget } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
-import type { PalletInput, SlotSuggestion } from '@/types/warehouse'
+import type { LocationList, MapContents, PalletInput, SlotSuggestion, WarehouseLayout, WarehouseUser } from '@/types/warehouse'
+import { PlacePeek } from './map/PlacePeek'
 
 interface Draft {
   key: number
@@ -28,20 +31,52 @@ interface Draft {
   slots: SlotSuggestion[]
   /** The material has been looked up: its description and place suggestions are known. */
   checked: boolean
+  /** The suggestion last shown with "Vis"; null shows the chosen place. Any change of `location` clears it. */
+  shown: string | null
 }
+
+/** The published drawing and what stands on its places, read once for the whole form. */
+interface PeekMap { layout: WarehouseLayout; ctx: MapContext }
 
 let nextKey = 1
 const today = () => new Date().toISOString().slice(0, 10)
-const blank = (): Draft => ({ key: nextKey++, document: '', material: '', description: '', quantity: '', serials: [], location: '', sloc: 'D000', date: today(), tags: [], note: '', slots: [], checked: false })
+const blank = (): Draft => ({ key: nextKey++, document: '', material: '', description: '', quantity: '', serials: [], location: '', sloc: 'D000', date: today(), tags: [], note: '', slots: [], checked: false, shown: null })
+// Typing waits this long before the place view follows, so it does not flicker on every key.
+const TYPING_MS = 250
 // Noon local time, so the day never shifts with the time zone.
 const dateMs = (value: string) => new Date(`${value}T12:00:00`).getTime()
 
 /** Put one or more pallets away after goods receipt: the 49/50 number fills in the rest, the Hub suggests a place. */
-export function PutAway({ tags, onDone }: { tags: string[]; onDone: () => void }) {
+export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
+  user: WarehouseUser; tags: string[]; drawing: LocationList['drawing']; version: number; onOpen: (target: LocationsTarget) => void; onDone: () => void
+}) {
   const [drafts, setDrafts] = useState<Draft[]>([blank()])
   const [saving, setSaving] = useState(false)
-  const update = (key: number, patch: Partial<Draft>) => setDrafts(list => list.map(item => (item.key === key ? { ...item, ...patch } : item)))
+  const [mapData, setMapData] = useState<{ layout: WarehouseLayout | null; list: LocationList; contents: MapContents } | null>(null)
+  const [mapFailed, setMapFailed] = useState(false)
+  // A new place clears the suggestion being looked at, so the view shows what will be saved.
+  const update = (key: number, patch: Partial<Draft>) => setDrafts(list => list.map(item => (item.key === key ? { ...item, ...('location' in patch ? { shown: null } : {}), ...patch } : item)))
   const bridge = window.electronWarehouse!.locations
+
+  const drawingVersion = drawing?.version ?? null
+  useEffect(() => {
+    if (drawingVersion === null) { setMapData(null); setMapFailed(false); return }
+    let current = true
+    const api = window.electronWarehouse!.locations
+    Promise.all([api.layout(), api.list(), api.mapContents()])
+      .then(([read, list, contents]) => { if (current) { setMapData({ layout: read.layout, list, contents }); setMapFailed(false) } })
+      .catch(() => { if (current) { setMapData(null); setMapFailed(true) } })
+    return () => { current = false }
+  }, [drawingVersion, version])
+
+  const map = useMemo<PeekMap | null>(() => (drawingVersion !== null && mapData?.layout ? { layout: mapData.layout, ctx: contextOf(mapData.list, mapData.contents, user.team) } : null), [drawingVersion, mapData, user.team])
+  const showMapFailed = drawingVersion !== null && mapFailed
+
+  function showOnMap(placeId: string) {
+    const typed = drafts.some(item => item.material.trim() || item.location.trim() || item.document.trim())
+    if (typed && !window.confirm(t('Forlad uden at gemme?', 'Leave without saving?'))) return
+    onOpen({ kind: 'map', id: placeId })
+  }
 
   async function describe(key: number, material: string) {
     const code = material.trim().toUpperCase()
@@ -102,7 +137,7 @@ export function PutAway({ tags, onDone }: { tags: string[]; onDone: () => void }
         <p className="text-sm text-muted-foreground">{t('Scan 49/50-nummeret, så henter Hubben materiale, antal og serienumre fra SAP. Uden SAP: skriv materiale og antal.', 'Scan the 49/50 number and the Hub fetches material, quantity and serial numbers from SAP. Without SAP: type material and quantity.')}</p>
       </div>
       {drafts.map((draft, index) => (
-        <DraftCard key={draft.key} draft={draft} index={index} tags={tags} canRemove={drafts.length > 1}
+        <DraftCard key={draft.key} draft={draft} index={index} tags={tags} canRemove={drafts.length > 1} map={map} mapFailed={showMapFailed} onShowOnMap={showOnMap}
           onChange={patch => update(draft.key, patch)} onLookup={() => lookup(draft)} onDescribe={material => void describe(draft.key, material)}
           onRemove={() => setDrafts(list => list.filter(item => item.key !== draft.key))} />
       ))}
@@ -114,11 +149,31 @@ export function PutAway({ tags, onDone }: { tags: string[]; onDone: () => void }
   )
 }
 
-function DraftCard({ draft, index, tags, canRemove, onChange, onLookup, onDescribe, onRemove }: {
-  draft: Draft; index: number; tags: string[]; canRemove: boolean
+function DraftCard({ draft, index, tags, canRemove, map, mapFailed, onShowOnMap, onChange, onLookup, onDescribe, onRemove }: {
+  draft: Draft; index: number; tags: string[]; canRemove: boolean; map: PeekMap | null; mapFailed: boolean; onShowOnMap: (placeId: string) => void
   onChange: (patch: Partial<Draft>) => void; onLookup: () => Promise<void>; onDescribe: (material: string) => void; onRemove: () => void
 }) {
   const id = (name: string) => `putaway-${draft.key}-${name}`
+  // The place the view follows: a typed place after a short pause, a chosen suggestion at once.
+  const [settled, setSettled] = useState(draft.location)
+  useEffect(() => {
+    if (draft.location === settled) return
+    const timer = window.setTimeout(() => setSettled(draft.location), TYPING_MS)
+    return () => window.clearTimeout(timer)
+  }, [draft.location, settled])
+  const choose = (location: string) => { onChange({ location }); setSettled(location) }
+
+  // While a typed place is pending nothing is claimed: the old view only keeps its room, hidden.
+  const pending = draft.shown === null && settled !== draft.location
+  const looked = draft.shown ?? settled
+  const peek = useMemo(() => (map && looked.trim() ? peekOf(map.layout, looked, map.ctx) : null), [map, looked])
+  const chosen = !!peek && peek.placeId === locationKeyOf(draft.location)
+  // "Vis" only for suggestions that are on the drawing.
+  const onMap = useMemo(() => new Set(map ? draft.slots.filter(slot => peekOf(map.layout, slot.location, map.ctx)).map(slot => slot.location) : []), [map, draft.slots])
+  const showSlot = (location: string) => {
+    if (locationKeyOf(location) === locationKeyOf(draft.location)) { if (draft.shown !== null) onChange({ shown: null }); return }
+    onChange({ shown: location })
+  }
 
   return (
     <Card>
@@ -159,14 +214,33 @@ function DraftCard({ draft, index, tags, canRemove, onChange, onLookup, onDescri
           <Label htmlFor={id('location')}>{t('Plads', 'Place')}</Label>
           <div className="flex flex-wrap items-center gap-2">
             <Input id={id('location')} value={draft.location} className="w-36 font-mono" placeholder="A2.4" onChange={event => onChange({ location: event.target.value.toUpperCase() })} />
-            {draft.slots.map(slot => (
-              <button key={slot.location} type="button" onClick={() => onChange({ location: slot.location })}
-                className={cn('rounded-md border px-2.5 py-1 text-left text-xs transition', draft.location === slot.location ? 'border-primary bg-primary text-primary-foreground' : 'bg-background hover:bg-secondary')}>
-                <span className="font-mono font-semibold">{slot.location}</span> <span className="opacity-75">{reasonLabel(slot.reason)}</span>
-              </button>
-            ))}
+            {draft.slots.map(slot => {
+              const isShown = !pending && !!peek && peek.placeId === locationKeyOf(slot.location)
+              return (
+                <span key={slot.location} className="inline-flex items-center gap-1">
+                  <button type="button" onClick={() => choose(slot.location)}
+                    className={cn('rounded-md border px-2.5 py-1 text-left text-xs transition', draft.location === slot.location ? 'border-primary bg-primary text-primary-foreground' : 'bg-background hover:bg-secondary')}>
+                    <span className="font-mono font-semibold">{slot.location}</span> <span className="opacity-75">{reasonLabel(slot.reason)}</span>
+                  </button>
+                  {onMap.has(slot.location) && (
+                    <button type="button" aria-pressed={isShown} aria-label={t(`Vis ${slot.location}`, `Show ${slot.location}`)} onClick={() => showSlot(slot.location)}
+                      className={cn('rounded-md border px-1.5 py-1 text-xs transition', isShown ? 'border-primary bg-primary/10 text-foreground' : 'text-primary hover:bg-secondary')}>
+                      {t('Vis', 'Show')}
+                    </button>
+                  )}
+                </span>
+              )
+            })}
             {draft.checked && !draft.slots.length && <span className="text-xs text-muted-foreground">{t('Ingen ledige pladser at foreslå', 'No free places to suggest')}</span>}
           </div>
+          {mapFailed && <p className="text-xs text-muted-foreground">{t('Kortet kunne ikke hentes', 'The map could not be loaded')}</p>}
+          {map && looked.trim() && (
+            <div className={cn(pending && 'invisible')} aria-hidden={pending || undefined}>
+              {peek
+                ? <PlacePeek peek={peek} ctx={map.ctx} layout={map.layout} chosen={chosen} onChoose={() => choose(looked)} onShowOnMap={() => onShowOnMap(peek.placeId)} />
+                : <p className="text-xs text-muted-foreground">{t('Pladsen er ikke på kortet', 'The place is not on the map')}</p>}
+            </div>
+          )}
         </div>
 
         {tags.length > 0 && (

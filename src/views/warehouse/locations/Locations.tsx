@@ -98,7 +98,7 @@ export function Locations({ user, initial }: { user: WarehouseUser; initial: Loc
         </div>
       )}
       {target.kind === 'home' && <LocationsHome user={user} canAdmin={canAdmin} drawn={drawn} drawing={drawing} version={version} onOpen={setTarget} />}
-      {target.kind === 'putaway' && <PutAway tags={tags} onDone={() => setVersion(value => value + 1)} />}
+      {target.kind === 'putaway' && <PutAway user={user} tags={tags} drawing={drawing} version={version} onOpen={setTarget} onDone={() => setVersion(value => value + 1)} />}
       {target.kind === 'shelf' && <ShelfPut key={target.id || ''} shelf={target.id} version={version} onDone={() => setVersion(value => value + 1)} />}
       {target.kind === 'take' && <TakePallet material={target.id} version={version} onDone={() => setVersion(value => value + 1)} />}
       {target.kind === 'refill' && <Refill id={target.id} version={version} onDone={() => setVersion(value => value + 1)} />}
