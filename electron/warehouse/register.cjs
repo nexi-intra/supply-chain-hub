@@ -300,7 +300,7 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   handle('sap-check:mail', (user, p) => sapChecks.createMail(user, { id: p.id, mode: p.mode, language: p.language, scope: p.scope }))
 
   // Placeringer: reads, then the changes; every change tells the open windows of that hub.
-  const LOCATION_READS = { overview: 'overview', 'lookup-document': 'lookupDocument', suggest: 'suggest', search: 'search', 'material-card': 'materialCard', 'location-card': 'locationCard', 'pallet-card': 'palletCard', list: 'list', stamp: 'stamp', log: 'log', 'rack-card': 'rackCard' }
+  const LOCATION_READS = { overview: 'overview', 'lookup-document': 'lookupDocument', suggest: 'suggest', search: 'search', 'material-card': 'materialCard', 'location-card': 'locationCard', 'pallet-card': 'palletCard', list: 'list', stamp: 'stamp', log: 'log', 'rack-card': 'rackCard', 'map-contents': 'mapContents' }
   const LOCATION_WRITES = { 'put-away': 'putAway', take: 'take', refill: 'refill', move: 'move', 'change-sloc': 'changeSloc', 'edit-pallet': 'editPallet', undo: 'undo', 'shelf-put': 'shelfPut', 'shelf-take': 'shelfTake', 'shelf-move': 'shelfMove', 'shelf-set': 'shelfSet', 'create-rack': 'createRack', 'add-shelf': 'addShelf', 'delete-locations': 'deleteLocations', 'set-active-many': 'setActiveMany', 'create-location': 'createLocation', 'create-series': 'createSeries', 'edit-location': 'editLocation', 'set-active': 'setActive', 'set-tags': 'setTags', 'apply-import': 'applyImport' }
   for (const [channel, method] of Object.entries(LOCATION_READS)) handle(`locations:${channel}`, (user, p) => locations[method](user, p))
   // The import reads the sheet and SAP for a few minutes; its steps are shown as a progress bar.

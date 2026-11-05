@@ -448,3 +448,41 @@ test('an undo of a shelf take puts the quantity back and the dialog effect says 
   await pc1.service.undo(ADA, { eventId: take.id })
   assert.equal((await pc1.repo.read('TCD')).stock['E9 H5|R162-0717'].quantity, 40)
 })
+
+test('mapContents: what stands on every place, merged per material, oldest pallet first', async () => {
+  const { pc1, seed } = setup()
+  await seed([place('A1.1'), place('A1.2'), place('F1.0', { type: 'Gulv', capacity: 0 }), place('H26', { type: 'Hylde', purpose: 'pick', fixedMaterials: ['R162-0717'] }), place('A9.9', { active: false }), place('A17.1', { purpose: 'reserved' }), shelf('E9 H5'), place('Z1')], [
+    { id: 'p1', location: 'F1.0', material: 'INT4300-4921-0', quantity: 10, receivedAt: day(2026, 9, 1) },
+    { id: 'p2', location: 'F1.0', material: 'R162-0717', quantity: 5, receivedAt: day(2026, 8, 1) },
+    { id: 'p3', location: 'F1.0', material: 'R162-0717', quantity: null, receivedAt: day(2026, 8, 5) },
+    { id: 'p4', location: 'A1.2', material: 'R162-0717', quantity: 7, receivedAt: day(2026, 7, 1) },
+    { id: 'p5', location: 'A9.9', material: 'R162-0717', quantity: 1, receivedAt: day(2025, 1, 1) },
+    { id: 'p6', location: 'A17.1', material: 'X-ONLY-RESERVED', quantity: 1, receivedAt: day(2025, 1, 1) },
+  ])
+  await pc1.service.shelfPut(ANNA, { location: 'E9 H5', material: 'R162-0717', quantity: 40 })
+  const map = await pc1.service.mapContents(ANNA)
+  assert.deepEqual(map.places['F1.0'].materials.map(m => [m.material, m.pallets, m.quantity, m.oldestAt]), [['R162-0717', 2, 5, day(2026, 8, 1)], ['INT4300-4921-0', 1, 10, day(2026, 9, 1)]], 'oldest pallet first; a null quantity adds nothing')
+  assert.equal(map.places['F1.0'].materials[0].description, 'Ethernet Cable RJ45 2m')
+  assert.deepEqual(map.places['E9 H5'].materials.map(m => [m.material, m.pallets, m.quantity, m.fixed]), [['R162-0717', 0, 40, false]])
+  assert.deepEqual(map.places.H26.materials.map(m => [m.material, m.pallets, m.quantity, m.fixed]), [['R162-0717', 0, null, true]], 'a pick place shows its fixed material')
+  assert.equal(map.places['A1.1'], undefined, 'empty places are left out')
+  assert.equal(map.places.Z1, undefined)
+  assert.equal(map.oldest['R162-0717'], 'A1.2', 'same as Tag: the deactivated A9.9 does not count')
+  assert.equal(map.oldest['X-ONLY-RESERVED'], undefined, 'a reserved place is never the oldest')
+  assert.deepEqual(await pc1.service.mapContents(TRR), { places: {}, oldest: {} }, 'another hub sees only its own')
+})
+
+test('mapContents: fixed materials of a reserve place are not shown as content', async () => {
+  const { pc1, seed } = setup()
+  await seed([place('A1.1', { fixedMaterials: ['R162-0717'] }), place('I1', { type: 'Bord', purpose: 'station', fixedMaterials: ['INT4300-4921-0'] })])
+  const map = await pc1.service.mapContents(ANNA)
+  assert.equal(map.places['A1.1'], undefined)
+  assert.deepEqual(map.places.I1.materials.map(m => [m.material, m.fixed]), [['INT4300-4921-0', true]])
+})
+
+test('overview tells whether a drawing is published, without the heavier list', async () => {
+  const { pc1 } = setup()
+  assert.equal((await pc1.service.overview(ANNA)).drawing, null)
+  await pc1.repo.transact('TCD', tx => { tx.meta.layout = { version: 3, linked: ['A1.1'] } })
+  assert.deepEqual((await pc1.service.overview(ANNA)).drawing, { version: 3, linked: ['A1.1'] })
+})

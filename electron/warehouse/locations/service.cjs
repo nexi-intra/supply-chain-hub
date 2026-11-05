@@ -337,6 +337,7 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
       areas: rules.areaSummary(state),
       counts: { locations: Object.keys(state.locations).length, pallets: Object.keys(state.pallets).length, stock: Object.keys(state.stock || {}).length },
       imported: Boolean(state.meta.importedAt), live: Boolean(state.meta.liveAt), tags: state.tags,
+      drawing: state.meta.layout ? { version: state.meta.layout.version, linked: state.meta.layout.linked } : null,
     }
   }
 
@@ -442,6 +443,44 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
       shelves: list.map(location => ({ location, stock: shelves.stockOn(state, location.id).map(line => ({ ...line, description: texts[line.material] || '' })) })),
       history,
     }
+  }
+
+  /**
+   * What stands on every place for the map: pallets and shelf stock merged per material (oldest pallet first), plus the
+   * fixed materials of pick places and stations. Empty places are left out; `oldest` is the place of each material's
+   * oldest pallet, the same one Tag points to.
+   */
+  async function mapContents(user) {
+    const state = await repo.read(teamOf(user))
+    const places = {}
+    const entry = (location, material) => {
+      const materials = places[location] || (places[location] = new Map())
+      if (!materials.has(material)) materials.set(material, { material, description: '', pallets: 0, quantity: null, oldestAt: null, fixed: false })
+      return materials.get(material)
+    }
+    const add = (item, quantity) => { if (typeof quantity === 'number') item.quantity = (item.quantity || 0) + quantity }
+    for (const pallet of Object.values(state.pallets)) {
+      const item = entry(pallet.location, pallet.material)
+      item.pallets++
+      add(item, pallet.quantity)
+      if (pallet.receivedAt != null && (item.oldestAt === null || pallet.receivedAt < item.oldestAt)) item.oldestAt = pallet.receivedAt
+    }
+    for (const line of Object.values(state.stock || {})) add(entry(line.location, line.material), line.quantity)
+    for (const location of Object.values(state.locations)) {
+      if (location.purpose !== 'pick' && location.purpose !== 'station') continue
+      for (const material of location.fixedMaterials || []) entry(location.id, material).fixed = true
+    }
+    const materials = new Set(Object.values(places).flatMap(list => [...list.keys()]))
+    const texts = await describe([...materials])
+    const order = (a, b) => (a.oldestAt ?? Infinity) - (b.oldestAt ?? Infinity) || (b.quantity ?? -1) - (a.quantity ?? -1)
+    const result = {}
+    for (const [location, list] of Object.entries(places)) result[location] = { materials: [...list.values()].map(item => ({ ...item, description: texts[item.material] || '' })).sort(order) }
+    const oldest = {}
+    for (const material of new Set(Object.values(state.pallets).map(pallet => pallet.material))) {
+      const first = rules.fifo(state, material, { now: now() })[0]
+      if (first) oldest[material] = first.location
+    }
+    return { places: result, oldest }
   }
 
   /** Every place of the hub in name order with how full it is (the administration list). */
@@ -843,7 +882,7 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
     }
   }
 
-  return { teamOf, requireAdmin, log, undo, createRack, addShelf, deleteLocations, setActiveMany, shelfPut, shelfTake, shelfMove, shelfSet, rackCard, ensureShelves, createLocation, createSeries, editLocation, setActive, setTags, previewImport, applyImport, list, stamp, putAway, take, refill, move, changeSloc, editPallet, overview, lookupDocument, suggest, search, materialCard, locationCard, palletCard }
+  return { teamOf, requireAdmin, log, undo, createRack, addShelf, deleteLocations, setActiveMany, shelfPut, shelfTake, shelfMove, shelfSet, rackCard, mapContents, ensureShelves, createLocation, createSeries, editLocation, setActive, setTags, previewImport, applyImport, list, stamp, putAway, take, refill, move, changeSloc, editPallet, overview, lookupDocument, suggest, search, materialCard, locationCard, palletCard }
 }
 
 module.exports = { createLocationService, codeError }

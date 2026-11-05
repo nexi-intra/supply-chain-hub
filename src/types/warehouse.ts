@@ -806,6 +806,8 @@ export interface LocationsOverview {
   live: boolean
   /** The hub's labels for pallets (Sluse oppe, Brandskab …). */
   tags: string[]
+  /** The published drawing: its version and the place ids on it. */
+  drawing: { version: number; linked: string[] } | null
 }
 
 export interface SlotSuggestion { location: string; reason: 'fixed' | 'near' | 'free' }
@@ -847,6 +849,10 @@ export interface RackCard {
   shelves: { location: Location; stock: StockLineView[] }[]
   history: LocationEvent[]
 }
+export interface MapMaterial { material: string; description: string; pallets: number; quantity: number | null; oldestAt: number | null; fixed: boolean }
+export interface MapPlaceContent { materials: MapMaterial[] }
+/** What stands on every non-empty place, and per material the place of its oldest pallet (as Tag). */
+export interface MapContents { places: Record<string, MapPlaceContent>; oldest: Record<string, string> }
 export interface DeleteResult { deleted: string[]; kept: { name: string; reason: string }[] }
 export interface LocationList {
   locations: (Location & { used: number; stockCount: number })[]
@@ -988,6 +994,7 @@ export interface LocationsBridge {
   log(request?: { query?: string; person?: string; type?: LocationEventType; days?: number }): Promise<LocationLog>
   undo(request: WithActionId<{ eventId: string }>): Promise<{ undone: number } | Deferred>
   rackCard(request: { rack: string }): Promise<RackCard>
+  mapContents(): Promise<MapContents>
   shelfPut(request: WithActionId<{ location: string; material: string; quantity: number }>): Promise<{ line: StockLine } | Deferred>
   /** `quantity` left out: all of it. */
   shelfTake(request: WithActionId<{ location: string; material: string; quantity?: number }>): Promise<{ left: StockLine | null; taken: number } | Deferred>

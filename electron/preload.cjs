@@ -174,6 +174,7 @@ contextBridge.exposeInMainWorld('electronWarehouse', {
     log: request => warehouse('locations:log', request),
     undo: request => warehouse('locations:undo', request),
     rackCard: request => warehouse('locations:rack-card', request),
+    mapContents: () => warehouse('locations:map-contents'),
     shelfPut: request => warehouse('locations:shelf-put', request),
     shelfTake: request => warehouse('locations:shelf-take', request),
     shelfMove: request => warehouse('locations:shelf-move', request),

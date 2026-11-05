@@ -84,7 +84,7 @@ test('Hubert reads Optælling through the same services and Hub user: TCD gets t
   assert.equal(await registered.assistant.answer({ event: { who: 'anna', sender: { id: 1 } }, question: 'hvem har ferie i dag?', language: 'da' }), null)
 })
 
-const LOCATION_CHANNELS = ['overview', 'lookup-document', 'suggest', 'put-away', 'take', 'refill', 'move', 'change-sloc', 'edit-pallet', 'search', 'material-card', 'location-card', 'pallet-card', 'list', 'stamp', 'log', 'undo', 'rack-card', 'shelf-put', 'shelf-take', 'shelf-move', 'shelf-set', 'create-rack', 'add-shelf', 'delete-locations', 'set-active-many', 'create-location', 'create-series', 'edit-location', 'set-active', 'set-tags', 'preview-import', 'apply-import',
+const LOCATION_CHANNELS = ['overview', 'lookup-document', 'suggest', 'put-away', 'take', 'refill', 'move', 'change-sloc', 'edit-pallet', 'search', 'material-card', 'location-card', 'pallet-card', 'list', 'stamp', 'log', 'undo', 'rack-card', 'shelf-put', 'shelf-take', 'shelf-move', 'shelf-set', 'create-rack', 'add-shelf', 'delete-locations', 'set-active-many', 'create-location', 'create-series', 'edit-location', 'set-active', 'set-tags', 'preview-import', 'apply-import', 'map-contents',
   'layout', 'layout-draft', 'layout-preview', 'layout-versions', 'layout-start-draft', 'layout-save-draft', 'layout-discard-draft', 'layout-publish', 'layout-open-version']
 
 test('the drawing is reached over IPC without the local queue; only a publish tells the windows', async () => {
