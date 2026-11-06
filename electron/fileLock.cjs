@@ -34,6 +34,10 @@ const observedLocks = new Map()
 function readOwner(target) {
   try { return fs.readFileSync(target, 'utf8') } catch { return null }
 }
+// Async tvilling: acquireFileLockAsync maa aldrig lave synkron SMB-I/O paa main.
+async function readOwnerAsync(target) {
+  try { return await fs.promises.readFile(target, 'utf8') } catch { return null }
+}
 
 /** Maa laasen fjernes? `mtimeMs` bruges kun hvis alderen er troværdig. */
 function isAbandonedLock(target, staleMs, mtimeMs, owner) {
@@ -127,7 +131,7 @@ async function acquireFileLockAsync(target, { attempts = 50, delayMs = 100, crea
       if (staleMs > 0 && error.code === 'EEXIST') {
         try {
           const stat = await fs.promises.stat(target)
-          const verdict = isAbandonedLock(target, staleMs, stat.mtimeMs, readOwner(target))
+          const verdict = isAbandonedLock(target, staleMs, stat.mtimeMs, await readOwnerAsync(target))
           if (verdict.abandoned) {
             console.warn(`KV: fjerner forladt laas (${verdict.reason}): ${target}`)
             await fs.promises.unlink(target).catch(() => {})

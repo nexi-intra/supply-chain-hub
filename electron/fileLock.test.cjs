@@ -3,7 +3,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { withFileLock, withFileLocks } = require('./fileLock.cjs')
+const { withFileLock, withFileLocks, withFileLockAsync } = require('./fileLock.cjs')
 
 test('multi-locks deduplicate, hold every target and release after failure', t => {
   const first = fixture(t), second = path.join(path.dirname(first), 'second.lock')
@@ -125,4 +125,24 @@ test('release does not remove a lock now owned by another writer', t => {
   const target = fixture(t)
   withFileLock(target, () => fs.writeFileSync(target, 'replacement-owner'))
   assert.equal(fs.readFileSync(target, 'utf8'), 'replacement-owner')
+})
+test('acquireFileLockAsync never reads the lock owner synchronously while waiting', async t => {
+  const target = fixture(t)
+  fs.writeFileSync(target, 'other-owner')
+  const originalReadFileSync = fs.readFileSync
+  const syncLockReads = []
+  fs.readFileSync = function (file, ...rest) {
+    if (String(file).endsWith('.lock')) {
+      syncLockReads.push(String(file))
+      throw new Error('synkron laeselaas paa main')
+    }
+    return originalReadFileSync.call(this, file, ...rest)
+  }
+  t.after(() => { fs.readFileSync = originalReadFileSync })
+  await assert.rejects(
+    withFileLockAsync(target, () => assert.fail('must not run'), { attempts: 3, delayMs: 10, staleMs: 60000 }),
+    error => error.code === 'KV_LOCK_BUSY')
+  fs.readFileSync = originalReadFileSync
+  assert.deepEqual(syncLockReads, [])
+  assert.equal(fs.readFileSync(target, 'utf8'), 'other-owner')
 })
