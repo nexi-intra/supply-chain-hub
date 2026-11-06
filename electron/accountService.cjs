@@ -18,11 +18,15 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
   // after every IPC call. Only the READ gate is cached; every write/migration
   // path (rename/recover/runWrite) still takes the real account lock, so data
   // stays fully serialized and atomic. A migration started by another client
-  // is therefore detected within CONTEXT_TTL_MS by the sync gate, and by the
-  // async gate within at most CONTEXT_MAX_STALE_MS (normally one background read).
+  // is therefore detected within CONTEXT_TTL_MS by the sync gate. The async
+  // gate normally detects it within CONTEXT_TTL_MS plus one background read;
+  // only when background reads fail or hang can it answer from a context up to
+  // CONTEXT_MAX_STALE_MS (60 s) after the last successful read was stored, i.e.
+  // data up to 60 s plus that read's duration old.
   const CONTEXT_TTL_MS = contextTtlMs
-  // Async-gaten (contextAsync/runWriteAsync) maa svare med en aeldre terminal
-  // kontekst i hoejst 60 s, mens den opfriskes i baggrunden (se assertNoMigrationAsync).
+  // Async-gaten (contextAsync/runWriteAsync) svarer med en aeldre terminal
+  // kontekst, mens den opfriskes i baggrunden (se assertNoMigrationAsync);
+  // 60 s-graensen naas kun naar baggrundslaesningerne fejler eller haenger.
   const CONTEXT_MAX_STALE_MS = Math.max(CONTEXT_TTL_MS, 60000)
   let contextCache = null, contextRefresh = null
   // Retired identities for the reference check: loaded asynchronously once per write burst

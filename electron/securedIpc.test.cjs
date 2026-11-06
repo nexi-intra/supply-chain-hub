@@ -272,6 +272,7 @@ function liveFixture() {
   ipc.handle('kv:set', () => new Promise(done => { release = done }))
   const drain = async () => { for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve)) }
   return { auth, accounts, users, sessions, meta, root, drain, advance: value => { clock += value },
+    register(channel, listener = () => 'ok') { ipc.handle(channel, listener); return (...args) => handlers.get(channel)(event, ...args) },
     async start() { release = null; const pending = handlers.get('kv:set')(event, 'guides', []); await listenerStarted(() => release); return { pending, finish: value => release(value) } } }
 }
 test('the after-check denies AUTH_CONTEXT_CHANGED when a soft revalidation during the handler changes the role', async () => {
@@ -305,4 +306,65 @@ test('the after-check denies AUTH_CONTEXT_CHANGED when the background migration-
   await f.drain()
   call.finish('must not leak')
   await assert.rejects(call.pending, code('AUTH_CONTEXT_CHANGED'))
+})
+
+// Rolle-tjek paa sjaeldne kanaler: venter async paa en frisk aktoer i stedet for en
+// synkron M:-laesning paa main-traaden, og efterkontrollen bygger paa samme friske aktoer.
+function roleFixture() {
+  const handlers = new Map(), event = { sender: { id: 1 } }
+  const base = { email: 'user@example.test', userId: 'user_user@example.test', role: 'user', token: 'verified', home: { teamId: 'a', folderName: 'A' }, activeTeam: { teamId: 'a', folderName: 'A' }, teams: [{ teamId: 'a', folderName: 'A' }] }
+  let stale = base, fresh = base, served = base, syncCalls = 0
+  const service = {
+    current() { syncCalls++; throw new Error('synchronous actor resolve on the main thread') },
+    requireRole() { syncCalls++; throw new Error('synchronous actor resolve on the main thread') },
+    async currentAsync() { return structuredClone(served) },
+    async requireRoleAsync(_, role) {
+      served = fresh
+      if (fresh.role !== 'creator' && (role === 'creator' || fresh.role !== 'manager')) throw Object.assign(new Error('AUTH_FORBIDDEN'), { code: 'AUTH_FORBIDDEN' })
+      return structuredClone(fresh)
+    },
+  }
+  const ipc = createSecuredIpc({ handle: (key, handler) => handlers.set(key, handler) }, { auth: () => service, accounts: () => null, trusted: () => true, currentFolder: () => 'A', listTeams: () => [{ teamId: 'a', folderName: 'A' }] })
+  return {
+    register(channel, handler = () => 'ok') { ipc.handle(channel, handler); return (...args) => handlers.get(channel)(event, ...args) },
+    actors(staleChange, freshChange) { stale = { ...base, ...staleChange }; fresh = { ...base, ...freshChange }; served = stale },
+    syncCalls: () => syncCalls,
+  }
+}
+test('role-gated channels never resolve the actor synchronously', async () => {
+  const f = roleFixture()
+  const creatorChannel = f.register('registry:list-user-options'), usersWrite = f.register('kv:update'), assign = f.register('registry:assign-user'), recovery = f.register('accounts:resume')
+  const setField = { op: 'setField', field: 'x@example.test', value: {} }
+  f.actors({ role: 'creator' }, { role: 'creator' }); assert.equal(await creatorChannel(), 'ok')
+  f.actors({ role: 'creator' }, { role: 'creator' }); assert.equal(await recovery(), 'ok')
+  f.actors({ role: 'manager' }, { role: 'manager' }); assert.equal(await usersWrite('users', setField), 'ok')
+  f.actors({ role: 'manager' }, { role: 'manager' }); assert.equal(await assign('x@example.test', 'a'), 'ok')
+  f.actors({ role: 'creator' }, { role: 'creator' }); assert.equal(await usersWrite('guide-admin-emails', setField), 'ok')
+  // A demoted creator/manager is denied at once, even though the stale snapshot still holds the old role.
+  f.actors({ role: 'creator' }, { role: 'user' }); await assert.rejects(creatorChannel(), code('AUTH_FORBIDDEN'))
+  f.actors({ role: 'creator' }, { role: 'manager' }); await assert.rejects(creatorChannel(), code('AUTH_FORBIDDEN'))
+  f.actors({ role: 'creator' }, { role: 'user' }); await assert.rejects(recovery(), code('AUTH_FORBIDDEN'))
+  f.actors({ role: 'manager' }, { role: 'user' }); await assert.rejects(usersWrite('users', setField), code('AUTH_FORBIDDEN'))
+  f.actors({ role: 'manager' }, { role: 'user' }); await assert.rejects(assign('x@example.test', 'a'), code('AUTH_FORBIDDEN'))
+  f.actors({ role: 'manager' }, { role: 'user' }); await assert.rejects(usersWrite('force-update-requests', setField), code('AUTH_FORBIDDEN'))
+  f.actors({ role: 'manager' }, { role: 'user' }); await assert.rejects(f.register('kv:set')('guide-admin-emails', []), code('AUTH_FORBIDDEN'))
+  assert.equal(f.syncCalls(), 0, 'no role check read the actor synchronously')
+})
+test('a role-gated call after a stale actor does not fail with AUTH_CONTEXT_CHANGED', async () => {
+  const f = roleFixture()
+  const usersWrite = f.register('kv:update'), creatorChannel = f.register('registry:list-user-options'), assign = f.register('registry:assign-user')
+  const setField = { op: 'setField', field: 'x@example.test', value: {} }
+  f.actors({ role: 'user' }, { role: 'manager' }); assert.equal(await usersWrite('users', setField), 'ok')
+  f.actors({ role: 'user', token: 'old' }, { role: 'manager', token: 'renewed' }); assert.equal(await assign('x@example.test', 'a'), 'ok')
+  f.actors({ role: 'manager' }, { role: 'creator' }); assert.equal(await creatorChannel(), 'ok')
+  assert.equal(f.syncCalls(), 0)
+})
+test('a role-gated write after a stale snapshot uses the fresh role from the real auth service, without a synchronous read', async () => {
+  const f = liveFixture()
+  await f.auth.login(1, { email: 'user@example.test', password: 'secret123' })
+  f.users.mutate('users', users => ({ ...users, 'user@example.test': { ...users['user@example.test'], role: 'manager' } }))
+  f.users.get = () => { throw new Error('synchronous read of the shared drive') }
+  f.advance(20000)
+  assert.equal((await f.auth.currentAsync(1)).role, 'user', 'the stale snapshot is still served')
+  assert.equal(await f.register('kv:update')('guide-admin-emails', { op: 'setField', field: 'x@example.test', value: true }), 'ok')
 })

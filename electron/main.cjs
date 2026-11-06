@@ -1235,9 +1235,9 @@ app.whenReady().then(() => {
   }
   ipcMain.handle('registry:set-creator-email', (_event, email) => registry.setCreatorEmail(platformRoot, email))
   ipcMain.handle('registry:create-team', (_event, team) => registry.createTeam(platformRoot, team))
-  const requireCreator = event => authService.requireRole(event.sender.id, 'creator')
-  ipcMain.handle('registry:list-team-administration', (_event, requesterEmail) => {
-    requireCreator(_event)
+  const requireCreator = event => authService.requireRoleAsync(event.sender.id, 'creator')
+  ipcMain.handle('registry:list-team-administration', async (_event, requesterEmail) => {
+    await requireCreator(_event)
     const creatorEmail = registry.getCreatorEmail(platformRoot)
     return registry.listTeams(platformRoot).map((team) => {
       const users = storeFor(path.join(platformRoot, team.folderName)).get('users') || {}
@@ -1255,12 +1255,12 @@ app.whenReady().then(() => {
       return { ...team, managers }
     })
   })
-  ipcMain.handle('registry:update-team', (_event, requesterEmail, teamId, input) => {
-    requireCreator(_event)
+  ipcMain.handle('registry:update-team', async (_event, requesterEmail, teamId, input) => {
+    await requireCreator(_event)
     return registry.updateTeam(platformRoot, teamId, input)
   })
-  ipcMain.handle('registry:list-user-options', (_event, requesterEmail) => {
-    requireCreator(_event)
+  ipcMain.handle('registry:list-user-options', async (_event, requesterEmail) => {
+    await requireCreator(_event)
     const byEmail = new Map()
     for (const team of registry.listTeams(platformRoot)) {
       const users = storeFor(path.join(platformRoot, team.folderName)).get('users') || {}
@@ -1281,15 +1281,15 @@ app.whenReady().then(() => {
   const teamUsers = team => storeFor(registeredTeamDir(platformRoot, registry.listTeams(platformRoot), team.folderName).directory).getAsync('users')
   const nameOf = (users, email) => Object.values(users || {}).find(user => String(user?.email || '').trim().toLowerCase() === email)?.fullName || email
   ipcMain.handle('registry:list-manager-access', async (event) => {
-    requireCreator(event)
+    await requireCreator(event)
     const teams = registry.listTeams(platformRoot)
     return Promise.all(registry.listManagerAccess(platformRoot).map(async entry => {
       const home = registry.lookupTeamForEmail(platformRoot, entry.email)
       return { ...entry, fullName: home ? nameOf(await teamUsers(home), entry.email) : entry.email, homeTeamId: home?.teamId || null, teamIds: entry.teamIds.filter(teamId => teams.some(team => team.teamId === teamId)) }
     }))
   })
-  ipcMain.handle('registry:set-manager-access', (event, email, teamIds) => {
-    requireCreator(event)
+  ipcMain.handle('registry:set-manager-access', async (event, email, teamIds) => {
+    await requireCreator(event)
     const result = registry.setManagerAccess(platformRoot, email, teamIds)
     authService.invalidateAll()
     broadcast('registry:hubs-changed')
@@ -1321,7 +1321,7 @@ app.whenReady().then(() => {
   })
   // Managers from other teams, shown read-only to the open team's own managers.
   ipcMain.handle('registry:list-extra-managers', async (event) => {
-    const actor = authService.requireRole(event.sender.id, 'manager')
+    const actor = await authService.requireRoleAsync(event.sender.id, 'manager')
     const team = actor.activeTeam
     if (!team) return []
     const entries = registry.listManagerAccess(platformRoot).filter(entry => entry.teamIds.includes(team.teamId))

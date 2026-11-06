@@ -28,16 +28,22 @@ function createSecuredIpc(native, { auth, trusted, currentFolder, listTeams, acc
       if (PUBLIC_CHANNELS.has(channel)) return listener(event, ...args)
       // Async, cached auth: the synchronous variant read the shared drive on the main thread and froze the whole app.
       const service = auth(), actorOf = sender => (typeof service.currentAsync === 'function' ? service.currentAsync(sender) : service.current(sender))
-      const actor = await actorOf(event.sender.id)
+      let actor = await actorOf(event.sender.id)
+      // Rolle-tjek venter async paa en frisk aktoer (aldrig synkron M:-laesning paa main-traaden,
+      // aldrig en forældet rolle). Den friske aktoer bruges derefter, ogsaa som efterkontrollens scope.
+      const requireRole = async role => {
+        const fresh = typeof service.requireRoleAsync === 'function' ? await service.requireRoleAsync(event.sender.id, role) : service.requireRole(event.sender.id, role)
+        if (fresh) actor = fresh
+      }
       if (RECOVERY_CHANNELS.has(channel)) {
-        if (channel !== 'accounts:status') service.requireRole(event.sender.id, 'creator')
+        if (channel !== 'accounts:status') await requireRole('creator')
         return listener(event, ...args)
       }
       const accountService = accounts(), contextOf = () => (typeof accountService?.contextAsync === 'function' ? accountService.contextAsync() : accountService?.context())
       const accountContext = await contextOf()
-      if (CREATOR_CHANNELS.has(channel)) service.requireRole(event.sender.id, 'creator')
+      if (CREATOR_CHANNELS.has(channel)) await requireRole('creator')
       if (channel === 'registry:assign-user') {
-        service.requireRole(event.sender.id, 'manager')
+        await requireRole('manager')
         if (actor.role !== 'creator' && args[1] !== actor.activeTeam?.teamId) denied()
       }
       if (channel === 'registry:switch-to-team') {
@@ -52,10 +58,10 @@ function createSecuredIpc(native, { auth, trusted, currentFolder, listTeams, acc
       }
       if (WRITES.has(channel)) {
         const key = args[0]
-        if (key === 'users' || key === 'guide-admin-emails') service.requireRole(event.sender.id, 'manager')
+        if (key === 'users' || key === 'guide-admin-emails') await requireRole('manager')
         if (key === 'force-update-requests') {
           const operation = args[1]
-          if (!(channel === 'kv:update' && operation?.op === 'deleteField' && operation.field === actor.email)) service.requireRole(event.sender.id, 'manager')
+          if (!(channel === 'kv:update' && operation?.op === 'deleteField' && operation.field === actor.email)) await requireRole('manager')
         }
         if (key === 'users' && channel !== 'kv:update') denied()
         if (PERSONAL_KEY.test(key) && ![actor.email, actor.userId].some(identity => key.endsWith(`-${identity}`))) denied()

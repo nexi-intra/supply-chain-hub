@@ -51,9 +51,12 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
   // (main.cjs uses 15 s and clears the cache as soon as its watcher sees
   // active-sessions/users change); migration context (accountService) is gated separately.
   const contextCache = new Map(), CONTEXT_TTL_MS = contextTtlMs
-  // currentAsync maa svare med et aeldre snapshot i hoejst 60 s, mens det
-  // genlaeses i baggrunden; afvises genlaesningen (fx tilbagekaldt session)
-  // fjernes snapshottet, saa naeste kald afvises - inden for én M:-laesning.
+  // currentAsync maa svare med et aeldre snapshot, mens det genlaeses i
+  // baggrunden: hoejst 60 s efter at den seneste vellykkede laesning blev
+  // gemt (`at` saettes naar laesningen er faerdig), dvs. data kan vaere op til
+  // 60 s + varigheden af den laesning gamle. Afvises genlaesningen (fx
+  // tilbagekaldt session) fjernes snapshottet, saa naeste kald afvises.
+  // Rolle-tjek (requireRoleAsync) bruger aldrig et forældet snapshot.
   const MAX_STALE_MS = Math.max(CONTEXT_TTL_MS, 60000)
   // Bumped by every HARD invalidation, so a resolve that started before a logout/role change is never cached afterwards.
   let generation = 0
@@ -200,10 +203,17 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
     const role = homeRole === 'creator' ? 'creator' : activeTeam?.teamId === home.teamId ? homeRole : activeTeam ? 'manager' : 'user'
     return { token: bound.token, email, userId: session.userId, teamId: session.teamId, expiresAt: session.expiresAt, createdAt: session.createdAt, role, homeRole, home, activeTeam, teams }
   }
-  function requireRole(sender, role) {
-    const actor = current(sender)
+  function checkRole(actor, role) {
     if (actor.role !== 'creator' && (role === 'creator' || actor.role !== 'manager')) fail('AUTH_FORBIDDEN')
     return actor
+  }
+  function requireRole(sender, role) {
+    return checkRole(current(sender), role)
+  }
+  // Rolle-tjek uden synkron M:-laesning: aldrig et forældet/soft-markeret snapshot
+  // (en degraderet creator/manager mister adgangen straks), men venter async paa genlaesning.
+  async function requireRoleAsync(sender, role) {
+    return checkRole(await currentFreshAsync(sender), role)
   }
   async function exclusive(sender, callback, throttle = false) {
     if (busy.has(sender) || busy.size >= 4) fail('AUTH_BUSY')
@@ -392,6 +402,6 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
     })
   }
   function forget(sender) { epochs.set(sender, (epochs.get(sender) || 0) + 1); bindings.delete(sender); attempts.delete(sender); invalidate(sender) }
-  return { login, signup, resume, current, currentAsync, requireRole, renew, logout, profile, forget, revalidateAll, invalidateAll: () => { generation++; contextCache.clear() } }
+  return { login, signup, resume, current, currentAsync, requireRole, requireRoleAsync, renew, logout, profile, forget, revalidateAll, invalidateAll: () => { generation++; contextCache.clear() } }
 }
 module.exports = { createAuthService, hashPassword, verifyPassword, sessionKey, loadDeviceSecret }
