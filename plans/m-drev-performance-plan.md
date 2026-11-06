@@ -116,14 +116,14 @@ Tick-forlÃ¸b: `fs.promises.stat(dataDir)` â†’ fejl = uopnÃ¥elig (samme 
 
 AdfÃ¦rd: nÃ¥r `freshDepth === 0` og der findes en cache-post (ogsÃ¥ `value: undefined` for ENOENT): returnÃ©r altid kopien med det samme; er den Ã¦ldre end `CACHE_TTL_MS`, start (single-flight pr. fil) en `fs.promises.readFile`-opfriskning der opdaterer cachen. Fejl i opfriskningen bevarer cachen. Uden cache-post: synkron lÃ¦sning som i dag. `withFreshReads` er uÃ¦ndret (mutationer lÃ¦ser stadig frisk og synkront).
 
-- [ ] **Step 1: Skriv fejlende tests** i `electron/registry.test.cjs`:
+- [x] **Step 1: Skriv fejlende tests** i `electron/registry.test.cjs`:
   - `an expired registry cache is served without a synchronous read and refreshed in the background` â€“ skriv `teams.json` med team A, `readTeams` (varmer cache), skriv team B direkte til filen, skru `Date.now` 31 s frem, erstat `fs.readFileSync` med en der kaster â†’ `readTeams` returnerer kun A; `await registry.whenRefreshed()` â†’ `readTeams` indeholder B.
   - `a failed background refresh keeps serving the cached registry` â€“ som ovenfor men slet filens mappe fÃ¸r opfriskning â†’ efter `whenRefreshed()` returneres stadig A, intet kast.
   - `mutations still read the registry fresh` â€“ efter ekstern Ã¦ndring (inden for TTL) skal f.eks. `assignUserToTeam` bygge pÃ¥ den friske fil (eksisterende adfÃ¦rd; testen skal blive grÃ¸n bÃ¥de fÃ¸r og efter).
-- [ ] **Step 2:** `node --test electron/registry.test.cjs` â†’ de to fÃ¸rste FAIL.
-- [ ] **Step 3: ImplementÃ©r** i `readJsonSafe` + `whenRefreshed`. Lad `prefetchAsync` genbruge samme single-flight.
-- [ ] **Step 4:** `node --test electron/registry.test.cjs` â†’ PASS. Eksisterende tests der forventer frisk vÃ¦rdi efter TTL rettes til at `await registry.whenRefreshed()` fÃ¸rst.
-- [ ] **Step 5:** `npm test` â†’ PASS. Commit: `perf(registry): udloebet cache serveres straks og opfriskes async`.
+- [x] **Step 2:** `node --test electron/registry.test.cjs` â†’ de to fÃ¸rste FAIL.
+- [x] **Step 3: ImplementÃ©r** i `readJsonSafe` + `whenRefreshed`. Lad `prefetchAsync` genbruge samme single-flight.
+- [x] **Step 4:** `node --test electron/registry.test.cjs` â†’ PASS. Eksisterende tests der forventer frisk vÃ¦rdi efter TTL rettes til at `await registry.whenRefreshed()` fÃ¸rst.
+- [x] **Step 5:** `npm test` â†’ PASS. Commit: `perf(registry): udloebet cache serveres straks og opfriskes async`.
 
 ### Task 5: Login, resume, renew og logout uden synkron lÃ¥s og I/O
 
@@ -146,15 +146,15 @@ Konkrete udskiftninger i `authService.cjs` (kun i `login`, `resume`, `renew`, `l
 - `registry.*`-kald forbliver synkrone (cachet, se Task 4); kald `await registry.prefetchAsync?.(getRoot())` fÃ¸rst i `login` og `resume`.
 - `signup` og `profile` rÃ¸res ikke (afgrÃ¦nset i spec).
 
-- [ ] **Step 1: Skriv fejlende tests:**
+- [x] **Step 1: Skriv fejlende tests:**
   - `accountService.test.cjs`: `runAuthenticationAsync waits for a held account lock without blocking the event loop` â€“ opret `_registry/account-operation.lock` med anden ejer; start `runAuthenticationAsync('a@x', () => 'ok')`; en `setImmediate`-callback skal kÃ¸re fÃ¸r lÃ¥sen frigives; slet lÃ¥sfilen efter 300 ms â†’ resolver `'ok'`.
   - `accountService.test.cjs`: `runAuthenticationAsync gives up with KV_LOCK_BUSY after its attempt budget` â€“ lÃ¥s holdes hele tiden, `delayMs` gjort lille via test-hook eller ventetid accepteret (â‰¤ ~12 s) â†’ rejecter med `code === 'KV_LOCK_BUSY'`.
   - `authService.test.cjs`: `login, resume, renew and logout never call synchronous store methods` â€“ fixture-stores hvor `get`, `mutate`, `update`, `set` kaster `'SYNC_CALLED'`; et fuldt login â†’ resume â†’ renew â†’ logout-forlÃ¸b lykkes og `active-sessions` ender uden sessionen.
-- [ ] **Step 2:** `node --test electron/accountService.test.cjs electron/authService.test.cjs` â†’ nye tests FAIL.
-- [ ] **Step 3: ImplementÃ©r** `runAuthenticationAsync` og de fire auth-flows; wire `runWriteAsync: accountService.runWriteAsync, runAuthenticationAsync: accountService.runAuthenticationAsync` i `main.cjs`.
-- [ ] **Step 4:** Samme kommando â†’ PASS; derefter `npm test` â†’ PASS.
-- [ ] **Step 5:** `npm run test:electron-auth` â†’ PASS (auth-smoke i rigtig Electron).
-- [ ] **Step 6:** Commit: `perf(auth): login/resume/renew/logout venter async paa kontolaasen`.
+- [x] **Step 2:** `node --test electron/accountService.test.cjs electron/authService.test.cjs` â†’ nye tests FAIL.
+- [x] **Step 3: ImplementÃ©r** `runAuthenticationAsync` og de fire auth-flows; wire `runWriteAsync: accountService.runWriteAsync, runAuthenticationAsync: accountService.runAuthenticationAsync` i `main.cjs`.
+- [x] **Step 4:** Samme kommando â†’ PASS; derefter `npm test` â†’ PASS.
+- [x] **Step 5:** `npm run test:electron-auth` â†’ PASS (auth-smoke i rigtig Electron).
+- [x] **Step 6:** Commit: `perf(auth): login/resume/renew/logout venter async paa kontolaasen`.
 
 ### Task 6: Handlere og sygefravÃ¦r-timer uden synkron M:
 
@@ -168,12 +168,12 @@ Konkrete udskiftninger i `authService.cjs` (kun i `login`, `resume`, `renew`, `l
 - Produces: `purgeStoreAsync(store, today: string): Promise<number>` â€“ samme regler som `purgeStore`, men `getAsync`/`mutateAsync`.
 - Ã†ndret: `currentActor` i warehouse-wiring returnerer `Promise<actor>` (`event => authService.currentAsync(event.sender.id)`).
 
-- [ ] **Step 1: Skriv fejlende test** `purgeStoreAsync removes finished sick leave and notices without synchronous store calls` â€“ store-fake hvor `get`/`mutate` kaster; `getAsync`/`mutateAsync` virker; forventet antal fjernet = samme som `purgeStore` pÃ¥ samme data (genbrug eksisterende testdata hvis de findes).
-- [ ] **Step 2:** KÃ¸r testen â†’ FAIL.
-- [ ] **Step 3: ImplementÃ©r** `purgeStoreAsync`; gÃ¸r `purgeFinishedSickLeave` `async`, brug `storeFor(...)` i stedet for `createStore(...)` (undgÃ¥r synkron `mkdirSync`) og `purgeStoreAsync`. `setTimeout`/`setInterval` kalder den med `.catch(() => {})`.
-- [ ] **Step 4:** Udskift alle `authService.current(event.sender.id)` / `authService.current(_event.sender.id)` i handlere med `await authService.currentAsync(â€¦)` og gÃ¸r handlerne `async`. OpdatÃ©r warehouse `currentActor` og `register.cjs:189`.
-- [ ] **Step 5:** `grep -n "authService.current(" electron/main.cjs` â†’ ingen trÃ¦f. `npm test` og `npm run test:warehouse` â†’ PASS.
-- [ ] **Step 6:** Commit: `perf(main): handlere og sygefravaer-oprydning bruger async auth og store`.
+- [x] **Step 1: Skriv fejlende test** `purgeStoreAsync removes finished sick leave and notices without synchronous store calls` â€“ store-fake hvor `get`/`mutate` kaster; `getAsync`/`mutateAsync` virker; forventet antal fjernet = samme som `purgeStore` pÃ¥ samme data (genbrug eksisterende testdata hvis de findes).
+- [x] **Step 2:** KÃ¸r testen â†’ FAIL.
+- [x] **Step 3: ImplementÃ©r** `purgeStoreAsync`; gÃ¸r `purgeFinishedSickLeave` `async`, brug `storeFor(...)` i stedet for `createStore(...)` (undgÃ¥r synkron `mkdirSync`) og `purgeStoreAsync`. `setTimeout`/`setInterval` kalder den med `.catch(() => {})`.
+- [x] **Step 4:** Udskift alle `authService.current(event.sender.id)` / `authService.current(_event.sender.id)` i handlere med `await authService.currentAsync(â€¦)` og gÃ¸r handlerne `async`. OpdatÃ©r warehouse `currentActor` og `register.cjs:189`.
+- [x] **Step 5:** `grep -n "authService.current(" electron/main.cjs` â†’ ingen trÃ¦f. `npm test` og `npm run test:warehouse` â†’ PASS.
+- [x] **Step 6:** Commit: `perf(main): handlere og sygefravaer-oprydning bruger async auth og store`.
 
 ### Task 6b: Async lås venter uden synkron læsning af låsens ejer
 
@@ -186,11 +186,11 @@ Konkrete udskiftninger i `authService.cjs` (kun i `login`, `resume`, `renew`, `l
 **Interfaces:**
 - Produces: intern `readOwnerAsync(target): Promise<string | null>` (samme semantik som `readOwner`: fejl → `null`). `acquireFileLockAsync` bruger den; sync `acquireFileLock` bruger fortsat `readOwner`. Ingen ændring af eksporterede signaturer, lås-format, `staleMs`-regler eller `isAbandonedLock`.
 
-- [ ] **Step 1: Skriv fejlende test** `acquireFileLockAsync never reads the lock owner synchronously while waiting` – opret lås-fil med anden ejer, erstat `fs.readFileSync` med en der kaster for stier der ender på `.lock`, kald `withFileLockAsync(target, fn, { attempts: 3, delayMs: 10, staleMs: 60000 })` → rejecter med `code === 'KV_LOCK_BUSY'` (ikke med den kastede fejl); gendan `fs.readFileSync`.
-- [ ] **Step 2:** `node --test electron/fileLock.test.cjs` → FAIL.
-- [ ] **Step 3: Implementér** `readOwnerAsync` og brug den i `acquireFileLockAsync`. Release-funktionen er allerede async.
-- [ ] **Step 4:** `node --test electron/fileLock.test.cjs` → PASS; `npm test` → PASS.
-- [ ] **Step 5:** Commit: `perf(lock): async laas laeser ejer async mens den venter`.
+- [x] **Step 1: Skriv fejlende test** `acquireFileLockAsync never reads the lock owner synchronously while waiting` – opret lås-fil med anden ejer, erstat `fs.readFileSync` med en der kaster for stier der ender på `.lock`, kald `withFileLockAsync(target, fn, { attempts: 3, delayMs: 10, staleMs: 60000 })` → rejecter med `code === 'KV_LOCK_BUSY'` (ikke med den kastede fejl); gendan `fs.readFileSync`.
+- [x] **Step 2:** `node --test electron/fileLock.test.cjs` → FAIL.
+- [x] **Step 3: Implementér** `readOwnerAsync` og brug den i `acquireFileLockAsync`. Release-funktionen er allerede async.
+- [x] **Step 4:** `node --test electron/fileLock.test.cjs` → PASS; `npm test` → PASS.
+- [x] **Step 5:** Commit: `perf(lock): async laas laeser ejer async mens den venter`.
 
 ## Fase 3 â€“ FÃ¦rre skrivninger og sikker lukning
 
