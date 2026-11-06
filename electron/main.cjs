@@ -310,6 +310,21 @@ function createDebouncedBroadcast(delayMs = 100) {
   }
 }
 
+// Skjult/minimeret vindue: watcherne tikker langsomt; ved gendannelse scannes straks.
+let windowVisible = true
+
+function applyWatchVisibility() {
+  for (const s of [store, sharedStore]) {
+    if (typeof s?.setWatchVisibility === 'function') s.setWatchVisibility(windowVisible)
+  }
+}
+
+function setWindowVisible(visible) {
+  if (windowVisible === visible) return
+  windowVisible = visible
+  applyWatchVisibility()
+}
+
 function startWatcher() {
   if (stopWatcher) stopWatcher()
   const debouncedBroadcast = createDebouncedBroadcast(100)
@@ -319,6 +334,7 @@ function startWatcher() {
     if (changedKeys.includes('users')) authService?.invalidateAll()
     debouncedBroadcast(changedKeys)
   }), setStorageConnected)
+  applyWatchVisibility()
 }
 
 /**
@@ -351,6 +367,7 @@ function startSharedWatcher() {
     if (changedKeys.includes('active-sessions')) authService?.invalidateAll()
     debouncedBroadcast(changedKeys)
   }), () => {})
+  applyWatchVisibility()
 }
 
 /** Fjerner temp-filer som crashede klienter har efterladt i de delte mapper. Best effort og helt i baggrunden. */
@@ -703,6 +720,11 @@ function createWindow() {
   const revealTimer = setTimeout(() => { if (!win.isDestroyed() && !win.isVisible()) win.show() }, 1200)
   win.once('ready-to-show', () => { clearTimeout(revealTimer); if (!win.isDestroyed()) win.show() })
   win.once('closed', () => clearTimeout(revealTimer))
+  // Fokustab (blur) taeller ikke som skjult.
+  win.on('minimize', () => setWindowVisible(false))
+  win.on('hide', () => setWindowVisible(false))
+  win.on('restore', () => setWindowVisible(true))
+  win.on('show', () => setWindowVisible(true))
   const senderId = win.webContents.id
   // Danish until the renderer reports the user's language.
   applySpellcheckLanguage(win.webContents.session, 'da')
