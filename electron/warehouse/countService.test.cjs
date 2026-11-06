@@ -861,12 +861,25 @@ function countingService(ctx, name) {
       }
     },
   })
-  const svc = createCountService({ repo, storeFor: ctx.storeFor, fetcher: ctx.fetcher, journalsDir: path.join(ctx.root, `local-${name}`), deviceId: name, now: () => ctx.clock.now, newId: () => `${name}-${crypto.randomUUID()}`, journalOptions: { autoFlush: false } })
+  // Styrede timere (opvarmning og hængende opfriskning) og et signal, hver gang en kontekst-hentning er færdig.
+  const timers = []
+  const setTimer = (fn, ms) => { const timer = { fn, ms, done: false, unrefed: false, unref() { timer.unrefed = true; return timer } }; timers.push(timer); return timer }
+  const clearTimer = timer => { if (timer) timer.done = true }
+  let waiters = []
+  const onScanContextRefreshed = () => { const due = waiters; waiters = []; for (const resolve of due) resolve() }
+  const svc = createCountService({ repo, storeFor: ctx.storeFor, fetcher: ctx.fetcher, journalsDir: path.join(ctx.root, `local-${name}`), deviceId: name, now: () => ctx.clock.now, newId: () => `${name}-${crypto.randomUUID()}`, journalOptions: { autoFlush: false }, setTimer, clearTimer, onScanContextRefreshed })
   return {
     svc,
     reads,
-    hold() { let release; const promise = new Promise(resolve => { release = resolve }); gate = { promise, release } },
+    timers,
+    hold() { let release; const promise = new Promise(resolve => { release = resolve }); gate = { promise, release }; return gate },
     release() { if (gate) { gate.release(); gate = null } },
+    /** Stops holding new reads; the reads already held hang until their gate is released (or forever). */
+    unhold() { gate = null },
+    /** Resolves when the next scan-context fetch has settled (call it before the fetch can settle). */
+    refreshed() { return new Promise(resolve => waiters.push(resolve)) },
+    armed: ms => timers.filter(timer => !timer.done && timer.ms === ms).length,
+    fire(ms) { const due = timers.filter(timer => !timer.done && timer.ms === ms); for (const timer of due) { timer.done = true; timer.fn() } return due.length },
   }
 }
 
@@ -894,6 +907,7 @@ test('a stale scan context answers at once and refreshes in the background', asy
   ctx.tick(6000)
   pc.reads.length = 0
   pc.hold()
+  const refreshed = pc.refreshed()
   try {
     const started = Date.now()
     const result = await within(pc.svc.scan(ANNA, id, { serial: 'N2', place: 'A1.1' }), 1000)
@@ -904,7 +918,7 @@ test('a stale scan context answers at once and refreshes in the background', asy
   } finally {
     pc.release()
   }
-  await pc.svc._scanContextSettled()
+  assert.notEqual(await within(refreshed, 2000), 'timeout', 'the background refresh settles')
   assert.equal(pc.reads.filter(name => name === 'getStatus').length, 1, 'one background refresh, not one per scan')
   assert.equal(pc.reads.filter(name => name === 'getMembers').length, 1)
   pc.reads.length = 0
@@ -921,6 +935,7 @@ test('a status locked elsewhere rejects the next scan after the background refre
   await ctx.repo.updateStatus('TCD', 'st0open1', { state: 'locked', lockedAt: 2, lockedBy: { email: 'mona@example.test', name: 'Mona' } }, { action: 'locked', by: { email: 'mona@example.test', name: 'Mona' } })
   ctx.tick(6000)
   pc.hold()
+  const refreshed = pc.refreshed()
   try {
     const result = await within(pc.svc.scan(ANNA, id, { serial: 'N2', place: 'A1.1' }), 1000)
     assert.notEqual(result, 'timeout')
@@ -928,8 +943,94 @@ test('a status locked elsewhere rejects the next scan after the background refre
   } finally {
     pc.release()
   }
-  await pc.svc._scanContextSettled()
+  assert.notEqual(await within(refreshed, 2000), 'timeout', 'the background refresh settles')
   await assert.rejects(pc.svc.scan(ANNA, id, { serial: 'U1', place: 'A1.1' }), { code: 'STATUS_LOCKED' })
+})
+
+test('an active scanner keeps its scan context fresh', async () => {
+  const ctx = setup()
+  const { id } = await newCount(ctx, ctx.service('pc1'))
+  const pc = countingService(ctx, 'pc1b')
+  await pc.svc.scan(ANNA, id, { serial: 'N1', place: 'A1.1' })
+  assert.equal(pc.armed(4000), 1, 'one warm-up timer per count and user')
+  ctx.tick(4000)
+  const refreshed = pc.refreshed()
+  assert.equal(pc.fire(4000), 1)
+  assert.notEqual(await within(refreshed, 2000), 'timeout', 'the warm-up refreshes the context')
+  ctx.tick(2000)
+  pc.reads.length = 0
+  pc.hold()
+  try {
+    const started = Date.now()
+    const result = await within(pc.svc.scan(ANNA, id, { serial: 'N2', place: 'A1.1' }), 1000)
+    assert.notEqual(result, 'timeout')
+    assert.ok(Date.now() - started < 90, `answered in ${Date.now() - started} ms without waiting for the drive`)
+    assert.deepEqual([result.outcome, result.saved], ['found', true])
+  } finally {
+    pc.release()
+  }
+  assert.deepEqual(pc.reads, [], 'the warm context is fresh')
+  assert.equal(pc.armed(4000), 1, 'still one timer after scanning again')
+  assert.ok(pc.timers.every(timer => timer.unrefed), 'timers never keep the app alive')
+})
+
+test('warm-up stops after two minutes without scanning', async () => {
+  const ctx = setup()
+  const { id } = await newCount(ctx, ctx.service('pc1'))
+  const pc = countingService(ctx, 'pc1b')
+  await pc.svc.scan(ANNA, id, { serial: 'N1', place: 'A1.1' })
+  const scannedAt = ctx.clock.now
+  let refreshes = 0
+  while (pc.armed(4000)) {
+    assert.ok(ctx.clock.now - scannedAt < 130_000, 'the warm-up must stop')
+    ctx.tick(4000)
+    pc.reads.length = 0
+    const refreshed = pc.refreshed()
+    pc.fire(4000)
+    if (await within(refreshed, 300) !== 'timeout') refreshes++
+  }
+  assert.deepEqual(pc.reads, [], 'the last timer read nothing')
+  assert.equal(ctx.clock.now - scannedAt, 120_000, 'stopped after two minutes idle')
+  assert.equal(refreshes, 29, 'refreshed every 4 s while the scanner was active')
+  await pc.svc.scan(ANNA, id, { serial: 'N2', place: 'A1.1' })
+  assert.equal(pc.armed(4000), 1, 'a new scan starts the warm-up again')
+  await pc.svc.closeAll()
+  assert.equal(pc.armed(4000), 0, 'closing clears the timer')
+})
+
+test('a hung background refresh does not block later refreshes', async () => {
+  const ctx = setup()
+  const { id } = await newCount(ctx, ctx.service('pc1'))
+  const pc = countingService(ctx, 'pc1b')
+  await pc.svc.scan(ANNA, id, { serial: 'N1', place: 'A1.1' })
+  ctx.tick(6000)
+  const hung = pc.hold()
+  const result = await within(pc.svc.scan(ANNA, id, { serial: 'N2', place: 'A1.1' }), 1000)
+  assert.equal(result.outcome, 'found', 'answered from the old context')
+  pc.unhold()
+  const logged = []
+  const original = console.error
+  console.error = (...args) => logged.push(args.join(' '))
+  try {
+    assert.equal(pc.fire(10_000), 1, 'the hung refresh times out after 10 s')
+    ctx.tick(1000)
+    pc.reads.length = 0
+    const refreshed = pc.refreshed()
+    assert.equal((await pc.svc.scan(ANNA, id, { serial: 'U1', place: 'A1.1' })).outcome, 'found')
+    assert.notEqual(await within(refreshed, 2000), 'timeout', 'a new refresh ran')
+    assert.equal(pc.reads.filter(name => name === 'getMembers').length, 1, 'a new refresh was started')
+    assert.equal(logged.filter(line => /scan context/.test(line)).length, 1, 'logged once')
+  } finally {
+    console.error = original
+  }
+  // Det hængende svar kommer sent og må ikke erstatte den nyere kontekst.
+  const late = pc.refreshed()
+  hung.release()
+  await within(late, 2000)
+  ctx.tick(4500)
+  pc.reads.length = 0
+  assert.equal((await pc.svc.scan(ANNA, id, { serial: 'N1', place: 'A1.1' })).outcome, 'duplicate')
+  assert.deepEqual(pc.reads, [], 'the late result was ignored')
 })
 
 test('changing a material lock on this client is seen by the next scan', async () => {

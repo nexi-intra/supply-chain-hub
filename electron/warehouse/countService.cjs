@@ -26,6 +26,11 @@ const LIST_LIMIT = 500
 // offline journal. En ældre kontekst opfriskes i baggrunden; scanningen venter højst SCAN_CONTEXT_WAIT_MS på den.
 const SCAN_CONTEXT_FRESH_MS = 5000
 const SCAN_CONTEXT_WAIT_MS = 100
+// Mens der scannes, opfriskes konteksten hvert 4. s i baggrunden, så næste scanning finder den frisk og aldrig venter.
+// Opvarmningen stopper 2 min efter seneste scanning; en hængende opfriskning slippes efter 10 s.
+const SCAN_CONTEXT_WARM_MS = 4000
+const SCAN_CONTEXT_WARM_IDLE_MS = 120_000
+const SCAN_CONTEXT_HUNG_MS = 10_000
 
 function codeError(code, message) {
   return Object.assign(new Error(message || code), { code })
@@ -35,7 +40,7 @@ const lower = value => String(value || '').trim().toLowerCase()
 const sameList = (list, wanted) => Array.isArray(list) && list.length === wanted.length && wanted.every(item => list.includes(item))
 const clean = (value, max) => String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max)
 
-function createCountService({ repo, storeFor, fetcher, placementSource = null, reportWriter = null, peekRules = async () => ({}), localCache = null, journalsDir, deviceId, now = Date.now, newId = () => crypto.randomUUID(), emit = () => {}, journalOptions = {} }) {
+function createCountService({ repo, storeFor, fetcher, placementSource = null, reportWriter = null, peekRules = async () => ({}), localCache = null, journalsDir, deviceId, now = Date.now, newId = () => crypto.randomUUID(), emit = () => {}, journalOptions = {}, setTimer = setTimeout, clearTimer = clearTimeout, onScanContextRefreshed = () => {} }) {
   const pending = new Map()
   const opened = new Map()
   const archives = new Map()
@@ -550,13 +555,20 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   // ---------- Scan context: what a scan needs from M:, cached per open count (and so per user) ----------
   // Afvisninger (slettet, låst status, afsluttet, ikke medlem) kommer med højst ~5 s forsinkelse; en kontekst, der
   // afviser, bruges aldrig fra cachen men hentes forfra, så en netop godkendt deltager kan scanne med det samme.
-  const scanFetches = new Set()
   let scanContextWarned = false
+  let scanContextHungWarned = false
+
+  const startTimer = (fn, ms) => {
+    const timer = setTimer(fn, ms)
+    timer?.unref?.()
+    return timer
+  }
 
   function fetchScanContext(state) {
     if (state.scanFetch && state.scanFetch.gen === state.scanGen) return state.scanFetch.promise
     const gen = state.scanGen
     const at = now()
+    let hung = null
     const promise = Promise.all([
       repo.isDeleted(state.team, state.id).catch(() => false),
       repo.getMembers(state.team, state.id).catch(() => null),
@@ -566,17 +578,51 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       materialLocks(state),
       repo.getApprovals(state.team, state.id).catch(() => ({})),
     ]).then(([deleted, members, locked, own, claims, locks, approvals]) => {
-      adoptMembers(state, members)
       const context = { at, deleted, locked, own, claims, locks, approvals }
-      if (state.scanGen === gen) state.scanContext = context
+      // Et sent svar (efter invalidering eller timeout) ignoreres.
+      if (state.scanGen === gen) {
+        adoptMembers(state, members)
+        state.scanContext = context
+      }
       return context
     }).finally(() => {
+      clearTimer(hung)
       if (state.scanFetch?.promise === promise) state.scanFetch = null
-      scanFetches.delete(promise)
+      onScanContextRefreshed()
     })
+    // Hænger drevet, slippes single-flight-pladsen efter 10 s, så en senere scanning kan starte en ny opfriskning.
+    hung = startTimer(() => {
+      if (state.scanFetch?.promise !== promise) return
+      state.scanFetch = null
+      state.scanGen = (state.scanGen || 0) + 1
+      if (!scanContextHungWarned) console.error('CountPoint: scan context refresh hung, released after', SCAN_CONTEXT_HUNG_MS, 'ms')
+      scanContextHungWarned = true
+    }, SCAN_CONTEXT_HUNG_MS)
     state.scanFetch = { gen, promise }
-    scanFetches.add(promise)
     return promise
+  }
+
+  const refreshInBackground = state => fetchScanContext(state).catch(error => {
+    if (!scanContextWarned) console.error('CountPoint: scan context refresh failed', error.code || error.message)
+    scanContextWarned = true
+    return null
+  })
+
+  /** Holder konteksten varm mens der scannes: én timer pr. åben optælling (= pr. bruger), stopper efter 2 min uden scanning. */
+  function warmScanContext(state) {
+    clearTimer(state.scanWarm)
+    state.scanWarm = startTimer(() => {
+      state.scanWarm = null
+      if (state.scanWarmStopped || now() - state.lastScanAt >= SCAN_CONTEXT_WARM_IDLE_MS) return
+      refreshInBackground(state)
+      warmScanContext(state)
+    }, SCAN_CONTEXT_WARM_MS)
+  }
+
+  function stopScanWarm(state) {
+    clearTimer(state.scanWarm)
+    state.scanWarm = null
+    state.scanWarmStopped = true
   }
 
   const contextDenies = (user, state, context) => context.deleted || state.meta.status !== 'open' || !rightsOf(user, state, context.locked).canWrite
@@ -585,11 +631,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const cached = state.scanContext
     if (cached && !contextDenies(user, state, cached)) {
       if (now() - cached.at < SCAN_CONTEXT_FRESH_MS) return cached
-      const refreshing = fetchScanContext(state).catch(error => {
-        if (!scanContextWarned) console.error('CountPoint: scan context refresh failed', error.code || error.message)
-        scanContextWarned = true
-        return null
-      })
+      // Kun første scanning efter en pause rammer en forældet kontekst (opvarmningen holder den ellers frisk).
+      const refreshing = refreshInBackground(state)
       let timer
       const waited = new Promise(resolve => { timer = setTimeout(resolve, SCAN_CONTEXT_WAIT_MS, null) })
       const settled = await Promise.race([refreshing, waited]).finally(() => clearTimeout(timer))
@@ -620,10 +663,6 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     }
   }
 
-  async function scanContextSettled() {
-    while (scanFetches.size) await Promise.allSettled([...scanFetches])
-  }
-
   async function scan(user, id, { serial, place } = {}) {
     const state = await load(user, id)
     const context = await scanContext(user, state)
@@ -635,6 +674,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const { area, warning } = areaContext(user, state, cleanPlace, context)
     const event = await state.journal.append({ type: 'scan', serial: normalized, place: cleanPlace, area })
     if (result.outcome !== 'duplicate') state.found.set(normalized, { by: event.by, byName: event.byName, at: event.at, place: cleanPlace, source: 'scan', eventId: event.id })
+    state.lastScanAt = now()
+    if (!state.scanWarmStopped) warmScanContext(state)
     let materialWarning = null
     if (result.outcome === 'found' && result.material) {
       const lock = context.locks[result.material]
@@ -1168,7 +1209,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
 
   function forget(team, id) {
     for (const [key, state] of opened) {
-      if (state.team === team && state.id === id) { state.journal.stop(); opened.delete(key) }
+      if (state.team === team && state.id === id) { stopScanWarm(state); state.journal.stop(); opened.delete(key) }
     }
     for (const [key, value] of pending) if (value.countId === id) pending.delete(key)
   }
@@ -1209,7 +1250,10 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   }
 
   async function closeAll() {
-    for (const state of opened.values()) await state.journal.close().catch(() => {})
+    for (const state of opened.values()) {
+      stopScanWarm(state)
+      await state.journal.close().catch(() => {})
+    }
     opened.clear()
   }
 
@@ -1233,7 +1277,6 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     closeCount: changes(closeCount), reopenCount: changes(reopenCount), deleteCount: changes(deleteCount), previewRefetch, applyRefetch,
     setApproval: changes(setApproval), approveAllWithoutDifference: changes(approveAllWithoutDifference),
     getRules, setRule, serialRules, setSerialRule, copySerials, countDoc, fetchDocStock, savePlacement: changes(savePlacement, 'team'), reportData, readCount, flush, closeAll,
-    _scanContextSettled: scanContextSettled,
   }
 }
 
