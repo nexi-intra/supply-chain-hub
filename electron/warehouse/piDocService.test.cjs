@@ -77,7 +77,8 @@ test('the admin enters the count: serials per material in ZMS_COUNT_SERIAL, quan
     enterCounts: async request => { calls.push(['counts', request]); return { message: 'ok' } },
   }
   const serials = { 'INT1-0': ['S1', 'S2'], R5: ['A1'], R6: [] }
-  const counts = { countDoc: async () => ({ rows }), copySerials: async (user, id, { material }) => ({ serials: serials[material] }) }
+  // Only the list of the day may go into SAP; the serials found in the count may be days old.
+  const counts = { countDoc: async () => ({ rows }), copySerials: async (user, id, { material, forDoc }) => ({ serials: forDoc === true ? serials[material] : ['STALE'] }) }
   const service = createPiDocService({ counts, repo, roles: { roleOf: async user => (user.email === 'anna@x' ? 'admin' : 'manager') }, writer, system: 'QS4' })
 
   await assert.rejects(service.count(MONA, 'c1', 'D1'), { code: 'PIDOC_FORBIDDEN' }, 'the manager does not count')

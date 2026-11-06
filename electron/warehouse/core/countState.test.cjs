@@ -2,7 +2,7 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const { buildSnapshot, indexSnapshot } = require('./snapshot.cjs')
 const { storageRulesFor } = require('./classify.cjs')
-const { normalizeSerial, matchSerial, aggregateCount, buildCountLists, computeProgress, applyApprovals } = require('./countState.cjs')
+const { normalizeSerial, matchSerial, aggregateCount, buildCountLists, computeProgress, applyApprovals, freezeRows } = require('./countState.cjs')
 
 const rulesByTeam = { TCD: storageRulesFor('TCD', {}), TRR: storageRulesFor('TRR', {}) }
 const stock = (material, sloc, unrestricted, blocked = 0, valueUnrestricted = 0, valueBlocked = 0) => ({ material, description: `${material} tekst`, plant: 'D301', sloc, unrestricted, blocked, valueUnrestricted, valueBlocked })
@@ -206,4 +206,15 @@ test('progress: overall, terminals, accessories, per area and per counter', () =
   assert.equal(progress.counters.find(item => item.email === 'bo@example.test').events, 2)
   assert.equal(progress.materials.approved, 1)
   assert.ok(progress.materials.total >= 4)
+})
+
+test('approval freezes the missing serials of serial-managed rows, not of quantity rows', () => {
+  const rows = [
+    { material: 'INT1-0', sloc: 'D000', stockType: 'unrestricted', serialManaged: true, sapQty: 3, counted: 2, diff: -1, valueDiff: -100 },
+    { material: 'INT1-0', sloc: 'D000', stockType: 'blocked', serialManaged: true, sapQty: 1, counted: 1, diff: 0, valueDiff: 0 },
+    { material: 'R1', sloc: 'D000', stockType: 'unrestricted', serialManaged: false, sapQty: 5, counted: 5, diff: 0, valueDiff: 0 },
+  ]
+  const missing = [{ serial: 'N3', material: 'INT1-0', sloc: 'D000', stockType: 'unrestricted' }, { serial: 'N9', material: 'INT2-0', sloc: 'D000', stockType: 'unrestricted' }]
+  assert.deepEqual(freezeRows(rows, 'INT1-0', missing).map(row => row.missingSerials), [['N3'], []])
+  assert.equal('missingSerials' in freezeRows(rows, 'R1', missing)[0], false)
 })

@@ -90,7 +90,8 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
   }
 
   /**
-   * The admin step: the found serial numbers go through ZMS_COUNT_SERIAL one material at a time, quantities through MI04
+   * The admin step: the serial list of the day (SAP's serials minus the ones missing at approval) goes through
+   * ZMS_COUNT_SERIAL one material at a time, quantities through MI04
    * ("Antal til dokument"). Every material entered is remembered, so a later failure can be retried without repeating it.
    */
   async function count(user, id, docId) {
@@ -110,7 +111,7 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
     const quantities = []
     for (const line of doc.lines.filter(item => !done[item.material])) {
       if (line.transaction === 'ZMS_COUNT_SERIAL') {
-        const { serials } = await counts.copySerials(user, id, { material: line.material, sloc: doc.sloc, stockType: doc.stockType })
+        const { serials } = await counts.copySerials(user, id, { material: line.material, sloc: doc.sloc, stockType: doc.stockType, forDoc: true })
         if (!serials.length) { quantities.push({ material: line.material, qty: 0 }); continue }
         const result = await writer.enterSerials({ docNo: doc.docNo, year: doc.year, material: line.material, serials })
         await remember(line.material, { serials: result.serials, qty: result.counted })

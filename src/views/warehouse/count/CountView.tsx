@@ -234,7 +234,7 @@ export function CountView({ id, onBack }: { id: string; onBack: () => void }) {
           {me.status === 'rejected' && <Badge variant="destructive" className="h-9 px-3">{t('Anmodning afvist', 'Request rejected')}</Badge>}
           <Button variant="outline" onClick={() => setFullscreen(true)}><ArrowsOut size={18} /> {t('Fremdrift i fuld skærm', 'Progress in full screen')}</Button>
           <Button variant="outline" onClick={() => void makeReport()} loading={busy === 'report'}><FileXls size={18} /> {t('Excel-rapport', 'Excel report')}</Button>
-          {me.isOwner && meta.status === 'open' && !locked && (
+          {me.canFetchSap && meta.status === 'open' && !locked && (
             <SapActionButton variant="outline" onAction={() => setRefetchOpen(true)}><ArrowsClockwise size={18} /> {t('Hent SAP igen', 'Fetch SAP again')}</SapActionButton>
           )}
           {me.isOwner && meta.status === 'open' && !locked && (

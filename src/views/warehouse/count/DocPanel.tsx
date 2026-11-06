@@ -167,13 +167,15 @@ export function DocPanel({ id, open, state }: PanelProps) {
 
   if (failed && !doc) return <p role="alert" className="text-sm text-destructive">{failed}</p>
   if (!doc) return <p className="text-sm text-muted-foreground">{t('Henter …', 'Fetching …')}</p>
+  const needsSerials = doc.rows.filter(row => row.needsSerials).length
+  const mismatches = doc.rows.filter(serialMismatch).length
 
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-base">{t('Til optællingsdokument', 'To count document')}</CardTitle>
         <CardDescription>
-          {t('Hent dagens SAP-tal den dag, optællingsdokumentet laves. Antal til dokument = SAP i dag + den godkendte difference. Managers opretter og printer SAP-dokumentet herfra; du trykker selv F8 og Print i SAP.', "Fetch today's SAP figures on the day the count document is made. Quantity for document = SAP today + the approved difference. Managers create and print the SAP document from here; you press F8 and Print in SAP yourself.")}
+          {t('Hent dagens SAP-tal den dag, optællingsdokumentet laves. Antal til dokument = SAP i dag + den godkendte difference. Materialer med serienumre får SAP\'s serienumre i dag minus dem, der manglede ved godkendelsen. Managers opretter og printer SAP-dokumentet herfra; du trykker selv F8 og Print i SAP.', "Fetch today's SAP figures on the day the count document is made. Quantity for document = SAP today + the approved difference. Materials with serial numbers get SAP's serial numbers today minus the ones missing at approval. Managers create and print the SAP document from here; you press F8 and Print in SAP yourself.")}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -189,6 +191,21 @@ export function DocPanel({ id, open, state }: PanelProps) {
               : t('Dagens SAP-tal er ikke hentet endnu.', "Today's SAP figures are not fetched yet.")}
           </span>
         </div>
+        {doc.fetchedAt !== null && !step && new Date(doc.fetchedAt).toDateString() !== new Date().toDateString() && (
+          <p className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200">
+            <Warning size={16} /> {t(`SAP-tallene er fra ${formatDateTime(doc.fetchedAt)}, ikke i dag. Hent dagens SAP-tal, før dokumentet laves.`, `The SAP figures are from ${formatDateTime(doc.fetchedAt)}, not today. Fetch today's SAP figures before the document is made.`)}
+          </p>
+        )}
+        {needsSerials > 0 && (
+          <p className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200">
+            <Warning size={16} /> {t(`SAP-tallene blev hentet uden serienumre. Hent dagens SAP-tal igen for at få serienummerlisten til ${formatNumber(needsSerials)} ${needsSerials === 1 ? 'linje' : 'linjer'}.`, `The SAP figures were fetched without serial numbers. Fetch today's SAP figures again to get the serial list for ${formatNumber(needsSerials)} ${needsSerials === 1 ? 'line' : 'lines'}.`)}
+          </p>
+        )}
+        {mismatches > 0 && (
+          <p className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200">
+            <Warning size={16} /> {t(`${formatNumber(mismatches)} ${mismatches === 1 ? 'linje' : 'linjer'} med serienumre giver et andet antal end SAP i dag + difference. Serienumrene bestemmer – tjek materialet, før dokumentet laves.`, `${formatNumber(mismatches)} ${mismatches === 1 ? 'line' : 'lines'} with serial numbers give another quantity than SAP today + difference. The serial numbers decide – check the material before the document is made.`)}
+          </p>
+        )}
         {doc.missingApproval > 0 && (
           <p className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200">
             <Warning size={16} /> {formatNumber(doc.missingApproval)} {doc.missingApproval === 1 ? t('materiale mangler godkendelse og får intet antal.', 'material needs approval and gets no quantity.') : t('materialer mangler godkendelse og får intet antal.', 'materials need approval and get no quantity.')}
@@ -240,7 +257,7 @@ export function DocPanel({ id, open, state }: PanelProps) {
                   </td>
                   <td className="space-x-1 px-3 py-1.5 text-right whitespace-nowrap">
                     {row.docQty !== null && <CopyQtyButton row={row} />}
-                    {row.approved && row.serialManaged && row.foundSerials > 0 && <CopySerialsButton id={id} row={row} long={Boolean(open.serialRules?.[row.material]?.[row.stockType])} />}
+                    {row.approved && row.serialManaged && row.docQty !== null && row.docQty > 0 && <CopySerialsButton id={id} row={row} long={Boolean(open.serialRules?.[row.material]?.[row.stockType])} forDoc />}
                   </td>
                 </tr>
               ))}
@@ -254,11 +271,27 @@ export function DocPanel({ id, open, state }: PanelProps) {
   )
 }
 
+/** A serial list of the day that gives another quantity than "SAP today + difference": something changed in SAP since approval. */
+const serialMismatch = (row: CountDocRow) => row.serialManaged && row.docQty !== null && row.expectedQty !== null && row.docQty !== row.expectedQty
+
 function DocQty({ row, fetched }: { row: CountDocRow; fetched: boolean }) {
   if (!row.approved) return <Badge variant="outline" className="border-amber-500 text-amber-700 dark:text-amber-300">{t('Mangler godkendelse', 'Needs approval')}</Badge>
+  if (row.needsSerials) return <span className="text-xs text-amber-700 dark:text-amber-300">{t('Hent igen (serienumre)', 'Fetch again (serial numbers)')}</span>
   if (!fetched || row.docQty === null) return <span className="text-xs text-muted-foreground">{t('Hent dagens SAP-tal', "Fetch today's SAP figures")}</span>
   if (row.docQty < 0) {
     return <span className="font-semibold tabular-nums text-red-600 dark:text-red-400" title={t('SAP har i dag færre end differencen – tjek materialet, før dokumentet laves', 'SAP has fewer today than the difference – check the material before the document is made')}>{formatNumber(row.docQty)}</span>
+  }
+  if (serialMismatch(row)) {
+    const title = t(
+      `Serienumrene giver ${formatNumber(row.docQty)}, men SAP i dag + difference giver ${formatNumber(row.expectedQty!)}. Et serienummer, der manglede ved godkendelsen, er nok bogført ud eller flyttet i SAP siden. Serienumrene bestemmer – tjek materialet.`,
+      `The serial numbers give ${formatNumber(row.docQty)}, but SAP today + difference gives ${formatNumber(row.expectedQty!)}. A serial number missing at approval has probably been booked out or moved in SAP since. The serial numbers decide – check the material.`,
+    )
+    return (
+      <span className="inline-flex items-center gap-1 text-base font-semibold tabular-nums text-amber-700 dark:text-amber-300" title={title} aria-label={title}>
+        <Warning size={14} /> {formatNumber(row.docQty)}
+        <span className="text-xs font-normal">({t(`ventet ${formatNumber(row.expectedQty!)}`, `expected ${formatNumber(row.expectedQty!)}`)})</span>
+      </span>
+    )
   }
   return <span className="text-base font-semibold tabular-nums">{formatNumber(row.docQty)}</span>
 }

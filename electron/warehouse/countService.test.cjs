@@ -717,6 +717,58 @@ test('count document: SAP stock of the day + the approved difference; fetched by
   assert.equal(doc.missingApproval, 2, 'the terminals are not approved yet')
   assert.equal(row(await bo.countDoc(BO, id)).docQty, 77, 'stored for the whole team')
   assert.equal((await anna.countDoc(ANNA, id)).canFetch, true)
+  const ADA = { email: 'ada@example.test', fullName: 'Ada', role: 'user', team: 'TCD', countAdmin: true }
+  const ada = ctx.service('pc4')
+  assert.equal((await ada.countDoc(ADA, id)).canFetch, true, 'an Optælling admin may fetch the SAP figures of the day')
+  ctx.tick(60_000)
+  assert.equal((await ada.fetchDocStock(ADA, id)).fetchedBy.name, 'Ada')
+})
+
+test('count document for serials: SAP\'s serials of the day minus the ones missing at approval – also for an older approval', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const mona = ctx.service('pc3')
+  const { id } = await newCount(ctx, anna)
+  await anna.scan(ANNA, id, { serial: 'N1', place: 'A1.1' })
+  await anna.scan(ANNA, id, { serial: 'U1', place: 'A1.1' })
+  await anna.flush(ANNA, id)
+  ctx.tick(2000)
+  const approval = await mona.setApproval(MONA, id, { material: 'INT4300-4921-0', status: 'approved' })
+  assert.deepEqual(approval.frozen.map(row => [row.diff, row.missingSerials]), [[-1, ['N2']]], 'N2 is missing at approval')
+  await mona.setApproval(MONA, id, { material: 'INT4300-4921-0-R', status: 'approved' })
+  const row = (doc, material) => doc.rows.find(item => item.material === material && item.sloc === 'D000')
+  const terminal = { material: 'INT4300-4921-0', sloc: 'D000', stockType: 'unrestricted' }
+  const used = { material: 'INT4300-4921-0-R', sloc: 'D000', stockType: 'unrestricted' }
+  await assert.rejects(mona.copySerials(MONA, id, { ...terminal, forDoc: true }), { code: 'DOC_NOT_FETCHED' })
+
+  // Days later: N5 has come in; U1 has gone out and U8 has come in.
+  ctx.sap.mb52 = [stock('INT4300-4921-0', 'D000', 3, 0, 3000), stock('INT4300-4921-0-R', 'D000', 1), stock('R162-0717', 'D000', 100, 0, 500)]
+  ctx.sap.serials = [serial('N1', 'INT4300-4921-0', 'D000'), serial('N2', 'INT4300-4921-0', 'D000'), serial('N5', 'INT4300-4921-0', 'D000'), serial('U8', 'INT4300-4921-0-R', 'D000')]
+  ctx.tick(86_400_000)
+  let doc = await mona.fetchDocStock(MONA, id)
+  assert.equal(doc.withSerials, true)
+  assert.deepEqual([row(doc, 'INT4300-4921-0').sapToday, row(doc, 'INT4300-4921-0').docQty, row(doc, 'INT4300-4921-0').expectedQty], [3, 2, 2])
+  assert.deepEqual([row(doc, 'INT4300-4921-0-R').diff, row(doc, 'INT4300-4921-0-R').docQty, row(doc, 'INT4300-4921-0-R').expectedQty], [0, 1, 1])
+  assert.equal('docSerials' in row(doc, 'INT4300-4921-0'), false, 'the lists stay in the main process')
+  assert.deepEqual((await mona.copySerials(MONA, id, { ...terminal, forDoc: true })).serials, ['N1', 'N5'], 'the new terminal is on the list, the missing N2 is not')
+  assert.deepEqual((await mona.copySerials(MONA, id, { ...used, forDoc: true })).serials, ['U8'], 'zero difference = the live list of SAP')
+  assert.deepEqual((await mona.copySerials(MONA, id, terminal)).serials, ['N1'], 'without forDoc: the serials found in the count')
+  await assert.rejects(mona.copySerials(MONA, id, { material: 'R162-0717', sloc: 'D000', stockType: 'unrestricted', forDoc: true }), { code: 'APPROVAL_INVALID' })
+
+  // An approval from before the missing serials were frozen: rebuilt from the scan times. A scan after it does not count.
+  const stored = (await ctx.repo.getApprovals('TCD', id))['INT4300-4921-0']
+  await ctx.repo.setApproval('TCD', id, 'INT4300-4921-0', { ...stored, frozen: stored.frozen.map(({ missingSerials, ...rest }) => rest) })
+  await anna.scan(ANNA, id, { serial: 'N2', place: 'A1.1' })
+  await anna.flush(ANNA, id)
+  ctx.tick(2000)
+  assert.deepEqual((await mona.copySerials(MONA, id, { ...terminal, forDoc: true })).serials, ['N1', 'N5'])
+
+  // A stock of the day fetched before serials were included: no list, fetch again.
+  const saved = await ctx.repo.getCountDoc('TCD', id)
+  await ctx.repo.setCountDoc('TCD', id, { ...saved, withSerials: undefined, lines: saved.lines.map(({ serials, ...line }) => line) })
+  doc = await mona.countDoc(MONA, id)
+  assert.deepEqual([row(doc, 'INT4300-4921-0').needsSerials, row(doc, 'INT4300-4921-0').docQty, row(doc, 'R162-0717').needsSerials], [true, null, false])
+  await assert.rejects(mona.copySerials(MONA, id, { ...terminal, forDoc: true }), { code: 'DOC_NOT_FETCHED' })
 })
 
 test('a found serial can be removed again (undoable); approved materials and the others\' locked materials are protected', async () => {
@@ -757,6 +809,15 @@ test('the owner can fetch SAP again, see the differences and apply them', async 
   const meta = await anna.applyRefetch(ANNA, id, { token: preview.token })
   assert.equal(meta.snapshotVersion, 2)
   assert.equal((await anna.getState(ANNA, id)).serials.expected, 3)
+
+  const ADA = { email: 'ada@example.test', fullName: 'Ada', role: 'user', team: 'TCD', countAdmin: true }
+  const ada = ctx.service('pc4')
+  await assert.rejects(ctx.service('pc2').previewRefetch(BO, id), { code: 'COUNT_OWNER_ONLY' }, 'an ordinary user may not')
+  assert.equal((await ada.openCount(ADA, id)).me.canFetchSap, true)
+  assert.equal((await anna.openCount(ANNA, id)).me.canFetchSap, true)
+  const byAdmin = await ada.previewRefetch(ADA, id)
+  await assert.rejects(anna.applyRefetch(ANNA, id, { token: byAdmin.token }), { code: 'PREVIEW_EXPIRED' }, 'only the one who fetched applies it')
+  assert.equal((await ada.applyRefetch(ADA, id, { token: byAdmin.token })).snapshotVersion, 3, 'an Optælling admin may fetch SAP again')
 })
 
 test('readCount (for Hubert) shows figures, differences, material locks and area claims without writing anything to the drive', async () => {

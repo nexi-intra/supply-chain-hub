@@ -125,14 +125,15 @@ export function OverviewPanel({ id, open, state }: PanelProps) {
   )
 }
 
-export function CopySerialsButton({ id, row, long }: { id: string; row: Pick<ResultRow, 'material' | 'sloc' | 'stockType'>; long: boolean }) {
+/** `forDoc`: the serial list for the count document of the day (SAP today minus the ones missing at approval) instead of the found ones. */
+export function CopySerialsButton({ id, row, long, forDoc = false }: { id: string; row: Pick<ResultRow, 'material' | 'sloc' | 'stockType'>; long: boolean; forDoc?: boolean }) {
   const [copying, setCopying] = useState(false)
   const label = t(`Kopiér ${long ? 'lange ' : ''}serienumre for ${row.material} ${row.sloc}${row.stockType === 'blocked' ? ' blocked' : ''}`, `Copy ${long ? 'long ' : ''}serial numbers for ${row.material} ${row.sloc}${row.stockType === 'blocked' ? ' blocked' : ''}`)
   const copy = async () => {
     setCopying(true)
     try {
-      const result = await window.electronWarehouse!.counts.copySerials({ id, material: row.material, sloc: row.sloc, stockType: row.stockType })
-      if (!result.total) { toast.info(t('Ingen fundne serienumre at kopiere', 'No found serial numbers to copy')); return }
+      const result = await window.electronWarehouse!.counts.copySerials({ id, material: row.material, sloc: row.sloc, stockType: row.stockType, forDoc })
+      if (!result.total) { toast.info(forDoc ? t('Ingen serienumre på dokumentlisten', 'No serial numbers on the document list') : t('Ingen fundne serienumre at kopiere', 'No found serial numbers to copy')); return }
       const what = result.long ? (result.total === 1 ? t('langt serienummer', 'long serial number') : t('lange serienumre', 'long serial numbers')) : (result.total === 1 ? t('serienummer', 'serial number') : t('serienumre', 'serial numbers'))
       toast.success(t(`${formatNumber(result.total)} ${what} kopieret`, `${formatNumber(result.total)} ${what} copied`), { description: t(`${row.material} · ${row.sloc}${row.stockType === 'blocked' ? ' · Blocked' : ''} – klar til at sætte ind i SAP.`, `${row.material} · ${row.sloc}${row.stockType === 'blocked' ? ' · Blocked' : ''} – ready to paste into SAP.`) })
       if (result.withoutLongTotal > 0) {

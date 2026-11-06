@@ -184,13 +184,17 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
     return target
   }
 
-  /** A status manager (appointed in Optælling) acts as a manager everywhere; marked so only real managers grant that role. */
+  /**
+   * A status manager (appointed in Optælling) acts as a manager everywhere; marked so only real managers grant that role.
+   * An Optælling admin is marked `countAdmin` (may fetch the SAP stock of the day for the count document).
+   */
   async function serviceUser(event) {
     const actor = await currentActor(event)
     const user = warehouseUser(actor, isAllowedTeam(actor?.activeTeam?.teamId) ? await cachedUsers(actor.activeTeam.teamId).catch(() => ({})) : {})
     if (user.role !== 'user') return user
     const role = await roles.roleOf(user).catch(() => 'user')
-    return role === 'status-manager' ? { ...user, role: 'manager', statusManager: true } : user
+    if (role === 'status-manager') return { ...user, role: 'manager', statusManager: true }
+    return role === 'admin' ? { ...user, countAdmin: true } : user
   }
   const channels = []
   const handle = (channel, fn) => {
@@ -275,7 +279,7 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   handle('serial-rules:get', user => counts.serialRules(user))
   handle('serial-rules:set', (user, p) => counts.setSerialRule(user, { material: p.material, unrestricted: p.unrestricted === true }))
   handle('counts:copy-serials', async (user, p) => {
-    const result = await counts.copySerials(user, p.id, { material: p.material, sloc: p.sloc, stockType: p.stockType })
+    const result = await counts.copySerials(user, p.id, { material: p.material, sloc: p.sloc, stockType: p.stockType, forDoc: p.forDoc === true })
     if (result.serials.length) await clipboard.writeText(result.serials.join('\r\n'))
     return { long: result.long, total: result.total, withoutLong: result.withoutLong.slice(0, 200), withoutLongTotal: result.withoutLong.length, lookedUp: result.lookedUp }
   })

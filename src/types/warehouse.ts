@@ -327,6 +327,8 @@ export interface MyAccess {
   email: string
   isOwner: boolean
   isManager: boolean
+  /** May fetch SAP again for the count and the stock of the day: owner, manager or Optælling admin. */
+  canFetchSap: boolean
   status: MemberStatus | null
   canWrite: boolean
 }
@@ -394,7 +396,11 @@ export interface CopySerialsResult {
   lookedUp: number
 }
 
-/** One line for the SAP count document: quantity = SAP stock of the day + the approved difference. */
+/**
+ * One line for the SAP count document: quantity = SAP stock of the day + the approved difference. Serial-managed:
+ * quantity = the serial list of the day (SAP's serials today minus the ones missing at approval); `expectedQty` is
+ * "SAP today + difference", so a mismatch can be shown.
+ */
 export interface CountDocRow {
   material: string
   description: string
@@ -408,7 +414,10 @@ export interface CountDocRow {
   sapAtApproval: number | null
   diff: number | null
   sapToday: number | null
+  expectedQty: number | null
   docQty: number | null
+  /** The stock of the day was fetched before serials were included: fetch again to get the list. */
+  needsSerials: boolean
 }
 
 export interface CountDoc {
@@ -416,6 +425,7 @@ export interface CountDoc {
   fetchedBy: { email: string; name: string } | null
   canFetch: boolean
   missingApproval: number
+  withSerials: boolean
   rows: CountDocRow[]
 }
 
@@ -1087,7 +1097,7 @@ export interface WarehouseBridge {
     releaseMaterial(request: { id: string; material: string }): Promise<{ ok: true }>
     submitMaterial(request: { id: string; material: string; comment?: string; acceptDiff?: boolean }): Promise<Approval>
     approveClean(id: string): Promise<{ approved: number }>
-    copySerials(request: { id: string; material: string; sloc: string; stockType: StockType }): Promise<CopySerialsResult>
+    copySerials(request: { id: string; material: string; sloc: string; stockType: StockType; forDoc?: boolean }): Promise<CopySerialsResult>
     doc(id: string): Promise<CountDoc>
     fetchDoc(id: string): Promise<CountDoc>
     flush(id: string): Promise<{ ok: boolean; pending: number }>

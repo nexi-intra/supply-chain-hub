@@ -8,7 +8,7 @@ const { storageRulesFor, suggestRulesFromStock, KINDS } = require('./core/classi
 const { buildSnapshot, indexSnapshot, summarizeSnapshot, normalizeMaterial, normalizeScope, MATERIAL_PATTERN } = require('./core/snapshot.cjs')
 const { scopeStockTypes, scopeKinds, scopeOverlap, describeOverlap, TERMINAL_KINDS, ACCESSORY_KINDS } = require('./core/scopes.cjs')
 const { normalizeSerial, matchSerial, activeEvents, aggregateCount, applyApprovals, freezeRows, buildCountLists, computeProgress } = require('./core/countState.cjs')
-const { docLinesFromSnapshot, buildCountDoc } = require('./core/countDoc.cjs')
+const { docLinesFromSnapshot, missingAtApproval, buildCountDoc } = require('./core/countDoc.cjs')
 const { normalizeMatdoc } = require('./core/sapParsers.cjs')
 const { differenceTotals, archiveLines } = require('./core/archive.cjs')
 const { createJournal, readAllJournals } = require('./journal.cjs')
@@ -37,6 +37,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   const archives = new Map()
 
   const isManager = user => user.role === 'manager' || user.role === 'creator'
+  /** Who may fetch SAP for the count (again, or the stock of the day): the owner, a manager or an Optælling admin. */
+  const canFetchDoc = (user, rights) => rights.isOwner || rights.isManager || user.countAdmin === true
   const me = user => ({ email: lower(user.email), name: user.fullName || user.email })
 
   function teamOf(user) {
@@ -387,7 +389,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       meta: state.meta,
       statusLocked: rights.locked,
       summary: summarizeSnapshot(state.snapshot),
-      me: { email: lower(user.email), isOwner: rights.isOwner, isManager: rights.isManager, status: rights.member?.status || null, canWrite: rights.canWrite },
+      me: { email: lower(user.email), isOwner: rights.isOwner, isManager: rights.isManager, canFetchSap: canFetchDoc(user, rights), status: rights.member?.status || null, canWrite: rights.canWrite },
       countLists: state.countLists,
       materials: materialsFor(state),
       areas,
@@ -440,7 +442,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     return {
       meta: state.meta,
       statusLocked: rights.locked,
-      me: { email: lower(user.email), isOwner: rights.isOwner, isManager: rights.isManager, status: rights.member?.status || null, canWrite: rights.canWrite },
+      me: { email: lower(user.email), isOwner: rights.isOwner, isManager: rights.isManager, canFetchSap: canFetchDoc(user, rights), status: rights.member?.status || null, canWrite: rights.canWrite },
       progress,
       rows: aggregate.rows,
       totals: aggregate.totals,
@@ -855,6 +857,15 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     return state
   }
 
+  /** Fetching SAP again for the count: the owner, a manager or an Optælling admin. */
+  async function sapAction(user, id) {
+    const state = await load(user, id)
+    const rights = await access(user, state)
+    if (rights.locked) throw lockedError()
+    if (!canFetchDoc(user, rights)) throw codeError('COUNT_OWNER_ONLY', 'Kun den ansvarlige, en admin eller en manager kan hente data fra SAP igen')
+    return state
+  }
+
   async function closeCount(user, id) {
     const state = await ownerAction(user, id)
     await requireSynced(state)
@@ -873,7 +884,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   }
 
   async function previewRefetch(user, id) {
-    const state = await ownerAction(user, id)
+    const state = await sapAction(user, id)
     if (state.meta.status !== 'open') throw codeError('COUNT_CLOSED', 'Genåbn optællingen først')
     const fetched = await fetcher.fetchPlant({ onProgress: step => emit('sap:fetch-progress', { step }) })
     const snapshot = buildSnapshot({ team: state.team, scope: state.snapshot.scope, mb52: fetched.mb52, serials: fetched.serials, rulesByTeam: await rulesByTeam(state.team), exclusions: state.snapshot.excluded.manual, fetchedAt: fetched.fetchedAt, fetchedBy: lower(user.email) })
@@ -887,7 +898,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   }
 
   async function applyRefetch(user, id, { token } = {}) {
-    const state = await ownerAction(user, id)
+    const state = await sapAction(user, id)
     const entry = pending.get(token)
     if (!entry || entry.countId !== state.id || entry.email !== lower(user.email)) throw codeError('PREVIEW_EXPIRED', 'Hent data fra SAP igen')
     await repo.replaceSnapshot(state.team, state.id, entry.snapshot)
@@ -921,7 +932,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const by = me(user)
     const value = status === 'reset' ? { status: 'open', by, at: now() }
       : status === 'posted' ? { ...current, status: 'posted', postedBy: by, postedAt: now() }
-      : status === 'approved' ? { status, comment: clean(comment, 300), by, at: now(), frozen: freezeRows(state.aggregate.rows, code) }
+      : status === 'approved' ? { status, comment: clean(comment, 300), by, at: now(), frozen: freezeRows(state.aggregate.rows, code, state.aggregate.serials.missing) }
       : { status, comment: clean(comment, 300), by, at: now() }
     await repo.setApproval(state.team, state.id, code, value)
     if (status === 'approved') await repo.changeMaterialLocks(state.team, state.id, all => { delete all[code]; return { all, result: null } }).catch(() => {})
@@ -942,7 +953,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     let approved = 0
     for (const [material, entry] of byMaterial) {
       if (entry.diff || ['approved', 'posted'].includes(approvals[material]?.status)) continue
-      await repo.setApproval(state.team, state.id, material, { status: 'approved', comment: 'Ingen difference', by: me(user), at: now(), frozen: freezeRows(state.aggregate.rows, material) })
+      await repo.setApproval(state.team, state.id, material, { status: 'approved', comment: 'Ingen difference', by: me(user), at: now(), frozen: freezeRows(state.aggregate.rows, material, state.aggregate.serials.missing) })
       approved += 1
     }
     return { approved }
@@ -984,16 +995,28 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     return repo.setSerialRule(teamOf(user), material, { unrestricted: unrestricted === true, by: me(user) })
   }
 
-  /** The found serials of one row (material, storage location, stock type) for the SAP count document; long where the rule says so. */
-  async function copySerials(user, id, { material, sloc, stockType } = {}) {
+  /**
+   * The serials of one row (material, storage location, stock type) to copy or enter in SAP; long where the rule says so.
+   * Without `forDoc` the serials found in the count; with `forDoc` the list for the count document of the day
+   * (SAP's serials of the day minus the ones missing at approval).
+   */
+  async function copySerials(user, id, { material, sloc, stockType, forDoc = false } = {}) {
     const state = await refresh(await load(user, id))
     const code = normalizeMaterial(material)
     const type = stockType === 'blocked' ? 'blocked' : 'unrestricted'
-    const short = []
-    for (const [serial, info] of state.index.serials) {
-      if (info.inScope && info.material === code && info.sloc === sloc && info.stockType === type && state.found.has(serial)) short.push(serial)
+    let short = []
+    if (forDoc) {
+      const { result } = await docOf(state)
+      const row = result.rows.find(item => item.material === code && item.sloc === sloc && item.stockType === type)
+      if (!row?.approved) throw codeError('APPROVAL_INVALID', `${code} er ikke godkendt`)
+      if (!row.docSerials) throw codeError('DOC_NOT_FETCHED', 'Hent dagens SAP-tal først – serienumrene til dokumentet kommer derfra')
+      short = [...row.docSerials]
+    } else {
+      for (const [serial, info] of state.index.serials) {
+        if (info.inScope && info.material === code && info.sloc === sloc && info.stockType === type && state.found.has(serial)) short.push(serial)
+      }
+      short.sort()
     }
-    short.sort()
     const rule = state.team === 'TCD' ? (await repo.getSerialRules(state.team).catch(() => ({})))[code] : null
     if (!rule?.[type] || !short.length) return { serials: short, long: false, total: short.length, withoutLong: [], lookedUp: 0 }
     const cache = await repo.getLongSerials(state.team).catch(() => ({}))
@@ -1012,22 +1035,29 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   }
 
   // ---------- Count document (read-only preparation; the document itself is created in SAP) ----------
+  async function docOf(state) {
+    const [approvals, doc] = await Promise.all([repo.getApprovals(state.team, state.id).catch(() => ({})), repo.getCountDoc(state.team, state.id).catch(() => null)])
+    const missingOf = row => missingAtApproval({ approval: approvals[row.material], row, index: state.index, found: state.found })
+    return { doc, result: buildCountDoc({ rows: applyApprovals(state.aggregate, approvals).rows, approvals, doc, missingOf }) }
+  }
+
   async function countDoc(user, id) {
     const state = await refresh(await load(user, id))
     const rights = await access(user, state)
-    const [approvals, doc] = await Promise.all([repo.getApprovals(state.team, state.id).catch(() => ({})), repo.getCountDoc(state.team, state.id).catch(() => null)])
-    const result = buildCountDoc({ rows: applyApprovals(state.aggregate, approvals).rows, approvals, doc })
-    return { fetchedAt: doc?.fetchedAt || null, fetchedBy: doc?.by || null, canFetch: (rights.isOwner || rights.isManager) && !rights.locked, ...result }
+    const { doc, result } = await docOf(state)
+    // The serial lists stay in the main process (copySerials / SAP entry); the screen only needs the numbers.
+    const rows = result.rows.map(({ docSerials, ...row }) => row)
+    return { fetchedAt: doc?.fetchedAt || null, fetchedBy: doc?.by || null, canFetch: canFetchDoc(user, rights) && !rights.locked, ...result, rows }
   }
 
   async function fetchDocStock(user, id) {
     const state = await load(user, id)
     const rights = await access(user, state)
     if (rights.locked) throw lockedError()
-    if (!rights.isOwner && !rights.isManager) throw codeError('COUNT_OWNER_ONLY', 'Kun den ansvarlige eller en manager kan hente dagens SAP-tal')
+    if (!canFetchDoc(user, rights)) throw codeError('COUNT_OWNER_ONLY', 'Kun den ansvarlige, en admin eller en manager kan hente dagens SAP-tal')
     const fetched = await fetcher.fetchPlant({ onProgress: step => emit('sap:fetch-progress', { step }) })
-    const snapshot = buildSnapshot({ team: state.team, scope: state.snapshot.scope, mb52: fetched.mb52, serials: [], rulesByTeam: await rulesByTeam(state.team), exclusions: state.snapshot.excluded.manual, fetchedAt: fetched.fetchedAt, fetchedBy: lower(user.email) })
-    await repo.setCountDoc(state.team, state.id, { fetchedAt: fetched.fetchedAt, by: me(user), lines: docLinesFromSnapshot(snapshot) })
+    const snapshot = buildSnapshot({ team: state.team, scope: state.snapshot.scope, mb52: fetched.mb52, serials: fetched.serials || [], rulesByTeam: await rulesByTeam(state.team), exclusions: state.snapshot.excluded.manual, fetchedAt: fetched.fetchedAt, fetchedBy: lower(user.email) })
+    await repo.setCountDoc(state.team, state.id, { fetchedAt: fetched.fetchedAt, by: me(user), withSerials: true, lines: docLinesFromSnapshot(snapshot) })
     return countDoc(user, id)
   }
 

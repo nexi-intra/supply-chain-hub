@@ -190,9 +190,17 @@ function applyApprovals(aggregate, approvals = {}) {
   return { ...aggregate, rows, totals: totalsOf(rows) }
 }
 
-/** The rows of one material as they are frozen when a manager approves it. */
-function freezeRows(rows, material) {
-  return rows.filter(row => row.material === material).map(row => ({ sloc: row.sloc, stockType: row.stockType, sapQty: row.sapQty, counted: row.counted, diff: row.diff, valueDiff: row.valueDiff }))
+/**
+ * The rows of one material as they are frozen when a manager approves it. Serial-managed rows also keep the serials
+ * that were missing (`missing` = aggregate.serials.missing), so the count document of a later day can leave them out.
+ */
+function freezeRows(rows, material, missing = []) {
+  return rows.filter(row => row.material === material).map(row => {
+    const frozen = { sloc: row.sloc, stockType: row.stockType, sapQty: row.sapQty, counted: row.counted, diff: row.diff, valueDiff: row.valueDiff }
+    if (!row.serialManaged) return frozen
+    const serials = missing.filter(item => item.material === material && item.sloc === row.sloc && item.stockType === row.stockType).map(item => item.serial).sort()
+    return { ...frozen, missingSerials: serials }
+  })
 }
 
 const lineIdFor = (place, material) => `pl-${crypto.createHash('sha256').update(`${place}|${material}`).digest('hex').slice(0, 12)}`

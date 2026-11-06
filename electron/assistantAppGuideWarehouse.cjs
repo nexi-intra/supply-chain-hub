@@ -96,7 +96,7 @@ const WAREHOUSE_MODULE = {
       steps: [
         'Åbn optællingen og vælg fanen "Til optællingsdokument". Klik "Hent dagens SAP-tal" den dag, dokumentet laves.',
         'Sæt flueben ved godkendte materialer og klik "Opret SAP-dokument". SAP åbner, og du trykker selv F8. Klik derefter "Print".',
-        'En admin (ikke den, der oprettede dokumentet) klikker "Læg antal på". Serienumre går til ZMS_COUNT_SERIAL, antal til MI04.',
+        'En admin (ikke den, der oprettede dokumentet) klikker "Læg antal på". Serienumre går til ZMS_COUNT_SERIAL (SAP\'s serienumre i dag minus dem, der manglede ved godkendelsen), antal til MI04.',
         'Til sidst klikker en manager "Bogfør". Materialedokumentet vises, og materialet står som "Bogført i SAP".',
       ],
       notes: 'Højst 20 materialer pr. dokument. Nye terminaler får hvert sit dokument, og serienummer- og antalsmaterialer blandes aldrig. Programmet udfylder SAP, men du trykker altid selv F8, Gem eller Post. Et dokument kan slettes, så længe der ikke er lagt antal på.',
