@@ -25,18 +25,64 @@ function platformConfigPath(platformRoot) {
   return path.join(registryDir(platformRoot), 'platform-config.json')
 }
 
+// Laesninger mod M: koster 100-1500 ms og blev lavet SYNKRONT ved hvert IPC-kald
+// (auth-opslag: teams, user-directory, manager-access, creator-email), hvilket
+// frøs hele appen i sekunder. Registret aendres sjaeldent, saa laesninger deles i
+// CACHE_TTL_MS. Mutationer (locked/withIdentityTransaction) laeser ALTID frisk,
+// saa en skrivning aldrig bygger paa en foraeldet kopi og overskriver en kollegas
+// aendring, og enhver skrivning fra denne klient rydder cachen for filen.
+const CACHE_TTL_MS = 30000
+const readCache = new Map()
+let freshDepth = 0
+
+function invalidateCache(filePath) {
+  if (filePath === undefined) readCache.clear()
+  else readCache.delete(path.resolve(filePath))
+}
+
 function readJsonSafe(filePath, fallback) {
+  const key = path.resolve(filePath)
+  const cached = freshDepth === 0 && readCache.get(key)
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS) return structuredClone(cached.value ?? fallback)
   try {
     const value = JSON.parse(fs.readFileSync(filePath, 'utf8'))
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Registret har et ugyldigt format')
+    readCache.set(key, { at: Date.now(), value: structuredClone(value) })
     return value
   } catch (error) {
-    if (error.code === 'ENOENT') return fallback
+    if (error.code === 'ENOENT') {
+      readCache.set(key, { at: Date.now(), value: undefined })
+      return fallback
+    }
+    readCache.delete(key)
     throw error
   }
 }
 
+function withFreshReads(callback) {
+  freshDepth++
+  try { return callback() } finally { freshDepth-- }
+}
+
+/** Loads the registry files the auth check needs without blocking the main thread; the synchronous readers then hit the cache. */
+async function prefetchAsync(platformRoot) {
+  const files = [teamsPath(platformRoot), userDirectoryPath(platformRoot), managerAccessPath(platformRoot), platformConfigPath(platformRoot)]
+  await Promise.all(files.map(async filePath => {
+    const key = path.resolve(filePath)
+    const cached = readCache.get(key)
+    if (cached && Date.now() - cached.at < CACHE_TTL_MS) return
+    try {
+      const value = JSON.parse(await fs.promises.readFile(filePath, 'utf8'))
+      if (value && typeof value === 'object' && !Array.isArray(value)) readCache.set(key, { at: Date.now(), value })
+    } catch (error) {
+      if (error.code === 'ENOENT') readCache.set(key, { at: Date.now(), value: undefined })
+      // Anything else is left to the synchronous reader, which reports it exactly as before.
+    }
+  }))
+}
+
 function writeJsonAtomic(filePath, data) {
+  invalidateCache(filePath)
   fs.mkdirSync(path.dirname(filePath), { recursive: true })
   const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`
   fs.writeFileSync(tmp, JSON.stringify(data, null, 2))
@@ -46,6 +92,7 @@ function writeJsonAtomic(filePath, data) {
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
       fs.renameSync(tmp, filePath)
+      readCache.set(path.resolve(filePath), { at: Date.now(), value: structuredClone(data) })
       return
     } catch (error) {
       lastError = error
@@ -89,6 +136,12 @@ function normalizeTeam(teamId, team) {
 function lookupTeamForEmail(platformRoot, email) {
   const normalizedEmail = String(email || '').trim().toLowerCase()
   if (!normalizedEmail) return null
+  const found = findTeamForEmail(platformRoot, normalizedEmail)
+  // A colleague may have assigned this person seconds ago on another PC; a miss is always confirmed fresh.
+  return found || withFreshReads(() => findTeamForEmail(platformRoot, normalizedEmail))
+}
+
+function findTeamForEmail(platformRoot, normalizedEmail) {
   const userDirectory = readUserDirectory(platformRoot)
   const teamId = userDirectory[normalizedEmail]
   if (!teamId) return null
@@ -227,7 +280,7 @@ function setCreatorEmail(platformRoot, email) {
 // capability expires after the synchronous callback and is never exposed to IPC.
 function withIdentityTransaction(platformRoot, callback) {
   if (typeof callback !== 'function' || require('node:util').types.isAsyncFunction(callback)) throw new Error('Registry transaction must be synchronous')
-  return withFileLock(path.join(registryDir(platformRoot), 'mutation.lock'), () => {
+  return withFileLock(path.join(registryDir(platformRoot), 'mutation.lock'), () => withFreshReads(() => {
     let active = true
     const files = { directory: userDirectoryPath(platformRoot), managerAccess: managerAccessPath(platformRoot) }
     const target = key => { if (!active || !Object.hasOwn(files, key)) throw new Error('Invalid registry transaction capability'); return files[key] }
@@ -236,10 +289,12 @@ function withIdentityTransaction(platformRoot, callback) {
       if (result && typeof result.then === 'function') throw new Error('Registry transaction must be synchronous')
       return result
     } finally { active = false }
-  })
+  }))
 }
-const locked = mutate => (platformRoot, ...args) => withFileLock(path.join(registryDir(platformRoot), 'mutation.lock'), () => mutate(platformRoot, ...args))
+const locked = mutate => (platformRoot, ...args) => withFileLock(path.join(registryDir(platformRoot), 'mutation.lock'), () => withFreshReads(() => mutate(platformRoot, ...args)))
 module.exports = {
+  invalidateCache,
+  prefetchAsync,
   registryDir,
   teamsPath,
   userDirectoryPath,

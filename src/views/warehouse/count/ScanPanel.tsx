@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowCounterClockwise, Barcode, LockKey, LockKeyOpen, SpeakerHigh, SpeakerSlash, Trash } from '@phosphor-icons/react'
+import { ArrowCounterClockwise, Barcode, CircleNotch, LockKey, LockKeyOpen, SpeakerHigh, SpeakerSlash, Trash } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -40,6 +40,8 @@ export function ScanPanel({ id, open, state, refresh }: PanelProps) {
   const [sound, setSound] = useState(isSoundOn())
   const [queueSize, setQueueSize] = useState(0)
   const [removing, setRemoving] = useState(false)
+  const [undoing, setUndoing] = useState(false)
+  const [claimingArea, setClaimingArea] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const queue = useRef<string[]>([])
   const working = useRef(false)
@@ -102,6 +104,8 @@ export function ScanPanel({ id, open, state, refresh }: PanelProps) {
   }
 
   const undo = async () => {
+    if (undoing) return
+    setUndoing(true)
     try {
       const { undone } = await window.electronWarehouse!.counts.undo({ id })
       toast.success(t(`Fortrudt: ${undone.serial || undone.material || undone.type}`, `Undone: ${undone.serial || undone.material || undone.type}`))
@@ -111,6 +115,7 @@ export function ScanPanel({ id, open, state, refresh }: PanelProps) {
     } catch (error) {
       toast.error(errorMessage(error))
     } finally {
+      setUndoing(false)
       inputRef.current?.focus()
     }
   }
@@ -129,6 +134,8 @@ export function ScanPanel({ id, open, state, refresh }: PanelProps) {
   const claimedBy = new Map(state.claims.map(claim => [claim.area, claim]))
   const myClaims = state.claims.filter(claim => claim.email === state.me.email)
   const toggleClaim = async (area: string) => {
+    if (claimingArea) return
+    setClaimingArea(area)
     try {
       const claim = claimedBy.get(area)
       if (claim?.email === state.me.email) await window.electronWarehouse!.counts.release({ id, area })
@@ -136,6 +143,8 @@ export function ScanPanel({ id, open, state, refresh }: PanelProps) {
       await refresh()
     } catch (error) {
       toast.error(errorMessage(error))
+    } finally {
+      setClaimingArea(null)
     }
   }
 
@@ -158,7 +167,7 @@ export function ScanPanel({ id, open, state, refresh }: PanelProps) {
                 <Button variant="outline" size="icon" aria-label={sound ? t('Slå lyd fra', 'Sound off') : t('Slå lyd til', 'Sound on')} onClick={() => { setSoundOn(!sound); setSound(!sound) }}>
                   {sound ? <SpeakerHigh size={18} /> : <SpeakerSlash size={18} />}
                 </Button>
-                <Button variant="outline" onClick={() => void undo()}><ArrowCounterClockwise size={18} /> {t('Fortryd (Ctrl+Z)', 'Undo (Ctrl+Z)')}</Button>
+                <Button variant="outline" loading={undoing} onClick={() => void undo()}><ArrowCounterClockwise size={18} /> {t('Fortryd (Ctrl+Z)', 'Undo (Ctrl+Z)')}</Button>
                 <Button variant="outline" onClick={() => setRemoving(true)}><Trash size={18} /> {t('Fjern serienummer', 'Remove serial number')}</Button>
               </div>
             </div>
@@ -271,11 +280,12 @@ export function ScanPanel({ id, open, state, refresh }: PanelProps) {
                       key={area}
                       type="button"
                       onClick={() => void toggleClaim(area)}
-                      disabled={Boolean(claim) && !mine}
+                      disabled={(Boolean(claim) && !mine) || claimingArea === area}
+                      aria-busy={claimingArea === area || undefined}
                       title={claim ? t(`${claim.name} tæller her`, `${claim.name} is counting here`) : t('Lås området', 'Lock the area')}
                       className={cn('inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 font-mono text-sm transition disabled:cursor-not-allowed', mine ? 'border-primary bg-primary text-primary-foreground' : claim ? 'bg-muted text-muted-foreground' : 'hover:border-primary')}
                     >
-                      {claim ? <LockKey size={14} /> : <LockKeyOpen size={14} />}
+                      {claimingArea === area ? <CircleNotch size={14} className="motion-safe:animate-spin" /> : claim ? <LockKey size={14} /> : <LockKeyOpen size={14} />}
                       {area}
                       {claim && !mine && <span className="font-sans text-xs">{claim.name.split(' ')[0]}</span>}
                     </button>

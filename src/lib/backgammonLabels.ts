@@ -19,6 +19,9 @@ export interface BackgammonLabels {
   mustEnter: string
   bearOff: string
   doneHint: string
+  /** Shown at once when the turn is handed in, while it is saved to the shared drive. */
+  sending: string
+  sendingHint: (name: string) => string
   noMoves: string
   pass: string
   confirm: string
@@ -55,6 +58,8 @@ const BACKGAMMON_LABELS: Record<Language, BackgammonLabels> = {
     mustEnter: 'Du har en brik på baren. Den skal ind på brættet først.',
     bearOff: 'Alle dine brikker er hjemme. Nu kan du tage dem ud.',
     doneHint: 'Turen er klar. Tryk "Afslut tur", eller fortryd og flyt anderledes.',
+    sending: 'Sender din tur…',
+    sendingHint: name => `Din tur er afleveret - ${name} er den næste. Gemmer på det fælles drev…`,
     noMoves: 'Du kan ikke flytte med dette slag.',
     pass: 'Videre',
     confirm: 'Afslut tur',
@@ -112,6 +117,8 @@ const BACKGAMMON_LABELS: Record<Language, BackgammonLabels> = {
     mustEnter: 'You have a checker on the bar. It must enter the board first.',
     bearOff: 'All your checkers are home. You can bear them off now.',
     doneHint: 'Your turn is ready. Press "End turn", or undo and move differently.',
+    sending: 'Sending your turn…',
+    sendingHint: name => `Your turn is handed in - ${name} is next. Saving to the shared drive…`,
     noMoves: 'You cannot move with this roll.',
     pass: 'Continue',
     confirm: 'End turn',
@@ -169,6 +176,8 @@ const BACKGAMMON_LABELS: Record<Language, BackgammonLabels> = {
     mustEnter: 'Du har en bricka på baren. Den måste in på brädet först.',
     bearOff: 'Alla dina brickor är hemma. Nu kan du ta ut dem.',
     doneHint: 'Turen är klar. Tryck på "Avsluta tur", eller ångra och flytta annorlunda.',
+    sending: 'Skickar din tur…',
+    sendingHint: name => `Din tur är inlämnad - ${name} är näst på tur. Sparar på den delade enheten…`,
     noMoves: 'Du kan inte flytta med det här slaget.',
     pass: 'Vidare',
     confirm: 'Avsluta tur',
@@ -226,6 +235,8 @@ const BACKGAMMON_LABELS: Record<Language, BackgammonLabels> = {
     mustEnter: 'Sinulla on nappula palkilla. Sen täytyy palata laudalle ensin.',
     bearOff: 'Kaikki nappulasi ovat kotona. Voit nyt poistaa niitä laudalta.',
     doneHint: 'Vuoro on valmis. Paina "Lopeta vuoro" tai peru ja siirrä toisin.',
+    sending: 'Lähetetään vuoroasi…',
+    sendingHint: name => `Vuorosi on annettu - ${name} on seuraavana. Tallennetaan jaetulle asemalle…`,
     noMoves: 'Et voi siirtää tällä heitolla.',
     pass: 'Jatka',
     confirm: 'Lopeta vuoro',

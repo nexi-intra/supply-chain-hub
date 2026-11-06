@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Check, LockKey, X } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
@@ -12,21 +13,30 @@ const statusLabels = () => ({ requested: t('Anmodet', 'Requested'), approved: t(
 
 export function MembersPanel({ id, state, refresh }: PanelProps) {
   const isOwner = state.me.isOwner && !state.statusLocked
+  const [pending, setPending] = useState<string | null>(null)
   const decide = async (email: string, approve: boolean) => {
+    if (pending) return
+    setPending(`${approve ? 'approve' : 'reject'}:${email}`)
     try {
       await window.electronWarehouse!.counts.decideMember({ id, email, approve })
       toast.success(approve ? t('Deltageren er godkendt', 'The participant is approved') : t('Anmodningen er afvist', 'The request is rejected'))
       await refresh()
     } catch (error) {
       toast.error(errorMessage(error))
+    } finally {
+      setPending(null)
     }
   }
   const release = async (area: string) => {
+    if (pending) return
+    setPending(`release:${area}`)
     try {
       await window.electronWarehouse!.counts.release({ id, area })
       await refresh()
     } catch (error) {
       toast.error(errorMessage(error))
+    } finally {
+      setPending(null)
     }
   }
   const members = [...state.members].sort((a, b) => (a.role === 'owner' ? -1 : b.role === 'owner' ? 1 : (a.status === 'requested' ? -1 : 0) - (b.status === 'requested' ? -1 : 0) || a.name.localeCompare(b.name, 'da')))
@@ -45,10 +55,10 @@ export function MembersPanel({ id, state, refresh }: PanelProps) {
                 </div>
                 {member.role === 'owner' ? <Badge>{t('Ansvarlig', 'Responsible')}</Badge> : <Badge variant={member.status === 'rejected' ? 'destructive' : member.status === 'requested' ? 'outline' : 'secondary'}>{statusLabels()[member.status]}</Badge>}
                 {isOwner && member.role !== 'owner' && member.status !== 'approved' && (
-                  <Button size="sm" onClick={() => void decide(member.email, true)}><Check size={16} /> {t('Godkend', 'Approve')}</Button>
+                  <Button size="sm" loading={pending === `approve:${member.email}`} onClick={() => void decide(member.email, true)}><Check size={16} /> {t('Godkend', 'Approve')}</Button>
                 )}
                 {isOwner && member.role !== 'owner' && member.status !== 'rejected' && (
-                  <Button size="sm" variant="ghost" onClick={() => void decide(member.email, false)}><X size={16} /> {member.status === 'approved' ? t('Fjern', 'Remove') : t('Afvis', 'Reject')}</Button>
+                  <Button size="sm" variant="ghost" loading={pending === `reject:${member.email}`} onClick={() => void decide(member.email, false)}><X size={16} /> {member.status === 'approved' ? t('Fjern', 'Remove') : t('Afvis', 'Reject')}</Button>
                 )}
               </li>
             ))}
@@ -67,7 +77,7 @@ export function MembersPanel({ id, state, refresh }: PanelProps) {
                   <span className="font-mono font-semibold">{claim.area}</span>
                   <span className="flex-1">{claim.name}</span>
                   <span className="text-xs text-muted-foreground">{t('aktiv', 'active')} {formatTime(claim.lastActivity)}</span>
-                  {!state.statusLocked && (isOwner || claim.email === state.me.email) && <Button size="sm" variant="ghost" onClick={() => void release(claim.area)}>{t('Frigiv', 'Release')}</Button>}
+                  {!state.statusLocked && (isOwner || claim.email === state.me.email) && <Button size="sm" variant="ghost" loading={pending === `release:${claim.area}`} onClick={() => void release(claim.area)}>{t('Frigiv', 'Release')}</Button>}
                 </li>
               ))}
             </ul>

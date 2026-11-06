@@ -421,6 +421,8 @@ export type MultiplayerPreview =
 export interface MultiplayerApi {
   snapshot(): Promise<MultiplayerSnapshot>
   game(gameId: string): Promise<MultiplayerAnyGame>
+  /** Cheap change marker for an open game (the game file's mtime and size); null when it has no game file yet. */
+  gameStamp?(gameId: string): Promise<string | null>
   preview(input: MultiplayerPreviewInput): Promise<MultiplayerPreview>
   command(command: MultiplayerCommand): Promise<MultiplayerCommandResult>
   /** Asks the service to load the language's word list now; a hint only, failures can be ignored. */

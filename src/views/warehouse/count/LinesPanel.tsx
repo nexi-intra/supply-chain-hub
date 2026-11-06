@@ -274,25 +274,34 @@ function MaterialRow({ id, open, state, group, showType, canWrite, refresh, relo
 }
 
 function OwnRow({ id, line, description, canWrite, refresh }: { id: string; line: CountLine; description: string; canWrite: boolean; refresh: () => Promise<void> }) {
+  const [busy, setBusy] = useState<'edit' | 'remove' | null>(null)
   const edit = async () => {
+    if (busy) return
     const answer = window.prompt(t(`Nyt antal for ${line.material} på ${line.place}:`, `New quantity for ${line.material} in ${line.place}:`), String(line.qty))
     if (answer === null) return
     const qty = Number(answer)
     if (!Number.isInteger(qty) || qty < 0) { toast.error(t('Skriv et helt antal', 'Type a whole number')); return }
+    setBusy('edit')
     try {
       await window.electronWarehouse!.counts.saveLine({ id, line: { lineId: line.lineId, place: line.place, area: line.area, material: line.material, sloc: line.sloc, stockType: line.stockType, qty, status: line.status, comment: line.comment } })
       await refresh()
     } catch (error) {
       toast.error(errorMessage(error))
+    } finally {
+      setBusy(null)
     }
   }
   const remove = async () => {
+    if (busy) return
     if (!window.confirm(t(`Slet linjen ${line.material} på ${line.place}?`, `Delete the line ${line.material} in ${line.place}?`))) return
+    setBusy('remove')
     try {
       await window.electronWarehouse!.counts.deleteLine({ id, lineId: line.lineId })
       await refresh()
     } catch (error) {
       toast.error(errorMessage(error))
+    } finally {
+      setBusy(null)
     }
   }
   return (
@@ -306,8 +315,8 @@ function OwnRow({ id, line, description, canWrite, refresh }: { id: string; line
       <td className="px-3 py-2 text-right">
         {canWrite && (
           <div className="flex justify-end gap-1">
-            <Button size="sm" variant="ghost" onClick={() => void edit()} aria-label={t('Ret antal', 'Edit quantity')}><PencilSimple size={16} /></Button>
-            <Button size="sm" variant="ghost" onClick={() => void remove()} aria-label={t('Slet linje', 'Delete line')}><Trash size={16} /></Button>
+            <Button size="sm" variant="ghost" loading={busy === 'edit'} disabled={busy !== null} onClick={() => void edit()} aria-label={t('Ret antal', 'Edit quantity')}><PencilSimple size={16} /></Button>
+            <Button size="sm" variant="ghost" loading={busy === 'remove'} disabled={busy !== null} onClick={() => void remove()} aria-label={t('Slet linje', 'Delete line')}><Trash size={16} /></Button>
           </div>
         )}
       </td>

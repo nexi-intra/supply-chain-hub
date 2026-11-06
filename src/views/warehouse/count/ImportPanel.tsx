@@ -62,14 +62,19 @@ export function ImportPanel({ id, open, state, refresh }: PanelProps) {
     }
   }
 
+  const [undoingId, setUndoingId] = useState<string | null>(null)
   const undoImport = async (eventId: string) => {
+    if (undoingId) return
     if (!window.confirm(t('Fortryd hele importen?', 'Undo the whole import?'))) return
+    setUndoingId(eventId)
     try {
       await window.electronWarehouse!.counts.undo({ id, eventId })
       toast.success(t('Importen er fortrudt', 'The import was undone'))
       await refresh()
     } catch (error) {
       toast.error(errorMessage(error))
+    } finally {
+      setUndoingId(null)
     }
   }
 
@@ -125,7 +130,7 @@ export function ImportPanel({ id, open, state, refresh }: PanelProps) {
               {imports.map(event => (
                 <li key={event.id} className="flex items-center justify-between gap-3 py-2">
                   <span>{event.document ? <><span className="font-mono">{t('Matdok', 'Mat. doc.')} {event.document}</span> · </> : null}{formatNumber(event.serials?.length ?? 0)} {t('stk.', 'pcs')} · {event.place} · {formatDateTime(event.at)}</span>
-                  <Button size="sm" variant="ghost" onClick={() => void undoImport(event.id)}><ArrowCounterClockwise size={16} /> {t('Fortryd', 'Undo')}</Button>
+                  <Button size="sm" variant="ghost" loading={undoingId === event.id} onClick={() => void undoImport(event.id)}><ArrowCounterClockwise size={16} /> {t('Fortryd', 'Undo')}</Button>
                 </li>
               ))}
             </ul>

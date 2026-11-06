@@ -28,6 +28,8 @@ interface GuideReviewDashboardProps {
   onDiscard: (request: GuideReviewRequest) => void
   onClaim: (request: GuideReviewRequest) => void
   onRestore: (entry: ArchivedGuideEntry) => void
+  /** `${action}:${id}` of the review action currently being saved, if any. */
+  busyKey?: string | null
 }
 
 const normalized = (email: string) => email.trim().toLowerCase()
@@ -150,7 +152,7 @@ function GuideDifference({ before, after }: { before?: Guide; after?: Guide }) {
 
 export function GuideReviewDashboard({
   requests, archivedGuides, userEmail, isReviewer, isManager, onEditRequest, onPreview,
-  onApprove, onReturn, onWithdraw, onDiscard, onClaim, onRestore,
+  onApprove, onReturn, onWithdraw, onDiscard, onClaim, onRestore, busyKey = null,
 }: GuideReviewDashboardProps) {
   const { language, lt } = useLibraryLanguage()
   const da = language === 'da'
@@ -197,15 +199,15 @@ export function GuideReviewDashboard({
           <div className="flex flex-wrap gap-2 shrink-0">
             {request.baseGuide && request.proposedGuide && <Button size="sm" variant="outline" className="gap-1.5" onClick={() => onPreview(request.baseGuide!)}><Eye size={16} />{da ? 'Vis udgivet' : fi ? 'Näytä julkaistu' : sv ? 'Visa publicerad' : 'View published'}</Button>}
             {previewGuide && <Button size="sm" variant="outline" className="gap-1.5" onClick={() => onPreview(previewGuide)}><Eye size={16} />{request.proposedGuide && request.baseGuide ? (da ? 'Vis forslag' : fi ? 'Näytä ehdotus' : sv ? 'Visa förslag' : 'View proposal') : (da ? 'Vis' : fi ? 'Näytä' : sv ? 'Visa' : 'View')}</Button>}
-            {!reviewMode && request.status === 'pending' && <Button size="sm" variant="outline" onClick={() => onWithdraw(request)}>{da ? 'Træk tilbage' : fi ? 'Peruuta' : sv ? 'Dra tillbaka' : 'Withdraw'}</Button>}
+            {!reviewMode && request.status === 'pending' && <Button size="sm" variant="outline" loading={busyKey === `withdraw:${request.id}`} onClick={() => onWithdraw(request)}>{da ? 'Træk tilbage' : fi ? 'Peruuta' : sv ? 'Dra tillbaka' : 'Withdraw'}</Button>}
             {((!reviewMode && ['pending', 'draft', 'changes_requested'].includes(request.status)) || (reviewMode && isManager)) && (
-              <Button size="sm" variant="outline" className="gap-1.5 text-destructive" onClick={() => setDiscardingRequest(request)}><Trash size={16} />{da ? 'Kassér' : fi ? 'Hylkää' : sv ? 'Kassera' : 'Discard'}</Button>
+              <Button size="sm" variant="outline" className="gap-1.5 text-destructive" loading={busyKey === `discard:${request.id}`} onClick={() => setDiscardingRequest(request)}><Trash size={16} />{da ? 'Kassér' : fi ? 'Hylkää' : sv ? 'Kassera' : 'Discard'}</Button>
             )}
             {!reviewMode && (request.status === 'draft' || request.status === 'changes_requested') && request.action !== 'delete' && (
               <Button size="sm" className="gap-1.5" onClick={() => onEditRequest(request, false)}><PencilSimple size={16} />{da ? 'Ret og indsend' : fi ? 'Muokkaa ja lähetä' : sv ? 'Redigera och skicka igen' : 'Edit and resubmit'}</Button>
             )}
             {!reviewMode && (request.status === 'draft' || request.status === 'changes_requested') && request.action === 'delete' && (
-              <Button size="sm" onClick={() => onEditRequest(request, false)}>{da ? 'Indsend sletning igen' : fi ? 'Lähetä poistaminen uudelleen' : sv ? 'Skicka borttagningen igen' : 'Resubmit deletion'}</Button>
+              <Button size="sm" loading={busyKey === `edit:${request.id}`} onClick={() => onEditRequest(request, false)}>{da ? 'Indsend sletning igen' : fi ? 'Lähetä poistaminen uudelleen' : sv ? 'Skicka borttagningen igen' : 'Resubmit deletion'}</Button>
             )}
           </div>
         </div>
@@ -228,12 +230,12 @@ export function GuideReviewDashboard({
             {!canActAsReviewer && <Badge variant="outline">{da ? 'Din egen indsendelse kræver en anden reviewer' : fi ? 'Oma lähetyksesi vaatii toisen tarkistajan' : sv ? 'Din egen inlämning kräver en annan granskare' : 'Your own submission requires another reviewer'}</Badge>}
             {claimedByOther && <Badge variant="secondary">{da ? `Tages af ${request.claimedBy}` : fi ? `Tarkistaja: ${request.claimedBy}` : sv ? `Tas av ${request.claimedBy}` : `Claimed by ${request.claimedBy}`}</Badge>}
             {canActAsReviewer && (!request.claimedBy || (claimedByOther && isManager)) && (
-              <Button variant="outline" onClick={() => onClaim(request)}>{claimedByOther ? (da ? 'Overtag review' : fi ? 'Ota tarkistus' : sv ? 'Ta över granskning' : 'Take over review') : (da ? 'Tag review' : fi ? 'Ota tarkistukseen' : sv ? 'Ta granskning' : 'Claim review')}</Button>
+              <Button variant="outline" loading={busyKey === `claim:${request.id}`} onClick={() => onClaim(request)}>{claimedByOther ? (da ? 'Overtag review' : fi ? 'Ota tarkistus' : sv ? 'Ta över granskning' : 'Take over review') : (da ? 'Tag review' : fi ? 'Ota tarkistukseen' : sv ? 'Ta granskning' : 'Claim review')}</Button>
             )}
             {claimedByMe && request.action !== 'delete' && <Button variant="outline" className="gap-1.5" onClick={() => onEditRequest(request, true)}><NotePencil size={16} />{da ? 'Rediger forslag' : fi ? 'Muokkaa ehdotusta' : sv ? 'Redigera förslag' : 'Edit proposal'}</Button>}
-            {claimedByMe && <Button variant="outline" className="gap-1.5 text-destructive" onClick={() => { setReturningRequest(request); setReturnComment('') }}><X size={16} />{da ? 'Send tilbage' : fi ? 'Palauta' : sv ? 'Skicka tillbaka' : 'Return'}</Button>}
+            {claimedByMe && <Button variant="outline" className="gap-1.5 text-destructive" loading={busyKey === `return:${request.id}`} onClick={() => { setReturningRequest(request); setReturnComment('') }}><X size={16} />{da ? 'Send tilbage' : fi ? 'Palauta' : sv ? 'Skicka tillbaka' : 'Return'}</Button>}
             {claimedByMe && (
-              <Button className="gap-1.5" variant={request.action === 'delete' ? 'destructive' : 'default'} disabled={!canApprove} title={!canApprove ? (da ? 'Guide Admins kan ikke godkende deres egne indsendelser' : fi ? 'Opasvastaava ei voi hyväksyä omaa lähetystään' : sv ? 'Guide-administratörer kan inte godkänna sina egna inlämningar' : 'Guide Admins cannot approve their own submissions') : undefined} onClick={() => onApprove(request)}>
+              <Button className="gap-1.5" variant={request.action === 'delete' ? 'destructive' : 'default'} disabled={!canApprove} loading={busyKey === `approve:${request.id}`} title={!canApprove ? (da ? 'Guide Admins kan ikke godkende deres egne indsendelser' : fi ? 'Opasvastaava ei voi hyväksyä omaa lähetystään' : sv ? 'Guide-administratörer kan inte godkänna sina egna inlämningar' : 'Guide Admins cannot approve their own submissions') : undefined} onClick={() => onApprove(request)}>
                 {request.action === 'delete' ? <Trash size={16} /> : <Check size={16} />}{guideApproveLabel(request.action, language)}
               </Button>
             )}
@@ -269,7 +271,7 @@ export function GuideReviewDashboard({
           {archivedGuides.filter((entry) => !entry.restoredAt).length === 0 ? <Card className="p-10 text-center text-muted-foreground">{da ? 'Arkivet er tomt.' : fi ? 'Arkisto on tyhjä.' : sv ? 'Arkivet är tomt.' : 'The archive is empty.'}</Card> : archivedGuides.filter((entry) => !entry.restoredAt).map((entry) => (
             <Card key={entry.id} className="p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div><h3 className="font-bold">{entry.guide.title}</h3><p className="text-sm text-muted-foreground">v{entry.guide.version || '1.00'} · {new Date(entry.archivedAt).toLocaleString(da ? 'da-DK' : fi ? 'fi-FI' : sv ? 'sv-SE' : 'en-US')}</p></div>
-              <div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => onPreview(entry.guide)}><Eye size={16} className="mr-1.5" />{da ? 'Vis' : fi ? 'Näytä' : sv ? 'Visa' : 'View'}</Button><Button size="sm" onClick={() => onRestore(entry)}><ArrowCounterClockwise size={16} className="mr-1.5" />{da ? 'Anmod om gendannelse' : fi ? 'Pyydä palautusta' : sv ? 'Begär återställning' : 'Request restore'}</Button></div>
+              <div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => onPreview(entry.guide)}><Eye size={16} className="mr-1.5" />{da ? 'Vis' : fi ? 'Näytä' : sv ? 'Visa' : 'View'}</Button><Button size="sm" loading={busyKey === `restore:${entry.id}`} onClick={() => onRestore(entry)}><ArrowCounterClockwise size={16} className="mr-1.5" />{da ? 'Anmod om gendannelse' : fi ? 'Pyydä palautusta' : sv ? 'Begär återställning' : 'Request restore'}</Button></div>
             </Card>
           ))}
         </TabsContent>}

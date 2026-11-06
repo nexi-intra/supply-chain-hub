@@ -52,14 +52,16 @@ export function AccountMigrationRecovery({ userEmail, onLogout }: { userEmail: s
     const accounts = window.electronAccounts
     if (!accounts) return
     let active = true, checking = false
+    let lastCheck = 0
     const check = async () => {
       // Denne komponent er altid monteret (ogsaa oven paa spil) og laeser IKKE
       // via useKV, saa den fik ikke normalt den samme "data-game-active"-pause
       // som resten af appen - hvert baggrunds-tjek er 2 IPC-rundture, der
       // konkurrerede med spillets main-traad hver gang NOGEN aendrede data
       // paa det delte drev (hyppigere efter watcheren blev speedet op).
-      if (checking || (typeof document !== 'undefined' && document.body?.hasAttribute('data-game-active'))) return
+      if (checking || (typeof document !== 'undefined' && (document.body?.hasAttribute('data-game-active') || document.visibilityState === 'hidden'))) return
       checking = true
+      lastCheck = Date.now()
       try {
         const record = await accounts.status()
         const actor = record ? await window.electronAuth?.current() : undefined
@@ -69,8 +71,10 @@ export function AccountMigrationRecovery({ userEmail, onLogout }: { userEmail: s
       } finally { checking = false }
     }
     void check()
-    const interval = setInterval(() => { void check() }, 5000)
-    const unsubscribe = window.electronKv?.onChanged(() => { void check() })
+    // Målt: 227 statuskald på 12 min (hvert 5. s + ved HVER datændring). Serveren afviser
+    // alligevel skrivninger under en migrering, så banneret må gerne komme inden for 30 s.
+    const interval = setInterval(() => { void check() }, 30000)
+    const unsubscribe = window.electronKv?.onChanged(() => { if (Date.now() - lastCheck > 10000) void check() })
     return () => { active = false; clearInterval(interval); unsubscribe?.() }
   }, [userEmail])
   if (!blocked) return null

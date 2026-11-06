@@ -66,6 +66,7 @@ export function UserProfile({ userEmail, displayName, onLogout, onAdminClick, sh
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [saving, setSaving] = useState(false)
 
   const handleOpenSettings = async () => {
     const usersData = (await window.kv.get<Record<string, UserData>>('users')) || {}
@@ -82,6 +83,8 @@ export function UserProfile({ userEmail, displayName, onLogout, onAdminClick, sh
   }
 
   const handleSaveSettings = async () => {
+    if (saving) return
+    setSaving(true)
     try {
       const usersData = (await window.kv.get<Record<string, UserData>>('users')) || {}
       const userData = usersData[userEmail]
@@ -155,6 +158,8 @@ export function UserProfile({ userEmail, displayName, onLogout, onAdminClick, sh
     } catch (error) {
       console.error('Error in handleSaveSettings:', error)
       toast.error(t.profile.errors.generic)
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -281,7 +286,7 @@ export function UserProfile({ userEmail, displayName, onLogout, onAdminClick, sh
             <Button variant="outline" onClick={() => setSettingsOpen(false)}>
               {t.profile.cancel}
             </Button>
-            <Button onClick={handleSaveSettings}>
+            <Button onClick={handleSaveSettings} loading={saving}>
               {t.profile.saveChanges}
             </Button>
           </div>

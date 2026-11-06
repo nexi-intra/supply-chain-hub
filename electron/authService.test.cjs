@@ -208,3 +208,51 @@ test('device secret is persisted without overwrite and malformed existing secret
   assert.throws(() => loadDeviceSecret(invalid), code('AUTH_DEVICE_KEY_INVALID'))
   assert.equal(fs.readFileSync(invalid, 'utf8'), 'invalid')
 })
+
+function asyncSessions(f) {
+  // Mirrors store.getAsync: the read resolves later, so tests can act while it is in flight.
+  let reads = 0, gate = null
+  f.sessions.getAsync = async key => { if (key === 'active-sessions') reads++; if (gate) await gate.promise; return f.sessions.get(key) }
+  return {
+    reads: () => reads,
+    hold() { let release; gate = { promise: new Promise(resolve => { release = resolve }) }; return () => { const open = gate; gate = null; release(); return open } },
+  }
+}
+test('currentAsync reads the shared drive asynchronously, caches for contextTtlMs and shares one resolve per window', async () => {
+  const f = fixture(), auth = createAuthService({ ...f.deps, contextTtlMs: 15000 })
+  await auth.login(1, f.login)
+  const io = asyncSessions(f)
+  f.advance(15000)
+  const [a, b, c] = await Promise.all([auth.currentAsync(1), auth.currentAsync(1), auth.currentAsync(1)])
+  assert.equal(io.reads(), 1, 'concurrent calls share one read')
+  assert.deepEqual([a.email, b.email, c.email], [f.login.email, f.login.email, f.login.email])
+  f.advance(14000); await auth.currentAsync(1); auth.current(1)
+  assert.equal(io.reads(), 1, 'within the window nothing is read again, sync current() included')
+  f.advance(1000); await auth.currentAsync(1)
+  assert.equal(io.reads(), 2)
+})
+test('a role change seen by the watcher (invalidateAll) during an asynchronous resolve is never cached', async () => {
+  const f = fixture(), auth = createAuthService({ ...f.deps, contextTtlMs: 15000 })
+  await auth.login(1, f.login)
+  const io = asyncSessions(f)
+  f.advance(15000)
+  const release = io.hold()
+  const pending = auth.currentAsync(1)
+  f.changeUser({ role: 'manager' }); auth.invalidateAll()
+  release()
+  await pending
+  assert.equal((await auth.currentAsync(1)).role, 'manager')
+  assert.equal(io.reads(), 2, 'the result of a resolve that overlapped an invalidation was not cached')
+})
+test('logout while an asynchronous resolve is in flight fails it and caches nothing', async () => {
+  const f = fixture(), auth = createAuthService({ ...f.deps, contextTtlMs: 15000 })
+  await auth.login(1, f.login)
+  const io = asyncSessions(f)
+  f.advance(15000)
+  const release = io.hold()
+  const pending = auth.currentAsync(1)
+  auth.logout(1)
+  release()
+  await assert.rejects(pending, code('AUTH_REQUIRED'))
+  await assert.rejects(auth.currentAsync(1), code('AUTH_REQUIRED'))
+})

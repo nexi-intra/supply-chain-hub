@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ArrowLeft, Lightbulb } from '@phosphor-icons/react'
+import { ArrowLeft, CircleNotch, Lightbulb } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -71,8 +71,8 @@ export function Rules({ onBack }: { onBack: () => void }) {
                   const suggestion = view.suggestions?.bySloc[sloc]
                   const stored = view.stored[sloc]
                   return (
-                    <tr key={sloc} className="border-t">
-                      <td className="px-3 py-2 font-mono font-semibold">{sloc}{!allowed && <Badge variant="outline" className="ml-2">{t('Ingen regel', 'No rule')}</Badge>}</td>
+                    <tr key={sloc} className="border-t" aria-busy={saving === sloc || undefined}>
+                      <td className="px-3 py-2 font-mono font-semibold">{sloc}{!allowed && <Badge variant="outline" className="ml-2">{t('Ingen regel', 'No rule')}</Badge>}{saving === sloc && <CircleNotch size={14} aria-hidden="true" className="ml-2 inline text-muted-foreground motion-safe:animate-spin" />}</td>
                       {kinds.map(kind => (
                         <td key={kind} className="px-3 py-2">
                           <Checkbox
@@ -89,7 +89,7 @@ export function Rules({ onBack }: { onBack: () => void }) {
                             <Lightbulb size={14} />
                             {suggestion.suggested.map(kindLabel).join(' + ')}
                             <span className="text-muted-foreground">({kinds.map(kind => `${formatNumber(suggestion.quantities[kind] || 0)}`).join(' / ')})</span>
-                            {view.canEdit && JSON.stringify(suggestion.suggested) !== JSON.stringify(allowed) && <Button size="sm" variant="link" className="h-auto px-1" onClick={() => void save(sloc, suggestion.suggested)}>{t('Brug', 'Use')}</Button>}
+                            {view.canEdit && JSON.stringify(suggestion.suggested) !== JSON.stringify(allowed) && <Button size="sm" variant="link" className="h-auto px-1" loading={saving === sloc} onClick={() => void save(sloc, suggestion.suggested)}>{t('Brug', 'Use')}</Button>}
                           </span>
                         ) : <span className="text-muted-foreground">–</span>}
                       </td>

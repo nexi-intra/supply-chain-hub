@@ -13,15 +13,19 @@ function fail(code) { const error = new Error(code); error.code = code; throw er
 function object(value) { return !!value && typeof value === 'object' && !Array.isArray(value) }
 function control(record) { return { id: record.id, root: record.root, teamId: record.teamId, oldEmail: record.oldEmail, newEmail: record.newEmail, state: record.state, applied: record.applied, total: record.steps.length } }
 
-function createAccountService({ getRoot, registry, openStore, beforeStep = () => {}, assertNoPendingSync = () => {}, maxJournalBytes = 32 * 1024 * 1024, now = Date.now }) {
+function createAccountService({ getRoot, registry, openStore, beforeStep = () => {}, assertNoPendingSync = () => {}, maxJournalBytes = 32 * 1024 * 1024, now = Date.now, contextTtlMs = 500 }) {
   // Coalesces the migration-context read gate that securedIpc runs before and
   // after every IPC call. Only the READ gate is cached; every write/migration
   // path (rename/recover/runWrite) still takes the real account lock, so data
   // stays fully serialized and atomic. A migration started by another client
   // is therefore detected within CONTEXT_TTL_MS instead of instantly.
-  const CONTEXT_TTL_MS = 500
+  const CONTEXT_TTL_MS = contextTtlMs
   let contextCache = null
-  const invalidateContext = () => { contextCache = null }
+  // Retired identities for the reference check: loaded asynchronously once per write burst
+  // (prepareReferenceChecksAsync) instead of 1-4 synchronous reads on the main thread per write.
+  const RETIRED_SNAPSHOT_MS = 2000
+  let retiredLoad = null, retiredSnapshot = null
+  const invalidateContext = () => { contextCache = null; retiredLoad = null; retiredSnapshot = null }
   // Genbrug store-instansen pr. mappe: openStore/createStore laver ellers en
   // synkron mkdirSync mod netvaerksdrevet ved HVERT kald (fx hver skrivning).
   const storeCache = new Map()
@@ -139,11 +143,27 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
     contextCache = { at: now(), value }
     return value
   }
+  async function contextAsync() {
+    await assertNoMigrationAsync()
+    return contextCache.value
+  }
+  async function prepareReferenceChecksAsync() {
+    if (!retiredLoad || now() - retiredLoad.at >= RETIRED_SNAPSHOT_MS) {
+      const entry = { at: now(), promise: metadata().getAsync(RETIRED, { skipCache: true }).then(value => value || {}) }
+      retiredLoad = entry
+      entry.promise.then(value => { if (retiredLoad === entry) retiredSnapshot = { at: entry.at, value } }, () => { if (retiredLoad === entry) retiredLoad = null })
+    }
+    await retiredLoad.promise
+  }
+  function retiredIdentities() {
+    if (retiredSnapshot && now() - retiredSnapshot.at < RETIRED_SNAPSHOT_MS) return retiredSnapshot.value
+    return metadata().get(RETIRED, { skipCache: true }) || {}
+  }
   function assertReferences(key, value) {
     if (value && typeof value === 'object' && !Array.isArray(value) && typeof value.op === 'string') {
       for (const property of ['value', 'items', 'expected']) if (Object.hasOwn(value, property)) assertReferences(key, value[property])
     }
-    const retired = metadata().get(RETIRED, { skipCache: true }) || {}
+    const retired = retiredIdentities()
     for (const [email, record] of Object.entries(retired)) {
       if (personalKey(key, email, record.replacement) !== key || (key === 'users' && ((value?.field && normalize(value.field) === email) || Object.keys(value || {}).some(field => normalize(field) === email))) || !same(value, migrateReferences(key, value, email, record.replacement))) fail('ACCOUNT_RETIRED_REFERENCE')
     }
@@ -152,7 +172,12 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
     if (metadata().get(RETIRED, { skipCache: true })?.[normalize(email)]) fail('ACCOUNT_EMAIL_RETIRED')
   }
   function status(actor) {
-    const record = readControl()
+    return statusOf(actor, readControl())
+  }
+  async function statusAsync(actor) {
+    return statusOf(actor, await readControlAsync())
+  }
+  function statusOf(actor, record) {
     if (terminal(record)) return null
     if (actor.role !== 'creator' && (actor.role !== 'manager' || actor.activeTeam?.teamId !== record.teamId)) fail('AUTH_FORBIDDEN')
     const { id, state, oldEmail, newEmail, applied, total, teamId } = record
@@ -308,6 +333,6 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
       return { state: reverse ? 'rolled-back' : 'committed' }
     })
   }
-  return { rename, pending, status, assertReady, assertAvailable, assertReferences, context, runWrite, runWriteAsync, runAuthentication, resume: (actor, id) => recover(actor, id, false), rollback: (actor, id) => recover(actor, id, true) }
+  return { rename, pending, status, statusAsync, assertReady, assertAvailable, assertReferences, prepareReferenceChecksAsync, context, contextAsync, runWrite, runWriteAsync, runAuthentication, resume: (actor, id) => recover(actor, id, false), rollback: (actor, id) => recover(actor, id, true) }
 }
 module.exports = { createAccountService }

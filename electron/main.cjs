@@ -4,13 +4,25 @@
 // Data is stored as JSON files in a shared data directory (see resolveDataDir)
 // so multiple machines can point at the same folder on a network share and
 // stay in sync. A polling watcher broadcasts external changes to all windows.
-const { app, BrowserWindow, shell, ipcMain: nativeIpcMain, dialog, nativeImage, Notification, clipboard } = require('electron')
+const { app, BrowserWindow, shell, ipcMain: nativeIpcMain, dialog, nativeImage, Notification, clipboard, crashReporter } = require('electron')
 const { pathToFileURL } = require('node:url')
 const path = require('path')
 const fs = require('fs')
 const fsp = require('fs/promises')
 const crypto = require('crypto')
 const { createStore, encryptPayload } = require('./store.cjs')
+// createStore() laver en synkron mkdirSync mod M: og starter med en tom laesecache.
+// Varme stier (auth ved hvert IPC-kald, hub-oversigter) genbruger derfor instansen pr. mappe.
+const reusableStores = new Map()
+function storeFor(directory) {
+  const key = path.resolve(directory)
+  let instance = reusableStores.get(key)
+  if (!instance) {
+    instance = createStore(directory)
+    reusableStores.set(key, instance)
+  }
+  return instance
+}
 const { createResilientStore, isImmutableBlobKey } = require('./offlineSync.cjs')
 const { createAuthService, loadDeviceSecret } = require('./authService.cjs')
 const { createAccountService } = require('./accountService.cjs')
@@ -47,7 +59,31 @@ const { buildEvidencePrompt } = require('./assistantPrompt.cjs')
 const { detectQuestionLanguage } = require('./assistantContext.cjs')
 const { buildUnansweredLogEntry } = require('./assistantUnansweredLog.cjs')
 const { registerWarehouse } = require('./warehouse/register.cjs')
+const { createDiagnosticsLog, installMainDiagnostics, createCrashRecovery } = require('./diagnostics.cjs')
 if (!app.isPackaged && process.env.TCD_HUB_USER_DATA_DIR) app.setPath('userData', process.env.TCD_HUB_USER_DATA_DIR)
+// Persistent log + local crash dumps in %APPDATA%\tcd-hub: "the app just closed" used to leave no trace at all.
+const diagnostics = createDiagnosticsLog(path.join(app.getPath('userData'), 'logs'))
+installMainDiagnostics(diagnostics)
+try { crashReporter.start({ uploadToServer: false }) } catch (error) { diagnostics.write('warn', 'crashReporter kunne ikke starte', error) }
+diagnostics.write('info', `start ${app.getVersion()} packaged=${app.isPackaged} argv=${JSON.stringify(process.argv.slice(1))}`)
+// One instance per user profile. A second instance shared userData with the first, lost the GPU cache
+// ("Unable to move the cache") and rendered everything on the CPU, while doubling the load on the share.
+if (!app.requestSingleInstanceLock()) {
+  diagnostics.write('info', 'en anden instans kører allerede - fokuserer den i stedet')
+  app.exit(0)
+  return
+}
+app.on('second-instance', () => {
+  const win = BrowserWindow.getAllWindows()[0]
+  if (!win || win.isDestroyed()) return
+  if (win.isMinimized()) win.restore()
+  win.show()
+  win.focus()
+})
+app.on('child-process-gone', (_event, details) => diagnostics.write('error', 'CHILD PROCESS GONE', details))
+app.on('render-process-gone', (_event, _contents, details) => diagnostics.write('error', 'RENDER PROCESS GONE', details))
+app.on('before-quit', () => diagnostics.write('info', 'before-quit'))
+app.on('will-quit', () => diagnostics.write('info', 'will-quit'))
 // Never call app.setAppUserModelId: a new taskbar identity splits the app from users' existing pinned icons (toasts work without it).
 let localAI = null
 let warehouse = null
@@ -56,9 +92,7 @@ let assistantBackend = null
 let authService = null
 let accountService = null
 let guestStore = null
-// Last-resort safety net: log fatal main-process errors instead of terminating silently.
-process.on('uncaughtException', error => console.error('MAIN UNCAUGHT EXCEPTION:', error))
-process.on('unhandledRejection', reason => console.error('MAIN UNHANDLED REJECTION:', reason))
+// Last-resort safety net (installMainDiagnostics): fatal main-process errors go to logs\main.log instead of terminating silently.
 function appUrl() { return !app.isPackaged && process.env.ELECTRON_START_URL || pathToFileURL(path.join(__dirname, '..', 'dist', 'index.html')).href }
 function normalizedAppUrl(value) { const url = new URL(value); url.search = ''; url.hash = ''; return url.href }
 const ipcMain = createSecuredIpc(nativeIpcMain, {
@@ -261,6 +295,8 @@ function startWatcher() {
   const debouncedBroadcast = createDebouncedBroadcast(100)
   stopWatcher = store.watch((changedKeys) => {
     if (changedKeys.includes('users') && directUsersStore.store) directUsersStore.store.invalidate()
+    // Roles/passwords changed on another PC: the cached auth snapshot (15 s) must not outlive them.
+    if (changedKeys.includes('users')) authService?.invalidateAll()
     debouncedBroadcast(changedKeys)
   }, setStorageConnected)
 }
@@ -290,7 +326,21 @@ function migrateSharedMealPlanIfNeeded() {
 function startSharedWatcher() {
   if (stopSharedWatcher) stopSharedWatcher()
   const debouncedBroadcast = createDebouncedBroadcast(100)
-  stopSharedWatcher = sharedStore.watch((changedKeys) => debouncedBroadcast(changedKeys), () => {})
+  stopSharedWatcher = sharedStore.watch((changedKeys) => {
+    // A session revoked or renewed on another PC: drop the cached auth snapshot right away.
+    if (changedKeys.includes('active-sessions')) authService?.invalidateAll()
+    debouncedBroadcast(changedKeys)
+  }, () => {})
+}
+
+/** Fjerner temp-filer som crashede klienter har efterladt i de delte mapper. Best effort og helt i baggrunden. */
+function sweepSharedTempFiles() {
+  if (storageStartedDisconnected || !storageConnected || !platformRoot) return
+  for (const directory of [path.join(platformRoot, '_shared'), path.join(platformRoot, '_shared', 'multiplayer')]) {
+    createStore(directory).sweepStaleTempFilesAsync()
+      .then(removed => { if (removed.length) console.log(`TCD Hub: fjernede ${removed.length} forladte temp-filer i ${directory}`) })
+      .catch(() => {})
+  }
 }
 
 /** Aktuel forbindelsesstatus til den delte datamappe — sendt til renderer ved opstart og efter hver ændring. */
@@ -640,12 +690,26 @@ function createWindow() {
     if (normalizedAppUrl(target) !== normalizedAppUrl(appUrl())) event.preventDefault()
   })
 
-  // Opt-in diagnostics (set TCD_HUB_DEBUG=1): surface renderer console/crash/hang events.
+  // Always on: a crashed renderer used to leave a blank window (or none) and no trace.
+  const crashRecovery = createCrashRecovery()
+  win.webContents.on('render-process-gone', (_e, details) => {
+    diagnostics.write('error', 'RENDERER GONE', details)
+    if (!win.isDestroyed() && crashRecovery.shouldReload(details.reason)) {
+      diagnostics.write('info', 'genindlæser vinduet efter renderer-nedbrud')
+      win.webContents.reload()
+    }
+  })
+  win.webContents.on('unresponsive', () => diagnostics.write('warn', 'RENDERER UNRESPONSIVE'))
+  win.webContents.on('responsive', () => diagnostics.write('info', 'renderer responsive again'))
+  win.webContents.on('did-fail-load', (_e, code, description) => diagnostics.write('error', 'DID FAIL LOAD', code, description))
+  win.webContents.on('console-message', event => {
+    if (event.level === 'error') diagnostics.write('error', 'RENDERER:', String(event.message).slice(0, 2000), `(${event.sourceId}:${event.lineNumber})`)
+  })
+  win.on('closed', () => diagnostics.write('info', 'window closed'))
+
+  // Opt-in diagnostics (set TCD_HUB_DEBUG=1): also surface the full renderer console in the terminal.
   if (process.env.TCD_HUB_DEBUG) {
-    win.webContents.on('console-message', (_e, level, message, line, sourceId) => console.log('RENDERER:', level, message, `(${sourceId}:${line})`))
-    win.webContents.on('unresponsive', () => console.log('RENDERER UNRESPONSIVE'))
-    win.webContents.on('render-process-gone', (_e, details) => console.log('RENDER PROCESS GONE', details))
-    win.webContents.on('did-fail-load', (_e, code, description) => console.log('DID FAIL LOAD', code, description))
+    win.webContents.on('console-message', event => console.log('RENDERER:', event.level, event.message, `(${event.sourceId}:${event.lineNumber})`))
   }
 
   // Open external links (e.g. mailto:, https://) in the OS default handler.
@@ -695,9 +759,16 @@ app.whenReady().then(() => {
   setTimeout(() => {
     try { console.log('TCD Hub: GPU feature status', JSON.stringify(app.getGPUFeatureStatus())) } catch { /* ikke kritisk */ }
   }, 5000)
+  // Main-thread watchdog: every freeze over 2 s is logged, so "the app hangs" reports come with evidence.
+  let lastTick = performance.now()
+  setInterval(() => {
+    const now = performance.now(), stalledMs = now - lastTick - 1000
+    if (stalledMs > 2000) diagnostics.write('warn', `MAIN BLOCKED ${Math.round(stalledMs)} ms`)
+    lastTick = now
+  }, 1000).unref()
   const resolved = resolveDataDir()
   platformRoot = resolved.dir
-  accountService = createAccountService({ getRoot: () => platformRoot, registry, openStore: createStore, assertNoPendingSync: assertNoPendingAccountSync })
+  accountService = createAccountService({ getRoot: () => platformRoot, registry, openStore: createStore, assertNoPendingSync: assertNoPendingAccountSync, contextTtlMs: 5000 })
   store = createResilientStore(createStore(resolved.dir), createStore(localCacheDir()), resilientOptions())
   dataDirSource = resolved.source
   storageStartedDisconnected = resolved.failedSources.length > 0
@@ -718,16 +789,17 @@ app.whenReady().then(() => {
     runWrite: accountService.runWrite,
     runAuthentication: accountService.runAuthentication,
     assertAvailable: accountService.assertAvailable,
-    openTeam: team => createStore(registeredTeamDir(platformRoot, registry.listTeams(platformRoot), team.folderName).directory),
-    openSessions: () => createStore(path.join(platformRoot, '_shared')),
+    openTeam: team => storeFor(registeredTeamDir(platformRoot, registry.listTeams(platformRoot), team.folderName).directory),
+    openSessions: () => storeFor(path.join(platformRoot, '_shared')),
     switchTeam: team => switchToTeamDir(team.folderName, registeredTeamDir(platformRoot, registry.listTeams(platformRoot), team.folderName).directory),
     getActiveFolder: () => currentTeamFolder,
     deviceSecret: loadDeviceSecret(path.join(app.getPath('userData'), 'auth-device-key')),
+    contextTtlMs: 15000,
   })
   ipcMain.handle('auth:login', (event, request) => authService.login(event.sender.id, request))
   ipcMain.handle('auth:signup', (event, request) => authService.signup(event.sender.id, request))
   ipcMain.handle('auth:resume', (event, token) => authService.resume(event.sender.id, token))
-  ipcMain.handle('auth:current', event => authService.current(event.sender.id))
+  ipcMain.handle('auth:current', event => authService.currentAsync(event.sender.id))
   ipcMain.handle('auth:renew', event => authService.renew(event.sender.id))
   ipcMain.handle('auth:logout', event => authService.logout(event.sender.id))
   ipcMain.handle('auth:profile', (event, request) => authService.profile(event.sender.id, request))
@@ -749,9 +821,9 @@ app.whenReady().then(() => {
     onChanged: () => broadcast('improvements:changed'),
   })
   // Improvements, Multiplayer, Links and High-fives are shared by every team, so the person's own (home) role applies there.
-  const sharedActor = event => { const actor = authService.current(event.sender.id); return { ...actor, role: actor.homeRole } }
-  ipcMain.handle('improvements:snapshot', event => improvements.snapshot(sharedActor(event)))
-  ipcMain.handle('improvements:command', (event, command) => improvements.command(sharedActor(event), command))
+  const sharedActor = async event => { const actor = await authService.currentAsync(event.sender.id); return { ...actor, role: actor.homeRole } }
+  ipcMain.handle('improvements:snapshot', async event => improvements.snapshot((await sharedActor(event))))
+  ipcMain.handle('improvements:command', async (event, command) => improvements.command((await sharedActor(event)), command))
   let multiplayerIndexStore = null
   let multiplayerGameStore = null
   wordChecker = createWordChecker()
@@ -776,15 +848,18 @@ app.whenReady().then(() => {
     // The directory (every team's users) and the index barely change within these windows; see multiplayer.cjs.
     directoryTtlMs: 30000,
     indexShareMs: 300,
+    // A move answers once its game file is saved; the index entry follows in the background (see multiplayer.cjs).
+    deferIndexWrites: true,
   })
   multiplayerHooks.usersChanged = () => multiplayer.invalidateDirectory()
   multiplayerHooks.indexChangedOnDisk = () => {
     multiplayer.hasUnannouncedChange().then(changed => { if (changed) broadcast('multiplayer:changed') }, () => broadcast('multiplayer:changed'))
   }
-  ipcMain.handle('multiplayer:snapshot', event => multiplayer.snapshot(sharedActor(event)))
-  ipcMain.handle('multiplayer:game', (event, gameId) => multiplayer.game(sharedActor(event), gameId))
-  ipcMain.handle('multiplayer:preview', (event, input) => multiplayer.preview(sharedActor(event), input))
-  ipcMain.handle('multiplayer:command', (event, input) => multiplayer.command(sharedActor(event), input))
+  ipcMain.handle('multiplayer:snapshot', async event => multiplayer.snapshot((await sharedActor(event))))
+  ipcMain.handle('multiplayer:game', async (event, gameId) => multiplayer.game((await sharedActor(event)), gameId))
+  ipcMain.handle('multiplayer:game-stamp', async (event, gameId) => multiplayer.gameStamp((await sharedActor(event)), gameId))
+  ipcMain.handle('multiplayer:preview', async (event, input) => multiplayer.preview((await sharedActor(event)), input))
+  ipcMain.handle('multiplayer:command', async (event, input) => multiplayer.command((await sharedActor(event)), input))
   let highFivesStore = null
   const highFives = createHighFivesService({
     getStore: () => {
@@ -810,9 +885,9 @@ app.whenReady().then(() => {
     openExternal: href => shell.openExternal(href),
     onChanged: () => broadcast('links:changed'),
   })
-  ipcMain.handle('links:snapshot', event => links.snapshot(sharedActor(event)))
-  ipcMain.handle('links:command', (event, input) => links.command(sharedActor(event), input))
-  ipcMain.handle('links:open', (event, linkId) => links.open(sharedActor(event), linkId))
+  ipcMain.handle('links:snapshot', async event => links.snapshot((await sharedActor(event))))
+  ipcMain.handle('links:command', async (event, input) => links.command((await sharedActor(event)), input))
+  ipcMain.handle('links:open', async (event, linkId) => links.open((await sharedActor(event)), linkId))
   // Warehouse Management (Optælling) for TCD and TRR: the open hub is the team, data in "<team>\lagerstyring".
   const warehouseTeamDir = team => registeredTeamDir(platformRoot, registry.listTeams(platformRoot), team).directory
   const warehouseUserStores = new Map()
@@ -833,8 +908,8 @@ app.whenReady().then(() => {
     configDirs: [process.env.PORTABLE_EXECUTABLE_DIR || path.dirname(app.getPath('exe')), path.join(__dirname, '..')],
     scriptsDir: path.join(__dirname, 'warehouse'),
   })
-  ipcMain.handle('highFives:snapshot', event => highFives.snapshot(sharedActor(event)))
-  ipcMain.handle('highFives:command', (event, input) => highFives.command(sharedActor(event), input))
+  ipcMain.handle('highFives:snapshot', async event => highFives.snapshot((await sharedActor(event))))
+  ipcMain.handle('highFives:command', async (event, input) => highFives.command((await sharedActor(event)), input))
   ipcMain.handle('multiplayer:warm-words', async (event, language) => {
     authService.current(event.sender.id)
     await wordChecker.warm(language)
@@ -846,7 +921,7 @@ app.whenReady().then(() => {
   }))
   ipcMain.handle('notifications:desktop', (event, request) => desktopNotifications.notify(authService.current(event.sender.id), request))
   ipcMain.handle('notifications:desktop-enabled', (event, value) => { authService.current(event.sender.id); return desktopNotifications.enabled(value) })
-  ipcMain.handle('accounts:status', event => accountService.status(authService.current(event.sender.id)))
+  ipcMain.handle('accounts:status', async event => accountService.statusAsync(await authService.currentAsync(event.sender.id)))
   for (const action of ['resume', 'rollback']) ipcMain.handle(`accounts:${action}`, (event, id) => {
     const result = accountService[action](authService.current(event.sender.id), id)
     accountDataChanged()
@@ -903,7 +978,7 @@ app.whenReady().then(() => {
   ipcMain.handle('kv:get-many', (event, keys) => Promise.all(keys.map(key => readKv(key, event))))
   ipcMain.handle('kv:set', async (event, key, value) => {
     if (!isPrivateKey(key)) return kvTarget(key, event).setAsync(key, value)
-    await writePrivate(key, { op: 'set', value }, authService.current(event.sender.id))
+    await writePrivate(key, { op: 'set', value }, await authService.currentAsync(event.sender.id))
     broadcast('kv:changed', [key])
   })
   ipcMain.handle('kv:delete', (event, key) => {
@@ -1105,7 +1180,7 @@ app.whenReady().then(() => {
     requireCreator(_event)
     const creatorEmail = registry.getCreatorEmail(platformRoot)
     return registry.listTeams(platformRoot).map((team) => {
-      const users = createStore(path.join(platformRoot, team.folderName)).get('users') || {}
+      const users = storeFor(path.join(platformRoot, team.folderName)).get('users') || {}
       const managers = Object.entries(users)
         .map(([storedEmail, user]) => ({
           email: String(user?.email || storedEmail).trim().toLowerCase(),
@@ -1128,7 +1203,7 @@ app.whenReady().then(() => {
     requireCreator(_event)
     const byEmail = new Map()
     for (const team of registry.listTeams(platformRoot)) {
-      const users = createStore(path.join(platformRoot, team.folderName)).get('users') || {}
+      const users = storeFor(path.join(platformRoot, team.folderName)).get('users') || {}
       for (const user of Object.values(users)) {
         const email = String(user?.email || '').trim().toLowerCase()
         if (!email) continue
@@ -1142,8 +1217,8 @@ app.whenReady().then(() => {
     }
     return Array.from(byEmail.values()).sort((a, b) => a.fullName.localeCompare(b.fullName))
   })
-  const teamReader = createTeamReader({ getRoot: () => platformRoot, listTeams: () => registry.listTeams(platformRoot), openStore: createStore })
-  const teamUsers = team => createStore(registeredTeamDir(platformRoot, registry.listTeams(platformRoot), team.folderName).directory).getAsync('users')
+  const teamReader = createTeamReader({ getRoot: () => platformRoot, listTeams: () => registry.listTeams(platformRoot), openStore: storeFor })
+  const teamUsers = team => storeFor(registeredTeamDir(platformRoot, registry.listTeams(platformRoot), team.folderName).directory).getAsync('users')
   const nameOf = (users, email) => Object.values(users || {}).find(user => String(user?.email || '').trim().toLowerCase() === email)?.fullName || email
   ipcMain.handle('registry:list-manager-access', async (event) => {
     requireCreator(event)
@@ -1163,9 +1238,9 @@ app.whenReady().then(() => {
   // The hubs the signed-in person may open, with what is waiting for them as manager in each.
   // Counted like the bell: vacation requests already seen or dismissed by this person are not waiting.
   ipcMain.handle('registry:list-my-hubs', async (event) => {
-    const actor = authService.current(event.sender.id)
+    const actor = await authService.currentAsync(event.sender.id)
     const teams = registry.listTeams(platformRoot)
-    const teamStore = team => createStore(registeredTeamDir(platformRoot, teams, team.folderName).directory)
+    const teamStore = team => storeFor(registeredTeamDir(platformRoot, teams, team.folderName).directory)
     const [homeUsers, dismissed] = await Promise.all([teamUsers(actor.home), teamStore(actor.home).getAsync(`hub-notifications-dismissed-${actor.email}`, { skipCache: true })])
     const homeUser = Object.values(homeUsers || {}).find(user => String(user?.email || '').trim().toLowerCase() === actor.email)
     const homeManager = actor.homeRole === 'creator' || ['manager', 'admin'].includes(homeUser?.role) || (!homeUser?.role && homeUser?.isManager === true)
@@ -1202,9 +1277,9 @@ app.whenReady().then(() => {
   // Tværgående READ-ONLY opslag i et ANDET teams data uden at skifte den aktive store
   // (Team Oversigt, Guide Bibliotek-team-vælger m.fl., se Fase 8). Opretter en midlertidig
   // store-instans for mål-teamets mappe — rører ALDRIG `store`/`currentTeamFolder`.
-  ipcMain.handle('registry:read-team-key', (event, folderName, key) => teamReader.readTeam(authService.current(event.sender.id), folderName, key))
-  ipcMain.handle('registry:read-team-keys', (event, folderName, keys) => teamReader.readTeamMany(authService.current(event.sender.id), folderName, keys))
-  ipcMain.handle('registry:read-teams-keys', (event, requests) => teamReader.readTeamsMany(authService.current(event.sender.id), requests))
+  ipcMain.handle('registry:read-team-key', async (event, folderName, key) => teamReader.readTeam(await authService.currentAsync(event.sender.id), folderName, key))
+  ipcMain.handle('registry:read-team-keys', async (event, folderName, keys) => teamReader.readTeamMany(await authService.currentAsync(event.sender.id), folderName, keys))
+  ipcMain.handle('registry:read-teams-keys', async (event, requests) => teamReader.readTeamsMany(await authService.currentAsync(event.sender.id), requests))
   ipcMain.handle('registry:read-shared-guide-file', (event, kind, guideId, key) => teamReader.readSharedFile(authService.current(event.sender.id), kind, guideId, key))
   // Tværgående SKRIVNING, men snævert afgrænset til ét formål: en bruger i team A
   // anmoder om adgang til en guide ejet af team B. Gemmes i team B's EGEN
@@ -1437,6 +1512,7 @@ app.whenReady().then(() => {
   setImmediate(() => {
     startWatcher()
     startSharedWatcher()
+    sweepSharedTempFiles()
     // runWrite() er synkron og kaster STRAKS (attempts:1) hvis kontolaasen er
     // kortvarigt optaget. try/catch er kritisk: en kastet fejl her maa aldrig
     // stoppe resten af opstarten. Proeves igen ved naeste opstart.

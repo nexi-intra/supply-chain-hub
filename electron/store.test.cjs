@@ -182,6 +182,47 @@ test('missing keys return undefined', (t) => {
   assert.equal(store.get('missing'), undefined)
 })
 
+test('mutateAsync reads, changes and writes under one lock, skips on undefined and serializes concurrent callers', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  assert.deepEqual(await store.mutateAsync('counter', current => (current === undefined ? { n: 1 } : undefined)), { n: 1 })
+  assert.deepEqual(await store.getAsync('counter', { skipCache: true }), { n: 1 })
+  assert.equal(await store.mutateAsync('counter', () => undefined), undefined)
+  assert.deepEqual(await store.getAsync('counter', { skipCache: true }), { n: 1 })
+
+  const other = createStore(directory)
+  await Promise.all(Array.from({ length: 8 }, (_, i) => (i % 2 ? other : store).mutateAsync('counter', current => ({ n: current.n + 1 }))))
+  assert.deepEqual(await store.getAsync('counter', { skipCache: true }), { n: 9 })
+  assert.ok(!fs.existsSync(path.join(directory, 'counter.json.lock')))
+
+  await assert.rejects(store.mutateAsync('counter', async () => ({ n: 0 })), /synchronous/)
+  await assert.rejects(store.mutateAsync('counter', () => { throw new Error('nope') }), /nope/)
+  assert.deepEqual(await store.getAsync('counter', { skipCache: true }), { n: 9 })
+  assert.ok(!fs.existsSync(path.join(directory, 'counter.json.lock')))
+})
+
+test('sweepStaleTempFilesAsync removes only temp files that are old by both name and mtime', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  store.set('index', { ok: true })
+  const day = 24 * 60 * 60 * 1000
+  const old = Date.now() - 2 * day
+  const write = (name, mtimeMs) => {
+    const file = path.join(directory, name)
+    fs.writeFileSync(file, 'x')
+    fs.utimesSync(file, new Date(mtimeMs), new Date(mtimeMs))
+    return name
+  }
+  const stale = write(`index.json.123.${old}.deadbeef.tmp`, old)
+  const freshName = write(`index.json.123.${Date.now()}.deadbeef.tmp`, old)
+  const freshMtime = write(`index.json.123.${old}.cafebabe.tmp`, Date.now())
+  const foreign = write('notes.tmp', old)
+
+  assert.deepEqual(await store.sweepStaleTempFilesAsync(), [stale])
+  const left = fs.readdirSync(directory)
+  for (const name of [freshName, freshMtime, foreign, 'index.json']) assert.ok(left.includes(name), name)
+  assert.ok(!left.includes(stale))
+  assert.deepEqual(store.get('index'), { ok: true })
+})
+
 test('getAsync mirrors get: decrypts, caches, and reports missing keys as undefined', async (t) => {
   const { store } = temporaryStore(t)
   assert.equal(await store.getAsync('missing'), undefined)
@@ -444,4 +485,16 @@ test('watch reports connection loss and recovery via onConnectionChange', async 
   await reconnected
   assert.deepEqual(events, [false, true])
   assert.equal(store.isConnected(), true)
+})
+
+test('statAsync reports a key file change marker without reading it, and undefined when missing', async (t) => {
+  const { store } = temporaryStore(t)
+  assert.equal(await store.statAsync('missing'), undefined)
+  await store.setAsync('game', { revision: 1 })
+  const first = await store.statAsync('game')
+  assert.ok(first.size > 0 && first.mtimeMs > 0)
+  await new Promise(resolve => setTimeout(resolve, 20))
+  await store.setAsync('game', { revision: 2, more: 'data' })
+  const second = await store.statAsync('game')
+  assert.ok(second.mtimeMs !== first.mtimeMs || second.size !== first.size)
 })

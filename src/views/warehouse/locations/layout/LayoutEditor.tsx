@@ -65,6 +65,7 @@ export function LayoutEditor({ user, onDone }: { user: WarehouseUser; onDone: ()
   const [drag, setDragState] = useState<Drag | null>(null)
   const [savedAt, setSavedAt] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
+  const [pendingAction, setPendingAction] = useState<'discard' | 'versions' | 'open' | null>(null)
   // Why the draft cannot be saved any more (LAYOUT_STALE); null while it can.
   const [stale, setStale] = useState<string | null>(null)
   const [editing, setEditing] = useState<{ name: string; since: number } | null>(null)
@@ -357,6 +358,7 @@ export function LayoutEditor({ user, onDone }: { user: WarehouseUser; onDone: ()
   async function discard() {
     // An autosave in between would bring the discarded draft back.
     pausedRef.current = true
+    setPendingAction('discard')
     try {
       await bridge.discardLayoutDraft()
       await load()
@@ -368,20 +370,25 @@ export function LayoutEditor({ user, onDone }: { user: WarehouseUser; onDone: ()
       else toast.error(errorMessage(error))
     } finally {
       pausedRef.current = false
+      setPendingAction(null)
     }
   }
 
   async function showVersions() {
+    setPendingAction('versions')
     try {
       const { versions } = await bridge.layoutVersions()
       setDialog({ kind: 'versions', versions, chosen: null })
     } catch (error) {
       toast.error(errorMessage(error))
+    } finally {
+      setPendingAction(null)
     }
   }
 
   async function openVersion(version: number, takeOver = false) {
     pausedRef.current = true
+    setPendingAction('open')
     try {
       const { draft: opened } = await bridge.openLayoutVersion({ version, takeOver })
       pausedRef.current = false
@@ -392,6 +399,8 @@ export function LayoutEditor({ user, onDone }: { user: WarehouseUser; onDone: ()
       pausedRef.current = false
       if (errorCode(error) === 'LAYOUT_DRAFT_BUSY') setDialog({ kind: 'busy', name: busyName(error), retry: () => void openVersion(version, true), leave: false })
       else toast.error(errorMessage(error))
+    } finally {
+      setPendingAction(null)
     }
   }
 
@@ -426,7 +435,7 @@ export function LayoutEditor({ user, onDone }: { user: WarehouseUser; onDone: ()
         <input ref={fileInput} type="file" accept=".json,application/json" className="hidden" aria-label={t('Fil med tegning', 'File with a drawing')} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void onFile(file) }} />
         <Button size="sm" variant="outline" onClick={() => fileInput.current?.click()}><UploadSimple size={14} /> {t('Hent tegning fra fil', 'Load drawing from file')}</Button>
         <Button size="sm" variant="outline" onClick={saveAsFile}><DownloadSimple size={14} /> {t('Gem som fil', 'Save as file')}</Button>
-        <Button size="sm" variant="outline" onClick={() => void showVersions()}><ClockCounterClockwise size={14} /> {t('Tidligere versioner', 'Earlier versions')}</Button>
+        <Button size="sm" variant="outline" loading={pendingAction === 'versions'} onClick={() => void showVersions()}><ClockCounterClockwise size={14} /> {t('Tidligere versioner', 'Earlier versions')}</Button>
         <Button size="sm" variant="ghost" className="text-destructive" onClick={() => setDialog({ kind: 'discard' })}><X size={14} /> {t('Kassér kladde', 'Discard draft')}</Button>
         {duplicates.size > 0 && <span className="ml-auto inline-flex items-center gap-1 text-sm text-destructive"><Warning size={14} /> {t(`${duplicates.size} navne bruges to gange (rød kant)`, `${duplicates.size} names are used twice (red outline)`)}</span>}
       </div>
@@ -545,7 +554,7 @@ export function LayoutEditor({ user, onDone }: { user: WarehouseUser; onDone: ()
             </DialogHeader>
             <DialogFooter>
               <Button variant="ghost" onClick={() => setDialog(null)}>{t('Annullér', 'Cancel')}</Button>
-              <Button variant="destructive" onClick={() => void discard()}><Trash size={16} /> {t('Kassér', 'Discard')}</Button>
+              <Button variant="destructive" loading={pendingAction === 'discard'} onClick={() => void discard()}><Trash size={16} /> {t('Kassér', 'Discard')}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -575,7 +584,7 @@ export function LayoutEditor({ user, onDone }: { user: WarehouseUser; onDone: ()
             )}
             <DialogFooter>
               <Button variant="ghost" onClick={() => setDialog(null)}>{t('Annullér', 'Cancel')}</Button>
-              {dialog.chosen != null && <Button onClick={() => void openVersion(dialog.chosen!)}>{t('Åbn som kladde', 'Open as draft')}</Button>}
+              {dialog.chosen != null && <Button loading={pendingAction === 'open'} onClick={() => void openVersion(dialog.chosen!)}>{t('Åbn som kladde', 'Open as draft')}</Button>}
             </DialogFooter>
           </DialogContent>
         </Dialog>

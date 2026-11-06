@@ -322,6 +322,38 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
     return result
   }
 
+  // En billig aendrings-markoer for EN noegle: kun metadata (ingen laesning/dekryptering).
+  // Bruges af et aabent spil til at opdage modstanderens traek uden at vente paa watcheren.
+  async function statAsync(key) {
+    try {
+      const stats = await fs.promises.stat(filePath(key))
+      return { mtimeMs: stats.mtimeMs, size: stats.size }
+    } catch (err) {
+      if (err.code === 'ENOENT') return undefined
+      throw err
+    }
+  }
+
+  // En klient der crasher mellem writeFile(tmp) og rename efterlader temp-filen
+  // for evigt (fundet i _shared: 843 KB multiplayer-index-tmp). Baade tidsstemplet
+  // i navnet OG mtime skal vaere ældre end maxAgeMs, saa hverken en kollega-pc med
+  // forkert ur eller en "17 aar gammel" SMB-mtime kan slette en skrivning i gang.
+  async function sweepStaleTempFilesAsync(maxAgeMs = 24 * 60 * 60 * 1000) {
+    const removed = []
+    const nowMs = Date.now()
+    for (const name of await fs.promises.readdir(dataDir)) {
+      const match = /\.json\.\d+\.(\d+)\.[0-9a-f]{8}\.tmp$/.exec(name)
+      if (!match || nowMs - Number(match[1]) < maxAgeMs) continue
+      const target = path.join(dataDir, name)
+      try {
+        if (nowMs - (await fs.promises.stat(target)).mtimeMs < maxAgeMs) continue
+        await fs.promises.unlink(target)
+        removed.push(name)
+      } catch { /* allerede fjernet af en anden klient */ }
+    }
+    return removed
+  }
+
   function del(key) {
     return withFileLock(filePath(key) + '.lock', () => {
       try { fs.unlinkSync(filePath(key)) } catch (err) { if (err.code !== 'ENOENT') throw err }
@@ -516,6 +548,18 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
     }, SYNC_WRITE_LOCK)
   }
 
+  // Asynkron tvilling til mutate(): laes-aendr-skriv under EN laas. Paa M: sparer
+  // det en hel rundtur (~200 ms) pr. skrivning i forhold til laes + compareAndSet,
+  // og der kan ikke opstaa KV_CONFLICT-retries, fordi ingen anden kan skrive imens.
+  async function mutateAsync(key, callback) {
+    return serializeWrite(key, () => withFileLockAsync(lockPath(key), async () => {
+      const next = callback(structuredClone(await getAsync(key, { skipCache: true })))
+      if (next && typeof next.then === 'function') throw new Error('Mutation callback must be synchronous')
+      if (next !== undefined) await setUnlockedAsync(key, next)
+      return next
+    }, ASYNC_WRITE_LOCK))
+  }
+
   // Trusted multi-record operations only. No capability is exposed to IPC.
   // Locks follow the same filename order across instances and stay held until
   // the synchronous callback returns. Escaped capabilities expire afterwards.
@@ -692,7 +736,7 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
     return connected
   }
 
-  return { get, getAsync, peekCache, set, setAsync, delete: del, deleteAsync, keys, keysAsync, watch, update, updateAsync, updateDetailed, updateDetailedAsync, mutate, withLockedKeys, invalidate: () => readCache.clear(), dumpAll, dumpAllAsync, dataDir, isConnected, scanDirectory, scanDirectoryAsync }
+  return { get, getAsync, peekCache, set, setAsync, delete: del, deleteAsync, keys, keysAsync, watch, update, updateAsync, updateDetailed, updateDetailedAsync, mutate, mutateAsync, sweepStaleTempFilesAsync, statAsync, withLockedKeys, invalidate: () => readCache.clear(), dumpAll, dumpAllAsync, dataDir, isConnected, scanDirectory, scanDirectoryAsync }
 }
 
 module.exports = { createStore, parseFileContents, keyToFilename, encryptPayload }

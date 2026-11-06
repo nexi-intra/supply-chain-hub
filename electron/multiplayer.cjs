@@ -27,8 +27,10 @@ const MAX_OPEN_GAMES = 20
 const CHAT_TEXT_LIMIT = 500
 const CHAT_LIMIT = 200
 const HISTORY_LIMIT = 512
-const OPERATION_LIMIT = 1000
+const OPERATION_LIMIT = 300
 const NOTIFICATION_TTL_MS = 30 * 24 * 3600 * 1000
+/** Read notifications only serve as recent history; keeping them 30 days grew the shared index to ~900 KB. */
+const READ_NOTIFICATION_TTL_MS = 7 * 24 * 3600 * 1000
 const NOTIFICATIONS_PER_RECIPIENT = 200
 const SNAPSHOT_NOTIFICATIONS = 100
 const ENDED_GAME_LIMIT = 500
@@ -372,7 +374,8 @@ function newestFirst(items, field) {
 }
 
 function prune(index, nowMs) {
-  index.notifications = index.notifications.filter(note => nowMs - Date.parse(note.createdAt) <= NOTIFICATION_TTL_MS)
+  index.notifications = index.notifications.filter(note => nowMs - Date.parse(note.createdAt) <= NOTIFICATION_TTL_MS &&
+    !(note.readAt !== null && nowMs - Date.parse(note.readAt) > READ_NOTIFICATION_TTL_MS))
   const groups = new Map()
   for (const note of index.notifications) groups.set(note.recipientEmail, [...(groups.get(note.recipientEmail) || []), note])
   const dropped = new Set()
@@ -395,11 +398,13 @@ function prune(index, nowMs) {
 
 function createMultiplayerService({
   getIndexStore, getGameStore, getDirectory, wordChecker, now = Date.now, makeId = crypto.randomUUID, randomInt = crypto.randomInt, onChanged,
-  directoryTtlMs = 0, indexShareMs = 0, cacheNow = Date.now,
+  directoryTtlMs = 0, indexShareMs = 0, cacheNow = Date.now, deferIndexWrites = false,
+  // How long game() shows a game file ahead of its index entry before repairing the entry itself.
+  healGraceMs = deferIndexWrites ? 15000 : 0,
 } = {}) {
   if (typeof getIndexStore !== 'function' || typeof getGameStore !== 'function' || typeof getDirectory !== 'function' || typeof wordChecker?.check !== 'function' ||
     typeof now !== 'function' || typeof makeId !== 'function' || typeof randomInt !== 'function' || (onChanged !== undefined && typeof onChanged !== 'function') ||
-    !Number.isFinite(directoryTtlMs) || !Number.isFinite(indexShareMs) || typeof cacheNow !== 'function') {
+    !Number.isFinite(directoryTtlMs) || !Number.isFinite(indexShareMs) || typeof cacheNow !== 'function' || typeof deferIndexWrites !== 'boolean' || !Number.isFinite(healGraceMs) || healGraceMs < 0) {
     throw new TypeError('Invalid multiplayer service dependencies')
   }
 
@@ -481,8 +486,26 @@ function createMultiplayerService({
     return raw === undefined ? undefined : { raw, game: readGame(raw) }
   }
 
-  /** Compare-and-set the small shared index; mutate() works on a clone and may return { skip: true } to avoid a write. */
+  /**
+   * Read-modify-write of the small shared index. mutate() works on a clone and may return { skip: true } to avoid a write.
+   * Stores with mutateAsync do it under one lock (one SMB round trip less, no conflict retries); others compare-and-set.
+   */
   async function updateIndex(store, mutate) {
+    if (typeof store.mutateAsync === 'function') {
+      let outcome
+      const written = await store.mutateAsync(INDEX_KEY, actual => {
+        const next = structuredClone(readIndex(actual))
+        outcome = mutate(next)
+        if (outcome?.skip) return undefined
+        prune(next, Date.parse(stamp()))
+        return next
+      })
+      if (outcome?.skip) return outcome.result
+      invalidateIndex()
+      announcedPrint = printOf(written)
+      await changed()
+      return outcome?.result
+    }
     for (let attempt = 0; ; attempt++) {
       const actual = await store.getAsync(INDEX_KEY, { skipCache: true })
       const next = structuredClone(readIndex(actual))
@@ -500,6 +523,34 @@ function createMultiplayerService({
       await changed()
       return outcome?.result
     }
+  }
+
+  /**
+   * With deferIndexWrites a move answers the player as soon as the game file is saved (~2 s sooner on the shared
+   * drive); the index entry and notifications follow here. heal() already repairs an index that fell behind its game
+   * file, so a write that keeps failing costs the opponent's bell item, never the move. Reads and commands in this
+   * process wait for pending writes, so they never see their own index lagging.
+   */
+  const pendingIndexWrites = new Set()
+  function deferIndexWrite(store, mutate) {
+    const run = (async () => {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          return await updateIndex(store, mutate)
+        } catch (error) {
+          if (attempt >= RETRIES - 1) {
+            console.warn(`MULTIPLAYER: deferred index write failed: ${error?.code || error?.message}`)
+            return
+          }
+          await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)))
+        }
+      }
+    })()
+    pendingIndexWrites.add(run)
+    run.finally(() => pendingIndexWrites.delete(run))
+  }
+  async function settled() {
+    while (pendingIndexWrites.size) await Promise.allSettled([...pendingIndexWrites])
   }
 
   function findPlayerEntry(index, gameId, actorEmail) {
@@ -801,14 +852,18 @@ function createMultiplayerService({
   }
 
   async function gameCommand(ctx, command) {
+    await settled()
     const indexStore = await getIndexStore()
+    const gameStore = await getGameStore()
+    // The game file does not depend on the index, so the first two round trips to the share overlap.
+    const prefetched = readGameFrom(gameStore, command.gameId)
+    prefetched.catch(() => {})
     const first = findPlayerEntry(await readIndexFrom(indexStore), command.gameId, ctx.actor.email)
     const { me } = first
     let entry = first.entry
-    const gameStore = await getGameStore()
     const fingerprint = sha256({ player: me, command })
     for (let attempt = 0; ; attempt++) {
-      const found = await readGameFrom(gameStore, command.gameId)
+      const found = attempt === 0 ? await prefetched : await readGameFrom(gameStore, command.gameId)
       if (!found) fail(['invited', 'declined', 'cancelled'].includes(entry.status) ? 'MULTIPLAYER_STATE' : 'MULTIPLAYER_NOT_FOUND', 'The game has not started')
       const { raw, game } = found
       entry = await heal(indexStore, game, entry)
@@ -830,7 +885,7 @@ function createMultiplayerService({
         if (attempt < RETRIES - 1) continue
         fail('MULTIPLAYER_CONFLICT', 'The game changed while saving')
       }
-      const updated = await updateIndex(indexStore, index => {
+      const writeIndex = index => {
         const previous = index.games.find(item => item.id === game.id) || entry
         const projected = entryFromGame(next, previous)
         index.games = index.games.some(item => item.id === game.id) ? index.games.map(item => (item.id === game.id ? projected : item)) : [...index.games, projected]
@@ -841,7 +896,13 @@ function createMultiplayerService({
         const played = topWordsFromMoves(next, projected.players, game.moves?.length ?? 0)
         if (played.length) index.topWords = mergeTopWords(index.topWords, played)
         return { result: projected }
-      })
+      }
+      if (deferIndexWrites) {
+        const projected = entryFromGame(next, entry)
+        deferIndexWrite(indexStore, writeIndex)
+        return { entry: structuredClone(projected), game: projectGame(next, projected, me) }
+      }
+      const updated = await updateIndex(indexStore, writeIndex)
       return { entry: structuredClone(updated), game: projectGame(next, updated, me) }
     }
   }
@@ -853,6 +914,7 @@ function createMultiplayerService({
    * marker so the opponent's watcher sees the change.
    */
   async function hubertCommand(ctx, command) {
+    await settled()
     const indexStore = await getIndexStore()
     const first = findPlayerEntry(await readIndexFrom(indexStore), command.gameId, ctx.actor.email)
     const { me } = first
@@ -907,6 +969,7 @@ function createMultiplayerService({
    * spaced REACTION_COOLDOWN_MS apart and only the last REACTION_LIMIT are kept.
    */
   async function reactCommand(ctx, command) {
+    await settled()
     const indexStore = await getIndexStore()
     const first = findPlayerEntry(await readIndexFrom(indexStore), command.gameId, ctx.actor.email)
     const { me } = first
@@ -1137,6 +1200,7 @@ function createMultiplayerService({
 
   async function snapshot(actor) {
     const ctx = await context(actor)
+    await settled()
     const index = await readIndexShared(await getIndexStore())
     const me = ctx.actor.email
     const results = tallyResults(index)
@@ -1168,12 +1232,38 @@ function createMultiplayerService({
   async function game(actor, gameId) {
     const ctx = await context(actor)
     const id = identifier(gameId, 'gameId')
+    await settled()
     const indexStore = await getIndexStore()
     const { entry, me } = findPlayerEntry(await readIndexShared(indexStore), id, ctx.actor.email)
     if (['declined', 'cancelled'].includes(entry.status)) fail('MULTIPLAYER_NOT_FOUND', 'The game has not started')
     const found = await readGameFrom(await getGameStore(), id)
     if (!found) fail('MULTIPLAYER_NOT_FOUND', 'The game has not started')
+    if (entry.gameRevision >= found.game.revision) return projectGame(found.game, entry, me)
+    // An index behind its game file is normally the mover's deferred index write still on its way. Healing it
+    // here would queue the opponent behind that write (measured: the move showed only once the index was
+    // written) and add a second index write, so the game file is shown at once and healing waits a while.
+    if (healGraceMs > 0) {
+      scheduleHeal(indexStore, id)
+      return projectGame(found.game, entryFromGame(found.game, entry), me)
+    }
     return projectGame(found.game, await heal(indexStore, found.game, entry), me)
+  }
+
+  const healTimers = new Map()
+  function scheduleHeal(store, gameId) {
+    if (healTimers.has(gameId)) return
+    const timer = setTimeout(async () => {
+      healTimers.delete(gameId)
+      try {
+        const [found, index] = await Promise.all([readGameFrom(await getGameStore(), gameId), readIndexFrom(store)])
+        const entry = index.games.find(item => item.id === gameId)
+        if (found && entry && entry.gameRevision < found.game.revision) await heal(store, found.game, entry)
+      } catch {
+        // Best effort: the next read or command heals it.
+      }
+    }, healGraceMs)
+    timer.unref?.()
+    healTimers.set(gameId, timer)
   }
 
   async function preview(actor, input) {
@@ -1197,6 +1287,7 @@ function createMultiplayerService({
    * write), false when it only shows what this client wrote and already announced. Fails open.
    */
   async function hasUnannouncedChange() {
+    await settled()
     invalidateIndex()
     try {
       const print = printOf(await readIndexShared(await getIndexStore(), true))
@@ -1208,7 +1299,28 @@ function createMultiplayerService({
     }
   }
 
-  return { snapshot, game, preview, command, hasUnannouncedChange, invalidateDirectory }
+  /**
+   * A cheap change marker for one open game: the game file's mtime and size, no read and no decryption.
+   * The opponent's window polls it while waiting, so a move shows as soon as its game file is saved
+   * instead of after the deferred index write and the 2 s shared-folder watcher. Membership is checked
+   * once per person and game (players never change) and fails closed like game().
+   */
+  const stampMembers = new Set()
+  async function gameStamp(actor, gameId) {
+    const ctx = await context(actor)
+    const id = identifier(gameId, 'gameId')
+    const member = `${ctx.actor.email}\n${id}`
+    if (!stampMembers.has(member)) {
+      findPlayerEntry(await readIndexShared(await getIndexStore()), id, ctx.actor.email)
+      stampMembers.add(member)
+    }
+    const store = await getGameStore()
+    if (typeof store.statAsync !== 'function') return null
+    const stats = await store.statAsync(gameKey(id))
+    return stats ? `${stats.mtimeMs}:${stats.size}` : null
+  }
+
+  return { snapshot, game, gameStamp, preview, command, hasUnannouncedChange, invalidateDirectory, settled }
 }
 
 module.exports = { createMultiplayerService, HUBERT_LIMIT, REACTION_EMOJIS, REACTION_COOLDOWN_MS, REACTION_LIMIT }

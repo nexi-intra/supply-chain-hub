@@ -26,12 +26,15 @@ function createSecuredIpc(native, { auth, trusted, currentFolder, listTeams, acc
         if (keys.every(key => GUEST_KEYS.has(key))) return listener(event, ...args)
       }
       if (PUBLIC_CHANNELS.has(channel)) return listener(event, ...args)
-      const service = auth(), actor = service.current(event.sender.id)
+      // Async, cached auth: the synchronous variant read the shared drive on the main thread and froze the whole app.
+      const service = auth(), actorOf = sender => (typeof service.currentAsync === 'function' ? service.currentAsync(sender) : service.current(sender))
+      const actor = await actorOf(event.sender.id)
       if (RECOVERY_CHANNELS.has(channel)) {
         if (channel !== 'accounts:status') service.requireRole(event.sender.id, 'creator')
         return listener(event, ...args)
       }
-      const accountService = accounts(), accountContext = accountService?.context()
+      const accountService = accounts(), contextOf = () => (typeof accountService?.contextAsync === 'function' ? accountService.contextAsync() : accountService?.context())
+      const accountContext = await contextOf()
       if (CREATOR_CHANNELS.has(channel)) service.requireRole(event.sender.id, 'creator')
       if (channel === 'registry:assign-user') {
         service.requireRole(event.sender.id, 'manager')
@@ -79,16 +82,18 @@ function createSecuredIpc(native, { auth, trusted, currentFolder, listTeams, acc
       // den normale drift (~1 s) forbliver stille.
       const domainWrite = channel === 'improvements:command' || channel === 'multiplayer:command' || channel === 'highFives:command' || channel === 'links:command'
       const writeStartedAt = WRITES.has(channel) || domainWrite ? Date.now() : 0
+      const checksReferences = WRITES.has(channel) || domainWrite || channel === 'registry:assign-user'
+      if (checksReferences && !emailRename && typeof accountService?.prepareReferenceChecksAsync === 'function') await accountService.prepareReferenceChecksAsync()
       const result = await (accountService && !emailRename && (WRITES.has(channel) || IDENTITY_WRITES.has(channel) || domainWrite) ? accountService.runWriteAsync(invoke) : invoke())
       if (writeStartedAt) {
         const elapsedMs = Date.now() - writeStartedAt
         if (elapsedMs >= SLOW_WRITE_WARNING_MS) console.warn(`TCD Hub: LANGSOM gemning ${elapsedMs} ms  ${channel} "${args[0]}"`)
       }
-      if (!emailRename && accountService?.context() !== accountContext) denied('AUTH_CONTEXT_CHANGED')
+      if (!emailRename && accountService && await contextOf() !== accountContext) denied('AUTH_CONTEXT_CHANGED')
       // A completed own-email migration deliberately revokes this session.
       // Only the backend migration result may bypass the ordinary postcheck.
       if (emailRename && accountService && actor.email.toLowerCase() === args[1].field.toLowerCase() && result?.[args[1].newField]?.email === args[1].newField) return result
-      const after = service.current(event.sender.id)
+      const after = await actorOf(event.sender.id)
       const contextChange = channel === 'registry:switch-to-team' || channel === 'registry:set-creator-email'
       if (after.token !== scope[0] || (!contextChange && (after.role !== scope[1] || currentFolder() !== scope[2]))) denied('AUTH_CONTEXT_CHANGED')
       return result

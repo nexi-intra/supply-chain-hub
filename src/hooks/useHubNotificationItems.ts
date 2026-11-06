@@ -1,3 +1,4 @@
+import { acknowledgeMultiplayerNotifications } from '@/lib/multiplayerAcknowledge'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useKV } from '@/hooks/useKV'
 import { useImprovementNotificationState } from '@/hooks/useImprovementNotifications'
@@ -37,7 +38,6 @@ export interface HubNotificationsValue {
 }
 
 const CLOCK_TICK_MS = 5 * 60 * 1000
-const MULTIPLAYER_ACK_BATCH = 100
 const HIGH_FIVE_ACK_BATCH = 100
 
 /** Marks the given notebook notifications read with one read and one atomic write. */
@@ -64,10 +64,7 @@ function acknowledgeInModules(items: readonly HubNotificationItem[]) {
     else if (ack?.source === 'note') noteIds.push(ack.notificationId)
   }
   if (noteIds.length && typeof window !== 'undefined' && window.kv) void markNotesRead(noteIds).catch(() => {})
-  for (let start = 0; multiplayer && start < multiplayerIds.length; start += MULTIPLAYER_ACK_BATCH) {
-    const notificationIds = multiplayerIds.slice(start, start + MULTIPLAYER_ACK_BATCH)
-    void multiplayer.command({ operationId: newOperationId(), type: 'acknowledge', notificationIds }).catch(() => {})
-  }
+  if (multiplayer && multiplayerIds.length) void acknowledgeMultiplayerNotifications(multiplayerIds).catch(() => {})
   for (let start = 0; highFives && start < highFiveIds.length; start += HIGH_FIVE_ACK_BATCH) {
     const ids = highFiveIds.slice(start, start + HIGH_FIVE_ACK_BATCH)
     void highFives.command({ operationId: newOperationId(), type: 'acknowledge', ids }).catch(() => {})

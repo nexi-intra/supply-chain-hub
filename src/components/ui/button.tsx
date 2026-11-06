@@ -1,6 +1,7 @@
 import { ComponentProps } from "react"
 import { Slot } from "@radix-ui/react-slot"
 import { cva, type VariantProps } from "class-variance-authority"
+import { CircleNotch } from "@phosphor-icons/react"
 
 import { cn } from "@/lib/utils"
 
@@ -59,6 +60,8 @@ function Button({
       aria-busy={loading || undefined}
       {...props}
     >
+      {/* A visible spinner the moment the click is registered: saves to the shared drive can take seconds. */}
+      {loading && !asChild && <CircleNotch aria-hidden="true" className="motion-safe:animate-spin" weight="bold" />}
       {children}
       {loading && !asChild && <span aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 h-0.5 overflow-hidden bg-current/20"><span className="block h-full w-full bg-current motion-safe:animate-pulse" /></span>}
     </Comp>

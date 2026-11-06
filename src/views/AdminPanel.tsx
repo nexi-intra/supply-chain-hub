@@ -41,7 +41,20 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
   const [hasAccess, setHasAccess] = useState(false)
   const [userEmail, setUserEmail] = useState<string>('')
   const [creatorEmail, setCreatorEmail] = useState<string | null>(null)
-
+  // Which save/delete is running, so that button shows a spinner and can't be pressed twice.
+  const [busyAction, setBusyAction] = useState<string | null>(null)
+  const runBusy = async (key: string, action: () => Promise<void>) => {
+    if (busyAction) return
+    setBusyAction(key)
+    try {
+      await action()
+    } catch (error) {
+      console.error('Admin action failed:', error)
+      toast.error(t.profile.errors.generic)
+    } finally {
+      setBusyAction(null)
+    }
+  }
   const [shiftRoles, setShiftRoles] = useState<ShiftRole[]>([])
   const [showRoleDialog, setShowRoleDialog] = useState(false)
   const [newRoleName, setNewRoleName] = useState('')
@@ -443,7 +456,8 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
                         <>
                           <Select
                             value={user.role}
-                            onValueChange={(value) => changeUserRole(user.email, value as UserRole)}
+                            disabled={busyAction === `role:${user.email}`}
+                            onValueChange={(value) => void runBusy(`role:${user.email}`, () => changeUserRole(user.email, value as UserRole))}
                           >
                             <SelectTrigger className="w-40 h-10">
                               <SelectValue />
@@ -605,6 +619,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
                                   variant="ghost"
                                   size="icon"
                                   className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                                  loading={busyAction === `delete-employee:${user.email}`}
                                 >
                                   <Trash size={16} />
                                 </Button>
@@ -619,7 +634,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
                                 <AlertDialogFooter>
                                   <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
                                   <AlertDialogAction
-                                    onClick={() => handleDeleteEmployee(user.email)}
+                                    onClick={() => void runBusy(`delete-employee:${user.email}`, () => handleDeleteEmployee(user.email))}
                                     className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                                   >
                                     {t.adminPanel.employees.deleteAction}
@@ -716,7 +731,8 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
                           <Button 
                             variant="ghost" 
                             size="icon" 
-                            className="text-destructive hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-opacity"
+                            className="text-destructive hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 aria-busy:opacity-100 transition-opacity"
+                            loading={busyAction === `delete-role:${role.id}`}
                           >
                             <Trash size={20} />
                           </Button>
@@ -731,7 +747,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
                           <AlertDialogFooter>
                             <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
                             <AlertDialogAction
-                              onClick={() => handleDeleteRole(role.id)}
+                              onClick={() => void runBusy(`delete-role:${role.id}`, () => handleDeleteRole(role.id))}
                               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                             >
                               {t.adminPanel.roles.deleteAction}
@@ -760,7 +776,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
                   value={newRoleName}
                   onChange={(e) => setNewRoleName(e.target.value)}
                   placeholder={t.adminPanel.roleDialog.namePlaceholder}
-                  onKeyDown={(e) => e.key === 'Enter' && handleAddRole()}
+                  onKeyDown={(e) => e.key === 'Enter' && void runBusy('add-role', handleAddRole)}
                 />
               </div>
               <div>
@@ -780,7 +796,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
                   />
                 </div>
               </div>
-              <Button onClick={handleAddRole} className="w-full gap-2">
+              <Button onClick={() => void runBusy('add-role', handleAddRole)} loading={busyAction === 'add-role'} className="w-full gap-2">
                 <Plus size={20} />
                 {t.adminPanel.roleDialog.submit}
               </Button>
@@ -852,7 +868,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
                   </SelectContent>
                 </Select>
               </div>
-              <Button onClick={handleSaveEmployee} className="w-full gap-2">
+              <Button onClick={() => void runBusy('save-employee', handleSaveEmployee)} loading={busyAction === 'save-employee'} className="w-full gap-2">
                 {editingEmployee ? (
                   <>
                     <PencilSimple size={20} />

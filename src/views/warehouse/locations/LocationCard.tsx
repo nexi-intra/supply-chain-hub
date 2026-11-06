@@ -17,6 +17,7 @@ import { ShelfLines } from './ShelfLines'
 /** One place: what it is for, what stands there and what happened there. */
 export function LocationCard({ location, version, canAdmin, drawing, onOpen, onChanged }: { location: string; version: number; canAdmin: boolean; drawing: LocationList['drawing']; onOpen: (target: LocationsTarget) => void; onChanged: () => void }) {
   const [card, setCard] = useState<LocationCardData | null>(null)
+  const [deleting, setDeleting] = useState(false)
   useEffect(() => {
     let current = true
     window.electronWarehouse!.locations.locationCard({ location }).then(result => { if (current) setCard(result) }).catch(error => toast.error(errorMessage(error)))
@@ -28,6 +29,8 @@ export function LocationCard({ location, version, canAdmin, drawing, onOpen, onC
   const shelf = isShelfPlace(place)
 
   async function remove() {
+    if (deleting) return
+    setDeleting(true)
     try {
       const result = await window.electronWarehouse!.locations.deleteLocations({ locations: [place.id] })
       if (result.kept.length) { toast.error(result.kept[0].reason); return }
@@ -36,6 +39,8 @@ export function LocationCard({ location, version, canAdmin, drawing, onOpen, onC
       onOpen(place.rack ? { kind: 'rack', id: place.rack } : { kind: 'admin' })
     } catch (error) {
       toast.error(errorMessage(error))
+    } finally {
+      setDeleting(false)
     }
   }
   const occupancyText = shelf
@@ -58,7 +63,7 @@ export function LocationCard({ location, version, canAdmin, drawing, onOpen, onC
         {canAdmin && (
           <Button size="sm" variant="ghost" className="text-destructive" disabled={card.pallets.length > 0 || card.stock.length > 0}
             title={card.pallets.length || card.stock.length ? t('Kun en tom placering kan slettes', 'Only an empty location can be deleted') : undefined}
-            onClick={() => void remove()}><Trash size={14} /> {t('Slet', 'Delete')}</Button>
+            loading={deleting} onClick={() => void remove()}><Trash size={14} /> {t('Slet', 'Delete')}</Button>
         )}
       </div>
       {place.note && <p className="text-sm text-muted-foreground">{place.note}</p>}

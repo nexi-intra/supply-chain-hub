@@ -209,6 +209,7 @@ contextBridge.exposeInMainWorld('electronWarehouse', {
 contextBridge.exposeInMainWorld('electronMultiplayer', {
   snapshot: () => ipcRenderer.invoke('multiplayer:snapshot'),
   game: gameId => ipcRenderer.invoke('multiplayer:game', gameId),
+  gameStamp: gameId => ipcRenderer.invoke('multiplayer:game-stamp', gameId),
   preview: input => ipcRenderer.invoke('multiplayer:preview', input),
   command: input => ipcRenderer.invoke('multiplayer:command', input),
   warmWords: language => ipcRenderer.invoke('multiplayer:warm-words', language),

@@ -1,5 +1,7 @@
+import { useGameChangeWatch } from '@/hooks/useGameChangeWatch'
+import { acknowledgeMultiplayerNotifications } from '@/lib/multiplayerAcknowledge'
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
-import { ArrowLeft, ArrowsClockwise, ArrowsLeftRight, Flag, HandPalm, Shuffle, Trophy } from '@phosphor-icons/react'
+import { ArrowLeft, ArrowsClockwise, ArrowsLeftRight, CircleNotch, Flag, HandPalm, Shuffle, Trophy } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { useLanguage } from '@/contexts/LanguageContext'
 import {
@@ -55,6 +57,7 @@ export const WordPuzzleGame = memo(function WordPuzzleGame({ gameId, languageHin
   const gameRef = useRef<MultiplayerGame | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [sendingMove, setSendingMove] = useState(false)
   const inFlight = useRef(false)
   const dirty = useRef(false)
   const generation = useRef(0)
@@ -133,6 +136,12 @@ export const WordPuzzleGame = memo(function WordPuzzleGame({ gameId, languageHin
 
   const moveAllowed = game ? canMove(game, myEmail) : false
   const approver = game ? canApprove(game, myEmail) : false
+  // The opponent's move appears as soon as its game file is saved (see useGameChangeWatch).
+  useGameChangeWatch(api, gameId, {
+    active: Boolean(game) && game?.status !== 'finished',
+    waiting: (game?.status === 'active' || game?.status === 'awaiting-approval') && !moveAllowed && !approver,
+    onChange: () => { if (inFlight.current) dirty.current = true; else void load() },
+  })
 
   // Any change to the board, the rack or the pending word makes a half-built move meaningless.
   const draftKey = game ? `${game.moves.length}|${game.status}|${game.rack.join('')}|${game.pending?.at ?? ''}` : ''
@@ -205,7 +214,7 @@ export const WordPuzzleGame = memo(function WordPuzzleGame({ gameId, languageHin
       const fresh = unreadNotificationIds.filter(id => !acknowledged.current.has(id)).slice(0, 100)
       if (fresh.length === 0) return
       for (const id of fresh) acknowledged.current.add(id)
-      api.command({ operationId: newOperationId(), type: 'acknowledge', notificationIds: fresh })
+      acknowledgeMultiplayerNotifications(fresh)
         .catch(() => { for (const id of fresh) acknowledged.current.delete(id) })
     }
     acknowledge()
@@ -357,7 +366,13 @@ export const WordPuzzleGame = memo(function WordPuzzleGame({ gameId, languageHin
 
   const play = async () => {
     if (preview.status !== 'ok' || !moveAllowed || busy) return
-    await run(revision => ({ operationId: newOperationId(), type: 'move', gameId, expectedRevision: revision, placements }))
+    // The turn passes on screen at once while the move is saved to the shared drive (can take seconds).
+    setSendingMove(true)
+    try {
+      await run(revision => ({ operationId: newOperationId(), type: 'move', gameId, expectedRevision: revision, placements }))
+    } finally {
+      setSendingMove(false)
+    }
   }
 
   const confirmSwap = async () => {
@@ -438,8 +453,8 @@ export const WordPuzzleGame = memo(function WordPuzzleGame({ gameId, languageHin
         <span className="bgr-title__sub">{labels.languageNames[game.language]}</span>
       </h1>
       {playing && (
-        <span className="bgr-turn" data-mine={turnMine ? '' : undefined} role="status">
-          {turnMine ? l.yourTurn : l.theirTurn(opponent.name)}
+        <span className="bgr-turn" data-mine={turnMine && !sendingMove ? '' : undefined} role="status">
+          {sendingMove ? l.sending : turnMine ? l.yourTurn : l.theirTurn(opponent.name)}
         </span>
       )}
     </>
@@ -569,7 +584,7 @@ export const WordPuzzleGame = memo(function WordPuzzleGame({ gameId, languageHin
               <div className="wp-actions__group">
                 {preview.status === 'ok' && <span className="wp-score-chip" aria-hidden="true">+{preview.total}</span>}
                 <button type="button" className="bgr-chip" data-tone="primary" disabled={preview.status !== 'ok' || !moveAllowed || busy} onClick={() => void play()}>
-                  {busy ? l.playing : l.play}
+                  {sendingMove && <CircleNotch size={16} weight="bold" aria-hidden="true" className="motion-safe:animate-spin" />}{busy ? l.playing : l.play}
                 </button>
               </div>
             </div>
@@ -581,7 +596,7 @@ export const WordPuzzleGame = memo(function WordPuzzleGame({ gameId, languageHin
 
   const panels = (
     <>
-      <PlayersCard game={game} labels={l} teamName={teamName} />
+      <PlayersCard game={sendingMove && playing ? { ...game, turn: opponent.email } : game} labels={l} teamName={teamName} />
       <MoveCard game={game} labels={l} moveErrors={labels.moveErrors} preview={preview} placedCount={placedCount} canMove={moveAllowed} footer={<>{decision}{moreActions}</>} />
       <ChatPanel
         messages={game.chat}

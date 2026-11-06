@@ -519,3 +519,28 @@
 .word-content p[style*="text-align: justify"] {
   text-align: justify;
 }
+/* ---- Software rendering (no GPU compositing; see src/lib/renderMode.ts) ----
+   Everything on screen is then drawn by the CPU. Blur behind panels, animated blur and large
+   drop-shadow filters repaint big areas every frame, and the room's endless ambient animations
+   keep the CPU busy even when nobody touches anything. They are switched off here; spinners,
+   press feedback and the small shadows under game pieces stay. */
+html[data-render-mode="software"] *,
+html[data-render-mode="software"] *::before,
+html[data-render-mode="software"] *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+/* Ambient room effects: held at a pleasant still value instead of breathing forever. */
+html[data-render-mode="software"] .bgr-backdrop__sunbeams { animation: none; opacity: 0.8; }
+html[data-render-mode="software"] .dark .bgr-backdrop__firelight { animation: none; opacity: 0.85; }
+html[data-render-mode="software"] .bgr-steam { animation: none; display: none; }
+html[data-render-mode="software"] .wp-tile[data-state="pending"] { animation: none; }
+html[data-render-mode="software"] .bgm-target { animation: none; }
+/* Large filtered layers: the whole table top and the backgammon board are repainted with every change. */
+html[data-render-mode="software"] .bgr-table__top,
+html[data-render-mode="software"] .bgm-board,
+html[data-render-mode="software"] .bgr-prop { filter: none; }
+/* Without the blur behind it, the smoked glass (top bar, controls) gets a denser tint to stay readable. */
+html[data-render-mode="software"],
+html.dark[data-render-mode="software"] { --bgr-glass: rgba(24, 12, 4, 0.7); }
+html.dark[data-render-mode="software"] .bgr-prop { filter: brightness(0.82) saturate(0.95); }

@@ -41,6 +41,7 @@ export function VacationRequestDialog({ userEmail }: VacationRequestDialogProps)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (isSubmitting) return
 
     if (!startDate || !endDate) {
       toast.error(t.vacationRequestDialog.selectStartEndDate)
@@ -124,7 +125,8 @@ export function VacationRequestDialog({ userEmail }: VacationRequestDialogProps)
             </Button>
             <Button
               type="submit"
-              disabled={isSubmitting || !startDate || !endDate}
+              disabled={!startDate || !endDate}
+              loading={isSubmitting}
               className="gap-2"
             >
               <PaperPlaneTilt size={18} weight="bold" />

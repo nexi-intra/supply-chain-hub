@@ -35,6 +35,8 @@ export interface UseLobbyOptions<T extends MultiplayerGameEntry> {
 }
 
 /** Snapshot, commands and the open match for one game's lobby; behaviour shared by every game. */
+const pendingKey = (action: 'accept' | 'decline' | 'withdraw' | 'remind', gameId: string) => `${action}:${gameId}`
+
 export function useLobby<T extends MultiplayerGameEntry>({
   gameType, isGame, userEmail, initialGameId = null, openGameId = null, onOpenGameConsumed, onNavigateBack,
 }: UseLobbyOptions<T>) {
@@ -46,6 +48,8 @@ export function useLobby<T extends MultiplayerGameEntry>({
 
   const [patch, setPatch] = useState<{ base: MultiplayerSnapshot | null; entries: MultiplayerGameEntry[] }>({ base: null, entries: [] })
   const [busy, setBusy] = useState(false)
+  // Which button the running command came from, so exactly that button shows "Accepterer…" with a spinner.
+  const [pending, setPending] = useState<string | null>(null)
   const inFlight = useRef(false)
   const [openGame, setOpenGame] = useState<string | null>(initialGameId)
   const [challengeOpen, setChallengeOpen] = useState(false)
@@ -112,10 +116,11 @@ export function useLobby<T extends MultiplayerGameEntry>({
   const games = useMemo(() => (snapshot?.games ?? []).filter(isGame), [snapshot, isGame])
   const groups = useMemo(() => groupGames(games, me), [games, me])
 
-  const run = async (build: () => MultiplayerCommand): Promise<{ ok: boolean; result?: MultiplayerCommandResult }> => {
+  const run = async (build: () => MultiplayerCommand, action: string | null = null): Promise<{ ok: boolean; result?: MultiplayerCommandResult }> => {
     if (!api || inFlight.current) return { ok: false }
     inFlight.current = true
     setBusy(true)
+    setPending(action)
     try {
       const result = await api.command(build())
       const entry = result.entry
@@ -134,6 +139,7 @@ export function useLobby<T extends MultiplayerGameEntry>({
     } finally {
       inFlight.current = false
       setBusy(false)
+      setPending(null)
     }
   }
 
@@ -145,18 +151,18 @@ export function useLobby<T extends MultiplayerGameEntry>({
   }
 
   const respond = async (entry: MultiplayerGameEntry, accept: boolean) => {
-    const { ok, result } = await run(() => ({ operationId: newOperationId(), type: 'respond', gameId: entry.id, accept }))
+    const { ok, result } = await run(() => ({ operationId: newOperationId(), type: 'respond', gameId: entry.id, accept }), pendingKey(accept ? 'accept' : 'decline', entry.id))
     if (!ok) return
     toast.success(accept ? labels.toast.accepted : labels.toast.declined)
     if (accept && result?.game) setOpenGame(entry.id)
   }
 
   const cancel = async (entry: MultiplayerGameEntry) => {
-    if ((await run(() => ({ operationId: newOperationId(), type: 'cancel', gameId: entry.id }))).ok) toast.success(labels.toast.withdrawn)
+    if ((await run(() => ({ operationId: newOperationId(), type: 'cancel', gameId: entry.id }), pendingKey('withdraw', entry.id))).ok) toast.success(labels.toast.withdrawn)
   }
 
   const remind = async (entry: MultiplayerGameEntry) => {
-    if ((await run(() => ({ operationId: newOperationId(), type: 'remind', gameId: entry.id }))).ok) toast.success(labels.toast.reminded(opponentOf(entry, me).name))
+    if ((await run(() => ({ operationId: newOperationId(), type: 'remind', gameId: entry.id }), pendingKey('remind', entry.id))).ok) toast.success(labels.toast.reminded(opponentOf(entry, me).name))
   }
 
   const actorName = (email: string) =>
@@ -167,7 +173,7 @@ export function useLobby<T extends MultiplayerGameEntry>({
   const openChallenge = (email: string | null) => { setRematchEmail(email); setChallengeOpen(true) }
 
   return {
-    api, labels, language, snapshot, loading, loadError, busy, load, openGame, setOpenGame, now, me, teamName, games, groups,
+    api, labels, language, snapshot, loading, loadError, busy, pending, load, openGame, setOpenGame, now, me, teamName, games, groups,
     respond, cancel, remind, actorName, sendChallenge, challengeOpen, setChallengeOpen, rematchEmail, openChallenge,
     showAllFinished, setShowAllFinished,
   }
@@ -272,7 +278,7 @@ export interface GameRowProps<T extends MultiplayerGameEntry> {
 }
 
 export function GameRow<T extends MultiplayerGameEntry>({ entry, group, lobby, art, detail, score }: GameRowProps<T>) {
-  const { labels, me, teamName, now, language, busy, setOpenGame, respond, cancel, remind } = lobby
+  const { labels, me, teamName, now, language, busy, pending, setOpenGame, respond, cancel, remind } = lobby
   const l = labels.lobby
   const opponent = opponentOf(entry, me)
   const seat = seatOf(entry, me) ?? 0
@@ -318,22 +324,29 @@ export function GameRow<T extends MultiplayerGameEntry>({ entry, group, lobby, a
       <div className="wp-game-row__actions">
         {group === 'invitation' && seat === 1 && (
           <>
-            <Button size="sm" disabled={busy} onClick={() => void respond(entry, true)}>{l.accept}</Button>
-            <Button size="sm" variant="outline" disabled={busy} onClick={() => void respond(entry, false)}>{l.decline}</Button>
+            <Button size="sm" disabled={busy} loading={pending === pendingKey('accept', entry.id)} onClick={() => void respond(entry, true)}>
+              {pending === pendingKey('accept', entry.id) ? l.working.accept : l.accept}
+            </Button>
+            <Button size="sm" variant="outline" disabled={busy} loading={pending === pendingKey('decline', entry.id)} onClick={() => void respond(entry, false)}>
+              {pending === pendingKey('decline', entry.id) ? l.working.decline : l.decline}
+            </Button>
           </>
         )}
         {group === 'invitation' && seat === 0 && (
-          <Button size="sm" variant="outline" disabled={busy} onClick={() => void cancel(entry)}>{l.withdraw}</Button>
+          <Button size="sm" variant="outline" disabled={busy} loading={pending === pendingKey('withdraw', entry.id)} onClick={() => void cancel(entry)}>
+            {pending === pendingKey('withdraw', entry.id) ? l.working.withdraw : l.withdraw}
+          </Button>
         )}
         {group === 'waiting' && (
           <Button
             size="sm"
             variant="outline"
             disabled={busy || !canRemind(entry, me, now)}
+            loading={pending === pendingKey('remind', entry.id)}
             title={canRemind(entry, me, now) ? undefined : l.remindedRecently}
             onClick={() => void remind(entry)}
           >
-            {l.remind}
+            {pending === pendingKey('remind', entry.id) ? l.working.remind : l.remind}
           </Button>
         )}
         {playable && <CaretRight size={18} aria-hidden="true" className="text-muted-foreground" />}

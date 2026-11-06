@@ -58,6 +58,10 @@ async function fixture(t, options = {}) {
       if (state.failIndexWrites) throw new Error('INDEX_WRITE_FAILED')
       return indexStore.updateAsync(...args)
     },
+    mutateAsync: async (...args) => {
+      if (state.failIndexWrites) throw new Error('INDEX_WRITE_FAILED')
+      return indexStore.mutateAsync(...args)
+    },
   }
   const settings = {
     getIndexStore: () => guardedIndex, getGameStore: () => gameStore, getDirectory: () => structuredClone({ people, teams }),
@@ -974,6 +978,77 @@ test('a crash between the game write and the index write heals on the next read 
   assert.equal((await f.entry(id)).gameRevision, 4)
 })
 
+test('deferIndexWrites answers a move once the game file is saved; the index entry and notification follow', async t => {
+  const f = await fixture(t)
+  const id = await f.start()
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  const gated = {
+    getAsync: (...args) => f.indexStore.getAsync(...args),
+    updateAsync: (...args) => f.indexStore.updateAsync(...args),
+    mutateAsync: async (...args) => { await gate; return f.indexStore.mutateAsync(...args) },
+  }
+  const { createMultiplayerService } = require('./multiplayer.cjs')
+  const service = createMultiplayerService({ ...f.settings, getIndexStore: () => gated, deferIndexWrites: true })
+  const turnsBefore = (await f.notes(bo.email, 'turn')).length
+
+  const result = await service.command(anna, request('pass', { gameId: id, expectedRevision: 1 }))
+  assert.equal(result.game.revision, 2)
+  assert.equal(result.entry.gameRevision, 2)
+  assert.equal(result.entry.turn, bo.email)
+  assert.equal((await f.game(id)).revision, 2, 'the game file is saved before the answer')
+  assert.equal((await f.entry(id)).gameRevision, 1, 'the index write is still waiting')
+
+  // Reads in the same process wait for the pending write instead of seeing (and healing) a lagging index.
+  const snapshot = service.snapshot(anna)
+  release()
+  assert.equal((await snapshot).games[0].turn, bo.email)
+  await service.settled()
+  assert.equal((await f.entry(id)).gameRevision, 2)
+  assert.equal((await f.notes(bo.email, 'turn')).length, turnsBefore + 1, 'the opponent still gets the bell item')
+})
+
+test('deferIndexWrites keeps a move whose index write keeps failing; the index heals after the grace period', async t => {
+  const f = await fixture(t, { deferIndexWrites: true, healGraceMs: 50 })
+  const id = await f.start()
+  f.state.failIndexWrites = true
+  const result = await f.act(anna, 'pass', id)
+  assert.equal(result.entry.turn, bo.email)
+  await f.service.settled()
+  f.state.failIndexWrites = false
+  assert.equal((await f.game(id)).revision, 2)
+  assert.equal((await f.entry(id)).gameRevision, 1)
+  assert.equal((await f.service.game(bo, id)).revision, 2, 'the opponent sees the move straight from the game file')
+  assert.equal((await f.entry(id)).gameRevision, 1, 'without queueing behind an index write')
+  await new Promise(resolve => setTimeout(resolve, 400))
+  assert.equal((await f.entry(id)).gameRevision, 2)
+  assert.equal((await f.entry(id)).turn, bo.email)
+})
+
+test('an opponent reading a game whose index write is still on its way neither waits for it nor writes the index', async t => {
+  const f = await fixture(t)
+  const id = await f.start()
+  let indexWrites = 0
+  const counting = {
+    getAsync: (...args) => f.indexStore.getAsync(...args),
+    updateAsync: (...args) => { indexWrites++; return f.indexStore.updateAsync(...args) },
+    mutateAsync: (...args) => { indexWrites++; return f.indexStore.mutateAsync(...args) },
+  }
+  const { createMultiplayerService } = require('./multiplayer.cjs')
+  const opponent = createMultiplayerService({ ...f.settings, getIndexStore: () => counting, deferIndexWrites: true })
+  await f.patch(id, { revision: 2, turn: 1 })
+  const seen = await opponent.game(bo, id)
+  assert.equal(seen.revision, 2)
+  assert.equal(indexWrites, 0)
+})
+
+test('deferIndexWrites rejects a non-boolean value', () => {
+  const { createMultiplayerService } = require('./multiplayer.cjs')
+  assert.throws(() => createMultiplayerService({
+    getIndexStore: () => null, getGameStore: () => null, getDirectory: () => null, wordChecker: { check: async () => ({}) }, deferIndexWrites: 'yes',
+  }), TypeError)
+})
+
 test('an accepted game whose index entry is still invited is repaired from the game file', async t => {
   const f = await fixture(t)
   const challenged = await f.service.command(anna, request('challenge', { opponentEmail: bo.email, language: 'da' }))
@@ -1015,6 +1090,8 @@ test('pruning removes old notifications and enforces per-recipient, finished-gam
   games.push(seedEntry('still-open', 'active', new Date(NOW - 9999 * 60000).toISOString()))
   const notifications = [
     note('ancient', bo.email, NOW - 31 * DAY), note('recent', bo.email, NOW - 29 * DAY),
+    note('read-long-ago', bo.email, NOW - 9 * DAY, new Date(NOW - 8 * DAY).toISOString()),
+    note('read-this-week', bo.email, NOW - 9 * DAY, new Date(NOW - 6 * DAY).toISOString()),
     ...Array.from({ length: 100 }, (_, i) => note(`read-${i}`, cara.email, NOW - (400 - i) * 60000, new Date(NOW).toISOString())),
     ...Array.from({ length: 105 }, (_, i) => note(`unread-${i}`, cara.email, NOW - (200 - i) * 60000)),
   ]
@@ -1025,6 +1102,9 @@ test('pruning removes old notifications and enforces per-recipient, finished-gam
   const index = await f.index()
   assert.ok(!index.notifications.some(item => item.id === 'ancient'))
   assert.ok(index.notifications.some(item => item.id === 'recent'))
+  // Read notifications are only recent history: dropped a week after they were read, unread ones stay 30 days.
+  assert.ok(!index.notifications.some(item => item.id === 'read-long-ago'))
+  assert.ok(index.notifications.some(item => item.id === 'read-this-week'))
   const caras = index.notifications.filter(item => item.recipientEmail === cara.email)
   assert.equal(caras.length, 200)
   assert.equal(caras.filter(item => item.readAt === null).length, 105)
@@ -1039,8 +1119,9 @@ test('pruning removes old notifications and enforces per-recipient, finished-gam
   const leadView = await f.service.snapshot(lead)
   assert.deepEqual(leadView.myStats.wins, 169)
   assert.deepEqual(leadView.rivals.map(({ email, wins, losses }) => [email, wins, losses]), [[cara.email, 169, 0]])
-  assert.equal(index.operations.length, 1000)
-  assert.ok(!index.operations.some(item => item.operationId === 'op-0'))
+  assert.equal(index.operations.length, 300)
+  assert.ok(!index.operations.some(item => item.operationId === 'op-704'))
+  assert.ok(index.operations.some(item => item.operationId === 'op-1004'))
   assert.equal(index.operations.at(-1).actorEmail, anna.email)
 })
 
@@ -1608,4 +1689,20 @@ test('resigning a backgammon game gives the opponent a single win; chat and reac
   assert.deepEqual(seen.chat.map(item => item.text), ['Held og lykke'])
   assert.deepEqual(seen.reactions.map(item => item.emoji), ['🎉'])
   assert.equal((await f.service.snapshot(bo)).myStatsByType.backgammon.wins, 1)
+})
+
+test('gameStamp is a cheap change marker of the game file, for the players only', async t => {
+  const f = await fixture(t)
+  const id = await f.start()
+  const first = await f.service.gameStamp(anna, id)
+  assert.match(first, /^\d+(\.\d+)?:\d+$/)
+  assert.equal(await f.service.gameStamp(bo, id), first, 'both players see the same marker')
+  await new Promise(resolve => setTimeout(resolve, 20))
+  await f.act(anna, 'pass', id)
+  const after = await f.service.gameStamp(bo, id)
+  assert.notEqual(after, first, 'the opponent sees the move as soon as the game file changes')
+  await assert.rejects(f.service.gameStamp(cara, id), code('MULTIPLAYER_NOT_FOUND'))
+  await assert.rejects(f.service.gameStamp(anna, '../escape'), code('MULTIPLAYER_INVALID'))
+  const invited = (await f.service.command(anna, request('challenge', { opponentEmail: cara.email, language: 'da' }))).entry.id
+  assert.equal(await f.service.gameStamp(cara, invited), null, 'no game file before the invitation is accepted')
 })

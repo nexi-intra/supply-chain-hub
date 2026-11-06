@@ -35,6 +35,7 @@ export function Admin({ user, version, onOpen, onChanged }: { user: WarehouseUse
   const [onlyEmpty, setOnlyEmpty] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState(false)
+  const [togglingId, setTogglingId] = useState<string | null>(null)
   const [dialog, setDialog] = useState<Dialogs>(null)
   const bridge = window.electronWarehouse!.locations
 
@@ -58,6 +59,8 @@ export function Admin({ user, version, onOpen, onChanged }: { user: WarehouseUse
   if (!list.canAdmin) return <p className="text-sm text-muted-foreground">{t('Kun managere og admins kan vedligeholde placeringer.', 'Only managers and admins can maintain locations.')}</p>
 
   async function setActive(location: Listed, active: boolean) {
+    if (togglingId) return
+    setTogglingId(location.id)
     try {
       await bridge.setActive({ location: location.id, active })
       if (active) toast.success(t(`${location.name} er aktiv igen`, `${location.name} is active again`))
@@ -66,6 +69,8 @@ export function Admin({ user, version, onOpen, onChanged }: { user: WarehouseUse
       onChanged()
     } catch (error) {
       toast.error(errorMessage(error))
+    } finally {
+      setTogglingId(null)
     }
   }
 
@@ -138,7 +143,7 @@ export function Admin({ user, version, onOpen, onChanged }: { user: WarehouseUse
           <>
             <span className="text-sm">{t(`${chosen.length} valgt`, `${chosen.length} selected`)}</span>
             <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>{t('Fravælg', 'Clear')}</Button>
-            <Button size="sm" variant="outline" onClick={() => void deactivateChosen()} disabled={busy}><Prohibit size={14} /> {t('Deaktivér valgte', 'Deactivate selected')}</Button>
+            <Button size="sm" variant="outline" onClick={() => void deactivateChosen()} disabled={busy} loading={busy && !dialog}><Prohibit size={14} /> {t('Deaktivér valgte', 'Deactivate selected')}</Button>
             <Button size="sm" variant="destructive" onClick={() => setDialog({ kind: 'delete' })} disabled={busy}><Trash size={14} /> {t('Slet valgte', 'Delete selected')}</Button>
           </>
         )}
@@ -174,7 +179,7 @@ export function Admin({ user, version, onOpen, onChanged }: { user: WarehouseUse
                 <td className="max-w-64 truncate px-3 py-1.5 font-mono text-xs">{location.fixedMaterials.join(', ')}</td>
                 <td className="px-3 py-1.5 text-right whitespace-nowrap">
                   <Button size="sm" variant="ghost" onClick={() => setDialog({ kind: 'edit', location })} aria-label={t(`Ret ${location.name}`, `Edit ${location.name}`)}><PencilSimple size={14} /></Button>
-                  <Button size="sm" variant="ghost" onClick={() => void setActive(location, !location.active)}>{location.active ? t('Deaktivér', 'Deactivate') : t('Aktivér', 'Activate')}</Button>
+                  <Button size="sm" variant="ghost" loading={togglingId === location.id} onClick={() => void setActive(location, !location.active)}>{location.active ? t('Deaktivér', 'Deactivate') : t('Aktivér', 'Activate')}</Button>
                 </td>
               </tr>
             ))}

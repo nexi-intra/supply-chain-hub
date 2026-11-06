@@ -53,17 +53,22 @@ export function ApprovalPanel({ id, state, refresh }: PanelProps) {
   const needle = query.trim().toUpperCase()
   const visible = materials.filter(item => (!needle || item.material.includes(needle) || item.description.toUpperCase().includes(needle)) && (!onlyOpen || !['approved', 'posted'].includes(state.approvals[item.material]?.status || '')))
 
+  const [pending, setPending] = useState<string | null>(null)
   const set = async (material: string, status: 'approved' | 'returned' | 'posted' | 'reset') => {
+    if (pending) return
     let comment = ''
     if (status === 'returned') {
       comment = window.prompt(t(`Hvorfor sendes ${material} tilbage til optælling?`, `Why is ${material} sent back for counting?`)) || ''
       if (!comment.trim()) return
     }
+    setPending(`${status}:${material}`)
     try {
       await window.electronWarehouse!.counts.approval({ id, material, status, comment })
       await refresh()
     } catch (error) {
       toast.error(errorMessage(error))
+    } finally {
+      setPending(null)
     }
   }
 
@@ -129,10 +134,10 @@ export function ApprovalPanel({ id, state, refresh }: PanelProps) {
                     {canEdit && (
                       <td className="px-3 py-1.5">
                         <div className="flex justify-end gap-1">
-                          {(!approval || ['open', 'returned', 'submitted'].includes(approval.status)) && <Button size="sm" onClick={() => void set(item.material, 'approved')}><CheckCircle size={16} /> {t('Godkend', 'Approve')}</Button>}
-                          {approval?.status === 'approved' && <Button size="sm" variant="secondary" onClick={() => void set(item.material, 'posted')}><Stamp size={16} /> {t('Bogført i SAP', 'Posted in SAP')}</Button>}
-                          {approval?.status !== 'returned' && approval?.status !== 'posted' && <Button size="sm" variant="ghost" onClick={() => void set(item.material, 'returned')}><ArrowUUpLeft size={16} /> {t('Tilbage', 'Send back')}</Button>}
-                          {approval && approval.status !== 'open' && <Button size="sm" variant="ghost" onClick={() => void set(item.material, 'reset')}>{t('Nulstil', 'Reset')}</Button>}
+                          {(!approval || ['open', 'returned', 'submitted'].includes(approval.status)) && <Button size="sm" loading={pending === `approved:${item.material}`} onClick={() => void set(item.material, 'approved')}><CheckCircle size={16} /> {t('Godkend', 'Approve')}</Button>}
+                          {approval?.status === 'approved' && <Button size="sm" variant="secondary" loading={pending === `posted:${item.material}`} onClick={() => void set(item.material, 'posted')}><Stamp size={16} /> {t('Bogført i SAP', 'Posted in SAP')}</Button>}
+                          {approval?.status !== 'returned' && approval?.status !== 'posted' && <Button size="sm" variant="ghost" loading={pending === `returned:${item.material}`} onClick={() => void set(item.material, 'returned')}><ArrowUUpLeft size={16} /> {t('Tilbage', 'Send back')}</Button>}
+                          {approval && approval.status !== 'open' && <Button size="sm" variant="ghost" loading={pending === `reset:${item.material}`} onClick={() => void set(item.material, 'reset')}>{t('Nulstil', 'Reset')}</Button>}
                         </div>
                       </td>
                     )}

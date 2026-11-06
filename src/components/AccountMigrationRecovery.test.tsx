@@ -54,9 +54,10 @@ describe('account recovery lifecycle (isolated hook harness, not a real DOM)', (
     expect(render()).toContain('Intet overskrives automatisk'); expect(logout).not.toHaveBeenCalled()
   })
   it('polling and subscriptions stop on cleanup', async () => {
-    const f = await mount(); await vi.advanceTimersByTimeAsync(5000); expect(f.accounts.status).toHaveBeenCalledTimes(2)
+    // Polls every 30 s (it used to be 5 s: 227 status calls in 12 minutes, measured live).
+    const f = await mount(); await vi.advanceTimersByTimeAsync(30000); expect(f.accounts.status).toHaveBeenCalledTimes(2)
     for (const cleanup of harness.cleanups) cleanup(); harness.cleanups = []
-    await vi.advanceTimersByTimeAsync(10000); expect(f.accounts.status).toHaveBeenCalledTimes(2); expect(f.unsubscribe).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(60000); expect(f.accounts.status).toHaveBeenCalledTimes(2); expect(f.unsubscribe).toHaveBeenCalledOnce()
   })
   for (const [language, title] of [['en', 'An account migration needs recovery'], ['fi', 'Tilin siirto on palautettava']]) it(`localizes recovery in ${language}`, async () => {
     harness.language = language; const f = await mount(); expect(f.html).toContain(title); expect(f.html).not.toContain('En kontoflytning skal afsluttes')

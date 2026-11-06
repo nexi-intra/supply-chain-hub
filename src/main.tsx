@@ -4,6 +4,7 @@ import { MotionConfig } from 'framer-motion'
 import { localKv } from './lib/localKvStore'
 import { createElectronKv } from './lib/electronKvBridge'
 import { withErrorToast } from './lib/kvErrorToast'
+import { applyRenderMode } from './lib/renderMode'
 
 import App from './App.tsx'
 import { ErrorFallback } from './ErrorFallback.tsx'
@@ -13,6 +14,8 @@ import "./main.css"
 // In the desktop app, data lives as files in a shared (network) folder so all
 // clients see the same data. In the browser, localStorage is used instead.
 async function bootstrap() {
+  // Before the first paint: without a GPU the heavy effects are switched off (main.css, data-render-mode).
+  applyRenderMode()
   if (window.electronKv) {
     window.kv = withErrorToast(createElectronKv(window.electronKv))
 

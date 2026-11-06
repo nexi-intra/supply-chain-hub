@@ -253,3 +253,17 @@ test('a rename migrates the shared multiplayer index and rejects retired identit
   assert.throws(() => f.service.assertReferences('multiplayer-index', { type: 'challenge', opponentEmail: f.oldEmail }), code('ACCOUNT_RETIRED_REFERENCE'))
   assert.doesNotThrow(() => f.service.assertReferences('multiplayer-index', { type: 'challenge', opponentEmail: f.newEmail }))
 })
+
+test('prepareReferenceChecksAsync loads retired identities once, so a write checks them without synchronous reads', async t => {
+  const f = fixture(t)
+  const meta = createStore(path.join(f.root, '_registry'))
+  meta.set('account-retired-identities', { 'gone@example.test': { replacement: 'new@example.test', accountId: 'x' } })
+  const service = createAccountService({ getRoot: () => f.root, registry, openStore: dir => {
+    const store = createStore(dir)
+    return { ...store, get: (...args) => { throw new Error('synchronous read on the main thread') } }
+  } })
+  await service.prepareReferenceChecksAsync()
+  service.assertReferences('guides', { op: 'append', items: [{ id: '1', title: 'fine' }] })
+  assert.throws(() => service.assertReferences('app-language-gone@example.test', 'da'), code('ACCOUNT_RETIRED_REFERENCE'))
+  assert.equal(await service.contextAsync(), null)
+})

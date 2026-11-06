@@ -91,7 +91,7 @@ export function ImprovementCreateDialog({ snapshot, labels, actions, open, onOpe
           </fieldset>
           <div className="mt-5 flex flex-wrap justify-end gap-2 border-t pt-4">
             <Button type="button" variant="outline" disabled={actions.busy} onClick={() => onOpenChange(false)}>{labels.cancel}</Button>
-            <Button type="submit" disabled={disabled || incomplete}><Plus size={18} />{actions.busy ? labels.saving : labels.create}</Button>
+            <Button type="submit" disabled={disabled || incomplete} loading={actions.busy}><Plus size={18} />{actions.busy ? labels.saving : labels.create}</Button>
           </div>
         </form>
       </DialogContent>

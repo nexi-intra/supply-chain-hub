@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Warehouse } from '@phosphor-icons/react'
+import { CircleNotch, Warehouse } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
@@ -163,7 +163,8 @@ export function WarehouseRolesCard() {
               <div className="truncate text-sm text-muted-foreground">{item.email}</div>
             </div>
             {item.role === 'manager' ? <Badge variant="secondary">{labels.automatic}</Badge> : (
-              <div className="flex shrink-0 flex-wrap items-center justify-end gap-4">
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-4" aria-busy={saving === item.email || undefined}>
+                {saving === item.email && <CircleNotch size={18} aria-hidden="true" className="text-muted-foreground motion-safe:animate-spin" />}
                 <label className="flex items-center gap-2">
                   <span className="text-xs text-muted-foreground"><span className="font-medium text-foreground">{labels.counts}</span><span className="hidden sm:inline"> · {labels.roleHelp[item.role]}</span></span>
                   <select

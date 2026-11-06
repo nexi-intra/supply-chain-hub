@@ -65,6 +65,8 @@ export interface MultiplayerLabels {
     withdraw: string
     remind: string
     remindedRecently: string
+    /** Shown on the clicked button while the command is on its way to the shared drive. */
+    working: { accept: string; decline: string; withdraw: string; remind: string }
     updated: (when: string) => string
     news: string
     markRead: string
@@ -118,6 +120,8 @@ export interface MultiplayerLabels {
     yourTurn: string
     theirTurn: (name: string) => string
     waitHint: string
+    sending: string
+    sendingHint: (name: string) => string
     placeHint: string
     shuffle: string
     recall: string
@@ -157,7 +161,7 @@ export interface MultiplayerLabels {
       exchange: (name: string, count: number) => string
       resign: (name: string) => string
     }
-    chat: { title: string; placeholder: (name: string) => string; send: string; empty: string }
+    chat: { title: string; placeholder: (name: string) => string; send: string; empty: string; sending: string }
     /** Hubert, the room's dog. His name tag always reads "Hubert". */
     hubert: {
       /** What he says when he is petted. */
@@ -212,6 +216,8 @@ export interface ChessLabels {
   selectHint: string
   targetHint: (piece: string) => string
   waitHint: string
+  sending: string
+  sendingHint: (name: string) => string
   moved: (name: string, move: string) => string
   lastMove: string
   challenge: { description: string; color: string; colorHint: string }
@@ -252,6 +258,8 @@ const CHESS_LABELS: Record<Language, ChessLabels> = {
     selectHint: 'Vælg en brik, eller træk den til et markeret felt.',
     targetHint: piece => `${piece} er løftet. Vælg et markeret felt.`,
     waitHint: 'Vent på dit træk. Du kan imens skrive i chatten eller kalde på Hubert.',
+    sending: 'Sender dit træk…',
+    sendingHint: name => `Dit træk er afleveret - ${name} er den næste. Gemmer på det fælles drev…`,
     moved: (name, move) => `${name} spillede ${move}`,
     lastMove: 'Sidste træk',
     challenge: {
@@ -302,6 +310,8 @@ const CHESS_LABELS: Record<Language, ChessLabels> = {
     selectHint: 'Pick a piece, or drag it to a highlighted square.',
     targetHint: piece => `${piece} is lifted. Pick a highlighted square.`,
     waitHint: 'Wait for your move. Meanwhile you can chat or call Hubert.',
+    sending: 'Sending your move…',
+    sendingHint: name => `Your move is handed in - ${name} is next. Saving to the shared drive…`,
     moved: (name, move) => `${name} played ${move}`,
     lastMove: 'Last move',
     challenge: {
@@ -352,6 +362,8 @@ const CHESS_LABELS: Record<Language, ChessLabels> = {
     selectHint: 'Välj en pjäs, eller dra den till en markerad ruta.',
     targetHint: piece => `${piece} är upplyft. Välj en markerad ruta.`,
     waitHint: 'Vänta på ditt drag. Under tiden kan du chatta eller kalla på Hubert.',
+    sending: 'Skickar ditt drag…',
+    sendingHint: name => `Ditt drag är inlämnat - ${name} är näst på tur. Sparar på den delade enheten…`,
     moved: (name, move) => `${name} spelade ${move}`,
     lastMove: 'Senaste draget',
     challenge: {
@@ -402,6 +414,8 @@ const CHESS_LABELS: Record<Language, ChessLabels> = {
     selectHint: 'Valitse nappula tai vedä se merkittyyn ruutuun.',
     targetHint: piece => `${piece} on nostettu. Valitse merkitty ruutu.`,
     waitHint: 'Odota siirtovuoroasi. Sillä välin voit keskustella tai kutsua Hubertin.',
+    sending: 'Lähetetään siirtoasi…',
+    sendingHint: name => `Siirtosi on annettu - ${name} on seuraavana. Tallennetaan jaetulle asemalle…`,
     moved: (name, move) => `${name} pelasi ${move}`,
     lastMove: 'Viimeisin siirto',
     challenge: {
@@ -541,6 +555,7 @@ export const MULTIPLAYER_LABELS: Record<Language, MultiplayerLabels> = {
       withdraw: 'Træk tilbage',
       remind: 'Mind om tur',
       remindedRecently: 'Du har mindet for nylig',
+      working: { accept: 'Accepterer…', decline: 'Afviser…', withdraw: 'Trækker tilbage…', remind: 'Minder om tur…' },
       updated: when => `Opdateret ${when}`,
       news: 'Nyt',
       markRead: 'Markér som læst',
@@ -593,6 +608,8 @@ export const MULTIPLAYER_LABELS: Record<Language, MultiplayerLabels> = {
       yourTurn: 'Din tur',
       theirTurn: name => `${name} er ved at lægge`,
       waitHint: 'Vent på din tur. Du kan imens blande dit stativ og skrive i chatten.',
+      sending: 'Sender dit træk…',
+      sendingHint: name => `Dit træk er afleveret - ${name} er den næste. Gemmer på det fælles drev…`,
       placeHint: 'Vælg et felt på brættet for at lægge brikken.',
       shuffle: 'Bland',
       recall: 'Tag tilbage',
@@ -641,7 +658,7 @@ export const MULTIPLAYER_LABELS: Record<Language, MultiplayerLabels> = {
         exchange: (name, count) => `${name} byttede ${count} ${count === 1 ? 'brik' : 'brikker'}`,
         resign: name => `${name} gav op`,
       },
-      chat: { title: 'Chat', placeholder: name => `Skriv til ${name}`, send: 'Send', empty: 'Ingen beskeder endnu. Sig hej!' },
+      chat: { title: 'Chat', placeholder: name => `Skriv til ${name}`, send: 'Send', empty: 'Ingen beskeder endnu. Sig hej!', sending: 'Sender…' },
       hubert: {
         woofs: ['Vuf!', 'Vuf vuf!', 'Er det min tur?', 'Har du en godbid?'],
         call: 'Kald på Hubert',
@@ -778,6 +795,7 @@ export const MULTIPLAYER_LABELS: Record<Language, MultiplayerLabels> = {
       withdraw: 'Withdraw',
       remind: 'Remind',
       remindedRecently: 'You reminded them recently',
+      working: { accept: 'Accepting…', decline: 'Declining…', withdraw: 'Withdrawing…', remind: 'Reminding…' },
       updated: when => `Updated ${when}`,
       news: 'News',
       markRead: 'Mark as read',
@@ -830,6 +848,8 @@ export const MULTIPLAYER_LABELS: Record<Language, MultiplayerLabels> = {
       yourTurn: 'Your turn',
       theirTurn: name => `${name} is playing`,
       waitHint: 'Wait for your turn. Meanwhile you can shuffle your rack and chat.',
+      sending: 'Sending your move…',
+      sendingHint: name => `Your move is handed in - ${name} is next. Saving to the shared drive…`,
       placeHint: 'Pick a square on the board to place the tile.',
       shuffle: 'Shuffle',
       recall: 'Take back',
@@ -878,7 +898,7 @@ export const MULTIPLAYER_LABELS: Record<Language, MultiplayerLabels> = {
         exchange: (name, count) => `${name} swapped ${count} ${count === 1 ? 'tile' : 'tiles'}`,
         resign: name => `${name} resigned`,
       },
-      chat: { title: 'Chat', placeholder: name => `Write to ${name}`, send: 'Send', empty: 'No messages yet. Say hello!' },
+      chat: { title: 'Chat', placeholder: name => `Write to ${name}`, send: 'Send', empty: 'No messages yet. Say hello!', sending: 'Sending…' },
       hubert: {
         woofs: ['Woof!', 'Woof woof!', 'Is it my turn?', 'Got a treat?'],
         call: 'Call Hubert',
@@ -1015,6 +1035,7 @@ export const MULTIPLAYER_LABELS: Record<Language, MultiplayerLabels> = {
       withdraw: 'Dra tillbaka',
       remind: 'Påminn',
       remindedRecently: 'Du har påmint nyligen',
+      working: { accept: 'Accepterar…', decline: 'Avböjer…', withdraw: 'Drar tillbaka…', remind: 'Påminner…' },
       updated: when => `Uppdaterad ${when}`,
       news: 'Nytt',
       markRead: 'Markera som läst',
@@ -1067,6 +1088,8 @@ export const MULTIPLAYER_LABELS: Record<Language, MultiplayerLabels> = {
       yourTurn: 'Din tur',
       theirTurn: name => `${name} lägger`,
       waitHint: 'Vänta på din tur. Under tiden kan du blanda ditt ställ och chatta.',
+      sending: 'Skickar ditt drag…',
+      sendingHint: name => `Ditt drag är inlämnat - ${name} är näst på tur. Sparar på den delade enheten…`,
       placeHint: 'Välj en ruta på brädet för att lägga brickan.',
       shuffle: 'Blanda',
       recall: 'Ta tillbaka',
@@ -1115,7 +1138,7 @@ export const MULTIPLAYER_LABELS: Record<Language, MultiplayerLabels> = {
         exchange: (name, count) => `${name} bytte ${count} ${count === 1 ? 'bricka' : 'brickor'}`,
         resign: name => `${name} gav upp`,
       },
-      chat: { title: 'Chatt', placeholder: name => `Skriv till ${name}`, send: 'Skicka', empty: 'Inga meddelanden ännu. Säg hej!' },
+      chat: { title: 'Chatt', placeholder: name => `Skriv till ${name}`, send: 'Skicka', empty: 'Inga meddelanden ännu. Säg hej!', sending: 'Skickar…' },
       hubert: {
         woofs: ['Voff!', 'Voff voff!', 'Är det min tur?', 'Har du en godbit?'],
         call: 'Ropa på Hubert',
@@ -1252,6 +1275,7 @@ export const MULTIPLAYER_LABELS: Record<Language, MultiplayerLabels> = {
       withdraw: 'Peruuta kutsu',
       remind: 'Muistuta',
       remindedRecently: 'Muistutit äskettäin',
+      working: { accept: 'Hyväksytään…', decline: 'Hylätään…', withdraw: 'Perutaan…', remind: 'Muistutetaan…' },
       updated: when => `Päivitetty ${when}`,
       news: 'Uutta',
       markRead: 'Merkitse luetuksi',
@@ -1304,6 +1328,8 @@ export const MULTIPLAYER_LABELS: Record<Language, MultiplayerLabels> = {
       yourTurn: 'Sinun vuorosi',
       theirTurn: name => `${name} pelaa`,
       waitHint: 'Odota vuoroasi. Sillä välin voit sekoittaa telineesi ja jutella.',
+      sending: 'Lähetetään siirtoasi…',
+      sendingHint: name => `Siirtosi on annettu - ${name} on seuraavana. Tallennetaan jaetulle asemalle…`,
       placeHint: 'Valitse ruutu laudalta asettaaksesi laatan.',
       shuffle: 'Sekoita',
       recall: 'Ota takaisin',
@@ -1352,7 +1378,7 @@ export const MULTIPLAYER_LABELS: Record<Language, MultiplayerLabels> = {
         exchange: (name, count) => `${name} vaihtoi ${count} ${count === 1 ? 'laatan' : 'laattaa'}`,
         resign: name => `${name} luovutti`,
       },
-      chat: { title: 'Keskustelu', placeholder: name => `Kirjoita henkilölle ${name}`, send: 'Lähetä', empty: 'Ei viestejä vielä. Sano hei!' },
+      chat: { title: 'Keskustelu', placeholder: name => `Kirjoita henkilölle ${name}`, send: 'Lähetä', empty: 'Ei viestejä vielä. Sano hei!', sending: 'Lähetetään…' },
       hubert: {
         woofs: ['Hau!', 'Hau hau!', 'Onko minun vuoroni?', 'Saisinko herkun?'],
         call: 'Kutsu Hubert',

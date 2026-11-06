@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowCounterClockwise, Check, CheckCircle, FloppyDisk, PaperPlaneTilt, Trash, UserPlus, X } from '@phosphor-icons/react'
+import { ArrowCounterClockwise, Check, CheckCircle, CircleNotch, FloppyDisk, PaperPlaneTilt, Trash, UserPlus, X } from '@phosphor-icons/react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -118,7 +118,7 @@ export function ImprovementActionError({ actions, labels }: { actions: Improveme
   return (
     <div role="alert" className="flex flex-wrap items-center gap-3 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
       <p className="min-w-0 flex-1 break-words">{actions.error}</p>
-      {actions.canRetry && <Button type="button" variant="outline" size="sm" disabled={actions.busy} onClick={actions.retry}>
+      {actions.canRetry && <Button type="button" variant="outline" size="sm" loading={actions.busy} onClick={actions.retry}>
         <ArrowCounterClockwise size={16} />{actions.busy ? labels.saving : labels.retry}
       </Button>}
     </div>
@@ -194,7 +194,15 @@ export function ImprovementCaseDialog({ entry, snapshot, labels, language, actio
   const [rejectionReasons, setRejectionReasons] = useState<Record<string, string>>({})
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deletionReason, setDeletionReason] = useState('')
+  // Which button started the running command, so only that one shows a spinner.
+  const [pendingKey, setPendingKey] = useState('')
   const disabled = actions.busy || actions.blocked
+  const run = (key: string, input: ImprovementCommandInput, onSuccess?: () => void) => {
+    if (disabled) return
+    setPendingKey(key)
+    actions.command(input, onSuccess)
+  }
+  const loadingFor = (key: string) => actions.busy && pendingKey === key
 
   useEffect(() => {
     setNextAction(entry.nextAction)
@@ -231,7 +239,7 @@ export function ImprovementCaseDialog({ entry, snapshot, labels, language, actio
 
   const updateProgress = () => {
     if (!permissions.canProgress || !hasProgressChanges || !progressValid) return
-    actions.command({ type: 'update', caseId: entry.id, expectedRevision: entry.revision,
+    run('progress', { type: 'update', caseId: entry.id, expectedRevision: entry.revision,
       nextAction: nextAction.trim(), dueDate,
       ...(progressStatus ? { status: progressStatus as ImprovementProgressStatus } : {}),
     })
@@ -284,14 +292,14 @@ export function ImprovementCaseDialog({ entry, snapshot, labels, language, actio
                     <ImprovementDateField id="improvement-due-date" value={dueDate} onChange={setDueDate}
                       language={language} labels={labels} label={labels.dueDate} disabled={disabled} />
                   </div>
-                  <Button type="submit" disabled={disabled || !hasProgressChanges || !progressValid}><FloppyDisk size={16} />{labels.updateProgress}</Button>
+                  <Button type="submit" disabled={disabled || !hasProgressChanges || !progressValid} loading={loadingFor('progress')}><FloppyDisk size={16} />{labels.updateProgress}</Button>
                 </fieldset>
               </form> : <dl className="space-y-2 text-sm">
                 <div><dt className="text-muted-foreground">{labels.nextAction}</dt><dd className="whitespace-pre-wrap break-words">{entry.nextAction || '-'}</dd></div>
                 <div><dt className="text-muted-foreground">{labels.dueDate}</dt><dd><ImprovementDeadline value={entry.dueDate} language={language} labels={labels} active={activeDeadline} /></dd></div>
               </dl>}
-              {permissions.canSubmit && <Button disabled={disabled || hasProgressChanges} variant="outline"
-                onClick={() => actions.command({ type: 'submit', caseId: entry.id, expectedRevision: entry.revision })}>
+              {permissions.canSubmit && <Button disabled={disabled || hasProgressChanges} variant="outline" loading={loadingFor('submit')}
+                onClick={() => run('submit', { type: 'submit', caseId: entry.id, expectedRevision: entry.revision })}>
                 <PaperPlaneTilt size={16} />{labels.submitForApproval}</Button>}
             </section>
             <section aria-label={labels.comments} className="space-y-3 border-t pt-4">
@@ -302,11 +310,11 @@ export function ImprovementCaseDialog({ entry, snapshot, labels, language, actio
               </li>)}</ol> : <p className="text-sm text-muted-foreground">{labels.noComments}</p>}
               {permissions.canComment && <form onSubmit={event => {
                 event.preventDefault()
-                if (comment.trim()) actions.command({ type: 'comment', caseId: entry.id, message: comment.trim() }, () => setComment(''))
+                if (comment.trim()) run('comment', { type: 'comment', caseId: entry.id, message: comment.trim() }, () => setComment(''))
               }}><fieldset disabled={disabled} className="space-y-2">
                 <Label htmlFor="improvement-comment">{labels.comment}</Label>
                 <Textarea id="improvement-comment" value={comment} onChange={event => setComment(event.target.value)} placeholder={labels.commentPlaceholder} rows={3} maxLength={8000} required />
-                <Button type="submit" disabled={disabled || !comment.trim()}><PaperPlaneTilt size={16} />{labels.addComment}</Button>
+                <Button type="submit" disabled={disabled || !comment.trim()} loading={loadingFor('comment')}><PaperPlaneTilt size={16} />{labels.addComment}</Button>
               </fieldset></form>}
             </section>
             <section aria-label={labels.history} className="space-y-3 border-t pt-4">
@@ -323,11 +331,11 @@ export function ImprovementCaseDialog({ entry, snapshot, labels, language, actio
               {permissions.canSetDeadlines ? <form onSubmit={event => {
                 event.preventDefault()
                 if (disabled || feedbackDueDate === (entry.feedbackDueDate || '')) return
-                actions.command({ type: 'set-deadlines', caseId: entry.id, expectedRevision: entry.revision, feedbackDueDate })
+                run('deadlines', { type: 'set-deadlines', caseId: entry.id, expectedRevision: entry.revision, feedbackDueDate })
               }}><fieldset disabled={disabled} className="space-y-2">
                 <ImprovementDateField id="improvement-feedback-due-date" value={feedbackDueDate} onChange={setFeedbackDueDate}
                   language={language} labels={labels} label={labels.feedbackDueDate} disabled={disabled} />
-                <Button type="submit" disabled={disabled || feedbackDueDate === (entry.feedbackDueDate || '')}><FloppyDisk size={16} />{labels.saveDeadlines}</Button>
+                <Button type="submit" disabled={disabled || feedbackDueDate === (entry.feedbackDueDate || '')} loading={loadingFor('deadlines')}><FloppyDisk size={16} />{labels.saveDeadlines}</Button>
               </fieldset></form> : <dl className="text-sm"><dt className="text-muted-foreground">{labels.feedbackDueDate}</dt>
                 <dd><ImprovementDeadline value={entry.feedbackDueDate} language={language} labels={labels} active={activeDeadline} /></dd></dl>}
             </section>
@@ -348,21 +356,21 @@ export function ImprovementCaseDialog({ entry, snapshot, labels, language, actio
                   event.preventDefault()
                   const responseDueDate = responseDueDates[assignment.id] ?? assignment.responseDueDate ?? ''
                   if (disabled || responseDueDate === (assignment.responseDueDate || '')) return
-                  actions.command({ type: 'set-deadlines', caseId: entry.id, expectedRevision: entry.revision, assignmentId: assignment.id, responseDueDate })
+                  run(`response-${assignment.id}`, { type: 'set-deadlines', caseId: entry.id, expectedRevision: entry.revision, assignmentId: assignment.id, responseDueDate })
                 }}><fieldset disabled={disabled} className="space-y-2">
                   <ImprovementDateField id={`improvement-response-due-date-${assignment.id}`} value={responseDueDates[assignment.id] ?? assignment.responseDueDate ?? ''}
                     onChange={value => setResponseDueDates(current => ({ ...current, [assignment.id]: value }))}
                     language={language} labels={labels} label={labels.responseDueDate} disabled={disabled} />
-                  <Button type="submit" size="sm" disabled={disabled || (responseDueDates[assignment.id] ?? assignment.responseDueDate ?? '') === (assignment.responseDueDate || '')}><FloppyDisk size={16} />{labels.saveDeadlines}</Button>
+                  <Button type="submit" size="sm" loading={loadingFor(`response-${assignment.id}`)} disabled={disabled || (responseDueDates[assignment.id] ?? assignment.responseDueDate ?? '') === (assignment.responseDueDate || '')}><FloppyDisk size={16} />{labels.saveDeadlines}</Button>
                 </fieldset></form>}
                 {permissions.pendingInvitations.some(pending => pending.id === assignment.id) && <div className="flex flex-wrap gap-2 pt-2">
-                  <Button size="sm" disabled={disabled} onClick={() => actions.command({ type: 'respond', caseId: entry.id, assignmentId: assignment.id, accept: true })}><Check size={16} />{labels.acceptInvitation}</Button>
-                  <Button size="sm" variant="outline" disabled={disabled} onClick={() => actions.command({ type: 'respond', caseId: entry.id, assignmentId: assignment.id, accept: false })}><X size={16} />{labels.declineInvitation}</Button>
+                  <Button size="sm" disabled={disabled} loading={loadingFor(`accept-${assignment.id}`)} onClick={() => run(`accept-${assignment.id}`, { type: 'respond', caseId: entry.id, assignmentId: assignment.id, accept: true })}><Check size={16} />{labels.acceptInvitation}</Button>
+                  <Button size="sm" variant="outline" disabled={disabled} loading={loadingFor(`decline-${assignment.id}`)} onClick={() => run(`decline-${assignment.id}`, { type: 'respond', caseId: entry.id, assignmentId: assignment.id, accept: false })}><X size={16} />{labels.declineInvitation}</Button>
                 </div>}
               </li>)}</ul>
               {permissions.canInvite && <form onSubmit={event => {
                 event.preventDefault()
-                if (selectedPersonAvailable && !(inviteKind === 'owner' && ownerBlocked)) actions.command({ type: 'invite', caseId: entry.id, expectedRevision: entry.revision, email: inviteEmail, kind: inviteKind,
+                if (selectedPersonAvailable && !(inviteKind === 'owner' && ownerBlocked)) run('invite', { type: 'invite', caseId: entry.id, expectedRevision: entry.revision, email: inviteEmail, kind: inviteKind,
                   ...(inviteResponseDueDate ? { responseDueDate: inviteResponseDueDate } : {}),
                 }, () => { setInviteEmail(''); setInviteResponseDueDate('') })
               }}><fieldset disabled={disabled} className="space-y-3 border-t pt-3">
@@ -381,7 +389,7 @@ export function ImprovementCaseDialog({ entry, snapshot, labels, language, actio
                 {ownerBlocked && permissions.canInviteOwner && <p className="text-xs text-muted-foreground">{labels.ownerConflict}</p>}
                 <ImprovementDateField id="improvement-invite-response-due-date" value={inviteResponseDueDate} onChange={setInviteResponseDueDate}
                   language={language} labels={labels} label={labels.responseDueDate} disabled={disabled} />
-                <Button type="submit" disabled={disabled || !selectedPersonAvailable || (inviteKind === 'owner' && ownerBlocked)}><UserPlus size={16} />{labels.invite}</Button>
+                <Button type="submit" loading={loadingFor('invite')} disabled={disabled || !selectedPersonAvailable || (inviteKind === 'owner' && ownerBlocked)}><UserPlus size={16} />{labels.invite}</Button>
               </fieldset></form>}
             </section>
             {permissions.canPrioritize && <section aria-label={labels.priority} className="space-y-3 border-t pt-4">
@@ -389,7 +397,7 @@ export function ImprovementCaseDialog({ entry, snapshot, labels, language, actio
               <form onSubmit={event => {
                 event.preventDefault()
                 if (!hasLeaderChanges || !leaderValid || (requiresReason && !feedback.trim())) return
-                actions.command({ type: 'update', caseId: entry.id, expectedRevision: entry.revision,
+                run('leader', { type: 'update', caseId: entry.id, expectedRevision: entry.revision,
                   ...(priority !== entry.priority ? { priority } : {}),
                   ...(leaderStatus ? { status: leaderStatus as ImprovementProgressStatus } : {}),
                   ...(feedback.trim() ? { message: feedback.trim() } : {}),
@@ -406,7 +414,7 @@ export function ImprovementCaseDialog({ entry, snapshot, labels, language, actio
                   </select></div>
                 <div className="space-y-1"><Label htmlFor="improvement-leader-feedback">{labels.reviewFeedback}{requiresReason ? ' *' : ''}</Label>
                   <Textarea id="improvement-leader-feedback" value={feedback} onChange={event => setFeedback(event.target.value)} required={requiresReason} rows={3} maxLength={8000} /></div>
-                <Button type="submit" disabled={disabled || !hasLeaderChanges || !leaderValid || (requiresReason && !feedback.trim())}><FloppyDisk size={16} />{labels.save}</Button>
+                <Button type="submit" loading={loadingFor('leader')} disabled={disabled || !hasLeaderChanges || !leaderValid || (requiresReason && !feedback.trim())}><FloppyDisk size={16} />{labels.save}</Button>
               </fieldset></form>
             </section>}
             {permissions.canReview && <section aria-label={labels.readyForApproval} className="space-y-3 border-t pt-4">
@@ -415,8 +423,8 @@ export function ImprovementCaseDialog({ entry, snapshot, labels, language, actio
                 <Label htmlFor="improvement-review-feedback">{labels.reviewFeedback}</Label>
                 <Textarea id="improvement-review-feedback" value={feedback} onChange={event => setFeedback(event.target.value)} rows={4} maxLength={8000} />
                 <div className="flex flex-wrap gap-2">
-                  <Button disabled={disabled} onClick={() => actions.command({ type: 'approve', caseId: entry.id, expectedRevision: entry.revision, ...(feedback.trim() ? { message: feedback.trim() } : {}) })}><CheckCircle size={16} />{labels.approve}</Button>
-                  <Button variant="outline" disabled={disabled || !feedback.trim()} onClick={() => actions.command({ type: 'return', caseId: entry.id, expectedRevision: entry.revision, message: feedback.trim() })}><ArrowCounterClockwise size={16} />{labels.returnForChanges}</Button>
+                  <Button disabled={disabled} loading={loadingFor('approve')} onClick={() => run('approve', { type: 'approve', caseId: entry.id, expectedRevision: entry.revision, ...(feedback.trim() ? { message: feedback.trim() } : {}) })}><CheckCircle size={16} />{labels.approve}</Button>
+                  <Button variant="outline" disabled={disabled || !feedback.trim()} loading={loadingFor('return')} onClick={() => run('return', { type: 'return', caseId: entry.id, expectedRevision: entry.revision, message: feedback.trim() })}><ArrowCounterClockwise size={16} />{labels.returnForChanges}</Button>
                 </div>
                 {!feedback.trim() && <p className="text-xs text-muted-foreground">{labels.feedbackRequired}</p>}
               </fieldset>
@@ -426,10 +434,10 @@ export function ImprovementCaseDialog({ entry, snapshot, labels, language, actio
               {permissions.canRequestDeletion && <form onSubmit={event => {
                 event.preventDefault()
                 if (disabled || !isImprovementDeletionReasonValid(requestReason)) return
-                actions.command({ type: 'request-deletion', caseId: entry.id, message: requestReason.trim() }, () => setRequestReason(''))
+                run('request-deletion', { type: 'request-deletion', caseId: entry.id, message: requestReason.trim() }, () => setRequestReason(''))
               }}><fieldset disabled={disabled} className="space-y-2">
                 <DeletionReason id="improvement-deletion-request-reason" value={requestReason} onChange={setRequestReason} label={labels.deletionReason} language={language} />
-                <Button type="submit" variant="outline" disabled={disabled || !isImprovementDeletionReasonValid(requestReason)} data-testid="improvement-request-deletion" aria-label={labels.requestDeletion}>
+                <Button type="submit" variant="outline" disabled={disabled || !isImprovementDeletionReasonValid(requestReason)} loading={loadingFor('request-deletion')} data-testid="improvement-request-deletion" aria-label={labels.requestDeletion}>
                   <Trash size={16} />{labels.requestDeletion}</Button>
               </fieldset></form>}
               {hasOwnPendingDeletion && <p role="status" className="text-sm text-muted-foreground">{labels.deletionPending}</p>}
@@ -448,13 +456,13 @@ export function ImprovementCaseDialog({ entry, snapshot, labels, language, actio
                   event.preventDefault()
                   const message = (rejectionReasons[request.id] || '').trim()
                   if (disabled || !isImprovementDeletionReasonValid(message)) return
-                  actions.command({ type: 'reject-deletion', caseId: entry.id, expectedRevision: entry.revision, requestId: request.id, message },
+                  run(`reject-${request.id}`, { type: 'reject-deletion', caseId: entry.id, expectedRevision: entry.revision, requestId: request.id, message },
                     () => setRejectionReasons(current => ({ ...current, [request.id]: '' })))
                 }}><fieldset disabled={disabled} className="space-y-2">
                   <DeletionReason id={`improvement-reject-reason-${request.id}`} value={rejectionReasons[request.id] || ''}
                     onChange={value => setRejectionReasons(current => ({ ...current, [request.id]: value }))} rows={2} label={labels.rejectionReason} language={language} />
                   <div className="flex flex-wrap gap-2">
-                    <Button type="submit" variant="outline" size="sm" disabled={disabled || !isImprovementDeletionReasonValid(rejectionReasons[request.id] || '')}
+                    <Button type="submit" variant="outline" size="sm" disabled={disabled || !isImprovementDeletionReasonValid(rejectionReasons[request.id] || '')} loading={loadingFor(`reject-${request.id}`)}
                       data-testid={`improvement-reject-deletion-${request.id}`} aria-label={labels.rejectDeletion}><X size={16} />{labels.rejectDeletion}</Button>
                     <Button type="button" variant="destructive" size="sm" disabled={disabled}
                       data-testid={`improvement-approve-deletion-${request.id}`} aria-label={labels.approveDeletion}
@@ -478,11 +486,11 @@ export function ImprovementCaseDialog({ entry, snapshot, labels, language, actio
             <AlertDialogFooter>
               <AlertDialogCancel disabled={actions.busy}>{labels.cancel}</AlertDialogCancel>
               <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90 whitespace-normal" disabled={disabled || !isImprovementDeletionReasonValid(deletionReason)}
-                data-testid="improvement-confirm-delete" aria-label={labels.confirmDelete} onClick={event => {
+                data-testid="improvement-confirm-delete" aria-label={labels.confirmDelete} aria-busy={loadingFor('delete') || undefined} onClick={event => {
                   event.preventDefault()
                   if (!permissions.canDelete || disabled || !isImprovementDeletionReasonValid(deletionReason)) return
-                  actions.command({ type: 'delete', caseId: entry.id, expectedRevision: entry.revision, message: deletionReason.trim() }, () => setDeleteOpen(false))
-                }}><Trash size={16} />{labels.confirmDelete}</AlertDialogAction>
+                  run('delete', { type: 'delete', caseId: entry.id, expectedRevision: entry.revision, message: deletionReason.trim() }, () => setDeleteOpen(false))
+                }}>{loadingFor('delete') ? <CircleNotch size={16} className="motion-safe:animate-spin" /> : <Trash size={16} />}{labels.confirmDelete}</AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>

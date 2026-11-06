@@ -243,6 +243,8 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
   const [selectedTaskForAssign, setSelectedTaskForAssign] = useState<{ roleId: string; roleName: string } | null>(null)
   const [selectedEmployeeForAssign, setSelectedEmployeeForAssign] = useState<string>('')
   const [allEmployees, setAllEmployees] = useState<Array<{ email: string; name: string }>>([])
+  // Optaget mens tildelingens forudgående opslag kører over netværket.
+  const [assigning, setAssigning] = useState(false)
   // Widget: tildel en opgave (rolle) direkte til en bruger fra Team status-kortet.
   const [showWidgetAssignDialog, setShowWidgetAssignDialog] = useState(false)
   const [widgetAssignUser, setWidgetAssignUser] = useState<{ email: string; name: string } | null>(null)
@@ -317,7 +319,7 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
     }
 
     loadCrossTeamOverview()
-    const interval = setInterval(loadCrossTeamOverview, 5 * 60 * 1000)
+    const interval = setInterval(() => { if (document.visibilityState === 'visible') loadCrossTeamOverview() }, 5 * 60 * 1000)
     return () => { cancelled = true; clearInterval(interval) }
   }, [])
 
@@ -455,8 +457,8 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
     const unsubscribe = window.kv.subscribe((changedKeys) => {
       if (changedKeys.some((key) => overviewKeys.includes(key))) loadOverviewData()
     })
-    // Langsomt fallback-interval så "i dag" ruller korrekt over ved midnat.
-    const interval = setInterval(loadOverviewData, 5 * 60 * 1000)
+    // Langsomt fallback-interval så "i dag" ruller korrekt over ved midnat; springes over mens vinduet er skjult.
+    const interval = setInterval(() => { if (document.visibilityState === 'visible') loadOverviewData() }, 5 * 60 * 1000)
     return () => {
       disposed = true
       unsubscribe()
@@ -472,6 +474,7 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
   }
 
   const handleQuickAssign = async (taskOverride?: { roleId: string; roleName: string }, employeeEmailOverride?: string) => {
+    if (assigning) return
     const task = taskOverride || selectedTaskForAssign
     const employeeEmailSel = employeeEmailOverride || selectedEmployeeForAssign
     if (!task || !employeeEmailSel) {
@@ -480,8 +483,24 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
     }
 
     const today = format(new Date(), 'yyyy-MM-dd')
-    const assignments = (await window.kv.get<ShiftAssignment[]>('shift-assignments')) || []
-    const usersData = (await window.kv.get<Record<string, { fullName: string }>>('users')) || {}
+    let assignments: ShiftAssignment[]
+    let sickLeave: SickLeaveEntry[]
+    let vacations: VacationEntry[]
+    setAssigning(true)
+    try {
+      // Read in parallel: on the shared drive each read costs a round trip.
+      ;[assignments, sickLeave, vacations] = await Promise.all([
+        window.kv.get<ShiftAssignment[]>('shift-assignments').then(value => value || []),
+        window.kv.get<SickLeaveEntry[]>('sick-leave-entries').then(value => value || []),
+        window.kv.get<VacationEntry[]>('vacation-entries').then(value => value || []),
+      ])
+    } catch (error) {
+      console.error('Kunne ikke tildele opgaven:', error)
+      toast.error(language === 'da' ? 'Tildelingen blev ikke gemt — prøv igen' : language === 'fi' ? 'Osoitusta ei tallennettu — yritä uudelleen' : language === 'sv' ? 'Tilldelningen sparades inte — försök igen' : 'The assignment was not saved — please try again')
+      return
+    } finally {
+      setAssigning(false)
+    }
     
     const selectedEmployee = allEmployees.find(e => e.email === employeeEmailSel)
     if (!selectedEmployee) {
@@ -491,9 +510,6 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
 
     const employeeName = selectedEmployee.name
     const employeeEmail = selectedEmployee.email
-
-    const sickLeave = (await window.kv.get<SickLeaveEntry[]>('sick-leave-entries')) || []
-    const vacations = (await window.kv.get<VacationEntry[]>('vacation-entries')) || []
     
     const isSickToday = sickLeave.some(s => 
       s.userEmail === employeeEmail && 
@@ -1651,7 +1667,7 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
             </Button>
             <Button
               onClick={() => handleQuickAssign()}
-              
+              loading={assigning}
             >
               {language === 'da' ? 'Tildel' : language === 'fi' ? 'Valitse' : language === 'sv' ? 'Tilldela' : 'Assign'}
             </Button>
@@ -1691,7 +1707,7 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
             <Button
               onClick={handleWidgetAssign}
               disabled={!widgetAssignRoleId}
-              
+              loading={assigning}
             >
               {language === 'da' ? 'Tildel' : language === 'fi' ? 'Valitse' : language === 'sv' ? 'Tilldela' : 'Assign'}
             </Button>

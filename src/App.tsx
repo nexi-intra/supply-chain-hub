@@ -219,12 +219,20 @@ function App() {
     // så Manager Panel kan se hvem der kører hvilken version. Kun i desktop-appen.
     if (!userSession || !window.electronUpdates) return
 
+    // Hver skrivning til den delte fil koster en laasefil paa M: (maalt 10-77 s under belastning),
+    // og ~40 klienter skrev hvert 5. minut. Manager Panel kalder en klient "offline" efter 24 t,
+    // saa vi skriver kun ved ny version/platform eller naar lastSeen er over en time gammel.
+    const WRITE_AFTER_MS = 60 * 60 * 1000
     const reportVersion = async () => {
       try {
+        if (document.visibilityState === 'hidden') return
         const status = await window.electronUpdates!.getStatus()
+        const platform = navigator.platform || 'unknown'
+        const stored = (await window.kv.get<Record<string, { version?: string; platform?: string; lastSeen?: number }>>('client-versions'))?.[userSession.email]
+        if (stored && stored.version === status.currentVersion && stored.platform === platform && Date.now() - (stored.lastSeen || 0) < WRITE_AFTER_MS) return
         await setKvObjectField('client-versions', userSession.email, {
           version: status.currentVersion,
-          platform: navigator.platform || 'unknown',
+          platform,
           lastSeen: Date.now(),
         })
       } catch (error) {
@@ -233,7 +241,7 @@ function App() {
     }
 
     reportVersion()
-    const interval = setInterval(reportVersion, 5 * 60 * 1000)
+    const interval = setInterval(reportVersion, 15 * 60 * 1000)
     return () => clearInterval(interval)
   }, [userSession])
 

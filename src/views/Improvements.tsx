@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { toast } from 'sonner'
 import { useLanguage } from '@/contexts/LanguageContext'
 import {
   IMPROVEMENT_PRIORITIES, IMPROVEMENT_STATUSES, applyImprovementResult, filterImprovements, improvementView, unseenImprovementIds,
@@ -203,6 +204,7 @@ export function Improvements({ onNavigateBack, userEmail }: ImprovementsProps) {
       pendingAction.current = null
       setHasPendingAction(false)
       action.onSuccess?.()
+      toast.success(action.command.type === 'comment' ? labelsRef.current.commentSaved : labelsRef.current.saved)
       if (action.command.type === 'create' && !result.deletedAt) setSelectedId(result.id)
     } catch (error) {
       if (!alive.current || session !== lifetime.current) return

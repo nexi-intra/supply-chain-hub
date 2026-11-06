@@ -23,9 +23,9 @@ export function TakePallet({ material: initial, version, onDone }: { material?: 
   const [shelfAmounts, setShelfAmounts] = useState<Record<string, string>>({})
   const bridge = window.electronWarehouse!.locations
 
-  async function takeFromShelf(shelf: MaterialCard['shelves'][number], quantity?: number) {
+  async function takeFromShelf(shelf: MaterialCard['shelves'][number], quantity?: number, all = false) {
     if (!card) return
-    setBusy(shelf.location)
+    setBusy(all ? `${shelf.location}:all` : shelf.location)
     try {
       const result = await bridge.shelfTake({ actionId: newActionId(), label: t(`Tag ${card.material} fra ${shelf.name}`, `Take ${card.material} from ${shelf.name}`), location: shelf.location, material: card.material, quantity })
       if (isDeferred(result)) toast.warning(deferredText(result))
@@ -54,7 +54,7 @@ export function TakePallet({ material: initial, version, onDone }: { material?: 
     const oldest = card?.reserve[0]
     if (!sure && oldest && oldest.id !== pallet.id && oldest.receivedAt < pallet.receivedAt) { setConfirm({ pallet, quantity }); return }
     setConfirm(null)
-    setBusy(pallet.id)
+    setBusy(quantity === undefined ? pallet.id : `${pallet.id}:part`)
     try {
       const result = await bridge.take({ actionId: newActionId(), label: t(`Tag ${pallet.material} fra ${pallet.location}`, `Take ${pallet.material} from ${pallet.location}`), pallet: pallet.id, quantity })
       if (isDeferred(result)) toast.warning(deferredText(result))
@@ -100,7 +100,7 @@ export function TakePallet({ material: initial, version, onDone }: { material?: 
                         <Input inputMode="numeric" value={shelfAmounts[shelf.location] || ''} placeholder={t('stk.', 'pcs')} className="h-9 w-20" aria-label={t('Antal at tage fra hylden', 'Quantity to take from the shelf')}
                           onChange={event => setShelfAmounts(value => ({ ...value, [shelf.location]: event.target.value.replace(/\D/g, '') }))} />
                         <Button size="sm" variant="outline" disabled={!shelfAmounts[shelf.location] || busy !== null} loading={busy === shelf.location} onClick={() => void takeFromShelf(shelf, Number(shelfAmounts[shelf.location]))}>{t(`Tag ${shelfAmounts[shelf.location] || 'X'} stk.`, `Take ${shelfAmounts[shelf.location] || 'X'}`)}</Button>
-                        <Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => void takeFromShelf(shelf, shelf.quantity)}>{t('Tag alt', 'Take all')}</Button>
+                        <Button size="sm" variant="ghost" disabled={busy !== null} loading={busy === `${shelf.location}:all`} onClick={() => void takeFromShelf(shelf, shelf.quantity, true)}>{t('Tag alt', 'Take all')}</Button>
                       </span>
                     </div>
                   ))}
@@ -118,7 +118,7 @@ export function TakePallet({ material: initial, version, onDone }: { material?: 
                   <span className="ml-auto flex items-center gap-2">
                     <Input inputMode="numeric" value={amounts[pallet.id] || ''} placeholder={t('stk.', 'pcs')} className="h-9 w-20" aria-label={t('Antal at tage', 'Quantity to take')}
                       onChange={event => setAmounts(value => ({ ...value, [pallet.id]: event.target.value.replace(/\D/g, '') }))} />
-                    <Button size="sm" variant="outline" disabled={!amounts[pallet.id] || busy !== null} onClick={() => void take(pallet, Number(amounts[pallet.id]))}>{t(`Tag ${amounts[pallet.id] || 'X'} stk.`, `Take ${amounts[pallet.id] || 'X'}`)}</Button>
+                    <Button size="sm" variant="outline" disabled={!amounts[pallet.id] || busy !== null} loading={busy === `${pallet.id}:part`} onClick={() => void take(pallet, Number(amounts[pallet.id]))}>{t(`Tag ${amounts[pallet.id] || 'X'} stk.`, `Take ${amounts[pallet.id] || 'X'}`)}</Button>
                     <Button size="sm" disabled={busy !== null} loading={busy === pallet.id} onClick={() => void take(pallet)}><HandGrabbing size={16} /> {t('Tag hele pallen', 'Take the whole pallet')}</Button>
                   </span>
                   {confirm?.pallet.id === pallet.id && (

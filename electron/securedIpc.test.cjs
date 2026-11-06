@@ -11,6 +11,8 @@ function fixture(accounts = null) {
   return { register(channel, handler = () => 'ok') { ipc.handle(channel, handler); return (...args) => handlers.get(channel)(event, ...args) }, actor: change => { actor = change === null ? null : { ...actor, ...change } }, folder: value => { folder = value }, trust: value => { trusted = value } }
 }
 const code = expected => error => error.code === expected
+// Auth is awaited before a listener runs, so a test that changes context mid-call first waits for the listener to start.
+const listenerStarted = async started => { for (let i = 0; i < 50 && !started(); i++) await new Promise(resolve => setImmediate(resolve)); assert.ok(started(), 'listener did not start') }
 test('improvement case state cannot be bypassed through generic KV, including creator', async () => {
   const f = fixture()
   for (const role of ['user', 'manager', 'creator']) {
@@ -90,7 +92,9 @@ test('asynchronous reads cannot return data across a completed account migration
   let context = 'before', resolve
   const f = fixture({ context: () => context })
   const call = f.register('kv:get', () => new Promise(done => { resolve = done }))
-  const pending = call('guides'); context = 'after'; resolve('must not leak')
+  const pending = call('guides')
+  await listenerStarted(() => resolve)
+  context = 'after'; resolve('must not leak')
   await assert.rejects(pending, code('AUTH_CONTEXT_CHANGED'))
 })
 test('ordinary writes and directory assignments execute inside the account gate and check retired identities', async () => {
@@ -216,9 +220,27 @@ for (const change of ['logout', 'role', 'folder', 'token']) test(`an asynchronou
   const f = fixture(); let resolve
   const call = f.register('kv:get', () => new Promise(done => { resolve = done }))
   const pending = call('guides')
+  await listenerStarted(() => resolve)
   if (change === 'logout') f.actor(null)
   else if (change === 'folder') f.folder('B')
   else f.actor(change === 'role' ? { role: 'manager' } : { token: 'new' })
   resolve('must not leak')
   await assert.rejects(pending, code(change === 'logout' ? 'AUTH_REQUIRED' : 'AUTH_CONTEXT_CHANGED'))
+})
+test('auth and the migration gate are awaited asynchronously and retired identities are prepared before a write', async () => {
+  const calls = []
+  const accounts = {
+    context: () => { throw new Error('sync context must not be used') },
+    contextAsync: async () => { calls.push('contextAsync'); return null },
+    prepareReferenceChecksAsync: async () => { calls.push('prepare') },
+    async runWriteAsync(callback) { calls.push('gate'); return callback() },
+    assertReferences: () => { calls.push('references') },
+  }
+  const handlers = new Map(), event = { sender: { id: 1 } }
+  const actor = { email: 'user@example.test', role: 'user', token: 't', home: { teamId: 'a', folderName: 'A' }, activeTeam: { teamId: 'a', folderName: 'A' }, teams: [{ teamId: 'a', folderName: 'A' }] }
+  const service = { current: () => { throw new Error('sync current must not be used') }, currentAsync: async () => { calls.push('auth'); return structuredClone(actor) } }
+  const ipc = createSecuredIpc({ handle: (key, handler) => handlers.set(key, handler) }, { auth: () => service, accounts: () => accounts, trusted: () => true, currentFolder: () => 'A', listTeams: () => [] })
+  ipc.handle('kv:set', () => 'saved')
+  assert.equal(await handlers.get('kv:set')(event, 'guides', []), 'saved')
+  assert.deepEqual(calls, ['auth', 'contextAsync', 'prepare', 'gate', 'references', 'contextAsync', 'auth'])
 })

@@ -133,6 +133,8 @@ function GuideLibraryContent({ onNavigateBack, onLogout, userEmail }: Omit<Guide
   const [isLoadingOtherTeamGuides, setIsLoadingOtherTeamGuides] = useState(false)
   const otherTeamRequest = useRef(0)
   const [submittingRequestGuideId, setSubmittingRequestGuideId] = useState<string | null>(null)
+  // `${action}:${id}` for the review/draft action being saved, so its button shows a spinner.
+  const [reviewBusyKey, setReviewBusyKey] = useState<string | null>(null)
 
   useEffect(() => {
     if (!window.electronRegistry) return
@@ -370,6 +372,19 @@ function GuideLibraryContent({ onNavigateBack, onLogout, userEmail }: Omit<Guide
 
   const updateReviewRequest = async (updated: GuideReviewRequest) => {
     await upsertInKvArray(keys.reviewRequests, [updated])
+  }
+
+  const runReviewAction = async (key: string, action: () => Promise<void>) => {
+    if (reviewBusyKey) return
+    setReviewBusyKey(key)
+    try {
+      await action()
+    } catch (error) {
+      console.error('Guide action failed:', error)
+      toast.error(error instanceof Error && error.message ? error.message : t.guideEditor.saveFailed)
+    } finally {
+      setReviewBusyKey(null)
+    }
   }
 
   const publishGuide = async (guide: Guide) => {
@@ -906,7 +921,7 @@ function GuideLibraryContent({ onNavigateBack, onLogout, userEmail }: Omit<Guide
                             size="sm"
                             variant="outline"
                             className="gap-1.5"
-                            disabled={submittingRequestGuideId === guide.id}
+                            loading={submittingRequestGuideId === guide.id}
                             onClick={() => handleRequestAccess(guide)}
                           >
                             <LockKey size={16} weight="bold" />
@@ -1144,7 +1159,7 @@ function GuideLibraryContent({ onNavigateBack, onLogout, userEmail }: Omit<Guide
                     </div>
                   </div>
                   <Button size="sm" onClick={() => handleResumeDraft(draft)} className="shrink-0">{t.guideEditor.draftResume}</Button>
-                  <Button size="sm" variant="ghost" onClick={() => void handleDeleteDraft(draft)} className="shrink-0 text-destructive hover:text-destructive" aria-label={t.guideEditor.draftDiscard}>
+                  <Button size="sm" variant="ghost" loading={reviewBusyKey === `draft:${draft.guideId}`} onClick={() => void runReviewAction(`draft:${draft.guideId}`, () => handleDeleteDraft(draft))} className="shrink-0 text-destructive hover:text-destructive" aria-label={t.guideEditor.draftDiscard}>
                     <Trash size={16} />
                   </Button>
                 </div>
@@ -1161,14 +1176,15 @@ function GuideLibraryContent({ onNavigateBack, onLogout, userEmail }: Omit<Guide
             userEmail={userEmail}
             isReviewer={isGuideReviewer}
             isManager={isManager}
-            onEditRequest={handleEditReviewRequest}
+            onEditRequest={(request, asReviewer) => void runReviewAction(`edit:${request.id}`, () => handleEditReviewRequest(request, asReviewer))}
             onPreview={handleViewGuide}
-            onApprove={handleApproveReview}
-            onReturn={handleReturnReview}
-            onWithdraw={handleWithdrawReview}
-            onDiscard={handleDiscardReview}
-            onClaim={handleClaimReview}
-            onRestore={handleRestoreArchived}
+            onApprove={(request) => void runReviewAction(`approve:${request.id}`, () => handleApproveReview(request))}
+            onReturn={(request, comment) => void runReviewAction(`return:${request.id}`, () => handleReturnReview(request, comment))}
+            onWithdraw={(request) => void runReviewAction(`withdraw:${request.id}`, () => handleWithdrawReview(request))}
+            onDiscard={(request) => void runReviewAction(`discard:${request.id}`, () => handleDiscardReview(request))}
+            onClaim={(request) => void runReviewAction(`claim:${request.id}`, () => handleClaimReview(request))}
+            onRestore={(entry) => void runReviewAction(`restore:${entry.id}`, () => handleRestoreArchived(entry))}
+            busyKey={reviewBusyKey}
           />
         ) : filteredGuides.length === 0 ? (
           <motion.div
@@ -1212,7 +1228,7 @@ function GuideLibraryContent({ onNavigateBack, onLogout, userEmail }: Omit<Guide
                   responsibleName={(guide.responsibleEmail && usersByEmail?.[guide.responsibleEmail]?.fullName) || guide.responsibleEmail?.split('@')[0] || ''}
                   currentTeamCode={currentTeamCode}
                   onEdit={handleEditGuide}
-                  onDelete={handleDeleteGuide}
+                  onDelete={(id) => void runReviewAction(`delete:${id}`, () => handleDeleteGuide(id))}
                   onView={handleViewGuide}
                   onMarkReviewed={handleMarkReviewed}
                   deleteRequiresReview

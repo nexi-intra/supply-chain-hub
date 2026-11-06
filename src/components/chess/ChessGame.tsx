@@ -1,3 +1,5 @@
+import { useGameChangeWatch } from '@/hooks/useGameChangeWatch'
+import { acknowledgeMultiplayerNotifications } from '@/lib/multiplayerAcknowledge'
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ArrowLeft, Flag, Handshake, SpeakerHigh, SpeakerSlash, Trophy } from '@phosphor-icons/react'
 import { toast } from 'sonner'
@@ -55,6 +57,7 @@ export const ChessGame = memo(function ChessGame({ gameId, myEmail, teamName, un
   const gameRef = useRef<MultiplayerChessGame | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [sendingMove, setSendingMove] = useState(false)
   const inFlight = useRef(false)
   const dirty = useRef(false)
   const generation = useRef(0)
@@ -157,7 +160,7 @@ export const ChessGame = memo(function ChessGame({ gameId, myEmail, teamName, un
       const fresh = unreadNotificationIds.filter(id => !acknowledged.current.has(id)).slice(0, 100)
       if (fresh.length === 0) return
       for (const id of fresh) acknowledged.current.add(id)
-      api.command({ operationId: newOperationId(), type: 'acknowledge', notificationIds: fresh })
+      acknowledgeMultiplayerNotifications(fresh)
         .catch(() => { for (const id of fresh) acknowledged.current.delete(id) })
     }
     acknowledge()
@@ -212,10 +215,22 @@ export const ChessGame = memo(function ChessGame({ gameId, myEmail, teamName, un
   // ------------------------------------------------------------ commands
 
   const moveAllowed = game ? canMove(game, myEmail) : false
+  // The opponent's move appears as soon as its game file is saved (see useGameChangeWatch).
+  useGameChangeWatch(api, gameId, {
+    active: Boolean(game) && game?.status !== 'finished',
+    waiting: game?.status === 'active' && !moveAllowed,
+    onChange: () => { if (inFlight.current) dirty.current = true; else void load() },
+  })
 
   const sendMove = async (from: string, to: string, promotion?: MultiplayerChessPromotion) => {
-    const ok = await run(revision => ({ operationId: newOperationId(), type: 'chess-move', gameId, expectedRevision: revision, from, to, ...(promotion ? { promotion } : {}) }))
-    if (!ok) setSyncKey(key => key + 1)
+    // The board already shows the move; the turn now also passes at once while it is saved (can take seconds on M:).
+    setSendingMove(true)
+    try {
+      const ok = await run(revision => ({ operationId: newOperationId(), type: 'chess-move', gameId, expectedRevision: revision, from, to, ...(promotion ? { promotion } : {}) }))
+      if (!ok) setSyncKey(key => key + 1)
+    } finally {
+      setSendingMove(false)
+    }
   }
 
   const feedHubert = async (kind: HubertFood) => {
@@ -338,15 +353,16 @@ export const ChessGame = memo(function ChessGame({ gameId, myEmail, teamName, un
         <span className="bgr-title__sub">{c.playsAs(c.colors[myColor])}</span>
       </h1>
       {playing && (
-        <span className="bgr-turn" data-mine={moveAllowed ? '' : undefined} data-check={chess.inCheck ? '' : undefined} role="status">
-          {moveAllowed ? (chess.inCheck ? `${c.yourTurn} · ${c.check}` : c.yourTurn) : c.theirTurn(opponent.name)}
+        <span className="bgr-turn" data-mine={moveAllowed && !sendingMove ? '' : undefined} data-check={chess.inCheck && !sendingMove ? '' : undefined} role="status">
+          {sendingMove ? c.sending : moveAllowed ? (chess.inCheck ? `${c.yourTurn} · ${c.check}` : c.yourTurn) : c.theirTurn(opponent.name)}
         </span>
       )}
     </>
   )
 
   let hint: string
-  if (!moveAllowed) hint = c.waitHint
+  if (sendingMove) hint = c.sendingHint(opponent.name)
+  else if (!moveAllowed) hint = c.waitHint
   else if (selectedPiece) hint = c.targetHint(pieceName(selectedPiece.color, selectedPiece.type))
   else hint = chess.inCheck ? `${c.inCheck} ${c.selectHint}` : c.selectHint
 
@@ -420,7 +436,7 @@ export const ChessGame = memo(function ChessGame({ gameId, myEmail, teamName, un
 
       {playing && (
         <>
-          <p className="bgr-hint" data-tone={moveAllowed && chess.inCheck ? 'check' : undefined}>{hint}</p>
+          <p className="bgr-hint" data-tone={moveAllowed && chess.inCheck && !sendingMove ? 'check' : undefined}>{hint}</p>
           <div className="wp-actions cx-actions">
             <RoomCalls />
             <button type="button" className="bgr-chip" aria-pressed={soundOn} onClick={toggleSound} title={soundOn ? c.sound.off : c.sound.on}>
@@ -446,7 +462,7 @@ export const ChessGame = memo(function ChessGame({ gameId, myEmail, teamName, un
 
   const panels = (
     <>
-      <ChessPlayersCard game={game} labels={labels} teamName={teamName} />
+      <ChessPlayersCard game={sendingMove && playing ? { ...game, turn: opponent.email } : game} labels={labels} teamName={teamName} />
       <ScoreSheet game={game} labels={labels} footer={sheetFooter} />
       <ChatPanel
         messages={game.chat}

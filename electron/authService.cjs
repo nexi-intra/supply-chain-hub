@@ -41,21 +41,33 @@ async function verifyPassword(password, stored) {
 // Only the backend can mint sessions. Persistent keys are token hashes: the
 // shared file does not contain reusable plaintext bearer tokens. Every use
 // checks the account and directory afresh (no cached privilege fallback).
-function createAuthService({ registry, getRoot, openTeam, openSessions, switchTeam, getActiveFolder = () => null, deviceSecret, now = Date.now, runWrite = callback => callback(), runAuthentication = (_, callback) => callback({ recovering: false }), assertAvailable = () => {} }) {
+function createAuthService({ registry, getRoot, openTeam, openSessions, switchTeam, getActiveFolder = () => null, deviceSecret, now = Date.now, runWrite = callback => callback(), runAuthentication = (_, callback) => callback({ recovering: false }), assertAvailable = () => {}, contextTtlMs = 500 }) {
   if (!Buffer.isBuffer(deviceSecret) || deviceSecret.length !== 32) fail('AUTH_DEVICE_KEY_INVALID')
   const bindings = new Map(), busy = new Set(), attempts = new Map(), epochs = new Map()
-  // Coalesces the many synchronous session/role reads that arrive in a burst
-  // (module load) into one fresh snapshot per sender. A revoked session or
-  // changed role therefore takes effect within CONTEXT_TTL_MS instead of
-  // instantly; migration context (accountService) stays live and uncached.
-  const contextCache = new Map(), CONTEXT_TTL_MS = 500
-  const invalidate = sender => contextCache.delete(sender)
+  // Coalesces the session/role reads behind every IPC call into one snapshot per
+  // sender. A revoked session or changed role takes effect within contextTtlMs
+  // (main.cjs uses 15 s and clears the cache as soon as its watcher sees
+  // active-sessions/users change); migration context (accountService) is gated separately.
+  const contextCache = new Map(), CONTEXT_TTL_MS = contextTtlMs
+  // Bumped by every invalidation, so a resolve that started before a logout/role change is never cached afterwards.
+  let generation = 0
+  const pendingResolves = new Map()
+  const invalidate = sender => { generation++; contextCache.delete(sender) }
   const sign = record => crypto.createHmac('sha256', deviceSecret).update(JSON.stringify([getRoot(), record.authVersion, record.email, record.userId, record.teamId, record.createdAt, record.expiresAt, record.credentialHash])).digest('hex')
   const signed = record => ({ ...record, signature: sign(record) })
   function account(email) {
     const home = registry.lookupTeamForEmail(getRoot(), email)
     if (!home) fail('AUTH_CREDENTIALS')
-    const users = openTeam(home).get('users', { skipCache: true }) || {}
+    return accountIn(home, openTeam(home).get('users', { skipCache: true }), email)
+  }
+  async function accountAsync(email) {
+    const home = registry.lookupTeamForEmail(getRoot(), email)
+    if (!home) fail('AUTH_CREDENTIALS')
+    const target = openTeam(home)
+    return accountIn(home, typeof target.getAsync === 'function' ? await target.getAsync('users', { skipCache: true }) : target.get('users', { skipCache: true }), email)
+  }
+  function accountIn(home, stored, email) {
+    const users = stored || {}
     const entry = Object.entries(users).find(([key, user]) => normalize(user?.email || key) === normalize(email))
     if (!entry) fail('AUTH_CREDENTIALS')
     return { home, key: entry[0], user: structuredClone(entry[1]) }
@@ -64,20 +76,64 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
     if (user.status === 'pending') fail('AUTH_PENDING')
     if (user.status && user.status !== 'approved') fail('AUTH_REJECTED')
   }
-  function current(sender) {
+  function cachedActor(sender) {
     const cached = contextCache.get(sender)
-    if (cached && cached.root === getRoot() && cached.folder === getActiveFolder() && now() - cached.at < CONTEXT_TTL_MS) return structuredClone(cached.actor)
+    return cached && cached.root === getRoot() && cached.folder === getActiveFolder() && now() - cached.at < CONTEXT_TTL_MS ? structuredClone(cached.actor) : null
+  }
+  function remember(sender, actor, startedAt) {
+    if (startedAt === generation) contextCache.set(sender, { at: now(), root: getRoot(), folder: getActiveFolder(), actor: structuredClone(actor) })
+  }
+  function current(sender) {
+    const cached = cachedActor(sender)
+    if (cached) return cached
+    const startedAt = generation
     const actor = resolveCurrent(sender)
-    contextCache.set(sender, { at: now(), root: getRoot(), folder: getActiveFolder(), actor: structuredClone(actor) })
+    remember(sender, actor, startedAt)
     return structuredClone(actor)
   }
-  function resolveCurrent(sender) {
+  /** current() without blocking the main thread on the shared drive; concurrent calls for one window share one resolve. */
+  async function currentAsync(sender) {
+    const cached = cachedActor(sender)
+    if (cached) return cached
+    let pending = pendingResolves.get(sender)
+    if (!pending || pending.generation !== generation || pending.root !== getRoot() || pending.folder !== getActiveFolder()) {
+      const startedAt = generation
+      const promise = resolveCurrentAsync(sender).then(actor => { remember(sender, actor, startedAt); return actor })
+      pending = { promise, generation: startedAt, root: getRoot(), folder: getActiveFolder() }
+      pendingResolves.set(sender, pending)
+      const entry = pending
+      promise.then(() => {}, () => {}).finally(() => { if (pendingResolves.get(sender) === entry) pendingResolves.delete(sender) })
+    }
+    return structuredClone(await pending.promise)
+  }
+  function boundSession(sender, sessions) {
     const bound = bindings.get(sender)
     if (!bound || bound.root !== getRoot()) fail('AUTH_REQUIRED')
-    const session = openSessions().get('active-sessions', { skipCache: true })?.[sessionKey(bound.token)]
+    const session = sessions?.[sessionKey(bound.token)]
     if (!session || session.authVersion !== 1 || session.expiresAt <= now() || !Number.isFinite(session.expiresAt)) fail('AUTH_REQUIRED')
     if (typeof session.signature !== 'string' || !/^[a-f0-9]{64}$/.test(session.signature) || !crypto.timingSafeEqual(Buffer.from(session.signature, 'hex'), Buffer.from(sign(session), 'hex'))) fail('AUTH_REQUIRED')
-    const email = normalize(session.email), { home, user } = account(email)
+    return { bound, session }
+  }
+  function boundOrFail(sender) {
+    const bound = bindings.get(sender)
+    if (!bound || bound.root !== getRoot()) fail('AUTH_REQUIRED')
+    return bound
+  }
+  function resolveCurrent(sender) {
+    boundOrFail(sender)
+    const { bound, session } = boundSession(sender, openSessions().get('active-sessions', { skipCache: true }))
+    return actorFrom(bound, session, account(normalize(session.email)))
+  }
+  async function resolveCurrentAsync(sender) {
+    boundOrFail(sender)
+    if (typeof registry.prefetchAsync === 'function') await registry.prefetchAsync(getRoot())
+    const sessionStore = openSessions()
+    const sessions = typeof sessionStore.getAsync === 'function' ? await sessionStore.getAsync('active-sessions', { skipCache: true }) : sessionStore.get('active-sessions', { skipCache: true })
+    const { bound, session } = boundSession(sender, sessions)
+    return actorFrom(bound, session, await accountAsync(normalize(session.email)))
+  }
+  function actorFrom(bound, session, { home, user }) {
+    const email = normalize(session.email)
     approved(user)
     if (typeof user.password !== 'string' || !user.password || session.credentialHash !== sessionKey(user.password)) fail('AUTH_REQUIRED')
     if (home.teamId !== session.teamId) fail('AUTH_REQUIRED')
@@ -258,6 +314,6 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
     })
   }
   function forget(sender) { epochs.set(sender, (epochs.get(sender) || 0) + 1); bindings.delete(sender); attempts.delete(sender); invalidate(sender) }
-  return { login, signup, resume, current, requireRole, renew, logout, profile, forget, invalidateAll: () => contextCache.clear() }
+  return { login, signup, resume, current, currentAsync, requireRole, renew, logout, profile, forget, invalidateAll: () => { generation++; contextCache.clear() } }
 }
 module.exports = { createAuthService, hashPassword, verifyPassword, sessionKey, loadDeviceSecret }

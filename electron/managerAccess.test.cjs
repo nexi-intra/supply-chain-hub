@@ -38,6 +38,7 @@ test('access to a team that no longer exists, or that became the home team, is i
   const stored = JSON.parse(fs.readFileSync(file, 'utf8'))
   stored['rasmus@example.com'].teamIds.push('gone', 'PIM')
   fs.writeFileSync(file, JSON.stringify(stored))
+  registry.invalidateCache()
   assert.deepEqual(registry.managerTeamsForEmail(root, 'rasmus@example.com').map(team => team.teamId), ['BPO'])
 })
 

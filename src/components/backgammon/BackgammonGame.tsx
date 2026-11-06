@@ -1,5 +1,7 @@
+import { useGameChangeWatch } from '@/hooks/useGameChangeWatch'
+import { acknowledgeMultiplayerNotifications } from '@/lib/multiplayerAcknowledge'
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ArrowCounterClockwise, ArrowLeft, Check, Flag, Trophy } from '@phosphor-icons/react'
+import { ArrowCounterClockwise, ArrowLeft, Check, CircleNotch, Flag, Trophy } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { useLanguage } from '@/contexts/LanguageContext'
 import {
@@ -75,6 +77,7 @@ export const BackgammonGame = memo(function BackgammonGame({ gameId, myEmail, te
   const gameRef = useRef<MultiplayerBackgammonGame | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [sendingTurn, setSendingTurn] = useState(false)
   const inFlight = useRef(false)
   const dirty = useRef(false)
   const generation = useRef(0)
@@ -178,7 +181,7 @@ export const BackgammonGame = memo(function BackgammonGame({ gameId, myEmail, te
       const fresh = unreadNotificationIds.filter(id => !acknowledged.current.has(id)).slice(0, 100)
       if (fresh.length === 0) return
       for (const id of fresh) acknowledged.current.add(id)
-      api.command({ operationId: newOperationId(), type: 'acknowledge', notificationIds: fresh })
+      acknowledgeMultiplayerNotifications(fresh)
         .catch(() => { for (const id of fresh) acknowledged.current.delete(id) })
     }
     acknowledge()
@@ -222,6 +225,12 @@ export const BackgammonGame = memo(function BackgammonGame({ gameId, myEmail, te
   // ------------------------------------------------------------ the turn being built
 
   const moveAllowed = game ? canMove(game, myEmail) : false
+  // The opponent's move appears as soon as its game file is saved (see useGameChangeWatch).
+  useGameChangeWatch(api, gameId, {
+    active: Boolean(game) && game?.status !== 'finished',
+    waiting: game?.status === 'active' && !moveAllowed,
+    onChange: () => { if (inFlight.current) dirty.current = true; else void load() },
+  })
   const myColor: BgColor = game?.bg.myColor ?? 'white'
   const plan = useMemo(() => {
     if (!game || !moveAllowed) return null
@@ -250,8 +259,14 @@ export const BackgammonGame = memo(function BackgammonGame({ gameId, myEmail, te
   const undo = () => { setStaged(NO_STEPS); setSelected(null) }
   const submit = async () => {
     const steps = staged.map(wire)
-    const ok = await run(revision => ({ operationId: newOperationId(), type: 'bg-move', gameId, expectedRevision: revision, steps }))
-    if (!ok) setStaged(NO_STEPS)
+    // Answer the click at once: the turn shows as handed in while it is saved to the shared drive (can take seconds).
+    setSendingTurn(true)
+    try {
+      const ok = await run(revision => ({ operationId: newOperationId(), type: 'bg-move', gameId, expectedRevision: revision, steps }))
+      if (!ok) setStaged(NO_STEPS)
+    } finally {
+      setSendingTurn(false)
+    }
   }
 
   const feedHubert = async (kind: HubertFood) => {
@@ -348,15 +363,16 @@ export const BackgammonGame = memo(function BackgammonGame({ gameId, myEmail, te
         <span className="bgr-title__sub">{b.playsAs(b.colors[myColor])}</span>
       </h1>
       {playing && (
-        <span className="bgr-turn" data-mine={moveAllowed ? '' : undefined} role="status">
-          {moveAllowed ? b.yourTurn : b.theirTurn(opponent.name)}
+        <span className="bgr-turn" data-mine={moveAllowed && !sendingTurn ? '' : undefined} role="status">
+          {sendingTurn ? b.sending : moveAllowed ? b.yourTurn : b.theirTurn(opponent.name)}
         </span>
       )}
     </>
   )
 
   let hint: string
-  if (!moveAllowed) hint = last && lastSeat !== null ? (last.steps.length ? b.lastTurn(game.players[lastSeat].name, b.dice(last.dice[0], last.dice[1]), describeSteps(last.steps, last.by, b.bar, b.off)) : b.lastTurnBlocked(game.players[lastSeat].name, b.dice(last.dice[0], last.dice[1]))) : b.opening(bg.opening?.white ?? 0, bg.opening?.black ?? 0)
+  if (sendingTurn) hint = b.sendingHint(opponent.name)
+  else if (!moveAllowed) hint = last && lastSeat !== null ? (last.steps.length ? b.lastTurn(game.players[lastSeat].name, b.dice(last.dice[0], last.dice[1]), describeSteps(last.steps, last.by, b.bar, b.off)) : b.lastTurnBlocked(game.players[lastSeat].name, b.dice(last.dice[0], last.dice[1]))) : b.opening(bg.opening?.white ?? 0, bg.opening?.black ?? 0)
   else if (blocked) hint = `${b.rolled(diceText)} ${b.noMoves}`
   else if (turnReady) hint = b.doneHint
   else if (selected !== null) hint = b.targetHint
@@ -416,14 +432,14 @@ export const BackgammonGame = memo(function BackgammonGame({ gameId, myEmail, te
                 <button type="button" className="bgr-chip" disabled={busy || staged.length === 0} onClick={undo}>
                   <ArrowCounterClockwise size={16} aria-hidden="true" />{b.undo}
                 </button>
-                <button type="button" className="bgr-chip" data-tone="primary" disabled={busy || !turnReady} onClick={() => void submit()}>
-                  <Check size={16} weight="bold" aria-hidden="true" />{b.confirm}
+                <button type="button" className="bgr-chip" data-tone="primary" disabled={busy || !turnReady} aria-busy={sendingTurn || undefined} onClick={() => void submit()}>
+                  {sendingTurn ? <CircleNotch size={16} weight="bold" aria-hidden="true" className="motion-safe:animate-spin" /> : <Check size={16} weight="bold" aria-hidden="true" />}{sendingTurn ? b.sending : b.confirm}
                 </button>
               </>
             )}
             {blocked && (
-              <button type="button" className="bgr-chip" data-tone="primary" disabled={busy} onClick={() => void submit()}>
-                <Check size={16} weight="bold" aria-hidden="true" />{b.pass}
+              <button type="button" className="bgr-chip" data-tone="primary" disabled={busy} aria-busy={sendingTurn || undefined} onClick={() => void submit()}>
+                {sendingTurn ? <CircleNotch size={16} weight="bold" aria-hidden="true" className="motion-safe:animate-spin" /> : <Check size={16} weight="bold" aria-hidden="true" />}{sendingTurn ? b.sending : b.pass}
               </button>
             )}
           </div>

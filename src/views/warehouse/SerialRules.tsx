@@ -117,7 +117,7 @@ function RuleRow({ rule, canEdit, saving, onRemove }: { rule: SerialRule; canEdi
       <td className="px-3 py-2 text-xs text-muted-foreground">{rule.updatedBy ? `${rule.updatedBy.name} · ${formatDateTime(rule.updatedAt)}` : '–'}</td>
       {canEdit && (
         <td className="px-3 py-2 text-right">
-          <Button size="sm" variant="ghost" disabled={saving} onClick={onRemove} aria-label={t(`Fjern reglen for ${rule.material}`, `Remove the rule for ${rule.material}`)}><Trash size={16} /></Button>
+          <Button size="sm" variant="ghost" loading={saving} onClick={onRemove} aria-label={t(`Fjern reglen for ${rule.material}`, `Remove the rule for ${rule.material}`)}><Trash size={16} /></Button>
         </td>
       )}
     </tr>

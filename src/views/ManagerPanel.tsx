@@ -112,6 +112,20 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
   const [seenVacationRequestIds, setSeenVacationRequestIds] = useKV<string[]>(`seen-vacation-requests-${userEmail}`, [])
   const [guideAdminEmails, setGuideAdminEmails] = useKV<string[]>('guide-admin-emails', [], { initializeIfMissing: false })
   const [isBulkProcessing, setIsBulkProcessing] = useState(false)
+  // Which save/delete is running, so that button shows a spinner and can't be pressed twice.
+  const [busyAction, setBusyAction] = useState<string | null>(null)
+  const runBusy = async (key: string, action: () => Promise<void>) => {
+    if (busyAction) return
+    setBusyAction(key)
+    try {
+      await action()
+    } catch (error) {
+      console.error('Manager action failed:', error)
+      toast.error(t.profile.errors.generic)
+    } finally {
+      setBusyAction(null)
+    }
+  }
   // Fase 8/9 guide-adgangsanmodning: andre teams' brugere anmoder om adgang til EGNE guides.
   // BEVIDST ikke useKV her: dens "skriv default hvis undefined"-adfærd kan i et kapløb
   // overskrive en anden brugers lige-indsendte anmodning med et tomt array (se lærdom i
@@ -951,14 +965,16 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                       </div>
                       <div className="flex items-center gap-2">
                         <Button
-                          onClick={() => handleApproveUser(user)}
+                          onClick={() => void runBusy(`approve-user:${user.email}`, () => handleApproveUser(user))}
+                          loading={busyAction === `approve-user:${user.email}`}
                           className="gap-2"
                         >
                           <Check size={18} weight="bold" />
                           {t.managerPanel.permissions.approve}
                         </Button>
                         <Button
-                          onClick={() => handleRejectUser(user)}
+                          onClick={() => void runBusy(`reject-user:${user.email}`, () => handleRejectUser(user))}
+                          loading={busyAction === `reject-user:${user.email}`}
                           variant="destructive"
                           className="gap-2"
                         >
@@ -1093,7 +1109,8 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                         </Button>
                         <Select
                           value={user.role}
-                          onValueChange={(value) => changeUserRole(user.email, value as UserRole)}
+                          disabled={busyAction === `role:${user.email}`}
+                          onValueChange={(value) => void runBusy(`role:${user.email}`, () => changeUserRole(user.email, value as UserRole))}
                         >
                           <SelectTrigger className="w-40 h-10">
                             <SelectValue />
@@ -1115,7 +1132,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                         </Select>
                         <AlertDialog>
                           <AlertDialogTrigger asChild>
-                            <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10">
+                            <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10" loading={busyAction === `delete-user:${user.email}`}>
                               <Trash size={20} />
                             </Button>
                           </AlertDialogTrigger>
@@ -1129,7 +1146,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                             <AlertDialogFooter>
                               <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
                               <AlertDialogAction
-                                onClick={() => deleteUser(user.email)}
+                                onClick={() => void runBusy(`delete-user:${user.email}`, () => deleteUser(user.email))}
                                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                               >
                                 {t.managerPanel.permissions.deleteAction}
@@ -1238,7 +1255,8 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                         <Button
                           size="sm"
                           disabled={isBulkProcessing}
-                          onClick={() => handleBulkVacationDecision('approved')}
+                          loading={busyAction === 'bulk:approved'}
+                          onClick={() => void runBusy('bulk:approved', () => handleBulkVacationDecision('approved'))}
                           className="gap-2"
                         >
                           <Check size={16} weight="bold" />
@@ -1248,7 +1266,8 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                           size="sm"
                           variant="destructive"
                           disabled={isBulkProcessing}
-                          onClick={() => handleBulkVacationDecision('rejected')}
+                          loading={busyAction === 'bulk:rejected'}
+                          onClick={() => void runBusy('bulk:rejected', () => handleBulkVacationDecision('rejected'))}
                           className="gap-2"
                         >
                           <X size={16} weight="bold" />
@@ -1514,6 +1533,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                                 variant="ghost" 
                                 size="icon" 
                                 className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                loading={busyAction === `delete-vacation:${vacation.id}`}
                               >
                                 <Trash size={20} />
                               </Button>
@@ -1528,7 +1548,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                               <AlertDialogFooter>
                                 <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
                                 <AlertDialogAction
-                                  onClick={() => deleteVacation(vacation.id)}
+                                  onClick={() => void runBusy(`delete-vacation:${vacation.id}`, () => deleteVacation(vacation.id))}
                                   className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                                 >
                                   {t.managerPanel.vacationOverview.deleteAction}
@@ -1650,6 +1670,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                                     size="icon" 
                                     onClick={(e) => e.stopPropagation()}
                                     className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                    loading={busyAction === `delete-birthday:${user.email}`}
                                   >
                                     <Trash size={20} />
                                   </Button>
@@ -1664,7 +1685,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                                   <AlertDialogFooter>
                                     <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
                                     <AlertDialogAction
-                                      onClick={() => deleteBirthday(user.email)}
+                                      onClick={() => void runBusy(`delete-birthday:${user.email}`, () => deleteBirthday(user.email))}
                                       className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                                     >
                                       {t.managerPanel.birthdays.deleteAction}
@@ -1742,12 +1763,13 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                           size="sm"
                           variant="outline"
                           className="gap-1.5 text-destructive hover:bg-destructive/10"
-                          onClick={() => handleReviewLibraryAccessRequest(kind, request, 'rejected')}
+                          loading={busyAction === `library-reject:${request.id}`}
+                          onClick={() => void runBusy(`library-reject:${request.id}`, () => handleReviewLibraryAccessRequest(kind, request, 'rejected'))}
                         >
                           <X size={16} weight="bold" />
                           {t.managerPanel.guideAccessRequests.reject}
                         </Button>
-                        <Button size="sm" className="gap-1.5" onClick={() => handleReviewLibraryAccessRequest(kind, request, 'approved')}>
+                        <Button size="sm" className="gap-1.5" loading={busyAction === `library-approve:${request.id}`} onClick={() => void runBusy(`library-approve:${request.id}`, () => handleReviewLibraryAccessRequest(kind, request, 'approved'))}>
                           <Check size={16} weight="bold" />
                           {t.managerPanel.guideAccessRequests.approve}
                         </Button>
@@ -1820,7 +1842,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
             }}>
               {t.common.cancel}
             </Button>
-            <Button onClick={handleSaveVacationEdit} className="gap-2">
+            <Button onClick={() => void runBusy('save-vacation', handleSaveVacationEdit)} loading={busyAction === 'save-vacation'} className="gap-2">
               <Check size={18} weight="bold" />
               {t.managerPanel.dialogs.editVacation.saveChanges}
             </Button>
@@ -1905,7 +1927,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
             }}>
               {t.common.cancel}
             </Button>
-            <Button onClick={handleSaveUserName}>
+            <Button onClick={() => void runBusy('save-user', handleSaveUserName)} loading={busyAction === 'save-user'}>
               {t.managerPanel.dialogs.editUser.saveChanges}
             </Button>
           </DialogFooter>
@@ -2335,7 +2357,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
             }}>
               {t.common.cancel}
             </Button>
-            <Button onClick={handleSaveBirthday} className="gap-2">
+            <Button onClick={() => void runBusy('save-birthday', handleSaveBirthday)} loading={busyAction === 'save-birthday'} className="gap-2">
               <Check size={18} weight="bold" />
               {t.managerPanel.dialogs.editBirthday.saveButton}
             </Button>
