@@ -29,3 +29,45 @@ test('an ended label is not reported twice and end is idempotent', () => {
 test('an empty tracker describes nothing in flight', () => {
   assert.equal(createActivityTracker().describe(), 'i gang: – · sidst startet: –')
 })
+
+const isKv = label => label.startsWith('ipc:kv:')
+
+test('whenIdle resolves true at once when nothing matching is in flight', async () => {
+  const tracker = createActivityTracker()
+  tracker.begin('ipc:auth:current')
+  assert.equal(await tracker.whenIdle(isKv, 1000), true)
+})
+
+test('whenIdle waits for a matching in-flight entry to end', async () => {
+  const tracker = createActivityTracker()
+  const end = tracker.begin('ipc:kv:set')
+  setTimeout(end, 50)
+  const started = Date.now()
+  assert.equal(await tracker.whenIdle(isKv, 2000), true)
+  assert.ok(Date.now() - started >= 40)
+})
+
+test('whenIdle also waits for matching entries begun while waiting', async () => {
+  const tracker = createActivityTracker()
+  const endFirst = tracker.begin('ipc:kv:set')
+  let endSecond = null
+  setTimeout(() => { endSecond = tracker.begin('ipc:kv:delete'); endFirst() }, 20)
+  setTimeout(() => endSecond(), 80)
+  let settledAt = null
+  const started = Date.now()
+  const result = await tracker.whenIdle(isKv, 2000).then(value => { settledAt = Date.now(); return value })
+  assert.equal(result, true)
+  assert.ok(settledAt - started >= 70)
+})
+
+test('whenIdle resolves false on timeout when the entry never ends', async () => {
+  const tracker = createActivityTracker()
+  tracker.begin('ipc:kv:set')
+  assert.equal(await tracker.whenIdle(isKv, 50), false)
+})
+
+test('whenIdle ignores in-flight entries that do not match', async () => {
+  const tracker = createActivityTracker()
+  tracker.begin('ipc:assistant:ask')
+  assert.equal(await tracker.whenIdle(isKv, 50), true)
+})

@@ -1605,20 +1605,28 @@ app.on('before-quit', () => { localAI?.stop(); assistantBackend?.stop(); void wo
 // i alt). Ét fælles flag: app.quit() herunder udløser before-quit igen, og den
 // gang skal lukningen bare fortsætte.
 const QUIT_FLUSH_TIMEOUT_MS = 10000
+// IPC-kanaler der kan skrive brugerdata. En skrivning der stadig er i auth-tjek
+// har endnu ikke registreret sig i whenWritesSettled, så den skal ventes ud først.
+const QUIT_WRITE_CHANNEL_PREFIXES = ['ipc:kv:', 'ipc:multiplayer:', 'ipc:improvements:', 'ipc:highFives:', 'ipc:links:', 'ipc:warehouse:', 'ipc:registry:', 'ipc:auth:', 'ipc:assistant:record']
+const isQuitWriteChannel = label => QUIT_WRITE_CHANNEL_PREFIXES.some(prefix => label.startsWith(prefix))
 let quitFlushed = false
 app.on('before-quit', event => {
   if (quitFlushed) return
   quitFlushed = true
   event.preventDefault()
+  const startedAt = Date.now()
+  const remaining = () => Math.max(0, QUIT_FLUSH_TIMEOUT_MS - (Date.now() - startedAt))
   const delay = (ms, value) => new Promise(resolve => setTimeout(() => resolve(value), ms))
   const warehouseDone = warehouse
     ? Promise.race([warehouse.closeAll().catch(() => {}), delay(4000)])
     : Promise.resolve()
+  const writesDone = mainActivity.whenIdle(isQuitWriteChannel, remaining())
+    .then(idle => whenWritesSettled(remaining()).then(settled => idle && settled !== false))
   const flushed = Promise.all([
     warehouseDone,
-    whenWritesSettled(QUIT_FLUSH_TIMEOUT_MS),
+    writesDone,
     Promise.resolve(multiplayerSettled?.()).catch(() => {}),
-  ]).then(([, writesSettled]) => writesSettled !== false)
+  ]).then(([, writesSettled]) => writesSettled)
   Promise.race([flushed, delay(QUIT_FLUSH_TIMEOUT_MS, false)])
     .then(settled => { if (!settled) diagnostics.write('warn', `lukning: gemninger ikke færdige efter ${QUIT_FLUSH_TIMEOUT_MS} ms - lukker alligevel`) })
     .catch(() => {})
