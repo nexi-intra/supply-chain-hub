@@ -63,7 +63,7 @@ function loadDeviceId(dir) {
 /**
  * @param {object} deps
  * @param {{ handle(channel: string, listener: Function): void }} deps.ipcMain Hub's secured IPC (trusted window + session)
- * @param {(event) => object} deps.currentActor authService.current(event.sender.id)
+ * @param {(event) => Promise<object>} deps.currentActor authService.currentAsync(event.sender.id)
  * @param {(teamId: string) => Promise<object>} deps.teamUsers the team's public users (no secrets)
  * @param {(teamId: string) => string} deps.teamDir the registered folder of a team in the platform root
  * @param {() => string} deps.platformRoot
@@ -186,7 +186,7 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
 
   /** A status manager (appointed in Optælling) acts as a manager everywhere; marked so only real managers grant that role. */
   async function serviceUser(event) {
-    const actor = currentActor(event)
+    const actor = await currentActor(event)
     const user = warehouseUser(actor, isAllowedTeam(actor?.activeTeam?.teamId) ? await cachedUsers(actor.activeTeam.teamId).catch(() => ({})) : {})
     if (user.role !== 'user') return user
     const role = await roles.roleOf(user).catch(() => 'user')

@@ -19,7 +19,7 @@ function setup({ clipboard = { readText: () => '', writeText: () => {} } } = {})
   const broadcasts = []
   const registered = registerWarehouse({
     ipcMain,
-    currentActor: event => actors[event.who],
+    currentActor: async event => actors[event.who],
     teamUsers: async () => users,
     teamDir: team => path.join(root, team),
     platformRoot: () => root,

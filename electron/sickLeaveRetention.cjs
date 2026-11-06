@@ -45,6 +45,22 @@ function purgeStore(store, today) {
   return removed
 }
 
+/** Same rules as purgeStore, but via getAsync/mutateAsync so the main thread never waits on M:. */
+async function purgeStoreAsync(store, today) {
+  let removed = 0
+  for (const [key, finished] of RULES) {
+    const current = await store.getAsync(key, { skipCache: true })
+    if (!Array.isArray(current) || !current.some(item => finished(item, today))) continue
+    await store.mutateAsync(key, list => {
+      if (!Array.isArray(list)) return undefined
+      const kept = list.filter(item => !finished(item, today))
+      removed += list.length - kept.length
+      return kept.length === list.length ? undefined : kept
+    })
+  }
+  return removed
+}
+
 /** A backup's data without finished sick leave or its notices. */
 function scrubBackup(data, today) {
   if (!data || typeof data !== 'object') return data
@@ -55,4 +71,4 @@ function scrubBackup(data, today) {
   return out
 }
 
-module.exports = { purgeStore, scrubBackup, isFinishedEntry, isFinishedNotice, localDay }
+module.exports = { purgeStore, purgeStoreAsync, scrubBackup, isFinishedEntry, isFinishedNotice, localDay }

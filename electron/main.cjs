@@ -68,7 +68,7 @@ const { withFileLockAsync } = require('./fileLock.cjs')
 const { exportBackup } = require('./backupPolicy.cjs')
 const updater = require('./updater.cjs')
 const registry = require('./registry.cjs')
-const { purgeStore, scrubBackup, localDay } = require('./sickLeaveRetention.cjs')
+const { purgeStoreAsync, scrubBackup, localDay } = require('./sickLeaveRetention.cjs')
 const { createLocalAI } = require('./localAI.cjs')
 const { createAssistantWorkerClient } = require('./assistantWorkerClient.cjs')
 const { resolveAssistantAnswer, fingerprint } = require('./assistantPlanner.cjs')
@@ -576,23 +576,31 @@ function startAutoBackup({ immediate = true } = {}) {
 const SICK_PURGE_CHECK_INTERVAL = 60 * 60 * 1000
 let sickPurgeTimer = null
 let sickPurgedDay = null
-function purgeFinishedSickLeave() {
+let sickPurgeRunning = false
+async function purgeFinishedSickLeave() {
   const today = localDay(new Date())
   if (!platformRoot || sickPurgedDay === today) return
-  let teams
-  try { teams = registry.listTeams(platformRoot) } catch (err) { console.warn('TCD Hub: sygdomsoprydning kunne ikke læse teams', err.message); return }
-  let failed = false
-  for (const team of teams) {
-    try {
-      const removed = purgeStore(createStore(registeredTeamDir(platformRoot, teams, team.folderName).directory), today)
-      if (removed) console.log(`TCD Hub: slettede ${removed} afsluttede sygemeldinger/beskeder i ${team.folderName}`)
-    } catch (err) {
-      failed = true
-      console.warn(`TCD Hub: sygdomsoprydning i ${team.folderName} fejlede`, err.code || err.message)
+  // Et langsomt drev må ikke give to overlappende kørsler.
+  if (sickPurgeRunning) return
+  sickPurgeRunning = true
+  try {
+    let teams
+    try { teams = registry.listTeams(platformRoot) } catch (err) { console.warn('TCD Hub: sygdomsoprydning kunne ikke læse teams', err.message); return }
+    let failed = false
+    for (const team of teams) {
+      try {
+        const removed = await purgeStoreAsync(storeFor(registeredTeamDir(platformRoot, teams, team.folderName).directory), today)
+        if (removed) console.log(`TCD Hub: slettede ${removed} afsluttede sygemeldinger/beskeder i ${team.folderName}`)
+      } catch (err) {
+        failed = true
+        console.warn(`TCD Hub: sygdomsoprydning i ${team.folderName} fejlede`, err.code || err.message)
+      }
     }
+    // Et team der var låst eller utilgængeligt prøves igen ved næste time-tjek.
+    if (!failed) sickPurgedDay = today
+  } finally {
+    sickPurgeRunning = false
   }
-  // Et team der var låst eller utilgængeligt prøves igen ved næste time-tjek.
-  if (!failed) sickPurgedDay = today
 }
 
 function startSickLeavePurge() {
@@ -600,7 +608,8 @@ function startSickLeavePurge() {
   // Dev points at the production drive: the irreversible purge only runs in a released build (or when asked for explicitly).
   if (!app.isPackaged && process.env.TCD_HUB_SICK_PURGE !== '1') return
   // Lidt efter opstart, så login og første visning ikke venter på drevet.
-  const purge = tracked('timer:sick-purge', purgeFinishedSickLeave)
+  const trackedPurge = tracked('timer:sick-purge', purgeFinishedSickLeave)
+  const purge = () => { trackedPurge().catch(() => {}) }
   setTimeout(purge, 20_000).unref?.()
   sickPurgeTimer = setInterval(purge, SICK_PURGE_CHECK_INTERVAL)
   sickPurgeTimer.unref?.()
@@ -938,7 +947,7 @@ app.whenReady().then(() => {
   const warehouseUserStores = new Map()
   warehouse = registerWarehouse({
     ipcMain,
-    currentActor: event => authService.current(event.sender.id),
+    currentActor: event => authService.currentAsync(event.sender.id),
     teamUsers: async team => {
       const directory = warehouseTeamDir(team)
       if (!warehouseUserStores.has(directory)) warehouseUserStores.set(directory, createStore(directory))
@@ -956,7 +965,7 @@ app.whenReady().then(() => {
   ipcMain.handle('highFives:snapshot', async event => highFives.snapshot((await sharedActor(event))))
   ipcMain.handle('highFives:command', async (event, input) => highFives.command((await sharedActor(event)), input))
   ipcMain.handle('multiplayer:warm-words', async (event, language) => {
-    authService.current(event.sender.id)
+    await authService.currentAsync(event.sender.id)
     await wordChecker.warm(language)
   })
   const desktopNotifications = createDesktopNotificationHandlers(createDesktopNotifier({
@@ -964,11 +973,11 @@ app.whenReady().then(() => {
     getWindow: () => BrowserWindow.getAllWindows()[0] ?? null,
     userDataDir: app.getPath('userData'),
   }))
-  ipcMain.handle('notifications:desktop', (event, request) => desktopNotifications.notify(authService.current(event.sender.id), request))
-  ipcMain.handle('notifications:desktop-enabled', (event, value) => { authService.current(event.sender.id); return desktopNotifications.enabled(value) })
+  ipcMain.handle('notifications:desktop', async (event, request) => desktopNotifications.notify(await authService.currentAsync(event.sender.id), request))
+  ipcMain.handle('notifications:desktop-enabled', async (event, value) => { await authService.currentAsync(event.sender.id); return desktopNotifications.enabled(value) })
   ipcMain.handle('accounts:status', async event => accountService.statusAsync(await authService.currentAsync(event.sender.id)))
-  for (const action of ['resume', 'rollback']) ipcMain.handle(`accounts:${action}`, (event, id) => {
-    const result = accountService[action](authService.current(event.sender.id), id)
+  for (const action of ['resume', 'rollback']) ipcMain.handle(`accounts:${action}`, async (event, id) => {
+    const result = accountService[action](await authService.currentAsync(event.sender.id), id)
     accountDataChanged()
     return result
   })
@@ -990,24 +999,24 @@ app.whenReady().then(() => {
       deleteAsync: async key => { const result = await network.deleteAsync(key); await syncMirror(key); return result },
     }
   }
-  const personalStore = event => {
-    const home = authService.current(event.sender.id).home
+  const personalStore = async event => {
+    const home = (await authService.currentAsync(event.sender.id)).home
     if (home.folderName === currentTeamFolder) return store
     const directory = registeredTeamDir(platformRoot, registry.listTeams(platformRoot), home.folderName).directory
     if (!homeStores.has(directory)) homeStores.set(directory, awayFromHome(createStore(directory), createStore(localCacheDir(home.folderName))))
     return homeStores.get(directory)
   }
-  const kvTarget = (key, event) => ['app-language-guest', 'user-theme-guest'].includes(key) ? guestStore : SHARED_KV_KEYS.has(key) ? sharedStore : PERSONAL_KEY.test(key) && event ? personalStore(event) : store
+  const kvTarget = async (key, event) => ['app-language-guest', 'user-theme-guest'].includes(key) ? guestStore : SHARED_KV_KEYS.has(key) ? sharedStore : PERSONAL_KEY.test(key) && event ? personalStore(event) : store
 
   // 'users' laeses fra usersStore()s cache (invalideret af watcheren) — foer laa
   // der skipCache paa, dvs. en fuld SMB-rundtur ved HVER laesning af brugerlisten.
   const readKv = (key, event) => key === 'users' ? usersStore().getAsync(key).then(publicUsers)
-    : isPrivateKey(key) ? kvTarget(key).getAsync(key).then(value => readView(key, value, authService.current(event.sender.id)))
-    : kvTarget(key, event).getAsync(key)
+    : isPrivateKey(key) ? kvTarget(key).then(target => target.getAsync(key)).then(async value => readView(key, value, await authService.currentAsync(event.sender.id)))
+    : kvTarget(key, event).then(target => target.getAsync(key))
   // A private list is written through the signed-in person's view; a race with another client is retried on fresh data.
   async function writePrivate(key, operation, actor) {
     for (let attempt = 0; ; attempt++) {
-      const target = kvTarget(key)
+      const target = await kvTarget(key)
       const stored = await target.getAsync(key, { skipCache: true })
       const planned = planWrite(key, operation, stored, actor)
       if (!planned.op) return readView(key, stored, actor)
@@ -1022,13 +1031,13 @@ app.whenReady().then(() => {
   ipcMain.handle('kv:get', (event, key) => readKv(key, event))
   ipcMain.handle('kv:get-many', (event, keys) => Promise.all(keys.map(key => readKv(key, event))))
   ipcMain.handle('kv:set', async (event, key, value) => {
-    if (!isPrivateKey(key)) return kvTarget(key, event).setAsync(key, value)
+    if (!isPrivateKey(key)) return (await kvTarget(key, event)).setAsync(key, value)
     await writePrivate(key, { op: 'set', value }, await authService.currentAsync(event.sender.id))
     broadcast('kv:changed', [key])
   })
-  ipcMain.handle('kv:delete', (event, key) => {
+  ipcMain.handle('kv:delete', async (event, key) => {
     if (isPrivateKey(key)) throw Object.assign(new Error('AUTH_FORBIDDEN'), { code: 'AUTH_FORBIDDEN' })
-    return kvTarget(key, event).deleteAsync(key)
+    return (await kvTarget(key, event)).deleteAsync(key)
   })
   ipcMain.handle('kv:keys', async () => (await store.keysAsync()).filter(key => !key.startsWith('__') && !key.startsWith('account-') && key !== 'active-sessions' && key !== 'improvement-cases' && key !== 'multiplayer-index' && key !== 'high-fives' && key !== 'link-library'))
   ipcMain.handle('backup:export', () => exportBackup(createStore(store.dataDir)))
@@ -1038,7 +1047,7 @@ app.whenReady().then(() => {
     const emailRename = key === 'users' && operation?.op === 'renameField' && operation.field !== operation.newField
     if (emailRename && path.resolve(store.dataDir) !== path.resolve(registeredTeamDir(platformRoot, registry.listTeams(platformRoot), currentTeamFolder).directory)) throw new Error('ACCOUNT_STORAGE_SCOPE_MISMATCH')
     const deletedName = key === 'users' && operation?.op === 'deleteField' ? usersStore().get('users', { skipCache: true })?.[operation.field]?.fullName : undefined
-    const result = emailRename ? accountService.rename(authService.current(_event.sender.id), currentTeamFolder, operation) : key === 'users' ? updateUsers(usersStore(), operation, authService.current(_event.sender.id), registry.getCreatorEmail(platformRoot)) : isPrivateKey(key) ? await writePrivate(key, operation, authService.current(_event.sender.id)) : await kvTarget(key, _event).updateAsync(key, operation)
+    const result = emailRename ? accountService.rename(await authService.currentAsync(_event.sender.id), currentTeamFolder, operation) : key === 'users' ? updateUsers(usersStore(), operation, await authService.currentAsync(_event.sender.id), registry.getCreatorEmail(platformRoot)) : isPrivateKey(key) ? await writePrivate(key, operation, await authService.currentAsync(_event.sender.id)) : await (await kvTarget(key, _event)).updateAsync(key, operation)
     if (emailRename) accountDataChanged()
     // A deleted account takes its personal data with it (GDPR art. 17); updateUsers has already checked the role.
     if (key === 'users' && operation?.op === 'deleteField') {
@@ -1138,7 +1147,7 @@ app.whenReady().then(() => {
     ipcMain.handle('assistant:image', (_event, request) => assistantBackend.session().getImage(request.token, request.teamId, request.guideId, request.imageId, request.library || 'guides'))
     ipcMain.handle('assistant:record', (_event, request) => assistantBackend.session().getRecord(request))
     // Every answer leaves through publicAnswer: no colleague e-mail in the sources the renderer gets.
-    ipcMain.handle('assistant:ask', async (event, request) => publicAnswer(await askAssistant(request, event), authService.current(event.sender.id).email))
+    ipcMain.handle('assistant:ask', async (event, request) => publicAnswer(await askAssistant(request, event), (await authService.currentAsync(event.sender.id)).email))
     const askAssistant = async (request, event) => {
       const assistant = assistantBackend.session()
       const principal = await assistant.authorize(request?.token)
@@ -1325,13 +1334,13 @@ app.whenReady().then(() => {
   ipcMain.handle('registry:read-team-key', async (event, folderName, key) => teamReader.readTeam(await authService.currentAsync(event.sender.id), folderName, key))
   ipcMain.handle('registry:read-team-keys', async (event, folderName, keys) => teamReader.readTeamMany(await authService.currentAsync(event.sender.id), folderName, keys))
   ipcMain.handle('registry:read-teams-keys', async (event, requests) => teamReader.readTeamsMany(await authService.currentAsync(event.sender.id), requests))
-  ipcMain.handle('registry:read-shared-guide-file', (event, kind, guideId, key) => teamReader.readSharedFile(authService.current(event.sender.id), kind, guideId, key))
+  ipcMain.handle('registry:read-shared-guide-file', async (event, kind, guideId, key) => teamReader.readSharedFile(await authService.currentAsync(event.sender.id), kind, guideId, key))
   // Tværgående SKRIVNING, men snævert afgrænset til ét formål: en bruger i team A
   // anmoder om adgang til en guide ejet af team B. Gemmes i team B's EGEN
   // 'guide-access-requests', så B's manager ser den som en helt normal del af deres
   // eget team — ingen generel "skriv hvad som helst til et andet team"-mekanisme.
-  ipcMain.handle('registry:submit-guide-access-request', (event, folderName, request) => teamReader.submitRequest(authService.current(event.sender.id), folderName, request))
-  ipcMain.handle('registry:submit-knowledge-access-request', (event, folderName, request) => teamReader.submitRequest(authService.current(event.sender.id), folderName, request, 'knowledge'))
+  ipcMain.handle('registry:submit-guide-access-request', async (event, folderName, request) => teamReader.submitRequest(await authService.currentAsync(event.sender.id), folderName, request))
+  ipcMain.handle('registry:submit-knowledge-access-request', async (event, folderName, request) => teamReader.submitRequest(await authService.currentAsync(event.sender.id), folderName, request, 'knowledge'))
 
   ipcMain.handle('guides:choose-export-dir', async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
@@ -1344,12 +1353,12 @@ app.whenReady().then(() => {
     return result.filePaths[0]
   })
 
-  ipcMain.handle('guides:open-in-word', (event, payload) => {
-    authService.current(event.sender.id)
+  ipcMain.handle('guides:open-in-word', async (event, payload) => {
+    await authService.currentAsync(event.sender.id)
     return openWordGuide({ dialog, shell, fs, window: BrowserWindow.fromWebContents(event.sender) }, payload)
   })
-  ipcMain.handle('guides:render-pdf', (event, payload) => {
-    authService.current(event.sender.id)
+  ipcMain.handle('guides:render-pdf', async (event, payload) => {
+    await authService.currentAsync(event.sender.id)
     return renderWordGuide(payload)
   })
 
@@ -1482,7 +1491,7 @@ app.whenReady().then(() => {
       zipPath: String(payload.zipPath),
       version,
       notes: String(payload.notes || ''),
-      publishedBy: authService.current(_event.sender.id).email,
+      publishedBy: (await authService.currentAsync(_event.sender.id)).email,
       skipDelta: !!payload.skipDelta,
       setAsLatest,
       onProgress: (progress) => broadcast('updates:publish-progress', progress),

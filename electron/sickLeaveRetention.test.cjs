@@ -4,7 +4,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { createStore } = require('./store.cjs')
-const { purgeStore, scrubBackup, isFinishedEntry, isFinishedNotice } = require('./sickLeaveRetention.cjs')
+const { purgeStore, purgeStoreAsync, scrubBackup, isFinishedEntry, isFinishedNotice } = require('./sickLeaveRetention.cjs')
 
 const TODAY = '2026-10-13'
 // The sick dialog stores local midnight as an ISO timestamp, i.e. the evening before in UTC.
@@ -49,6 +49,44 @@ test('purgeStore deletes finished sick leave and notices in a real store, and le
   assert.deepEqual(store.get('email-notifications', { skipCache: true }).map(entry => entry.id), ['n-today', 'mail'])
   assert.equal(store.get('vacation-entries', { skipCache: true }).length, 1)
   assert.equal(purgeStore(store, TODAY), 0, 'a second run finds nothing')
+})
+
+test('purgeStoreAsync removes finished sick leave and notices without synchronous store calls', async () => {
+  const data = {
+    'sick-leave-entries': [
+      { id: 'old', startDate: '2026-09-01' },
+      { id: 'today', startDate: localMidnight(TODAY) },
+      { id: 'long', startDate: '2026-10-10', endDate: '2026-10-16' },
+    ],
+    'email-notifications': [
+      { id: 'n-old', type: 'sick-leave', timestamp: '2026-09-01T08:00:00.000Z' },
+      { id: 'mail', type: 'email', timestamp: Date.parse('2026-01-01') },
+    ],
+    'vacation-entries': [{ id: 'v', startDate: '2026-01-01' }],
+  }
+  const syncData = JSON.parse(JSON.stringify(data))
+  const expected = purgeStore({
+    get: key => syncData[key],
+    mutate: (key, callback) => { const next = callback(syncData[key]); if (next !== undefined) syncData[key] = next },
+  }, TODAY)
+  const store = {
+    get: () => { throw new Error('synchronous get') },
+    mutate: () => { throw new Error('synchronous mutate') },
+    getAsync: async key => data[key],
+    mutateAsync: async (key, callback) => { const next = callback(data[key]); if (next !== undefined) data[key] = next; return next },
+  }
+  assert.equal(await purgeStoreAsync(store, TODAY), expected)
+  assert.equal(expected, 2)
+  assert.deepEqual(data['sick-leave-entries'].map(entry => entry.id), ['today', 'long'])
+  assert.deepEqual(data['email-notifications'].map(entry => entry.id), ['mail'])
+  assert.equal(await purgeStoreAsync(store, TODAY), 0, 'a second run finds nothing')
+})
+
+test('purgeStoreAsync never takes a lock when there is nothing to delete', async () => {
+  let mutated = false
+  const store = { getAsync: async () => [{ id: 'x', startDate: TODAY }], mutateAsync: async () => { mutated = true } }
+  assert.equal(await purgeStoreAsync(store, TODAY), 0)
+  assert.equal(mutated, false)
 })
 
 test('purgeStore never takes a lock when there is nothing to delete', () => {
