@@ -99,7 +99,7 @@ Tick-forlÃ¸b: `fs.promises.stat(dataDir)` â†’ fejl = uopnÃ¥elig (samme 
 
 - [x] **Step 1:** TilfÃ¸j modul-variabel `let windowVisible = true` og funktion `applyWatchVisibility()` der kalder `setWatchVisibility(windowVisible)` pÃ¥ `store` og `sharedStore` (hvis de findes). Kald den i slutningen af `startWatcher()` og `startSharedWatcher()`, sÃ¥ et team-skift arver tilstanden.
 - [x] **Step 2:** I `createWindow()`: `win.on('minimize')` og `win.on('hide')` â†’ `windowVisible = false; applyWatchVisibility()`; `win.on('restore')` og `win.on('show')` â†’ `windowVisible = true; applyWatchVisibility()`. (Et vindue der blot mister fokus forbliver "synligt".)
-- [x] **Step 3: Manuel verifikation:** `$env:TCD_HUB_DEBUG='1'; npm run electron:dev`; minimÃ©r vinduet 30 s og gendan; en Ã¦ndring lavet fra en anden klient mens vinduet var minimeret vises straks ved gendannelse.
+- [ ] **Step 3: Manuel verifikation:** `$env:TCD_HUB_DEBUG='1'; npm run electron:dev`; minimÃ©r vinduet 30 s og gendan; en Ã¦ndring lavet fra en anden klient mens vinduet var minimeret vises straks ved gendannelse.
 - [x] **Step 4:** `npm test` â†’ PASS. Commit: `perf(main): watcher tikker langsomt naar vinduet er skjult`.
 
 ## Fase 2 â€“ Ingen frys
