@@ -200,6 +200,67 @@ test('mutateAsync reads, changes and writes under one lock, skips on undefined a
   assert.ok(!fs.existsSync(path.join(directory, 'counter.json.lock')))
 })
 
+const fileMtime = (directory, key) => fs.statSync(path.join(directory, `${key}.json`)).mtimeMs
+const assertNoLeftovers = (directory) => {
+  const left = fs.readdirSync(directory)
+  assert.ok(!left.some(name => name.endsWith('.tmp')), `tmp left: ${left}`)
+  assert.ok(!left.some(name => name.endsWith('.lock')), `lock left: ${left}`)
+}
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+test('updateAsync with an unchanged field value does not rewrite the file', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  await store.setAsync('client-versions', { a: { v: 1 } })
+  const before = fileMtime(directory, 'client-versions')
+  await pause(25)
+  assert.deepEqual(await store.updateAsync('client-versions', { op: 'setField', field: 'a', value: { v: 1 } }), { a: { v: 1 } })
+  assert.deepEqual((await store.updateDetailedAsync('client-versions', { op: 'setField', field: 'a', value: { v: 1 } })).value, { a: { v: 1 } })
+  assert.deepEqual(store.update('client-versions', { op: 'setField', field: 'a', value: { v: 1 } }), { a: { v: 1 } })
+  assert.equal(fileMtime(directory, 'client-versions'), before)
+  assert.deepEqual(await store.getAsync('client-versions'), { a: { v: 1 } })
+  assertNoLeftovers(directory)
+})
+
+test('mutateAsync returning an equal value does not rewrite the file', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  const value = { n: 3, list: [1, 2] }
+  await store.setAsync('counter', value)
+  const before = fileMtime(directory, 'counter')
+  await pause(25)
+  assert.deepEqual(await store.mutateAsync('counter', current => structuredClone(current)), value)
+  assert.deepEqual(store.mutate('counter', current => structuredClone(current)), value)
+  assert.equal(fileMtime(directory, 'counter'), before)
+  assertNoLeftovers(directory)
+})
+
+test('upsert of an identical item does not rewrite the file', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  const sameItem = { id: '1', name: 'Vagt' }
+  await store.setAsync('shifts', [sameItem, { id: '2', name: 'Anden' }])
+  const before = fileMtime(directory, 'shifts')
+  await pause(25)
+  assert.deepEqual(await store.updateAsync('shifts', { op: 'upsert', items: [sameItem] }), [sameItem, { id: '2', name: 'Anden' }])
+  assert.deepEqual(store.update('shifts', { op: 'upsert', items: [sameItem] }), [sameItem, { id: '2', name: 'Anden' }])
+  assert.equal(fileMtime(directory, 'shifts'), before)
+  assertNoLeftovers(directory)
+})
+
+test('a real change is still written', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  await store.setAsync('client-versions', { a: { v: 1 } })
+  const before = fileMtime(directory, 'client-versions')
+  await pause(25)
+  assert.deepEqual(await store.updateAsync('client-versions', { op: 'setField', field: 'a', value: { v: 2 } }), { a: { v: 2 } })
+  assert.notEqual(fileMtime(directory, 'client-versions'), before)
+  assert.deepEqual(await store.getAsync('client-versions', { skipCache: true }), { a: { v: 2 } })
+  const mid = fileMtime(directory, 'client-versions')
+  await pause(25)
+  assert.deepEqual(await store.mutateAsync('client-versions', current => { current.a.v = 3; return current }), { a: { v: 3 } })
+  assert.notEqual(fileMtime(directory, 'client-versions'), mid)
+  assert.deepEqual(await store.getAsync('client-versions', { skipCache: true }), { a: { v: 3 } })
+  assertNoLeftovers(directory)
+})
+
 test('sweepStaleTempFilesAsync removes only temp files that are old by both name and mtime', async (t) => {
   const { directory, store } = temporaryStore(t)
   store.set('index', { ok: true })

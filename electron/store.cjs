@@ -435,8 +435,9 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
   function updateDetailed(key, operation) {
     validateOperation(operation)
     return withFileLock(lockPath(key), () => {
-      const outcome = computeUpdate(key, operation, get(key, { skipCache: true }))
-      if (outcome.write) setUnlocked(key, outcome.value)
+      const current = get(key, { skipCache: true })
+      const outcome = computeUpdate(key, operation, current)
+      if (outcome.write && !sameValue(outcome.value, current)) setUnlocked(key, outcome.value)
       return { result: outcome.result, value: outcome.write ? outcome.value : get(key, { skipCache: true }) }
     }, SYNC_WRITE_LOCK)
   }
@@ -450,10 +451,18 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
   async function updateDetailedAsync(key, operation) {
     validateOperation(operation)
     return serializeWrite(key, () => withFileLockAsync(lockPath(key), async () => {
-      const outcome = computeUpdate(key, operation, await getAsync(key, { skipCache: true }))
-      if (outcome.write) await setUnlockedAsync(key, outcome.value)
+      const current = await getAsync(key, { skipCache: true })
+      const outcome = computeUpdate(key, operation, current)
+      if (outcome.write && !sameValue(outcome.value, current)) await setUnlockedAsync(key, outcome.value)
       return { result: outcome.result, value: outcome.write ? outcome.value : await getAsync(key, { skipCache: true }) }
     }, ASYNC_WRITE_LOCK))
+  }
+
+  // En uaendret vaerdi (sammenlignet med det der blev laest under laasen)
+  // skrives ikke: hver skrivning paa M: koster laas + tmp + rename og faar alle
+  // ~40 klienters watchere til at rescanne mappen. Manglende fil skrives altid.
+  function sameValue(next, current) {
+    return current !== undefined && JSON.stringify(next) === JSON.stringify(current)
   }
 
   function validateOperation(operation) {
@@ -568,9 +577,10 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
   // undefined skips the write; backups may be made inside the callback.
   function mutate(key, callback) {
     return withFileLock(filePath(key) + '.lock', () => {
-      const next = callback(structuredClone(get(key, { skipCache: true })))
+      const current = get(key, { skipCache: true })
+      const next = callback(structuredClone(current))
       if (next && typeof next.then === 'function') throw new Error('Mutation callback must be synchronous')
-      if (next !== undefined) setUnlocked(key, next)
+      if (next !== undefined && !sameValue(next, current)) setUnlocked(key, next)
       return next
     }, SYNC_WRITE_LOCK)
   }
@@ -580,9 +590,10 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
   // og der kan ikke opstaa KV_CONFLICT-retries, fordi ingen anden kan skrive imens.
   async function mutateAsync(key, callback) {
     return serializeWrite(key, () => withFileLockAsync(lockPath(key), async () => {
-      const next = callback(structuredClone(await getAsync(key, { skipCache: true })))
+      const current = await getAsync(key, { skipCache: true })
+      const next = callback(structuredClone(current))
       if (next && typeof next.then === 'function') throw new Error('Mutation callback must be synchronous')
-      if (next !== undefined) await setUnlockedAsync(key, next)
+      if (next !== undefined && !sameValue(next, current)) await setUnlockedAsync(key, next)
       return next
     }, ASYNC_WRITE_LOCK))
   }
