@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { Chess } from 'chess.js'
-import type { MultiplayerChessMove } from './multiplayer'
+import type { MultiplayerChessLegalMove, MultiplayerChessMove } from './multiplayer'
 import {
   START_FEN, advantage, applyMove, cellToSquare, figurineSan, glideDuration, isDarkSquare, moveFocus, needsPromotion, parseFen,
-  piecesFromFen, reconcile, samePlacement, scoreSheet, squareToCell, targetsFrom, trayOrder,
+  pendingStillValid, piecesFromFen, reconcile, samePlacement, scoreSheet, squareToCell, targetsFrom, trayOrder,
 } from './chessView'
 
 /** Plays SAN moves with chess.js and returns them the way the service records them. */
@@ -64,6 +64,17 @@ describe('legal targets', () => {
     expect([...targetsFrom(legal, 'b7')]).toEqual([['a8', { capture: true, promotion: true }]])
     expect(needsPromotion(legal, 'b7', 'a8')).toBe(true)
     expect(needsPromotion(legal, 'e5', 'e6')).toBe(false)
+  })
+
+  it('pendingStillValid keeps a staged move only while the position is unchanged and the move is still legal', () => {
+    const legal = [{ from: 'e2', to: 'e4', flags: 'b', san: 'e4' }, { from: 'e7', to: 'e8', flags: 'np', promotion: 'q', san: 'e8=Q' }] as MultiplayerChessLegalMove[]
+    const fen = START_FEN
+    expect(pendingStillValid(null, fen, legal)).toBe(false)
+    expect(pendingStillValid({ from: 'e2', to: 'e4', fen }, fen, legal)).toBe(true)
+    expect(pendingStillValid({ from: 'e2', to: 'e4', fen }, 'other-fen', legal)).toBe(false)
+    expect(pendingStillValid({ from: 'e2', to: 'e4', fen }, fen, [])).toBe(false)
+    expect(pendingStillValid({ from: 'e2', to: 'e5', fen }, fen, legal)).toBe(false)
+    expect(pendingStillValid({ from: 'e7', to: 'e8', promotion: 'q', fen }, fen, legal)).toBe(true)
   })
 })
 

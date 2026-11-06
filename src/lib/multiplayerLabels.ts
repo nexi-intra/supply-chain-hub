@@ -218,6 +218,9 @@ export interface ChessLabels {
   waitHint: string
   sending: string
   sendingHint: (name: string) => string
+  undo: string
+  confirm: string
+  pendingHint: string
   moved: (name: string, move: string) => string
   lastMove: string
   challenge: { description: string; color: string; colorHint: string }
@@ -260,6 +263,9 @@ const CHESS_LABELS: Record<Language, ChessLabels> = {
     waitHint: 'Vent på dit træk. Du kan imens skrive i chatten eller kalde på Hubert.',
     sending: 'Sender dit træk…',
     sendingHint: name => `Dit træk er afleveret - ${name} er den næste. Gemmer på det fælles drev…`,
+    undo: 'Fortryd',
+    confirm: 'Bekræft',
+    pendingHint: 'Trækket er ikke sendt endnu – tryk Bekræft eller Fortryd',
     moved: (name, move) => `${name} spillede ${move}`,
     lastMove: 'Sidste træk',
     challenge: {
@@ -287,9 +293,9 @@ const CHESS_LABELS: Record<Language, ChessLabels> = {
       title: 'Tastatur',
       items: [
         { keys: 'Piletaster', text: 'Flyt markøren på brættet' },
-        { keys: 'Enter / Mellemrum', text: 'Løft brikken, og sæt den på det valgte felt' },
+        { keys: 'Enter / Mellemrum', text: 'Løft brikken, og sæt den på det valgte felt – Enter bekræfter derefter trækket' },
         { keys: 'Mus', text: 'Klik eller træk en brik til et markeret felt' },
-        { keys: 'Esc', text: 'Sæt brikken ned igen, og gå derefter tilbage til lobbyen' },
+        { keys: 'Esc', text: 'Fortryd et ventende træk, eller sæt brikken ned igen, og gå derefter tilbage til lobbyen' },
       ],
     },
   },
@@ -312,6 +318,9 @@ const CHESS_LABELS: Record<Language, ChessLabels> = {
     waitHint: 'Wait for your move. Meanwhile you can chat or call Hubert.',
     sending: 'Sending your move…',
     sendingHint: name => `Your move is handed in - ${name} is next. Saving to the shared drive…`,
+    undo: 'Undo',
+    confirm: 'Confirm',
+    pendingHint: 'Your move is not sent yet – press Confirm or Undo',
     moved: (name, move) => `${name} played ${move}`,
     lastMove: 'Last move',
     challenge: {
@@ -339,9 +348,9 @@ const CHESS_LABELS: Record<Language, ChessLabels> = {
       title: 'Keyboard',
       items: [
         { keys: 'Arrow keys', text: 'Move the cursor on the board' },
-        { keys: 'Enter / Space', text: 'Lift the piece, then put it on the chosen square' },
+        { keys: 'Enter / Space', text: 'Lift the piece, then put it on the chosen square – Enter then confirms the move' },
         { keys: 'Mouse', text: 'Click or drag a piece to a highlighted square' },
-        { keys: 'Esc', text: 'Put the piece down, then go back to the lobby' },
+        { keys: 'Esc', text: 'Undo a waiting move, or put the piece down, then go back to the lobby' },
       ],
     },
   },
@@ -364,6 +373,9 @@ const CHESS_LABELS: Record<Language, ChessLabels> = {
     waitHint: 'Vänta på ditt drag. Under tiden kan du chatta eller kalla på Hubert.',
     sending: 'Skickar ditt drag…',
     sendingHint: name => `Ditt drag är inlämnat - ${name} är näst på tur. Sparar på den delade enheten…`,
+    undo: 'Ångra',
+    confirm: 'Bekräfta',
+    pendingHint: 'Draget är inte skickat än – tryck Bekräfta eller Ångra',
     moved: (name, move) => `${name} spelade ${move}`,
     lastMove: 'Senaste draget',
     challenge: {
@@ -391,9 +403,9 @@ const CHESS_LABELS: Record<Language, ChessLabels> = {
       title: 'Tangentbord',
       items: [
         { keys: 'Piltangenter', text: 'Flytta markören på brädet' },
-        { keys: 'Enter / Blanksteg', text: 'Lyft pjäsen och ställ den på den valda rutan' },
+        { keys: 'Enter / Blanksteg', text: 'Lyft pjäsen och ställ den på den valda rutan – Enter bekräftar sedan draget' },
         { keys: 'Mus', text: 'Klicka eller dra en pjäs till en markerad ruta' },
-        { keys: 'Esc', text: 'Ställ ned pjäsen och gå sedan tillbaka till lobbyn' },
+        { keys: 'Esc', text: 'Ångra ett väntande drag, eller ställ ned pjäsen och gå sedan tillbaka till lobbyn' },
       ],
     },
   },
@@ -416,6 +428,9 @@ const CHESS_LABELS: Record<Language, ChessLabels> = {
     waitHint: 'Odota siirtovuoroasi. Sillä välin voit keskustella tai kutsua Hubertin.',
     sending: 'Lähetetään siirtoasi…',
     sendingHint: name => `Siirtosi on annettu - ${name} on seuraavana. Tallennetaan jaetulle asemalle…`,
+    undo: 'Peru',
+    confirm: 'Vahvista',
+    pendingHint: 'Siirtoa ei ole vielä lähetetty – paina Vahvista tai Peru',
     moved: (name, move) => `${name} pelasi ${move}`,
     lastMove: 'Viimeisin siirto',
     challenge: {
@@ -443,9 +458,9 @@ const CHESS_LABELS: Record<Language, ChessLabels> = {
       title: 'Näppäimistö',
       items: [
         { keys: 'Nuolinäppäimet', text: 'Siirrä kohdistinta laudalla' },
-        { keys: 'Enter / Välilyönti', text: 'Nosta nappula ja aseta se valittuun ruutuun' },
+        { keys: 'Enter / Välilyönti', text: 'Nosta nappula ja aseta se valittuun ruutuun – Enter vahvistaa sitten siirron' },
         { keys: 'Hiiri', text: 'Napsauta tai vedä nappula merkittyyn ruutuun' },
-        { keys: 'Esc', text: 'Laske nappula ja palaa sitten aulaan' },
+        { keys: 'Esc', text: 'Peru odottava siirto tai laske nappula ja palaa sitten aulaan' },
       ],
     },
   },

@@ -1,7 +1,7 @@
 import { useGameChangeWatch } from '@/hooks/useGameChangeWatch'
 import { acknowledgeMultiplayerNotifications } from '@/lib/multiplayerAcknowledge'
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ArrowLeft, Flag, Handshake, SpeakerHigh, SpeakerSlash, Trophy } from '@phosphor-icons/react'
+import { ArrowCounterClockwise, ArrowLeft, Check, Flag, Handshake, SpeakerHigh, SpeakerSlash, Trophy } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { useLanguage } from '@/contexts/LanguageContext'
 import {
@@ -15,7 +15,7 @@ import type { HubertFood, MultiplayerAnyGame, MultiplayerChessGame, MultiplayerC
 import { sameJson } from '@/lib/multiplayerSnapshotStore'
 import { useStableCallback } from '@/hooks/useStable'
 import { getMultiplayerLabels } from '@/lib/multiplayerLabels'
-import { advantage, parseFen, type Side } from '@/lib/chessView'
+import { advantage, parseFen, pendingStillValid, type PendingMove, type Side } from '@/lib/chessView'
 import { canMove, multiplayerErrorInfo, newOperationId, opponentOf, outcomeFor } from '@/lib/multiplayerView'
 import { isAnyDialogOpen } from '@/lib/modalStack'
 import { reactionScope } from '@/lib/multiplayerReactions'
@@ -63,6 +63,10 @@ export const ChessGame = memo(function ChessGame({ gameId, myEmail, teamName, un
   const generation = useRef(0)
   const [syncKey, setSyncKey] = useState(0)
   const [selected, setSelected] = useState<string | null>(null)
+  // A move made on our own board that waits for "Confirm"; nothing is sent until then.
+  const [pending, setPending] = useState<PendingMove | null>(null)
+  const pendingRef = useRef<PendingMove | null>(null)
+  pendingRef.current = pending
   const [confirm, setConfirm] = useState<'resign' | 'draw' | null>(null)
   const [soundOn, setSoundOn] = useState(() => loadChessSound(safeStorage()))
   const [announcement, setAnnouncement] = useState('')
@@ -169,20 +173,6 @@ export const ChessGame = memo(function ChessGame({ gameId, myEmail, teamName, un
     // unreadKey stands in for the id list.
   }, [api, loaded, unreadKey])
 
-  // Escape: the promotion card and Hubert's menu close themselves; then a lifted piece; then back to the lobby.
-  useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented) return
-      if (isAnyDialogOpen() || document.body.classList.contains('cx-dragging')) return
-      if (event.target instanceof Element && event.target.closest('[data-own-escape]')) return
-      event.preventDefault()
-      if (selected) setSelected(null)
-      else onBack()
-    }
-    window.addEventListener('keydown', handler, true)
-    return () => window.removeEventListener('keydown', handler, true)
-  }, [selected, onBack])
-
   // A new move: announce it, chime on check, sound the end of the game.
   const moveCount = game?.chess.moves.length ?? 0
   const seenMoves = useRef<number | null>(null)
@@ -256,7 +246,60 @@ export const ChessGame = memo(function ChessGame({ gameId, myEmail, teamName, un
     }
   }
 
-  const onMove = useStableCallback((from: string, to: string, promotion?: MultiplayerChessPromotion) => { void sendMove(from, to, promotion) })
+  // The move stays on our own board until "Confirm"; the board already shows it and plays the landing sound.
+  const onMove = useStableCallback((from: string, to: string, promotion?: MultiplayerChessPromotion) => {
+    const current = gameRef.current
+    if (!current) return
+    setPending({ from, to, ...(promotion ? { promotion } : {}), fen: current.chess.fen })
+  })
+  const undoPending = useStableCallback(() => {
+    if (!pendingRef.current) return
+    pendingRef.current = null
+    setPending(null)
+    setSyncKey(key => key + 1)
+  })
+  const confirmPending = useStableCallback(() => {
+    const move = pendingRef.current
+    if (!move || busy) return
+    // Cleared before sending so a double click or a repeated Enter cannot send the move twice.
+    pendingRef.current = null
+    setPending(null)
+    void sendMove(move.from, move.to, move.promotion)
+  })
+
+  // A new position (opponent, resignation, game over) or a move that is no longer legal drops the waiting move.
+  // Chat, emoji and Hubert change the revision but not the position, so they keep it.
+  const currentFen = game?.chess.fen ?? ''
+  const currentLegal = game?.chess.legalMoves ?? NO_MOVES
+  useEffect(() => {
+    if (pending && !pendingStillValid(pending, currentFen, currentLegal)) undoPending()
+  }, [pending, currentFen, currentLegal, undoPending])
+
+  // Enter confirms a waiting move. Escape: the promotion card and Hubert's menu close themselves; then a waiting
+  // move is undone; then a lifted piece is put down; then back to the lobby.
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return
+      if (event.key === 'Enter') {
+        if (!pending || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || isAnyDialogOpen()) return
+        // Text fields (chat) and buttons keep their own Enter.
+        if (event.target instanceof Element && event.target.closest('input, textarea, select, button, a[href], [contenteditable]:not([contenteditable="false"])')) return
+        event.preventDefault()
+        if (!event.repeat) confirmPending()
+        return
+      }
+      if (event.key !== 'Escape') return
+      if (isAnyDialogOpen() || document.body.classList.contains('cx-dragging')) return
+      if (event.target instanceof Element && event.target.closest('[data-own-escape]')) return
+      event.preventDefault()
+      if (pending) undoPending()
+      else if (selected) setSelected(null)
+      else onBack()
+    }
+    window.addEventListener('keydown', handler, true)
+    return () => window.removeEventListener('keydown', handler, true)
+  }, [pending, selected, onBack, confirmPending, undoPending])
+
   const opponentName = game ? opponentOf(game, myEmail).name : ''
   const capturedPieces = game?.chess.captured
   const myColorNow = game?.chess.myColor
@@ -361,7 +404,8 @@ export const ChessGame = memo(function ChessGame({ gameId, myEmail, teamName, un
   )
 
   let hint: string
-  if (sendingMove) hint = c.sendingHint(opponent.name)
+  if (pending) hint = c.pendingHint
+  else if (sendingMove) hint = c.sendingHint(opponent.name)
   else if (!moveAllowed) hint = c.waitHint
   else if (selectedPiece) hint = c.targetHint(pieceName(selectedPiece.color, selectedPiece.type))
   else hint = chess.inCheck ? `${c.inCheck} ${c.selectHint}` : c.selectHint
@@ -371,8 +415,8 @@ export const ChessGame = memo(function ChessGame({ gameId, myEmail, teamName, un
       fen={chess.fen}
       moves={chess.moves}
       bottom={myColor}
-      legalMoves={moveAllowed && !busy ? chess.legalMoves : NO_MOVES}
-      interactive={moveAllowed && !busy}
+      legalMoves={moveAllowed && !busy && !pending ? chess.legalMoves : NO_MOVES}
+      interactive={moveAllowed && !busy && !pending}
       lastMove={chess.lastMove}
       checkSquare={chess.checkSquare}
       fallenKing={fallenKing}
@@ -436,9 +480,19 @@ export const ChessGame = memo(function ChessGame({ gameId, myEmail, teamName, un
 
       {playing && (
         <>
-          <p className="bgr-hint" data-tone={moveAllowed && chess.inCheck && !sendingMove ? 'check' : undefined}>{hint}</p>
+          <p className="bgr-hint" data-tone={moveAllowed && chess.inCheck && !sendingMove && !pending ? 'check' : undefined}>{hint}</p>
           <div className="wp-actions cx-actions">
             <RoomCalls />
+            {pending && (
+              <>
+                <button type="button" className="bgr-chip" onClick={undoPending}>
+                  <ArrowCounterClockwise size={16} aria-hidden="true" />{c.undo}
+                </button>
+                <button type="button" className="bgr-chip" data-tone="primary" disabled={busy} onClick={confirmPending}>
+                  <Check size={16} weight="bold" aria-hidden="true" />{c.confirm}
+                </button>
+              </>
+            )}
             <button type="button" className="bgr-chip" aria-pressed={soundOn} onClick={toggleSound} title={soundOn ? c.sound.off : c.sound.on}>
               {soundOn ? <SpeakerHigh size={16} aria-hidden="true" /> : <SpeakerSlash size={16} aria-hidden="true" />}
               {soundOn ? c.sound.on : c.sound.off}

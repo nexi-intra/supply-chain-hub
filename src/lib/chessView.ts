@@ -82,6 +82,15 @@ export function needsPromotion(legal: readonly MultiplayerChessLegalMove[], from
   return legal.some(move => move.from === from && move.to === to && Boolean(move.promotion))
 }
 
+/** A move the player has made on their own board but not yet confirmed (sent). */
+export interface PendingMove { from: string; to: string; promotion?: MultiplayerChessPromotion; fen: string }
+
+/** The staged move still applies: the position (FEN) is unchanged and it is still a legal move in the current list. */
+export function pendingStillValid(pending: PendingMove | null, fen: string, legal: readonly MultiplayerChessLegalMove[]): boolean {
+  if (!pending || pending.fen !== fen) return false
+  return findLegal(legal, pending.from, pending.to, pending.promotion) !== null
+}
+
 // ---------------------------------------------------------------- moves and animation
 
 export interface MoveLike { from: string; to: string; flags: string; promotion?: MultiplayerChessPromotion }
