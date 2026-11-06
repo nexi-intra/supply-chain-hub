@@ -94,6 +94,8 @@ const DEFAULT_WATCH_OPTIONS = {
   hiddenSafetyScanMs: 120000,
   // Loft: hoejst en aendrings-udloest fuld scanning pr. gap.
   minScanGapMs: 2000,
+  // 'sync' (opstart: isConnected() retvisende med det samme) eller 'async' (senere watchere).
+  initialScan: 'sync',
 }
 
 /** Afgoer hvad et watcher-tick skal goere: 'full' scanning, 'skip' eller 'defer' (vent paa gap). */
@@ -765,16 +767,23 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
    */
   function watch(onChange, onConnectionChange, options) {
     const config = resolveWatchOptions(options)
+    const asyncInitialScan = config.initialScan === 'async'
     // Mappens mtime maales FOER scanningen, saa en aendring under scanningen
     // giver en ny mtime ved naeste tick.
     let lastDirMtimeMs = null
-    try { lastDirMtimeMs = fs.statSync(dataDir).mtimeMs } catch { /* uopnaaelig: foerste tick scanner fuldt */ }
-    // Første scan er synkron (sker ved opstart, før vinduet vises) så
-    // isConnected() er retvisende med det samme.
-    const initial = scanDirectory(null)
-    let snapshot = initial.snapshot
-    connected = initial.reachable
-    watching = true
+    let snapshot = null
+    // Asynkron foerste scan (watchere startet efter opstart, fx team-skift):
+    // ingen synkron I/O mod M:; forbindelsen forbliver optimistisk indtil den er faerdig.
+    let ready = !asyncInitialScan
+    if (!asyncInitialScan) {
+      try { lastDirMtimeMs = fs.statSync(dataDir).mtimeMs } catch { /* uopnaaelig: foerste tick scanner fuldt */ }
+      // Første scan er synkron (sker ved opstart, før vinduet vises) så
+      // isConnected() er retvisende med det samme.
+      const initial = scanDirectory(null)
+      snapshot = initial.snapshot
+      connected = initial.reachable
+      watching = true
+    }
     let scanning = false
     let stopped = false
     let timer = null
@@ -799,7 +808,7 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
 
     async function tick() {
       timer = null
-      if (stopped || scanning) return // en igangvaerende scanning planlaegger selv naeste tick
+      if (stopped || scanning || !ready) return // en igangvaerende scanning planlaegger selv naeste tick
       scanning = true
       try {
         let dirMtimeMs
@@ -844,7 +853,21 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
       },
     }
     activeWatchers.add(watcher)
-    schedule(watchVisible ? config.intervalMs : config.hiddenIntervalMs)
+    if (ready) {
+      schedule(watchVisible ? config.intervalMs : config.hiddenIntervalMs)
+    } else {
+      (async () => {
+        try { lastDirMtimeMs = (await fs.promises.stat(dataDir)).mtimeMs } catch { /* uopnaaelig: foerste tick scanner fuldt */ }
+        const initial = await scanDirectoryAsync(null)
+        if (stopped) return
+        snapshot = initial.snapshot
+        lastFullScanAtMs = performance.now()
+        watching = true
+        ready = true
+        if (!initial.reachable) setReachable(false)
+        schedule(watchVisible ? config.intervalMs : config.hiddenIntervalMs)
+      })().catch(() => { if (!stopped) { ready = true; schedule(config.intervalMs) } })
+    }
 
     return () => {
       watching = false

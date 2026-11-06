@@ -62,6 +62,7 @@ const { isPrivateKey, readView, planWrite } = require('./privateViews.cjs')
 const { eraseUserData } = require('./userErasure.cjs')
 const { eraseSharedUserData } = require('./sharedErasure.cjs')
 const { createTeamReader, registeredTeamDir } = require('./teamReadPolicy.cjs')
+const { isSameTeamTarget } = require('./teamSwitch.cjs')
 const { PLATFORM_SHARED_KV_KEYS } = require('./libraryKeys.cjs')
 const { createTrustedWindow } = require('./trustedWindow.cjs')
 const { withFileLockAsync } = require('./fileLock.cjs')
@@ -327,7 +328,7 @@ function setWindowVisible(visible) {
   applyWatchVisibility()
 }
 
-function startWatcher() {
+function startWatcher({ initialScan = 'sync' } = {}) {
   if (stopWatcher) stopWatcher()
   const debouncedBroadcast = createDebouncedBroadcast(100)
   stopWatcher = store.watch(tracked('watcher:team', (changedKeys) => {
@@ -335,7 +336,7 @@ function startWatcher() {
     // Roles/passwords changed on another PC: the cached auth snapshot (15 s) must not outlive them.
     if (changedKeys.includes('users')) authService?.invalidateAll()
     debouncedBroadcast(changedKeys)
-  }), setStorageConnected)
+  }), setStorageConnected, { initialScan })
   applyWatchVisibility()
 }
 
@@ -667,6 +668,7 @@ function switchDataDir(newDir) {
  * egen manuelle override af HELE lagerstien.
  */
 function switchToTeamDir(folderName, newDir) {
+  if (isSameTeamTarget({ folder: currentTeamFolder, dataDir: store?.dataDir }, folderName, newDir)) return { dataDir: store.dataDir }
   fs.mkdirSync(newDir, { recursive: true })
   fs.accessSync(newDir, fs.constants.W_OK)
 
@@ -685,7 +687,7 @@ function switchToTeamDir(folderName, newDir) {
   // noeglelisten er alle SMB-kald, saa de koerer foerst efter skiftet er meldt
   // tilbage - ellers fryser Ctrl+K-skiftet mens de venter paa drevet.
   setImmediate(() => {
-    startWatcher()
+    startWatcher({ initialScan: 'async' })
     startAutoBackup({ immediate: false })
     // keysAsync frem for keys(): den synkrone udgave laaser main-traaden mens
     // hele teammappen listes over netvaerket.

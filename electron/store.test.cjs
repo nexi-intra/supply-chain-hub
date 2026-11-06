@@ -656,6 +656,28 @@ test('a write from another store instance is reported on the next tick', async (
   assert.ok(changed.includes('k'))
 })
 
+test('watch with initialScan async does no synchronous directory or file I/O and still reports a later change', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  const other = createStore(directory)
+  for (let index = 0; index < 5; index++) store.set(`setting-${index}`, index)
+  let syncCalls = 0, syncScans = 0
+  const readdirSync = fs.readdirSync, statSync = fs.statSync
+  const isScan = target => path.resolve(String(target)) === path.resolve(directory)
+  t.mock.method(fs, 'readdirSync', (target, ...rest) => { syncCalls++; if (isScan(target)) syncScans++; return readdirSync(target, ...rest) })
+  t.mock.method(fs, 'statSync', (target, ...rest) => { syncCalls++; if (isScan(target)) syncScans++; return statSync(target, ...rest) })
+  const changed = []
+  const stop = store.watch(keys => changed.push(...keys), () => {}, { intervalMs: 20, minScanGapMs: 0, initialScan: 'async' })
+  t.after(() => stop())
+  assert.equal(syncCalls, 0, 'watch() returns before any synchronous scan')
+  assert.equal(store.isConnected(), true, 'connection stays optimistic while the first scan runs')
+  await sleep(150)
+  assert.deepEqual(changed, [], 'the initial scan reports nothing')
+  other.set('setting-1', 'changed')
+  for (let waited = 0; waited < 1000 && !changed.includes('setting-1'); waited += 10) await sleep(10)
+  assert.ok(changed.includes('setting-1'))
+  assert.equal(syncScans, 0, 'the watcher never scans the directory synchronously')
+})
+
 test('the safety scan finds a change that left the directory mtime untouched', async (t) => {
   const { directory, store } = temporaryStore(t)
   const other = createStore(directory)
