@@ -18,9 +18,13 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
   // after every IPC call. Only the READ gate is cached; every write/migration
   // path (rename/recover/runWrite) still takes the real account lock, so data
   // stays fully serialized and atomic. A migration started by another client
-  // is therefore detected within CONTEXT_TTL_MS instead of instantly.
+  // is therefore detected within CONTEXT_TTL_MS by the sync gate, and by the
+  // async gate within at most CONTEXT_MAX_STALE_MS (normally one background read).
   const CONTEXT_TTL_MS = contextTtlMs
-  let contextCache = null
+  // Async-gaten (contextAsync/runWriteAsync) maa svare med en aeldre terminal
+  // kontekst i hoejst 60 s, mens den opfriskes i baggrunden (se assertNoMigrationAsync).
+  const CONTEXT_MAX_STALE_MS = Math.max(CONTEXT_TTL_MS, 60000)
+  let contextCache = null, contextRefresh = null
   // Retired identities for the reference check: loaded asynchronously once per write burst
   // (prepareReferenceChecksAsync) instead of 1-4 synchronous reads on the main thread per write.
   const RETIRED_SNAPSHOT_MS = 2000
@@ -118,10 +122,29 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
   // i en skrivning bliver stadig opdaget.
   async function assertNoMigrationAsync() {
     // Samme cache som context(): den saettes kun naar tilstanden var terminal.
-    if (contextCache && now() - contextCache.at < CONTEXT_TTL_MS) return
+    const cached = contextCache, age = cached ? now() - cached.at : Infinity
+    if (age < CONTEXT_TTL_MS) return cached.value
+    // Stale-while-revalidate med haard graense: en terminal kontekst der hoejst
+    // er CONTEXT_MAX_STALE_MS gammel svares straks, mens EN laesning i
+    // baggrunden opfrisker den. Ser den en migrering, ryddes cachen, saa det
+    // naeste kald afvises (ACCOUNT_MIGRATION_PENDING) - inden for én M:-laesning.
+    if (age < CONTEXT_MAX_STALE_MS) { refreshContextInBackground(); return cached.value }
     const record = await readControlAsync()
     if (!terminal(record)) fail('ACCOUNT_MIGRATION_PENDING')
     contextCache = { at: now(), value: record ? `${record.id}:${record.state}` : null }
+    return contextCache.value
+  }
+  function refreshContextInBackground() {
+    if (contextRefresh) return
+    const startedFrom = contextCache
+    contextRefresh = readControlAsync().then(record => {
+      if (!terminal(record)) { contextCache = null; return }
+      // Kun den cache vi startede fra fornyes: en invalidering eller nyere laesning imens vinder.
+      if (contextCache === startedFrom) contextCache = { at: now(), value: record ? `${record.id}:${record.state}` : null }
+    }, () => {
+      // Laesefejl: den gamle vaerdi beholdes, men dens alder forlaenges ikke,
+      // saa efter CONTEXT_MAX_STALE_MS venter kaldet igen paa en rigtig laesning.
+    }).finally(() => { contextRefresh = null })
   }
   async function runWriteAsync(callback) {
     await assertNoMigrationAsync()
@@ -158,8 +181,7 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
     return value
   }
   async function contextAsync() {
-    await assertNoMigrationAsync()
-    return contextCache.value
+    return assertNoMigrationAsync()
   }
   async function prepareReferenceChecksAsync() {
     if (!retiredLoad || now() - retiredLoad.at >= RETIRED_SNAPSHOT_MS) {

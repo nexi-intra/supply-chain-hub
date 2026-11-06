@@ -302,3 +302,67 @@ test('prepareReferenceChecksAsync loads retired identities once, so a write chec
   assert.throws(() => service.assertReferences('app-language-gone@example.test', 'da'), code('ACCOUNT_RETIRED_REFERENCE'))
   assert.equal(await service.contextAsync(), null)
 })
+
+function gatedControl(t, clock) {
+  // Laesning af migrations-kontrollen der kan holdes tilbage, saa testen kan se om kalderen venter paa M:.
+  let reads = 0, open = 0, gate = null
+  const f = fixture(t, { now: () => clock.now, contextTtlMs: 5000, openStore: directory => {
+    const store = createStore(directory)
+    return { ...store, async getAsync(key, options) {
+      if (!key.startsWith('account-migration')) return store.getAsync(key, options)
+      reads++; open++
+      try { if (gate) await gate.promise; return await store.getAsync(key, options) } finally { open-- }
+    } }
+  } })
+  const drain = async () => { for (let i = 0; i < 200 && open; i++) await new Promise(resolve => setTimeout(resolve, 10)); await settle() }
+  return { f, drain, reads: () => reads, hold() { let release; gate = { promise: new Promise(resolve => { release = resolve }) }; return () => { gate = null; release() } } }
+}
+const settle = () => new Promise(resolve => setImmediate(resolve))
+test('contextAsync serves a stale terminal context at once and refreshes it in the background', async t => {
+  const clock = { now: 1000000 }, io = gatedControl(t, clock)
+  assert.equal(await io.f.service.contextAsync(), null)
+  const first = io.reads()
+  clock.now += 6000
+  const release = io.hold()
+  let answered = false
+  const call = io.f.service.contextAsync().then(value => { answered = true; return value })
+  await settle()
+  const answeredAtOnce = answered
+  if (!answered) { release(); await call }
+  assert.equal(answeredAtOnce, true, 'the caller does not wait for the shared drive')
+  assert.equal(await call, null)
+  assert.ok(io.reads() > first, 'a background refresh was started')
+  const during = io.reads()
+  await io.f.service.contextAsync()
+  assert.equal(io.reads(), during, 'one refresh at a time')
+  release(); await io.drain()
+  clock.now += 4000
+  const afterRefresh = io.reads()
+  await io.f.service.contextAsync()
+  assert.equal(io.reads(), afterRefresh, 'the refresh renewed the cache time')
+})
+test('a migration started elsewhere blocks the call after the background refresh', async t => {
+  const clock = { now: 1000000 }, io = gatedControl(t, clock)
+  assert.equal(await io.f.service.contextAsync(), null)
+  createStore(path.join(io.f.root, '_registry')).set('account-migration-control', { id: 'm1', root: path.resolve(io.f.root), teamId: 'A', oldEmail: io.f.oldEmail, newEmail: io.f.newEmail, state: 'running', applied: 0, total: 1 })
+  clock.now += 6000
+  const release = io.hold()
+  const call = io.f.service.contextAsync()
+  await settle(); release()
+  assert.equal(await call, null, 'served from the bounded stale cache')
+  await io.drain()
+  await assert.rejects(io.f.service.contextAsync(), code('ACCOUNT_MIGRATION_PENDING'))
+})
+test('after 60 s without calls the context is read before answering', async t => {
+  const clock = { now: 1000000 }, io = gatedControl(t, clock)
+  assert.equal(await io.f.service.contextAsync(), null)
+  createStore(path.join(io.f.root, '_registry')).set('account-migration-control', { id: 'm1', root: path.resolve(io.f.root), teamId: 'A', oldEmail: io.f.oldEmail, newEmail: io.f.newEmail, state: 'running', applied: 0, total: 1 })
+  clock.now += 60000
+  const release = io.hold()
+  let settled = false
+  const call = io.f.service.contextAsync().then(() => { settled = true }, error => { settled = true; throw error })
+  await settle()
+  assert.equal(settled, false, 'the caller waits for the shared drive')
+  release()
+  await assert.rejects(call, code('ACCOUNT_MIGRATION_PENDING'))
+})

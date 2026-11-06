@@ -244,3 +244,65 @@ test('auth and the migration gate are awaited asynchronously and retired identit
   assert.equal(await handlers.get('kv:set')(event, 'guides', []), 'saved')
   assert.deepEqual(calls, ['auth', 'contextAsync', 'prepare', 'gate', 'references', 'contextAsync', 'auth'])
 })
+
+// Integration med de rigtige auth-/konto-services: et forældet snapshot serveres
+// foer handleren, men efterkontrollen ser resultatet af genlaesningen i baggrunden.
+function liveFixture() {
+  const path = require('node:path')
+  const { createAuthService } = require('./authService.cjs')
+  const { createAccountService } = require('./accountService.cjs')
+  const memory = () => {
+    const values = new Map()
+    const get = key => structuredClone(values.get(key))
+    const mutate = (key, callback) => { const next = callback(structuredClone(values.get(key))); if (next !== undefined) values.set(key, structuredClone(next)); return structuredClone(next) }
+    return { get, mutate, set: (key, value) => values.set(key, structuredClone(value)), async getAsync(key) { return get(key) }, async mutateAsync(key, callback) { return mutate(key, callback) }, async updateAsync(key, operation) { return mutate(key, current => { const next = { ...(current || {}) }; if (operation.op === 'deleteField') delete next[operation.field]; else next[operation.field] = operation.value; return next }) } }
+  }
+  const root = path.resolve('synthetic-secured-ipc-root'), team = { teamId: 'a', folderName: 'A' }
+  const users = memory(), sessions = memory(), meta = memory()
+  users.set('users', { 'user@example.test': { email: 'user@example.test', password: 'secret123', status: 'approved', role: 'user' } })
+  let clock = 1000000
+  const auth = createAuthService({
+    registry: { listTeams: () => [team], lookupTeamForEmail: () => team, getCreatorEmail: () => 'creator@example.test' },
+    getRoot: () => root, openTeam: () => users, openSessions: () => sessions, switchTeam: () => {}, deviceSecret: Buffer.alloc(32, 7), now: () => clock, contextTtlMs: 15000,
+  })
+  const accounts = createAccountService({ getRoot: () => root, registry: {}, openStore: () => meta, now: () => clock, contextTtlMs: 5000 })
+  const handlers = new Map(), event = { sender: { id: 1 } }
+  const ipc = createSecuredIpc({ handle: (key, handler) => handlers.set(key, handler) }, { auth: () => auth, accounts: () => accounts, trusted: () => true, currentFolder: () => null, listTeams: () => [team] })
+  let release
+  ipc.handle('kv:set', () => new Promise(done => { release = done }))
+  const drain = async () => { for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve)) }
+  return { auth, accounts, users, sessions, meta, root, drain, advance: value => { clock += value },
+    async start() { release = null; const pending = handlers.get('kv:set')(event, 'guides', []); await listenerStarted(() => release); return { pending, finish: value => release(value) } } }
+}
+test('the after-check denies AUTH_CONTEXT_CHANGED when a soft revalidation during the handler changes the role', async () => {
+  const f = liveFixture()
+  await f.auth.login(1, { email: 'user@example.test', password: 'secret123' })
+  f.advance(20000)
+  const call = await f.start()
+  f.users.mutate('users', users => ({ ...users, 'user@example.test': { ...users['user@example.test'], role: 'manager' } }))
+  f.auth.revalidateAll(); await f.drain()
+  call.finish('must not leak')
+  await assert.rejects(call.pending, code('AUTH_CONTEXT_CHANGED'))
+})
+test('the after-check rejects when a soft revalidation during the handler finds the session revoked', async () => {
+  const f = liveFixture()
+  await f.auth.login(1, { email: 'user@example.test', password: 'secret123' })
+  f.advance(20000)
+  const call = await f.start()
+  f.sessions.set('active-sessions', {})
+  f.auth.revalidateAll(); await f.drain()
+  call.finish('must not leak')
+  await assert.rejects(call.pending, code('AUTH_REQUIRED'))
+})
+test('the after-check denies AUTH_CONTEXT_CHANGED when the background migration-context refresh sees a new terminal state', async () => {
+  const f = liveFixture()
+  await f.auth.login(1, { email: 'user@example.test', password: 'secret123' })
+  f.meta.set('account-migration-control', { id: 'm1', root: f.root, state: 'rolled-back', applied: 0, total: 1 })
+  assert.equal(await f.accounts.contextAsync(), 'm1:rolled-back')
+  f.advance(6000)
+  f.meta.set('account-migration-control', { id: 'm2', root: f.root, state: 'committed', applied: 1, total: 1 })
+  const call = await f.start()
+  await f.drain()
+  call.finish('must not leak')
+  await assert.rejects(call.pending, code('AUTH_CONTEXT_CHANGED'))
+})

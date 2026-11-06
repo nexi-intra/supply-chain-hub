@@ -51,8 +51,14 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
   // (main.cjs uses 15 s and clears the cache as soon as its watcher sees
   // active-sessions/users change); migration context (accountService) is gated separately.
   const contextCache = new Map(), CONTEXT_TTL_MS = contextTtlMs
-  // Bumped by every invalidation, so a resolve that started before a logout/role change is never cached afterwards.
+  // currentAsync maa svare med et aeldre snapshot i hoejst 60 s, mens det
+  // genlaeses i baggrunden; afvises genlaesningen (fx tilbagekaldt session)
+  // fjernes snapshottet, saa naeste kald afvises - inden for én M:-laesning.
+  const MAX_STALE_MS = Math.max(CONTEXT_TTL_MS, 60000)
+  // Bumped by every HARD invalidation, so a resolve that started before a logout/role change is never cached afterwards.
   let generation = 0
+  // Bumped by every SOFT revalidation (revalidateAll): older snapshots are served once more but are re-read at once.
+  let softEpoch = 0, resolveSeq = 0
   const pendingResolves = new Map()
   const invalidate = sender => { generation++; contextCache.delete(sender) }
   const sign = record => crypto.createHmac('sha256', deviceSecret).update(JSON.stringify([getRoot(), record.authVersion, record.email, record.userId, record.teamId, record.createdAt, record.expiresAt, record.credentialHash])).digest('hex')
@@ -78,35 +84,73 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
     if (user.status === 'pending') fail('AUTH_PENDING')
     if (user.status && user.status !== 'approved') fail('AUTH_REJECTED')
   }
-  function cachedActor(sender) {
+  // Snapshot for samme rod/mappe; fresh = yngre end TTL og ikke markeret af en senere revalidateAll.
+  function snapshot(sender) {
     const cached = contextCache.get(sender)
-    return cached && cached.root === getRoot() && cached.folder === getActiveFolder() && now() - cached.at < CONTEXT_TTL_MS ? structuredClone(cached.actor) : null
+    if (!cached || cached.root !== getRoot() || cached.folder !== getActiveFolder()) return null
+    const age = now() - cached.at
+    return { cached, fresh: age < CONTEXT_TTL_MS && cached.soft === softEpoch, usable: age < MAX_STALE_MS }
   }
-  function remember(sender, actor, startedAt) {
-    if (startedAt === generation) contextCache.set(sender, { at: now(), root: getRoot(), folder: getActiveFolder(), actor: structuredClone(actor) })
+  function cachedActor(sender) {
+    const found = snapshot(sender)
+    return found?.fresh ? structuredClone(found.cached.actor) : null
+  }
+  // A resolve may only replace a snapshot that is older than itself (seq), so a
+  // slow resolve that finishes late never overwrites data read after it started.
+  function remember(sender, actor, startedAt, seq, soft) {
+    if (startedAt !== generation) return
+    const existing = contextCache.get(sender)
+    if (existing && existing.seq > seq) return
+    contextCache.set(sender, { at: now(), root: getRoot(), folder: getActiveFolder(), actor: structuredClone(actor), seq, soft })
   }
   function current(sender) {
     const cached = cachedActor(sender)
     if (cached) return cached
-    const startedAt = generation
+    const startedAt = generation, seq = ++resolveSeq, soft = softEpoch
     const actor = resolveCurrent(sender)
-    remember(sender, actor, startedAt)
+    remember(sender, actor, startedAt, seq, soft)
     return structuredClone(actor)
+  }
+  // Single-flight resolve per window. A pending resolve is reused only if it
+  // started after the latest hard invalidation AND the latest soft revalidation.
+  function ensureResolve(sender) {
+    const pending = pendingResolves.get(sender)
+    if (pending && pending.generation === generation && pending.soft === softEpoch && pending.root === getRoot() && pending.folder === getActiveFolder()) return pending
+    const startedAt = generation, soft = softEpoch, seq = ++resolveSeq
+    const promise = resolveCurrentAsync(sender).then(actor => { remember(sender, actor, startedAt, seq, soft); return actor }, error => {
+      // Afvist (AUTH_REQUIRED, rolle/konto aendret, laesefejl): et snapshot der
+      // er aeldre end denne resolve maa ikke serveres igen.
+      const existing = contextCache.get(sender)
+      if (existing && existing.seq < seq) contextCache.delete(sender)
+      throw error
+    })
+    const entry = { promise, generation: startedAt, soft, root: getRoot(), folder: getActiveFolder() }
+    pendingResolves.set(sender, entry)
+    promise.then(() => {}, () => {}).finally(() => { if (pendingResolves.get(sender) === entry) pendingResolves.delete(sender) })
+    return entry
   }
   /** current() without blocking the main thread on the shared drive; concurrent calls for one window share one resolve. */
   async function currentAsync(sender) {
-    const cached = cachedActor(sender)
-    if (cached) return cached
-    let pending = pendingResolves.get(sender)
-    if (!pending || pending.generation !== generation || pending.root !== getRoot() || pending.folder !== getActiveFolder()) {
-      const startedAt = generation
-      const promise = resolveCurrentAsync(sender).then(actor => { remember(sender, actor, startedAt); return actor })
-      pending = { promise, generation: startedAt, root: getRoot(), folder: getActiveFolder() }
-      pendingResolves.set(sender, pending)
-      const entry = pending
-      promise.then(() => {}, () => {}).finally(() => { if (pendingResolves.get(sender) === entry) pendingResolves.delete(sender) })
+    const found = snapshot(sender)
+    if (found?.fresh) return structuredClone(found.cached.actor)
+    // Stale-while-revalidate: hoejst MAX_STALE_MS gammelt og ikke haardt
+    // invalideret (det sletter snapshottet) -> svar straks, genlaes i baggrunden.
+    if (found?.usable) { ensureResolve(sender); return structuredClone(found.cached.actor) }
+    return structuredClone(await ensureResolve(sender).promise)
+  }
+  // Uden stale-servering: til auth-operationer selv (renew), som skal se samme friske snapshot som foer.
+  async function currentFreshAsync(sender) {
+    return cachedActor(sender) || structuredClone(await ensureResolve(sender).promise)
+  }
+  // Blød invalidering (en anden klient aendrede active-sessions/users): alle
+  // snapshots markeres forældede og genlaeses straks i baggrunden, saa en
+  // tilbagekaldt session eller ny rolle slaar igennem efter én M:-laesning.
+  function revalidateAll() {
+    softEpoch++
+    for (const sender of new Set([...bindings.keys(), ...contextCache.keys()])) {
+      if (!bindings.has(sender)) { contextCache.delete(sender); continue }
+      ensureResolve(sender).promise.catch(() => {})
     }
-    return structuredClone(await pending.promise)
   }
   function boundSession(sender, sessions) {
     const bound = bindings.get(sender)
@@ -137,9 +181,9 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
   // Under kontolaasen: samme resolve som currentAsync, men laesningerne springer
   // laese-koeen over (laasen holdes imens) og deles ikke med en koe-ventende resolve.
   async function currentUnderLockAsync(sender) {
-    const startedAt = generation
+    const startedAt = generation, seq = ++resolveSeq, soft = softEpoch
     const actor = await resolveCurrentAsync(sender, UNDER_LOCK_READ)
-    remember(sender, actor, startedAt)
+    remember(sender, actor, startedAt, seq, soft)
     return structuredClone(actor)
   }
   function actorFrom(bound, session, { home, user }) {
@@ -232,7 +276,7 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
       // the account lock; each queued write acquires that lock independently.
       check()
       switchTeam(actor.home)
-      return currentAsync(sender)
+      return currentFreshAsync(sender)
     }, true)
   }
   async function signup(sender, request) {
@@ -286,11 +330,11 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
       bindings.set(sender, attempt)
       invalidate(sender)
       try {
-        const actor = await currentAsync(sender)
+        const actor = await currentFreshAsync(sender)
         await runAuthenticationAsync(actor.email, () => actor)
         check()
         switchTeam(actor.home)
-        return await currentAsync(sender)
+        return await currentFreshAsync(sender)
       } catch (error) {
         // Gendan kun hvis bindingen stadig er vores: en logout/forget under et
         // await har allerede fjernet den og maa ikke fortrydes.
@@ -301,7 +345,7 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
     })
   }
   async function renew(sender) {
-    const actor = await currentAsync(sender)
+    const actor = await currentFreshAsync(sender)
     return runAuthenticationAsync(actor.email, async () => {
     if (bindings.get(sender)?.token !== actor.token) fail('AUTH_REQUIRED')
     const key = sessionKey(actor.token)
@@ -348,6 +392,6 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
     })
   }
   function forget(sender) { epochs.set(sender, (epochs.get(sender) || 0) + 1); bindings.delete(sender); attempts.delete(sender); invalidate(sender) }
-  return { login, signup, resume, current, currentAsync, requireRole, renew, logout, profile, forget, invalidateAll: () => { generation++; contextCache.clear() } }
+  return { login, signup, resume, current, currentAsync, requireRole, renew, logout, profile, forget, revalidateAll, invalidateAll: () => { generation++; contextCache.clear() } }
 }
 module.exports = { createAuthService, hashPassword, verifyPassword, sessionKey, loadDeviceSecret }
