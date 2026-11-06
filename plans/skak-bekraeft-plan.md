@@ -22,7 +22,7 @@
 
 ## Review Focus
 
-1. Modstanderen opgiver/tilbyder remis, mens et træk venter → det ventende træk forsvinder, brættet viser tjenestens stilling – test i Task 1 (`pendingStillValid` med ny revision).
+1. Modstanderen opgiver, eller spillet slutter, mens et træk venter → det ventende træk forsvinder, brættet viser tjenestens stilling; chat/emoji/remis-tilbud fra modstanderen nulstiller **ikke** – test i Task 1 (`pendingStillValid` med ny FEN / ingen lovlige træk).
 2. Bondeforvandling: det valgte forvandlingsstykke sendes ved "Bekræft" – test i Task 1 (hjælper bevarer `promotion`) og Task 2 (E2E hvis stillingen tillader; ellers kun Task 1).
 3. Dobbeltklik på "Bekræft" sender ikke to gange – Task 1: knappen er `disabled` mens `busy`; E2E i Task 2 tjekker `serverMoves()` stiger med præcis 1.
 4. Escape med ventende træk fortryder (går ikke til lobbyen) – test i Task 2 (E2E).
@@ -43,31 +43,34 @@
 - Produces:
   ```ts
   // chessView.ts
-  export interface PendingMove { from: string; to: string; promotion?: MultiplayerChessPromotion; revision: number }
-  /** The staged move still applies: same game revision and still a legal move in the current list. */
-  export function pendingStillValid(pending: PendingMove | null, revision: number, legal: readonly MultiplayerChessLegalMove[]): boolean
+  export interface PendingMove { from: string; to: string; promotion?: MultiplayerChessPromotion; fen: string }
+  /** The staged move still applies: the position (FEN) is unchanged and it is still a legal move in the current list. */
+  export function pendingStillValid(pending: PendingMove | null, fen: string, legal: readonly MultiplayerChessLegalMove[]): boolean
   ```
+  (Ændret 06.11: FEN i stedet for revision – chat, emoji og Hubert ændrer spillets revision, men ikke stillingen, og må ikke nulstille trækket. Et afsluttet spil har ingen lovlige træk og nulstiller derfor.)
 
 - [ ] **Step 1: Fejlende tests** i `chessView.test.ts`:
 
 ```ts
-it('pendingStillValid keeps a staged move only while the game is unchanged and the move is still legal', () => {
+it('pendingStillValid keeps a staged move only while the position is unchanged and the move is still legal', () => {
   const legal = [{ from: 'e2', to: 'e4', flags: 'b', san: 'e4' }, { from: 'e7', to: 'e8', flags: 'np', promotion: 'q', san: 'e8=Q' }] as MultiplayerChessLegalMove[]
-  expect(pendingStillValid(null, 3, legal)).toBe(false)
-  expect(pendingStillValid({ from: 'e2', to: 'e4', revision: 3 }, 3, legal)).toBe(true)
-  expect(pendingStillValid({ from: 'e2', to: 'e4', revision: 3 }, 4, legal)).toBe(false)   // opponent resigned / offered a draw
-  expect(pendingStillValid({ from: 'e2', to: 'e5', revision: 3 }, 3, legal)).toBe(false)
-  expect(pendingStillValid({ from: 'e7', to: 'e8', promotion: 'q', revision: 3 }, 3, legal)).toBe(true)
+  const fen = START_FEN
+  expect(pendingStillValid(null, fen, legal)).toBe(false)
+  expect(pendingStillValid({ from: 'e2', to: 'e4', fen }, fen, legal)).toBe(true)
+  expect(pendingStillValid({ from: 'e2', to: 'e4', fen }, 'other-fen', legal)).toBe(false)   // the position changed
+  expect(pendingStillValid({ from: 'e2', to: 'e4', fen }, fen, [])).toBe(false)              // game over / resigned: no legal moves
+  expect(pendingStillValid({ from: 'e2', to: 'e5', fen }, fen, legal)).toBe(false)
+  expect(pendingStillValid({ from: 'e7', to: 'e8', promotion: 'q', fen }, fen, legal)).toBe(true)
 })
 ```
 (Tilpas fixture-felterne til `MultiplayerChessLegalMove`'s faktiske form og `findLegal`.)
 
 - [ ] **Step 2:** `node node_modules/vitest/vitest.mjs run src/lib/chessView.test.ts` → FAIL.
 - [ ] **Step 3: Implementér** `pendingStillValid` (genbrug `findLegal`). I `ChessGame.tsx`:
-  - `const [pending, setPending] = useState<PendingMove | null>(null)`; `onMove` sætter `pending` (med spillets nuværende revision) i stedet for `sendMove`.
-  - Brættets `interactive` = `moveAllowed && !pending`.
-  - En effekt nulstiller (`setPending(null)` + `setSyncKey(k => k + 1)`) når `!pendingStillValid(pending, revision, legalMoves)`.
-  - Under brættet, når `pending`: `pendingHint` + "Fortryd" (`bgr-chip`, `ArrowCounterClockwise`) → `setPending(null)` + `setSyncKey(k => k + 1)`; "Bekræft" (`bgr-chip data-tone="primary"`, `Check`, `disabled={busy}`) → `sendMove(pending.from, pending.to, pending.promotion)` og så `setPending(null)` (ved afvisning nulstiller `sendMove` allerede brættet).
+  - `const [pending, setPending] = useState<PendingMove | null>(null)`; `onMove` sætter `pending` (med spillets nuværende FEN) i stedet for `sendMove`.
+  - Brættets `interactive` = `moveAllowed && !busy && !pending` (bevar `sendingMove`-logikken fra 993cee2: "sender …"-status og hint efter Bekræft).
+  - En effekt nulstiller (`setPending(null)` + `setSyncKey(k => k + 1)`) når `!pendingStillValid(pending, chess.fen, chess.legalMoves)`.
+  - Under brættet, når `pending`: hint-linjen viser `pendingHint` + "Fortryd" (`bgr-chip`, `ArrowCounterClockwise`) → `setPending(null)` + `setSyncKey(k => k + 1)`; "Bekræft" (`bgr-chip data-tone="primary"`, `Check`, `disabled={busy}`) → `setPending(null)` og `sendMove(pending.from, pending.to, pending.promotion)` (ved afvisning nulstiller `sendMove` allerede brættet).
   - Tastatur: Enter (ikke i tekstfelter/chat; ikke når en dialog er åben) bekræfter; Escape fortryder før de nuværende Escape-trin.
   - Forlades skærmen, sendes intet (pending er kun state).
 - [ ] **Step 4:** test → PASS; `tsc` → 0 fejl; `node node_modules/vitest/vitest.mjs run src/lib` → grøn.
