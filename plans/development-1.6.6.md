@@ -32,7 +32,8 @@ Oprettet: 2026-11-05. Ingen build, release eller push.
 ## Fase 3 - senere, kun efter godkendelse
 
 - [ ] Aftal push af `develop/1.6.5` og `develop/1.6.6`, PR og release-tag, når det er relevant.
-- [ ] Aftal separat releaseforløb (`npm run electron:build`, `node scripts/verify-packaged-release.cjs release/win-unpacked`, SHA-256).
+- [x] Releasebuild 1.6.6 (06.11, fra commit `c903e36`): `npm.cmd run electron:build` → `release/Supply Chain Hub-1.6.6-win.zip` (241.074.334 bytes), `node scripts/verify-packaged-release.cjs release/win-unpacked` bestået (login, Word→PDF, 40.491 ASAR-filer), app.asar i zip = verificeret win-unpacked, exe 1.6.6.0. SHA-256 `69CCA980E51540C5E3E5A1C12D4A5F82B44C50CB504A3D288EF722D58CF7309E`.
+- [ ] Udgiv zip'en (brugerens trin) og aftal push/tag af `develop/1.6.6`.
 
 ## Backlog
 
