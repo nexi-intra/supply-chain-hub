@@ -28,7 +28,8 @@ function platformConfigPath(platformRoot) {
 // Laesninger mod M: koster 100-1500 ms og blev lavet SYNKRONT ved hvert IPC-kald
 // (auth-opslag: teams, user-directory, manager-access, creator-email), hvilket
 // frøs hele appen i sekunder. Registret aendres sjaeldent, saa laesninger deles i
-// CACHE_TTL_MS. Mutationer (locked/withIdentityTransaction) laeser ALTID frisk,
+// CACHE_TTL_MS. Efter TTL serveres kopien stadig straks og opfriskes asynkront i
+// baggrunden; kun den allerfoerste laesning af en fil er synkron. Mutationer (locked/withIdentityTransaction) laeser ALTID frisk,
 // saa en skrivning aldrig bygger paa en foraeldet kopi og overskriver en kollegas
 // aendring, og enhver skrivning fra denne klient rydder cachen for filen.
 const CACHE_TTL_MS = 30000
@@ -40,13 +41,51 @@ function invalidateCache(filePath) {
   else readCache.delete(path.resolve(filePath))
 }
 
+// Igangvaerende asynkrone laesninger pr. fil (single-flight), delt af
+// baggrunds-opfriskning og prefetchAsync.
+const refreshes = new Map()
+
+function isRegistryObject(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function refreshAsync(key) {
+  const running = refreshes.get(key)
+  if (running) return running
+  const startEntry = readCache.get(key)
+  // Et resultat maa kun lande hvis ingen skrivning/frisk laesning har aendret
+  // cache-posten i mellemtiden; ellers ville en aeldre filversion overskrive en nyere.
+  const settle = value => { if (readCache.get(key) === startEntry) readCache.set(key, { at: Date.now(), value }) }
+  const promise = fs.promises.readFile(key, 'utf8')
+    .then(text => {
+      const value = JSON.parse(text)
+      if (isRegistryObject(value)) settle(value)
+    })
+    .catch(error => {
+      if (error && error.code === 'ENOENT') settle(undefined)
+      // Andre fejl: behold den eksisterende cache; den synkrone laeser rapporterer dem ved behov.
+    })
+    .finally(() => { refreshes.delete(key) })
+  refreshes.set(key, promise)
+  return promise
+}
+
+/** Resolves when every background registry refresh in progress has finished. */
+async function whenRefreshed() {
+  while (refreshes.size > 0) await Promise.all([...refreshes.values()])
+}
+
 function readJsonSafe(filePath, fallback) {
   const key = path.resolve(filePath)
   const cached = freshDepth === 0 && readCache.get(key)
-  if (cached && Date.now() - cached.at < CACHE_TTL_MS) return structuredClone(cached.value ?? fallback)
+  if (cached) {
+    // Udloebet cache serveres straks; en synkron SMB-laesning ville fryse main-traaden.
+    if (Date.now() - cached.at >= CACHE_TTL_MS) refreshAsync(key)
+    return structuredClone(cached.value ?? fallback)
+  }
   try {
     const value = JSON.parse(fs.readFileSync(filePath, 'utf8'))
-    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Registret har et ugyldigt format')
+    if (!isRegistryObject(value)) throw new Error('Registret har et ugyldigt format')
     readCache.set(key, { at: Date.now(), value: structuredClone(value) })
     return value
   } catch (error) {
@@ -67,17 +106,12 @@ function withFreshReads(callback) {
 /** Loads the registry files the auth check needs without blocking the main thread; the synchronous readers then hit the cache. */
 async function prefetchAsync(platformRoot) {
   const files = [teamsPath(platformRoot), userDirectoryPath(platformRoot), managerAccessPath(platformRoot), platformConfigPath(platformRoot)]
-  await Promise.all(files.map(async filePath => {
+  await Promise.all(files.map(filePath => {
     const key = path.resolve(filePath)
     const cached = readCache.get(key)
-    if (cached && Date.now() - cached.at < CACHE_TTL_MS) return
-    try {
-      const value = JSON.parse(await fs.promises.readFile(filePath, 'utf8'))
-      if (value && typeof value === 'object' && !Array.isArray(value)) readCache.set(key, { at: Date.now(), value })
-    } catch (error) {
-      if (error.code === 'ENOENT') readCache.set(key, { at: Date.now(), value: undefined })
-      // Anything else is left to the synchronous reader, which reports it exactly as before.
-    }
+    if (cached && Date.now() - cached.at < CACHE_TTL_MS) return undefined
+    // Anything but ENOENT is left to the synchronous reader, which reports it exactly as before.
+    return refreshAsync(key)
   }))
 }
 
@@ -295,6 +329,7 @@ const locked = mutate => (platformRoot, ...args) => withFileLock(path.join(regis
 module.exports = {
   invalidateCache,
   prefetchAsync,
+  whenRefreshed,
   registryDir,
   teamsPath,
   userDirectoryPath,
