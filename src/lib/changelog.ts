@@ -12,6 +12,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     items: [
       'Nyt: Kort over lageret i Placeringer – alle kan se hallen, søge en plads eller et materiale (kortet peger på den ældste palle), se reolen forfra med materialet på hver plads og trykke "Vis på kort" fra pladskort, reolkort og søgning',
       'Nyt: Sæt palle på plads viser pladsen på et lille kort over hallen og reolen forfra med niveauet (fx "3. niveau fra gulvet") – tryk "Vis" ved et forslag for at se det, før du vælger',
+      'Skak: et træk sendes først, når du trykker Bekræft – Fortryd sætter brikken tilbage (som i backgammon)',
     ],
   },
   {

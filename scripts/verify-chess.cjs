@@ -6,6 +6,7 @@
 // No direct storage edits.
 //
 // Game: 1.e4 e5 2.Nf3 Nc6 3.Bc4 Nd4 4.O-O Nxf3+ 5.Qxf3 (Bo offers a draw, Anna declines) d6 6.Qxf7# (scholar's-mate finish).
+// Every move of Anna is only staged on the board until "Bekræft" (Enter also confirms; "Fortryd"/Escape put it back).
 //
 // Needs a Vite dev server: MULTIPLAYER_VERIFY_URL=http://127.0.0.1:5021 node scripts/verify-chess.cjs
 const assert = require('node:assert/strict')
@@ -212,12 +213,49 @@ async function verify() {
     const serverMoves = async () => (await colleagueGame(BO, gameId)).chess.moves.length
     const labelOf = name => square(name).getAttribute('aria-label')
     const waitTurn = () => poll('Anna to move', async () => (await page.locator('.bgr-turn').innerText()).trim().startsWith('Dit tr\u00e6k'))
+    const PENDING_HINT = 'Tr\u00e6kket er ikke sendt endnu \u2013 tryk Bekr\u00e6ft eller Fortryd'
+    const hintText = async () => (await page.locator('.bgr-hint').innerText()).trim()
+    const waitStaged = () => poll('move staged (Fortryd/Bekræft and the hint shown)', async () =>
+      (await hintText()) === PENDING_HINT && await button('Fortryd').isVisible() && await button('Bekr\u00e6ft').isVisible())
+    const waitUnstaged = () => poll('no staged move', async () => (await button('Bekr\u00e6ft').count()) === 0 && (await button('Fortryd').count()) === 0)
+    // A board move is only staged: nothing reaches the service until "Bekræft", and then exactly one move is stored.
+    // With double, the button gets two clicks in the same task (before React re-renders) to pin "no double send".
+    const confirmMove = async ({ double = false } = {}) => {
+      await waitStaged()
+      const before = await serverMoves()
+      await page.waitForTimeout(400)
+      assert.equal(await serverMoves(), before, 'a staged move is not sent before Bekræft')
+      if (double) await button('Bekr\u00e6ft').evaluate(element => { element.click(); element.click() })
+      else await button('Bekr\u00e6ft').click()
+      await poll(`move ${before + 1} stored`, async () => (await serverMoves()) === before + 1)
+      await waitUnstaged()
+      await poll('sending finished', async () => (await page.locator('.bgr-turn', { hasText: 'Sender dit tr\u00e6k' }).count()) === 0)
+      assert.equal(await serverMoves(), before + 1, 'Bekræft sends the move exactly once')
+    }
+
+    // ------------------------------------------------------------------ staged move: Fortryd puts it back, nothing is sent
+    const emptyE3 = await labelOf('e3')
+    assert.equal(emptyE3, 'e3, tomt felt')
+    assert.equal(await labelOf('e2'), 'Hvid bonde p\u00e5 e2')
+    // Dragged, not clicked: a lifted e2 pawn's (transparent) image box covers the centre of e3, so a click there hits the pawn.
+    await dragMove('e2', 'e3')
+    await waitStaged()
+    await poll('e3 staged on the board', async () => (await labelOf('e3')) === 'Hvid bonde p\u00e5 e3')
+    assert.equal(await serverMoves(), 0, 'the staged move is not sent')
+    await button('Fortryd').click()
+    await waitUnstaged()
+    await poll('e2 back', async () => (await labelOf('e2')) === 'Hvid bonde p\u00e5 e2')
+    assert.equal(await labelOf('e3'), emptyE3, 'e3 is empty again')
+    assert.notEqual(await hintText(), PENDING_HINT)
+    assert.equal(await serverMoves(), 0, 'Fortryd sends nothing')
+    await waitTurn()
+    step('Anna: e2-e3 (drag) is only staged (Fortryd/Bekræft and "Trækket er ikke sendt endnu" shown, nothing stored); Fortryd puts the pawn back on e2')
 
     // ------------------------------------------------------------------ moves via click and drag; opponent moves arrive animated
     await clickMove('e2', 'e4')
-    await poll('e4 stored', async () => (await serverMoves()) === 1)
+    await confirmMove()
     assert.equal(await labelOf('e4'), 'Hvid bonde p\u00e5 e4')
-    step('Anna: 1.e4 by click (piece lifts, legal targets marked); the service stores the move')
+    step('Anna: 1.e4 by click (piece lifts, legal targets marked); stored only after Bekræft, exactly once')
 
     await resetFx()
     await boMove(gameId, 'e7', 'e5')
@@ -228,24 +266,48 @@ async function verify() {
     step('Bo: 1...e5 arrives through the watcher, is animated and marked as the last move')
 
     await dragMove('g1', 'f3')
-    await poll('Nf3 stored', async () => (await serverMoves()) === 3)
+    await confirmMove()
     assert.equal(await labelOf('f3'), 'Hvid springer p\u00e5 f3')
     await boMove(gameId, 'b8', 'c6')
     await poll('Nc6', async () => (await labelOf('c6')) === 'Sort springer p\u00e5 c6')
     await waitTurn()
+    step('Anna: 2.Nf3 by drag-and-drop (drop square highlighted), stored after Bekræft; Bo answers Nc6')
+
+    const movesBeforeEscape = await serverMoves()
     await clickMove('f1', 'c4')
-    await poll('Bc4 stored', async () => (await serverMoves()) === 5)
+    await waitStaged()
+    await page.keyboard.press('Escape')
+    await waitUnstaged()
+    await poll('bishop back on f1', async () => (await labelOf('f1')) === 'Hvid l\u00f8ber p\u00e5 f1')
+    assert.ok(await room.isVisible(), 'Escape with a staged move stays in the game')
+    assert.ok(await page.getByRole('grid', { name: 'Skakbr\u00e6t' }).isVisible(), 'the board is still shown')
+    assert.equal(await lobby.count(), 0, 'Escape with a staged move does not go to the lobby')
+    assert.equal(await serverMoves(), movesBeforeEscape, 'Escape sends nothing')
+    await waitTurn()
+    step('Anna: a staged Bc4 + Escape puts the bishop back on f1; the game stays open (not the lobby), nothing is sent')
+
+    await clickMove('f1', 'c4')
+    await waitStaged()
+    const movesBeforeEnter = await serverMoves()
+    await page.getByRole('grid', { name: 'Skakbr\u00e6t' }).focus()
+    assert.equal(await page.evaluate(() => document.activeElement?.closest('input, textarea, select, button, a[href]') ? 'control' : 'page'), 'page', 'focus is on the board, not a button')
+    await page.keyboard.press('Enter')
+    await poll('Bc4 stored by Enter', async () => (await serverMoves()) === movesBeforeEnter + 1)
+    await waitUnstaged()
+    assert.equal(await labelOf('c4'), 'Hvid l\u00f8ber p\u00e5 c4')
     await boMove(gameId, 'c6', 'd4')
     await poll('Nd4', async () => (await labelOf('d4')) === 'Sort springer p\u00e5 d4')
     await waitTurn()
-    step('Anna: 2.Nf3 by drag-and-drop (drop square highlighted), 3.Bc4 by click; Bo answers Nc6 and Nd4')
+    assert.equal(await serverMoves(), movesBeforeEnter + 2, 'Enter sent Bc4 exactly once')
+    step('Anna: 3.Bc4 staged by click and confirmed with Enter (focus on the board) - stored once; Bo answers Nd4')
 
     await resetFx()
     await clickMove('e1', 'g1')
+    await confirmMove()
     await poll('castled', async () => (await labelOf('g1')) === 'Hvid konge p\u00e5 g1' && (await labelOf('f1')) === 'Hvidt t\u00e5rn p\u00e5 f1')
     await poll('O-O stored', async () => (await colleagueGame(BO, gameId)).chess.moves.at(-1)?.san === 'O-O')
     assert.ok((await fx()).anims >= 2, 'king and rook both travel')
-    step('Anna: 4.O-O by moving the king two squares; king and rook both animate to g1/f1')
+    step('Anna: 4.O-O by moving the king two squares and Bekræft; king and rook both animate to g1/f1')
 
     await resetFx()
     await boMove(gameId, 'd4', 'f3')
@@ -259,11 +321,11 @@ async function verify() {
 
     await resetFx()
     await dragMove('d1', 'f3')
-    await poll('Qxf3 stored', async () => (await serverMoves()) === 9)
+    await confirmMove({ double: true })
     assert.equal(await labelOf('f3'), 'Hvid dronning p\u00e5 f3')
     assert.ok((await fx()).falling > 0, 'Anna\'s capture knocks the knight off')
     await poll('both trays', async () => (await page.locator('.cx-tray[data-place="bottom"] .cx-tray__piece').count()) === 1)
-    step('Anna: 5.Qxf3 recaptures by drag; the black knight is knocked off into her tray')
+    step('Anna: 5.Qxf3 recaptures by drag; a double click on Bekræft stores it exactly once; the black knight is knocked off into her tray')
 
     // ------------------------------------------------------------------ draw offer declined
     await boCommand(gameId, 'offer-draw')
@@ -340,6 +402,7 @@ async function verify() {
     await poll('d6', async () => (await labelOf('d6')) === 'Sort bonde p\u00e5 d6')
     await waitTurn()
     await clickMove('f3', 'f7')
+    await confirmMove()
     const banner = page.locator('.cx-banner', { hasText: 'Skakmat!' })
     await banner.waitFor({ timeout: 30000 })
     await banner.getByText('Slutstilling').waitFor()
@@ -372,7 +435,7 @@ async function verify() {
 
     assert.deepEqual(errors, [], 'no renderer page errors')
     step('no renderer page errors during the whole run')
-    console.log(`PASS: ${results.length} checks - chess tile, lobby, colour challenge, accept, badge, bell deep link, click/drag moves, opponent moves, capture, castling, check, draw offer declined, checkmate, record; isolated data/profile.`)
+    console.log(`PASS: ${results.length} checks - chess tile, lobby, colour challenge, accept, badge, bell deep link, staged moves (Bekræft/Fortryd/Escape/Enter, no double send), click/drag moves, opponent moves, capture, castling, check, draw offer declined, checkmate, record; isolated data/profile.`)
   } catch (error) {
     if (page) {
       await page.screenshot({ path: path.join(shots, 'failure.png') }).catch(() => {})

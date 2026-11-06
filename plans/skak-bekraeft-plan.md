@@ -49,7 +49,7 @@
   ```
   (Ændret 06.11: FEN i stedet for revision – chat, emoji og Hubert ændrer spillets revision, men ikke stillingen, og må ikke nulstille trækket. Et afsluttet spil har ingen lovlige træk og nulstiller derfor.)
 
-- [ ] **Step 1: Fejlende tests** i `chessView.test.ts`:
+- [x] **Step 1: Fejlende tests** i `chessView.test.ts`:
 
 ```ts
 it('pendingStillValid keeps a staged move only while the position is unchanged and the move is still legal', () => {
@@ -65,16 +65,16 @@ it('pendingStillValid keeps a staged move only while the position is unchanged a
 ```
 (Tilpas fixture-felterne til `MultiplayerChessLegalMove`'s faktiske form og `findLegal`.)
 
-- [ ] **Step 2:** `node node_modules/vitest/vitest.mjs run src/lib/chessView.test.ts` → FAIL.
-- [ ] **Step 3: Implementér** `pendingStillValid` (genbrug `findLegal`). I `ChessGame.tsx`:
+- [x] **Step 2:** `node node_modules/vitest/vitest.mjs run src/lib/chessView.test.ts` → FAIL.
+- [x] **Step 3: Implementér** `pendingStillValid` (genbrug `findLegal`). I `ChessGame.tsx`:
   - `const [pending, setPending] = useState<PendingMove | null>(null)`; `onMove` sætter `pending` (med spillets nuværende FEN) i stedet for `sendMove`.
   - Brættets `interactive` = `moveAllowed && !busy && !pending` (bevar `sendingMove`-logikken fra 993cee2: "sender …"-status og hint efter Bekræft).
   - En effekt nulstiller (`setPending(null)` + `setSyncKey(k => k + 1)`) når `!pendingStillValid(pending, chess.fen, chess.legalMoves)`.
   - Under brættet, når `pending`: hint-linjen viser `pendingHint` + "Fortryd" (`bgr-chip`, `ArrowCounterClockwise`) → `setPending(null)` + `setSyncKey(k => k + 1)`; "Bekræft" (`bgr-chip data-tone="primary"`, `Check`, `disabled={busy}`) → `setPending(null)` og `sendMove(pending.from, pending.to, pending.promotion)` (ved afvisning nulstiller `sendMove` allerede brættet).
   - Tastatur: Enter (ikke i tekstfelter/chat; ikke når en dialog er åben) bekræfter; Escape fortryder før de nuværende Escape-trin.
   - Forlades skærmen, sendes intet (pending er kun state).
-- [ ] **Step 4:** test → PASS; `tsc` → 0 fejl; `node node_modules/vitest/vitest.mjs run src/lib` → grøn.
-- [ ] **Step 5: Commit** `Skak: et træk venter på Bekræft – Fortryd sætter brikken tilbage`
+- [x] **Step 4:** test → PASS; `tsc` → 0 fejl; `node node_modules/vitest/vitest.mjs run src/lib` → grøn.
+- [x] **Step 5: Commit** `Skak: et træk venter på Bekræft – Fortryd sætter brikken tilbage`
 
 ---
 
@@ -85,8 +85,8 @@ it('pendingStillValid keeps a staged move only while the position is unchanged a
 **Files:**
 - Modify: `scripts/verify-chess.cjs`, `src/lib/changelog.ts` (tilføj til den eksisterende `1.6.6`-post), `plans/development-1.6.6.md`, denne plan
 
-- [ ] **Step 1: E2E**: `clickMove`/`dragMove` efterfølges af et klik på "Bekræft" (ny hjælper `confirmMove()` der også tjekker, at `serverMoves()` først stiger efter klikket). Nyt tjek før 1.e4: Anna trækker e2→e3, ser "Fortryd"/"Bekræft" og hint; `serverMoves()` er stadig 0; "Fortryd" → `e3` er tom, `e2` har den hvide bonde. Nyt tjek: et træk + **Escape** fortryder (ikke til lobbyen). Nyt tjek: et træk + **Enter** bekræfter (serverMoves +1). Bevar alle eksisterende tjek. `step('…')`-linjer som resten af filen.
-- [ ] **Step 2:** Kør E2E → alle `ok - …` + slutlinjen filen udskriver ved succes.
-- [ ] **Step 3:** `node node_modules/vitest/vitest.mjs run`, `tsc`.
-- [ ] **Step 4:** Changelog 1.6.6: "Skak: et træk sendes først, når du trykker Bekræft – Fortryd sætter brikken tilbage (som i backgammon)". Afkryds planen og tilføj en linje i `plans/development-1.6.6.md` Fase 2.
-- [ ] **Step 5: Commit** `Skak: E2E for Bekræft/Fortryd, changelog 1.6.6`
+- [x] **Step 1: E2E**: `clickMove`/`dragMove` efterfølges af et klik på "Bekræft" (ny hjælper `confirmMove()` der også tjekker, at `serverMoves()` først stiger efter klikket). Nyt tjek før 1.e4: Anna trækker e2→e3, ser "Fortryd"/"Bekræft" og hint; `serverMoves()` er stadig 0; "Fortryd" → `e3` er tom, `e2` har den hvide bonde. Nyt tjek: et træk + **Escape** fortryder (ikke til lobbyen). Nyt tjek: et træk + **Enter** bekræfter (serverMoves +1). Bevar alle eksisterende tjek. `step('…')`-linjer som resten af filen.
+- [x] **Step 2:** Kør E2E → alle `ok - …` + slutlinjen filen udskriver ved succes.
+- [x] **Step 3:** `node node_modules/vitest/vitest.mjs run`, `tsc`.
+- [x] **Step 4:** Changelog 1.6.6: "Skak: et træk sendes først, når du trykker Bekræft – Fortryd sætter brikken tilbage (som i backgammon)". Afkryds planen og tilføj en linje i `plans/development-1.6.6.md` Fase 2.
+- [x] **Step 5: Commit** `Skak: E2E for Bekræft/Fortryd, changelog 1.6.6`
