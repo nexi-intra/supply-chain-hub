@@ -175,6 +175,23 @@ Konkrete udskiftninger i `authService.cjs` (kun i `login`, `resume`, `renew`, `l
 - [ ] **Step 5:** `grep -n "authService.current(" electron/main.cjs` â†’ ingen trÃ¦f. `npm test` og `npm run test:warehouse` â†’ PASS.
 - [ ] **Step 6:** Commit: `perf(main): handlere og sygefravaer-oprydning bruger async auth og store`.
 
+### Task 6b: Async lås venter uden synkron læsning af låsens ejer
+
+*(Tilføjet under udførelse 06.11 – fundet i Task 5: `acquireFileLockAsync` kalder `readOwner` = `fs.readFileSync` ved hver optaget-lås-ventetid når `staleMs > 0`, dvs. én synkron SMB-læsning pr. forsøg på main.)*
+
+**Files:**
+- Modify: `electron/fileLock.cjs` (`readOwner`, `acquireFileLockAsync`)
+- Test: `electron/fileLock.test.cjs` (opret hvis den ikke findes; ellers udvid)
+
+**Interfaces:**
+- Produces: intern `readOwnerAsync(target): Promise<string | null>` (samme semantik som `readOwner`: fejl → `null`). `acquireFileLockAsync` bruger den; sync `acquireFileLock` bruger fortsat `readOwner`. Ingen ændring af eksporterede signaturer, lås-format, `staleMs`-regler eller `isAbandonedLock`.
+
+- [ ] **Step 1: Skriv fejlende test** `acquireFileLockAsync never reads the lock owner synchronously while waiting` – opret lås-fil med anden ejer, erstat `fs.readFileSync` med en der kaster for stier der ender på `.lock`, kald `withFileLockAsync(target, fn, { attempts: 3, delayMs: 10, staleMs: 60000 })` → rejecter med `code === 'KV_LOCK_BUSY'` (ikke med den kastede fejl); gendan `fs.readFileSync`.
+- [ ] **Step 2:** `node --test electron/fileLock.test.cjs` → FAIL.
+- [ ] **Step 3: Implementér** `readOwnerAsync` og brug den i `acquireFileLockAsync`. Release-funktionen er allerede async.
+- [ ] **Step 4:** `node --test electron/fileLock.test.cjs` → PASS; `npm test` → PASS.
+- [ ] **Step 5:** Commit: `perf(lock): async laas laeser ejer async mens den venter`.
+
 ## Fase 3 â€“ FÃ¦rre skrivninger og sikker lukning
 
 ### Task 7: UÃ¦ndrede vÃ¦rdier skrives ikke
