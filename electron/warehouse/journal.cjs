@@ -44,14 +44,20 @@ function createJournal({ countId, team, user, deviceId, localDir, remote, chunkS
   let lastError = null
   let lastFlushAt = null
   let timer = null
-  let queue = Promise.resolve()
   let closed = false
 
-  const serial = task => {
-    const run = queue.then(task, task)
-    queue = run.catch(() => {})
-    return run
+  // To køer: den lokale (alt der skriver den lokale fil eller udskifter `events`) er altid kort,
+  // så en scanning aldrig venter på M:. Upload-køen sikrer, at kun én flush kører ad gangen.
+  const chain = () => {
+    let queue = Promise.resolve()
+    return task => {
+      const run = queue.then(task, task)
+      queue = run.catch(() => {})
+      return run
+    }
   }
+  const local = chain()
+  const upload = chain()
   const notify = () => { try { onStatus?.(status()) } catch {} }
 
   async function readLocal() {
@@ -85,22 +91,25 @@ function createJournal({ countId, team, user, deviceId, localDir, remote, chunkS
   /** Make the drive's copy and the local copy agree before anything is uploaded. */
   async function syncFromRemote() {
     const remoteEvents = await readRemoteOwn()
-    const remoteIds = new Set(remoteEvents.map(event => event.id))
-    const localOnly = events.filter(event => !remoteIds.has(event.id))
-    const merged = [...remoteEvents, ...localOnly]
-    if (merged.length !== events.length || merged.some((event, index) => event.id !== events[index]?.id)) {
-      events = merged
-      await writeLocal(events)
-    }
-    uploaded = remoteEvents.length
-    remoteKnown = true
+    // Flettes ud fra `events` som de er nu, så en scanning under drevlæsningen ikke går tabt.
+    await local(async () => {
+      const remoteIds = new Set(remoteEvents.map(event => event.id))
+      const localOnly = events.filter(event => !remoteIds.has(event.id))
+      const merged = [...remoteEvents, ...localOnly]
+      if (merged.length !== events.length || merged.some((event, index) => event.id !== events[index]?.id)) {
+        await writeLocal(merged)
+        events = merged
+      }
+      uploaded = remoteEvents.length
+      remoteKnown = true
+    })
   }
 
   async function load() {
     await fs.promises.mkdir(localDir, { recursive: true })
-    events = await readLocal()
+    events = await local(readLocal)
     try {
-      await syncFromRemote()
+      await upload(syncFromRemote)
       lastError = null
     } catch (error) {
       remoteKnown = false
@@ -122,7 +131,7 @@ function createJournal({ countId, team, user, deviceId, localDir, remote, chunkS
   }
 
   function append(fields) {
-    return serial(async () => {
+    return local(async () => {
       if (closed) throw Object.assign(new Error('JOURNAL_CLOSED'), { code: 'JOURNAL_CLOSED' })
       const event = { ...fields, id: newId(), at: now(), by: user.email, byName: user.name }
       await fs.promises.appendFile(localFile, encryptPayload(JSON.stringify(event)) + '\n')
@@ -134,12 +143,16 @@ function createJournal({ countId, team, user, deviceId, localDir, remote, chunkS
   }
 
   function flush() {
-    return serial(async () => {
+    return upload(async () => {
       try {
+        // Vent kun på allerede startede lokale skrivninger, så alt tilføjet før flush kommer med.
+        await local(() => {})
         if (!remoteKnown) await syncFromRemote()
-        const target = events.length
+        // Øjebliksbillede: hændelser tilføjet under uploaden sendes af næste flush.
+        const snapshot = events.slice()
+        const target = snapshot.length
         for (let index = Math.floor(uploaded / chunkSize); index * chunkSize < target; index++) {
-          const slice = events.slice(index * chunkSize, Math.min((index + 1) * chunkSize, target))
+          const slice = snapshot.slice(index * chunkSize, Math.min((index + 1) * chunkSize, target))
           await remote.setAsync(chunkKey(countId, writer, index), { writer, by: user.email, full: slice.length === chunkSize, events: slice })
         }
         uploaded = target
@@ -150,7 +163,7 @@ function createJournal({ countId, team, user, deviceId, localDir, remote, chunkS
         if (autoFlush && !closed) setTimeout(() => schedule(0), RETRY_MS).unref?.()
       }
       notify()
-      return lastError ? { ok: false, pending: pending(), error: lastError } : { ok: true, pending: 0 }
+      return lastError ? { ok: false, pending: pending(), error: lastError } : { ok: true, pending: pending() }
     })
   }
 
