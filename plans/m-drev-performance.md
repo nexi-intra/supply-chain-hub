@@ -28,7 +28,7 @@ Langsomste gemninger: `multiplayer:command` (17×, snit 21 s, max 51 s), `kv:upd
 
 > Erstattet af den godkendte plan: [m-drev-performance-plan.md](./m-drev-performance-plan.md) (design: [m-drev-performance-design.md](./m-drev-performance-design.md)). Faserne herunder er den oprindelige skitse.
 
-- [ ] Hæv `DEFAULT_WATCH_INTERVAL_MS` fra 2 s til 10 s og pause watcheren når vinduet er skjult/minimeret
+- [x] Hæv `DEFAULT_WATCH_INTERVAL_MS` fra 2 s til 10 s og pause watcheren når vinduet er skjult/minimeret
 - [ ] Skriv `client-versions` kun ved opstart/versionsskift (ikke periodisk) og sammenlign før skrivning – skip hvis uændret
 - [ ] Skriv `digest-last-seen-*` kun når værdien faktisk ændres (debounce)
 - [ ] Ryd forældreløse `*.tmp` og døde `.lock`-filer på M: (via eksisterende `sweepStaleTempFilesAsync`, kør for alle teams)
@@ -36,9 +36,9 @@ Langsomste gemninger: `multiplayer:command` (17×, snit 21 s, max 51 s), `kv:upd
 
 ## Fase 2 – Ingen frys af main-tråden
 
-- [ ] Flyt `accountService` (`withAccountLock`/`withAuthenticationLock`) til `withFileLockAsync`
-- [ ] Flyt `registry.cjs` mutationer til async lås
-- [ ] Find resterende IPC-handlere der kalder sync `store.set/update/mutate` og skift til `*Async`
+- [x] Flyt `accountService` (`withAccountLock`/`withAuthenticationLock`) til `withFileLockAsync`
+- [x] Flyt `registry.cjs` mutationer til async lås
+- [x] Find resterende IPC-handlere der kalder sync `store.set/update/mutate` og skift til `*Async`
 - [ ] Verificér: ingen `MAIN BLOCKED` i `main.log` over en arbejdsdag
 
 ## Fase 3 – Færre delte hotspot-filer
@@ -51,3 +51,13 @@ Langsomste gemninger: `multiplayer:command` (17×, snit 21 s, max 51 s), `kv:upd
 
 - [ ] Spørg IT om Defender-udelukkelse/lavere scanning for `Supply Chain Hub Storage` på `\\VM-MSDK-2\org`
 - [ ] Spørg IT om belastning/SMB-latens på `VM-MSDK-2` (280 ms pr. fil-oprettelse er højt ved 12 ms ping)
+
+## Efter (1.6.7, målt 06.11.2026)
+
+- Watcher-måling på den rigtige TCD-mappe på M: (kun watcher, 30 s, samme tidspunkt):
+  - 1.6.6 → 2.940 fil-stat + 14 mappelister, 26.564 I/O-operationer på 25 s.
+  - 1.6.7 → 860 fil-stat + 4 mappelister (3 ændrings-/sikkerheds-scans), 11.142 I/O-operationer på 25 s.
+  - Dvs. −71 % fil-stat og −58 % I/O-operationer.
+- Målet "< 10 %" nås ikke midt på dagen: andre klienters gemninger (lås-fil, tmp-fil, rename) ændrer TCD-mappens mtime ca. hvert 10. s, og hver ændring udløser en scan af ~210 filer. Næste skridt kræver en lille ændrings-markør pr. mappe (nyt format = "mulighed 2" i designet).
+- Frys: login/resume/renew/logout, handlere, registry-læsning, sygefravær-oprydning og ventetid på optagede låse kører nu async. `MAIN BLOCKED`-linjer i `main.log` viser nu hvilken handling der frøs.
+- Mangler (kræver login/anden PC – brugerens tjek): 0 × `MAIN BLOCKED` over en arbejdsdag, to-klient-test (ændring vises inden for ~2 s), minimeret vindue, spil-UI ("Sender…").

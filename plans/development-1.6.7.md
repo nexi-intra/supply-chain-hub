@@ -24,7 +24,8 @@ Oprettet: 2026-11-06. Ingen build, release eller push.
 ## Fase 2 - nye tiltag
 
 - [ ] Aftal næste tiltag fra backloggen.
-- [ ] Registrer brugerrettede ændringer i `src/lib/changelog.ts` under 1.6.7 — kun for ting der faktisk er lavet.
+- [x] M:-performance (fase 1–4): se `plans/m-drev-performance-plan.md`. Brugerrettet changelog registreret under 1.6.7.
+- [x] Registrer brugerrettede ændringer i `src/lib/changelog.ts` under 1.6.7 — kun for ting der faktisk er lavet.
 
 ## Fase 3 - senere, kun efter godkendelse
 
@@ -37,6 +38,7 @@ Oprettet: 2026-11-06. Ingen build, release eller push.
 - IT-sag (ikke kode): filserveren `\\VM-MSDK-2` er periodisk 5-9 s om at OPRETTE nye filer (målt 05.11). Undtag `...\ai Tools\Supply Chain Hub Storage\` (`*.lock`, `*.tmp`, `*.json`) fra on-access-scanning. Se `plans/responsiv-app.md`.
 - Følg op på `logs\main.log` hos brugere, der har oplevet nedbrud eller "Svarer ikke" i 1.6.6.
 - Valgfrit (arkitektur): lille realtime-backend til multiplayer i stedet for SMB-filshare – se `plans/multiplayer-hastighed.md` fase 3.
+- M:-performance mulighed 2: ændrings-markør pr. mappe / opdeling af `multiplayer-index` – se `plans/m-drev-performance-design.md`.
 - Ældre backlog: `plans/development-1.6.5.md`.
 
 ## Lokal opstart

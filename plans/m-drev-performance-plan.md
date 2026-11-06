@@ -240,9 +240,9 @@ Konkrete udskiftninger i `authService.cjs` (kun i `login`, `resume`, `renew`, `l
 - Modify: `plans/m-drev-performance.md` (afkryds faser, tilfÃ¸j mÃ¥linger efter)
 - Modify: `src/lib/changelog.ts` (1.6.7-indslag, samme format som 1.6.6) og `plans/development-1.6.7.md` hvis den findes
 
-- [ ] **Step 1:** `npm run lint`, `npm run build`, `npm test` â†’ alle PASS.
-- [ ] **Step 2:** Start 1.6.7 mod M: og kÃ¸r I/O-mÃ¥lingen fra diagnosen (30 s, vindue synligt, Hub-forsiden Ã¥ben). Forventet: SCH main-proces < 3.550 "other"-ops (< 10 % af 35.500).
-- [ ] **Step 3:** Brug appen 15 min (login, Hub, skak-trÃ¦k, logout). `main.log`: 0 Ã— `MAIN BLOCKED`. OpstÃ¥r der Ã©n, stÃ¥r handlingen nu i linjen (Task 1) â†’ fix den samme vej som Task 5/6 fÃ¸r release.
-- [ ] **Step 4:** To klienter (fx kollega-PC): en Ã¦ndring pÃ¥ A vises pÃ¥ B inden for ~2 s; med B minimeret vises den straks ved gendannelse.
-- [ ] **Step 5 (spec D):** Skak, backgammon og ordspil: trÃ¦kket stÃ¥r straks, turen skifter, "Senderâ€¦" vises og forsvinder nÃ¥r gemt; afbrudt netvÃ¦rk â†’ toast og spillet genindlÃ¦ses.
-- [ ] **Step 6:** OpdatÃ©r changelog + `plans/m-drev-performance.md`. Commit: `docs: maalinger og changelog for M:-performance`.
+- [x] **Step 1:** `npm run lint`, `npm run build`, `npm test` â†’ alle PASS. (build OK; lint: repo mangler eslint.config.* (eksisterende))
+- [x] **Step 2:** Start 1.6.7 mod M: og kÃ¸r I/O-mÃ¥lingen fra diagnosen (30 s, vindue synligt, Hub-forsiden Ã¥ben). Forventet: SCH main-proces < 3.550 "other"-ops (< 10 % af 35.500). (målt på watcher-niveau: −58 % I/O, mål < 10 % ikke nået – se m-drev-performance.md)
+- [ ] **Step 3:** Brug appen 15 min (login, Hub, skak-trÃ¦k, logout). `main.log`: 0 Ã— `MAIN BLOCKED`. OpstÃ¥r der Ã©n, stÃ¥r handlingen nu i linjen (Task 1) â†’ fix den samme vej som Task 5/6 fÃ¸r release. – brugerens tjek (kræver login/anden PC)
+- [ ] **Step 4:** To klienter (fx kollega-PC): en Ã¦ndring pÃ¥ A vises pÃ¥ B inden for ~2 s; med B minimeret vises den straks ved gendannelse. – brugerens tjek (kræver login/anden PC)
+- [ ] **Step 5 (spec D):** Skak, backgammon og ordspil: trÃ¦kket stÃ¥r straks, turen skifter, "Senderâ€¦" vises og forsvinder nÃ¥r gemt; afbrudt netvÃ¦rk â†’ toast og spillet genindlÃ¦ses. – brugerens tjek (kræver login/anden PC)
+- [x] **Step 6:** OpdatÃ©r changelog + `plans/m-drev-performance.md`. Commit: `docs: maalinger og changelog for M:-performance`.

@@ -8,6 +8,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.6.7',
+    items: [
+      'Hurtigere på det fælles drev (M:): Hubben fryser ikke længere, mens den venter på drevet – login, log ud og gemning kører i baggrunden, så du kan arbejde videre',
+      'Hubben belaster M: langt mindre: den tjekker kun, om en mappe er ændret, i stedet for at kigge på alle filer hvert andet sekund, og tjekker sjældnere, når vinduet er minimeret. Kollegers ændringer vises stadig inden for få sekunder',
+      'Hubben gemmer kun, når noget faktisk er ændret, og når du lukker den, venter den op til 10 sekunder på gemninger, der stadig er i gang',
+    ],
+  },
+  {
     version: '1.6.6',
     items: [
       'Nyt: Kort over lageret i Placeringer – alle kan se hallen, søge en plads eller et materiale (kortet peger på den ældste palle), se reolen forfra med materialet på hver plads og trykke "Vis på kort" fra pladskort, reolkort og søgning',
