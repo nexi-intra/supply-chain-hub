@@ -834,7 +834,9 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
         snapshot = result.snapshot
         lastDirMtimeMs = dirMtimeMs
         lastFullScanAtMs = nowMs
-        if (changeTriggered) lastChangeScanAtMs = nowMs
+        // Gap'et gaelder kun efter en aendrings-scan der faktisk fandt noget: en ren
+        // laasefil-bump maa ikke forsinke den rename der kommer lige efter.
+        if (changeTriggered && result.changedKeys.length > 0) lastChangeScanAtMs = nowMs
         if (result.changedKeys.length > 0) {
           // Invalidate cache for changed keys to force fresh read on next get().
           for (const key of result.changedKeys) readCache.delete(key)

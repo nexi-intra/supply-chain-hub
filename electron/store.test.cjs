@@ -678,6 +678,24 @@ test('watch with initialScan async does no synchronous directory or file I/O and
   assert.equal(syncScans, 0, 'the watcher never scans the directory synchronously')
 })
 
+test('a directory change that touched no data file does not start the change-scan gap', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  const other = createStore(directory)
+  store.set('existing', 1)
+  const changed = []
+  const stop = store.watch(keys => changed.push(...keys), () => {}, { intervalMs: 20, safetyScanMs: 60000, minScanGapMs: 5000 })
+  t.after(() => stop())
+  await sleep(60)
+  // Kun en laasefil kommer og gaar: mappens mtime skifter, men ingen noegle er aendret.
+  const lock = path.join(directory, 'existing.json.lock')
+  fs.writeFileSync(lock, 'x'); fs.unlinkSync(lock)
+  await sleep(150)
+  assert.deepEqual(changed, [])
+  other.set('k', 1)
+  for (let waited = 0; waited < 1500 && !changed.includes('k'); waited += 10) await sleep(10)
+  assert.ok(changed.includes('k'), 'the real write is not deferred by the lock-only scan')
+})
+
 test('the safety scan finds a change that left the directory mtime untouched', async (t) => {
   const { directory, store } = temporaryStore(t)
   const other = createStore(directory)
