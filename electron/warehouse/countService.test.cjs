@@ -1,5 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
+const crypto = require('node:crypto')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
@@ -841,4 +842,108 @@ test('readCount (for Hubert) shows figures, differences, material locks and area
   assert.deepEqual(view.materialLocks.map(lock => `${lock.material}:${lock.holder.name}`), ['INT4300-4921-0:Anna'])
   assert.deepEqual(view.claims.map(claim => `${claim.area}:${claim.name}`), ['A:Bo'])
   assert.ok(view.progress.overall.total > 0)
+})
+
+// ---------- Scan context: scanning answers from memory, the drive is read in the background ----------
+/** A service for `name` whose repository counts (and can hold) every read from the drive. */
+function countingService(ctx, name) {
+  const base = createCountRepository({ storeFor: ctx.storeFor, now: () => ctx.clock.now })
+  const reads = []
+  let gate = null
+  const repo = new Proxy(base, {
+    get(target, prop) {
+      const value = target[prop]
+      if (typeof value !== 'function' || !/^(get|is|list)/.test(String(prop))) return value
+      return async (...args) => {
+        reads.push(prop)
+        if (gate) await gate.promise
+        return value.apply(target, args)
+      }
+    },
+  })
+  const svc = createCountService({ repo, storeFor: ctx.storeFor, fetcher: ctx.fetcher, journalsDir: path.join(ctx.root, `local-${name}`), deviceId: name, now: () => ctx.clock.now, newId: () => `${name}-${crypto.randomUUID()}`, journalOptions: { autoFlush: false } })
+  return {
+    svc,
+    reads,
+    hold() { let release; const promise = new Promise(resolve => { release = resolve }); gate = { promise, release } },
+    release() { if (gate) { gate.release(); gate = null } },
+  }
+}
+
+const within = (promise, ms) => Promise.race([promise, new Promise(resolve => setTimeout(() => resolve('timeout'), ms))])
+
+test('a second scan within 5 s reads nothing from the drive', async () => {
+  const ctx = setup()
+  const { id } = await newCount(ctx, ctx.service('pc1'))
+  const pc = countingService(ctx, 'pc1b')
+  assert.equal((await pc.svc.scan(ANNA, id, { serial: 'N1', place: 'A1.1' })).outcome, 'found')
+  ctx.tick(1000)
+  pc.reads.length = 0
+  const second = await pc.svc.scan(ANNA, id, { serial: 'N1', place: 'A1.1' })
+  assert.equal(second.outcome, 'duplicate')
+  const third = await pc.svc.scan(ANNA, id, { serial: 'N2', place: 'A1.1' })
+  assert.deepEqual([third.outcome, third.saved, third.areaWarning, third.materialWarning], ['found', true, null, null])
+  assert.deepEqual(pc.reads, [], 'served from the scan context')
+})
+
+test('a stale scan context answers at once and refreshes in the background', async () => {
+  const ctx = setup()
+  const { id } = await newCount(ctx, ctx.service('pc1'))
+  const pc = countingService(ctx, 'pc1b')
+  await pc.svc.scan(ANNA, id, { serial: 'N1', place: 'A1.1' })
+  ctx.tick(6000)
+  pc.reads.length = 0
+  pc.hold()
+  try {
+    const started = Date.now()
+    const result = await within(pc.svc.scan(ANNA, id, { serial: 'N2', place: 'A1.1' }), 1000)
+    assert.notEqual(result, 'timeout', 'the scan must not wait for the drive')
+    assert.ok(Date.now() - started < 200, `answered in ${Date.now() - started} ms`)
+    assert.deepEqual([result.outcome, result.saved], ['found', true])
+    assert.equal((await within(pc.svc.scan(ANNA, id, { serial: 'U1', place: 'A1.1' }), 1000)).outcome, 'found')
+  } finally {
+    pc.release()
+  }
+  await pc.svc._scanContextSettled()
+  assert.equal(pc.reads.filter(name => name === 'getStatus').length, 1, 'one background refresh, not one per scan')
+  assert.equal(pc.reads.filter(name => name === 'getMembers').length, 1)
+  pc.reads.length = 0
+  ctx.tick(1000)
+  assert.equal((await pc.svc.scan(ANNA, id, { serial: 'N1', place: 'A1.1' })).outcome, 'duplicate')
+  assert.deepEqual(pc.reads, [], 'the refreshed context is used')
+})
+
+test('a status locked elsewhere rejects the next scan after the background refresh', async () => {
+  const ctx = setup()
+  const { id } = await newCount(ctx, ctx.service('pc1'))
+  const pc = countingService(ctx, 'pc1b')
+  await pc.svc.scan(ANNA, id, { serial: 'N1', place: 'A1.1' })
+  await ctx.repo.updateStatus('TCD', 'st0open1', { state: 'locked', lockedAt: 2, lockedBy: { email: 'mona@example.test', name: 'Mona' } }, { action: 'locked', by: { email: 'mona@example.test', name: 'Mona' } })
+  ctx.tick(6000)
+  pc.hold()
+  try {
+    const result = await within(pc.svc.scan(ANNA, id, { serial: 'N2', place: 'A1.1' }), 1000)
+    assert.notEqual(result, 'timeout')
+    assert.equal(result.outcome, 'found', 'answered from the context of a moment ago')
+  } finally {
+    pc.release()
+  }
+  await pc.svc._scanContextSettled()
+  await assert.rejects(pc.svc.scan(ANNA, id, { serial: 'U1', place: 'A1.1' }), { code: 'STATUS_LOCKED' })
+})
+
+test('changing a material lock on this client is seen by the next scan', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const { id } = await newCount(ctx, anna)
+  await anna.requestJoin(BO, id)
+  await anna.decideMember(ANNA, id, { email: BO.email, approve: true })
+  const pc = countingService(ctx, 'pc2')
+  assert.equal((await pc.svc.scan(BO, id, { serial: 'U1', place: 'A1.1' })).materialWarning, null)
+  await pc.svc.lockMaterial(ANNA, id, { material: 'INT4300-4921-0' })
+  ctx.tick(1000)
+  const scanned = await pc.svc.scan(BO, id, { serial: 'N1', place: 'A1.1' })
+  assert.deepEqual([scanned.outcome, scanned.saved, scanned.materialWarning], ['found', true, { kind: 'locked', byName: 'Anna' }])
+  await pc.svc.releaseMaterial(ANNA, id, { material: 'INT4300-4921-0' })
+  assert.equal((await pc.svc.scan(BO, id, { serial: 'N2', place: 'A1.1' })).materialWarning, null)
 })

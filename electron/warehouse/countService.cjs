@@ -22,6 +22,10 @@ const QTY_MAX = 10000000
 const REFRESH_MIN_MS = 1500
 const OTHERS_REFRESH_MS = 10000
 const LIST_LIMIT = 500
+// Scanning svarer fra en cachet kontekst (rettigheder, låse, claims …): højst ~5 s gammel, samme princip som den
+// offline journal. En ældre kontekst opfriskes i baggrunden; scanningen venter højst SCAN_CONTEXT_WAIT_MS på den.
+const SCAN_CONTEXT_FRESH_MS = 5000
+const SCAN_CONTEXT_WAIT_MS = 100
 
 function codeError(code, message) {
   return Object.assign(new Error(message || code), { code })
@@ -341,18 +345,24 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   }
 
   async function access(user, state) {
-    // A count always has its owner as member, so an empty answer means the drive is unreachable:
-    // keep using the last known members, so counting can go on locally.
-    const fresh = await repo.getMembers(state.team, state.id).catch(() => null)
+    adoptMembers(state, await repo.getMembers(state.team, state.id).catch(() => null))
+    return rightsOf(user, state, await statusLocked(state.team, state.meta.statusId))
+  }
+
+  // A count always has its owner as member, so an empty answer means the drive is unreachable:
+  // keep using the last known members, so counting can go on locally.
+  function adoptMembers(state, fresh) {
     if (fresh && Object.keys(fresh).length) {
       if (localCache && JSON.stringify(fresh) !== JSON.stringify(state.members)) localCache.save(state.team, state.id, 'members', fresh).catch(() => {})
       state.members = fresh
     }
+  }
+
+  function rightsOf(user, state, locked) {
     const members = state.members || {}
     const email = lower(user.email)
     const member = members[email]
     const isOwner = lower(state.meta.owner.email) === email
-    const locked = await statusLocked(state.team, state.meta.statusId)
     return { members, member, isOwner, locked, canWrite: !locked && state.meta.status === 'open' && member?.status === 'approved', isManager: isManager(user) }
   }
 
@@ -521,12 +531,10 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     return ownPlace?.area || ''
   }
 
-  async function areaContext(user, state, place) {
-    const own = await repo.getOwnPlacements(state.team).catch(() => [])
-    const area = areaOfPlace(state, place, own)
+  function areaContext(user, state, place, context) {
+    const area = areaOfPlace(state, place, context.own)
     if (!area) return { area: '', warning: null }
-    const claims = await repo.getClaims(state.team, state.id).catch(() => ({}))
-    const claim = claims[area]
+    const claim = context.claims[area]
     const email = lower(user.email)
     if (claim && now() - claim.lastActivity < CLAIM_IDLE_MS) {
       if (claim.email !== email) return { area, warning: { area, byName: claim.name } }
@@ -539,20 +547,98 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     return { area, warning: null }
   }
 
+  // ---------- Scan context: what a scan needs from M:, cached per open count (and so per user) ----------
+  // Afvisninger (slettet, låst status, afsluttet, ikke medlem) kommer med højst ~5 s forsinkelse; en kontekst, der
+  // afviser, bruges aldrig fra cachen men hentes forfra, så en netop godkendt deltager kan scanne med det samme.
+  const scanFetches = new Set()
+  let scanContextWarned = false
+
+  function fetchScanContext(state) {
+    if (state.scanFetch && state.scanFetch.gen === state.scanGen) return state.scanFetch.promise
+    const gen = state.scanGen
+    const at = now()
+    const promise = Promise.all([
+      repo.isDeleted(state.team, state.id).catch(() => false),
+      repo.getMembers(state.team, state.id).catch(() => null),
+      statusLocked(state.team, state.meta.statusId),
+      repo.getOwnPlacements(state.team).catch(() => []),
+      repo.getClaims(state.team, state.id).catch(() => ({})),
+      materialLocks(state),
+      repo.getApprovals(state.team, state.id).catch(() => ({})),
+    ]).then(([deleted, members, locked, own, claims, locks, approvals]) => {
+      adoptMembers(state, members)
+      const context = { at, deleted, locked, own, claims, locks, approvals }
+      if (state.scanGen === gen) state.scanContext = context
+      return context
+    }).finally(() => {
+      if (state.scanFetch?.promise === promise) state.scanFetch = null
+      scanFetches.delete(promise)
+    })
+    state.scanFetch = { gen, promise }
+    scanFetches.add(promise)
+    return promise
+  }
+
+  const contextDenies = (user, state, context) => context.deleted || state.meta.status !== 'open' || !rightsOf(user, state, context.locked).canWrite
+
+  async function scanContext(user, state) {
+    const cached = state.scanContext
+    if (cached && !contextDenies(user, state, cached)) {
+      if (now() - cached.at < SCAN_CONTEXT_FRESH_MS) return cached
+      const refreshing = fetchScanContext(state).catch(error => {
+        if (!scanContextWarned) console.error('CountPoint: scan context refresh failed', error.code || error.message)
+        scanContextWarned = true
+        return null
+      })
+      let timer
+      const waited = new Promise(resolve => { timer = setTimeout(resolve, SCAN_CONTEXT_WAIT_MS, null) })
+      const settled = await Promise.race([refreshing, waited]).finally(() => clearTimeout(timer))
+      return settled || cached
+    }
+    return fetchScanContext(state)
+  }
+
+  /** The same checks, in the same order and with the same errors, as requireWriter – from the scan context. */
+  function requireScanWriter(user, state, context) {
+    if (context.deleted) {
+      forget(state.team, state.id)
+      throw deletedError()
+    }
+    const rights = rightsOf(user, state, context.locked)
+    if (rights.locked) throw lockedError()
+    if (state.meta.status !== 'open') throw codeError('COUNT_CLOSED', 'Optællingen er afsluttet')
+    if (!rights.canWrite) throw codeError('COUNT_NOT_MEMBER', 'Du deltager ikke i optællingen')
+    return rights
+  }
+
+  /** This client changed something the scan context holds: the next scan reads it again. */
+  function dropScanContext(team, id = null) {
+    for (const state of opened.values()) {
+      if (state.team !== team || (id !== null && state.id !== id)) continue
+      state.scanContext = null
+      state.scanGen = (state.scanGen || 0) + 1
+    }
+  }
+
+  async function scanContextSettled() {
+    while (scanFetches.size) await Promise.allSettled([...scanFetches])
+  }
+
   async function scan(user, id, { serial, place } = {}) {
-    const { state } = await requireWriter(user, id)
+    const state = await load(user, id)
+    const context = await scanContext(user, state)
+    requireScanWriter(user, state, context)
     const normalized = normalizeSerial(serial)
     const cleanPlace = clean(place, 60)
     const result = matchSerial(normalized, state.index, state.found)
     if (result.outcome === 'invalid') return { ...result, saved: false }
-    const { area, warning } = await areaContext(user, state, cleanPlace)
+    const { area, warning } = areaContext(user, state, cleanPlace, context)
     const event = await state.journal.append({ type: 'scan', serial: normalized, place: cleanPlace, area })
     if (result.outcome !== 'duplicate') state.found.set(normalized, { by: event.by, byName: event.byName, at: event.at, place: cleanPlace, source: 'scan', eventId: event.id })
     let materialWarning = null
     if (result.outcome === 'found' && result.material) {
-      const [locks, approvals] = await Promise.all([materialLocks(state), repo.getApprovals(state.team, state.id).catch(() => ({}))])
-      const lock = locks[result.material]
-      if (isApprovedStatus(approvals[result.material])) materialWarning = { kind: 'approved', byName: '' }
+      const lock = context.locks[result.material]
+      if (isApprovedStatus(context.approvals[result.material])) materialWarning = { kind: 'approved', byName: '' }
       else if (lock && !mayCount(lock, lower(user.email))) materialWarning = { kind: 'locked', byName: lock.name }
     }
     return { ...result, saved: true, eventId: event.id, areaWarning: warning, materialWarning, journal: state.journal.status() }
@@ -1127,14 +1213,27 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     opened.clear()
   }
 
+  /**
+   * Wraps a change made through this client so the scan contexts it can affect are read again by the next scan
+   * (also after a failure: a change may have been half done). `scope` 'count' = this count, 'team' = all of the team.
+   */
+  const changes = (fn, scope = 'count') => async (user, ...args) => {
+    try {
+      return await fn(user, ...args)
+    } finally {
+      dropScanContext(user?.team, scope === 'count' ? args[0] : null)
+    }
+  }
+
   return {
-    listCounts, statusOverview, startStatus, statusChecklist, lockStatus, statusArchive, unlockStatus, deleteStatus, preview, createCount, openCount, getState, listSerials, materialSerials,
-    scan, undo, removeSerial, saveLine, deleteLine, importSerials, lookupMatdoc,
-    lockMaterial, requestMaterial, answerMaterialRequest, releaseMaterial, submitMaterial,
-    requestJoin, decideMember, claimArea, releaseArea,
-    closeCount, reopenCount, deleteCount, previewRefetch, applyRefetch,
-    setApproval, approveAllWithoutDifference,
-    getRules, setRule, serialRules, setSerialRule, copySerials, countDoc, fetchDocStock, savePlacement, reportData, readCount, flush, closeAll,
+    listCounts, statusOverview, startStatus, statusChecklist, lockStatus: changes(lockStatus, 'team'), statusArchive, unlockStatus: changes(unlockStatus, 'team'), deleteStatus: changes(deleteStatus, 'team'), preview, createCount, openCount, getState, listSerials, materialSerials,
+    scan, undo, removeSerial, saveLine: changes(saveLine), deleteLine, importSerials, lookupMatdoc,
+    lockMaterial: changes(lockMaterial), requestMaterial: changes(requestMaterial), answerMaterialRequest: changes(answerMaterialRequest), releaseMaterial: changes(releaseMaterial), submitMaterial: changes(submitMaterial),
+    requestJoin: changes(requestJoin), decideMember: changes(decideMember), claimArea: changes(claimArea), releaseArea: changes(releaseArea),
+    closeCount: changes(closeCount), reopenCount: changes(reopenCount), deleteCount: changes(deleteCount), previewRefetch, applyRefetch,
+    setApproval: changes(setApproval), approveAllWithoutDifference: changes(approveAllWithoutDifference),
+    getRules, setRule, serialRules, setSerialRule, copySerials, countDoc, fetchDocStock, savePlacement: changes(savePlacement, 'team'), reportData, readCount, flush, closeAll,
+    _scanContextSettled: scanContextSettled,
   }
 }
 
