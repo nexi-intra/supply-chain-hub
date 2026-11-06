@@ -333,8 +333,9 @@ function startWatcher({ initialScan = 'sync' } = {}) {
   const debouncedBroadcast = createDebouncedBroadcast(100)
   stopWatcher = store.watch(tracked('watcher:team', (changedKeys) => {
     if (changedKeys.includes('users') && directUsersStore.store) directUsersStore.store.invalidate()
-    // Roles/passwords changed on another PC: the cached auth snapshot (15 s) must not outlive them.
-    if (changedKeys.includes('users')) authService?.invalidateAll()
+    // Roles/passwords changed on another PC: every window's auth snapshot is re-read in the background at once (soft;
+    // the old snapshot answers meanwhile, at most 60 s old). Local identity changes still use the hard invalidateAll.
+    if (changedKeys.includes('users')) authService?.revalidateAll()
     debouncedBroadcast(changedKeys)
   }), setStorageConnected, { initialScan })
   applyWatchVisibility()
@@ -366,8 +367,8 @@ function startSharedWatcher() {
   if (stopSharedWatcher) stopSharedWatcher()
   const debouncedBroadcast = createDebouncedBroadcast(100)
   stopSharedWatcher = sharedStore.watch(tracked('watcher:shared', (changedKeys) => {
-    // A session revoked or renewed on another PC: drop the cached auth snapshot right away.
-    if (changedKeys.includes('active-sessions')) authService?.invalidateAll()
+    // A session revoked or renewed on another PC: re-read every window's auth snapshot in the background right away (soft).
+    if (changedKeys.includes('active-sessions')) authService?.revalidateAll()
     debouncedBroadcast(changedKeys)
   }), () => {})
   applyWatchVisibility()
