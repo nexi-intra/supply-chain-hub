@@ -153,6 +153,33 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
     .filter(([, user]) => user && (!user.status || user.status === 'approved'))
     .map(([key, user]) => ({ email: String(user.email || key).trim().toLowerCase(), fullName: user.fullName || user.email || key, role: user.role === 'manager' || user.role === 'admin' || user.isManager ? 'manager' : 'user' }))
   const roles = createRoles({ storeFor, listTeamUsers })
+  // Every call (also each scan) asks for the CountPoint role; it is kept 30 s like the user list. An older answer is
+  // used at once while it is read again in the background; a role change through this Hub drops the cache.
+  const roleCache = new Map()
+  let roleGeneration = 0
+  function readRole(key, user) {
+    const entry = roleCache.get(key) || {}
+    if (entry.pending) return entry.pending
+    const generation = roleGeneration
+    const pending = roles.roleOf(user).then(value => {
+      if (generation === roleGeneration) roleCache.set(key, { at: Date.now(), value })
+      return value
+    }, error => {
+      const current = roleCache.get(key)
+      if (current?.pending === pending) delete current.pending
+      throw error
+    })
+    roleCache.set(key, { ...entry, pending })
+    return pending
+  }
+  async function cachedRoleOf(user) {
+    const key = `${user.team}:${String(user.email || '').trim().toLowerCase()}`
+    const hit = roleCache.get(key)
+    if (hit?.value === undefined) return readRole(key, user)
+    if (Date.now() - hit.at >= USERS_TTL_MS) readRole(key, user).catch(() => {})
+    return hit.value
+  }
+  const dropRoles = () => { roleGeneration++; roleCache.clear() }
   const piDocs = createPiDocService({ counts, repo: countRepo, roles, system: config.sapSystem, writeEnabled: WRITE_SYSTEMS.includes(config.sapSystem), writer: createPiDocWriter({ bridge: sap, runScript, clipboard, system: config.sapSystem }) })
   const sapViewer = createSapViewer({ bridge: sap, runScript })
   // Placeringer: one store per hub in <team>/lagerstyring/placeringer; the placement sheet is only read by the import.
@@ -192,7 +219,7 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
     const actor = await currentActor(event)
     const user = warehouseUser(actor, isAllowedTeam(actor?.activeTeam?.teamId) ? await cachedUsers(actor.activeTeam.teamId).catch(() => ({})) : {})
     if (user.role !== 'user') return user
-    const role = await roles.roleOf(user).catch(() => 'user')
+    const role = await cachedRoleOf(user).catch(() => 'user')
     if (role === 'status-manager') return { ...user, role: 'manager', statusManager: true }
     return role === 'admin' ? { ...user, countAdmin: true } : user
   }
@@ -294,8 +321,8 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   handle('pidocs:delete', (user, p) => piDocs.remove(user, p.id, p.docId))
   handle('roles:me', async user => ({ role: await roles.roleOf(user), locationAdmin: await roles.isLocationAdmin(user) }))
   handle('roles:list', user => roles.list(user))
-  handle('roles:set-admin', (user, p) => roles.setAdmin(user, { email: p.email, admin: p.admin === true }))
-  handle('roles:set-role', (user, p) => roles.setRole(user, { email: p.email, role: p.role }))
+  handle('roles:set-admin', async (user, p) => { try { return await roles.setAdmin(user, { email: p.email, admin: p.admin === true }) } finally { dropRoles() } })
+  handle('roles:set-role', async (user, p) => { try { return await roles.setRole(user, { email: p.email, role: p.role }) } finally { dropRoles() } })
   handle('roles:set-location-admin', (user, p) => roles.setLocationAdmin(user, { email: p.email, admin: p.admin === true }))
   handle('sap-check:overview', user => sapChecks.overview(user))
   handle('sap-check:latest', user => sapChecks.latest(user))

@@ -181,3 +181,30 @@ test('shelf work goes through the local queue (applied once), and racks and dele
   assert.deepEqual(await call('mona', 'locations:delete-locations', { locations: ['E9 H3', 'E9 H2'] }), { deleted: ['E9 H3'], kept: [{ name: 'E9 H2', reason: 'Der står 1 materiale på E9 H2' }] })
   assert.deepEqual(await call('mona', 'locations:set-active-many', { locations: ['E9 H1'], active: false }), { changed: 1 })
 })
+
+test('the CountPoint role of a user is read once per 30 s, and again at once after a role change through this Hub', async () => {
+  const realNow = Date.now
+  const realReadFile = fs.promises.readFile
+  let clock = realNow()
+  let reads = 0
+  Date.now = () => clock
+  fs.promises.readFile = (file, ...rest) => {
+    if (path.basename(String(file)).startsWith('roller')) reads++
+    return realReadFile(file, ...rest)
+  }
+  try {
+    const { call } = setup()
+    await call('mona', 'roles:set-role', { email: 'anna@nexi.test', role: 'admin' })
+    clock += 4000
+    reads = 0
+    assert.equal((await call('anna', 'me')).role, 'user')
+    clock += 4000
+    assert.equal((await call('anna', 'me')).role, 'user')
+    assert.equal(reads, 1, 'the second call within 30 s uses the cached role')
+    await call('mona', 'roles:set-role', { email: 'anna@nexi.test', role: 'status-manager' })
+    assert.equal((await call('anna', 'me')).role, 'manager', 'a role change through this Hub is seen at once')
+  } finally {
+    Date.now = realNow
+    fs.promises.readFile = realReadFile
+  }
+})
