@@ -339,3 +339,19 @@ test('reads made while holding the account lock during login and renew skip the 
   assert.ok(reads.filter(read => !read.locked).every(read => !read.unthrottled), 'reads outside the lock keep the queue')
   assert.ok(actor.token)
 })
+test('a logout that lands after the login session write but before binding removes that session and leaves no binding', async () => {
+  const f = fixture(), realMutate = f.sessions.mutateAsync
+  let loggedOut = null
+  f.sessions.mutateAsync = async (key, callback) => {
+    const result = await realMutate(key, callback)
+    if (key === 'active-sessions' && !loggedOut) loggedOut = f.auth.logout(1)
+    return result
+  }
+  await assert.rejects(f.auth.login(1, f.login), code('AUTH_REQUIRED'))
+  await loggedOut
+  assert.ok(loggedOut, 'logout ran between the session write and the binding')
+  assert.deepEqual(f.sessions.get('active-sessions'), {}, 'the session written by the login is removed again')
+  assert.throws(() => f.auth.current(1), code('AUTH_REQUIRED'))
+  await assert.rejects(f.auth.currentAsync(1), code('AUTH_REQUIRED'))
+  assert.equal(f.selected(), undefined, 'no team switch after the aborted login')
+})
