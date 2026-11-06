@@ -3,7 +3,7 @@ const assert = require('node:assert/strict')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
-const { createStore } = require('./store.cjs')
+const { createStore, decideWatchTick } = require('./store.cjs')
 
 test('trusted multi-key capabilities read fresh data, lock every key, and expire', t => {
   const { directory, store } = temporaryStore(t), other = createStore(directory)
@@ -485,6 +485,91 @@ test('watch reports connection loss and recovery via onConnectionChange', async 
   await reconnected
   assert.deepEqual(events, [false, true])
   assert.equal(store.isConnected(), true)
+})
+
+test('decideWatchTick skips an unchanged directory, scans on change, defers within the gap and runs the safety scan', () => {
+  const config = { safetyScanMs: 30000, hiddenSafetyScanMs: 120000, minScanGapMs: 2000 }
+  const base = { visible: true, dirMtimeMs: 100, lastDirMtimeMs: 100, nowMs: 100000, lastFullScanAtMs: 99000, lastChangeScanAtMs: null, forceFull: false }
+  const cases = [
+    [{}, 'skip'],
+    [{ dirMtimeMs: 200, lastChangeScanAtMs: 99500 }, 'defer'],
+    [{ dirMtimeMs: 200, lastChangeScanAtMs: 97500 }, 'full'],
+    [{ lastFullScanAtMs: 70000 }, 'full'],
+    [{ lastFullScanAtMs: 70000, visible: false }, 'skip'],
+    [{ forceFull: true, lastChangeScanAtMs: 99500 }, 'full'],
+  ]
+  for (const [overrides, expected] of cases) {
+    assert.equal(decideWatchTick({ ...base, ...overrides }, config), expected, JSON.stringify(overrides))
+  }
+})
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+test('an unchanged directory is not rescanned file by file', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  for (let index = 0; index < 20; index++) store.set(`setting-${index}`, index)
+  const stat = fs.promises.stat
+  let fileStats = 0
+  t.mock.method(fs.promises, 'stat', async (file, ...rest) => {
+    if (path.resolve(file) !== path.resolve(directory)) fileStats++
+    return stat(file, ...rest)
+  })
+  const stop = store.watch(() => {}, () => {}, { intervalMs: 30, safetyScanMs: 60000 })
+  t.after(() => stop())
+  await sleep(200)
+  assert.equal(fileStats, 0)
+})
+
+test('a write from another store instance is reported on the next tick', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  const other = createStore(directory)
+  const changed = []
+  const stop = store.watch(keys => changed.push(...keys), () => {}, { intervalMs: 30, minScanGapMs: 0 })
+  t.after(() => stop())
+  other.set('k', 1)
+  for (let waited = 0; waited < 500 && !changed.includes('k'); waited += 10) await sleep(10)
+  assert.ok(changed.includes('k'))
+})
+
+test('the safety scan finds a change that left the directory mtime untouched', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  const other = createStore(directory)
+  // Hele sekunder, saa utimes kan saette praecis samme mtime tilbage.
+  const previous = new Date(Math.floor(Date.now() / 1000) * 1000 - 60000)
+  fs.utimesSync(directory, previous, previous)
+  const changed = []
+  const stop = store.watch(keys => changed.push(...keys), () => {}, { intervalMs: 20, safetyScanMs: 150, minScanGapMs: 0 })
+  t.after(() => stop())
+  other.set('k', 2)
+  fs.utimesSync(directory, previous, previous)
+  await sleep(80)
+  assert.ok(!changed.includes('k'), 'mappens mtime er uaendret: ingen scanning endnu')
+  for (let waited = 80; waited < 400 && !changed.includes('k'); waited += 10) await sleep(10)
+  assert.ok(changed.includes('k'), 'sikkerheds-scannen skal finde aendringen')
+})
+
+test('a hidden watcher slows down and becoming visible scans at once', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  const other = createStore(directory)
+  const changed = []
+  const stop = store.watch(keys => changed.push(...keys), () => {}, { intervalMs: 20, hiddenIntervalMs: 5000, hiddenSafetyScanMs: 60000 })
+  t.after(() => stop())
+  store.setWatchVisibility(false)
+  other.set('k', 3)
+  await sleep(150)
+  assert.ok(!changed.includes('k'), 'skjult watcher tikker kun hvert 5. sekund')
+  store.setWatchVisibility(true)
+  for (let waited = 0; waited < 100 && !changed.includes('k'); waited += 5) await sleep(5)
+  assert.ok(changed.includes('k'), 'synlig igen: scanner med det samme')
+})
+
+test('setWatchVisibility is safe before watch() and after stop', (t) => {
+  const { store } = temporaryStore(t)
+  store.setWatchVisibility(false)
+  const stop = store.watch(() => {}, () => {}, { intervalMs: 20 })
+  stop()
+  store.setWatchVisibility(true)
+  store.setWatchVisibility(false)
 })
 
 test('statAsync reports a key file change marker without reading it, and undefined when missing', async (t) => {

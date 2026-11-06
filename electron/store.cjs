@@ -52,17 +52,42 @@ function releaseReadSlot() {
 }
 
 // Read-cache-levetid. Naar watch() koerer, ved storen praecis hvilke filer der
-// er aendret paa disken (mtime+size hvert tick) og sletter dem fra cachen â€”
+// er aendret paa disken (mappe-mtime hvert tick, fuld scanning ved aendring) og sletter dem fra cachen â€”
 // saa cachen kan holdes laenge, og TTL'en er kun et sikkerhedsnet mod en
 // scanning der ikke fanger en aendring. Uden watcher (tests, engangs-stores)
 // bruges den korte TTL som foer.
 const CACHE_TTL_MS = 3000
 const CACHE_TTL_WATCHED_MS = 60000
-// Watcher-interval: et readdir+stat af 500 filer koster ~27 ms paa M:, saa 2 s
-// er billigt og giver baade hurtigere synlighed af kollegers aendringer og
-// hurtigere cache-invalidering.
-const DEFAULT_WATCH_INTERVAL_MS = 2000
+// Watcher: hvert tick stat'er kun selve mappen. Mappens mtime skifter naar en
+// fil oprettes/omdoebes/slettes (alle KV-skrivninger gaar via lock + tmp +
+// rename), saa fuld scanning (readdir + stat af hver fil) sker kun ved aendring
+// og som periodisk sikkerheds-scan (fanger in-place-overskrivninger).
+// fs.watch virker ikke paa M:-serveren.
 const MIN_WATCH_INTERVAL_MS = 1000
+const DEFAULT_WATCH_OPTIONS = {
+  intervalMs: 1000,
+  hiddenIntervalMs: 10000,
+  safetyScanMs: 30000,
+  hiddenSafetyScanMs: 120000,
+  // Loft: hoejst en aendrings-udloest fuld scanning pr. gap.
+  minScanGapMs: 2000,
+}
+
+/** Afgoer hvad et watcher-tick skal goere: 'full' scanning, 'skip' eller 'defer' (vent paa gap). */
+function decideWatchTick(state, config) {
+  const { visible, dirMtimeMs, lastDirMtimeMs, nowMs, lastFullScanAtMs, lastChangeScanAtMs, forceFull } = state
+  const safetyDue = nowMs - lastFullScanAtMs >= (visible ? config.safetyScanMs : config.hiddenSafetyScanMs)
+  const changed = forceFull || dirMtimeMs !== lastDirMtimeMs
+  if (!changed && !safetyDue) return 'skip'
+  if (changed && !safetyDue && !forceFull && lastChangeScanAtMs !== null && nowMs - lastChangeScanAtMs < config.minScanGapMs) return 'defer'
+  return 'full'
+}
+
+function resolveWatchOptions(options) {
+  // Legacy: et tal er det synlige interval og clampes som foer.
+  if (typeof options === 'number') return { ...DEFAULT_WATCH_OPTIONS, intervalMs: Math.max(options, MIN_WATCH_INTERVAL_MS) }
+  return { ...DEFAULT_WATCH_OPTIONS, ...(options || {}) }
+}
 
 function logSlow(operation, target, startedAt, attempts = 1) {
   if (!process.env.TCD_HUB_DEBUG) return
@@ -129,7 +154,9 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
   // externallyWatched: en anden store-instans paa SAMME mappe koerer watch() og
   // kalder invalidate() her ved aendringer, saa cachen kan holdes lige saa laenge.
   let watching = externallyWatched
-
+  // Vinduets synlighed (setWatchVisibility) og de koerende watchere.
+  let watchVisible = true
+  const activeWatchers = new Set()
   // Cachen er kun paalidelig i lang tid naar watcheren aktivt overvaager
   // mappen OG kan naa den (frakoblet = ingen scanning = ingen invalidering).
   function isFresh(cached) {
@@ -695,8 +722,14 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
    * files were added, modified, or removed, and onConnectionChange(connected)
    * whenever dataDir goes from reachable to unreachable or back (e.g. a
    * network share disconnecting/reconnecting). Returns a stop function.
+   * options: tal (legacy, synligt interval) eller objekt, se DEFAULT_WATCH_OPTIONS.
    */
-  function watch(onChange, onConnectionChange, intervalMs = DEFAULT_WATCH_INTERVAL_MS) {
+  function watch(onChange, onConnectionChange, options) {
+    const config = resolveWatchOptions(options)
+    // Mappens mtime maales FOER scanningen, saa en aendring under scanningen
+    // giver en ny mtime ved naeste tick.
+    let lastDirMtimeMs = null
+    try { lastDirMtimeMs = fs.statSync(dataDir).mtimeMs } catch { /* uopnaaelig: foerste tick scanner fuldt */ }
     // Første scan er synkron (sker ved opstart, før vinduet vises) så
     // isConnected() er retvisende med det samme.
     const initial = scanDirectory(null)
@@ -704,39 +737,97 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
     connected = initial.reachable
     watching = true
     let scanning = false
+    let stopped = false
+    let timer = null
+    let lastFullScanAtMs = performance.now()
+    let lastChangeScanAtMs = null
+    let forceFull = false
 
-    const timer = setInterval(() => {
-      if (scanning) return // forrige scan (langsomt netværk) kører stadig
+    function schedule(delayMs) {
+      if (stopped) return
+      clearTimeout(timer)
+      timer = setTimeout(tick, delayMs)
+      timer.unref?.()
+    }
+
+    function setReachable(reachable) {
+      if (reachable === connected) return
+      connected = reachable
+      // Efter en frakobling kan vi have misset aendringer: start paa en frisk.
+      if (connected) readCache.clear()
+      onConnectionChange?.(connected)
+    }
+
+    async function tick() {
+      timer = null
+      if (stopped || scanning) return // en igangvaerende scanning planlaegger selv naeste tick
       scanning = true
-      scanDirectoryAsync(snapshot)
-        .then((result) => {
-          if (result.reachable !== connected) {
-            connected = result.reachable
-            // Efter en frakobling kan vi have misset aendringer: start paa en frisk.
-            if (connected) readCache.clear()
-            onConnectionChange?.(connected)
-          }
-          if (!result.reachable) return
+      try {
+        let dirMtimeMs
+        try {
+          dirMtimeMs = (await fs.promises.stat(dataDir)).mtimeMs
+        } catch {
+          setReachable(false)
+          return
+        }
+        if (stopped) return
+        // Genforbundet: scan fuldt foer forbindelsen meldes tilbage.
+        if (!connected) forceFull = true
+        const nowMs = performance.now()
+        const decision = decideWatchTick({ visible: watchVisible, dirMtimeMs, lastDirMtimeMs, nowMs, lastFullScanAtMs, lastChangeScanAtMs, forceFull }, config)
+        if (decision !== 'full') return
+        const changeTriggered = dirMtimeMs !== lastDirMtimeMs
+        forceFull = false
+        const result = await scanDirectoryAsync(snapshot)
+        if (stopped) return
+        setReachable(result.reachable)
+        if (!result.reachable) return
 
-          snapshot = result.snapshot
-          if (result.changedKeys.length > 0) {
-            // Invalidate cache for changed keys to force fresh read on next get().
-            for (const key of result.changedKeys) readCache.delete(key)
-            onChange(result.changedKeys)
-          }
-        })
-        .finally(() => { scanning = false })
-    }, Math.max(intervalMs, MIN_WATCH_INTERVAL_MS))
-    timer.unref?.()
+        snapshot = result.snapshot
+        lastDirMtimeMs = dirMtimeMs
+        lastFullScanAtMs = nowMs
+        if (changeTriggered) lastChangeScanAtMs = nowMs
+        if (result.changedKeys.length > 0) {
+          // Invalidate cache for changed keys to force fresh read on next get().
+          for (const key of result.changedKeys) readCache.delete(key)
+          onChange(result.changedKeys)
+        }
+      } finally {
+        scanning = false
+        schedule(watchVisible ? config.intervalMs : config.hiddenIntervalMs)
+      }
+    }
 
-    return () => { watching = false; clearInterval(timer) }
+    const watcher = {
+      visibilityChanged(visible) {
+        if (visible) { forceFull = true; schedule(0) }
+        else schedule(config.hiddenIntervalMs)
+      },
+    }
+    activeWatchers.add(watcher)
+    schedule(watchVisible ? config.intervalMs : config.hiddenIntervalMs)
+
+    return () => {
+      watching = false
+      stopped = true
+      clearTimeout(timer)
+      activeWatchers.delete(watcher)
+    }
+  }
+
+  /** Skjult vindue: langsommere ticks. Synlig igen: fuld scanning med det samme. */
+  function setWatchVisibility(visible) {
+    const next = Boolean(visible)
+    if (next === watchVisible) return
+    watchVisible = next
+    for (const watcher of activeWatchers) watcher.visibilityChanged(next)
   }
 
   function isConnected() {
     return connected
   }
 
-  return { get, getAsync, peekCache, set, setAsync, delete: del, deleteAsync, keys, keysAsync, watch, update, updateAsync, updateDetailed, updateDetailedAsync, mutate, mutateAsync, sweepStaleTempFilesAsync, statAsync, withLockedKeys, invalidate: () => readCache.clear(), dumpAll, dumpAllAsync, dataDir, isConnected, scanDirectory, scanDirectoryAsync }
+  return { get, getAsync, peekCache, set, setAsync, delete: del, deleteAsync, keys, keysAsync, watch, setWatchVisibility, update, updateAsync, updateDetailed, updateDetailedAsync, mutate, mutateAsync, sweepStaleTempFilesAsync, statAsync, withLockedKeys, invalidate: () => readCache.clear(), dumpAll, dumpAllAsync, dataDir, isConnected, scanDirectory, scanDirectoryAsync }
 }
 
-module.exports = { createStore, parseFileContents, keyToFilename, encryptPayload }
+module.exports = { createStore, parseFileContents, keyToFilename, encryptPayload, decideWatchTick }
