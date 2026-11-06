@@ -10,6 +10,26 @@ const path = require('path')
 const fs = require('fs')
 const fsp = require('fs/promises')
 const crypto = require('crypto')
+const { createActivityTracker } = require('./mainActivity.cjs')
+// Én tracker for hele main: watchdog'en logger hvad der var i gang, når main frøs.
+const mainActivity = createActivityTracker()
+// Async-resultater afsluttes først, når promiset er afgjort.
+function tracked(label, fn) {
+  return function (...args) {
+    const end = mainActivity.begin(label)
+    let result
+    try { result = fn.apply(this, args) } catch (error) { end(); throw error }
+    if (result && typeof result.then === 'function') result.then(end, end)
+    else end()
+    return result
+  }
+}
+// Installeres før første handler, så både securedIpc og alle andre registreringer måles.
+const nativeHandle = nativeIpcMain.handle.bind(nativeIpcMain)
+nativeIpcMain.handle = (channel, listener) => nativeHandle(channel, async (...args) => {
+  const end = mainActivity.begin('ipc:' + channel)
+  try { return await listener(...args) } finally { end() }
+})
 const { createStore, encryptPayload } = require('./store.cjs')
 // createStore() laver en synkron mkdirSync mod M: og starter med en tom laesecache.
 // Varme stier (auth ved hvert IPC-kald, hub-oversigter) genbruger derfor instansen pr. mappe.
@@ -293,12 +313,12 @@ function createDebouncedBroadcast(delayMs = 100) {
 function startWatcher() {
   if (stopWatcher) stopWatcher()
   const debouncedBroadcast = createDebouncedBroadcast(100)
-  stopWatcher = store.watch((changedKeys) => {
+  stopWatcher = store.watch(tracked('watcher:team', (changedKeys) => {
     if (changedKeys.includes('users') && directUsersStore.store) directUsersStore.store.invalidate()
     // Roles/passwords changed on another PC: the cached auth snapshot (15 s) must not outlive them.
     if (changedKeys.includes('users')) authService?.invalidateAll()
     debouncedBroadcast(changedKeys)
-  }, setStorageConnected)
+  }), setStorageConnected)
 }
 
 /**
@@ -326,11 +346,11 @@ function migrateSharedMealPlanIfNeeded() {
 function startSharedWatcher() {
   if (stopSharedWatcher) stopSharedWatcher()
   const debouncedBroadcast = createDebouncedBroadcast(100)
-  stopSharedWatcher = sharedStore.watch((changedKeys) => {
+  stopSharedWatcher = sharedStore.watch(tracked('watcher:shared', (changedKeys) => {
     // A session revoked or renewed on another PC: drop the cached auth snapshot right away.
     if (changedKeys.includes('active-sessions')) authService?.invalidateAll()
     debouncedBroadcast(changedKeys)
-  }, () => {})
+  }), () => {})
 }
 
 /** Fjerner temp-filer som crashede klienter har efterladt i de delte mapper. Best effort og helt i baggrunden. */
@@ -526,7 +546,7 @@ function startAutoBackup({ immediate = true } = {}) {
   // immediate:false ved team-skift. Backup'en er asynkron og blokerer ikke
   // laengere appen, men den beslaglaegger stadig drevet - og teamets egne
   // brugere laver alligevel timens backup.
-  const run = () => { runAutoBackup().catch(err => console.error('TCD Hub: automatisk backup fejlede', err)) }
+  const run = tracked('timer:auto-backup', () => runAutoBackup().catch(err => console.error('TCD Hub: automatisk backup fejlede', err)))
   if (immediate) run()
   // Timetjek dækker både midnat og klienter, der bare får lov at køre.
   autoBackupTimer = setInterval(run, AUTO_BACKUP_CHECK_INTERVAL)
@@ -563,8 +583,9 @@ function startSickLeavePurge() {
   // Dev points at the production drive: the irreversible purge only runs in a released build (or when asked for explicitly).
   if (!app.isPackaged && process.env.TCD_HUB_SICK_PURGE !== '1') return
   // Lidt efter opstart, så login og første visning ikke venter på drevet.
-  setTimeout(purgeFinishedSickLeave, 20_000).unref?.()
-  sickPurgeTimer = setInterval(purgeFinishedSickLeave, SICK_PURGE_CHECK_INTERVAL)
+  const purge = tracked('timer:sick-purge', purgeFinishedSickLeave)
+  setTimeout(purge, 20_000).unref?.()
+  sickPurgeTimer = setInterval(purge, SICK_PURGE_CHECK_INTERVAL)
   sickPurgeTimer.unref?.()
 }
 
@@ -763,7 +784,7 @@ app.whenReady().then(() => {
   let lastTick = performance.now()
   setInterval(() => {
     const now = performance.now(), stalledMs = now - lastTick - 1000
-    if (stalledMs > 2000) diagnostics.write('warn', `MAIN BLOCKED ${Math.round(stalledMs)} ms`)
+    if (stalledMs > 2000) diagnostics.write('warn', `MAIN BLOCKED ${Math.round(stalledMs)} ms – ${mainActivity.describe()}`)
     lastTick = now
   }, 1000).unref()
   const resolved = resolveDataDir()
