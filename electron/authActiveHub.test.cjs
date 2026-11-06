@@ -8,6 +8,9 @@ function memory(initial) {
     get: key => structuredClone(values[key]),
     mutate(key, callback) { const next = callback(structuredClone(values[key])); if (next !== undefined) values = { ...values, [key]: structuredClone(next) }; return structuredClone(next) },
     update(key, operation) { return this.mutate(key, current => { const next = { ...(current || {}) }; if (operation.op === 'deleteField') delete next[operation.field]; else next[operation.field] = operation.value; return next }) },
+    async getAsync(key) { return this.get(key) },
+    async mutateAsync(key, callback) { return this.mutate(key, callback) },
+    async updateAsync(key, operation) { return this.update(key, operation) },
   }
 }
 

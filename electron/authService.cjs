@@ -41,7 +41,7 @@ async function verifyPassword(password, stored) {
 // Only the backend can mint sessions. Persistent keys are token hashes: the
 // shared file does not contain reusable plaintext bearer tokens. Every use
 // checks the account and directory afresh (no cached privilege fallback).
-function createAuthService({ registry, getRoot, openTeam, openSessions, switchTeam, getActiveFolder = () => null, deviceSecret, now = Date.now, runWrite = callback => callback(), runAuthentication = (_, callback) => callback({ recovering: false }), assertAvailable = () => {}, contextTtlMs = 500 }) {
+function createAuthService({ registry, getRoot, openTeam, openSessions, switchTeam, getActiveFolder = () => null, deviceSecret, now = Date.now, runWrite = callback => callback(), runWriteAsync = async callback => callback(), runAuthentication = (_, callback) => callback({ recovering: false }), runAuthenticationAsync = async (_email, callback) => callback({ recovering: false }), assertAvailable = () => {}, contextTtlMs = 500 }) {
   if (!Buffer.isBuffer(deviceSecret) || deviceSecret.length !== 32) fail('AUTH_DEVICE_KEY_INVALID')
   const bindings = new Map(), busy = new Set(), attempts = new Map(), epochs = new Map()
   // Coalesces the session/role reads behind every IPC call into one snapshot per
@@ -166,28 +166,33 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
   async function login(sender, request) {
     return exclusive(sender, async (check) => {
       if (typeof request?.email !== 'string' || !request.email.trim() || request.email.length > 254 || typeof request.password !== 'string' || !request.password || request.password.length > 1024) fail('AUTH_CREDENTIALS')
+      await registry.prefetchAsync?.(getRoot())
       const identity = normalize(request.email)
       let email = identity
       if (!identity.includes('@')) {
         const candidates = []
         for (const team of registry.listTeams(getRoot())) {
-          const users = openTeam(team).get('users', { skipCache: true }) || {}
+          const users = await openTeam(team).getAsync('users', { skipCache: true }) || {}
           for (const [key, user] of Object.entries(users)) if (normalize(user?.username) === identity) candidates.push(normalize(user.email || key))
         }
         if (new Set(candidates).size !== 1) fail('AUTH_CREDENTIALS')
         email = candidates[0]
       }
-      const original = account(email)
+      const original = await accountAsync(email)
       if (!await verifyPassword(request.password, original.user.password)) fail('AUTH_CREDENTIALS')
       const upgraded = original.user.password.startsWith('pbkdf2$') ? undefined : await hashPassword(request.password)
       check()
-      const actor = runAuthentication(email, ({ recovering }) => {
+      const actor = await runAuthenticationAsync(email, async ({ recovering }) => {
+      // Laasen og alle laesninger er nu async: en logout kan ske ved hvert
+      // await, saa epoch tjekkes igen foer hver skrivning og foer binding.
+      check()
       // Password hashing is asynchronous: recheck password/status after it.
-      const fresh = account(email)
+      const fresh = await accountAsync(email)
       if (fresh.user.password !== original.user.password || fresh.home.teamId !== original.home.teamId) fail('AUTH_CREDENTIALS')
       approved(fresh.user)
       const effectiveUpgrade = recovering ? undefined : upgraded
-      if (effectiveUpgrade) openTeam(fresh.home).mutate('users', users => {
+      if (effectiveUpgrade) await openTeam(fresh.home).mutateAsync('users', users => {
+        check()
         const user = users?.[fresh.key]
         if (!user || user.password !== original.user.password) fail('AUTH_CREDENTIALS')
         approved(user)
@@ -196,21 +201,28 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
       const token = `session_${crypto.randomBytes(32).toString('hex')}`
       const record = signed({ authVersion: 1, email, userId: `user_${email}`, teamId: fresh.home.teamId, credentialHash: sessionKey(effectiveUpgrade || fresh.user.password), createdAt: now(), expiresAt: now() + (request.rememberMe === true ? 365 * DAY : DAY) })
       const previous = bindings.get(sender)
-      openSessions().mutate('active-sessions', sessions => {
+      await openSessions().mutateAsync('active-sessions', sessions => {
+        check()
         if (sessions && (typeof sessions !== 'object' || Array.isArray(sessions))) fail('KV_INVALID_OPERATION')
         const next = recovering ? { ...(sessions || {}) } : Object.fromEntries(Object.entries(sessions || {}).filter(([, value]) => !(value?.authVersion === 1 && Number.isFinite(value.expiresAt) && value.expiresAt <= now())))
         if (previous && previous.root === getRoot() && (!recovering || normalize(next[sessionKey(previous.token)]?.email) === email)) delete next[sessionKey(previous.token)]
         next[sessionKey(token)] = record
         return next
       })
+      try { check() } catch (error) {
+        // Logout kom mens sessionen blev skrevet: fjern den igen (tokenet er aldrig udleveret).
+        await openSessions().updateAsync('active-sessions', { op: 'deleteField', field: sessionKey(token) }).catch(() => {})
+        throw error
+      }
       bindings.set(sender, { token, root: getRoot() })
       invalidate(sender)
-      return current(sender)
+      return currentAsync(sender)
       })
       // Starting a team watcher may replay its queue. Do it after releasing
       // the account lock; each queued write acquires that lock independently.
+      check()
       switchTeam(actor.home)
-      return current(sender)
+      return currentAsync(sender)
     }, true)
   }
   async function signup(sender, request) {
@@ -256,37 +268,49 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
     }, true)
   }
   async function resume(sender, token) {
-    return exclusive(sender, async () => {
+    return exclusive(sender, async (check) => {
       if (typeof token !== 'string' || !/^session_[a-f0-9]{64}$/.test(token)) fail('AUTH_REQUIRED')
-      const previous = bindings.get(sender)
-      bindings.set(sender, { token, root: getRoot() })
+      await registry.prefetchAsync?.(getRoot())
+      check()
+      const previous = bindings.get(sender), attempt = { token, root: getRoot() }
+      bindings.set(sender, attempt)
       invalidate(sender)
-      try { const actor = current(sender); runAuthentication(actor.email, () => actor); switchTeam(actor.home); return current(sender) } catch (error) {
-        if (previous) bindings.set(sender, previous); else bindings.delete(sender)
+      try {
+        const actor = await currentAsync(sender)
+        await runAuthenticationAsync(actor.email, () => actor)
+        check()
+        switchTeam(actor.home)
+        return await currentAsync(sender)
+      } catch (error) {
+        // Gendan kun hvis bindingen stadig er vores: en logout/forget under et
+        // await har allerede fjernet den og maa ikke fortrydes.
+        if (bindings.get(sender) === attempt) { if (previous) bindings.set(sender, previous); else bindings.delete(sender) }
         invalidate(sender)
         throw error
       }
     })
   }
-  function renew(sender) {
-    const actor = current(sender)
-    return runAuthentication(actor.email, () => {
+  async function renew(sender) {
+    const actor = await currentAsync(sender)
+    return runAuthenticationAsync(actor.email, async () => {
+    if (bindings.get(sender)?.token !== actor.token) fail('AUTH_REQUIRED')
     const key = sessionKey(actor.token)
-    openSessions().mutate('active-sessions', sessions => {
+    await openSessions().mutateAsync('active-sessions', sessions => {
       if (!sessions?.[key] || sessions[key].expiresAt <= now()) fail('AUTH_REQUIRED')
       if (sessions[key].signature !== sign(sessions[key])) fail('AUTH_REQUIRED')
       return { ...sessions, [key]: signed({ ...sessions[key], expiresAt: now() + 365 * DAY }) }
     })
     invalidate(sender)
-    return current(sender)
+    return currentAsync(sender)
     })
   }
-  function logout(sender) {
+  async function logout(sender) {
+    // Epoch, binding og cache ryddes synkront foer foerste await.
     epochs.set(sender, (epochs.get(sender) || 0) + 1)
     const bound = bindings.get(sender)
     bindings.delete(sender)
     invalidate(sender)
-    if (bound && bound.root === getRoot()) runWrite(() => openSessions().update('active-sessions', { op: 'deleteField', field: sessionKey(bound.token) }))
+    if (bound && bound.root === getRoot()) await runWriteAsync(() => openSessions().updateAsync('active-sessions', { op: 'deleteField', field: sessionKey(bound.token) }))
   }
   async function profile(sender, request) {
     return exclusive(sender, async check => {

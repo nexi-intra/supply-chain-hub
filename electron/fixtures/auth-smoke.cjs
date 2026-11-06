@@ -43,7 +43,7 @@ app.whenReady().then(async () => {
     let folder = 'A'
     let failMigration = false
     const accounts = createAccountService({ getRoot: () => platform, registry, openStore: createStore, beforeStep: ({ index }) => { if (failMigration && index === 1) throw new Error('SYNTHETIC MIGRATION FAILURE') } })
-    const auth = createAuthService({ registry, getRoot: () => platform, runWrite: accounts.runWrite, runAuthentication: accounts.runAuthentication, assertAvailable: accounts.assertAvailable, openTeam: team => createStore(path.join(platform, team.folderName)), openSessions: () => sessions, switchTeam: team => { folder = team.folderName }, deviceSecret: loadDeviceSecret(path.join(local, 'auth-device-key')) })
+    const auth = createAuthService({ registry, getRoot: () => platform, runWrite: accounts.runWrite, runAuthentication: accounts.runAuthentication, runWriteAsync: accounts.runWriteAsync, runAuthenticationAsync: accounts.runAuthenticationAsync, assertAvailable: accounts.assertAvailable, openTeam: team => createStore(path.join(platform, team.folderName)), openSessions: () => sessions, switchTeam: team => { folder = team.folderName }, deviceSecret: loadDeviceSecret(path.join(local, 'auth-device-key')) })
     const ipc = createSecuredIpc(native, { auth: () => auth, accounts: () => accounts, trusted: createTrustedWindow(BrowserWindow, () => pageUrl), currentFolder: () => folder, listTeams: () => registry.listTeams(platform) })
     const reader = createTeamReader({ getRoot: () => platform, listTeams: () => registry.listTeams(platform), openStore: createStore })
     for (const name of ['login', 'signup', 'resume', 'current', 'renew', 'logout', 'profile']) ipc.handle(`auth:${name}`, (event, input) => auth[name](event.sender.id, input))

@@ -1,6 +1,6 @@
 const path = require('node:path')
 const crypto = require('node:crypto')
-const { withFileLock } = require('./fileLock.cjs')
+const { withFileLock, withFileLockAsync } = require('./fileLock.cjs')
 const { updateUsers, publicUsers } = require('./userPolicy.cjs')
 const { migrateReferences, personalKey, relevantKey } = require('./accountReferences.cjs')
 const { registeredTeamDir } = require('./teamReadPolicy.cjs')
@@ -13,7 +13,7 @@ function fail(code) { const error = new Error(code); error.code = code; throw er
 function object(value) { return !!value && typeof value === 'object' && !Array.isArray(value) }
 function control(record) { return { id: record.id, root: record.root, teamId: record.teamId, oldEmail: record.oldEmail, newEmail: record.newEmail, state: record.state, applied: record.applied, total: record.steps.length } }
 
-function createAccountService({ getRoot, registry, openStore, beforeStep = () => {}, assertNoPendingSync = () => {}, maxJournalBytes = 32 * 1024 * 1024, now = Date.now, contextTtlMs = 500 }) {
+function createAccountService({ getRoot, registry, openStore, beforeStep = () => {}, assertNoPendingSync = () => {}, maxJournalBytes = 32 * 1024 * 1024, now = Date.now, contextTtlMs = 500, authenticationLockRetry = { attempts: 40, delayMs: 200 } }) {
   // Coalesces the migration-context read gate that securedIpc runs before and
   // after every IPC call. Only the READ gate is cached; every write/migration
   // path (rename/recover/runWrite) still takes the real account lock, so data
@@ -130,6 +130,17 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
       if (recovering && normalize(email) !== normalize(registry.getCreatorEmail(getRoot()))) fail('ACCOUNT_MIGRATION_PENDING')
       return synchronous(() => callback({ recovering }))
     })
+  }
+  // Samme laas, budget og creator-regel som runAuthentication, men ventetid og
+  // I/O er await-baseret, saa main-event-loopet ikke fryser under login. Laasen
+  // holdes indtil callbackens promise er afgjort. authenticationLockRetry
+  // overstyres kun i tests; produktion bruger 40 x 200 ms som den synkrone vej.
+  function runAuthenticationAsync(email, callback) {
+    return withFileLockAsync(globalLock(), async () => {
+      const recovering = !terminal(await readControlAsync())
+      if (recovering && normalize(email) !== normalize(registry.getCreatorEmail(getRoot()))) fail('ACCOUNT_MIGRATION_PENDING')
+      return callback({ recovering })
+    }, { attempts: authenticationLockRetry.attempts, delayMs: authenticationLockRetry.delayMs, staleMs: ACCOUNT_LOCK_STALE_MS })
   }
   function context() {
     if (contextCache && now() - contextCache.at < CONTEXT_TTL_MS) return contextCache.value
@@ -333,6 +344,6 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
       return { state: reverse ? 'rolled-back' : 'committed' }
     })
   }
-  return { rename, pending, status, statusAsync, assertReady, assertAvailable, assertReferences, prepareReferenceChecksAsync, context, contextAsync, runWrite, runWriteAsync, runAuthentication, resume: (actor, id) => recover(actor, id, false), rollback: (actor, id) => recover(actor, id, true) }
+  return { rename, pending, status, statusAsync, assertReady, assertAvailable, assertReferences, prepareReferenceChecksAsync, context, contextAsync, runWrite, runWriteAsync, runAuthentication, runAuthenticationAsync, resume: (actor, id) => recover(actor, id, false), rollback: (actor, id) => recover(actor, id, true) }
 }
 module.exports = { createAccountService }

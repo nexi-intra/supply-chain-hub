@@ -119,13 +119,33 @@ test('retired identities cannot reappear in stale operations, preferences or gui
   ]) assert.throws(() => f.service.assertReferences(key, value), code('ACCOUNT_RETIRED_REFERENCE'))
   assert.doesNotThrow(() => f.service.assertReferences('guides', [{ content: f.oldEmail, createdBy: f.newEmail }]))
 })
-test('the read context changes on migration and creator authentication remains possible during recovery without changing private snapshots', t => {
+test('runAuthenticationAsync waits for a held account lock without blocking the event loop', async t => {
+  const f = fixture(t), lock = path.join(f.root, '_registry', 'account-operation.lock')
+  fs.writeFileSync(lock, 'synthetic-other-client')
+  let ticked = false, tickedBeforeRelease = null
+  setImmediate(() => { ticked = true })
+  setTimeout(() => { tickedBeforeRelease = ticked; fs.unlinkSync(lock) }, 300)
+  assert.equal(await f.service.runAuthenticationAsync('a@x', ({ recovering }) => recovering ? 'recovering' : 'ok'), 'ok')
+  assert.equal(tickedBeforeRelease, true)
+  assert.equal(fs.existsSync(lock), false, 'own lock is released afterwards')
+})
+test('runAuthenticationAsync gives up with KV_LOCK_BUSY after its attempt budget', async t => {
+  const f = fixture(t, { authenticationLockRetry: { attempts: 3, delayMs: 10 } }), lock = path.join(f.root, '_registry', 'account-operation.lock')
+  fs.writeFileSync(lock, 'synthetic-other-client')
+  let called = false
+  await assert.rejects(f.service.runAuthenticationAsync(f.creator, () => { called = true }), code('KV_LOCK_BUSY'))
+  assert.equal(called, false)
+  assert.equal(fs.readFileSync(lock, 'utf8'), 'synthetic-other-client')
+})
+test('the read context changes on migration and creator authentication remains possible during recovery without changing private snapshots', async t => {
   const f = fixture(t, { beforeStep: ({ index }) => { if (index === 2) throw new Error('synthetic stop') } })
   const context = f.service.context()
   assert.throws(f.rename)
   assert.throws(() => f.service.context(), code('ACCOUNT_MIGRATION_PENDING'))
   assert.throws(() => f.service.runAuthentication(f.oldEmail, () => {}), code('ACCOUNT_MIGRATION_PENDING'))
   assert.equal(f.service.runAuthentication(f.creator, ({ recovering }) => recovering), true)
+  await assert.rejects(f.service.runAuthenticationAsync(f.oldEmail, () => {}), code('ACCOUNT_MIGRATION_PENDING'))
+  assert.equal(await f.service.runAuthenticationAsync(f.creator, async ({ recovering }) => recovering), true)
   f.shared.mutate('active-sessions', sessions => ({ ...sessions, recoveryCreator: { email: f.creator, token: 'SYNTHETIC RECOVERY TOKEN' } }))
   const fresh = createAccountService({ getRoot: () => f.root, registry, openStore: createStore })
   fresh.resume(f.actor, f.service.pending().id)

@@ -831,6 +831,8 @@ app.whenReady().then(() => {
     registry, getRoot: () => platformRoot,
     runWrite: accountService.runWrite,
     runAuthentication: accountService.runAuthentication,
+    runWriteAsync: accountService.runWriteAsync,
+    runAuthenticationAsync: accountService.runAuthenticationAsync,
     assertAvailable: accountService.assertAvailable,
     openTeam: team => storeFor(registeredTeamDir(platformRoot, registry.listTeams(platformRoot), team.folderName).directory),
     openSessions: () => storeFor(path.join(platformRoot, '_shared')),

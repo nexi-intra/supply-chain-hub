@@ -7,15 +7,19 @@ const { createAuthService, hashPassword, verifyPassword, sessionKey, loadDeviceS
 
 function memory() {
   const values = new Map()
+  const get = key => structuredClone(values.get(key))
+  const mutate = (key, callback) => { const next = callback(structuredClone(values.get(key))); if (next !== undefined) values.set(key, structuredClone(next)); return structuredClone(next) }
+  const update = (key, operation) => mutate(key, current => {
+    const next = { ...(current || {}) }
+    if (operation.op === 'deleteField') delete next[operation.field]
+    else next[operation.field] = structuredClone(operation.value)
+    return next
+  })
   return {
-    get: key => structuredClone(values.get(key)),
-    mutate(key, callback) { const next = callback(structuredClone(values.get(key))); if (next !== undefined) values.set(key, structuredClone(next)); return structuredClone(next) },
-    update(key, operation) { return this.mutate(key, current => {
-      const next = { ...(current || {}) }
-      if (operation.op === 'deleteField') delete next[operation.field]
-      else next[operation.field] = structuredClone(operation.value)
-      return next
-    }) },
+    get, mutate, update,
+    async getAsync(key) { return get(key) },
+    async mutateAsync(key, callback) { return mutate(key, callback) },
+    async updateAsync(key, operation) { return update(key, operation) },
   }
 }
 function fixture() {
@@ -47,7 +51,7 @@ const code = expected => error => error.code === expected
 test('recovery login does not upgrade a creator password, expire other sessions or remove a previous affected-user session', async () => {
   const f = fixture(), previous = await f.auth.login(1, f.login)
   const originalPassword = f.users.get('users')['creator@example.test'].password
-  const auth = createAuthService({ ...f.deps, runAuthentication: (_, callback) => callback({ recovering: true }) })
+  const auth = createAuthService({ ...f.deps, runAuthentication: (_, callback) => callback({ recovering: true }), runAuthenticationAsync: async (_, callback) => callback({ recovering: true }) })
   const user = await auth.login(2, f.login)
   const expired = { authVersion: 1, email: 'user@example.test', expiresAt: 1 }
   f.sessions.mutate('active-sessions', sessions => ({ ...sessions, expired }))
@@ -187,8 +191,8 @@ test('profile changes are limited to own phone; password change requires old pas
 })
 test('logout removes its token only; remember renewal remains signed', async () => {
   const f = fixture(), first = await f.auth.login(1, f.login), second = await f.auth.login(2, f.login)
-  f.advance(1000); assert.ok(f.auth.renew(1).expiresAt > first.expiresAt)
-  f.auth.logout(1)
+  f.advance(1000); assert.ok((await f.auth.renew(1)).expiresAt > first.expiresAt)
+  await f.auth.logout(1)
   assert.equal(f.sessions.get('active-sessions')[sessionKey(first.token)], undefined)
   assert.equal(f.auth.current(2).token, second.token)
 })
@@ -251,8 +255,70 @@ test('logout while an asynchronous resolve is in flight fails it and caches noth
   f.advance(15000)
   const release = io.hold()
   const pending = auth.currentAsync(1)
-  auth.logout(1)
+  const loggedOut = auth.logout(1)
   release()
   await assert.rejects(pending, code('AUTH_REQUIRED'))
   await assert.rejects(auth.currentAsync(1), code('AUTH_REQUIRED'))
+  await loggedOut
+})
+function syncForbidden(store) {
+  for (const name of ['get', 'mutate', 'update', 'set']) store[name] = () => { throw new Error('SYNC_CALLED') }
+}
+test('login, resume, renew and logout never call synchronous store methods', async () => {
+  const f = fixture(), peek = f.sessions.get
+  syncForbidden(f.sessions); for (const store of f.stores.values()) syncForbidden(store)
+  let prefetches = 0
+  const auth = createAuthService({ ...f.deps, registry: { ...f.deps.registry, prefetchAsync: async () => { prefetches++ } } })
+  const actor = await auth.login(1, { ...f.login, email: 'sample' })
+  assert.equal(actor.email, f.login.email)
+  assert.equal((await auth.resume(2, actor.token)).email, f.login.email)
+  f.advance(1000)
+  assert.ok((await auth.renew(1)).expiresAt > actor.expiresAt)
+  assert.ok(peek('active-sessions')[sessionKey(actor.token)])
+  await auth.logout(1)
+  assert.equal(peek('active-sessions')[sessionKey(actor.token)], undefined)
+  assert.ok(prefetches >= 2)
+  await assert.rejects(auth.currentAsync(1), code('AUTH_REQUIRED'))
+})
+function gatedAuthentication() {
+  let release, entered
+  const reached = new Promise(resolve => { entered = resolve })
+  const gate = new Promise(resolve => { release = resolve })
+  return { reached, release: () => release(), runAuthenticationAsync: async (_, callback) => { entered(); await gate; return callback({ recovering: false }) } }
+}
+test('logout while login waits for the account lock prevents the login from creating a session or binding', { timeout: 10000 }, async () => {
+  const f = fixture(), lock = gatedAuthentication()
+  f.changeUser({ password: await hashPassword(f.login.password) })
+  const auth = createAuthService({ ...f.deps, runAuthenticationAsync: lock.runAuthenticationAsync })
+  const pending = auth.login(1, f.login)
+  await lock.reached
+  await auth.logout(1)
+  lock.release()
+  await assert.rejects(pending, code('AUTH_REQUIRED'))
+  assert.deepEqual(f.sessions.get('active-sessions') || {}, {})
+  await assert.rejects(auth.currentAsync(1), code('AUTH_REQUIRED'))
+})
+test('logout while resume waits for the account lock is not undone by restoring the previous binding', { timeout: 10000 }, async () => {
+  const f = fixture(), first = await f.auth.login(1, f.login), second = await f.auth.login(2, f.login)
+  let lock = null
+  const auth = createAuthService({ ...f.deps, runAuthenticationAsync: (email, callback) => lock ? lock.runAuthenticationAsync(email, callback) : callback({ recovering: false }) })
+  await auth.resume(1, first.token)
+  lock = gatedAuthentication()
+  const pending = auth.resume(1, second.token)
+  await lock.reached
+  await auth.logout(1)
+  lock.release()
+  await assert.rejects(pending, code('AUTH_REQUIRED'))
+  await assert.rejects(auth.currentAsync(1), code('AUTH_REQUIRED'))
+  assert.ok(f.sessions.get('active-sessions')[sessionKey(first.token)], 'only the token bound at logout is removed')
+})
+test('renew and logout are asynchronous and logout clears the binding before its first await', async () => {
+  const f = fixture(), actor = await f.auth.login(1, f.login)
+  const renewing = f.auth.renew(1)
+  assert.equal(typeof renewing.then, 'function'); await renewing
+  const loggingOut = f.auth.logout(1)
+  assert.equal(typeof loggingOut.then, 'function')
+  assert.throws(() => f.auth.current(1), code('AUTH_REQUIRED'))
+  await loggingOut
+  assert.equal(f.sessions.get('active-sessions')[sessionKey(actor.token)], undefined)
 })
