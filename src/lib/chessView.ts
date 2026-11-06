@@ -85,9 +85,13 @@ export function needsPromotion(legal: readonly MultiplayerChessLegalMove[], from
 /** A move the player has made on their own board but not yet confirmed (sent). */
 export interface PendingMove { from: string; to: string; promotion?: MultiplayerChessPromotion; fen: string }
 
-/** The staged move still applies: the position (FEN) is unchanged and it is still a legal move in the current list. */
-export function pendingStillValid(pending: PendingMove | null, fen: string, legal: readonly MultiplayerChessLegalMove[]): boolean {
-  if (!pending || pending.fen !== fen) return false
+/**
+ * The staged move still applies: the game is active and it is my move (`myMoveNow`), the position (FEN) is unchanged
+ * and it is still a legal move in the current list. Legal moves come from the board only, so a resignation or an
+ * agreed draw leaves them in place; `myMoveNow` is what drops the move then.
+ */
+export function pendingStillValid(pending: PendingMove | null, fen: string, legal: readonly MultiplayerChessLegalMove[], myMoveNow: boolean): boolean {
+  if (!pending || !myMoveNow || pending.fen !== fen) return false
   return findLegal(legal, pending.from, pending.to, pending.promotion) !== null
 }
 

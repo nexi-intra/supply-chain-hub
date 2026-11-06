@@ -162,6 +162,8 @@
 /* One square; the image (3:4) stands on the square with its foot at 78 % of the square's height. */
 .cx-piece { position: absolute; width: 12.5%; height: 12.5%; pointer-events: none; }
 .cx-piece[data-grab] { pointer-events: auto; cursor: grab; touch-action: none; }
+/* Only the piece's own square catches the pointer; the body reaching up into the square in front lets clicks through. */
+.cx-piece[data-grab] .cx-piece__body { pointer-events: none; }
 .cx-piece[data-dragging] { cursor: grabbing; }
 
 .cx-piece__shadow {

@@ -69,12 +69,20 @@ describe('legal targets', () => {
   it('pendingStillValid keeps a staged move only while the position is unchanged and the move is still legal', () => {
     const legal = [{ from: 'e2', to: 'e4', flags: 'b', san: 'e4' }, { from: 'e7', to: 'e8', flags: 'np', promotion: 'q', san: 'e8=Q' }] as MultiplayerChessLegalMove[]
     const fen = START_FEN
-    expect(pendingStillValid(null, fen, legal)).toBe(false)
-    expect(pendingStillValid({ from: 'e2', to: 'e4', fen }, fen, legal)).toBe(true)
-    expect(pendingStillValid({ from: 'e2', to: 'e4', fen }, 'other-fen', legal)).toBe(false)
-    expect(pendingStillValid({ from: 'e2', to: 'e4', fen }, fen, [])).toBe(false)
-    expect(pendingStillValid({ from: 'e2', to: 'e5', fen }, fen, legal)).toBe(false)
-    expect(pendingStillValid({ from: 'e7', to: 'e8', promotion: 'q', fen }, fen, legal)).toBe(true)
+    expect(pendingStillValid(null, fen, legal, true)).toBe(false)
+    expect(pendingStillValid({ from: 'e2', to: 'e4', fen }, fen, legal, true)).toBe(true)
+    expect(pendingStillValid({ from: 'e2', to: 'e4', fen }, 'other-fen', legal, true)).toBe(false)
+    // No legal moves in this position (checkmate or stalemate on the board).
+    expect(pendingStillValid({ from: 'e2', to: 'e4', fen }, fen, [], true)).toBe(false)
+    expect(pendingStillValid({ from: 'e2', to: 'e5', fen }, fen, legal, true)).toBe(false)
+    expect(pendingStillValid({ from: 'e7', to: 'e8', promotion: 'q', fen }, fen, legal, true)).toBe(true)
+  })
+
+  it('pendingStillValid drops a staged move when the game has ended or it is no longer my move, even with legal moves left', () => {
+    // Resigning or agreeing a draw changes neither the FEN nor the board-derived legal moves.
+    const legal = [{ from: 'e2', to: 'e4', flags: 'b', san: 'e4' }] as MultiplayerChessLegalMove[]
+    const fen = START_FEN
+    expect(pendingStillValid({ from: 'e2', to: 'e4', fen }, fen, legal, false)).toBe(false)
   })
 })
 

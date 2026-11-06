@@ -7,6 +7,7 @@
 //
 // Game: 1.e4 e5 2.Nf3 Nc6 3.Bc4 Nd4 4.O-O Nxf3+ 5.Qxf3 (Bo offers a draw, Anna declines) d6 6.Qxf7# (scholar's-mate finish).
 // Every move of Anna is only staged on the board until "Bekræft" (Enter also confirms; "Fortryd"/Escape put it back).
+// Afterwards Bo challenges again and resigns while Anna has a move staged: the staged move must disappear.
 //
 // Needs a Vite dev server: MULTIPLAYER_VERIFY_URL=http://127.0.0.1:5021 node scripts/verify-chess.cjs
 const assert = require('node:assert/strict')
@@ -229,6 +230,7 @@ async function verify() {
       else await button('Bekr\u00e6ft').click()
       await poll(`move ${before + 1} stored`, async () => (await serverMoves()) === before + 1)
       await waitUnstaged()
+      assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('role')), 'grid', 'Bekræft puts the focus back on the board')
       await poll('sending finished', async () => (await page.locator('.bgr-turn', { hasText: 'Sender dit tr\u00e6k' }).count()) === 0)
       assert.equal(await serverMoves(), before + 1, 'Bekræft sends the move exactly once')
     }
@@ -237,19 +239,31 @@ async function verify() {
     const emptyE3 = await labelOf('e3')
     assert.equal(emptyE3, 'e3, tomt felt')
     assert.equal(await labelOf('e2'), 'Hvid bonde p\u00e5 e2')
-    // Dragged, not clicked: a lifted e2 pawn's (transparent) image box covers the centre of e3, so a click there hits the pawn.
-    await dragMove('e2', 'e3')
+    // Clicked: only the piece's own square catches the pointer, so e3 is free even with the e2 pawn lifted.
+    await clickMove('e2', 'e3')
     await waitStaged()
     await poll('e3 staged on the board', async () => (await labelOf('e3')) === 'Hvid bonde p\u00e5 e3')
+    assert.ok((await page.locator('.bgr-turn').innerText()).includes(PENDING_HINT), 'the status line tells screen readers the move waits')
     assert.equal(await serverMoves(), 0, 'the staged move is not sent')
+    const keyboardHelp = page.locator('.cx-room summary', { hasText: 'Tastatur' })
+    await keyboardHelp.focus()
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(400)
+    assert.equal(await serverMoves(), 0, 'Enter on the keyboard help does not send the staged move')
+    assert.ok(await keyboardHelp.evaluate(element => element.parentElement.open), 'Enter opens the keyboard help')
+    await waitStaged()
+    await keyboardHelp.focus()
+    await page.keyboard.press('Enter')
+    await poll('keyboard help closed', async () => !(await keyboardHelp.evaluate(element => element.parentElement.open)))
     await button('Fortryd').click()
     await waitUnstaged()
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('role')), 'grid', 'Fortryd puts the focus back on the board')
     await poll('e2 back', async () => (await labelOf('e2')) === 'Hvid bonde p\u00e5 e2')
     assert.equal(await labelOf('e3'), emptyE3, 'e3 is empty again')
     assert.notEqual(await hintText(), PENDING_HINT)
     assert.equal(await serverMoves(), 0, 'Fortryd sends nothing')
     await waitTurn()
-    step('Anna: e2-e3 (drag) is only staged (Fortryd/Bekræft and "Trækket er ikke sendt endnu" shown, nothing stored); Fortryd puts the pawn back on e2')
+    step('Anna: e2-e3 (click) is only staged (Fortryd/Bekræft and "Trækket er ikke sendt endnu" shown, also in the status line, nothing stored); Enter on the keyboard help sends nothing; Fortryd puts the pawn back on e2 and focus on the board')
 
     // ------------------------------------------------------------------ moves via click and drag; opponent moves arrive animated
     await clickMove('e2', 'e4')
@@ -433,9 +447,36 @@ async function verify() {
     await page.locator('.arcade-fame__row[data-rank="1"]', { hasText: ANNA.fullName }).getByText(`1${DASH}0${DASH}0`).waitFor()
     step('Anna: the chess lobby lists the finished game; record 1-0-0, "Dine opgør" shows 1-0 against Bo, Anna leads the chess leaderboard')
 
+    // ------------------------------------------------------------------ a staged move is dropped when the opponent resigns
+    await command(BO, 'challenge', { opponentEmail: ANNA.email, gameType: 'chess', color: 'black' })
+    const secondId = (await colleague.snapshot(actor(BO))).games.find(item => item.type === 'chess' && item.status === 'invited')?.id
+    assert.ok(secondId, 'Bo\'s second challenge exists')
+    await command(ANNA, 'respond', { gameId: secondId, accept: true })
+    const secondRow = page.locator('section[aria-labelledby="wp-sec-turn"] .wp-game-row[data-game-type="chess"]').first()
+    await secondRow.waitFor({ timeout: 30000 })
+    await secondRow.locator('.wp-game-row__main').first().click()
+    await room.waitFor()
+    await page.getByRole('grid', { name: 'Skakbr\u00e6t' }).waitFor()
+    await waitTurn()
+    await clickMove('d2', 'd4')
+    await waitStaged()
+    await poll('d4 staged', async () => (await labelOf('d4')) === 'Hvid bonde p\u00e5 d4')
+    await boCommand(secondId, 'resign')
+    await page.locator('.cx-banner').getByText('Slutstilling').waitFor({ timeout: 30000 })
+    await poll('d2 back after the resignation', async () => (await labelOf('d2')) === 'Hvid bonde p\u00e5 d2')
+    assert.equal(await labelOf('d4'), 'd4, tomt felt', 'the staged square is empty again')
+    await waitUnstaged()
+    const resigned = await colleagueGame(BO, secondId)
+    assert.equal(resigned.status, 'finished')
+    assert.equal(resigned.finishedReason, 'resigned')
+    assert.equal(resigned.chess.moves.length, 0, 'the staged move was never sent')
+    await page.keyboard.press('Escape')
+    await lobby.waitFor({ timeout: 10000 })
+    step('Anna: a staged d2-d4 disappears when Bo resigns (final position shown, no Fortryd/Bekræft, nothing sent); Escape goes to the lobby')
+
     assert.deepEqual(errors, [], 'no renderer page errors')
     step('no renderer page errors during the whole run')
-    console.log(`PASS: ${results.length} checks - chess tile, lobby, colour challenge, accept, badge, bell deep link, staged moves (Bekræft/Fortryd/Escape/Enter, no double send), click/drag moves, opponent moves, capture, castling, check, draw offer declined, checkmate, record; isolated data/profile.`)
+    console.log(`PASS: ${results.length} checks - chess tile, lobby, colour challenge, accept, badge, bell deep link, staged moves (Bekræft/Fortryd/Escape/Enter, no double send, dropped on resignation), click/drag moves, opponent moves, capture, castling, check, draw offer declined, checkmate, record; isolated data/profile.`)
   } catch (error) {
     if (page) {
       await page.screenshot({ path: path.join(shots, 'failure.png') }).catch(() => {})

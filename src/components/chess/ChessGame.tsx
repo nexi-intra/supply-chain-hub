@@ -258,22 +258,26 @@ export const ChessGame = memo(function ChessGame({ gameId, myEmail, teamName, un
     setPending(null)
     setSyncKey(key => key + 1)
   })
+  // Fortryd/Bekræft unmount their own button; keyboard players keep their place on the board.
+  const focusBoard = () => document.querySelector<HTMLElement>('.cx-room .cx-grid')?.focus({ preventScroll: true })
   const confirmPending = useStableCallback(() => {
     const move = pendingRef.current
-    if (!move || busy) return
+    // Another command is still running: keep the move staged so the player can confirm again.
+    if (!move || busy || inFlight.current) return
     // Cleared before sending so a double click or a repeated Enter cannot send the move twice.
     pendingRef.current = null
     setPending(null)
     void sendMove(move.from, move.to, move.promotion)
   })
 
-  // A new position (opponent, resignation, game over) or a move that is no longer legal drops the waiting move.
-  // Chat, emoji and Hubert change the revision but not the position, so they keep it.
+  // A new position (opponent), a finished game (resigned, draw agreed, game over), no longer my move, or a move that
+  // is no longer legal drops the waiting move. Chat, emoji and Hubert change the revision but not these, so they keep it.
   const currentFen = game?.chess.fen ?? ''
   const currentLegal = game?.chess.legalMoves ?? NO_MOVES
+  const myMoveNow = moveAllowed && game?.status === 'active'
   useEffect(() => {
-    if (pending && !pendingStillValid(pending, currentFen, currentLegal)) undoPending()
-  }, [pending, currentFen, currentLegal, undoPending])
+    if (pending && !pendingStillValid(pending, currentFen, currentLegal, myMoveNow)) undoPending()
+  }, [pending, currentFen, currentLegal, myMoveNow, undoPending])
 
   // Enter confirms a waiting move. Escape: the promotion card and Hubert's menu close themselves; then a waiting
   // move is undone; then a lifted piece is put down; then back to the lobby.
@@ -282,8 +286,10 @@ export const ChessGame = memo(function ChessGame({ gameId, myEmail, teamName, un
       if (event.defaultPrevented) return
       if (event.key === 'Enter') {
         if (!pending || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || isAnyDialogOpen()) return
-        // Text fields (chat) and buttons keep their own Enter.
-        if (event.target instanceof Element && event.target.closest('input, textarea, select, button, a[href], [contenteditable]:not([contenteditable="false"])')) return
+        // Only from the board or with nothing focused; other widgets (chat, buttons, the keyboard help) keep their own Enter.
+        const target = event.target
+        if (target !== document.body && !(target instanceof Element && target.closest('.cx-board-wrap'))) return
+        if (target instanceof Element && target.closest('input, textarea, select, button, a[href], [contenteditable]:not([contenteditable="false"])')) return
         event.preventDefault()
         if (!event.repeat) confirmPending()
         return
@@ -398,6 +404,8 @@ export const ChessGame = memo(function ChessGame({ gameId, myEmail, teamName, un
       {playing && (
         <span className="bgr-turn" data-mine={moveAllowed && !sendingMove ? '' : undefined} data-check={chess.inCheck && !sendingMove ? '' : undefined} role="status">
           {sendingMove ? c.sending : moveAllowed ? (chess.inCheck ? `${c.yourTurn} · ${c.check}` : c.yourTurn) : c.theirTurn(opponent.name)}
+          {/* Screen readers hear that a staged move still waits for Confirm (role="status" is atomic, so the whole line is read). */}
+          {pending && !sendingMove ? <span className="bgr-sr">. {c.pendingHint}</span> : null}
         </span>
       )}
     </>
@@ -485,10 +493,10 @@ export const ChessGame = memo(function ChessGame({ gameId, myEmail, teamName, un
             <RoomCalls />
             {pending && (
               <>
-                <button type="button" className="bgr-chip" onClick={undoPending}>
+                <button type="button" className="bgr-chip" onClick={() => { undoPending(); focusBoard() }}>
                   <ArrowCounterClockwise size={16} aria-hidden="true" />{c.undo}
                 </button>
-                <button type="button" className="bgr-chip" data-tone="primary" disabled={busy} onClick={confirmPending}>
+                <button type="button" className="bgr-chip" data-tone="primary" disabled={busy} onClick={() => { confirmPending(); focusBoard() }}>
                   <Check size={16} weight="bold" aria-hidden="true" />{c.confirm}
                 </button>
               </>
