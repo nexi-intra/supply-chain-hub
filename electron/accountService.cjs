@@ -80,10 +80,10 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
     return result
   }
   function runWrite(callback) { return withAccountLock(() => { assertReady(); return synchronous(callback) }) }
-  // Asynkron tvilling til IPC-skrivninger: samme globale konto-laas og
-  // migrations-gate, men await-baseret saa main-event-loopet aldrig blokeres.
-  // Flere ikke-blokerende forsoeg erstatter sync-vejens attempts:1, saa
-  // samtidige skrivninger fra flere klienter ikke fejler unoedigt med KV_LOCK_BUSY.
+  // Lock-free migrations-gate (bruges af runWriteAsync, statusAsync og
+  // runAuthenticationAsync): laeser kun migrations-kontrollen, await-baseret saa
+  // main-event-loopet aldrig blokeres. runWriteAsync tager IKKE kontolaasen (se
+  // begrundelsen ved assertNoMigrationAsync); kun runAuthenticationAsync holder den.
   // Under kontolaasen (runAuthenticationAsync) gives { unthrottled: true }, saa
   // laesningen ikke staar i laese-koeen mens laasen holdes.
   async function readControlAsync({ unthrottled = false } = {}) {
