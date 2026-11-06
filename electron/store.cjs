@@ -247,7 +247,10 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
       logSlow('get-cache', key, startedAt)
       return cached.value
     }
-    await acquireReadSlot()
+    // unthrottled: kun til laesninger under kontolaasen, der ellers ville holde
+    // laasen (og alle andre klienters login) mens de staar i koe bag langsomme laesninger.
+    const unthrottled = Boolean(options && options.unthrottled)
+    if (!unthrottled) await acquireReadSlot()
     try {
       let lastError
       for (let attempt = 1; attempt <= READ_ATTEMPTS; attempt++) {
@@ -266,7 +269,7 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
       logSlow('get-failed', key, startedAt, READ_ATTEMPTS)
       throw lastError
     } finally {
-      releaseReadSlot()
+      if (!unthrottled) releaseReadSlot()
     }
   }
 

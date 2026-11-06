@@ -129,6 +129,21 @@ test('runAuthenticationAsync waits for a held account lock without blocking the 
   assert.equal(tickedBeforeRelease, true)
   assert.equal(fs.existsSync(lock), false, 'own lock is released afterwards')
 })
+test('runAuthenticationAsync reads the migration control past the read-slot queue', async t => {
+  const reads = []
+  const f = fixture(t, { openStore: directory => {
+    const store = createStore(directory)
+    return { ...store, getAsync(key, options) { reads.push({ key, options }); return store.getAsync(key, options) } }
+  } })
+  reads.length = 0
+  assert.equal(await f.service.runAuthenticationAsync('a@x', () => 'ok'), 'ok')
+  const controlReads = reads.filter(read => read.key.startsWith('account-migration'))
+  assert.ok(controlReads.length > 0)
+  assert.ok(controlReads.every(read => read.options?.unthrottled === true && read.options?.skipCache === true))
+  reads.length = 0
+  await f.service.statusAsync(f.actor)
+  assert.ok(reads.filter(read => read.key.startsWith('account-migration')).every(read => !read.options?.unthrottled), 'reads outside the lock stay throttled')
+})
 test('runAuthenticationAsync gives up with KV_LOCK_BUSY after its attempt budget', async t => {
   const f = fixture(t, { authenticationLockRetry: { attempts: 3, delayMs: 10 } }), lock = path.join(f.root, '_registry', 'account-operation.lock')
   fs.writeFileSync(lock, 'synthetic-other-client')

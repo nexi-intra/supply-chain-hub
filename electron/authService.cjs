@@ -5,6 +5,8 @@ const { promisify } = require('node:util')
 const pbkdf2 = promisify(crypto.pbkdf2)
 const ITERATIONS = 150000
 const DAY = 24 * 60 * 60 * 1000
+// Laesninger mens kontolaasen holdes: friske og uden om store'ns laese-koe.
+const UNDER_LOCK_READ = Object.freeze({ skipCache: true, unthrottled: true })
 const normalize = value => String(value || '').trim().toLowerCase()
 const sessionKey = token => crypto.createHash('sha256').update(token).digest('hex')
 function fail(code) { const error = new Error(code); error.code = code; throw error }
@@ -60,11 +62,11 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
     if (!home) fail('AUTH_CREDENTIALS')
     return accountIn(home, openTeam(home).get('users', { skipCache: true }), email)
   }
-  async function accountAsync(email) {
+  async function accountAsync(email, readOptions = { skipCache: true }) {
     const home = registry.lookupTeamForEmail(getRoot(), email)
     if (!home) fail('AUTH_CREDENTIALS')
     const target = openTeam(home)
-    return accountIn(home, typeof target.getAsync === 'function' ? await target.getAsync('users', { skipCache: true }) : target.get('users', { skipCache: true }), email)
+    return accountIn(home, typeof target.getAsync === 'function' ? await target.getAsync('users', readOptions) : target.get('users', { skipCache: true }), email)
   }
   function accountIn(home, stored, email) {
     const users = stored || {}
@@ -124,13 +126,21 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
     const { bound, session } = boundSession(sender, openSessions().get('active-sessions', { skipCache: true }))
     return actorFrom(bound, session, account(normalize(session.email)))
   }
-  async function resolveCurrentAsync(sender) {
+  async function resolveCurrentAsync(sender, readOptions = { skipCache: true }) {
     boundOrFail(sender)
     if (typeof registry.prefetchAsync === 'function') await registry.prefetchAsync(getRoot())
     const sessionStore = openSessions()
-    const sessions = typeof sessionStore.getAsync === 'function' ? await sessionStore.getAsync('active-sessions', { skipCache: true }) : sessionStore.get('active-sessions', { skipCache: true })
+    const sessions = typeof sessionStore.getAsync === 'function' ? await sessionStore.getAsync('active-sessions', readOptions) : sessionStore.get('active-sessions', { skipCache: true })
     const { bound, session } = boundSession(sender, sessions)
-    return actorFrom(bound, session, await accountAsync(normalize(session.email)))
+    return actorFrom(bound, session, await accountAsync(normalize(session.email), readOptions))
+  }
+  // Under kontolaasen: samme resolve som currentAsync, men laesningerne springer
+  // laese-koeen over (laasen holdes imens) og deles ikke med en koe-ventende resolve.
+  async function currentUnderLockAsync(sender) {
+    const startedAt = generation
+    const actor = await resolveCurrentAsync(sender, UNDER_LOCK_READ)
+    remember(sender, actor, startedAt)
+    return structuredClone(actor)
   }
   function actorFrom(bound, session, { home, user }) {
     const email = normalize(session.email)
@@ -187,7 +197,7 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
       // await, saa epoch tjekkes igen foer hver skrivning og foer binding.
       check()
       // Password hashing is asynchronous: recheck password/status after it.
-      const fresh = await accountAsync(email)
+      const fresh = await accountAsync(email, UNDER_LOCK_READ)
       if (fresh.user.password !== original.user.password || fresh.home.teamId !== original.home.teamId) fail('AUTH_CREDENTIALS')
       approved(fresh.user)
       const effectiveUpgrade = recovering ? undefined : upgraded
@@ -216,7 +226,7 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
       }
       bindings.set(sender, { token, root: getRoot() })
       invalidate(sender)
-      return currentAsync(sender)
+      return currentUnderLockAsync(sender)
       })
       // Starting a team watcher may replay its queue. Do it after releasing
       // the account lock; each queued write acquires that lock independently.
@@ -301,7 +311,7 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
       return { ...sessions, [key]: signed({ ...sessions[key], expiresAt: now() + 365 * DAY }) }
     })
     invalidate(sender)
-    return currentAsync(sender)
+    return currentUnderLockAsync(sender)
     })
   }
   async function logout(sender) {

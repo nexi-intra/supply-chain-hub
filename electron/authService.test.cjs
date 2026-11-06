@@ -322,3 +322,20 @@ test('renew and logout are asynchronous and logout clears the binding before its
   await loggingOut
   assert.equal(f.sessions.get('active-sessions')[sessionKey(actor.token)], undefined)
 })
+test('reads made while holding the account lock during login and renew skip the read-slot queue', async () => {
+  const f = fixture(), reads = []
+  let locked = false
+  for (const store of [f.sessions, ...f.stores.values()]) {
+    const real = store.getAsync
+    store.getAsync = async (key, options) => { reads.push({ key, locked, unthrottled: options?.unthrottled === true }); return real(key, options) }
+  }
+  const auth = createAuthService({ ...f.deps, runAuthenticationAsync: async (_email, callback) => { locked = true; try { return await callback({ recovering: false }) } finally { locked = false } } })
+  const actor = await auth.login(1, f.login)
+  f.advance(1000)
+  await auth.renew(1)
+  const inside = reads.filter(read => read.locked)
+  assert.ok(inside.some(read => read.key === 'users') && inside.some(read => read.key === 'active-sessions'), JSON.stringify(reads))
+  assert.deepEqual(inside.filter(read => !read.unthrottled), [], 'every read under the account lock is unthrottled')
+  assert.ok(reads.filter(read => !read.locked).every(read => !read.unthrottled), 'reads outside the lock keep the queue')
+  assert.ok(actor.token)
+})

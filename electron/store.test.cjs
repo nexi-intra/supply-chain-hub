@@ -387,6 +387,49 @@ test('many concurrent getAsync calls run in parallel rather than one at a time',
   assert.deepEqual(values, Array.from({ length: 12 }, (_, i) => i))
 })
 
+test('an unthrottled getAsync skips the read-slot queue while every slot is held by slow reads', async (t) => {
+  const { store } = temporaryStore(t)
+  for (let i = 0; i < 6; i++) store.set(`slow${i}`, i)
+  store.set('control', 'ok')
+  store.invalidate()
+  const readFile = fs.promises.readFile
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  t.mock.method(fs.promises, 'readFile', async (file, ...rest) => {
+    if (path.basename(file).startsWith('slow')) await gate
+    return readFile(file, ...rest)
+  })
+  t.after(() => release())
+  const order = []
+  const slow = Array.from({ length: 6 }, (_, i) => store.getAsync(`slow${i}`).then(() => order.push(`slow${i}`)))
+  const fast = store.getAsync('control', { skipCache: true, unthrottled: true }).then(value => { order.push('control'); return value })
+  const winner = await Promise.race([fast, sleep(1000).then(() => 'timeout')])
+  assert.equal(winner, 'ok')
+  assert.deepEqual(order, ['control'])
+  release()
+  await Promise.all(slow)
+})
+
+test('without the option a read still waits for a free read slot', async (t) => {
+  const { store } = temporaryStore(t)
+  for (let i = 0; i < 6; i++) store.set(`slow${i}`, i)
+  store.set('control', 'ok')
+  store.invalidate()
+  const readFile = fs.promises.readFile
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  t.mock.method(fs.promises, 'readFile', async (file, ...rest) => {
+    if (path.basename(file).startsWith('slow')) await gate
+    return readFile(file, ...rest)
+  })
+  t.after(() => release())
+  const slow = Array.from({ length: 6 }, (_, i) => store.getAsync(`slow${i}`))
+  const result = await Promise.race([store.getAsync('control', { skipCache: true }), sleep(150).then(() => 'queued')])
+  assert.equal(result, 'queued')
+  release()
+  await Promise.all(slow)
+})
+
 test('values survive encrypted writes and reads', (t) => {
   const { store } = temporaryStore(t)
   const value = [{ id: '1', name: 'Vagt' }]

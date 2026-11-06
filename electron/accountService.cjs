@@ -84,11 +84,14 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
   // migrations-gate, men await-baseret saa main-event-loopet aldrig blokeres.
   // Flere ikke-blokerende forsoeg erstatter sync-vejens attempts:1, saa
   // samtidige skrivninger fra flere klienter ikke fejler unoedigt med KV_LOCK_BUSY.
-  async function readControlAsync() {
+  // Under kontolaasen (runAuthenticationAsync) gives { unthrottled: true }, saa
+  // laesningen ikke staar i laese-koeen mens laasen holdes.
+  async function readControlAsync({ unthrottled = false } = {}) {
     const meta = metadata()
-    let record = await meta.getAsync(CONTROL, { skipCache: true })
+    const readOptions = unthrottled ? { skipCache: true, unthrottled: true } : { skipCache: true }
+    let record = await meta.getAsync(CONTROL, readOptions)
     if (record === undefined) {
-      const journal = await meta.getAsync(JOURNAL, { skipCache: true })
+      const journal = await meta.getAsync(JOURNAL, readOptions)
       if (journal === undefined) return null
       if (!object(journal) || !Array.isArray(journal.steps) || !Array.isArray(journal.scopes)) fail('ACCOUNT_MIGRATION_INVALID')
       record = control(journal)
@@ -137,7 +140,7 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
   // overstyres kun i tests; produktion bruger 40 x 200 ms som den synkrone vej.
   function runAuthenticationAsync(email, callback) {
     return withFileLockAsync(globalLock(), async () => {
-      const recovering = !terminal(await readControlAsync())
+      const recovering = !terminal(await readControlAsync({ unthrottled: true }))
       if (recovering && normalize(email) !== normalize(registry.getCreatorEmail(getRoot()))) fail('ACCOUNT_MIGRATION_PENDING')
       return callback({ recovering })
     }, { attempts: authenticationLockRetry.attempts, delayMs: authenticationLockRetry.delayMs, staleMs: ACCOUNT_LOCK_STALE_MS })
