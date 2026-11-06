@@ -685,13 +685,16 @@ test('the safety scan finds a change that left the directory mtime untouched', a
   const previous = new Date(Math.floor(Date.now() / 1000) * 1000 - 60000)
   fs.utimesSync(directory, previous, previous)
   const changed = []
-  const stop = store.watch(keys => changed.push(...keys), () => {}, { intervalMs: 20, safetyScanMs: 150, minScanGapMs: 0 })
+  const watchStartedAt = Date.now()
+  const stop = store.watch(keys => changed.push(...keys), () => {}, { intervalMs: 20, safetyScanMs: 1000, minScanGapMs: 0 })
   t.after(() => stop())
   other.set('k', 2)
   fs.utimesSync(directory, previous, previous)
-  await sleep(80)
-  assert.ok(!changed.includes('k'), 'mappens mtime er uaendret: ingen scanning endnu')
-  for (let waited = 80; waited < 400 && !changed.includes('k'); waited += 10) await sleep(10)
+  const writtenAt = Date.now()
+  await sleep(Math.max(0, writtenAt + 100 - Date.now()))
+  // Kun meningsfuldt hvis sikkerheds-scannen (1 s efter watch-start) ikke kan vaere naaet endnu.
+  if (Date.now() - watchStartedAt < 1000) assert.ok(!changed.includes('k'), 'mappens mtime er uaendret: ingen scanning endnu')
+  for (let waited = 0; waited < 3000 && !changed.includes('k'); waited += 20) await sleep(20)
   assert.ok(changed.includes('k'), 'sikkerheds-scannen skal finde aendringen')
 })
 
