@@ -30,7 +30,7 @@ nativeIpcMain.handle = (channel, listener) => nativeHandle(channel, async (...ar
   const end = mainActivity.begin('ipc:' + channel)
   try { return await listener(...args) } finally { end() }
 })
-const { createStore, encryptPayload } = require('./store.cjs')
+const { createStore, encryptPayload, whenWritesSettled } = require('./store.cjs')
 // createStore() laver en synkron mkdirSync mod M: og starter med en tom laesecache.
 // Varme stier (auth ved hvert IPC-kald, hub-oversigter) genbruger derfor instansen pr. mappe.
 const reusableStores = new Map()
@@ -107,6 +107,8 @@ app.on('will-quit', () => diagnostics.write('info', 'will-quit'))
 // Never call app.setAppUserModelId: a new taskbar identity splits the app from users' existing pinned icons (toasts work without it).
 let localAI = null
 let warehouse = null
+// Sættes når multiplayer-tjenesten findes; before-quit venter på dens indeks-skrivninger.
+let multiplayerSettled = null
 let wordChecker = null
 let assistantBackend = null
 let authService = null
@@ -905,6 +907,7 @@ app.whenReady().then(() => {
     // A move answers once its game file is saved; the index entry follows in the background (see multiplayer.cjs).
     deferIndexWrites: true,
   })
+  multiplayerSettled = () => multiplayer.settled()
   multiplayerHooks.usersChanged = () => multiplayer.invalidateDirectory()
   multiplayerHooks.indexChangedOnDisk = () => {
     multiplayer.hasUnannouncedChange().then(changed => { if (changed) broadcast('multiplayer:changed') }, () => broadcast('multiplayer:changed'))
@@ -1597,11 +1600,27 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 app.on('before-quit', () => { localAI?.stop(); assistantBackend?.stop(); void wordChecker?.close() })
-// Upload the last Optælling scans before the app closes (at most a few seconds).
-let warehouseClosed = false
+// Før lukning: upload de sidste Optælling-scanninger (højst 4 s) og vent på
+// igangværende gemninger + multiplayers udskudte indeks-skrivninger (højst 10 s
+// i alt). Ét fælles flag: app.quit() herunder udløser before-quit igen, og den
+// gang skal lukningen bare fortsætte.
+const QUIT_FLUSH_TIMEOUT_MS = 10000
+let quitFlushed = false
 app.on('before-quit', event => {
-  if (!warehouse || warehouseClosed) return
-  warehouseClosed = true
+  if (quitFlushed) return
+  quitFlushed = true
   event.preventDefault()
-  Promise.race([warehouse.closeAll().catch(() => {}), new Promise(resolve => setTimeout(resolve, 4000))]).finally(() => app.quit())
+  const delay = (ms, value) => new Promise(resolve => setTimeout(() => resolve(value), ms))
+  const warehouseDone = warehouse
+    ? Promise.race([warehouse.closeAll().catch(() => {}), delay(4000)])
+    : Promise.resolve()
+  const flushed = Promise.all([
+    warehouseDone,
+    whenWritesSettled(QUIT_FLUSH_TIMEOUT_MS),
+    Promise.resolve(multiplayerSettled?.()).catch(() => {}),
+  ]).then(([, writesSettled]) => writesSettled !== false)
+  Promise.race([flushed, delay(QUIT_FLUSH_TIMEOUT_MS, false)])
+    .then(settled => { if (!settled) diagnostics.write('warn', `lukning: gemninger ikke færdige efter ${QUIT_FLUSH_TIMEOUT_MS} ms - lukker alligevel`) })
+    .catch(() => {})
+    .finally(() => app.quit())
 })

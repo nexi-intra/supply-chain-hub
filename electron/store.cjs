@@ -38,6 +38,29 @@ const SYNC_WRITE_LOCK = { createParent: false, staleMs: 30000 }
 // parallelt. Graensen holdes moderat, fordi et SMB-share stadig kollapser under
 // ubegraenset parallelisme; alle laesninger er async, saa main-traaden er fri.
 const MAX_CONCURRENT_READS = 6
+
+// Igangvaerende async-skrivninger paa tvaers af alle store-instanser, saa
+// app-lukning kan vente paa dem (whenWritesSettled). Promises her afviser aldrig.
+const inFlightWrites = new Set()
+
+// true hvis alle skrivninger (ogsaa dem der koeres ind undervejs) blev faerdige
+// inden timeoutMs, ellers false. Afviser aldrig og holder ikke processen i live.
+async function whenWritesSettled(timeoutMs) {
+  let timer
+  const timedOut = new Promise(resolve => {
+    timer = setTimeout(() => resolve(false), Math.max(0, Number(timeoutMs) || 0))
+    timer.unref?.()
+  })
+  const drained = (async () => {
+    while (inFlightWrites.size > 0) await Promise.all([...inFlightWrites])
+    return true
+  })()
+  try {
+    return await Promise.race([drained, timedOut])
+  } finally {
+    clearTimeout(timer)
+  }
+}
 const MAX_CONCURRENT_WATCH_STATS = 4
 let activeReads = 0
 const readWaiters = []
@@ -326,6 +349,8 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
     const run = previous.catch(() => {}).then(task)
     const tracked = run.catch(() => {}).finally(() => { if (pendingWrites.get(key) === tracked) pendingWrites.delete(key) })
     pendingWrites.set(key, tracked)
+    inFlightWrites.add(tracked)
+    tracked.finally(() => inFlightWrites.delete(tracked))
     return run
   }
 
@@ -841,4 +866,4 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
   return { get, getAsync, peekCache, set, setAsync, delete: del, deleteAsync, keys, keysAsync, watch, setWatchVisibility, update, updateAsync, updateDetailed, updateDetailedAsync, mutate, mutateAsync, sweepStaleTempFilesAsync, statAsync, withLockedKeys, invalidate: () => readCache.clear(), dumpAll, dumpAllAsync, dataDir, isConnected, scanDirectory, scanDirectoryAsync }
 }
 
-module.exports = { createStore, parseFileContents, keyToFilename, encryptPayload, decideWatchTick }
+module.exports = { createStore, parseFileContents, keyToFilename, encryptPayload, decideWatchTick, whenWritesSettled }

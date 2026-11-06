@@ -3,7 +3,7 @@ const assert = require('node:assert/strict')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
-const { createStore, decideWatchTick } = require('./store.cjs')
+const { createStore, decideWatchTick, whenWritesSettled } = require('./store.cjs')
 
 test('trusted multi-key capabilities read fresh data, lock every key, and expire', t => {
   const { directory, store } = temporaryStore(t), other = createStore(directory)
@@ -89,6 +89,27 @@ test('async writes self-heal a provably abandoned lock but never steal a fresh o
   await assert.rejects(store.setAsync('tasks', [{ id: 'b' }]), { code: 'KV_LOCK_BUSY' })
   assert.equal(fs.readFileSync(lockFile, 'utf8'), '99999:live-owner')
   assert.deepEqual(store.get('tasks', { skipCache: true }), [{ id: 'a' }])
+})
+
+test('whenWritesSettled resolves true once pending writes finish', async (t) => {
+  const { store } = temporaryStore(t)
+  const write = store.setAsync('pending', { value: 42 })
+  assert.equal(await whenWritesSettled(5000), true)
+  assert.deepEqual(store.get('pending', { skipCache: true }), { value: 42 })
+  await write
+})
+
+test('whenWritesSettled resolves false when the timeout passes first', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  const lockFile = path.join(directory, 'held.json.lock')
+  fs.writeFileSync(lockFile, '99999:other-owner')
+  const write = store.setAsync('held', 1)
+  const started = Date.now()
+  assert.equal(await whenWritesSettled(100), false)
+  assert.ok(Date.now() - started < 200, `took ${Date.now() - started} ms`)
+  fs.rmSync(lockFile, { force: true })
+  await write
+  assert.equal(await whenWritesSettled(1000), true)
 })
 
 test('append replay is idempotent but cannot overwrite an existing different record', (t) => {
