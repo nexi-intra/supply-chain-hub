@@ -152,8 +152,8 @@ export function CountView({ id, onBack }: { id: string; onBack: () => void }) {
     try {
       await action()
       if (success) toast.success(success)
-      await reloadOpen()
-      await refresh()
+      // The count is already loaded here, so both reads can run at once.
+      await Promise.all([reloadOpen(), refresh()])
     } catch (error) {
       toast.error(errorMessage(error))
     } finally {

@@ -486,3 +486,14 @@ test('overview tells whether a drawing is published, without the heavier list', 
   await pc1.repo.transact('TCD', tx => { tx.meta.layout = { version: 3, linked: ['A1.1'] } })
   assert.deepEqual((await pc1.service.overview(ANNA)).drawing, { version: 3, linked: ['A1.1'] })
 })
+test('opening Placeringer checks the one-time shelf migration once, not on every overview (a read on M: each time)', async () => {
+  const { pc1, seed } = setup()
+  await seed([place('A1.1')])
+  await pc1.service.overview(ANNA)
+  const meta = pc1.repo.meta
+  let metaReads = 0
+  pc1.repo.meta = async (...args) => { metaReads++; return meta(...args) }
+  await pc1.service.overview(ANNA)
+  await pc1.service.overview(ANNA)
+  assert.equal(metaReads, 0)
+})

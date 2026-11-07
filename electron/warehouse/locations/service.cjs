@@ -316,8 +316,11 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
    * The one-time migration of pallets on lagerhylder to stock (spec, section 1). Checked again under the lock, so two
    * PCs opening at once migrate once; logged as one action that cannot be undone.
    */
+  // A migrated hub stays migrated, so it is checked once per session (repo.meta reads M: past the cache).
+  const shelvesMigrated = new Set()
   async function ensureShelves(team) {
-    if ((await repo.meta(team)).shelvesMigratedAt) return
+    if (shelvesMigrated.has(team)) return
+    if ((await repo.meta(team)).shelvesMigratedAt) { shelvesMigrated.add(team); return }
     await repo.transact(team, { snapshot: false }, tx => {
       if (tx.meta.shelvesMigratedAt) return
       const racksBefore = JSON.stringify(Object.values(tx.locations).map(location => [location.rack, location.shelf]))
@@ -328,6 +331,7 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
       const racksAfter = JSON.stringify(Object.values(tx.locations).map(location => [location.rack, location.shelf]))
       if (result.removedPallets.length || result.kept.length || racksBefore !== racksAfter) tx.event({ type: 'migrate', by: { email: '', name: 'Hubben' }, changes: { shelves: [null, result.shelved.length], pallets: [result.removedPallets.length, 0], ...(result.kept.length ? { kept: [null, result.kept.length] } : {}) } })
     })
+    shelvesMigrated.add(team)
   }
 
   async function overview(user) {
@@ -378,8 +382,8 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
   async function materialCard(user, { material } = {}) {
     const team = teamOf(user)
     const code = materialOf(material)
-    const state = await repo.read(team)
-    const texts = await describe([code])
+    // Independent reads at once: each is a round trip to M:.
+    const [state, texts, history] = await Promise.all([repo.read(team), describe([code]), repo.history(team, { material: code })])
     if (!texts[code]) lookUpTexts([code])
     const reserve = rules.fifo(state, code, { now: now() })
     const onShelves = shelves.stockOf(state, code).map(line => ({ location: line.location, name: state.locations[line.location]?.name || line.location, quantity: line.quantity }))
@@ -392,14 +396,14 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
       shelves: onShelves,
       refillShelf: shelves.shelfForRefill(state, code)?.location || null,
       total: reserve.reduce((sum, pallet) => sum + (pallet.quantity || 0), 0) + onShelves.reduce((sum, line) => sum + line.quantity, 0),
-      history: (await repo.history(team, { material: code })).slice(0, 50).map(publicEvent),
+      history: history.slice(0, 50).map(publicEvent),
     }
   }
 
   async function locationCard(user, { location } = {}) {
     const team = teamOf(user)
-    const state = await repo.read(team)
     const key = locationKey(location)
+    const [state, history] = await Promise.all([repo.read(team), repo.history(team, { location: key })])
     const place = state.locations[key]
     if (!place) throw codeError('LOCATION_NOT_FOUND', `Placeringen ${location} findes ikke`)
     const pallets = Object.values(state.pallets).filter(pallet => pallet.location === key)
@@ -412,30 +416,30 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
       fixed: fixed.map(material => ({ material, description: texts[material] || '' })),
       occupancy: rules.occupancy(state)[key],
       pallets: pallets.map(pallet => ({ ...age(pallet), description: texts[pallet.material] || '' })).sort((a, b) => (a.receivedAt || 0) - (b.receivedAt || 0)),
-      history: (await repo.history(team, { location: key })).slice(0, 50).map(publicEvent),
+      history: history.slice(0, 50).map(publicEvent),
     }
   }
 
   async function palletCard(user, { pallet: id } = {}) {
     const team = teamOf(user)
-    const state = await repo.read(team)
+    const [state, history] = await Promise.all([repo.read(team), repo.history(team, { pallet: id })])
     const pallet = state.pallets[id]
     if (!pallet) throw codeError('PALLET_GONE', 'Pallen er ikke der længere')
     const texts = await describe([pallet.material])
-    return { pallet: { ...age(pallet), description: texts[pallet.material] || '' }, location: state.locations[pallet.location] || null, history: (await repo.history(team, { pallet: id })).slice(0, 50).map(publicEvent) }
+    return { pallet: { ...age(pallet), description: texts[pallet.material] || '' }, location: state.locations[pallet.location] || null, history: history.slice(0, 50).map(publicEvent) }
   }
 
   /** A rack: its shelves highest first, each with its stock lines. */
   async function rackCard(user, { rack } = {}) {
     const team = teamOf(user)
-    const state = await repo.read(team)
+    const [state, allHistory] = await Promise.all([repo.read(team), repo.history(team)])
     const name = locationKey(rack)
     const list = Object.values(state.locations).filter(location => location.rack === name).sort((a, b) => (b.shelf || 0) - (a.shelf || 0))
     if (!name || !list.length) throw codeError('RACK_INVALID', `Reolen ${rack} findes ikke`)
     const ids = new Set(list.map(location => location.id))
     const lines = Object.values(state.stock || {}).filter(line => ids.has(line.location))
     const texts = await describe(lines.map(line => line.material))
-    const history = (await repo.history(team)).filter(event => [event.location, event.from, event.to].some(id => ids.has(id))).slice(0, 50).map(publicEvent)
+    const history = allHistory.filter(event => [event.location, event.from, event.to].some(id => ids.has(id))).slice(0, 50).map(publicEvent)
     return {
       rack: name,
       area: list[0].area,

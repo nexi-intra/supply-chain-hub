@@ -68,10 +68,13 @@ export function Locations({ user, initial }: { user: WarehouseUser; initial: Loc
     }).catch(() => {})
     checkPending()
     void checkStamp()
-    const timer = window.setInterval(() => { checkPending(); void checkStamp() }, 15000)
+    // The stamp is a read on M:: skipped while the window is hidden, checked at once when it shows again.
+    const timer = window.setInterval(() => { checkPending(); if (document.visibilityState === 'visible') void checkStamp() }, 15000)
+    const onVisible = () => { if (document.visibilityState === 'visible') void checkStamp() }
+    document.addEventListener('visibilitychange', onVisible)
     const offChanged = bridge.onChanged(payload => { if (payload.team === user.team) { setVersion(value => value + 1); checkPending() } })
     const offFailed = bridge.onSyncFailed(payload => { if (payload.teams.includes(user.team)) checkPending() })
-    return () => { window.clearInterval(timer); offChanged(); offFailed() }
+    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', onVisible); offChanged(); offFailed() }
   }, [user.team, user.email])
 
   useEffect(() => {

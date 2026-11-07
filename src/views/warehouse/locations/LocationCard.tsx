@@ -63,7 +63,7 @@ export function LocationCard({ location, version, canAdmin, drawing, onOpen, onC
         {canAdmin && (
           <Button size="sm" variant="ghost" className="text-destructive" disabled={card.pallets.length > 0 || card.stock.length > 0}
             title={card.pallets.length || card.stock.length ? t('Kun en tom placering kan slettes', 'Only an empty location can be deleted') : undefined}
-            loading={deleting} onClick={() => void remove()}><Trash size={14} /> {t('Slet', 'Delete')}</Button>
+            loading={deleting} onClick={() => remove()}><Trash size={14} /> {t('Slet', 'Delete')}</Button>
         )}
       </div>
       {place.note && <p className="text-sm text-muted-foreground">{place.note}</p>}

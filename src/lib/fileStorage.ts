@@ -37,12 +37,9 @@ class FileStorageService {
         data: base64Data,
       }
 
+      // kv.set lykkes kun, når filen er skrevet og omdøbt på plads – en kontrol-læsning af hele
+      // dokumentet (flere MB over M:) bagefter gav intet ekstra, kun ventetid.
       await window.kv.set(`${fileId}_meta`, metadata)
-
-      const verification = await window.kv.get(`${fileId}_meta`)
-      if (!verification) {
-        throw new Error('Fil blev ikke gemt korrekt - verification failed')
-      }
     } catch (kvError) {
       console.error('[FileStorage] KV storage error:', kvError)
 
@@ -161,14 +158,14 @@ class FileStorageService {
         return new Blob([bytes as BlobPart], { type: metadata.contentType || 'application/octet-stream' })
       }
 
-      const chunks: string[] = []
-      for (let i = 0; i < metadata.chunkCount; i++) {
+      // Parallelt: hvert stykke er en rundtur til M:.
+      const chunks = await Promise.all(Array.from({ length: metadata.chunkCount }, async (_, i) => {
         const chunk = await read<string>(`${fileId}_chunk_${i}`)
         if (!chunk) {
           throw new Error(`Missing chunk ${i} for file ${fileId}`)
         }
-        chunks.push(chunk)
-      }
+        return chunk
+      }))
 
       const base64Data = chunks.join('')
       const bytes = this.base64ToUint8Array(base64Data)

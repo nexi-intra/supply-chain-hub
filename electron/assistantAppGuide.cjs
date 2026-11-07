@@ -954,8 +954,8 @@ const APP_TOPICS = [
   {
     id: 'storage',
     title: 'Faelles drev, offline og synkronisering',
-    keywords: ['offline', 'forbindelse', 'synkronisering', 'drev', 'gemt', 'lager', 'optaget'],
-    summary: 'Alle data ligger paa et faelles drev, saa hele teamet ser det samme. Mister du forbindelsen, kan du arbejde videre, og aendringerne sendes automatisk naar forbindelsen er tilbage. Beskeden om at lageret er optaget betyder blot at en kollega skrev i samme oejeblik. Appen proever selv igen.',
+    keywords: ['offline', 'forbindelse', 'synkronisering', 'drev', 'gemt', 'lager', 'optaget', 'gemmer'],
+    summary: 'Alle data ligger paa et faelles drev, saa hele teamet ser det samme. Mister du forbindelsen, kan du arbejde videre, og aendringerne sendes automatisk naar forbindelsen er tilbage. Beskeden om at lageret er optaget betyder blot at en kollega skrev i samme oejeblik. Appen proever selv igen. Staar der "Gemmer paa det faelles drev" nederst til venstre, er en aendring paa vej til drevet - du ser den allerede, og du kan arbejde videre imens.',
   },
   {
     id: 'updates',

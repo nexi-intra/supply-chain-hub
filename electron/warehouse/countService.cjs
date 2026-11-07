@@ -57,12 +57,10 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
 
   /** The own team's rules through its store; other teams' rules are only peeked at (read only, never creates a folder). */
   async function rulesByTeam(ownTeam) {
-    const result = {}
-    for (const team of Object.keys(TEAMS)) {
-      const stored = team === ownTeam ? await repo.getRules(team).catch(() => ({})) : await peekRules(team).catch(() => ({}))
-      result[team] = storageRulesFor(team, stored || {})
-    }
-    return result
+    // In parallel: each team's rules is a round trip to M:.
+    const teams = Object.keys(TEAMS)
+    const stored = await Promise.all(teams.map(team => (team === ownTeam ? repo.getRules(team) : peekRules(team)).catch(() => ({}))))
+    return Object.fromEntries(teams.map((team, index) => [team, storageRulesFor(team, stored[index] || {})]))
   }
 
   // ---------- Counts list ----------

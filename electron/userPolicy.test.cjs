@@ -4,7 +4,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { createStore } = require('./store.cjs')
-const { publicUsers, updateUsers } = require('./userPolicy.cjs')
+const { publicUsers, updateUsers, updateUsersAsync } = require('./userPolicy.cjs')
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sch-user-policy-test-'))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
@@ -74,4 +74,19 @@ test('a late create cannot overwrite an already created account', t => {
   const f = fixture(t)
   assert.throws(() => f.update({ op: 'setField', field: f.email, value: { ...f.user, fullName: 'must not replace' } }), code('KV_CONFLICT'))
   assert.equal(f.store.get('users', { skipCache: true })[f.email].fullName, f.user.fullName)
+})
+test('updateUsersAsync: same rules and result as updateUsers, without freezing the app (a write to M: takes 20-40 s)', async t => {
+  const f = fixture(t)
+  let ticked = false
+  setImmediate(() => { ticked = true })
+  const pending = updateUsersAsync(f.store, { op: 'renameField', field: f.email, newField: f.email, expected: publicUsers({ user: f.user }).user, value: { email: f.email, fullName: 'Changed', password: '' } }, f.actor, f.creator)
+  const result = await pending
+  assert.equal(ticked, true, 'the event loop ran while the users file was saved')
+  assert.equal(result[f.email].fullName, 'Changed')
+  assert.equal(result[f.email].password, undefined)
+  assert.equal(f.store.get('users', { skipCache: true })[f.email].password, 'legacy secret')
+  await assert.rejects(updateUsersAsync(f.store, { op: 'deleteField', field: f.creator }, f.actor, f.creator), code('AUTH_FORBIDDEN'))
+  await assert.rejects(updateUsersAsync(f.store, { op: 'setField', field: f.email, value: { ...f.user } }, f.actor, f.creator), code('KV_CONFLICT'))
+  await assert.rejects(updateUsersAsync(f.store, { op: 'deleteField', field: f.email }, { ...f.actor, role: 'user' }, f.creator), code('AUTH_FORBIDDEN'))
+  assert.ok(f.store.get('users', { skipCache: true })[f.creator])
 })

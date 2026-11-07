@@ -137,7 +137,7 @@ export function Refill({ id, version, onDone }: { id?: string; version: number; 
                           {shelf.location === card.refillShelf && <Badge>{t('Forslag', 'Suggested')}</Badge>}
                           <span className="font-mono font-semibold">{shelf.name}</span>
                           <span>{t(`${formatNumber(shelf.quantity)} stk.`, `${formatNumber(shelf.quantity)} pcs`)}</span>
-                          <Button size="sm" className="ml-auto" variant={shelf.location === card.refillShelf ? 'default' : 'outline'} loading={busy && source === shelf.location} disabled={busy || !quantity.trim() || Number(quantity) > shelf.quantity} onClick={() => void refillFromShelf(shelf)}>
+                          <Button size="sm" className="ml-auto" variant={shelf.location === card.refillShelf ? 'default' : 'outline'} loading={busy && source === shelf.location} disabled={busy || !quantity.trim() || Number(quantity) > shelf.quantity} onClick={() => refillFromShelf(shelf)}>
                             <ArrowsClockwise size={16} /> {t(`Fyldt op fra ${shelf.name}`, `Refilled from ${shelf.name}`)}
                           </Button>
                         </div>

@@ -94,7 +94,7 @@ export function AccountMigrationRecovery({ userEmail, onLogout }: { userEmail: s
         {migration && <div className="text-sm space-y-1"><p className="break-all">{migration.oldEmail} → {migration.newEmail}</p><p>{text.progress}: {migration.applied} / {migration.total}</p></div>}
         {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
         <div className="flex flex-wrap gap-2">
-          {canRecover && <><Button disabled={busy} onClick={() => { void recover('resume') }}>{text.resume}</Button><Button variant="outline" disabled={busy} onClick={() => { void recover('rollback') }}>{text.rollback}</Button></>}
+          {canRecover && <><Button disabled={busy} onClick={() => { return recover('resume') }}>{text.resume}</Button><Button variant="outline" disabled={busy} onClick={() => { return recover('rollback') }}>{text.rollback}</Button></>}
           <Button variant="ghost" disabled={busy} onClick={onLogout}>{text.logout}</Button>
         </div>
       </section>

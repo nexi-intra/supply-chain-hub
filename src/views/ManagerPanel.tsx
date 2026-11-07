@@ -484,7 +484,8 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
       onLogout()
       return
     }
-    await loadUsers()
+    // Listen genindlæses uden at dialogen venter på det.
+    void loadUsers()
     setIsEditDialogOpen(false)
     setEditingUser(null)
     setNewName('')
@@ -779,8 +780,15 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
       return
     }
 
-    await window.kv.update('vacation-entries', { op: 'remove', ids: [id] })
-    await loadVacationEntries()
+    // Forsvinder straks fra listen; listen læses igen bagefter uden at knappen venter på det.
+    setVacationEntries(current => current.filter(entry => entry.id !== id))
+    try {
+      await removeFromKvArray('vacation-entries', [id])
+    } catch (error) {
+      void loadVacationEntries()
+      throw error
+    }
+    void loadVacationEntries()
     toast.success(t.managerPanel.vacationOverview.deletedToast)
 
     if (vacationToDelete.type === 'parental') return

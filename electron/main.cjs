@@ -63,7 +63,7 @@ const { createWordChecker } = require('./games/wordPuzzle/wordChecker.cjs')
 const { createSecuredIpc, PERSONAL_KEY } = require('./securedIpc.cjs')
 const { openWordGuide } = require('./openWordGuide.cjs')
 const { renderWordGuide } = require('./renderWordGuide.cjs')
-const { publicUsers, updateUsers } = require('./userPolicy.cjs')
+const { publicUsers, updateUsersAsync } = require('./userPolicy.cjs')
 const { isPrivateKey, readView, planWrite } = require('./privateViews.cjs')
 const { eraseUserData } = require('./userErasure.cjs')
 const { eraseSharedUserData } = require('./sharedErasure.cjs')
@@ -472,10 +472,13 @@ const AUTO_BACKUP_CHECK_INTERVAL = 60 * 60 * 1000
 const AUTO_BACKUP_LOCK_STALE_MS = 15 * 60 * 1000
 let autoBackupTimer = null
 
+// Asynkront: en synkron existsSync mod M: fryser main-traaden.
+const existsAsync = target => fsp.access(target).then(() => true, () => false)
+
 /** Skriver `payload` til `fileName` medmindre filen allerede findes. Returnerer true hvis DENNE klient skrev den. */
 async function writeBackupFileOnce(backupDir, fileName, payload) {
   const target = path.join(backupDir, fileName)
-  if (fs.existsSync(target)) return false
+  if (await existsAsync(target)) return false
   let handle
   try {
     handle = await fsp.open(target, 'wx')
@@ -504,7 +507,7 @@ async function backupStore(targetStore) {
     }
     // Tjek foer vi bygger indholdet: en dump er ~650 filer over SMB, saa den maa
     // kun koere naar der faktisk mangler en fil.
-    if (wanted.every(name => fs.existsSync(path.join(backupDir, name)))) return
+    if ((await Promise.all(wanted.map(name => existsAsync(path.join(backupDir, name))))).every(Boolean)) return
 
     await fsp.mkdir(backupDir, { recursive: true })
     // Pladsen skal KRAEVES foer dumpen, ikke efter. Tidligere afgjorde 'wx' foerst
@@ -514,7 +517,8 @@ async function backupStore(targetStore) {
     // aarsagen til at helt almindelige gemninger tog 2-5 minutter for alle andre.
     await withFileLockAsync(path.join(backupDir, 'backup-in-progress.lock'), async () => {
       // Genkontrol inde i laasen: vinderen kan have skrevet filerne mens vi ventede.
-      const missing = wanted.filter(name => !fs.existsSync(path.join(backupDir, name)))
+      const present = await Promise.all(wanted.map(name => existsAsync(path.join(backupDir, name))))
+      const missing = wanted.filter((name, index) => !present[index])
       if (!missing.length) return
       // Krypteret som selve storen (laeses med parseFileContents) - en backup maa ikke kunne aabnes i Notesblok.
       const snapshot = async include => encryptPayload(JSON.stringify({
@@ -1075,8 +1079,8 @@ app.whenReady().then(() => {
   ipcMain.handle('kv:update', async (_event, key, operation) => {
     const emailRename = key === 'users' && operation?.op === 'renameField' && operation.field !== operation.newField
     if (emailRename && path.resolve(store.dataDir) !== path.resolve(registeredTeamDir(platformRoot, registry.listTeams(platformRoot), currentTeamFolder).directory)) throw new Error('ACCOUNT_STORAGE_SCOPE_MISMATCH')
-    const deletedName = key === 'users' && operation?.op === 'deleteField' ? usersStore().get('users', { skipCache: true })?.[operation.field]?.fullName : undefined
-    const result = emailRename ? accountService.rename(await authService.currentAsync(_event.sender.id), currentTeamFolder, operation) : key === 'users' ? updateUsers(usersStore(), operation, await authService.currentAsync(_event.sender.id), registry.getCreatorEmail(platformRoot)) : isPrivateKey(key) ? await writePrivate(key, operation, await authService.currentAsync(_event.sender.id)) : await (await kvTarget(key, _event)).updateAsync(key, operation)
+    const deletedName = key === 'users' && operation?.op === 'deleteField' ? (await usersStore().getAsync('users', { skipCache: true }))?.[operation.field]?.fullName : undefined
+    const result = emailRename ? accountService.rename(await authService.currentAsync(_event.sender.id), currentTeamFolder, operation) : key === 'users' ? await updateUsersAsync(usersStore(), operation, await authService.currentAsync(_event.sender.id), registry.getCreatorEmail(platformRoot)) : isPrivateKey(key) ? await writePrivate(key, operation, await authService.currentAsync(_event.sender.id)) : await (await kvTarget(key, _event)).updateAsync(key, operation)
     if (emailRename) accountDataChanged()
     // A deleted account takes its personal data with it (GDPR art. 17); updateUsers has already checked the role.
     if (key === 'users' && operation?.op === 'deleteField') {
