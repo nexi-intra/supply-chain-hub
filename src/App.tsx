@@ -222,8 +222,8 @@ function App() {
 
     // Hver skrivning til den delte fil koster en laasefil paa M: (maalt 10-77 s under belastning),
     // og ~40 klienter skrev hvert 5. minut. Manager Panel kalder en klient "offline" efter 24 t,
-    // saa vi skriver kun ved ny version/platform eller naar lastSeen er over en time gammel.
-    const WRITE_AFTER_MS = 60 * 60 * 1000
+    // saa vi skriver kun ved ny version/platform eller naar lastSeen er over 6 timer gammel.
+    const WRITE_AFTER_MS = 6 * 60 * 60 * 1000
     const reportVersion = async () => {
       try {
         if (document.visibilityState === 'hidden') return

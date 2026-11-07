@@ -483,3 +483,24 @@ test('a stale entry older than 60 s is not served', async () => {
   assert.equal(atOnce, false, 'the caller waits for the drive')
   await assert.rejects(result, code('AUTH_REQUIRED'))
 })
+test('renew does not rewrite a remembered session renewed less than 30 days ago', async () => {
+  const f = fixture()
+  const actor = await f.auth.login(1, { ...f.login, rememberMe: true })
+  const writes = []
+  const realMutate = f.sessions.mutateAsync
+  f.sessions.mutateAsync = (...args) => { writes.push(args[0]); return realMutate(...args) }
+  f.advance(24 * 60 * 60 * 1000)
+  const renewed = await f.auth.renew(1)
+  assert.equal(renewed.expiresAt, actor.expiresAt, 'still valid for 364 days: nothing to renew')
+  assert.deepEqual(writes, [], 'no write to the shared drive')
+  f.advance(64 * 24 * 60 * 60 * 1000)
+  const later = await f.auth.renew(1)
+  assert.ok(later.expiresAt > actor.expiresAt, 'renewed once it has run for more than 30 days')
+  assert.deepEqual(writes, ['active-sessions'])
+})
+test('renew still refuses a session that is no longer valid, also when it skips the write', async () => {
+  const f = fixture()
+  const actor = await f.auth.login(1, { ...f.login, rememberMe: true })
+  f.sessions.mutate('active-sessions', sessions => { const copy = { ...sessions }; delete copy[sessionKey(actor.token)]; return copy })
+  await assert.rejects(f.auth.renew(1), code('AUTH_REQUIRED'))
+})

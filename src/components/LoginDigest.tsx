@@ -4,6 +4,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Button } from '@/components/ui/button'
 import { useLanguage } from '@/contexts/LanguageContext'
 import { navigateTo } from '@/lib/appNavigation'
+import { shouldSaveDigestLastSeen } from '@/lib/digestLastSeen'
 import type { Email, VacationEntry } from '@/lib/types'
 import type { Announcement } from '@/components/AnnouncementsBoard'
 
@@ -120,7 +121,7 @@ export function LoginDigest({ userEmail }: LoginDigestProps) {
 
       // Vis først – at gemme tidsstemplet på M: tager op mod 30 s.
       if (!cancelled && result.length > 0) setItems(result)
-      await window.kv.set(key, now)
+      if (shouldSaveDigestLastSeen({ lastSeen, now, shown: result.length })) await window.kv.set(key, now)
     }
 
     run().catch(error => console.error('Kunne ikke opbygge login-digest:', error))

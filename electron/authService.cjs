@@ -5,6 +5,8 @@ const { promisify } = require('node:util')
 const pbkdf2 = promisify(crypto.pbkdf2)
 const ITERATIONS = 150000
 const DAY = 24 * 60 * 60 * 1000
+// A remembered session is renewed (to 365 days) only once less than this is left, i.e. at most about monthly.
+const RENEW_AFTER_REMAINING_MS = 335 * DAY
 // Laesninger mens kontolaasen holdes: friske og uden om store'ns laese-koe.
 const UNDER_LOCK_READ = Object.freeze({ skipCache: true, unthrottled: true })
 const normalize = value => String(value || '').trim().toLowerCase()
@@ -368,6 +370,11 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
     return runAuthenticationAsync(actor.email, async () => {
     if (bindings.get(sender)?.token !== actor.token) fail('AUTH_REQUIRED')
     const key = sessionKey(actor.token)
+    // A remembered session runs for 365 days; renewing it on every start cost a write to M: (15-25 s) each time.
+    // Checked on a fresh read, so a removed or tampered session is refused exactly as before.
+    const current = (await openSessions().getAsync('active-sessions', UNDER_LOCK_READ))?.[key]
+    if (!current || current.expiresAt <= now() || current.signature !== sign(current)) fail('AUTH_REQUIRED')
+    if (current.expiresAt - now() >= RENEW_AFTER_REMAINING_MS) return currentUnderLockAsync(sender)
     await openSessions().mutateAsync('active-sessions', sessions => {
       if (!sessions?.[key] || sessions[key].expiresAt <= now()) fail('AUTH_REQUIRED')
       if (sessions[key].signature !== sign(sessions[key])) fail('AUTH_REQUIRED')
