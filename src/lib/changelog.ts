@@ -18,6 +18,11 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Optælling: admins kan nu selv "Hent dagens SAP-tal" og "Hent SAP igen" – det behøver ikke længere være den ansvarlige eller en manager',
       'Optælling åbner langt hurtigere: en optælling vises nu på omkring et halvt sekund – før kunne den vente på, at det fælles drev gemte',
       'Placeringer: Hubben fryser ikke længere, mens en handling (fx sæt palle på plads) gemmes på det fælles drev – du kan arbejde videre imens',
+      'Knapper viser altid, at du har trykket: en lille spinner, mens noget gemmes eller hentes. Nederst til venstre står "Gemmer på det fælles drev …", mens en ændring er på vej',
+      'Ændringer vises med det samme: ferie, projekter, to-dos, noter, mails og brugere opdateres på skærmen, så snart du trykker – gemningen sker i baggrunden. Fejler den, får du besked, og den gamle værdi vises igen',
+      'Hubben starter uden at fryse, og "Hvad skete der, mens du var væk" vises med det samme',
+      'Manager: oprettelse, rettelse og sletning af brugere fryser ikke længere hele Hubben',
+      'Spil: et træk, en chatbesked eller en reaktion venter ikke længere på det forrige træk, og lobbyen åbner med det samme',
     ],
   },
   {
