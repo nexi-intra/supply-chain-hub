@@ -3,7 +3,8 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { withFileLock, withFileLocks, withFileLockAsync } = require('./fileLock.cjs')
+const { withFileLock, withFileLocks, withFileLockAsync, withFileLocksAsync, setPreparedFiles } = require('./fileLock.cjs')
+const { createPreparedFiles } = require('./preparedFiles.cjs')
 
 test('multi-locks deduplicate, hold every target and release after failure', t => {
   const first = fixture(t), second = path.join(path.dirname(first), 'second.lock')
@@ -177,4 +178,120 @@ test('acquireFileLockAsync never reads the lock owner synchronously while waitin
   fs.readFileSync = originalReadFileSync
   assert.deepEqual(syncLockReads, [])
   assert.equal(fs.readFileSync(target, 'utf8'), 'other-owner')
+})
+
+// ---------- Lock as a hard link to a prepared owner file (no new file on M: while saving) ----------
+async function warmPool(t, dir, options) {
+  const pool = createPreparedFiles(options)
+  setPreparedFiles(pool)
+  t.after(async () => { setPreparedFiles(null); await pool.closeAll() })
+  pool.want(dir, 2)
+  await pool.whenIdle()
+  return pool
+}
+const ownerFileWith = (dir, content) => fs.readdirSync(dir).map(name => path.join(dir, name)).find(file => file.endsWith('.lockowner') && fs.readFileSync(file, 'utf8') === content)
+
+test('a link lock keeps a wx locker out and the other way round', async t => {
+  const target = fixture(t)
+  await warmPool(t, path.dirname(target))
+  await withFileLockAsync(target, async () => {
+    assert.equal(fs.statSync(target).nlink, 2, 'the lock is a hard link to a prepared owner file')
+    assert.throws(() => withFileLock(target, () => {}, { attempts: 1 }), { code: 'KV_LOCK_BUSY' })
+  })
+  assert.ok(!fs.existsSync(target))
+  fs.writeFileSync(target, 'other-client')
+  await assert.rejects(withFileLockAsync(target, () => assert.fail('must not run'), { attempts: 2, delayMs: 1 }), { code: 'KV_LOCK_BUSY' })
+  assert.equal(fs.readFileSync(target, 'utf8'), 'other-client')
+})
+
+test('a link lock is the prepared owner file and is released by unlinking only the link', async t => {
+  const target = fixture(t)
+  const dir = path.dirname(target)
+  const pool = await warmPool(t, dir, { poolSize: 1 })
+  let ownerFile, firstId
+  await withFileLockAsync(target, async () => {
+    firstId = fs.readFileSync(target, 'utf8')
+    ownerFile = ownerFileWith(dir, firstId)
+    assert.ok(ownerFile, 'the lock content is a prepared owner file')
+  })
+  assert.ok(!fs.existsSync(target))
+  await pool.whenIdle()
+  assert.ok(fs.existsSync(ownerFile), 'the owner file stays')
+  await withFileLockAsync(target, async () => {
+    const secondId = fs.readFileSync(target, 'utf8')
+    assert.notEqual(secondId, firstId, 'a reused owner file gets a new owner id')
+    assert.equal(fs.readFileSync(ownerFile, 'utf8'), secondId, 'the same file is reused, no new one')
+  })
+})
+
+test('release never removes a lock someone else has taken meanwhile', async t => {
+  const target = fixture(t)
+  const dir = path.dirname(target)
+  const pool = await warmPool(t, dir)
+  let ownerFile
+  await withFileLockAsync(target, async () => {
+    ownerFile = ownerFileWith(dir, fs.readFileSync(target, 'utf8'))
+    fs.unlinkSync(target)
+    fs.writeFileSync(target, 'thief')
+  })
+  assert.equal(fs.readFileSync(target, 'utf8'), 'thief')
+  await pool.whenIdle()
+  assert.ok(!fs.existsSync(ownerFile), 'an owner file whose lock was not certainly ours is never reused')
+})
+
+test('an abandoned link lock is reclaimed after staleMs like any lock', async t => {
+  const target = fixture(t)
+  await warmPool(t, path.dirname(target))
+  await withFileLockAsync(target, async () => {
+    const old = new Date(Date.now() - 61000)
+    fs.utimesSync(target, old, old)
+    assert.equal(withFileLock(target, () => 42, { attempts: 1, staleMs: 60000 }), 42)
+  })
+  assert.ok(!fs.existsSync(target))
+})
+
+test('nine locks in one folder with two prepared owners: two by link, the rest as today, none waits', async t => {
+  const first = fixture(t)
+  const dir = path.dirname(first)
+  await warmPool(t, dir)
+  const targets = Array.from({ length: 9 }, (_, index) => path.join(dir, `k${index}.json.lock`))
+  await withFileLocksAsync(targets, async () => {
+    assert.ok(targets.every(target => fs.existsSync(target)))
+    const linked = targets.filter(target => fs.statSync(target).nlink === 2)
+    assert.ok(linked.length >= 2, `${linked.length} locks by link`)
+    const ids = targets.map(target => fs.readFileSync(target, 'utf8'))
+    assert.equal(new Set(ids).size, 9, 'no owner file (owner id) is used by two locks')
+  }, { attempts: 1 })
+  assert.ok(targets.every(target => !fs.existsSync(target)))
+})
+
+test('when links are not supported the lock falls back and remembers it', async t => {
+  const target = fixture(t)
+  const dir = path.dirname(target)
+  const pool = await warmPool(t, dir)
+  const link = t.mock.method(fs.promises, 'link', async () => { throw Object.assign(new Error('not supported'), { code: 'ENOTSUP' }) })
+  await withFileLockAsync(target, async () => {
+    assert.equal(fs.statSync(target).nlink, 1, 'taken the way it is done today')
+  })
+  assert.equal(pool.linkSupported(dir), false)
+  await withFileLockAsync(target, async () => {})
+  assert.equal(link.mock.callCount(), 1, 'not tried again in that folder')
+  assert.ok(!fs.existsSync(target))
+})
+
+test('one EPERM from a link (a lock just deleted by another client) does not give up links in the folder', async t => {
+  const target = fixture(t)
+  const dir = path.dirname(target)
+  const pool = await warmPool(t, dir)
+  const realLink = fs.promises.link
+  let failures = 1
+  t.mock.method(fs.promises, 'link', async (...args) => {
+    if (failures-- > 0) throw Object.assign(new Error('delete pending'), { code: 'EPERM' })
+    return realLink(...args)
+  })
+  await withFileLockAsync(target, async () => {})
+  assert.equal(pool.linkSupported(dir), true)
+  await withFileLockAsync(target, async () => {
+    assert.equal(fs.statSync(target).nlink, 2, 'the next lock is a link again')
+  })
 })
