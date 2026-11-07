@@ -163,7 +163,7 @@ export async function submitHighscore(
     if (existing && existing.score >= candidate.score) return { saved: false, best: existing.score }
 
     try {
-      // The nested upsert does not go through the kvArrays prediction, so it is tracked here for "Gemmer …".
+      // The nested upsert does not go through the kvArrays prediction, so it is counted as a background write here.
       if (options.path) await trackPendingWrite(upsertInNestedKvArray<LeaderboardEntry>(key, options.path, [candidate]))
       else await upsertInKvArray<LeaderboardEntry>(key, [candidate])
       return { saved: true, best: candidate.score }

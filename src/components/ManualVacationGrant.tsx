@@ -83,7 +83,7 @@ export function ManualVacationGrant({ open, onOpenChange, managerEmail, onGrante
     }
 
     // Granted at once: the dialog closes, the vacation shows in the Manager Panel and it is saved in the background
-    // ("Gemmer …" shows; a write to M: takes 20+ s). A failed save reopens the dialog with the choices.
+    // (a write to M: takes 20+ s). A failed save reopens the dialog with the choices.
     const form = { selectedUser, grantType, startDate, endDate, notes }
     const newVacation: VacationEntry = {
       id: newId('vacation'),

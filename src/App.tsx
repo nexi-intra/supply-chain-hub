@@ -11,7 +11,6 @@ import { LoginDigest } from '@/components/LoginDigest'
 import { WhatsNewDialog } from '@/components/WhatsNewDialog'
 import { CommandPalette } from '@/components/CommandPalette'
 import { StorageConnectionBanner } from '@/components/StorageConnectionBanner'
-import { SavingIndicator } from '@/components/SavingIndicator'
 import { HubAssistant } from '@/components/HubAssistant'
 import { AccountMigrationRecovery } from '@/components/AccountMigrationRecovery'
 import { DesktopNotificationBridge } from '@/components/DesktopNotificationBridge'
@@ -540,7 +539,6 @@ function App() {
         <AnimatedBackground />
         <UpdateNotification suppressed={suppressUpdatePopup} />
         <StorageConnectionBanner />
-        <SavingIndicator />
         <GuideImportStatus onOpenGuideLibrary={(kind) => handleNavigate(kind)} />
         <BirthdayCelebration userEmail={userSession.email} />
         <LoginDigest userEmail={userSession.email} />

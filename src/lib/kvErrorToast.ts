@@ -7,7 +7,7 @@ import { trackPendingWrite } from './pendingWrites'
 // fejlen stille (kun i konsollen), og brugeren tror fejlagtigt at deres
 // ændring blev gemt. Fejlen kastes videre bagefter, så kald der allerede har
 // egen try/catch/toast stadig opfører sig som før.
-// Hver skrivning tælles (trackPendingWrite), så appen kan vise "Gemmer …", mens den er på vej til M:.
+// Hver skrivning tælles (trackPendingWrite), så appen ved, hvad der stadig er på vej til M:.
 export function withErrorToast(store: KvStore): KvStore {
   return {
     ...store,

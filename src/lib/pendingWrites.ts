@@ -1,5 +1,6 @@
 // Writes to the shared drive that are still on their way. Many screens show a change at once and save it in the
-// background (a write to M: takes up to 30 s), so the app shows a small "Gemmer …" while any write is pending.
+// background (a write to M: takes up to 90 s); this counts them. Nothing is shown for it on screen (07.11: a visible
+// "Gemmer …" made the app feel slow) - a failed write still shows an error toast.
 
 let pending = 0
 const listeners = new Set<(count: number) => void>()

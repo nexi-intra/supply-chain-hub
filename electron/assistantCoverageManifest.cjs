@@ -92,7 +92,6 @@ const COMPONENT_MAP = {
   'components/PauseOverlay.tsx': INTERNAL,
   'components/SickLeaveDialog.tsx': 'calendar:sick-leave',
   'components/SingleDayOffDialog.tsx': 'calendar:single-day-off',
-  'components/SavingIndicator.tsx': 'topic:storage',
   'components/StorageConnectionBanner.tsx': 'topic:storage',
   'components/TimeRangeFields.tsx': INTERNAL,
   'components/TranslationScope.tsx': INTERNAL, // "Oversat fra … · Vis original" under auto-translated text

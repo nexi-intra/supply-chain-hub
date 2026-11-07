@@ -11,7 +11,7 @@ import { trackPendingWrite } from './pendingWrites'
 async function predicted<R>(key: string, operation: KvOperation, write: () => Promise<R>): Promise<R> {
   const end = beginKvPrediction(key, operation)
   try {
-    // Shows "Gemmer …" while the write is on its way, also when the screen doesn't wait for it.
+    // Counted as a background write while it is on its way, also when the screen doesn't wait for it.
     return await trackPendingWrite(write())
   } finally {
     end()
