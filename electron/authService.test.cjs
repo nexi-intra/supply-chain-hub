@@ -173,6 +173,20 @@ test('signup ignores requested privileges and creates only a pending regular use
   assert.equal(await verifyPassword('test123', user.password), true)
   await assert.rejects(f.auth.login(1, { email, password: 'test123' }), code('AUTH_PENDING'))
 })
+test('signup tells every manager with one write per key, not two writes per manager', async () => {
+  const f = fixture(), email = 'new@example.test'
+  f.users.mutate('users', users => ({ ...users,
+    'boss@example.test': { email: 'boss@example.test', fullName: 'Boss', password: 'x', status: 'approved', role: 'manager' },
+    'chief@example.test': { email: 'chief@example.test', fullName: 'Chief', password: 'x', status: 'approved', role: 'manager' },
+  }))
+  const writes = []
+  f.users.update = (key, operation) => { writes.push({ key, operation }) }
+  await f.auth.signup(1, { email, password: 'test123', fullName: 'New User', phone: '123' })
+  assert.deepEqual(writes.map(write => write.key), ['emails', 'email-notifications'])
+  assert.deepEqual(writes[0].operation.items.map(item => item.to).sort(), ['boss@example.test', 'chief@example.test'])
+  assert.deepEqual(writes[1].operation.items.map(item => item.id), writes[0].operation.items.map(item => `${item.id}-notification`))
+  assert.ok(writes[1].operation.items.every(item => item.type === 'user-signup' && item.read === false))
+})
 test('signup rejects reserved creator, duplicate email and invalid typed fields', async () => {
   const f = fixture(), request = { email: f.login.email, password: 'test123', fullName: 'Test', phone: '123' }
   await assert.rejects(f.auth.signup(1, { ...request, email: 'creator@example.test' }), code('AUTH_RESERVED'))

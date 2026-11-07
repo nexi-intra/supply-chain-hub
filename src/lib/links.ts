@@ -96,6 +96,76 @@ declare global {
 
 export const linkFavoritesKey = (email: string) => `link-favorites-${email}`
 
+/**
+ * What the library will show after `command`, computed locally so the screen can show it at once – a save to the
+ * shared drive takes up to 90 s. Mirrors apply() in electron/links.cjs for the commands the screen does not wait for;
+ * the main process stays the authority and the snapshot is read again when the command is done.
+ */
+export function predictLinksCommand(snapshot: LinksSnapshot, command: LinkCommandInput): LinksSnapshot {
+  const at = new Date().toISOString()
+  const patchLink = (id: string, patch: (link: LibraryLink) => LibraryLink) => ({
+    links: snapshot.links.map(link => link.id === id ? patch(link) : link),
+    pending: snapshot.review.pending.map(link => link.id === id ? patch(link) : link),
+  })
+  const without = (id: string): LinksSnapshot => ({
+    ...snapshot,
+    links: snapshot.links.filter(link => link.id !== id),
+    review: {
+      pending: snapshot.review.pending.filter(link => link.id !== id),
+      suggestions: snapshot.review.suggestions.filter(entry => entry.linkId !== id),
+      reports: snapshot.review.reports.filter(entry => entry.linkId !== id),
+    },
+  })
+  switch (command.type) {
+    case 'delete':
+      return without(command.linkId)
+    case 'approve':
+    case 'reject': {
+      const status: LinkStatus = command.type === 'approve' ? 'approved' : 'rejected'
+      const note = command.type === 'reject' ? command.note || '' : ''
+      const { links } = patchLink(command.linkId, link => ({ ...link, status, reviewNote: note, reviewedAt: at, updatedAt: at }))
+      return { ...snapshot, links, review: { ...snapshot.review, pending: snapshot.review.pending.filter(link => link.id !== command.linkId) } }
+    }
+    case 'suggest': {
+      const { links, pending } = patchLink(command.linkId, link => ({ ...link, mySuggestionPending: true }))
+      return { ...snapshot, links, review: { ...snapshot.review, pending } }
+    }
+    case 'report': {
+      const { links, pending } = patchLink(command.linkId, link => ({ ...link, myReport: command.reason }))
+      return { ...snapshot, links, review: { ...snapshot.review, pending } }
+    }
+    case 'resolve-suggestion': {
+      const suggestion = snapshot.review.suggestions.find(entry => entry.id === command.suggestionId)
+      const { links, pending } = patchLink(command.linkId, link => {
+        const next = { ...link, openSuggestions: Math.max(0, (link.openSuggestions || 1) - 1) }
+        if (!command.accept || !suggestion) return next
+        for (const field of ['url', 'title', 'description', 'category'] as const) if (suggestion[field]) next[field] = suggestion[field]!
+        return { ...next, updatedAt: at }
+      })
+      return { ...snapshot, links, review: { ...snapshot.review, pending, suggestions: snapshot.review.suggestions.filter(entry => entry.id !== command.suggestionId) } }
+    }
+    case 'resolve-report': {
+      if (command.action === 'delete') return without(command.linkId)
+      const { links, pending } = patchLink(command.linkId, link => ({ ...link, openReports: Math.max(0, (link.openReports || 1) - 1) }))
+      return { ...snapshot, links, review: { ...snapshot.review, pending, reports: snapshot.review.reports.filter(entry => entry.id !== command.reportId) } }
+    }
+    default:
+      return snapshot
+  }
+}
+
+const predictionListeners = new Set<(snapshot: LinksSnapshot) => void>()
+
+/** The library's predicted snapshot, also for the bell (which reads its own copy) until both read the saved one. */
+export function publishLinksPrediction(snapshot: LinksSnapshot): void {
+  predictionListeners.forEach(listener => listener(snapshot))
+}
+
+export function subscribeLinksPrediction(listener: (snapshot: LinksSnapshot) => void): () => void {
+  predictionListeners.add(listener)
+  return () => { predictionListeners.delete(listener) }
+}
+
 /** Same rule as electron/linkSafety.cjs, so the form can say so before sending. */
 export function isAllowedLinkUrl(value: string): boolean {
   const text = value.trim()

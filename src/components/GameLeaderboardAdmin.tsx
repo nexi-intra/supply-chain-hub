@@ -116,7 +116,8 @@ export function GameLeaderboardAdmin({ gameTitle, icon, leaderboardKey, playCoun
     setNewLevel('')
   }
 
-  const handleSaveScore = async () => {
+  // Shown and closed at once; the score is saved in the background and the board is read again if that fails.
+  const handleSaveScore = () => {
     if (!editingEntry) return
 
     const scoreValue = parseInt(newScore)
@@ -130,56 +131,51 @@ export function GameLeaderboardAdmin({ gameTitle, icon, leaderboardKey, playCoun
       return
     }
 
-    const board = await window.kv.get<Leaderboard>(leaderboardKey)
-    if (!board) {
-      toast.error(t.gameLeaderboardAdmin.leaderboardNotFound)
-      return
-    }
-
-    const entries = board[editingEntry.difficulty] || []
-    const existing = entries.find(entry => entry.email === editingEntry.email)
-    if (!existing) {
-      toast.error(t.gameLeaderboardAdmin.scoreEntryNotFound)
-      return
-    }
-
-    const updatedEntry = {
-      ...existing,
-      score: scoreValue,
-      ...(hasLevel ? { level: levelValue } : {}),
-      timestamp: Date.now(),
-    }
-
-    if (isFlatMode) {
-      await upsertInKvArray(leaderboardKey, [{ ...updatedEntry, id: updatedEntry.email }])
-    } else {
-      await upsertInNestedKvArray(leaderboardKey, [editingEntry.difficulty], [{ ...updatedEntry, id: updatedEntry.email }])
-    }
-    await load()
+    const { difficulty, email } = editingEntry
+    const change = (entry: ScoreEntry): ScoreEntry => ({ ...entry, score: scoreValue, ...(hasLevel ? { level: levelValue } : {}), timestamp: Date.now() })
+    setLeaderboard(current => current && { ...current, [difficulty]: (current[difficulty] || []).map(entry => entry.email === email ? change(entry) : entry) })
     closeEditDialog()
     toast.success(t.gameLeaderboardAdmin.scoreUpdated)
+
+    let problem: string | undefined
+    void (async () => {
+      const board = await window.kv.get<Leaderboard>(leaderboardKey)
+      const existing = (board?.[difficulty] || []).find(entry => entry.email === email)
+      if (!board || !existing) {
+        problem = !board ? t.gameLeaderboardAdmin.leaderboardNotFound : t.gameLeaderboardAdmin.scoreEntryNotFound
+        throw new Error(problem)
+      }
+      const updatedEntry = { ...change(existing), id: existing.email }
+      if (isFlatMode) await upsertInKvArray(leaderboardKey, [updatedEntry])
+      else await upsertInNestedKvArray(leaderboardKey, [difficulty], [updatedEntry])
+    })().catch(error => {
+      console.error('Kunne ikke gemme highscore:', error)
+      if (problem) toast.error(problem)
+      void load()
+    })
   }
 
-  const handleDeleteScore = async (difficulty: Difficulty, email: string) => {
-    try {
-      await removeLeaderboardEntries(leaderboardKey, { emails: [email], category: isFlatMode ? undefined : difficulty })
-      await load()
-      toast.success(t.gameLeaderboardAdmin.scoreDeleted)
-    } catch (error) {
+  // The score leaves the board at once; it is removed in the background and the board is read again if that fails.
+  const handleDeleteScore = (difficulty: Difficulty, email: string) => {
+    setLeaderboard(current => current && (isFlatMode
+      ? { [categories[0]]: (current[categories[0]] || []).filter(entry => entry.email !== email) }
+      : { ...current, [difficulty]: (current[difficulty] || []).filter(entry => entry.email !== email) }))
+    toast.success(t.gameLeaderboardAdmin.scoreDeleted)
+    void removeLeaderboardEntries(leaderboardKey, { emails: [email], category: isFlatMode ? undefined : difficulty }).catch(error => {
       console.error('Kunne ikke slette highscore:', error)
       toast.error(t.gameLeaderboardAdmin.deleteFailed)
-    }
+      void load()
+    })
   }
 
-  const handleDeleteAll = async () => {
-    try {
-      await removeLeaderboardEntries(leaderboardKey, { all: true })
-      await load()
-      toast.success(t.gameLeaderboardAdmin.legacyDeleted)
-    } catch (error) {
+  const handleDeleteAll = () => {
+    setLeaderboard(current => current && Object.fromEntries(Object.keys(current).map(category => [category, []])))
+    toast.success(t.gameLeaderboardAdmin.legacyDeleted)
+    void removeLeaderboardEntries(leaderboardKey, { all: true }).catch(error => {
       console.error('Kunne ikke slette gamle highscores:', error)
       toast.error(t.gameLeaderboardAdmin.deleteFailed)
-    }
+      void load()
+    })
   }
 
   const hasEntries = !!leaderboard && categories.some((category) => (leaderboard[category] || []).length > 0)

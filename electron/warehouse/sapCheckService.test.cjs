@@ -145,3 +145,16 @@ test('only the newest checks are kept', async () => {
   const overview = await ctx.service.overview(ANNA)
   assert.deepEqual(overview.history.map(entry => entry.id), ['chk0005', 'chk0004', 'chk0003'])
 })
+
+test('the mail can use addresses typed on the screen before they are saved, and is recorded once in the check and the index', async () => {
+  const ctx = setup()
+  const check = await ctx.service.run(ANNA)
+  await ctx.service.setSettings(ADA, { to: 'old@example.test' })
+  await assert.rejects(ctx.service.createMail(ADA, { id: check.id, mode: 'all', to: 'not an address' }), { code: 'SAP_CHECK_SETTINGS_INVALID' })
+  assert.equal(ctx.drafts.length, 0)
+  await ctx.service.createMail(ADA, { id: check.id, mode: 'all', to: 'New@Example.test', cc: '' })
+  await ctx.service.createMail(ADA, { id: check.id, mode: 'all' })
+  assert.deepEqual(ctx.drafts.map(draft => draft.to), ['new@example.test', 'old@example.test'])
+  const overview = await ctx.service.overview(ADA)
+  assert.deepEqual([overview.latest.mails.length, overview.history[0].mail.by.name, overview.settings.to], [2, 'Ada', 'old@example.test'])
+})

@@ -464,10 +464,10 @@ function createImprovementsService({ getStore, getDirectory, now = Date.now, mak
     const store = await getStore()
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        let actual = await store.getAsync(KEY, { skipCache: true })
-        let cases = readCases(actual)
-        let ctx = await context(actor)
-        let operation = locateOperation(cases, command, ctx.actor.email, fingerprint)
+        const actual = await store.getAsync(KEY, { skipCache: true })
+        const cases = readCases(actual)
+        const ctx = await context(actor)
+        const operation = locateOperation(cases, command, ctx.actor.email, fingerprint)
         if (operation && operation.entry.type !== 'operation-reserved') return publicCase(operation.item, ctx.actor.email)
         if (command.type === 'create') {
           const item = create(command, ctx, stamp(), fingerprint)
@@ -478,22 +478,19 @@ function createImprovementsService({ getStore, getDirectory, now = Date.now, mak
         }
         let item = cases.find(item => item.id === command.caseId)
         if (!item) fail('IMPROVEMENTS_NOT_FOUND', 'Case not found')
-        if (!operation) {
-          const at = stamp()
-          const candidate = mutate(item, command, ctx, at, fingerprint)
-          const marker = { ...candidate.history.at(-1), type: 'operation-reserved', message: '' }
-          const reserved = { ...item, history: [...item.history, marker] }
-          await store.updateAsync(KEY, { op: 'compareAndSet', expected: actual, value: cases.map(current => current.id === item.id ? reserved : current) })
+        if (operation) {
+          // A claim left by an interrupted attempt of an older app version is finished at its claimed revision.
+          item = operation.item
+          const next = mutate(item, command, ctx, stamp(), fingerprint, operation.entry)
+          await store.updateAsync(KEY, { op: 'replaceItem', id: item.id, expected: item, item: next })
+          await changed()
+          return publicCase(next, ctx.actor.email)
         }
-        actual = await store.getAsync(KEY, { skipCache: true })
-        cases = readCases(actual)
-        ctx = await context(actor)
-        operation = locateOperation(cases, command, ctx.actor.email, fingerprint)
-        if (!operation) fail('IMPROVEMENTS_INVALID_DATA', 'Operation reservation is missing')
-        if (operation.entry.type !== 'operation-reserved') return publicCase(operation.item, ctx.actor.email)
-        item = operation.item
-        const next = mutate(item, command, ctx, stamp(), fingerprint, operation.entry)
-        await store.updateAsync(KEY, { op: 'replaceItem', id: item.id, expected: item, item: next })
+        // One write: the finished history entry carries the operation id, so a retry after a lost response finds it
+        // and returns the stored result. (A claim and then the result were two writes one after another – up to 90 s
+        // each on the shared drive.) Compare-and-set on the whole list keeps operation ids unique across cases.
+        const next = mutate(item, command, ctx, stamp(), fingerprint)
+        await store.updateAsync(KEY, { op: 'compareAndSet', expected: actual, value: cases.map(current => current.id === item.id ? next : current) })
         await changed()
         return publicCase(next, ctx.actor.email)
       } catch (error) {

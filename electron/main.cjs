@@ -1131,7 +1131,7 @@ app.whenReady().then(() => {
       }
       const sharedDir = path.join(platformRoot, '_shared')
       const shared = await eraseSharedUserData({ shared: createStore(sharedDir), games: createStore(path.join(sharedDir, 'multiplayer')) }, email, fullName)
-      registry.forgetUser(platformRoot, wanted)
+      await registry.forgetUserAsync(platformRoot, wanted)
       console.log(`TCD Hub: fælles data for slettet bruger anonymiseret (${shared.games} spil)`)
       multiplayerHooks.usersChanged?.()
       for (const channel of ['multiplayer:changed', 'improvements:changed', 'highFives:changed', 'links:changed']) broadcast(channel)
@@ -1159,9 +1159,7 @@ app.whenReady().then(() => {
   // --- Centralt team-/bruger-register (Supply Chain Hub multitenancy, Fase 1) ---
   ipcMain.handle('registry:lookup-team', (_event, email) => registry.lookupTeamForEmail(platformRoot, email))
   ipcMain.handle('registry:list-teams', () => registry.listTeams(platformRoot))
-  ipcMain.handle('registry:assign-user', (_event, email, teamId) => {
-    registry.assignUserToTeam(platformRoot, email, teamId)
-  })
+  ipcMain.handle('registry:assign-user', (_event, email, teamId) => registry.assignUserToTeamAsync(platformRoot, email, teamId).then(() => undefined))
   ipcMain.handle('registry:switch-to-team', (_event, folderName) => {
     const newDir = registeredTeamDir(platformRoot, registry.listTeams(platformRoot), folderName).directory
     return switchToTeamDir(folderName, newDir)
@@ -1287,14 +1285,15 @@ app.whenReady().then(() => {
       }
     }
   }
-  ipcMain.handle('registry:set-creator-email', (_event, email) => registry.setCreatorEmail(platformRoot, email))
-  ipcMain.handle('registry:create-team', (_event, team) => registry.createTeam(platformRoot, team))
+  ipcMain.handle('registry:set-creator-email', (_event, email) => registry.setCreatorEmailAsync(platformRoot, email))
+  ipcMain.handle('registry:create-team', (_event, team) => registry.createTeamAsync(platformRoot, team))
   const requireCreator = event => authService.requireRoleAsync(event.sender.id, 'creator')
   ipcMain.handle('registry:list-team-administration', async (_event, requesterEmail) => {
     await requireCreator(_event)
     const creatorEmail = registry.getCreatorEmail(platformRoot)
-    return registry.listTeams(platformRoot).map((team) => {
-      const users = storeFor(path.join(platformRoot, team.folderName)).get('users') || {}
+    // In parallel and async: a synchronous read per team froze the app for the whole list.
+    return Promise.all(registry.listTeams(platformRoot).map(async (team) => {
+      const users = (await storeFor(path.join(platformRoot, team.folderName)).getAsync('users')) || {}
       const managers = Object.entries(users)
         .map(([storedEmail, user]) => ({
           email: String(user?.email || storedEmail).trim().toLowerCase(),
@@ -1307,17 +1306,19 @@ app.whenReady().then(() => {
         .map(({ email, fullName }) => ({ email, fullName }))
         .sort((a, b) => a.fullName.localeCompare(b.fullName))
       return { ...team, managers }
-    })
+    }))
   })
   ipcMain.handle('registry:update-team', async (_event, requesterEmail, teamId, input) => {
     await requireCreator(_event)
-    return registry.updateTeam(platformRoot, teamId, input)
+    return registry.updateTeamAsync(platformRoot, teamId, input)
   })
   ipcMain.handle('registry:list-user-options', async (_event, requesterEmail) => {
     await requireCreator(_event)
     const byEmail = new Map()
-    for (const team of registry.listTeams(platformRoot)) {
-      const users = storeFor(path.join(platformRoot, team.folderName)).get('users') || {}
+    const teams = registry.listTeams(platformRoot)
+    const usersByTeam = await Promise.all(teams.map(async team => (await storeFor(path.join(platformRoot, team.folderName)).getAsync('users')) || {}))
+    teams.forEach((team, index) => {
+      const users = usersByTeam[index]
       for (const user of Object.values(users)) {
         const email = String(user?.email || '').trim().toLowerCase()
         if (!email) continue
@@ -1328,7 +1329,7 @@ app.whenReady().then(() => {
           primaryTeamId: team.teamId,
         })
       }
-    }
+    })
     return Array.from(byEmail.values()).sort((a, b) => a.fullName.localeCompare(b.fullName))
   })
   const teamReader = createTeamReader({ getRoot: () => platformRoot, listTeams: () => registry.listTeams(platformRoot), openStore: storeFor })
@@ -1344,7 +1345,7 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('registry:set-manager-access', async (event, email, teamIds) => {
     await requireCreator(event)
-    const result = registry.setManagerAccess(platformRoot, email, teamIds)
+    const result = await registry.setManagerAccessAsync(platformRoot, email, teamIds)
     authService.invalidateAll()
     broadcast('registry:hubs-changed')
     return result

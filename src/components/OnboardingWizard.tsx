@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { UserPlus, UserMinus, ArrowRight, ArrowLeft, Check, Gift, ShieldCheck, User as UserIcon, Warning, CalendarBlank, Trash } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -17,8 +17,22 @@ import { useLanguage } from '@/contexts/LanguageContext'
 interface WizardProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  /** Kaldes efter gennemført forløb, så ManagerPanel kan genindlæse lister. */
-  onCompleted: () => void
+}
+
+/** What the onboarding is creating, so the Manager Panel can show it at once (a write to M: takes 20-90 s). */
+export interface OnboardedAccount {
+  email: string
+  fullName: string
+  role: UserRole
+  phone: string
+}
+
+interface OnboardingWizardProps extends WizardProps {
+  /**
+   * Called at once when the manager confirms: `accountSaved` resolves when the account is saved (false if it was not),
+   * `birthday` is the birthday being saved with it, if one was given.
+   */
+  onCreating: (account: OnboardedAccount, accountSaved: Promise<boolean>, birthday?: { entry: BirthdayEntry & { id: string }; saved: Promise<boolean> }) => void
 }
 
 /** Trin-indikator (1 ● 2 ● 3) øverst i begge wizards. */
@@ -55,7 +69,7 @@ function StepIndicator({ current, labels }: { current: number; labels: string[] 
 // Onboarding: opret konto → fødselsdag (valgfri) → bekræft
 // ---------------------------------------------------------------------------
 
-export function OnboardingWizard({ open, onOpenChange, onCompleted }: WizardProps) {
+export function OnboardingWizard({ open, onOpenChange, onCreating }: OnboardingWizardProps) {
   const { t } = useLanguage()
   const [step, setStep] = useState(1)
   const [fullName, setFullName] = useState('')
@@ -64,18 +78,20 @@ export function OnboardingWizard({ open, onOpenChange, onCompleted }: WizardProp
   const [password, setPassword] = useState('')
   const [role, setRole] = useState<UserRole>('user')
   const [birthDate, setBirthDate] = useState('')
-  const [isWorking, setIsWorking] = useState(false)
+  // A failed save opens the wizard again on the summary with what was typed.
+  const restoreForm = useRef<{ fullName: string; email: string; phone: string; password: string; role: UserRole; birthDate: string } | null>(null)
 
   useEffect(() => {
     if (open) {
-      setStep(1)
-      setFullName('')
-      setEmail('')
-      setPhone('')
-      setPassword('')
-      setRole('user')
-      setBirthDate('')
-      setIsWorking(false)
+      const form = restoreForm.current
+      restoreForm.current = null
+      setStep(form ? 3 : 1)
+      setFullName(form?.fullName ?? '')
+      setEmail(form?.email ?? '')
+      setPhone(form?.phone ?? '')
+      setPassword(form?.password ?? '')
+      setRole(form?.role ?? 'user')
+      setBirthDate(form?.birthDate ?? '')
     }
   }, [open])
 
@@ -98,43 +114,59 @@ export function OnboardingWizard({ open, onOpenChange, onCompleted }: WizardProp
     }
   }
 
-  const handleConfirm = async () => {
-    setIsWorking(true)
-    try {
-      const normalizedEmail = email.trim().toLowerCase()
-
-      await setKvObjectField('users', normalizedEmail, {
-        email: normalizedEmail,
+  // The wizard closes and the person shows in the Manager Panel at once; the account is saved in the background, then the
+  // birthday and the welcome mail at the same time.
+  const handleConfirm = () => {
+    const form = { fullName, email, phone, password, role, birthDate }
+    const account: OnboardedAccount = { email: email.trim().toLowerCase(), fullName: fullName.trim(), role, phone: phone.trim() }
+    let failure: unknown
+    const accountSaved = (async () => {
+      await setKvObjectField('users', account.email, {
+        email: account.email,
         password: await hashPassword(password.trim()),
-        fullName: fullName.trim(),
+        fullName: account.fullName,
         role,
         isManager: role === 'manager' || role === 'creator',
-        phone: phone.trim(),
+        phone: account.phone,
         // Manager-oprettede konti springer godkendelses-flowet over.
         status: 'approved',
       })
+      return true
+    })().catch(error => { failure = error; return false })
 
-      // After the account: the birthday and the welcome mail are independent keys, saved at the same time (a write to M:
-      // takes 20+ s; they were one after another).
-      const followUps: Promise<unknown>[] = []
-      if (birthDate) {
-        const [year, month, day] = birthDate.split('-')
-        followUps.push(upsertInKvArray('employee-birthdays', [{
-          id: normalizedEmail,
-          email: normalizedEmail,
-          fullName: fullName.trim(),
-          birthday: `${month}-${day}`,
-          birthYear: parseInt(year),
-        }]))
+    let birthday: { entry: BirthdayEntry & { id: string }; saved: Promise<boolean> } | undefined
+    if (birthDate) {
+      const [year, month, day] = birthDate.split('-')
+      const entry = { id: account.email, email: account.email, fullName: account.fullName, birthday: `${month}-${day}`, birthYear: parseInt(year) }
+      birthday = {
+        entry,
+        saved: accountSaved.then(saved => saved && upsertInKvArray('employee-birthdays', [entry]).then(() => true, error => {
+          console.error('Onboarding: fødselsdagen blev ikke gemt:', error)
+          toast.error(`${t.onboardingWizard.createFailedPrefix} ${error instanceof Error ? error.message : String(error)}`)
+          return false
+        })),
       }
+    }
 
-      followUps.push(appendToKvArray('emails', [{
+    onCreating(account, accountSaved, birthday)
+    toast.success(`${account.fullName} ${t.onboardingWizard.createdSuffix}`)
+    onOpenChange(false)
+
+    void accountSaved.then(saved => {
+      if (!saved) {
+        console.error('Onboarding fejlede:', failure)
+        toast.error(`${t.onboardingWizard.createFailedPrefix} ${failure instanceof Error ? failure.message : String(failure)}`)
+        restoreForm.current = form
+        onOpenChange(true)
+        return
+      }
+      void appendToKvArray('emails', [{
         id: newId('email'),
         from: 'system@nexigroup.com',
-        to: normalizedEmail,
+        to: account.email,
         subject: 'Velkommen til Supply Chain Hub!',
         message: [
-          `Hej ${fullName.trim()},`,
+          `Hej ${account.fullName},`,
           '',
           'Din konto er blevet oprettet, og du kan nu logge ind på Supply Chain Hub.',
           '',
@@ -144,18 +176,8 @@ export function OnboardingWizard({ open, onOpenChange, onCompleted }: WizardProp
         ].join('\n'),
         timestamp: Date.now(),
         read: false,
-      }]))
-      await Promise.all(followUps)
-
-      toast.success(`${fullName.trim()} ${t.onboardingWizard.createdSuffix}`)
-      onOpenChange(false)
-      onCompleted()
-    } catch (error) {
-      console.error('Onboarding fejlede:', error)
-      toast.error(`${t.onboardingWizard.createFailedPrefix} ${error instanceof Error ? error.message : String(error)}`)
-    } finally {
-      setIsWorking(false)
-    }
+      }]).catch(error => console.error('Onboarding: velkomstmailen blev ikke sendt:', error))
+    })
   }
 
   return (
@@ -241,7 +263,7 @@ export function OnboardingWizard({ open, onOpenChange, onCompleted }: WizardProp
 
         <DialogFooter className="gap-2">
           {step > 1 && (
-            <Button variant="outline" onClick={() => setStep(step - 1)} disabled={isWorking} className="gap-2">
+            <Button variant="outline" onClick={() => setStep(step - 1)} className="gap-2">
               <ArrowLeft size={16} />
               {t.common.back}
             </Button>
@@ -252,9 +274,9 @@ export function OnboardingWizard({ open, onOpenChange, onCompleted }: WizardProp
               <ArrowRight size={16} />
             </Button>
           ) : (
-            <Button onClick={handleConfirm} disabled={isWorking} className="gap-2">
+            <Button onClick={handleConfirm} className="gap-2">
               <Check size={16} weight="bold" />
-              {isWorking ? t.onboardingWizard.creating : t.onboardingWizard.createEmployee}
+              {t.onboardingWizard.createEmployee}
             </Button>
           )}
         </DialogFooter>
@@ -269,6 +291,11 @@ export function OnboardingWizard({ open, onOpenChange, onCompleted }: WizardProp
 
 interface OffboardingWizardProps extends WizardProps {
   currentUserEmail: string
+  /**
+   * Called at once when the manager confirms, so the person, their birthday and pending requests leave the lists
+   * straight away; `saved` resolves when the account and the clean-up are saved (false if not).
+   */
+  onRemoving: (email: string, saved: Promise<boolean>) => void
 }
 
 interface CleanupPreview {
@@ -278,20 +305,18 @@ interface CleanupPreview {
   historicalEntries: number
 }
 
-export function OffboardingWizard({ open, onOpenChange, onCompleted, currentUserEmail }: OffboardingWizardProps) {
+export function OffboardingWizard({ open, onOpenChange, onRemoving, currentUserEmail }: OffboardingWizardProps) {
   const { t } = useLanguage()
   const [step, setStep] = useState(1)
   const [employees, setEmployees] = useState<Array<{ email: string; fullName: string }>>([])
   const [selectedEmail, setSelectedEmail] = useState('')
   const [preview, setPreview] = useState<CleanupPreview | null>(null)
-  const [isWorking, setIsWorking] = useState(false)
 
   useEffect(() => {
     if (!open) return
     setStep(1)
     setSelectedEmail('')
     setPreview(null)
-    setIsWorking(false)
     const loadEmployees = async () => {
       const creatorEmail = await getCreatorEmail()
       const usersData = await window.kv.get<Record<string, { email: string; fullName: string }>>('users') || {}
@@ -308,9 +333,12 @@ export function OffboardingWizard({ open, onOpenChange, onCompleted, currentUser
 
   const buildPreview = async () => {
     if (!selectedEmployee) return
-    const assignments = await window.kv.get<ShiftAssignment[]>('shift-assignments') || []
-    const vacations = await window.kv.get<VacationEntry[]>('vacation-entries') || []
-    const birthdays = await window.kv.get<BirthdayEntry[]>('employee-birthdays') || []
+    // Parallelt: hver læsning er en rundtur til M:.
+    const [assignments, vacations, birthdays] = await Promise.all([
+      window.kv.get<ShiftAssignment[]>('shift-assignments').then(value => value || []),
+      window.kv.get<VacationEntry[]>('vacation-entries').then(value => value || []),
+      window.kv.get<BirthdayEntry[]>('employee-birthdays').then(value => value || []),
+    ])
 
     const emailLower = selectedEmployee.email.toLowerCase()
     setPreview({
@@ -325,20 +353,23 @@ export function OffboardingWizard({ open, onOpenChange, onCompleted, currentUser
     setStep(2)
   }
 
-  const handleConfirm = async () => {
+  // The wizard closes and the person leaves the Manager Panel's lists at once; the account and the clean-up are saved in
+  // the background (each write to M: takes 20-90 s).
+  const handleConfirm = () => {
     if (!selectedEmployee || !preview) return
-    setIsWorking(true)
-    try {
-      const emailLower = selectedEmployee.email.toLowerCase()
-
-      await deleteKvObjectField('users', selectedEmployee.email)
-      if (emailLower !== selectedEmployee.email) {
-        await deleteKvObjectField('users', emailLower)
-      }
+    const employee = selectedEmployee
+    const plan = preview
+    const emailLower = employee.email.toLowerCase()
+    let failure: unknown
+    const saved = (async () => {
+      await Promise.all([
+        deleteKvObjectField('users', employee.email),
+        emailLower !== employee.email ? deleteKvObjectField('users', emailLower) : null,
+      ])
       // When the account is gone: shifts, birthday and pending vacations are independent keys, removed at the same time.
       await Promise.all([
-        preview.shiftAssignmentIds.length > 0 ? removeFromKvArray('shift-assignments', preview.shiftAssignmentIds) : null,
-        preview.hasBirthday ? removeFromKvArray('employee-birthdays', [emailLower, selectedEmployee.email]) : null,
+        plan.shiftAssignmentIds.length > 0 ? removeFromKvArray('shift-assignments', plan.shiftAssignmentIds) : null,
+        plan.hasBirthday ? removeFromKvArray('employee-birthdays', [emailLower, employee.email]) : null,
         (async () => {
           // Afventende ferieanmodninger fjernes (giver ikke mening uden bruger);
           // godkendt/afvist historik bevares som dokumentation.
@@ -349,16 +380,17 @@ export function OffboardingWizard({ open, onOpenChange, onCompleted, currentUser
           if (pendingIds.length > 0) await removeFromKvArray('vacation-entries', pendingIds)
         })(),
       ])
+      return true
+    })().catch(error => { failure = error; return false })
 
-      toast.success(`${selectedEmployee.fullName} ${t.onboardingWizard.offboardedSuffix}`)
-      onOpenChange(false)
-      onCompleted()
-    } catch (error) {
-      console.error('Offboarding fejlede:', error)
-      toast.error(`${t.onboardingWizard.offboardFailedPrefix} ${error instanceof Error ? error.message : String(error)}`)
-    } finally {
-      setIsWorking(false)
-    }
+    onRemoving(employee.email, saved)
+    toast.success(`${employee.fullName} ${t.onboardingWizard.offboardedSuffix}`)
+    onOpenChange(false)
+    void saved.then(ok => {
+      if (ok) return
+      console.error('Offboarding fejlede:', failure)
+      toast.error(`${t.onboardingWizard.offboardFailedPrefix} ${failure instanceof Error ? failure.message : String(failure)}`)
+    })
   }
 
   return (
@@ -437,7 +469,7 @@ export function OffboardingWizard({ open, onOpenChange, onCompleted, currentUser
 
         <DialogFooter className="gap-2">
           {step > 1 && (
-            <Button variant="outline" onClick={() => setStep(step - 1)} disabled={isWorking} className="gap-2">
+            <Button variant="outline" onClick={() => setStep(step - 1)} className="gap-2">
               <ArrowLeft size={16} />
               {t.common.back}
             </Button>
@@ -455,9 +487,9 @@ export function OffboardingWizard({ open, onOpenChange, onCompleted, currentUser
             </Button>
           )}
           {step === 3 && (
-            <Button onClick={handleConfirm} disabled={isWorking} variant="destructive" className="gap-2">
+            <Button onClick={handleConfirm} variant="destructive" className="gap-2">
               <UserMinus size={16} weight="bold" />
-              {isWorking ? t.onboardingWizard.offboarding : t.onboardingWizard.offboardEmployee}
+              {t.onboardingWizard.offboardEmployee}
             </Button>
           )}
         </DialogFooter>

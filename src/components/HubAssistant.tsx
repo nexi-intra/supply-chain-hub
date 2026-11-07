@@ -13,9 +13,9 @@ import type { AssistantScope, AssistantSource, AssistantAnswer, AssistantStatus 
 import { APP_VIEW_IDS, navigateTo, type AppViewId } from '@/lib/appNavigation'
 import type { Guide } from '@/lib/guideTypes'
 import { submitVacationRequest } from '@/lib/vacationRequests'
-import { createPersonalTodo } from '@/lib/personalTodos'
+import { createPersonalTodo, personalTodoScheduleProblem } from '@/lib/personalTodos'
 import { registerSickLeave } from '@/lib/sickLeave'
-import { createNote, createTeamTodo, sendInternalMessage, setHomeOfficeDay } from '@/lib/moduleWrites'
+import { buildNote, createNote, createTeamTodo, isTeamRecipient, sendInternalMessage, setHomeOfficeDay } from '@/lib/moduleWrites'
 import { isHighFiveEmoji, highFiveMessageProblem } from '@/lib/highFives'
 import { newOperationId } from '@/lib/multiplayerView'
 import { submitHubertFeedback } from '@/lib/hubertFeedback'
@@ -263,44 +263,63 @@ export function HubAssistant({ token }: AssistantScope) {
     setMessages(current => current.map(message => message.id === messageId ? { ...message, actionOutcome: 'confirmed' } : message))
     const text = ACTION_TEXT[language]
     const done = (message: string) => setMessages(current => current.map(item => item.id === messageId ? { ...item, actionOutcome: 'success', actionOutcomeMessage: message } : item))
+    const failed = (failure: unknown) => {
+      console.error('Hubert action failed:', failure)
+      setMessages(current => current.map(message => message.id === messageId ? { ...message, actionOutcome: 'failed', actionOutcomeMessage: text.failed } : message))
+    }
+    // The input is checked first (at most a quick read); then the result is shown at once and the write – up to 90 s
+    // on the shared drive – runs in the background. A failed write turns the answer into "failed".
+    const showThenSave = <T,>(write: Promise<T>, success: string, onSaved?: (result: T) => void) => {
+      done(success)
+      void write.then(result => onSaved?.(result), failed)
+    }
     try {
       if (!userEmail) throw new Error('Ingen bruger fundet')
       if (proposal.type === 'vacation-request') {
-        await submitVacationRequest({ userEmail, startDate: param(proposal, 'startDate'), endDate: param(proposal, 'endDate') })
-        done(text.vacationSuccess)
+        const startDate = param(proposal, 'startDate')
+        const endDate = param(proposal, 'endDate')
+        if (!startDate || !endDate || endDate < startDate) throw new Error('Ugyldige datoer')
+        showThenSave(submitVacationRequest({ userEmail, startDate, endDate }), text.vacationSuccess)
       } else if (proposal.type === 'personal-todo') {
         const dueDate = ISO_DAY.test(param(proposal, 'dueDate')) ? param(proposal, 'dueDate') : undefined
-        await createPersonalTodo(userEmail, param(proposal, 'title'), undefined, dueDate, undefined, dueDate ? { startTime: param(proposal, 'startTime'), endTime: param(proposal, 'endTime') } : undefined)
-        done(text.todoSuccess)
+        const schedule = dueDate ? { startTime: param(proposal, 'startTime'), endTime: param(proposal, 'endTime') } : undefined
+        const problem = !param(proposal, 'title').trim() ? 'MISSING_TITLE' : personalTodoScheduleProblem(dueDate, schedule)
+        if (problem) throw new Error(problem)
+        showThenSave(createPersonalTodo(userEmail, param(proposal, 'title'), undefined, dueDate, undefined, schedule), text.todoSuccess)
       } else if (proposal.type === 'sick-leave') {
         const date = param(proposal, 'date')
         if (!ISO_DAY.test(date)) throw new Error('Ugyldig dato')
         const name = await displayName(userEmail)
-        const { notified } = await registerSickLeave({ reporterEmail: userEmail, reporterName: name, userEmail, userName: name, date: new Date(`${date}T12:00:00`), type: param(proposal, 'type') === 'child' ? 'child' : 'self' })
-        done(notified ? text.sickSuccess : text.sickNoNotice)
+        showThenSave(
+          registerSickLeave({ reporterEmail: userEmail, reporterName: name, userEmail, userName: name, date: new Date(`${date}T12:00:00`), type: param(proposal, 'type') === 'child' ? 'child' : 'self' }),
+          text.sickSuccess,
+          ({ notified }) => { if (!notified) done(text.sickNoNotice) },
+        )
       } else if (proposal.type === 'home-office-day') {
-        await setHomeOfficeDay(userEmail, param(proposal, 'date'), true)
-        done(text.homeOfficeSuccess)
+        const date = param(proposal, 'date')
+        if (!ISO_DAY.test(date)) throw new Error('INVALID_DATE')
+        showThenSave(setHomeOfficeDay(userEmail, date, true), text.homeOfficeSuccess)
       } else if (proposal.type === 'note') {
-        await createNote({ userEmail, userName: await displayName(userEmail), title: param(proposal, 'title'), content: param(proposal, 'content'), isPersonal: proposal.params.isPersonal !== false })
-        done(text.noteSuccess)
+        const params = { userEmail, userName: await displayName(userEmail), title: param(proposal, 'title'), content: param(proposal, 'content'), isPersonal: proposal.params.isPersonal !== false }
+        buildNote(params)
+        showThenSave(createNote(params), text.noteSuccess)
       } else if (proposal.type === 'message') {
-        await sendInternalMessage({ from: userEmail, to: param(proposal, 'to'), subject: param(proposal, 'subject'), message: param(proposal, 'message') })
-        done(text.messageSuccess)
+        const to = param(proposal, 'to')
+        if (!to || !param(proposal, 'subject').trim() || !param(proposal, 'message').trim()) throw new Error('MISSING_FIELDS')
+        if (!isTeamRecipient(await window.kv.get<Record<string, { email: string }>>('users'), to)) throw new Error('USER_NOT_FOUND')
+        showThenSave(sendInternalMessage({ from: userEmail, to, subject: param(proposal, 'subject'), message: param(proposal, 'message') }), text.messageSuccess)
       } else if (proposal.type === 'team-todo') {
         const dueDate = ISO_DAY.test(param(proposal, 'dueDate')) ? param(proposal, 'dueDate') : undefined
-        await createTeamTodo({ userEmail, userName: await displayName(userEmail), title: param(proposal, 'title'), dueDate })
-        done(text.teamTodoSuccess)
+        if (!param(proposal, 'title').trim()) throw new Error('MISSING_TITLE')
+        showThenSave(createTeamTodo({ userEmail, userName: await displayName(userEmail), title: param(proposal, 'title'), dueDate }), text.teamTodoSuccess)
       } else if (proposal.type === 'high-five') {
         const emoji = param(proposal, 'emoji')
         const message = param(proposal, 'message')
         if (!window.electronHighFives || !isHighFiveEmoji(emoji) || highFiveMessageProblem(message)) throw new Error('Ugyldig high-five')
-        await window.electronHighFives.command({ operationId: newOperationId(), type: 'send', recipientEmail: param(proposal, 'recipientEmail'), emoji, message })
-        done(text.highFiveSuccess)
+        showThenSave(window.electronHighFives.command({ operationId: newOperationId(), type: 'send', recipientEmail: param(proposal, 'recipientEmail'), emoji, message }), text.highFiveSuccess)
       }
     } catch (failure) {
-      console.error('Hubert action failed:', failure)
-      setMessages(current => current.map(message => message.id === messageId ? { ...message, actionOutcome: 'failed', actionOutcomeMessage: text.failed } : message))
+      failed(failure)
     }
   }
   // Best-effort feedback-logning - paavirker aldrig selve svaret, og et klik

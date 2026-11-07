@@ -338,7 +338,7 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   handle('sap-check:latest', user => sapChecks.latest(user))
   handle('sap-check:run', (user, p) => sapChecks.run(user, { scope: p.scope }))
   handle('sap-check:settings', (user, p) => sapChecks.setSettings(user, { to: p.to, cc: p.cc, language: p.language }))
-  handle('sap-check:mail', (user, p) => sapChecks.createMail(user, { id: p.id, mode: p.mode, language: p.language, scope: p.scope }))
+  handle('sap-check:mail', (user, p) => sapChecks.createMail(user, { id: p.id, mode: p.mode, language: p.language, scope: p.scope, to: typeof p.to === 'string' ? p.to : undefined, cc: typeof p.cc === 'string' ? p.cc : undefined }))
 
   // Placeringer: reads, then the changes; every change tells the open windows of that hub.
   const LOCATION_READS = { overview: 'overview', 'lookup-document': 'lookupDocument', suggest: 'suggest', search: 'search', 'material-card': 'materialCard', 'location-card': 'locationCard', 'pallet-card': 'palletCard', list: 'list', stamp: 'stamp', log: 'log', 'rack-card': 'rackCard', 'map-contents': 'mapContents' }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, ArrowsClockwise, ArrowsOut, CloudCheck, CloudSlash, FileXls, LockSimple, LockSimpleOpen, Plus, Trash } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
@@ -6,9 +6,10 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs } from '@/components/warehouse/ui'
 import { SapActionButton } from '@/components/warehouse/SapActionButton'
+import { trackPendingWrite } from '@/lib/pendingWrites'
 import { errorCode, errorMessage } from '@/lib/warehouse/errors'
 import { formatDateTime, scopeText } from '@/lib/warehouse/format'
-import type { CountState, OpenCount } from '@/types/warehouse'
+import type { CountState, OpenCount, Person, WarehouseUser } from '@/types/warehouse'
 import { ApprovalPanel } from './ApprovalPanel'
 import { DeleteCountDialog } from './DeleteCountDialog'
 import { DocPanel } from './DocPanel'
@@ -16,6 +17,7 @@ import { ImportPanel } from './ImportPanel'
 import { LinesPanel } from './LinesPanel'
 import { MembersPanel } from './MembersPanel'
 import { MovesPanel } from './MovesPanel'
+import { answerRequest, createOverlays, withMember, withMeta, type StatePatch } from './optimisticState'
 import { OverviewPanel } from './OverviewPanel'
 import { ProgressPanel } from './ProgressPanel'
 import { RefetchDialog } from './RefetchDialog'
@@ -26,15 +28,24 @@ const POLL_MS = 5000
 
 export type CountTab = 'scan' | 'lines' | 'overview' | 'progress' | 'moves' | 'import' | 'members' | 'approval' | 'doc'
 
+/**
+ * Shows `patch` at once and runs `write` in the background (a write to M: takes 15–90 s). On failure the change is
+ * taken back and the error shown – unless `onError` returns true (it handled the error itself). Resolves to whether it was saved.
+ */
+export type Optimistic = (patch: StatePatch, write: () => Promise<unknown>, options?: { onError?: (error: unknown) => boolean | void }) => Promise<boolean>
+
 export interface PanelProps {
   id: string
   open: OpenCount
   state: CountState
   refresh: () => Promise<void>
   reloadOpen: () => Promise<void>
+  optimistic: Optimistic
+  /** The user, as the drive stores who did something. */
+  person: Person
 }
 
-export function CountView({ id, onBack }: { id: string; onBack: () => void }) {
+export function CountView({ id, user, onBack }: { id: string; user: WarehouseUser; onBack: () => void }) {
   const [open, setOpen] = useState<OpenCount | null>(null)
   const [state, setState] = useState<CountState | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
@@ -45,6 +56,9 @@ export function CountView({ id, onBack }: { id: string; onBack: () => void }) {
   const [deleteOpen, setDeleteOpen] = useState(false)
   const loading = useRef(false)
   const left = useRef(false)
+  const overlays = useRef(createOverlays())
+  // The last state read from the drive, without this PC's changes that are still on their way.
+  const serverState = useRef<CountState | null>(null)
 
   const leaveDeleted = useCallback(() => {
     if (left.current) return
@@ -57,7 +71,11 @@ export function CountView({ id, onBack }: { id: string; onBack: () => void }) {
     if (loading.current || left.current) return
     loading.current = true
     try {
-      setState(await window.electronWarehouse!.counts.state(id))
+      const startedAt = Date.now()
+      const fresh = await window.electronWarehouse!.counts.state(id)
+      overlays.current.received(startedAt)
+      serverState.current = fresh
+      setState(overlays.current.apply(fresh))
       setFailed(null)
     } catch (error) {
       if (errorCode(error) === 'COUNT_DELETED') leaveDeleted()
@@ -66,6 +84,28 @@ export function CountView({ id, onBack }: { id: string; onBack: () => void }) {
       loading.current = false
     }
   }, [id, leaveDeleted])
+
+  const optimistic = useCallback<Optimistic>((patch, write, options = {}) => {
+    const overlay = overlays.current.add(patch)
+    setState(current => (current ? patch(current) : current))
+    return trackPendingWrite(Promise.resolve().then(write)).then(
+      () => {
+        overlays.current.settle(overlay, Date.now())
+        void refresh()
+        return true
+      },
+      error => {
+        overlays.current.remove(overlay)
+        if (serverState.current) setState(overlays.current.apply(serverState.current))
+        if (errorCode(error) === 'COUNT_DELETED') leaveDeleted()
+        else if (!options.onError?.(error)) toast.error(errorMessage(error))
+        void refresh()
+        return false
+      },
+    )
+  }, [refresh, leaveDeleted])
+
+  const person = useMemo<Person>(() => ({ email: user.email.trim().toLowerCase(), name: user.fullName || user.email }), [user.email, user.fullName])
 
   const reloadOpen = useCallback(async () => {
     try {
@@ -120,7 +160,7 @@ export function CountView({ id, onBack }: { id: string; onBack: () => void }) {
       for (const lock of answerable) {
         for (const request of lock.requests) {
           if (seenMaterialRequests.current.has(`${lock.material}|${request.email}`)) continue
-          const answer = (allow: boolean) => { window.electronWarehouse!.counts.answerMaterialRequest({ id, material: lock.material, email: request.email, allow }).then(() => refresh()).catch(error => toast.error(errorMessage(error))) }
+          const answer = (allow: boolean) => { void optimistic(answerRequest(lock.material, request.email, allow), () => window.electronWarehouse!.counts.answerMaterialRequest({ id, material: lock.material, email: request.email, allow })) }
           toast.info(t(`${request.name} vil tælle med på ${lock.material}`, `${request.name} wants to help count ${lock.material}`), { action: { label: t('Tillad', 'Allow'), onClick: () => answer(true) }, cancel: { label: t('Afvis', 'Reject'), onClick: () => answer(false) }, duration: 12000 })
         }
       }
@@ -139,27 +179,25 @@ export function CountView({ id, onBack }: { id: string; onBack: () => void }) {
     const submitted = Object.entries(state.approvals).filter(([, approval]) => approval.status === 'submitted')
     if (seenSubmitted.current && state.me.isManager) {
       for (const [material, approval] of submitted) {
-        if (seenSubmitted.current.has(`${material}|${approval.at}`)) continue
+        if (seenSubmitted.current.has(`${material}|${approval.at}`) || approval.by?.email === email) continue
         const diff = typeof approval.diff === 'number' && approval.diff !== 0 ? t(` med difference ${approval.diff > 0 ? '+' : ''}${approval.diff}`, ` with difference ${approval.diff > 0 ? '+' : ''}${approval.diff}`) : t(' uden difference', ' without a difference')
         toast.info(t(`${approval.by?.name || 'En tæller'} har sendt ${material} til godkendelse${diff}`, `${approval.by?.name || 'A counter'} sent ${material} for approval${diff}`), { action: { label: t('Se', 'View'), onClick: () => setTab('approval') }, duration: 8000 })
       }
     }
     seenSubmitted.current = new Set(submitted.map(([material, approval]) => `${material}|${approval.at}`))
-  }, [state, id, refresh])
+  }, [state, id, optimistic])
 
-  const run = async (label: string, action: () => Promise<unknown>, success?: string) => {
-    setBusy(label)
-    try {
-      await action()
-      if (success) toast.success(success)
-      // The count is already loaded here, so both reads can run at once.
-      await Promise.all([reloadOpen(), refresh()])
-    } catch (error) {
-      toast.error(errorMessage(error))
-    } finally {
-      setBusy(null)
-    }
+  /** Join, close and reopen show at once; the screen of the count follows when the drive has it. */
+  const change = (patch: StatePatch, write: () => Promise<unknown>, success: string) => {
+    toast.success(success)
+    void optimistic(patch, write).then(saved => { if (saved) void reloadOpen() })
   }
+  const requestJoin = () => change(withMember({ email: person.email, name: person.name, role: 'participant', status: 'requested', requestedAt: Date.now() }), () => window.electronWarehouse!.counts.requestJoin(id), t('Anmodningen er sendt til den ansvarlige', 'The request was sent to the person responsible'))
+  const closeCount = () => {
+    setTab(current => (current === 'scan' || current === 'import' ? 'overview' : current))
+    change(withMeta({ status: 'closed' }, { canWrite: false }), () => window.electronWarehouse!.counts.close(id), t('Optællingen er afsluttet', 'The count is closed'))
+  }
+  const reopenCount = () => change(withMeta({ status: 'open' }, { canWrite: state?.me.status === 'approved' }), () => window.electronWarehouse!.counts.reopen(id), t('Optællingen er genåbnet', 'The count is reopened'))
 
   const makeReport = async () => {
     setBusy('report')
@@ -197,7 +235,7 @@ export function CountView({ id, onBack }: { id: string; onBack: () => void }) {
   const meta = state.meta
   const me = state.me
   const locked = state.statusLocked
-  const props: PanelProps = { id, open, state, refresh, reloadOpen }
+  const props: PanelProps = { id, open, state, refresh, reloadOpen, optimistic, person }
   const requests = state.members.filter(member => member.status === 'requested').length
   const submittedCount = Object.values(state.approvals).filter(approval => approval.status === 'submitted').length
   // A count of terminals only has nothing to count by quantity: no accessory tab.
@@ -226,7 +264,7 @@ export function CountView({ id, onBack }: { id: string; onBack: () => void }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {!me.status && meta.status === 'open' && !locked && (
-            <Button onClick={() => run('join', () => window.electronWarehouse!.counts.requestJoin(id), t('Anmodningen er sendt til den ansvarlige', 'The request was sent to the person responsible'))} loading={busy === 'join'}>
+            <Button onClick={requestJoin}>
               <Plus size={18} weight="bold" /> {t('Anmod om at deltage', 'Ask to join')}
             </Button>
           )}
@@ -238,12 +276,12 @@ export function CountView({ id, onBack }: { id: string; onBack: () => void }) {
             <SapActionButton variant="outline" onAction={() => setRefetchOpen(true)}><ArrowsClockwise size={18} /> {t('Hent SAP igen', 'Fetch SAP again')}</SapActionButton>
           )}
           {me.isOwner && meta.status === 'open' && !locked && (
-            <Button variant="secondary" loading={busy === 'close'} onClick={() => { if (window.confirm(t('Afslut optællingen? Ingen kan scanne eller tælle, før du genåbner den.', 'Close the count? Nobody can scan or count until you reopen it.'))) void run('close', () => window.electronWarehouse!.counts.close(id), t('Optællingen er afsluttet', 'The count is closed')) }}>
+            <Button variant="secondary" onClick={() => { if (window.confirm(t('Afslut optællingen? Ingen kan scanne eller tælle, før du genåbner den.', 'Close the count? Nobody can scan or count until you reopen it.'))) closeCount() }}>
               <LockSimple size={18} /> {t('Afslut', 'Close')}
             </Button>
           )}
           {me.isOwner && meta.status === 'closed' && !locked && (
-            <Button variant="secondary" loading={busy === 'reopen'} onClick={() => run('reopen', () => window.electronWarehouse!.counts.reopen(id), t('Optællingen er genåbnet', 'The count is reopened'))}>
+            <Button variant="secondary" onClick={reopenCount}>
               <LockSimpleOpen size={18} /> {t('Genåbn', 'Reopen')}
             </Button>
           )}
@@ -281,7 +319,7 @@ export function CountView({ id, onBack }: { id: string; onBack: () => void }) {
       {tab === 'approval' && <ApprovalPanel {...props} />}
       {tab === 'doc' && <DocPanel {...props} />}
 
-      {refetchOpen && <RefetchDialog id={id} onClose={() => setRefetchOpen(false)} onApplied={async () => { setRefetchOpen(false); await reloadOpen(); await refresh() }} />}
+      {refetchOpen && <RefetchDialog id={id} onClose={() => setRefetchOpen(false)} onApplied={async () => { setRefetchOpen(false); await Promise.all([reloadOpen(), refresh()]) }} />}
       {deleteOpen && <DeleteCountDialog id={id} name={meta.name} onClose={() => setDeleteOpen(false)} onDeleted={() => { left.current = true; onBack() }} />}
     </div>
   )

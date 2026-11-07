@@ -182,6 +182,25 @@ test('an append during the remote read of syncFromRemote is kept locally', async
   assert.deepEqual(all.map(item => item.serial), ['N1', 'N2', 'N3'])
 })
 
+test('stop() resolves only after an upload already on its way, and writes no further chunks', async () => {
+  const { make, remote, state } = setup()
+  const journal = make()
+  await journal.load()
+  for (const serial of ['N1', 'N2', 'N3', 'N4']) await journal.append({ type: 'scan', serial })
+  const writes = gate()
+  state.holdWrites = writes.promise
+  const flushing = journal.flush()
+  await until(() => state.waiting > 0)
+  const stopped = journal.stop()
+  assert.equal(await within(stopped, 100), 'timeout', 'the count may only be removed once the upload in progress is done')
+  state.holdWrites = null
+  writes.release()
+  await stopped
+  await flushing
+  const keys = (await remote.keysAsync()).filter(name => name.startsWith('count-count1abc-j-'))
+  assert.deepEqual(keys.length, 1, 'the second chunk is not written after stop')
+})
+
 test('writer keys are stable, short and do not reveal the e-mail address', () => {
   const keyA = writerKey('anna@example.test', 'pc1')
   assert.match(keyA, /^[a-f0-9]{12}$/)

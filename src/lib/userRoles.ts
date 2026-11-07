@@ -55,9 +55,9 @@ export async function getUserRole(email: string): Promise<UserRole> {
     try {
       const actor = await window.electronAuth.current()
       if (actor.email === normalizedEmail) return actor.role
-      const users = await window.kv.get<Record<string, UserData>>('users')
+      // Parallelt: hver læsning er en rundtur til M:.
+      const [users, creator] = await Promise.all([window.kv.get<Record<string, UserData>>('users'), window.electronRegistry?.getCreatorEmail()])
       const other = users?.[normalizedEmail] || users?.[email]
-      const creator = await window.electronRegistry?.getCreatorEmail()
       if (creator?.trim().toLowerCase() === normalizedEmail) return 'creator'
       return other?.role === 'creator' ? 'user' : normalizeStoredRole(other?.role) || (other?.isManager ? 'manager' : 'user')
     } catch { return 'user' }

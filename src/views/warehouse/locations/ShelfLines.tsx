@@ -1,21 +1,31 @@
 import { useState } from 'react'
 import { ArrowsLeftRight, HandGrabbing, PencilSimple } from '@phosphor-icons/react'
-import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { errorMessage } from '@/lib/warehouse/errors'
 import { formatNumber } from '@/lib/warehouse/format'
-import { deferredText, isDeferred, materialLabel, newActionId, shownQuantity, type LocationsTarget } from '@/lib/warehouse/locations'
+import { sendLocationAction } from '@/lib/warehouse/locationActions'
+import { locationKeyOf, materialLabel, newActionId, shownQuantity, type LocationsTarget } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
 import type { StockLineView } from '@/types/warehouse'
 
 type Action = 'take' | 'move' | 'set'
+/** A change of one shelf line: `delta` added to the material on the place (a take is negative). */
+export type StockChange = { line: Pick<StockLineView, 'location' | 'material' | 'description'>; delta: number }
+type Sent = { changes: StockChange[]; write: () => Promise<object>; success: string }
 
-/** A lagerhylde's lines (material + quantity) with "Tag", "Flyt" and "Ret antal" (everyone in the team). */
-export function ShelfLines({ shelf, lines, onOpen, onChanged }: { shelf: string; lines: StockLineView[]; onOpen: (target: LocationsTarget) => void; onChanged: () => void }) {
+/**
+ * A lagerhylde's lines (material + quantity) with "Tag", "Flyt" and "Ret antal" (everyone in the team). The dialog closes
+ * and `onApply` shows the change at once; M: gets it in the background (15-40 s), a refusal applies it back.
+ */
+export function ShelfLines({ shelf, lines, onOpen, onApply, onChanged }: { shelf: string; lines: StockLineView[]; onOpen: (target: LocationsTarget) => void; onApply: (changes: StockChange[]) => void; onChanged: () => void }) {
   const [open, setOpen] = useState<{ action: Action; line: StockLineView } | null>(null)
+  const send = ({ changes, write, success }: Sent) => {
+    setOpen(null)
+    onApply(changes)
+    void sendLocationAction(write, { success, rollback: () => onApply(changes.map(change => ({ ...change, delta: -change.delta }))), settled: onChanged })
+  }
   if (!lines.length) return <p className="text-sm text-muted-foreground">{t('Hylden er tom.', 'The shelf is empty.')}</p>
   return (
     <>
@@ -33,47 +43,48 @@ export function ShelfLines({ shelf, lines, onOpen, onChanged }: { shelf: string;
           </div>
         ))}
       </div>
-      {open && <ShelfLineDialog shelf={shelf} action={open.action} line={open.line} onClose={() => setOpen(null)} onDone={() => { setOpen(null); onChanged() }} />}
+      {open && <ShelfLineDialog shelf={shelf} action={open.action} line={open.line} onClose={() => setOpen(null)} onSend={send} />}
     </>
   )
 }
 
-function ShelfLineDialog({ shelf, action, line, onClose, onDone }: { shelf: string; action: Action; line: StockLineView; onClose: () => void; onDone: () => void }) {
+function ShelfLineDialog({ shelf, action, line, onClose, onSend }: { shelf: string; action: Action; line: StockLineView; onClose: () => void; onSend: (sent: Sent) => void }) {
   const [quantity, setQuantity] = useState(action === 'set' ? String(line.quantity) : '')
   const [target, setTarget] = useState('')
-  const [busy, setBusy] = useState(false)
   const bridge = window.electronWarehouse!.locations
   const amount = quantity.trim() ? Number(quantity) : undefined
 
-  async function run(all = false) {
-    setBusy(true)
-    try {
-      const actionId = newActionId()
-      if (action === 'take') {
-        const result = await bridge.shelfTake({ actionId, label: t(`Tag ${line.material} fra ${shelf}`, `Take ${line.material} from ${shelf}`), location: line.location, material: line.material, quantity: all ? line.quantity : amount })
-        if (isDeferred(result)) toast.warning(deferredText(result))
-        else toast.success(t(`${formatNumber(result.taken)} stk. taget fra ${shelf}`, `${formatNumber(result.taken)} pcs taken from ${shelf}`))
-      } else if (action === 'move') {
-        const result = await bridge.shelfMove({ actionId, label: t(`Flyt ${line.material} fra ${shelf} til ${target}`, `Move ${line.material} from ${shelf} to ${target}`), from: line.location, to: target.trim(), material: line.material, quantity: shownQuantity(quantity, line.quantity) })
-        if (isDeferred(result)) toast.warning(deferredText(result))
-        else toast.success(t(`${formatNumber(amount ?? line.quantity)} stk. flyttet fra ${shelf} til ${target.trim().toUpperCase()}`, `${formatNumber(amount ?? line.quantity)} pcs moved from ${shelf} to ${target.trim().toUpperCase()}`))
-      } else {
-        const result = await bridge.shelfSet({ actionId, label: t(`Ret antal af ${line.material} på ${shelf}`, `Correct ${line.material} on ${shelf}`), location: line.location, material: line.material, quantity: amount ?? 0 })
-        if (isDeferred(result)) toast.warning(deferredText(result))
-        else toast.success(t(`Antallet på ${shelf} er rettet`, `The quantity on ${shelf} has been corrected`))
-      }
-      onDone()
-    } catch (error) {
-      toast.error(errorMessage(error))
-    } finally {
-      setBusy(false)
+  function run(all = false) {
+    const actionId = newActionId()
+    if (action === 'take') {
+      const taken = all ? line.quantity : amount ?? line.quantity
+      onSend({
+        changes: [{ line, delta: -taken }],
+        write: () => bridge.shelfTake({ actionId, label: t(`Tag ${line.material} fra ${shelf}`, `Take ${line.material} from ${shelf}`), location: line.location, material: line.material, quantity: taken }),
+        success: t(`${formatNumber(taken)} stk. taget fra ${shelf}`, `${formatNumber(taken)} pcs taken from ${shelf}`),
+      })
+    } else if (action === 'move') {
+      const moved = shownQuantity(quantity, line.quantity)
+      const to = target.trim().toUpperCase()
+      onSend({
+        changes: [{ line, delta: -moved }, { line: { location: locationKeyOf(to), material: line.material, description: line.description }, delta: moved }],
+        write: () => bridge.shelfMove({ actionId, label: t(`Flyt ${line.material} fra ${shelf} til ${to}`, `Move ${line.material} from ${shelf} to ${to}`), from: line.location, to, material: line.material, quantity: moved }),
+        success: t(`${formatNumber(moved)} stk. flyttet fra ${shelf} til ${to}`, `${formatNumber(moved)} pcs moved from ${shelf} to ${to}`),
+      })
+    } else {
+      const next = amount ?? 0
+      onSend({
+        changes: [{ line, delta: next - line.quantity }],
+        write: () => bridge.shelfSet({ actionId, label: t(`Ret antal af ${line.material} på ${shelf}`, `Correct ${line.material} on ${shelf}`), location: line.location, material: line.material, quantity: next }),
+        success: t(`Antallet på ${shelf} er rettet`, `The quantity on ${shelf} has been corrected`),
+      })
     }
   }
 
   const title = action === 'take' ? t('Tag fra hylden', 'Take from the shelf') : action === 'move' ? t('Flyt til en anden hylde', 'Move to another shelf') : t('Ret antal', 'Correct quantity')
-  const valid = action === 'move' ? Boolean(target.trim()) && (amount === undefined || (amount >= 1 && amount <= line.quantity)) : action === 'take' ? amount !== undefined && amount >= 1 && amount <= line.quantity : amount !== undefined
+  const valid = action === 'move' ? Boolean(target.trim()) && locationKeyOf(target) !== line.location && (amount === undefined || (amount >= 1 && amount <= line.quantity)) : action === 'take' ? amount !== undefined && amount >= 1 && amount <= line.quantity : amount !== undefined && amount !== line.quantity
   return (
-    <Dialog open onOpenChange={value => { if (!value && !busy) onClose() }}>
+    <Dialog open onOpenChange={value => { if (!value) onClose() }}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
@@ -92,9 +103,9 @@ function ShelfLineDialog({ shelf, action, line, onClose, onDone }: { shelf: stri
           )}
         </div>
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={busy}>{t('Annullér', 'Cancel')}</Button>
-          {action === 'take' && <Button variant="outline" onClick={() => run(true)} disabled={busy}>{t('Tag alt', 'Take all')}</Button>}
-          <Button onClick={() => run()} loading={busy} disabled={!valid}>
+          <Button variant="ghost" onClick={onClose}>{t('Annullér', 'Cancel')}</Button>
+          {action === 'take' && <Button variant="outline" onClick={() => run(true)}>{t('Tag alt', 'Take all')}</Button>}
+          <Button onClick={() => run()} disabled={!valid}>
             {action === 'take' ? t(`Tag ${quantity || 'X'} stk.`, `Take ${quantity || 'X'}`) : action === 'move' ? t('Flyt', 'Move') : t('Gem', 'Save')}
           </Button>
         </DialogFooter>

@@ -51,8 +51,6 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
   useEffect(() => { consumeNavigationParams() }, [])
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [showEditDialog, setShowEditDialog] = useState(false)
-  const [savingNote, setSavingNote] = useState<'create' | 'edit' | null>(null)
-  const saveInProgress = useRef(false)
   const pendingNote = useRef<{ id: string; createdAt: string } | null>(null)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [showViewDialog, setShowViewDialog] = useState(false)
@@ -74,8 +72,8 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
-      if (showCreateDialog) { if (!saveInProgress.current) setShowCreateDialog(false); return }
-      if (showEditDialog) { if (!saveInProgress.current) setShowEditDialog(false); return }
+      if (showCreateDialog) { setShowCreateDialog(false); return }
+      if (showEditDialog) { setShowEditDialog(false); return }
       if (showViewDialog) { setShowViewDialog(false); setSelectedNote(null); return }
       if (isAnyModalOpen()) return
       onNavigateBack()
@@ -113,8 +111,9 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
     return result
   }
 
-  const handleCreateNote = async () => {
-    if (saveInProgress.current) return
+  const notSavedText = () => language === 'da' ? 'Noten blev ikke gemt — prøv igen' : language === 'fi' ? 'Muistiinpanoa ei tallennettu — yritä uudelleen' : language === 'sv' ? 'Anteckningen sparades inte — försök igen' : 'The note was not saved — please try again'
+
+  const handleCreateNote = () => {
     if (!noteTitle.trim()) {
       toast.error(t.notebook.titleRequired)
       return
@@ -125,36 +124,35 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
     }
 
     const tags = parseTags(noteTags)
+    // A retry after a failed save reuses the identity, so a write that did reach the drive is not added twice.
     const creation = pendingNote.current || { id: newId('note'), createdAt: new Date().toISOString() }
-    pendingNote.current = creation
-
-    saveInProgress.current = true
-    setSavingNote('create')
-    // Vises straks (en gemning på M: tager op mod 30 s); fejler den, fjernes noten igen og dialogen åbnes med teksten.
+    pendingNote.current = null
+    // Vises og kvitteres straks (en gemning på M: tager op mod 90 s); fejler den, fjernes noten igen og dialogen åbnes med teksten.
     const params = { userEmail, userName, title: noteTitle, content: noteContent, isPersonal: isCreatingPersonal, tags, identity: creation }
+    const draft = { title: noteTitle, content: noteContent, tags: noteTags, isPersonal: isCreatingPersonal }
     const provisional = buildNote(params)
     setNotes(current => [...current.filter(note => note.id !== provisional.id), provisional])
     setShowCreateDialog(false)
-    try {
-      await createNote(params)
-      pendingNote.current = null
-      setNoteTitle('')
-      setNoteContent('')
-      setNoteTags('')
-      toast.success(t.notebook.noteCreated)
-    } catch (error) {
+    setNoteTitle('')
+    setNoteContent('')
+    setNoteTags('')
+    toast.success(t.notebook.noteCreated)
+    void createNote(params).catch(error => {
       console.error('Kunne ikke oprette noten:', error)
       setNotes(current => current.filter(note => note.id !== provisional.id))
+      pendingNote.current = creation
+      setIsCreatingPersonal(draft.isPersonal)
+      setNoteTitle(draft.title)
+      setNoteContent(draft.content)
+      setNoteTags(draft.tags)
+      setShowEditDialog(false)
       setShowCreateDialog(true)
-      toast.error(language === 'da' ? 'Noten blev ikke gemt — prøv igen' : language === 'fi' ? 'Muistiinpanoa ei tallennettu — yritä uudelleen' : language === 'sv' ? 'Anteckningen sparades inte — försök igen' : 'The note was not saved — please try again')
-    } finally {
-      saveInProgress.current = false
-      setSavingNote(null)
-    }
+      toast.error(notSavedText())
+    })
   }
 
-  const handleEditNote = async () => {
-    if (saveInProgress.current || !selectedNote) return
+  const handleEditNote = () => {
+    if (!selectedNote) return
     const selectedNoteSnapshot = selectedNote
     if (!noteTitle.trim()) {
       toast.error(t.notebook.titleRequired)
@@ -175,49 +173,49 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
       lastEditedBy: userEmail,
       lastEditedByName: userName,
     }
+    const draft = { title: noteTitle, content: noteContent, tags: noteTags }
 
-    saveInProgress.current = true
-    setSavingNote('edit')
-    // Vises straks; fejler gemningen, vises den gamle udgave igen.
+    // Vises og kvitteres straks; fejler gemningen, vises den gamle udgave igen og dialogen åbnes med teksten.
     setNotes(current => current.map(note => note.id === updatedNote.id ? updatedNote : note))
     setSelectedNote(null)
     setShowEditDialog(false)
-    try {
-      // Atomar pr.-note-opdatering — to brugere der redigerer forskellige noter samtidig taber ikke hinandens ændringer.
-      await upsertInKvArray('notebook-notes', [updatedNote])
-      setNoteTitle('')
-      setNoteContent('')
-      setNoteTags('')
-      toast.success(t.notebook.noteUpdated)
-    } catch (error) {
+    setNoteTitle('')
+    setNoteContent('')
+    setNoteTags('')
+    toast.success(t.notebook.noteUpdated)
+
+    const notification = selectedNoteSnapshot.isPersonal ? null : {
+      id: newId('notification'),
+      type: 'note-edited' as const,
+      noteId: selectedNoteSnapshot.id,
+      noteTitle: updatedNote.title,
+      editedBy: userEmail,
+      editedByName: userName,
+      originalCreator: selectedNoteSnapshot.creatorEmail,
+      timestamp: new Date().toISOString(),
+      read: false,
+    }
+    // The note and the edit notice are different keys: saved at the same time. A notice for an edit that could not be
+    // saved is taken back again.
+    const notice = notification
+      ? appendToKvArray('notebook-notifications', [notification]).then(() => true, err => { console.error('Kunne ikke sende notifikationen:', err); return false })
+      : Promise.resolve(false)
+    // Atomar pr.-note-opdatering — to brugere der redigerer forskellige noter samtidig taber ikke hinandens ændringer.
+    void upsertInKvArray('notebook-notes', [updatedNote]).catch(async error => {
       console.error('Kunne ikke gemme noten:', error)
       setNotes(current => current.map(note => note.id === selectedNoteSnapshot.id ? selectedNoteSnapshot : note))
       setSelectedNote(selectedNoteSnapshot)
+      setNoteTitle(draft.title)
+      setNoteContent(draft.content)
+      setNoteTags(draft.tags)
+      setShowCreateDialog(false)
       setShowEditDialog(true)
-      toast.error(language === 'da' ? 'Noten blev ikke gemt — prøv igen' : language === 'fi' ? 'Muistiinpanoa ei tallennettu — yritä uudelleen' : language === 'sv' ? 'Anteckningen sparades inte — försök igen' : 'The note was not saved — please try again')
-      return
-    } finally {
-      saveInProgress.current = false
-      setSavingNote(null)
-    }
-
-    if (!selectedNoteSnapshot.isPersonal) {
-      const notification = {
-        id: newId('notification'),
-        type: 'note-edited' as const,
-        noteId: selectedNoteSnapshot.id,
-        noteTitle: updatedNote.title,
-        editedBy: userEmail,
-        editedByName: userName,
-        originalCreator: selectedNoteSnapshot.creatorEmail,
-        timestamp: new Date().toISOString(),
-        read: false,
-      }
-      void appendToKvArray('notebook-notifications', [notification]).catch(err => console.error('Kunne ikke sende notifikationen:', err))
-    }
+      toast.error(notSavedText())
+      if (notification && await notice) void removeFromKvArray('notebook-notifications', [notification.id]).catch(err => console.error('Kunne ikke fjerne notifikationen:', err))
+    })
   }
 
-  const handleDeleteNote = async () => {
+  const handleDeleteNote = () => {
     if (!selectedNote) return
     const doomed = selectedNote
     const previousNotes = notes
@@ -227,13 +225,11 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
     setShowDeleteDialog(false)
     toast.success(t.notebook.noteDeleted)
 
-    try {
-      await removeFromKvArray<Note>('notebook-notes', [doomed.id])
-    } catch (error) {
+    void removeFromKvArray<Note>('notebook-notes', [doomed.id]).catch(error => {
       console.error('Kunne ikke slette noten:', error)
       setNotes(previousNotes)
       toast.error(language === 'da' ? 'Noten blev ikke slettet — prøv igen' : language === 'fi' ? 'Muistiinpanoa ei poistettu — yritä uudelleen' : language === 'sv' ? 'Anteckningen togs inte bort — försök igen' : 'The note was not deleted — please try again')
-    }
+    })
   }
 
   const openCreateDialog = (isPersonal: boolean) => {
@@ -282,23 +278,20 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
   }
 
   /** Pin/unpin — fælles "vigtig note"-markør (ingen redigerings-notifikation). */
-  const togglePin = async (note: Note) => {
+  const togglePin = (note: Note) => {
     if (!canEditNote(note)) return
     const toggled = { ...note, pinned: !note.pinned }
     setNotes(current => current.map(item => item.id === note.id ? toggled : item))
-    try {
-      setNotes(await upsertInKvArray('notebook-notes', [toggled]))
-    } catch (error) {
-      console.error('Kunne ikke fastgøre noten:', error)
-      setNotes(current => current.map(item => item.id === note.id ? note : item))
-      toast.error(language === 'da' ? 'Ændringen blev ikke gemt — prøv igen' : language === 'fi' ? 'Muutosta ei tallennettu — yritä uudelleen' : language === 'sv' ? 'Ändringen sparades inte — försök igen' : 'The change was not saved — please try again')
-      return
-    }
     toast.success(
       note.pinned
         ? (language === 'da' ? 'Note frigjort' : language === 'fi' ? 'Muistiinpano ilman pinnoitusta' : language === 'sv' ? 'Anteckningen är inte längre fäst' : 'Note unpinned')
         : (language === 'da' ? 'Note fastgjort' : language === 'fi' ? 'Huomautus kiinnitetty' : language === 'sv' ? 'Anteckningen har fästs' : 'Note pinned')
     )
+    void upsertInKvArray('notebook-notes', [toggled]).catch(error => {
+      console.error('Kunne ikke fastgøre noten:', error)
+      setNotes(current => current.map(item => item.id === note.id ? note : item))
+      toast.error(language === 'da' ? 'Ændringen blev ikke gemt — prøv igen' : language === 'fi' ? 'Muutosta ei tallennettu — yritä uudelleen' : language === 'sv' ? 'Ändringen sparades inte — försök igen' : 'The change was not saved — please try again')
+    })
   }
 
   const filteredNotes = notes
@@ -624,7 +617,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
             </Tabs>
         </div>
 
-      <Dialog open={showCreateDialog} onOpenChange={(open) => { if (!saveInProgress.current) setShowCreateDialog(open) }}>
+      <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
         <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
           <DialogHeader className="shrink-0">
             <DialogTitle>{t.notebook.addNote}</DialogTitle>
@@ -637,7 +630,6 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
               <Input
                 placeholder={t.notebook.enterTitle}
                 value={noteTitle}
-                disabled={savingNote !== null}
                 onChange={(e) => { pendingNote.current = null; setNoteTitle(e.target.value) }}
               />
             </div>
@@ -645,7 +637,6 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
               <Textarea
                 placeholder={t.notebook.enterContent}
                 value={noteContent}
-                disabled={savingNote !== null}
                 onChange={(e) => { pendingNote.current = null; setNoteContent(e.target.value) }}
                 rows={12}
                 className="resize-none"
@@ -655,23 +646,22 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
               <Input
                 placeholder={language === 'da' ? 'Tags adskilt med komma — fx procedure, onboarding' : language === 'fi' ? 'Tunnisteet erotettu pilkulla ' : language === 'sv' ? 'Taggar separerade med komma — t.ex. rutin, onboarding' : 'Tags separated by comma — e.g. procedure, onboarding'}
                 value={noteTags}
-                disabled={savingNote !== null}
                 onChange={(e) => { pendingNote.current = null; setNoteTags(e.target.value) }}
               />
             </div>
           </div>
           <DialogFooter className="shrink-0">
-            <Button variant="outline" disabled={savingNote !== null} onClick={() => setShowCreateDialog(false)}>
+            <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
               {t.notebook.cancel}
             </Button>
-            <Button onClick={handleCreateNote} loading={savingNote === 'create'}>
-              {savingNote === 'create' ? t.notebook.saving : t.notebook.create}
+            <Button onClick={handleCreateNote}>
+              {t.notebook.create}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={showEditDialog} onOpenChange={(open) => { if (!saveInProgress.current) setShowEditDialog(open) }}>
+      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
         <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
           <DialogHeader className="shrink-0">
             <DialogTitle>{t.notebook.editNote}</DialogTitle>
@@ -681,7 +671,6 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
               <Input
                 placeholder={t.notebook.enterTitle}
                 value={noteTitle}
-                disabled={savingNote !== null}
                 onChange={(e) => setNoteTitle(e.target.value)}
               />
             </div>
@@ -689,7 +678,6 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
               <Textarea
                 placeholder={t.notebook.enterContent}
                 value={noteContent}
-                disabled={savingNote !== null}
                 onChange={(e) => setNoteContent(e.target.value)}
                 rows={12}
                 className="resize-none"
@@ -699,17 +687,16 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
               <Input
                 placeholder={language === 'da' ? 'Tags adskilt med komma — fx procedure, onboarding' : language === 'fi' ? 'Tunnisteet erotettu pilkulla ' : language === 'sv' ? 'Taggar separerade med komma — t.ex. rutin, onboarding' : 'Tags separated by comma — e.g. procedure, onboarding'}
                 value={noteTags}
-                disabled={savingNote !== null}
                 onChange={(e) => setNoteTags(e.target.value)}
               />
             </div>
           </div>
           <DialogFooter className="shrink-0">
-            <Button variant="outline" disabled={savingNote !== null} onClick={() => setShowEditDialog(false)}>
+            <Button variant="outline" onClick={() => setShowEditDialog(false)}>
               {t.notebook.cancel}
             </Button>
-            <Button onClick={handleEditNote} loading={savingNote === 'edit'}>
-              {savingNote === 'edit' ? t.notebook.saving : t.notebook.save}
+            <Button onClick={handleEditNote}>
+              {t.notebook.save}
             </Button>
           </DialogFooter>
         </DialogContent>

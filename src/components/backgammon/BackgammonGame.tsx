@@ -19,6 +19,7 @@ import { getMultiplayerLabels, type MultiplayerLabels } from '@/lib/multiplayerL
 import { applyStep, describeSteps, nextSteps, removeDie, turnPlan, type BgColor, type BgPosition } from '@/lib/backgammon'
 import { canMove, multiplayerErrorInfo, newOperationId, opponentOf, outcomeFor } from '@/lib/multiplayerView'
 import { isAnyDialogOpen } from '@/lib/modalStack'
+import { createGameCommandQueue } from '@/lib/gameCommandQueue'
 import { reactionScope } from '@/lib/multiplayerReactions'
 import { BackgammonBoard } from './BackgammonBoard'
 import '@/components/multiplayer/multiplayer.css'
@@ -78,6 +79,8 @@ export const BackgammonGame = memo(function BackgammonGame({ gameId, myEmail, te
   const gameRef = useRef<MultiplayerBackgammonGame | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const busyRef = useRef(false)
+  const [commands] = useState(createGameCommandQueue)
   const [sendingTurn, setSendingTurn] = useState(false)
   const inFlight = useRef(false)
   const dirty = useRef(false)
@@ -144,32 +147,38 @@ export const BackgammonGame = memo(function BackgammonGame({ gameId, myEmail, te
     return () => document.body.removeAttribute('data-game-active')
   }, [])
 
-  const run = useCallback(async (build: (revision: number) => MultiplayerCommand): Promise<boolean> => {
-    const current = gameRef.current
-    if (!api || !current || inFlight.current) return false
+  const run = useCallback(async (build: (revision: number) => MultiplayerCommand, { quiet = false }: { quiet?: boolean } = {}): Promise<boolean> => {
+    // A second turn/resign while one is on its way is a double click; a chat message (quiet) never locks the board.
+    if (!api || !gameRef.current || (!quiet && busyRef.current)) return false
+    if (!quiet) { busyRef.current = true; setBusy(true) }
     inFlight.current = true
-    setBusy(true)
     try {
-      const result = await api.command(build(current.revision))
-      if (result.game) applyGame(result.game)
-      return true
-    } catch (error) {
-      toast.error(errorText(error))
-      const code = multiplayerErrorInfo(error).code
-      if (code === 'MULTIPLAYER_CONFLICT' || code === 'MULTIPLAYER_STATE' || code === 'MULTIPLAYER_NOT_YOUR_TURN' || code === 'MULTIPLAYER_INVALID_MOVE') {
-        setStaged(NO_STEPS)
-        void load()
-      }
-      return false
+      return await commands.enqueue(async () => {
+        const current = gameRef.current
+        if (!current) return false
+        try {
+          const result = await api.command(build(current.revision))
+          if (result.game) applyGame(result.game)
+          return true
+        } catch (error) {
+          toast.error(errorText(error))
+          const code = multiplayerErrorInfo(error).code
+          if (code === 'MULTIPLAYER_CONFLICT' || code === 'MULTIPLAYER_STATE' || code === 'MULTIPLAYER_NOT_YOUR_TURN' || code === 'MULTIPLAYER_INVALID_MOVE') {
+            setStaged(NO_STEPS)
+            void load()
+          }
+          return false
+        }
+      })
     } finally {
-      inFlight.current = false
-      setBusy(false)
-      if (dirty.current) {
+      inFlight.current = commands.active()
+      if (!quiet) { busyRef.current = false; setBusy(false) }
+      if (!inFlight.current && dirty.current) {
         dirty.current = false
         void load()
       }
     }
-  }, [api, applyGame, errorText, load])
+  }, [api, applyGame, errorText, load, commands])
 
   // Acknowledge this game's notifications while the match is on screen.
   const acknowledged = useRef(new Set<string>())
@@ -280,7 +289,7 @@ export const BackgammonGame = memo(function BackgammonGame({ gameId, myEmail, te
     }
   }
 
-  const sendChat = useCallback((text: string) => run(() => ({ operationId: newOperationId(), type: 'chat', gameId, text })), [run, gameId])
+  const sendChat = useCallback((text: string) => run(() => ({ operationId: newOperationId(), type: 'chat', gameId, text }), { quiet: true }), [run, gameId])
 
   const sendReaction = async (emoji: MultiplayerReactionEmoji) => {
     if (!api) return
@@ -294,9 +303,9 @@ export const BackgammonGame = memo(function BackgammonGame({ gameId, myEmail, te
 
   const rematch = async () => {
     const current = gameRef.current
-    if (!api || !current || inFlight.current) return
+    if (!api || !current || busyRef.current) return
     const opponent = opponentOf(current, myEmail)
-    inFlight.current = true
+    busyRef.current = true
     setBusy(true)
     try {
       await api.command({ operationId: newOperationId(), type: 'challenge', opponentEmail: opponent.email, gameType: 'backgammon', color: current.bg.myColor === 'white' ? 'black' : 'white' })
@@ -305,7 +314,7 @@ export const BackgammonGame = memo(function BackgammonGame({ gameId, myEmail, te
     } catch (error) {
       toast.error(errorText(error))
     } finally {
-      inFlight.current = false
+      busyRef.current = false
       setBusy(false)
     }
   }

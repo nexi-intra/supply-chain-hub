@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { createPersonalTodo } from '@/lib/personalTodos'
+import { createPersonalTodo, personalTodoScheduleProblem } from '@/lib/personalTodos'
 import { parseTimeText } from '@/lib/timeText'
 import type { MyWeekLabels } from '@/lib/myWeekLabels'
 import { cn } from '@/lib/utils'
@@ -14,28 +14,32 @@ export function MyWeekQuickAdd({ userEmail, date, dayName, labels, className }: 
   const [open, setOpen] = useState(false)
   const [text, setText] = useState('')
   const [kind, setKind] = useState<'todo' | 'event'>('todo')
-  const [saving, setSaving] = useState(false)
   const parsed = parseTimeText(text.trim())
   const preview = parsed.startTime ? (parsed.endTime ? `${parsed.startTime}–${parsed.endTime}` : parsed.startTime) : ''
 
-  const save = async () => {
-    if (saving) return
+  const save = () => {
     if (!parsed.title) {
       toast.error(labels.quickAdd.missingTitle)
       return
     }
-    setSaving(true)
-    try {
-      await createPersonalTodo(userEmail, parsed.title, undefined, date, undefined, { kind, startTime: parsed.startTime, endTime: parsed.endTime })
-      toast.success(labels.quickAdd.saved)
-      setText('')
-      setKind('todo')
-      setOpen(false)
-    } catch (error) {
-      toast.error(error instanceof Error && error.message === 'INVALID_TIME' ? labels.quickAdd.invalidTime : labels.quickAdd.failed)
-    } finally {
-      setSaving(false)
+    const schedule = { kind, startTime: parsed.startTime, endTime: parsed.endTime }
+    if (personalTodoScheduleProblem(date, schedule) === 'INVALID_TIME') {
+      toast.error(labels.quickAdd.invalidTime)
+      return
     }
+    // Shown in Min uge at once (kvArrays) and saved in the background (up to 90 s on the shared drive); on failure the
+    // text comes back so it can be tried again.
+    const draft = { text, kind }
+    toast.success(labels.quickAdd.saved)
+    setText('')
+    setKind('todo')
+    setOpen(false)
+    void createPersonalTodo(userEmail, parsed.title, undefined, date, undefined, schedule).catch(error => {
+      console.error('Kunne ikke gemme to-do:', error)
+      toast.error(error instanceof Error && error.message === 'INVALID_TIME' ? labels.quickAdd.invalidTime : labels.quickAdd.failed)
+      setText(current => current || draft.text)
+      setKind(draft.kind)
+    })
   }
 
   return (
@@ -63,17 +67,16 @@ export function MyWeekQuickAdd({ userEmail, date, dayName, labels, className }: 
         <Input
           autoFocus
           value={text}
-          disabled={saving}
           placeholder={labels.quickAdd.placeholder}
           aria-label={labels.quickAdd.placeholder}
           onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void save() } }}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); save() } }}
         />
         <p className="mt-1 min-h-4 text-xs text-muted-foreground" aria-live="polite">
           {preview ? <span className="font-medium tabular-nums text-foreground">{preview}</span> : labels.quickAdd.hint}
         </p>
         <div className="mt-2 flex justify-end">
-          <Button size="sm" onClick={() => save()} loading={saving}>{labels.quickAdd.save}</Button>
+          <Button size="sm" onClick={() => save()}>{labels.quickAdd.save}</Button>
         </div>
       </PopoverContent>
     </Popover>

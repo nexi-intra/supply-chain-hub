@@ -5,6 +5,7 @@ import {
   recordGamePlay,
   removeLeaderboardEntries,
   submitHighscore,
+  withLocalScore,
 } from '@/lib/leaderboards'
 import { getCreatorEmail } from '@/lib/userRoles'
 
@@ -13,6 +14,22 @@ const DIFFICULTIES = ['easy', 'medium', 'hard', 'expert'] as const
 function entry(email: string, score: number, extra: Record<string, unknown> = {}) {
   return { id: email, email, score, timestamp: 1000, ...extra }
 }
+
+describe('withLocalScore (slutskærmen viser scoren mens den gemmes)', () => {
+  it('viser en ny rekord med det samme i den rigtige sværhedsgrad', () => {
+    const stored = { easy: [entry('a@x', 50)], hard: [entry('b@x', 10)] }
+    const shown = normalizeNestedLeaderboard(withLocalScore(stored, { email: 'b@x', score: 70, timestamp: 2000 }, 'hard'), DIFFICULTIES)
+    expect(shown.hard).toEqual([entry('b@x', 70, { timestamp: 2000 })])
+    expect(shown.easy).toEqual([entry('a@x', 50)])
+  })
+
+  it('en lavere score ændrer ikke spillerens rekord, og en tom liste får scoren', () => {
+    const stored = { easy: [entry('a@x', 50)] }
+    expect(normalizeNestedLeaderboard(withLocalScore(stored, { email: 'a@x', score: 20, timestamp: 2000 }, 'easy'), DIFFICULTIES).easy).toEqual([entry('a@x', 50)])
+    expect(normalizeNestedLeaderboard(withLocalScore(undefined, { email: 'a@x', score: 20, timestamp: 2000 }, 'easy'), DIFFICULTIES).easy).toEqual([entry('a@x', 20, { timestamp: 2000 })])
+    expect(normalizeFlatLeaderboard(withLocalScore([entry('a@x', 5)], { email: 'a@x', score: 9, timestamp: 2000 }))).toEqual([entry('a@x', 9, { timestamp: 2000 })])
+  })
+})
 
 describe('normalizeNestedLeaderboard', () => {
   it('altid giver alle sværhedsgrader, også når nøglen slet ikke findes', () => {

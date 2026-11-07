@@ -58,6 +58,15 @@ async function fixture(t, options = {}) {
   return { service, other, store, otherStore, directory, create, command, stored, setDirectory: value => { directoryValue = value } }
 }
 
+// Leaves the claim an older app version wrote before its result and never finished (e.g. it lost the drive): the
+// command is run, and its case is put back as it was with the finished history entry turned into the claim marker.
+async function interruptedClaim(fixture, actor, input) {
+  const before = await fixture.stored()
+  await fixture.service.command(actor, input)
+  const entry = (await fixture.stored()).find(item => item.id === input.caseId).history.find(current => current.operationId === input.operationId)
+  await fixture.store.setAsync(KEY, before.map(item => item.id === input.caseId ? { ...item, history: [...item.history, { ...entry, type: 'operation-reserved', message: '' }] } : item))
+}
+
 async function assigned(fixture, kind = 'owner', recipient = actors.owner) {
   const created = await fixture.create()
   const invited = await fixture.command(actors.leader, 'invite', created.id, { email: recipient.email, kind })
@@ -315,14 +324,7 @@ test('new guarded operation claims resume only at the original revision and keep
           : { requestId: requested.deletionRequests[0].id, message: 'Still relevant' }
       const input = request(type, { caseId: item.id, expectedRevision: requested.revision, ...fields })
       const publicBefore = (await f.other.snapshot(actors.leader)).cases.find(current => current.id === item.id)
-      const update = f.store.updateAsync
-      const interception = t.mock.method(f.store, 'updateAsync', async (key, operation) => {
-        const result = await update(key, operation)
-        if (operation.op === 'compareAndSet') throw Object.assign(new Error('Interrupted after durable claim'), { code: 'EIO' })
-        return result
-      })
-      await assert.rejects(f.service.command(actors.leader, input), { code: 'EIO' })
-      interception.mock.restore()
+      await interruptedClaim(f, actors.leader, input)
       const pending = (await f.stored()).find(current => current.id === item.id)
       assert.equal(pending.revision, requested.revision)
       assert.equal(pending.history.at(-1).type, 'operation-reserved')
@@ -363,7 +365,7 @@ test('new guarded commands fail on a real competing write without changing deadl
     const update = f.store.updateAsync
     let replacements = 0
     const interception = t.mock.method(f.store, 'updateAsync', async (key, operation) => {
-      if (operation.op === 'replaceItem') {
+      if (operation.op === 'compareAndSet') {
         replacements++
         await f.other.command(actors.owner, request('comment', { caseId: item.id, message: 'Competing comment' }))
       }
@@ -407,14 +409,7 @@ test('interrupted additive deletion requests reauthorize after competing deletio
   const f = await fixture(t)
   const item = await f.create()
   const input = request('request-deletion', { caseId: item.id, message: 'Late request' })
-  const update = f.store.updateAsync
-  const interception = t.mock.method(f.store, 'updateAsync', async (key, operation) => {
-    const result = await update(key, operation)
-    if (operation.op === 'compareAndSet') throw Object.assign(new Error('Interrupted request claim'), { code: 'EIO' })
-    return result
-  })
-  await assert.rejects(f.service.command(actors.author, input), { code: 'EIO' })
-  interception.mock.restore()
+  await interruptedClaim(f, actors.author, input)
   const deleted = await f.command(actors.leader, 'delete', item.id, { message: 'Already duplicated' })
   const before = await f.stored()
   await assert.rejects(f.other.command(actors.author, input), notFound)
@@ -431,7 +426,7 @@ test('an additive deletion request retries a real competing comment and persists
   const update = f.store.updateAsync
   let replacements = 0
   t.mock.method(f.store, 'updateAsync', async (key, operation) => {
-    if (operation.op === 'replaceItem' && ++replacements === 1) {
+    if (operation.op === 'compareAndSet' && ++replacements === 1) {
       await f.other.command(actors.owner, request('comment', { caseId: item.id, message: 'Concurrent actual comment' }))
     }
     return update(key, operation)
@@ -1045,17 +1040,11 @@ test('history capacity fails closed without pruning retry markers and change cal
   assert.equal(changes, 1)
 })
 
-test('a persisted operation claim survives an interrupted write and resumes safely from another service', async t => {
+test('a claim left by an interrupted older version resumes safely from another service', async t => {
   const fixtureValue = await fixture(t)
   const created = await fixtureValue.create()
   const input = request('comment', { caseId: created.id, message: 'Resume after lost response' })
-  const update = fixtureValue.store.updateAsync
-  const interception = t.mock.method(fixtureValue.store, 'updateAsync', async (key, operation) => {
-    const result = await update(key, operation)
-    if (operation.op === 'compareAndSet') throw Object.assign(new Error('Lost response after durable claim'), { code: 'EIO' })
-    return result
-  })
-  await assert.rejects(fixtureValue.service.command(actors.author, input), { code: 'EIO' })
+  await interruptedClaim(fixtureValue, actors.author, input)
   const pending = (await fixtureValue.stored())[0]
   assert.equal(pending.revision, 1)
   assert.equal(pending.history.at(-1).type, 'operation-reserved')
@@ -1064,7 +1053,6 @@ test('a persisted operation claim survives an interrupted write and resumes safe
   publicSnapshot.cases[0].history = []
   assert.equal((await fixtureValue.stored())[0].history.length, 2)
   await assert.rejects(fixtureValue.other.command(actors.author, { ...input, message: 'Changed retry' }), reuse)
-  interception.mock.restore()
   const resumed = await fixtureValue.other.command(actors.author, input)
   assert.equal(resumed.revision, 2)
   assert.equal(resumed.history.filter(entry => entry.operationId === input.operationId).length, 1)
@@ -1079,10 +1067,9 @@ test('CAS retries stop after three real competing writes and leave a recoverable
   let replacements = 0
   const interception = t.mock.method(fixtureValue.store, 'updateAsync', async (key, operation) => {
     assert.equal(key, KEY)
-    if (operation.op === 'replaceItem') {
-      replacements++
-      await fixtureValue.other.command(actors.owner, request('comment', { caseId: created.id, message: `Competing comment ${replacements}` }))
-    } else assert.equal(operation.op, 'compareAndSet')
+    assert.equal(operation.op, 'compareAndSet')
+    replacements++
+    await fixtureValue.other.command(actors.owner, request('comment', { caseId: created.id, message: `Competing comment ${replacements}` }))
     return update(key, operation)
   })
   await assert.rejects(fixtureValue.service.command(actors.author, input), { code: 'KV_CONFLICT' })
@@ -1187,14 +1174,7 @@ test('a guarded reservation keeps the displayed revision valid until an actual c
       const actor = type === 'submit' ? actors.owner : actors.leader
       const input = request(type, { caseId: item.id, expectedRevision: item.revision, ...fields[type] })
       const publicBefore = (await fixtureValue.other.snapshot(actor)).cases.find(current => current.id === item.id)
-      const update = fixtureValue.store.updateAsync
-      const interception = t.mock.method(fixtureValue.store, 'updateAsync', async (key, operation) => {
-        const result = await update(key, operation)
-        if (operation.op === 'compareAndSet') throw Object.assign(new Error('Interrupted after claim'), { code: 'EIO' })
-        return result
-      })
-      await assert.rejects(fixtureValue.service.command(actor, input), { code: 'EIO' })
-      interception.mock.restore()
+      await interruptedClaim(fixtureValue, actor, input)
       const pending = (await fixtureValue.stored()).find(current => current.id === item.id)
       assert.equal(pending.revision, item.revision)
       assert.equal(pending.updatedAt, item.updatedAt)
@@ -1222,7 +1202,7 @@ test('a real competing write invalidates a guarded CAS instead of autosquashing 
   const update = fixtureValue.store.updateAsync
   let replacements = 0
   t.mock.method(fixtureValue.store, 'updateAsync', async (key, operation) => {
-    if (operation.op === 'replaceItem') {
+    if (operation.op === 'compareAndSet') {
       replacements++
       await fixtureValue.other.command(actors.author, request('comment', { caseId: item.id, message: 'Concurrent actual mutation' }))
     }
@@ -1314,14 +1294,7 @@ test('pending additive responses reauthorize after a real status change instead 
     const item = await atStatus(fixtureValue, 'in-progress', true)
     const assignment = item.assignments.find(current => current.email === actors.contributor.email)
     const input = request('respond', { caseId: item.id, assignmentId: assignment.id, accept: true })
-    const update = fixtureValue.store.updateAsync
-    const interception = t.mock.method(fixtureValue.store, 'updateAsync', async (key, operation) => {
-      const result = await update(key, operation)
-      if (operation.op === 'compareAndSet') throw Object.assign(new Error('Interrupted after response claim'), { code: 'EIO' })
-      return result
-    })
-    await assert.rejects(fixtureValue.service.command(actors.contributor, input), { code: 'EIO' })
-    interception.mock.restore()
+    await interruptedClaim(fixtureValue, actors.contributor, input)
     if (status === 'declined') await fixtureValue.command(actors.leader, 'update', item.id, { status, message: 'Budget declined' })
     else {
       await fixtureValue.command(actors.owner, 'submit', item.id)
@@ -1380,7 +1353,7 @@ test('additive responses and acknowledgements retry fresh CAS while preserving c
     const update = fixtureValue.store.updateAsync
     let replacements = 0
     const interception = t.mock.method(fixtureValue.store, 'updateAsync', async (key, operation) => {
-      if (operation.op === 'replaceItem' && ++replacements === 1) {
+      if (operation.op === 'compareAndSet' && ++replacements === 1) {
         await fixtureValue.other.command(actors.author, request('comment', { caseId: item.id, message: 'Concurrent additive comment' }))
       }
       return update(key, operation)
@@ -1399,29 +1372,26 @@ test('additive responses and acknowledgements retry fresh CAS while preserving c
   }
 })
 
-test('reservation-only CAS contention preserves displayed revisions and bounded domain conflicts are recoverable', async t => {
+test('claims left by older versions do not invalidate displayed revisions and bounded domain conflicts are recoverable', async t => {
   const fixtureValue = await fixture(t)
   for (const collisions of [1, 3]) {
     const item = await fixtureValue.create()
     const input = request('update', { caseId: item.id, expectedRevision: item.revision, priority: 'high' })
-    const otherUpdate = fixtureValue.otherStore.updateAsync
-    const competitor = t.mock.method(fixtureValue.otherStore, 'updateAsync', async (key, operation) => {
-      const result = await otherUpdate(key, operation)
-      if (operation.op === 'compareAndSet') throw Object.assign(new Error('Interrupted competing reservation'), { code: 'EIO' })
-      return result
-    })
+    // An older app version claims a comment on the same case (and never finishes it) while this update is saved.
+    const competingClaim = async () => {
+      const current = (await fixtureValue.stored()).find(entry => entry.id === item.id)
+      const marker = { id: crypto.randomUUID(), type: 'operation-reserved', actorEmail: actors.author.email, actorName: people[0].fullName, at: new Date(NOW).toISOString(), message: '', operationId: crypto.randomUUID(), fingerprint: 'b'.repeat(64) }
+      await fixtureValue.otherStore.updateAsync(KEY, { op: 'replaceItem', id: item.id, expected: current, item: { ...current, history: [...current.history, marker] } })
+    }
     const update = fixtureValue.store.updateAsync
     let replacements = 0
     const interception = t.mock.method(fixtureValue.store, 'updateAsync', async (key, operation) => {
-      if (operation.op === 'replaceItem' && ++replacements <= collisions) {
-        await assert.rejects(fixtureValue.other.command(actors.author, request('comment', { caseId: item.id, message: `Reserved competitor ${replacements}` })), { code: 'EIO' })
-      }
+      if (operation.op === 'compareAndSet' && ++replacements <= collisions) await competingClaim()
       return update(key, operation)
     })
     if (collisions === 3) await assert.rejects(fixtureValue.service.command(actors.leader, input), conflict)
     else assert.equal((await fixtureValue.service.command(actors.leader, input)).priority, 'high')
     interception.mock.restore()
-    competitor.mock.restore()
     assert.equal(replacements, collisions === 3 ? 3 : 2)
     const pending = (await fixtureValue.stored()).find(current => current.id === item.id)
     assert.equal(pending.revision, item.revision + (collisions === 3 ? 0 : 1))
@@ -1431,4 +1401,26 @@ test('reservation-only CAS contention preserves displayed revisions and bounded 
     assert.equal(resumed.revision, item.revision + 1)
     assert.equal(resumed.history.filter(entry => entry.operationId === input.operationId).length, 1)
   }
+})
+test('a command is saved with one write, and a lost response replays the stored result', async t => {
+  const fixtureValue = await fixture(t)
+  const item = await atStatus(fixtureValue, 'in-progress')
+  const input = request('update', { caseId: item.id, expectedRevision: item.revision, priority: 'high' })
+  const update = fixtureValue.store.updateAsync
+  const writes = []
+  const interception = t.mock.method(fixtureValue.store, 'updateAsync', async (key, operation) => {
+    writes.push(operation.op)
+    await update(key, operation)
+    throw Object.assign(new Error('Lost response after the durable write'), { code: 'EIO' })
+  })
+  await assert.rejects(fixtureValue.service.command(actors.leader, input), { code: 'EIO' })
+  interception.mock.restore()
+  assert.deepEqual(writes, ['compareAndSet'])
+  const stored = (await fixtureValue.stored()).find(current => current.id === item.id)
+  assert.equal(stored.revision, item.revision + 1)
+  assert.ok(stored.history.every(entry => entry.type !== 'operation-reserved'))
+  const replay = await fixtureValue.other.command(actors.leader, input)
+  assert.equal(replay.priority, 'high')
+  assert.equal(replay.revision, item.revision + 1)
+  assert.equal(replay.history.filter(entry => entry.operationId === input.operationId).length, 1)
 })

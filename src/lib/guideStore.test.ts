@@ -145,3 +145,23 @@ describe('original Word guide versions', () => {
     expect(version.snapshot.previewPdfUrl).toBe(guide.previewPdfUrl)
   })
 })
+
+describe('deleteGuideArtifacts', () => {
+  it('sends the history and image deletions at the same time instead of one round trip per image', async () => {
+    const { store } = fixture()
+    const pending: Array<() => void> = []
+    vi.mocked(window.kv.delete).mockImplementation((key: string) => new Promise<void>((resolve) => {
+      pending.push(() => { store.delete(key); resolve() })
+    }))
+    vi.mocked(window.kv.get).mockImplementation(async (key: string) => (key.endsWith('_meta') ? { chunkCount: 0 } : store.get(key)))
+    const guide = {
+      id: 'g1', title: 'T', category: 'General', tags: [], content: '', createdAt: 1, updatedAt: 1,
+      sections: [{ id: 's1', heading: 'H', steps: [{ id: 'st1', text: 'x', imageIds: ['img1', 'img2'] }] }],
+    } as Guide
+    const deletion = deleteGuideArtifacts(guide)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(window.kv.delete).toHaveBeenCalledTimes(3)
+    pending.forEach((finish) => finish())
+    await deletion
+  })
+})

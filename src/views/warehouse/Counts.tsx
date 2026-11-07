@@ -12,6 +12,7 @@ import { formatDateTime, formatMoney, formatNumber, scopeText } from '@/lib/ware
 import { cn } from '@/lib/utils'
 import type { CountListEntry, WarehouseUser, CountStatus, StatusOverview } from '@/types/warehouse'
 import { StartStatusDialog } from './StartStatusDialog'
+import { useWithoutDeleted } from './pendingDeletes'
 import { t } from '@/lib/warehouse/text'
 
 const LIST_POLL_MS = 15000
@@ -25,7 +26,9 @@ interface CountsProps {
 }
 
 export function Counts({ user, onNew, onOpen, onOpenStatus, onOpenSapCheck }: CountsProps) {
-  const [overview, setOverview] = useState<StatusOverview | null>(null)
+  const [loaded, setOverview] = useState<StatusOverview | null>(null)
+  // Without what is being deleted on this PC right now (the drive still has it until the delete is written).
+  const overview = useWithoutDeleted(loaded)
   const [failed, setFailed] = useState<string | null>(null)
   const [starting, setStarting] = useState(false)
 

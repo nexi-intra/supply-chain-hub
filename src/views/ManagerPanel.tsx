@@ -23,6 +23,8 @@ import { newId } from '@/lib/utils'
 import { parseLocalDate } from '@/lib/dateUtils'
 import { vacationPreviewEntries } from '@/lib/vacationPreview'
 import { appendToKvArray, updateKvArrayItem, removeFromKvArray, upsertInKvArray, setKvObjectField, deleteKvObjectField, replaceKvObjectField } from '@/lib/kvArrays'
+import { useOptimisticList } from '@/hooks/useOptimisticList'
+import { decideVacationRequests } from '@/lib/vacationRequests'
 import { loadAccessRequests, reviewAccessRequest } from '@/lib/libraryAccess'
 import type { LibraryKind } from '@/lib/libraryConfig'
 import { cn } from '@/lib/utils'
@@ -37,7 +39,7 @@ import { ManualVacationGrant } from '@/components/ManualVacationGrant'
 import { ExtraManagersCard } from '@/components/ExtraManagersCard'
 import { WarehouseRolesCard } from '@/components/warehouse/WarehouseRolesCard'
 import { ParentalLeaveDialog } from '@/components/ParentalLeaveDialog'
-import { OnboardingWizard, OffboardingWizard } from '@/components/OnboardingWizard'
+import { OnboardingWizard, OffboardingWizard, type OnboardedAccount } from '@/components/OnboardingWizard'
 import { Checkbox } from '@/components/ui/checkbox'
 import { vacationApprovedEmail, vacationRejectedEmail, vacationEditedEmail, vacationDeletedEmail, userApprovedEmail, userRejectedEmail } from '@/lib/emailTemplates'
 import type { BirthdayEntry, VacationEntry, VacationStatus, GuideAccessRequest } from '@/lib/types'
@@ -57,6 +59,22 @@ interface ManagerPanelProps {
   userEmail: string
 }
 
+const ROLE_ORDER: Record<UserRole, number> = { creator: 0, manager: 1, user: 2 }
+const userKey = (user: User) => user.email.toLowerCase()
+const vacationKey = (entry: VacationEntry) => entry.id
+const birthdayKey = (entry: BirthdayEntry) => entry.email
+
+function sortByStartDate(entries: VacationEntry[]): VacationEntry[] {
+  return entries.sort((a, b) => {
+    const dateA = new Date(a.startDate)
+    const dateB = new Date(b.startDate)
+    if (isNaN(dateA.getTime()) || isNaN(dateB.getTime())) return 0
+    return dateA.getTime() - dateB.getTime()
+  })
+}
+
+type StoredUser = { email: string; password?: string; fullName: string; phone?: string; role?: UserRole; isManager?: boolean; status?: 'pending' | 'approved' | 'rejected'; username?: string } & Record<string, unknown>
+
 export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPanelProps) {
   const { t, language } = useLanguage()
   const dateLocale = language === 'en' ? enUS : language === 'fi' ? fi : language === 'sv' ? sv : da
@@ -64,13 +82,17 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
   const [initialTab] = useState(() => peekNavigationParams()?.tab ?? 'permissions')
   useEffect(() => { consumeNavigationParams() }, [])
   const [activeTab, setActiveTab] = useState(initialTab)
-  const [users, setUsers] = useState<User[]>([])
+  // A write to M: takes 20-90 s, so every change is shown at once in these lists (and kept shown while it is saved).
+  // Each list is ONE state; the requests, the overview and the counters are derived from it, so they always agree.
+  const [allUsers, userList] = useOptimisticList<User>(userKey)
+  const users = useMemo(() => allUsers.filter(u => u.status !== 'pending').sort((a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role]), [allUsers])
+  const pendingUsers = useMemo(() => allUsers.filter(u => u.status === 'pending'), [allUsers])
+  const creatorEmail = useRef<string | null>(null)
   // Manager-satte farveoverstyringer (delt KV) — vinder over den automatiske hash-farve.
   const [colorOverrides] = useKV<EmployeeColorOverrides>(EMPLOYEE_COLOR_OVERRIDES_KEY, {})
-  const [pendingUsers, setPendingUsers] = useState<User[]>([])
-  const [vacationEntries, setVacationEntries] = useState<VacationEntry[]>([])
-  const [allVacations, setAllVacations] = useState<VacationEntry[]>([])
-  const deletingVacationIds = useRef(new Set<string>())
+  const [vacations, vacationList] = useOptimisticList<VacationEntry>(vacationKey)
+  const vacationEntries = useMemo(() => sortByStartDate(vacations.filter(e => e.status === 'pending')), [vacations])
+  const allVacations = useMemo(() => sortByStartDate(vacations.filter(e => e.status !== 'rejected')), [vacations])
   const [isLoading, setIsLoading] = useState(true)
   const [hasAccess, setHasAccess] = useState(false)
   const [editingUser, setEditingUser] = useState<User | null>(null)
@@ -81,8 +103,6 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
   const [newPassword, setNewPassword] = useState('')
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
-  const [isCreatingUser, setIsCreatingUser] = useState(false)
-  const createUserInProgress = useRef(false)
   const [newUserName, setNewUserName] = useState('')
   const [newUserEmail, setNewUserEmail] = useState('')
   const [newUserPassword, setNewUserPassword] = useState('')
@@ -100,7 +120,12 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
   const [previewYear, setPreviewYear] = useState(new Date().getFullYear())
   const [isManualGrantDialogOpen, setIsManualGrantDialogOpen] = useState(false)
   const [isParentalDialogOpen, setIsParentalDialogOpen] = useState(false)
-  const [birthdays, setBirthdays] = useState<BirthdayEntry[]>([])
+  const [birthdayItems, birthdayList] = useOptimisticList<BirthdayEntry>(birthdayKey)
+  const birthdays = useMemo(() => [...birthdayItems].sort((a, b) => {
+    const dateA = new Date(`2000-${a.birthday}`)
+    const dateB = new Date(`2000-${b.birthday}`)
+    return dateA.getMonth() - dateB.getMonth() || dateA.getDate() - dateB.getDate()
+  }), [birthdayItems])
   const [isEditBirthdayDialogOpen, setIsEditBirthdayDialogOpen] = useState(false)
   const [editingBirthday, setEditingBirthday] = useState<BirthdayEntry | null>(null)
   const [birthdayDate, setBirthdayDate] = useState('')
@@ -112,7 +137,6 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
   // Hub-advarslen/notifikationen, uden at røre selve "afventer godkendelse"-status.
   const [seenVacationRequestIds, setSeenVacationRequestIds] = useKV<string[]>(`seen-vacation-requests-${userEmail}`, [])
   const [guideAdminEmails, setGuideAdminEmails] = useKV<string[]>('guide-admin-emails', [], { initializeIfMissing: false })
-  const [isBulkProcessing, setIsBulkProcessing] = useState(false)
   // Which save/delete is running, so that button shows a spinner and can't be pressed twice.
   const [busyAction, setBusyAction] = useState<string | null>(null)
   const runBusy = async (key: string, action: () => Promise<void>) => {
@@ -184,37 +208,48 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
 
   const loadUsers = async () => {
     setIsLoading(true)
-    const creator = await getCreatorEmail()
-    const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; phone?: string; role?: UserRole; isManager?: boolean; status?: 'pending' | 'approved' | 'rejected'; username?: string }>>('users')
-    if (usersData) {
-      const allUsers = Object.values(usersData)
-        .filter(u => u.role !== 'creator' && (!creator || u.email.toLowerCase() !== creator))
-        .map(u => {
-        let role: UserRole = 'user'
-        if (u.role) {
-          role = u.role
-        } else if (u.isManager) {
-          role = 'manager'
-        }
-
-        return {
-          email: u.email,
-          fullName: u.fullName,
-          role,
-          phone: u.phone,
-          status: u.status,
-          username: u.username,
-        }
-      })
-
-      setPendingUsers(allUsers.filter(u => u.status === 'pending'))
-      setUsers(allUsers.filter(u => u.status !== 'pending').sort((a, b) => {
-        const roleOrder = { creator: 0, manager: 1, user: 2 }
-        return roleOrder[a.role] - roleOrder[b.role]
-      }))
+    try {
+      // Parallelt: hver læsning er en rundtur til M:.
+      const [creator, usersData] = await Promise.all([getCreatorEmail(), window.kv.get<Record<string, StoredUser>>('users')])
+      creatorEmail.current = creator
+      if (usersData) {
+        userList.show(Object.values(usersData)
+          .filter(u => u.role !== 'creator' && (!creator || u.email.toLowerCase() !== creator))
+          .map(u => ({
+            email: u.email,
+            fullName: u.fullName,
+            role: u.role || (u.isManager ? 'manager' : 'user'),
+            phone: u.phone,
+            status: u.status,
+            username: u.username,
+          })))
+      }
+    } finally {
+      setIsLoading(false)
     }
-    setIsLoading(false)
   }
+
+  const isCreator = (email: string) => !!creatorEmail.current && email.toLowerCase() === creatorEmail.current
+
+  /** Reads the stored account and saves `change` of it, only if nobody changed it meanwhile. False if it is gone. */
+  const updateStoredUser = async (email: string, change: (stored: StoredUser) => StoredUser): Promise<boolean> => {
+    const usersData = await window.kv.get<Record<string, StoredUser>>('users')
+    const stored = usersData?.[email]
+    if (!stored) {
+      toast.error(t.managerPanel.permissions.userNotFound)
+      return false
+    }
+    await replaceKvObjectField('users', email, stored, change(stored))
+    return true
+  }
+
+  /** The account shows the change at once; it is saved in the background and a failed save undoes it. */
+  const changeUser = (user: User, next: User | null, write: Promise<boolean>) =>
+    userList.change([[userKey(user), next]], write.catch(error => {
+      console.error('Kunne ikke gemme brugeren:', error)
+      toast.error(t.profile.errors.generic)
+      return false
+    }))
 
   const sendUserDecisionEmail = async (user: User, approved: boolean) => {
     try {
@@ -233,61 +268,25 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
     }
   }
 
-  const handleApproveUser = async (user: User) => {
-    const usersData = await window.kv.get<Record<string, { status?: string } & Record<string, unknown>>>('users')
-    if (!usersData?.[user.email]) {
-      toast.error(t.managerPanel.permissions.userNotFound)
-      return
-    }
-    await replaceKvObjectField('users', user.email, usersData[user.email], { ...usersData[user.email], status: 'approved' })
-    await loadUsers()
-    await sendUserDecisionEmail(user, true)
-    toast.success(`${user.fullName} ${t.managerPanel.permissions.userApprovedSuffix}`)
+  // The request leaves the list at once; the account, and then the mail to the person, are saved in the background.
+  const decideUser = (user: User, status: 'approved' | 'rejected') => {
+    toast.success(status === 'approved'
+      ? `${user.fullName} ${t.managerPanel.permissions.userApprovedSuffix}`
+      : `${t.managerPanel.permissions.userRequestRejectedPrefix} ${user.fullName} ${t.managerPanel.permissions.userRequestRejectedSuffix}`)
+    void changeUser(user, { ...user, status }, updateStoredUser(user.email, stored => ({ ...stored, status })))
+      .then(saved => { if (saved) void sendUserDecisionEmail(user, status === 'approved') })
   }
 
-  const handleRejectUser = async (user: User) => {
-    const usersData = await window.kv.get<Record<string, { status?: string } & Record<string, unknown>>>('users')
-    if (!usersData?.[user.email]) {
-      toast.error(t.managerPanel.permissions.userNotFound)
-      return
-    }
-    await replaceKvObjectField('users', user.email, usersData[user.email], { ...usersData[user.email], status: 'rejected' })
-    await loadUsers()
-    await sendUserDecisionEmail(user, false)
-    toast.success(`${t.managerPanel.permissions.userRequestRejectedPrefix} ${user.fullName} ${t.managerPanel.permissions.userRequestRejectedSuffix}`)
-  }
+  const handleApproveUser = (user: User) => decideUser(user, 'approved')
+
+  const handleRejectUser = (user: User) => decideUser(user, 'rejected')
 
   const loadVacationEntries = async () => {
-    const stored = await window.kv.get<VacationEntry[]>('vacation-entries') || []
-    // A delete still on its way to the shared drive must not reappear.
-    const entries = stored.filter(entry => !deletingVacationIds.current.has(entry.id))
-    setVacationEntries(entries.filter(e => e.status === 'pending').sort((a, b) => {
-      const dateA = new Date(a.startDate)
-      const dateB = new Date(b.startDate)
-      if (isNaN(dateA.getTime()) || isNaN(dateB.getTime())) return 0
-      return dateA.getTime() - dateB.getTime()
-    }))
-    setAllVacations(entries.filter(e => e.status !== 'rejected').sort((a, b) => {
-      const dateA = new Date(a.startDate)
-      const dateB = new Date(b.startDate)
-      if (isNaN(dateA.getTime()) || isNaN(dateB.getTime())) return 0
-      return dateA.getTime() - dateB.getTime()
-    }))
-  }
-
-  // A write to M: can take over a minute, so a change is shown in BOTH lists (pending requests and the overview) at once.
-  const patchVacationLists = (patch: (entries: VacationEntry[]) => VacationEntry[]) => {
-    setVacationEntries(current => patch(current).filter(entry => entry.status === 'pending'))
-    setAllVacations(current => patch(current).filter(entry => entry.status !== 'rejected'))
+    vacationList.show(await window.kv.get<VacationEntry[]>('vacation-entries') || [])
   }
 
   const loadBirthdays = async () => {
-    const birthdaysData = await window.kv.get<BirthdayEntry[]>('employee-birthdays') || []
-    setBirthdays(birthdaysData.sort((a, b) => {
-      const dateA = new Date(`2000-${a.birthday}`)
-      const dateB = new Date(`2000-${b.birthday}`)
-      return dateA.getMonth() - dateB.getMonth() || dateA.getDate() - dateB.getDate()
-    }))
+    birthdayList.show(await window.kv.get<BirthdayEntry[]>('employee-birthdays') || [])
   }
 
   const openEditBirthdayDialog = (entry: BirthdayEntry) => {
@@ -297,7 +296,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
     setIsEditBirthdayDialogOpen(true)
   }
 
-  const handleSaveBirthday = async () => {
+  const handleSaveBirthday = () => {
     if (!editingBirthday || !birthdayDate) {
       toast.error(t.managerPanel.birthdays.dateRequiredError)
       return
@@ -309,78 +308,75 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
       birthday: birthdayDate,
       birthYear: birthYear ? parseInt(birthYear) : undefined
     }
+    const storedEntry = { ...updatedEntry, id: updatedEntry.email }
 
-    await upsertInKvArray('employee-birthdays', [{ ...updatedEntry, id: updatedEntry.email }])
-    await loadBirthdays()
-    
     setIsEditBirthdayDialogOpen(false)
     setEditingBirthday(null)
     setBirthdayDate('')
     setBirthYear('')
     toast.success(t.managerPanel.birthdays.savedToast)
+    void birthdayList.change([[updatedEntry.email, storedEntry]], upsertInKvArray('employee-birthdays', [storedEntry]))
+      .then(saved => { if (!saved) toast.error(t.profile.errors.generic) })
   }
 
-  const deleteBirthday = async (email: string) => {
-    await removeFromKvArray('employee-birthdays', [email])
-    await loadBirthdays()
+  const deleteBirthday = (email: string) => {
     toast.success(t.managerPanel.birthdays.deletedToast)
+    void birthdayList.change([[email, null]], removeFromKvArray('employee-birthdays', [email]))
+      .then(saved => { if (!saved) toast.error(t.profile.errors.generic) })
   }
 
-  const changeUserRole = async (email: string, newRole: UserRole) => {
-    const creator = await getCreatorEmail()
-    if (creator && email.toLowerCase() === creator) {
+  const changeUserRole = (email: string, newRole: UserRole) => {
+    if (isCreator(email)) {
       toast.error(t.managerPanel.permissions.cannotChangeAdminRole)
       return
     }
+    const user = userList.items.find(u => u.email === email)
+    if (!user) return
 
-    const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; role: UserRole; isManager: boolean }>>('users')
-    if (usersData && usersData[email]) {
-      await replaceKvObjectField('users', email, usersData[email], {
-        ...usersData[email],
-        role: newRole,
-        isManager: newRole === 'manager' || newRole === 'creator',
-      })
-      await loadUsers()
-      
-      toast.success(`${t.managerPanel.permissions.roleChangedPrefix} ${getRoleDisplayName(newRole, language)}`)
-    }
+    toast.success(`${t.managerPanel.permissions.roleChangedPrefix} ${getRoleDisplayName(newRole, language)}`)
+    void changeUser(user, { ...user, role: newRole }, updateStoredUser(email, stored => ({
+      ...stored,
+      role: newRole,
+      isManager: newRole === 'manager' || newRole === 'creator',
+    })))
   }
 
   // Sætter en manuel farve for en bruger (delt override) — vinder over auto-farven overalt.
-  const setUserColor = async (email: string, paletteIndex: number) => {
-    try {
-      await setKvObjectField(EMPLOYEE_COLOR_OVERRIDES_KEY, email.trim().toLowerCase(), paletteIndex)
-      toast.success(language === 'da' ? 'Farve opdateret' : language === 'fi' ? 'Väri päivitetty' : language === 'sv' ? 'Färg uppdaterad' : 'Color updated')
-    } catch {
+  // The colour shows at once (useKV); a failed save puts the old one back.
+  const setUserColor = (email: string, paletteIndex: number) => {
+    toast.success(language === 'da' ? 'Farve opdateret' : language === 'fi' ? 'Väri päivitetty' : language === 'sv' ? 'Färg uppdaterad' : 'Color updated')
+    void setKvObjectField(EMPLOYEE_COLOR_OVERRIDES_KEY, email.trim().toLowerCase(), paletteIndex).catch(() => {
       toast.error(language === 'da' ? 'Kunne ikke ændre farve' : language === 'fi' ? 'Värin muutos epäonnistui' : language === 'sv' ? 'Kunde inte ändra färg' : 'Could not change color')
-    }
+    })
   }
 
-  const resetUserColor = async (email: string) => {
-    try {
-      await deleteKvObjectField(EMPLOYEE_COLOR_OVERRIDES_KEY, email.trim().toLowerCase())
-      toast.success(language === 'da' ? 'Farve nulstillet' : language === 'fi' ? 'Väri palautettu' : language === 'sv' ? 'Färg återställd' : 'Color reset')
-    } catch {
+  const resetUserColor = (email: string) => {
+    toast.success(language === 'da' ? 'Farve nulstillet' : language === 'fi' ? 'Väri palautettu' : language === 'sv' ? 'Färg återställd' : 'Color reset')
+    void deleteKvObjectField(EMPLOYEE_COLOR_OVERRIDES_KEY, email.trim().toLowerCase()).catch(() => {
       toast.error(language === 'da' ? 'Kunne ikke nulstille farve' : language === 'fi' ? 'Värin palautus epäonnistui' : language === 'sv' ? 'Kunde inte återställa färg' : 'Could not reset color')
-    }
+    })
   }
 
-  const deleteUser = async (email: string) => {
-    const creator = await getCreatorEmail()
-    if (creator && email.toLowerCase() === creator) {
+  const deleteUser = (email: string) => {
+    if (isCreator(email)) {
       toast.error(t.managerPanel.permissions.cannotDeleteAdmin)
       return
     }
+    const user = userList.items.find(u => u.email === email)
+    if (!user) return
 
-    const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; role: UserRole; isManager: boolean }>>('users')
-    if (usersData && usersData[email]) {
+    toast.success(t.managerPanel.permissions.deleted)
+    void changeUser(user, null, (async () => {
+      const usersData = await window.kv.get<Record<string, StoredUser>>('users')
+      if (!usersData?.[email]) return true
       // The backend also removes the person's shifts, absences, messages, notes and personal settings.
       await deleteKvObjectField('users', email)
-      setGuideAdminEmails((current) => (current || []).filter((item) => item.toLowerCase() !== email.toLowerCase()))
-
-      await loadUsers()
-      toast.success(t.managerPanel.permissions.deleted)
-    }
+      return true
+    })()).then(saved => {
+      if (saved && (guideAdminEmails || []).some(item => item.toLowerCase() === email.toLowerCase())) {
+        setGuideAdminEmails((current) => (current || []).filter((item) => item.toLowerCase() !== email.toLowerCase()))
+      }
+    })
   }
 
   const setGuideAdmin = (email: string, enabled: boolean) => {
@@ -394,10 +390,16 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
       : (language === 'da' ? 'Guide Admin-adgangen er fjernet' : language === 'fi' ? 'Opasvastaavan käyttöoikeus poistettiin' : language === 'sv' ? 'Guide Admin-behörigheten har tagits bort' : 'Guide Admin access removed'))
   }
 
-  const handleReviewLibraryAccessRequest = async (kind: LibraryKind, request: GuideAccessRequest, status: 'approved' | 'rejected') => {
-    await reviewAccessRequest(kind, request, status, userEmail)
-    await loadGuideAccessRequests()
+  // The request leaves the list at once; a failed save puts it back.
+  const handleReviewLibraryAccessRequest = (kind: LibraryKind, request: GuideAccessRequest, status: 'approved' | 'rejected') => {
+    const setRequests = kind === 'guides' ? setGuideAccessRequests : setKnowledgeAccessRequests
+    setRequests(current => current.map(item => item.id === request.id ? { ...item, status } : item))
     toast.success(status === 'approved' ? t.managerPanel.guideAccessRequests.approved : t.managerPanel.guideAccessRequests.rejected)
+    void reviewAccessRequest(kind, request, status, userEmail).catch(error => {
+      console.error('Kunne ikke gemme adgangsanmodningen:', error)
+      setRequests(current => current.map(item => item.id === request.id ? request : item))
+      toast.error(t.profile.errors.generic)
+    })
   }
 
   // Telefon og brugernavn er allerede hentet af loadUsers, saa dialogen aabner
@@ -435,7 +437,67 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
       return
     }
 
-    const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; role: UserRole; isManager: boolean; phone?: string; username?: string }>>('users')
+    // Checked at once against the accounts on screen; the save checks again against the stored ones.
+    if (trimmedUsername && userList.items.some(u => userKey(u) !== userKey(editingUser) && u.username?.toLowerCase() === trimmedUsername.toLowerCase())) {
+      toast.error(t.managerPanel.validation.usernameTaken)
+      return
+    }
+
+    const normalizedNewEmail = newEmail.trim().toLowerCase()
+    const emailChanged = normalizedNewEmail !== editingUser.email.trim().toLowerCase()
+    if (emailChanged && (userList.items.some(u => userKey(u) === normalizedNewEmail) || isCreator(normalizedNewEmail))) {
+      toast.error(t.managerPanel.validation.emailExists)
+      return
+    }
+
+    if (newPassword && newPassword.length < 6) {
+      toast.error(t.managerPanel.validation.passwordTooShort)
+      return
+    }
+
+    const closeDialog = () => {
+      setIsEditDialogOpen(false)
+      setEditingUser(null)
+      setNewName('')
+      setNewEmail('')
+      setNewPhone('')
+      setNewUsername('')
+      setNewPassword('')
+    }
+
+    if (!emailChanged) {
+      // Name, phone, username or password: shown and closed at once, saved in the background (a write takes 20-90 s).
+      const user = editingUser
+      const form = { fullName: newName.trim(), email: newEmail.trim(), phone: newPhone.trim(), username: trimmedUsername, password: newPassword.trim() }
+      closeDialog()
+      toast.success(t.managerPanel.validation.userUpdated)
+      void changeUser(user, { ...user, fullName: form.fullName, phone: form.phone || user.phone, username: form.username || undefined }, (async () => {
+        const usersData = await window.kv.get<Record<string, StoredUser>>('users')
+        const stored = usersData?.[user.email]
+        if (!usersData || !stored) {
+          toast.error(t.managerPanel.permissions.userNotFound)
+          return false
+        }
+        if (form.username && Object.entries(usersData).some(([email, u]) => email !== user.email && u.username?.toLowerCase() === form.username.toLowerCase())) {
+          toast.error(t.managerPanel.validation.usernameTaken)
+          return false
+        }
+        const updatedUserData = {
+          ...stored,
+          fullName: form.fullName,
+          email: form.email,
+          phone: form.phone || stored.phone,
+          username: form.username || undefined,
+          password: form.password ? await hashPassword(form.password) : stored.password,
+        }
+        await window.kv.updateField('users', { op: 'renameField', field: user.email, newField: user.email, expected: stored, value: updatedUserData })
+        return true
+      })())
+      return
+    }
+
+    // A new e-mail moves the account and everything that refers to it; the backend may refuse, so this waits (spinner).
+    const usersData = await window.kv.get<Record<string, StoredUser>>('users')
     if (!usersData || !usersData[editingUser.email]) {
       toast.error(t.managerPanel.permissions.userNotFound)
       return
@@ -452,14 +514,8 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
     }
 
     const userData = usersData[editingUser.email]
-    const normalizedNewEmail = newEmail.trim().toLowerCase()
-    if (normalizedNewEmail !== editingUser.email.trim().toLowerCase() && Object.keys(usersData).some(email => email.trim().toLowerCase() === normalizedNewEmail)) {
+    if (Object.keys(usersData).some(email => email.trim().toLowerCase() === normalizedNewEmail)) {
       toast.error(t.managerPanel.validation.emailExists)
-      return
-    }
-
-    if (newPassword && newPassword.length < 6) {
-      toast.error(t.managerPanel.validation.passwordTooShort)
       return
     }
 
@@ -472,41 +528,33 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
       password: newPassword.trim() ? await hashPassword(newPassword.trim()) : userData.password,
     }
 
-    if (newEmail.trim().toLowerCase() !== editingUser.email.toLowerCase()) {
-      // Native account migration updates the directory and all references.
-      if (!window.electronAuth && window.electronRegistry) {
-        const currentTeam = await window.electronRegistry.getCurrentTeam()
-        if (currentTeam) await window.electronRegistry.assignUser(newEmail.trim().toLowerCase(), currentTeam.teamId)
-      }
-      await window.kv.updateField('users', { op: 'renameField', field: editingUser.email, newField: normalizedNewEmail, expected: userData, value: { ...updatedUserData, email: normalizedNewEmail } })
-      if (!window.electronAuth && (guideAdminEmails || []).some((item) => item.toLowerCase() === editingUser.email.toLowerCase())) {
-        setGuideAdminEmails((current) => [
-          ...(current || []).filter((item) => item.toLowerCase() !== editingUser.email.toLowerCase()),
-          newEmail.trim().toLowerCase(),
-        ])
-      }
-    } else {
-      await window.kv.updateField('users', { op: 'renameField', field: editingUser.email, newField: editingUser.email, expected: userData, value: updatedUserData })
+    // Native account migration updates the directory and all references.
+    if (!window.electronAuth && window.electronRegistry) {
+      const currentTeam = await window.electronRegistry.getCurrentTeam()
+      if (currentTeam) await window.electronRegistry.assignUser(normalizedNewEmail, currentTeam.teamId)
+    }
+    await window.kv.updateField('users', { op: 'renameField', field: editingUser.email, newField: normalizedNewEmail, expected: userData, value: { ...updatedUserData, email: normalizedNewEmail } })
+    if (!window.electronAuth && (guideAdminEmails || []).some((item) => item.toLowerCase() === editingUser.email.toLowerCase())) {
+      setGuideAdminEmails((current) => [
+        ...(current || []).filter((item) => item.toLowerCase() !== editingUser.email.toLowerCase()),
+        normalizedNewEmail,
+      ])
     }
 
-    if (window.electronAuth && normalizedNewEmail !== editingUser.email.toLowerCase() && editingUser.email.toLowerCase() === userEmail.toLowerCase()) {
+    if (window.electronAuth && editingUser.email.toLowerCase() === userEmail.toLowerCase()) {
       onLogout()
       return
     }
-    // Listen genindlæses uden at dialogen venter på det.
+    // The list shows the new e-mail at once and is read again without the dialog waiting for it.
+    void userList.change([[userKey(editingUser), null], [normalizedNewEmail, { ...editingUser, email: normalizedNewEmail, fullName: updatedUserData.fullName, phone: updatedUserData.phone, username: updatedUserData.username }]], Promise.resolve(true))
     void loadUsers()
-    setIsEditDialogOpen(false)
-    setEditingUser(null)
-    setNewName('')
-    setNewEmail('')
-    setNewPhone('')
-    setNewUsername('')
-    setNewPassword('')
+    closeDialog()
     toast.success(t.managerPanel.validation.userUpdated)
   }
 
-  const handleCreateUser = async () => {
-    if (createUserInProgress.current) return
+  // The account shows in the list and the dialog closes at once; it is created on the shared drive in the background.
+  // If that fails, the dialog opens again with what was typed.
+  const handleCreateUser = () => {
     if (!newUserName.trim()) {
       toast.error(t.managerPanel.validation.createNameRequired)
       return
@@ -530,44 +578,52 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
       return
     }
 
-    createUserInProgress.current = true
-    setIsCreatingUser(true)
-    try {
-      const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; role: UserRole; isManager: boolean; phone?: string; status?: 'pending' | 'approved' | 'rejected' }>>('users') || {}
-      if (usersData[newUserEmail.toLowerCase()]) {
-        toast.error(t.managerPanel.validation.emailExists)
-        return
-      }
+    const form = { fullName: newUserName.trim(), email: newUserEmail.trim().toLowerCase(), password: newUserPassword.trim(), phone: newUserPhone.trim() }
+    if (userList.items.some(u => userKey(u) === form.email) || isCreator(form.email)) {
+      toast.error(t.managerPanel.validation.emailExists)
+      return
+    }
+
+    setIsCreateDialogOpen(false)
+    setNewUserName('')
+    setNewUserEmail('')
+    setNewUserPassword('')
+    setNewUserPhone('')
+    toast.success(t.managerPanel.validation.userCreated)
+
+    let failure: unknown
+    const created = (async () => {
       // Uden dette kan brugeren ikke logge ind bagefter — registret er den ENESTE
       // kilde login-skærmen bruger til at finde ud af hvilket team en email hører til.
-      if (window.electronRegistry) {
+      const [password] = await Promise.all([hashPassword(form.password), (async () => {
+        if (!window.electronRegistry) return
         const currentTeam = await window.electronRegistry.getCurrentTeam()
-        if (currentTeam) await window.electronRegistry.assignUser(newUserEmail.toLowerCase(), currentTeam.teamId)
-      }
-      await setKvObjectField('users', newUserEmail.toLowerCase(), {
-        email: newUserEmail.toLowerCase(),
-        password: await hashPassword(newUserPassword.trim()),
-        fullName: newUserName.trim(),
+        if (currentTeam) await window.electronRegistry.assignUser(form.email, currentTeam.teamId)
+      })()])
+      await setKvObjectField('users', form.email, {
+        email: form.email,
+        password,
+        fullName: form.fullName,
         role: 'user',
         isManager: false,
-        phone: newUserPhone.trim(),
+        phone: form.phone,
         // Manager-created accounts skip the approval flow.
         status: 'approved'
       })
-      setIsCreateDialogOpen(false)
-      setNewUserName('')
-      setNewUserEmail('')
-      setNewUserPassword('')
-      setNewUserPhone('')
-      toast.success(t.managerPanel.validation.userCreated)
-      void loadUsers().catch(error => console.error('Kunne ikke opdatere brugerlisten:', error))
-    } catch (error) {
-      console.error('Failed to save new user:', error)
-      toast.error(`${t.managerPanel.validation.createFailedPrefix}: ${error instanceof Error ? error.message : String(error)}`)
-    } finally {
-      createUserInProgress.current = false
-      setIsCreatingUser(false)
-    }
+      return true
+    })().catch(error => { failure = error; return false })
+
+    const shown: User = { email: form.email, fullName: form.fullName, role: 'user', phone: form.phone, status: 'approved' }
+    void userList.change([[form.email, shown]], created).then(saved => {
+      if (saved) return
+      console.error('Failed to save new user:', failure)
+      toast.error(`${t.managerPanel.validation.createFailedPrefix}: ${failure instanceof Error ? failure.message : String(failure)}`)
+      setNewUserName(form.fullName)
+      setNewUserEmail(form.email)
+      setNewUserPassword(form.password)
+      setNewUserPhone(form.phone)
+      setIsCreateDialogOpen(true)
+    })
   }
 
   /** Sender kvitterings-mail og notifikation. Maa aldrig forsinke selve beslutningen. */
@@ -605,25 +661,20 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
    * og skrivning + mail sker i baggrunden. Tidligere ventede brugeren paa en
    * skrivning, en unoedvendig genindlaesning og to mail-skrivninger.
    */
-  const decideVacation = async (vacation: VacationEntry, status: 'approved' | 'rejected') => {
-    const previous = vacationEntries
-    const previousAll = allVacations
-    patchVacationLists(current => current.map(entry => entry.id === vacation.id ? { ...entry, status } : entry))
+  const decideVacation = (vacation: VacationEntry, status: 'approved' | 'rejected') => {
     if (status === 'approved') toast.success(t.managerPanel.vacationRequests.approvedToast)
     else toast.error(t.managerPanel.vacationRequests.rejectedToast)
 
-    const updated = await updateKvArrayItem<VacationEntry>('vacation-entries', vacation.id, (v) => ({
-      ...v, status: status as VacationStatus, reviewedBy: userEmail, reviewedAt: new Date().toISOString(),
-    })).catch(error => { console.error('Kunne ikke gemme feriebeslutningen:', error); return null })
-
-    if (!updated) {
-      setVacationEntries(previous)
-      setAllVacations(previousAll)
-      toast.error(t.managerPanel.vacationRequests.notFoundError)
-      void loadVacationEntries()
-      return
-    }
-    void sendVacationDecisionEmail(vacation, status === 'approved')
+    const reviewedAt = new Date().toISOString()
+    const decide = (v: VacationEntry): VacationEntry => ({ ...v, status: status as VacationStatus, reviewedBy: userEmail, reviewedAt })
+    void vacationList.change([[vacation.id, decide(vacation)]], updateKvArrayItem<VacationEntry>('vacation-entries', vacation.id, decide)).then(saved => {
+      if (!saved) {
+        toast.error(t.managerPanel.vacationRequests.notFoundError)
+        void loadVacationEntries()
+        return
+      }
+      void sendVacationDecisionEmail(vacation, status === 'approved')
+    })
   }
 
   const handleApproveVacation = (vacation: VacationEntry) => decideVacation(vacation, 'approved')
@@ -645,24 +696,32 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
     )
   }
 
-  /** Batch-afgørelse: opdaterer hver valgt anmodning atomart og sender alle mails/notifikationer i ét skriv pr. nøgle. */
-  const handleBulkVacationDecision = async (status: 'approved' | 'rejected') => {
+  /**
+   * Batch-afgørelse: vises straks i begge lister. Alle valgte anmodninger gemmes i ÉN skrivning (før én pr. anmodning,
+   * hver op mod et minut på M:), og derefter alle mails og alle notifikationer samtidig.
+   */
+  const handleBulkVacationDecision = (status: 'approved' | 'rejected') => {
     const selected = vacationEntries.filter(v => selectedVacationIds.includes(v.id))
     if (selected.length === 0) return
-    setIsBulkProcessing(true)
 
-    try {
+    const reviewedAt = new Date()
+    const write = decideVacationRequests(selected.map(v => v.id), status, userEmail, reviewedAt)
+    setSelectedVacationIds([])
+    const count = `${selected.length} ${selected.length === 1 ? t.managerPanel.vacationRequests.requestSingular : t.managerPanel.vacationRequests.requestPlural}`
+    toast.success(`${count} ${status === 'approved' ? t.managerPanel.vacationRequests.bulkApprovedSuffix : t.managerPanel.vacationRequests.bulkRejectedSuffix}`)
+
+    const shown = selected.map((v): [string, VacationEntry] => [v.id, { ...v, status, reviewedBy: userEmail, reviewedAt: reviewedAt.toISOString() }])
+    void vacationList.change(shown, write.then(decided => decided.length > 0)).then(async saved => {
+      const decided = await write.catch(() => null)
+      void loadVacationEntries()
+      if (!saved || !decided) {
+        toast.error(decided ? t.managerPanel.vacationRequests.bulkNoneFound : t.profile.errors.generic)
+        return
+      }
+
       const emailItems: Array<{ id: string } & Record<string, unknown>> = []
       const notificationItems: Array<{ id: string } & Record<string, unknown>> = []
-      let succeeded = 0
-
-      for (const vacation of selected) {
-        const updated = await updateKvArrayItem<VacationEntry>('vacation-entries', vacation.id, (v) => ({
-          ...v, status: status as VacationStatus, reviewedBy: userEmail, reviewedAt: new Date().toISOString(),
-        }))
-        if (!updated) continue
-        succeeded++
-
+      for (const vacation of decided) {
         const emailContent = status === 'approved'
           ? vacationApprovedEmail(vacation.startDate, vacation.endDate, userEmail, vacation.notes)
           : vacationRejectedEmail(vacation.startDate, vacation.endDate, userEmail, vacation.notes)
@@ -686,30 +745,14 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
           emailId,
         })
       }
-
-      if (emailItems.length > 0) {
-        // Mails maa ikke forsinke listen - de sendes i baggrunden.
-        void appendToKvArray('emails', emailItems)
-          .then(() => appendToKvArray('email-notifications', notificationItems))
-          .catch(error => console.error('Kunne ikke sende beslutnings-mails:', error))
-      }
-
-      setVacationEntries(current => current.filter(entry => !selectedVacationIds.includes(entry.id)))
-      setSelectedVacationIds([])
-
-      if (succeeded === 0) {
-        toast.error(t.managerPanel.vacationRequests.bulkNoneFound)
-      } else if (status === 'approved') {
-        toast.success(`${succeeded} ${succeeded === 1 ? t.managerPanel.vacationRequests.requestSingular : t.managerPanel.vacationRequests.requestPlural} ${t.managerPanel.vacationRequests.bulkApprovedSuffix}`)
-      } else {
-        toast.success(`${succeeded} ${succeeded === 1 ? t.managerPanel.vacationRequests.requestSingular : t.managerPanel.vacationRequests.requestPlural} ${t.managerPanel.vacationRequests.bulkRejectedSuffix}`)
-      }
-    } finally {
-      setIsBulkProcessing(false)
-    }
+      // Uafhængige nøgler: gemmes samtidig.
+      void Promise.all([appendToKvArray('emails', emailItems), appendToKvArray('email-notifications', notificationItems)])
+        .catch(error => console.error('Kunne ikke sende beslutnings-mails:', error))
+    })
   }
 
-  const handleSaveVacationEdit = async () => {
+  // Shown and closed at once; a failed save puts the vacation back as it was.
+  const handleSaveVacationEdit = () => {
     if (!editingVacation || !editVacationStartDate || !editVacationEndDate) {
       toast.error(t.managerPanel.vacationOverview.startEndRequired)
       return
@@ -720,100 +763,109 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
       return
     }
 
+    const original = editingVacation
+    const startDate = editVacationStartDate
+    const endDate = editVacationEndDate
+    const notes = editVacationNotes.trim() || undefined
+    const type = editVacationType
     const edit = (v: VacationEntry): VacationEntry => ({
       ...v,
-      startDate: format(editVacationStartDate, 'yyyy-MM-dd'),
-      endDate: format(editVacationEndDate, 'yyyy-MM-dd'),
-      notes: editVacationNotes.trim() || undefined,
-      type: editVacationType === 'parental' ? 'parental' : undefined,
+      startDate: format(startDate, 'yyyy-MM-dd'),
+      endDate: format(endDate, 'yyyy-MM-dd'),
+      notes,
+      type: type === 'parental' ? 'parental' : undefined,
     })
-    // Vises straks og dialogen lukker; fejler gemningen, læses listen igen.
-    const previousEntries = vacationEntries
-    const previousAll = allVacations
-    patchVacationLists(current => current.map(entry => entry.id === editingVacation.id ? edit(entry) : entry))
+
     setIsEditVacationDialogOpen(false)
-    const editedEntry = await updateKvArrayItem<VacationEntry>('vacation-entries', editingVacation.id, edit)
-      .catch(error => { console.error('Kunne ikke gemme ferien:', error); return undefined })
-    if (!editedEntry) {
-      toast.error(editedEntry === null ? t.managerPanel.vacationRequests.notFoundError : (language === 'da' ? 'Ændringen blev ikke gemt — prøv igen' : language === 'fi' ? 'Muutosta ei tallennettu — yritä uudelleen' : language === 'sv' ? 'Ändringen sparades inte — försök igen' : 'The change was not saved — please try again'))
-      setVacationEntries(previousEntries)
-      setAllVacations(previousAll)
-      void loadVacationEntries()
-      return
-    }
-    patchVacationLists(current => current.map(entry => entry.id === editedEntry.id ? editedEntry : entry))
-    toast.success(t.managerPanel.vacationOverview.updatedToast)
-
-    // Barsel sender ingen ferie-mails.
-    const involvesParental = editingVacation.type === 'parental' || editVacationType === 'parental'
-    if (!involvesParental) try {
-      const emailContent = vacationEditedEmail(
-        editingVacation.startDate,
-        editingVacation.endDate,
-        editVacationStartDate,
-        editVacationEndDate,
-        userEmail,
-        editVacationNotes.trim() || undefined,
-      )
-
-      const newEmail = {
-        id: newId('email'),
-        from: userEmail,
-        to: editingVacation.userEmail,
-        subject: emailContent.subject,
-        message: emailContent.body,
-        timestamp: Date.now(),
-        read: false
-      }
-
-      const notification = {
-        id: newId('notif'),
-        type: 'email' as const,
-        message: t.managerPanel.vacationOverview.editedNotification,
-        timestamp: Date.now(),
-        read: false,
-        from: userEmail,
-        emailId: newEmail.id
-      }
-
-      // I baggrunden og samtidig: uafhængige nøgler.
-      void Promise.all([appendToKvArray('emails', [newEmail]), appendToKvArray('email-notifications', [notification])])
-        .catch(emailError => console.error('Error sending vacation edit email:', emailError))
-    } catch (emailError) {
-      console.error('Error sending vacation edit email:', emailError)
-    }
-
     setEditingVacation(null)
     setEditVacationStartDate(undefined)
     setEditVacationEndDate(undefined)
     setEditVacationNotes('')
+    toast.success(t.managerPanel.vacationOverview.updatedToast)
+
+    const outcome = updateKvArrayItem<VacationEntry>('vacation-entries', original.id, edit)
+      .then(entry => entry ? 'saved' as const : 'missing' as const, error => { console.error('Kunne ikke gemme ferien:', error); return 'failed' as const })
+    void vacationList.change([[original.id, edit(original)]], outcome.then(result => result === 'saved')).then(async saved => {
+      if (!saved) {
+        toast.error(await outcome === 'missing' ? t.managerPanel.vacationRequests.notFoundError : (language === 'da' ? 'Ændringen blev ikke gemt — prøv igen' : language === 'fi' ? 'Muutosta ei tallennettu — yritä uudelleen' : language === 'sv' ? 'Ändringen sparades inte — försök igen' : 'The change was not saved — please try again'))
+        void loadVacationEntries()
+        return
+      }
+
+      // Barsel sender ingen ferie-mails.
+      if (original.type === 'parental' || type === 'parental') return
+      try {
+        const emailContent = vacationEditedEmail(original.startDate, original.endDate, startDate, endDate, userEmail, notes)
+
+        const newEmail = {
+          id: newId('email'),
+          from: userEmail,
+          to: original.userEmail,
+          subject: emailContent.subject,
+          message: emailContent.body,
+          timestamp: Date.now(),
+          read: false
+        }
+
+        const notification = {
+          id: newId('notif'),
+          type: 'email' as const,
+          message: t.managerPanel.vacationOverview.editedNotification,
+          timestamp: Date.now(),
+          read: false,
+          from: userEmail,
+          emailId: newEmail.id
+        }
+
+        // I baggrunden og samtidig: uafhængige nøgler.
+        void Promise.all([appendToKvArray('emails', [newEmail]), appendToKvArray('email-notifications', [notification])])
+          .catch(emailError => console.error('Error sending vacation edit email:', emailError))
+      } catch (emailError) {
+        console.error('Error sending vacation edit email:', emailError)
+      }
+    })
   }
 
   // Returns at once: the vacation leaves both lists immediately and is deleted on the shared drive in the background
   // (that write has taken 80 s). If it fails, the vacation comes back with an error.
   const deleteVacation = (id: string) => {
-    const vacationToDelete = allVacations.find(v => v.id === id) ?? vacationEntries.find(v => v.id === id)
+    const vacationToDelete = vacationList.items.find(v => v.id === id)
     if (!vacationToDelete) {
       toast.error(t.managerPanel.vacationOverview.notFoundError)
       return
     }
 
-    patchVacationLists(current => current.filter(entry => entry.id !== id))
     toast.success(t.managerPanel.vacationOverview.deletedToast)
-    deletingVacationIds.current.add(id)
-    void removeFromKvArray('vacation-entries', [id]).then(
-      () => {
-        deletingVacationIds.current.delete(id)
-        void loadVacationEntries()
-        sendVacationDeletedEmail(vacationToDelete)
-      },
-      error => {
-        deletingVacationIds.current.delete(id)
-        console.error('Kunne ikke slette ferien:', error)
+    void vacationList.change([[id, null]], removeFromKvArray('vacation-entries', [id])).then(saved => {
+      void loadVacationEntries()
+      if (!saved) {
         toast.error(t.profile.errors.generic)
-        void loadVacationEntries()
-      },
-    )
+        return
+      }
+      sendVacationDeletedEmail(vacationToDelete)
+    })
+  }
+
+  /** A vacation granted in a dialog (manual grant, parental leave) shows in both lists while it is saved. */
+  const showGrantedVacation = (entry: VacationEntry, saved: Promise<boolean>) => {
+    void vacationList.change([[entry.id, entry]], saved).then(() => loadVacationEntries())
+  }
+
+  /** The onboarded person (and birthday) shows at once; afterwards the lists are read again. */
+  const showOnboardedAccount = (account: OnboardedAccount, accountSaved: Promise<boolean>, birthday?: { entry: BirthdayEntry; saved: Promise<boolean> }) => {
+    void userList.change([[account.email, { ...account, status: 'approved' }]], accountSaved).then(saved => { if (saved) void loadUsers() })
+    if (birthday) void birthdayList.change([[birthdayKey(birthday.entry), birthday.entry]], birthday.saved).then(saved => { if (saved) void loadBirthdays() })
+  }
+
+  /** The offboarded person, their birthday and pending requests leave the lists at once. */
+  const showOffboardedAccount = (email: string, saved: Promise<boolean>) => {
+    const emailLower = email.toLowerCase()
+    void userList.change([[emailLower, null]], saved)
+    const birthdaysToHide = birthdayList.items.filter(entry => entry.email.toLowerCase() === emailLower)
+    if (birthdaysToHide.length > 0) void birthdayList.change(birthdaysToHide.map(entry => [birthdayKey(entry), null]), saved)
+    const requestsToHide = vacationList.items.filter(entry => entry.userEmail.toLowerCase() === emailLower && entry.status === 'pending')
+    if (requestsToHide.length > 0) void vacationList.change(requestsToHide.map(entry => [entry.id, null]), saved)
+    void saved.then(() => Promise.all([loadUsers(), loadBirthdays(), loadVacationEntries()]))
   }
 
   const sendVacationDeletedEmail = (vacationToDelete: VacationEntry) => {
@@ -999,16 +1051,14 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                       </div>
                       <div className="flex items-center gap-2">
                         <Button
-                          onClick={() => runBusy(`approve-user:${user.email}`, () => handleApproveUser(user))}
-                          loading={busyAction === `approve-user:${user.email}`}
+                          onClick={() => handleApproveUser(user)}
                           className="gap-2"
                         >
                           <Check size={18} weight="bold" />
                           {t.managerPanel.permissions.approve}
                         </Button>
                         <Button
-                          onClick={() => runBusy(`reject-user:${user.email}`, () => handleRejectUser(user))}
-                          loading={busyAction === `reject-user:${user.email}`}
+                          onClick={() => handleRejectUser(user)}
                           variant="destructive"
                           className="gap-2"
                         >
@@ -1143,8 +1193,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                         </Button>
                         <Select
                           value={user.role}
-                          disabled={busyAction === `role:${user.email}`}
-                          onValueChange={(value) => void runBusy(`role:${user.email}`, () => changeUserRole(user.email, value as UserRole))}
+                          onValueChange={(value) => changeUserRole(user.email, value as UserRole)}
                         >
                           <SelectTrigger className="w-40 h-10">
                             <SelectValue />
@@ -1166,7 +1215,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                         </Select>
                         <AlertDialog>
                           <AlertDialogTrigger asChild>
-                            <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10" loading={busyAction === `delete-user:${user.email}`}>
+                            <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10">
                               <Trash size={20} />
                             </Button>
                           </AlertDialogTrigger>
@@ -1180,7 +1229,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                             <AlertDialogFooter>
                               <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
                               <AlertDialogAction
-                                onClick={() => void runBusy(`delete-user:${user.email}`, () => deleteUser(user.email))}
+                                onClick={() => deleteUser(user.email)}
                                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                               >
                                 {t.managerPanel.permissions.deleteAction}
@@ -1288,20 +1337,16 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                       <div className="flex gap-2 ml-auto">
                         <Button
                           size="sm"
-                          disabled={isBulkProcessing}
-                          loading={busyAction === 'bulk:approved'}
-                          onClick={() => runBusy('bulk:approved', () => handleBulkVacationDecision('approved'))}
+                          onClick={() => handleBulkVacationDecision('approved')}
                           className="gap-2"
                         >
                           <Check size={16} weight="bold" />
-                          {isBulkProcessing ? t.managerPanel.vacationRequests.processing : `${t.managerPanel.vacationRequests.approveSelectedPrefix} (${selectedVacationIds.length})`}
+                          {`${t.managerPanel.vacationRequests.approveSelectedPrefix} (${selectedVacationIds.length})`}
                         </Button>
                         <Button
                           size="sm"
                           variant="destructive"
-                          disabled={isBulkProcessing}
-                          loading={busyAction === 'bulk:rejected'}
-                          onClick={() => runBusy('bulk:rejected', () => handleBulkVacationDecision('rejected'))}
+                          onClick={() => handleBulkVacationDecision('rejected')}
                           className="gap-2"
                         >
                           <X size={16} weight="bold" />
@@ -1703,7 +1748,6 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                                     size="icon" 
                                     onClick={(e) => e.stopPropagation()}
                                     className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                                    loading={busyAction === `delete-birthday:${user.email}`}
                                   >
                                     <Trash size={20} />
                                   </Button>
@@ -1718,7 +1762,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                                   <AlertDialogFooter>
                                     <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
                                     <AlertDialogAction
-                                      onClick={() => void runBusy(`delete-birthday:${user.email}`, () => deleteBirthday(user.email))}
+                                      onClick={() => deleteBirthday(user.email)}
                                       className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                                     >
                                       {t.managerPanel.birthdays.deleteAction}
@@ -1796,13 +1840,12 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                           size="sm"
                           variant="outline"
                           className="gap-1.5 text-destructive hover:bg-destructive/10"
-                          loading={busyAction === `library-reject:${request.id}`}
-                          onClick={() => runBusy(`library-reject:${request.id}`, () => handleReviewLibraryAccessRequest(kind, request, 'rejected'))}
+                          onClick={() => handleReviewLibraryAccessRequest(kind, request, 'rejected')}
                         >
                           <X size={16} weight="bold" />
                           {t.managerPanel.guideAccessRequests.reject}
                         </Button>
-                        <Button size="sm" className="gap-1.5" loading={busyAction === `library-approve:${request.id}`} onClick={() => runBusy(`library-approve:${request.id}`, () => handleReviewLibraryAccessRequest(kind, request, 'approved'))}>
+                        <Button size="sm" className="gap-1.5" onClick={() => handleReviewLibraryAccessRequest(kind, request, 'approved')}>
                           <Check size={16} weight="bold" />
                           {t.managerPanel.guideAccessRequests.approve}
                         </Button>
@@ -1866,7 +1909,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" disabled={isCreatingUser} onClick={() => {
+            <Button variant="outline" onClick={() => {
               setIsEditVacationDialogOpen(false)
               setEditingVacation(null)
               setEditVacationStartDate(undefined)
@@ -1875,7 +1918,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
             }}>
               {t.common.cancel}
             </Button>
-            <Button onClick={() => runBusy('save-vacation', handleSaveVacationEdit)} loading={busyAction === 'save-vacation'} className="gap-2">
+            <Button onClick={handleSaveVacationEdit} className="gap-2">
               <Check size={18} weight="bold" />
               {t.managerPanel.dialogs.editVacation.saveChanges}
             </Button>
@@ -1967,7 +2010,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
         </DialogContent>
       </Dialog>
 
-      <Dialog open={isCreateDialogOpen} onOpenChange={(open) => { if (!createUserInProgress.current) setIsCreateDialogOpen(open) }}>
+      <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>{t.managerPanel.dialogs.createUser.title}</DialogTitle>
@@ -2029,9 +2072,9 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
             }}>
               {t.common.cancel}
             </Button>
-            <Button onClick={handleCreateUser} loading={isCreatingUser} className="gap-2">
+            <Button onClick={handleCreateUser} className="gap-2">
               <Plus size={18} weight="bold" />
-              {isCreatingUser ? language === 'da' ? 'Gemmer…' : language === 'fi' ? 'Tallennetaan…' : language === 'sv' ? 'Sparar…' : 'Saving…' : t.managerPanel.dialogs.createUser.submit}
+              {t.managerPanel.dialogs.createUser.submit}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2320,34 +2363,27 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
         open={isManualGrantDialogOpen}
         onOpenChange={setIsManualGrantDialogOpen}
         managerEmail={userEmail}
-        onSuccess={loadVacationEntries}
+        onGranted={showGrantedVacation}
       />
 
       <ParentalLeaveDialog
         open={isParentalDialogOpen}
         onOpenChange={setIsParentalDialogOpen}
         managerEmail={userEmail}
-        onSuccess={loadVacationEntries}
+        onGranted={showGrantedVacation}
       />
 
       <OnboardingWizard
         open={isOnboardingOpen}
         onOpenChange={setIsOnboardingOpen}
-        onCompleted={() => {
-          loadUsers()
-          loadBirthdays()
-        }}
+        onCreating={showOnboardedAccount}
       />
 
       <OffboardingWizard
         open={isOffboardingOpen}
         onOpenChange={setIsOffboardingOpen}
         currentUserEmail={userEmail}
-        onCompleted={() => {
-          loadUsers()
-          loadBirthdays()
-          loadVacationEntries()
-        }}
+        onRemoving={showOffboardedAccount}
       />
 
       <Dialog open={isEditBirthdayDialogOpen} onOpenChange={setIsEditBirthdayDialogOpen}>
@@ -2390,7 +2426,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
             }}>
               {t.common.cancel}
             </Button>
-            <Button onClick={() => runBusy('save-birthday', handleSaveBirthday)} loading={busyAction === 'save-birthday'} className="gap-2">
+            <Button onClick={handleSaveBirthday} className="gap-2">
               <Check size={18} weight="bold" />
               {t.managerPanel.dialogs.editBirthday.saveButton}
             </Button>

@@ -22,7 +22,7 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Plus, X, ArrowUp, ArrowDown, Image as ImageIcon, Timer,
-  ClockCounterClockwise, ArrowCounterClockwise, ArrowClockwise, FileDoc, FilePdf, Upload, Trash, Eye, Buildings, FloppyDisk,
+  ClockCounterClockwise, ArrowCounterClockwise, ArrowClockwise, FileDoc, FilePdf, Upload, Trash, Eye, Buildings, FloppyDisk, CircleNotch,
 } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -37,6 +37,7 @@ import {
 } from '@/lib/guideTypes'
 import { detectLanguage, type GuideLanguage } from '@/lib/translator'
 import { bumpVersion, getVersionHistory, saveDraft, getDraft, deleteDraft } from '@/lib/guideStore'
+import { trackPendingWrite } from '@/lib/pendingWrites'
 import type { GuideImportDraft } from '@/lib/docxImporter'
 import { wordPdfErrorMessage } from '@/lib/wordPdfErrors'
 import { useLibraryLanguage } from '@/contexts/LibraryContext'
@@ -50,7 +51,13 @@ import { GUIDE_RICH_TEXT_LABELS } from '@/lib/guideRichTextLabels'
 interface GuideEditorProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onSave: (guide: Guide, changeNote?: string) => void | Promise<void>
+  /**
+   * Gemmer guiden. `draft` er editorens indhold som kladde: den, der gemmer, sletter kladden når
+   * guiden er gemt og beholder den, hvis gemningen fejler. Returnerer false for at holde editoren åben.
+   */
+  onSave: (guide: Guide, changeNote: string | undefined, draft: GuideDraft) => void | boolean | Promise<void | boolean>
+  /** Gemmer (draft) eller sletter (null) kladden for guideId i baggrunden og viser det med det samme. */
+  onDraftChange?: (guideId: string, draft: GuideDraft | null) => void
   editGuide?: Guide
   categories: string[]
   /** Opretter en ny kategori i det delte kategorisæt og returnerer om det lykkedes. */
@@ -121,7 +128,7 @@ function ImageThumb({ imageId, onRemove, onRotate }: { imageId: string; onRemove
           aria-label={t.guideEditor.rotateImage}
           title={t.guideEditor.rotateImage}
         >
-          <ArrowClockwise size={16} />
+          <ArrowClockwise size={16} className={cn(rotating && 'animate-spin')} />
         </button>
       )}
     </div>
@@ -142,16 +149,13 @@ function ImageDropZone({ onUploaded, compact }: { onUploaded: (fileIds: string[]
       return
     }
     setIsUploading(true)
-    const ids: string[] = []
-    for (const file of images) {
-      try {
-        const stored = await fileStorage.uploadImage(file)
-        ids.push(stored.fileId)
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : t.guideEditor.uploadImageFailed)
-      }
-    }
+    // Samtidig i stedet for ét billede ad gangen – hver upload er en rundtur til det delte drev.
+    const results = await Promise.all(images.map((file) => fileStorage.uploadImage(file).then((stored) => stored.fileId, (error) => {
+      toast.error(error instanceof Error ? error.message : t.guideEditor.uploadImageFailed)
+      return null
+    })))
     setIsUploading(false)
+    const ids = results.filter((id): id is string => id !== null)
     if (ids.length > 0) onUploaded(ids)
   }, [onUploaded])
 
@@ -197,14 +201,19 @@ function ImageDropZone({ onUploaded, compact }: { onUploaded: (fileIds: string[]
           e.target.value = ''
         }}
       />
-      <ImageIcon size={compact ? 22 : 20} />
+      {isUploading ? <CircleNotch size={compact ? 22 : 20} className="animate-spin" aria-label={t.guideEditor.uploading} /> : <ImageIcon size={compact ? 22 : 20} />}
       {!compact && <span className="text-xs font-medium">{isUploading ? t.guideEditor.uploading : t.guideEditor.dropImagesHint}</span>}
     </div>
   )
 }
 
-export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories, onCreateCategory, importDraft, resumeDraft, userEmail, users = [], linkTargets = [], linkCatalog = linkTargets, preserveVersion = false, submitLabel, titleOverride, descriptionOverride }: GuideEditorProps) {
+export function GuideEditor({ open, onOpenChange, onSave, onDraftChange, editGuide, categories, onCreateCategory, importDraft, resumeDraft, userEmail, users = [], linkTargets = [], linkCatalog = linkTargets, preserveVersion = false, submitLabel, titleOverride, descriptionOverride }: GuideEditorProps) {
   const { t, language: appLanguage, kind } = useLibraryLanguage()
+  const changeDraft = useCallback((guideId: string, draft: GuideDraft | null) => {
+    if (onDraftChange) { onDraftChange(guideId, draft); return }
+    void trackPendingWrite(draft ? saveDraft(draft, kind) : deleteDraft(guideId, kind))
+      .catch((error) => console.error('Kunne ikke gemme/slette guide-kladde:', error))
+  }, [onDraftChange, kind])
   const richLabels = GUIDE_RICH_TEXT_LABELS[appLanguage]
   const [title, setTitle] = useState('')
   const [category, setCategory] = useState<string>(categories[0] || 'General')
@@ -383,22 +392,23 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
       || sections.some((s) => s.heading.trim() || s.steps.some((st) => st.text.trim() || st.imageIds.length > 0))
   }, [open, migrated, title, category, tags, sections, coverImageId, reviewInterval, nextReviewDate, responsibleEmail, wordFile, stagedWordFile, removeWordAttachment, preserveWordLayout, originalPdf, restoredVersionFields, otherTeamCodes, currentTeamCode, userEmail])
 
-  const cleanupSessionImages = useCallback(async () => {
-    for (const id of sessionImagesRef.current) {
-      try { await fileStorage.deleteFile(`kv://${id}`) } catch { /* allerede væk */ }
-    }
+  const cleanupSessionImages = useCallback(() => {
+    // Samtidige sletninger i baggrunden – brugeren skal ikke vente paa oprydningen.
+    const urls = [
+      ...sessionImagesRef.current.map((id) => `kv://${id}`),
+      ...(sessionPdfRef.current ? [sessionPdfRef.current] : []),
+    ]
     sessionImagesRef.current = []
-    if (sessionPdfRef.current) {
-      try { await fileStorage.deleteFile(sessionPdfRef.current) } catch { /* allerede væk */ }
-      sessionPdfRef.current = null
-    }
+    sessionPdfRef.current = null
+    if (urls.length === 0) return
+    void trackPendingWrite(Promise.all(urls.map((url) => fileStorage.deleteFile(url).catch(() => { /* allerede væk */ }))))
   }, [])
 
   const discardDraft = useCallback(() => {
     draftGenerationRef.current++
     setDetectedDraft(null)
-    void deleteDraft(draftId, kind)
-  }, [draftId])
+    changeDraft(draftId, null)
+  }, [draftId, changeDraft])
 
   const currentDraft = useCallback((): GuideDraft => ({
     guideId: draftId,
@@ -457,12 +467,21 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
   // Forlader man editoren uden at gemme, skal arbejdet kunne findes igen. Derfor
   // beholdes BAADE kladden og de billeder der er uploadet undervejs - ryddes de
   // som "ubrugte", peger kladden bagefter paa billeder der ikke findes.
-  const keepAsDraft = useCallback(async () => {
+  // Venter kun paa en nyvalgt Word-fils upload (kladden skal pege paa den gemte fil);
+  // selve kladden gemmes i baggrunden af changeDraft.
+  const prepareDraftToKeep = useCallback(async (): Promise<GuideDraft> => {
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
+    draftGenerationRef.current++
     sessionImagesRef.current = []
     sessionPdfRef.current = null
-    await saveCurrentDraft()
-  }, [saveCurrentDraft])
+    const stored = wordFile ? await stageWordFile(wordFile) : stagedWordFile
+    return {
+      ...currentDraft(),
+      wordFileUrl: stored?.url,
+      wordFileName: stored?.filename,
+      wordFileSize: stored?.size,
+    }
+  }, [wordFile, stagedWordFile, stageWordFile, currentDraft])
 
   const restoreDraft = () => {
     if (!detectedDraft) return
@@ -503,7 +522,9 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
   useUnsavedChanges({
     hasUnsavedChanges,
     onConfirmedExit: () => {
-      void keepAsDraft().catch((error) => console.error('Kunne ikke gemme guide-kladde:', error))
+      void prepareDraftToKeep()
+        .then((draft) => changeDraft(draft.guideId, draft))
+        .catch((error) => console.error('Kunne ikke gemme guide-kladde:', error))
       onOpenChange(false)
     },
     enabled: open,
@@ -570,14 +591,14 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
     return stored.fileId
   }
 
-  const removeStepImage = async (sectionId: string, stepId: string, imageId: string) => {
+  const removeStepImage = (sectionId: string, stepId: string, imageId: string) => {
     setSections((prev) => prev.map((s) => s.id === sectionId
       ? { ...s, steps: s.steps.map((st) => (st.id === stepId ? { ...st, imageIds: st.imageIds.filter((i) => i !== imageId) } : st)) }
       : s))
     // Kun billeder fra denne session slettes fysisk — gemte billeder kan indgå i versionshistorik.
     if (sessionImagesRef.current.includes(imageId)) {
       sessionImagesRef.current = sessionImagesRef.current.filter((i) => i !== imageId)
-      try { await fileStorage.deleteFile(`kv://${imageId}`) } catch { /* ignorér */ }
+      void trackPendingWrite(fileStorage.deleteFile(`kv://${imageId}`)).catch(() => { /* ignorér */ })
     }
   }
 
@@ -731,14 +752,29 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
       let wordFileName = removeWordAttachment ? undefined : (restoredVersionFields ? restoredVersionFields.wordFileName : migrated?.wordFileName)
       let fileSize = removeWordAttachment ? undefined : (restoredVersionFields ? restoredVersionFields.fileSize : migrated?.fileSize)
       let previewPdfUrl = removeWordAttachment ? undefined : (restoredVersionFields ? restoredVersionFields.previewPdfUrl : migrated?.previewPdfUrl)
-      if (preserveWordLayout && (wordFile || stagedWordFile || !previewPdfUrl)) {
-        if (!window.electronGuides?.renderPdf) throw new Error('PDF-visning kræver appens lokale dokumentkonverter')
-        const original = wordFile || await fileStorage.downloadFile(stagedWordFile?.url || retainedFileUrl!)
-        const pdf = await window.electronGuides.renderPdf({ data: await original.arrayBuffer() })
-        const preview = await fileStorage.uploadPdf(new File([pdf], `${title.trim()}.pdf`, { type: 'application/pdf' }))
-        previewPdfUrl = preview.url
+      const needsPreview = preserveWordLayout && Boolean(wordFile || stagedWordFile || !previewPdfUrl)
+      if (needsPreview && !window.electronGuides?.renderPdf) throw new Error('PDF-visning kræver appens lokale dokumentkonverter')
+      // Word-filens upload og PDF-visningskopien er uafhaengige, saa de koerer samtidig
+      // i stedet for to lange rundture til det delte drev efter hinanden.
+      const previewUpload: Promise<string | undefined> = needsPreview
+        ? (async () => {
+            const original = wordFile || await fileStorage.downloadFile(stagedWordFile?.url || retainedFileUrl!)
+            const pdf = await window.electronGuides!.renderPdf({ data: await original.arrayBuffer() })
+            const preview = await fileStorage.uploadPdf(new File([pdf], `${title.trim()}.pdf`, { type: 'application/pdf' }))
+            return preview.url
+          })()
+        : Promise.resolve(previewPdfUrl)
+      let stored: StoredFile | null
+      try {
+        [stored, previewPdfUrl] = await Promise.all([
+          wordFile ? stageWordFile(wordFile) : Promise.resolve(stagedWordFile),
+          previewUpload,
+        ])
+      } catch (error) {
+        // En visningskopi, der blev faerdig selvom Word-filen fejlede, bruges aldrig.
+        if (needsPreview) void previewUpload.then((url) => { if (url) void fileStorage.deleteFile(url).catch(() => {}) }, () => {})
+        throw error
       }
-      const stored = wordFile ? await stageWordFile(wordFile) : stagedWordFile
       if (stored) {
         // Den gamle vedhæftning tilhører fortsat den udgivne version, indtil
         // revisionen er godkendt, og må derfor ikke slettes her.
@@ -781,12 +817,31 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
         sharedWithTeamCodes: resolveSharedWithTeamCodes(),
       }
 
+      const draft: GuideDraft = {
+        ...currentDraft(),
+        wordFileUrl: stored?.url,
+        wordFileName: stored?.filename,
+        wordFileSize: stored?.size,
+      }
+      const keptSessionImages = sessionImagesRef.current
+      const keptSessionPdf = sessionPdfRef.current
       sessionImagesRef.current = []
       sessionPdfRef.current = null
-      await onSave(guide, changeNote.trim() || undefined)
+      let result: void | boolean
+      try {
+        result = await onSave(guide, changeNote.trim() || undefined, draft)
+      } catch (error) {
+        sessionImagesRef.current = keptSessionImages
+        sessionPdfRef.current = keptSessionPdf
+        throw error
+      }
+      if (result === false) {
+        sessionImagesRef.current = keptSessionImages
+        sessionPdfRef.current = keptSessionPdf
+        return
+      }
       draftGenerationRef.current++
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
-      await deleteDraft(draftId, kind)
       onOpenChange(false)
     } catch (error) {
       console.error('Kunne ikke gemme guide:', error)
@@ -802,7 +857,9 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
     manualSaveInProgress.current = true
     setIsSavingDraft(true)
     try {
-      await keepAsDraft()
+      // Venter kun hvis en nyvalgt Word-fil stadig uploades; selve kladden gemmes i baggrunden.
+      const draft = await prepareDraftToKeep()
+      changeDraft(draft.guideId, draft)
       toast.success(t.guideEditor.draftSaved)
       onOpenChange(false)
     } catch {
@@ -1253,7 +1310,7 @@ export function GuideEditor({ open, onOpenChange, onSave, editGuide, categories,
 
         <DialogFooter className="px-6 py-4 border-t flex-shrink-0">
           {linkWarnings.length > 0 && <p role="status" className="mr-auto text-xs text-amber-700 dark:text-amber-300">{richLabels.linkWarnings}: {linkWarnings.length}</p>}
-          <Button variant="outline" onClick={() => { draftGenerationRef.current++; if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); cleanupSessionImages(); void deleteDraft(draftId, kind); onOpenChange(false) }} disabled={isSaving || isSavingDraft}>
+          <Button variant="outline" onClick={() => { draftGenerationRef.current++; if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); cleanupSessionImages(); changeDraft(draftId, null); onOpenChange(false) }} disabled={isSaving || isSavingDraft}>
             {t.common.cancel}
           </Button>
           <Button variant="outline" onClick={() => setPreviewOpen(true)} disabled={isSaving || isSavingDraft} className="gap-2">

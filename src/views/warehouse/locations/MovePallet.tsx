@@ -8,7 +8,8 @@ import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { errorCode, errorMessage } from '@/lib/warehouse/errors'
 import { formatNumber } from '@/lib/warehouse/format'
-import { deferredText, formatAge, isDeferred, isShelfPlace, locationKeyOf, materialLabel, newActionId, palletLimitOf, reasonLabel, shownQuantity, singleFlight } from '@/lib/warehouse/locations'
+import { movedInList, moveTargetCheck, sendLocationAction, startLocationsRead } from '@/lib/warehouse/locationActions'
+import { formatAge, isShelfPlace, locationKeyOf, materialLabel, newActionId, reasonLabel, shownQuantity, singleFlight } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
 import type { LocationList, PalletView, SlotSuggestion, StockLineView } from '@/types/warehouse'
 
@@ -24,19 +25,28 @@ export function MovePallet({ pallet: initialPallet, version, onDone }: { pallet?
   const [target, setTarget] = useState('')
   const [slots, setSlots] = useState<SlotSuggestion[]>([])
   const [places, setPlaces] = useState<Record<string, LocationList['locations'][number]>>({})
-  const [busy, setBusy] = useState(false)
   const [moved, setMoved] = useState<string | null>(null)
   // A lagerhylde scanned: its lines, the chosen line, how many, and the new shelf.
   const [shelf, setShelf] = useState<{ name: string; lines: StockLineView[] } | null>(null)
   const [line, setLine] = useState<StockLineView | null>(null)
   const [amount, setAmount] = useState('')
+  // What is chosen now: a refused move puts its choice back only when nothing else has been chosen since.
+  const chosenRef = useRef<PalletView | null>(null)
+  const shelfRef = useRef<{ name: string; lines: StockLineView[] } | null>(null)
+  chosenRef.current = pallet
+  shelfRef.current = shelf
   const once = useRef(singleFlight()).current
   const bridge = window.electronWarehouse!.locations
 
-  // Every place (for the target check: reserved, pick place, full).
+  // Every place (for the target check: reserved, pick place, full). A read during this PC's own move is older than the screen.
   useEffect(() => {
     let current = true
-    bridge.list().then(result => { if (current) setPlaces(Object.fromEntries(result.locations.map(location => [location.id, location]))) }).catch(() => {})
+    const fresh = startLocationsRead()
+    bridge.list().then(result => {
+      if (!current) return
+      const next = Object.fromEntries(result.locations.map(location => [location.id, location]))
+      setPlaces(value => (Object.keys(value).length && !fresh() ? value : next))
+    }).catch(() => {})
     return () => { current = false }
   }, [bridge, version])
 
@@ -89,17 +99,7 @@ export function MovePallet({ pallet: initialPallet, version, onDone }: { pallet?
   }
 
   const targetPlace = places[locationKeyOf(target)] || null
-  const full = (place: LocationList['locations'][number]) => place.purpose === 'reserve' && place.used >= palletLimitOf(place)
-  const targetNote = !target.trim() ? null
-    : !targetPlace ? t(`${target.trim().toUpperCase()} findes ikke`, `${target.trim().toUpperCase()} does not exist`)
-    : targetPlace.id === pallet?.location ? t('Pallen står der allerede', 'The pallet is already there')
-    : targetPlace.purpose === 'reserved' || targetPlace.purpose === 'station' ? t(`${targetPlace.name} kan ikke tage paller`, `${targetPlace.name} cannot take pallets`)
-    : !targetPlace.active ? t(`${targetPlace.name} er deaktiveret`, `${targetPlace.name} is deactivated`)
-    : isShelfPlace(targetPlace) ? t(`${targetPlace.name} er en hylde – brug Læg på hylde`, `${targetPlace.name} is a shelf – use Put on shelf`)
-    : full(targetPlace) ? t(`${targetPlace.name} er fuld – vælg en anden plads`, `${targetPlace.name} is full – choose another place`)
-    : targetPlace.purpose === 'pick' ? t(`${targetPlace.name} er en pluk-plads – pallen bruges op der`, `${targetPlace.name} is a pick place – the pallet is used up there`)
-    : null
-  const blocked = !targetPlace || targetPlace.id === pallet?.location || targetPlace.purpose === 'reserved' || targetPlace.purpose === 'station' || !targetPlace.active || isShelfPlace(targetPlace) || full(targetPlace)
+  const { note: targetNote, blocked } = moveTargetCheck(target, targetPlace, pallet?.location)
 
   // Moving goods between shelves: the new shelf must be another active lagerhylde.
   const shelfTarget = places[locationKeyOf(target)] || null
@@ -112,45 +112,48 @@ export function MovePallet({ pallet: initialPallet, version, onDone }: { pallet?
   const moveAmount = shownQuantity(amount, line?.quantity ?? 0)
   const shelfBlocked = !line || !shelfTarget || Boolean(shelfNote) || moveAmount < 1 || moveAmount > (line?.quantity ?? 0)
 
+  // Shown at once and sent in the background (15-40 s on M:); a refusal puts the choice back so another can be made.
   const moveFromShelf = () => once(async () => {
     if (!shelf || !line || !shelfTarget || shelfBlocked) return
-    setBusy(true)
-    try {
-      const result = await bridge.shelfMove({ actionId: newActionId(), label: t(`Flyt ${line.material} fra ${shelf.name} til ${shelfTarget.name}`, `Move ${line.material} from ${shelf.name} to ${shelfTarget.name}`), from: line.location, to: shelfTarget.id, material: line.material, quantity: moveAmount })
-      if (isDeferred(result)) toast.warning(deferredText(result))
-      else toast.success(t(`${formatNumber(moveAmount)} stk. flyttet fra ${shelf.name} til ${shelfTarget.name}`, `${formatNumber(moveAmount)} pcs moved from ${shelf.name} to ${shelfTarget.name}`))
-      setMoved(`${materialLabel(line.material, line.description)}: ${shelf.name} → ${shelfTarget.name} (${formatNumber(moveAmount)})`)
-      setShelf(null)
-      setLine(null)
-      setAmount('')
-      setTarget('')
-      setQuery('')
-      onDone()
-    } catch (error) {
-      toast.error(errorMessage(error))
-    } finally {
-      setBusy(false)
-    }
+    const [from, chosen, quantity, to] = [shelf, line, moveAmount, shelfTarget]
+    const text = `${materialLabel(chosen.material, chosen.description)}: ${from.name} → ${to.name} (${formatNumber(quantity)})`
+    setMoved(text)
+    setShelf(null)
+    setLine(null)
+    setAmount('')
+    setTarget('')
+    setQuery('')
+    void sendLocationAction(() => bridge.shelfMove({ actionId: newActionId(), label: t(`Flyt ${chosen.material} fra ${from.name} til ${to.name}`, `Move ${chosen.material} from ${from.name} to ${to.name}`), from: chosen.location, to: to.id, material: chosen.material, quantity }), {
+      success: t(`${formatNumber(quantity)} stk. flyttet fra ${from.name} til ${to.name}`, `${formatNumber(quantity)} pcs moved from ${from.name} to ${to.name}`),
+      rollback: () => {
+        setMoved(value => (value === text ? null : value))
+        if (!chosenRef.current && !shelfRef.current) { setShelf(from); setLine(chosen) }
+      },
+      settled: onDone,
+    })
   })
 
-  async function move() {
+  function move() {
     if (!pallet || !targetPlace || blocked) return
-    setBusy(true)
-    try {
-      const result = await bridge.move({ actionId: newActionId(), label: t(`Flyt ${pallet.material} fra ${pallet.location} til ${targetPlace.name}`, `Move ${pallet.material} from ${pallet.location} to ${targetPlace.name}`), pallet: pallet.id, to: targetPlace.id })
-      if (isDeferred(result)) toast.warning(deferredText(result))
-      else toast.success(t(`${pallet.material} er flyttet fra ${pallet.location} til ${targetPlace.name}`, `${pallet.material} moved from ${pallet.location} to ${targetPlace.name}`))
-      setMoved(t(`${materialLabel(pallet.material, pallet.description)}: ${pallet.location} → ${targetPlace.name}`, `${materialLabel(pallet.material, pallet.description)}: ${pallet.location} → ${targetPlace.name}`))
-      setPallet(null)
-      setCandidates(null)
-      setTarget('')
-      setQuery('')
-      onDone()
-    } catch (error) {
-      toast.error(errorCode(error) === 'LOCATION_FULL' ? t(`${targetPlace.name} er fuld – vælg en anden plads`, `${targetPlace.name} is full – choose another place`) : errorMessage(error))
-    } finally {
-      setBusy(false)
-    }
+    const [chosen, to, list] = [pallet, targetPlace, candidates]
+    const text = `${materialLabel(chosen.material, chosen.description)}: ${chosen.location} → ${to.name}`
+    setMoved(text)
+    setPallet(null)
+    setCandidates(null)
+    setTarget('')
+    setQuery('')
+    // The places count the move at once, so the next pallet cannot be sent to a place that just became full.
+    setPlaces(value => movedInList(value, chosen.location, to.id))
+    void sendLocationAction(() => bridge.move({ actionId: newActionId(), label: t(`Flyt ${chosen.material} fra ${chosen.location} til ${to.name}`, `Move ${chosen.material} from ${chosen.location} to ${to.name}`), pallet: chosen.id, to: to.id }), {
+      success: t(`${chosen.material} er flyttet fra ${chosen.location} til ${to.name}`, `${chosen.material} moved from ${chosen.location} to ${to.name}`),
+      failure: error => (errorCode(error) === 'LOCATION_FULL' ? t(`${to.name} er fuld – vælg en anden plads`, `${to.name} is full – choose another place`) : errorMessage(error)),
+      rollback: () => {
+        setMoved(value => (value === text ? null : value))
+        setPlaces(value => movedInList(value, to.id, chosen.location))
+        if (!chosenRef.current && !shelfRef.current) { setPallet(chosen); setCandidates(list) }
+      },
+      settled: onDone,
+    })
   }
 
   return (
@@ -212,7 +215,7 @@ export function MovePallet({ pallet: initialPallet, version, onDone }: { pallet?
                 <Input autoFocus value={target} onChange={event => setTarget(event.target.value.toUpperCase())} onKeyDown={event => { if (event.key === 'Enter') void moveFromShelf() }}
                   placeholder="E9 H2" className="h-11 w-44 font-mono" aria-label={t('Ny hylde', 'New shelf')} />
                 <ArrowRight size={18} className="text-muted-foreground" />
-                <Button size="lg" onClick={() => moveFromShelf()} disabled={shelfBlocked} loading={busy}><ArrowsLeftRight size={18} /> {t('Flyt', 'Move')}</Button>
+                <Button size="lg" onClick={() => void moveFromShelf()} disabled={shelfBlocked}><ArrowsLeftRight size={18} /> {t('Flyt', 'Move')}</Button>
               </div>
             )}
             {shelfNote && <p className="flex items-center gap-1.5 text-sm text-destructive"><Warning size={14} /> {shelfNote}</p>}
@@ -231,7 +234,7 @@ export function MovePallet({ pallet: initialPallet, version, onDone }: { pallet?
               <Input autoFocus value={target} onChange={event => setTarget(event.target.value.toUpperCase())} onKeyDown={event => { if (event.key === 'Enter') void move() }}
                 placeholder={t('Scan eller skriv ny plads', 'Scan or type the new place')} className="h-11 w-56 font-mono" aria-label={t('Ny plads', 'New place')} />
               <ArrowRight size={18} className="text-muted-foreground" />
-              <Button size="lg" onClick={() => move()} disabled={blocked} loading={busy}><ArrowsLeftRight size={18} /> {t('Flyt', 'Move')}</Button>
+              <Button size="lg" onClick={() => move()} disabled={blocked}><ArrowsLeftRight size={18} /> {t('Flyt', 'Move')}</Button>
             </div>
             {targetNote && <p className={cn('flex items-center gap-1.5 text-sm', blocked ? 'text-destructive' : 'text-amber-700 dark:text-amber-400')}><Warning size={14} /> {targetNote}</p>}
             {slots.length > 0 && (

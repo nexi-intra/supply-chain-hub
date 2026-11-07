@@ -19,6 +19,7 @@ import { getMultiplayerLabels } from '@/lib/multiplayerLabels'
 import { advantage, parseFen, pendingStillValid, type PendingMove, type Side } from '@/lib/chessView'
 import { canMove, multiplayerErrorInfo, newOperationId, opponentOf, outcomeFor } from '@/lib/multiplayerView'
 import { isAnyDialogOpen } from '@/lib/modalStack'
+import { createGameCommandQueue } from '@/lib/gameCommandQueue'
 import { reactionScope } from '@/lib/multiplayerReactions'
 import { createChessAudio, loadChessSound, saveChessSound, type ChessSound } from './audio'
 import { ChessBoard } from './ChessBoard'
@@ -58,6 +59,8 @@ export const ChessGame = memo(function ChessGame({ gameId, myEmail, teamName, un
   const gameRef = useRef<MultiplayerChessGame | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const busyRef = useRef(false)
+  const [commands] = useState(createGameCommandQueue)
   const [sendingMove, setSendingMove] = useState(false)
   const inFlight = useRef(false)
   const dirty = useRef(false)
@@ -130,29 +133,35 @@ export const ChessGame = memo(function ChessGame({ gameId, myEmail, teamName, un
     return () => document.body.removeAttribute('data-game-active')
   }, [])
 
-  const run = useCallback(async (build: (revision: number) => MultiplayerCommand): Promise<boolean> => {
-    const current = gameRef.current
-    if (!api || !current || inFlight.current) return false
+  const run = useCallback(async (build: (revision: number) => MultiplayerCommand, { quiet = false }: { quiet?: boolean } = {}): Promise<boolean> => {
+    // A second move/offer while one is on its way is a double click; a chat message (quiet) never locks the board.
+    if (!api || !gameRef.current || (!quiet && busyRef.current)) return false
+    if (!quiet) { busyRef.current = true; setBusy(true) }
     inFlight.current = true
-    setBusy(true)
     try {
-      const result = await api.command(build(current.revision))
-      if (result.game) applyGame(result.game)
-      return true
-    } catch (error) {
-      toast.error(errorText(error))
-      const code = multiplayerErrorInfo(error).code
-      if (code === 'MULTIPLAYER_CONFLICT' || code === 'MULTIPLAYER_STATE' || code === 'MULTIPLAYER_NOT_YOUR_TURN' || code === 'MULTIPLAYER_INVALID_MOVE') void load()
-      return false
+      return await commands.enqueue(async () => {
+        const current = gameRef.current
+        if (!current) return false
+        try {
+          const result = await api.command(build(current.revision))
+          if (result.game) applyGame(result.game)
+          return true
+        } catch (error) {
+          toast.error(errorText(error))
+          const code = multiplayerErrorInfo(error).code
+          if (code === 'MULTIPLAYER_CONFLICT' || code === 'MULTIPLAYER_STATE' || code === 'MULTIPLAYER_NOT_YOUR_TURN' || code === 'MULTIPLAYER_INVALID_MOVE') void load()
+          return false
+        }
+      })
     } finally {
-      inFlight.current = false
-      setBusy(false)
-      if (dirty.current) {
+      inFlight.current = commands.active()
+      if (!quiet) { busyRef.current = false; setBusy(false) }
+      if (!inFlight.current && dirty.current) {
         dirty.current = false
         void load()
       }
     }
-  }, [api, applyGame, errorText, load])
+  }, [api, applyGame, errorText, load, commands])
 
   // Acknowledge this game's notifications while the match is on screen.
   const acknowledged = useRef(new Set<string>())
@@ -234,7 +243,7 @@ export const ChessGame = memo(function ChessGame({ gameId, myEmail, teamName, un
     }
   }
 
-  const sendChat = useCallback((text: string) => run(() => ({ operationId: newOperationId(), type: 'chat', gameId, text })), [run, gameId])
+  const sendChat = useCallback((text: string) => run(() => ({ operationId: newOperationId(), type: 'chat', gameId, text }), { quiet: true }), [run, gameId])
 
   // The room shows our emoji at once; this only stores it for the opponent.
   const sendReaction = async (emoji: MultiplayerReactionEmoji) => {
@@ -263,8 +272,9 @@ export const ChessGame = memo(function ChessGame({ gameId, myEmail, teamName, un
   const focusBoard = () => document.querySelector<HTMLElement>('.cx-room .cx-grid')?.focus({ preventScroll: true })
   const confirmPending = useStableCallback(() => {
     const move = pendingRef.current
-    // Another command is still running: keep the move staged so the player can confirm again.
-    if (!move || busy || inFlight.current) return
+    // Another move/offer is still running: keep the move staged so the player can confirm again. (A chat message
+    // on its way does not count - the move queues behind it.)
+    if (!move || busyRef.current) return
     // Cleared before sending so a double click or a repeated Enter cannot send the move twice.
     pendingRef.current = null
     setPending(null)
@@ -318,9 +328,9 @@ export const ChessGame = memo(function ChessGame({ gameId, myEmail, teamName, un
 
   const rematch = async () => {
     const current = gameRef.current
-    if (!api || !current || inFlight.current) return
+    if (!api || !current || busyRef.current) return
     const opponent = opponentOf(current, myEmail)
-    inFlight.current = true
+    busyRef.current = true
     setBusy(true)
     try {
       await api.command({ operationId: newOperationId(), type: 'challenge', opponentEmail: opponent.email, gameType: 'chess', color: current.chess.myColor === 'white' ? 'black' : 'white' })
@@ -329,7 +339,7 @@ export const ChessGame = memo(function ChessGame({ gameId, myEmail, teamName, un
     } catch (error) {
       toast.error(errorText(error))
     } finally {
-      inFlight.current = false
+      busyRef.current = false
       setBusy(false)
     }
   }

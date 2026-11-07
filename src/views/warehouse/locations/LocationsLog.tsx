@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ArrowCounterClockwise, MagnifyingGlass } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -10,9 +10,10 @@ import { NativeSelect } from '@/components/warehouse/ui'
 import { cn } from '@/lib/utils'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { formatDateTime, formatTime } from '@/lib/warehouse/format'
-import { deferredText, describeEvent, describeUndoEffect, isDeferred, newActionId, type LocationsTarget } from '@/lib/warehouse/locations'
+import { sendLocationAction, startLocationsRead } from '@/lib/warehouse/locationActions'
+import { describeEvent, describeUndoEffect, newActionId, type LocationsTarget } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
-import type { LocationEventType, LocationLog } from '@/types/warehouse'
+import type { LocationEventType, LocationLog, WarehouseUser } from '@/types/warehouse'
 
 type Line = LocationLog['events'][number]
 
@@ -40,39 +41,48 @@ const PERIODS = (): { days: number; label: string }[] => [
 const targetOf = (line: Line): LocationsTarget | null => (line.pallet ? { kind: 'pallet', id: line.pallet } : line.location ? { kind: 'location', id: line.location } : line.material ? { kind: 'material', id: line.material } : null)
 
 /** Everything that happened in Placeringer, newest first; managers and Placerings admins undo one action at a time. */
-export function LocationsLog({ query: initial, version, onOpen, onChanged }: { query?: string; version: number; onOpen: (target: LocationsTarget) => void; onChanged: () => void }) {
+export function LocationsLog({ query: initial, user, version, onOpen, onChanged }: { query?: string; user: WarehouseUser; version: number; onOpen: (target: LocationsTarget) => void; onChanged: () => void }) {
   const [log, setLog] = useState<LocationLog | null>(null)
   const [query, setQuery] = useState(initial || '')
   const [person, setPerson] = useState('')
   const [type, setType] = useState<LocationEventType | ''>('')
   const [days, setDays] = useState(7)
   const [confirm, setConfirm] = useState<Line | null>(null)
-  const [busy, setBusy] = useState(false)
   const bridge = window.electronWarehouse!.locations
 
+  // The filters the shown log was read with: a read for other filters always replaces it.
+  const shownFilters = useRef('')
   useEffect(() => {
     let current = true
+    const filters = JSON.stringify([query.trim(), person, type, days])
     const timer = window.setTimeout(() => {
+      // A re-read during an undo on its way to M: is older than the log, which already shows it undone.
+      const fresh = startLocationsRead()
       bridge.log({ query: query.trim() || undefined, person: person || undefined, type: type || undefined, days })
-        .then(result => { if (current) setLog(result) })
+        .then(result => {
+          if (!current || (shownFilters.current === filters && !fresh())) return
+          shownFilters.current = filters
+          setLog(result)
+        })
         .catch(error => toast.error(errorMessage(error)))
     }, 200)
     return () => { current = false; window.clearTimeout(timer) }
   }, [bridge, query, person, type, days, version])
 
-  async function undo(line: Line) {
-    setBusy(true)
-    try {
-      const result = await bridge.undo({ actionId: newActionId(), label: t(`Fortryd: ${describeEvent(line)}`, `Undo: ${describeEvent(line)}`), eventId: line.id })
-      if (isDeferred(result)) toast.warning(deferredText(result))
-      else toast.success(t('Handlingen er fortrudt', 'The action has been undone'), { description: describeEvent(line) })
-      setConfirm(null)
-      onChanged()
-    } catch (error) {
-      toast.error(errorMessage(error))
-    } finally {
-      setBusy(false)
-    }
+  // The log offers an undo only when the backend has checked it can be done, so it shows as undone at once; M: does it in
+  // the background (15-40 s) and the log is read again then. A refusal (someone changed it meanwhile) is shown.
+  function undo(line: Line) {
+    setConfirm(null)
+    const tx = line.tx || line.id
+    const at = Date.now()
+    const by = { email: user.email, name: user.fullName || user.email }
+    const mark = (undone: boolean) => setLog(value => value && { ...value, events: value.events.map(event => ((event.tx || event.id) === tx ? (undone ? { ...event, undoneAt: at, undoneBy: by } : { ...event, undoneAt: undefined, undoneBy: undefined }) : event)) })
+    mark(true)
+    void sendLocationAction(() => bridge.undo({ actionId: newActionId(), label: t(`Fortryd: ${describeEvent(line)}`, `Undo: ${describeEvent(line)}`), eventId: line.id, at: line.at }), {
+      success: t('Handlingen er fortrudt', 'The action has been undone'),
+      rollback: () => mark(false),
+      settled: onChanged,
+    })
   }
 
   return (
@@ -121,7 +131,7 @@ export function LocationsLog({ query: initial, version, onOpen, onChanged }: { q
                   </button>
                   {undone && <span className="text-xs text-muted-foreground">{t(`Fortrudt af ${line.undoneBy?.name} kl. ${formatTime(line.undoneAt!)}`, `Undone by ${line.undoneBy?.name} at ${formatTime(line.undoneAt!)}`)}</span>}
                   {log.canUndo && !undone && line.type !== 'undo' && (
-                    <Button size="sm" variant="outline" disabled={!line.canUndo || busy} title={line.canUndo ? undefined : t(line.reason || 'Kan ikke fortrydes', 'Cannot be undone')} onClick={() => setConfirm(line)}>
+                    <Button size="sm" variant="outline" disabled={!line.canUndo} title={line.canUndo ? undefined : t(line.reason || 'Kan ikke fortrydes', 'Cannot be undone')} onClick={() => setConfirm(line)}>
                       <ArrowCounterClockwise size={14} /> {t('Fortryd', 'Undo')}
                     </Button>
                   )}
@@ -133,7 +143,7 @@ export function LocationsLog({ query: initial, version, onOpen, onChanged }: { q
       )}
 
       {confirm && (
-        <Dialog open onOpenChange={open => { if (!open && !busy) setConfirm(null) }}>
+        <Dialog open onOpenChange={open => { if (!open) setConfirm(null) }}>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>{t('Fortryd handlingen?', 'Undo the action?')}</DialogTitle>
@@ -145,8 +155,8 @@ export function LocationsLog({ query: initial, version, onOpen, onChanged }: { q
               </ul>
             )}
             <DialogFooter>
-              <Button variant="ghost" onClick={() => setConfirm(null)} disabled={busy}>{t('Annullér', 'Cancel')}</Button>
-              <Button onClick={() => undo(confirm)} loading={busy}><ArrowCounterClockwise size={16} /> {t('Fortryd', 'Undo')}</Button>
+              <Button variant="ghost" onClick={() => setConfirm(null)}>{t('Annullér', 'Cancel')}</Button>
+              <Button onClick={() => undo(confirm)}><ArrowCounterClockwise size={16} /> {t('Fortryd', 'Undo')}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

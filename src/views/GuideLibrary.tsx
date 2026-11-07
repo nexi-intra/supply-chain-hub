@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useSyncExternalStore, useCallback } from 'react'
-import { useKV } from '@/hooks/useKV'
+import { useKV, beginKvPrediction } from '@/hooks/useKV'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
@@ -9,7 +9,9 @@ import { Plus, MagnifyingGlass, Books, Brain, Gear, ArrowLeft, Timer, FolderOpen
 import { Guide, GuideAccessRequest } from '@/lib/types'
 import { guidePlainText, getReviewStatus, computeNextReviewAt, type ArchivedGuideEntry, type GuideDraft, type GuideReviewRequest } from '@/lib/guideTypes'
 import { GuideSearchIndex } from '@/lib/searchIndex'
-import { bumpVersion, saveVersionSnapshot, listDrafts, deleteDraft, draftLabel } from '@/lib/guideStore'
+import { bumpVersion, saveVersionSnapshot, listDrafts, deleteDraft, saveDraft, draftLabel } from '@/lib/guideStore'
+import { trackPendingWrite } from '@/lib/pendingWrites'
+import { saveInBackground } from '@/lib/saveInBackground'
 import { guideToDocModel, resolveAuthorName } from '@/lib/docModel'
 import { isExportAvailable, getExportRoot, chooseAndSaveExportRoot, exportGuideToLibrary, exportOriginalGuideToLibrary } from '@/lib/guideExporter'
 import { guideImportManager } from '@/lib/guideImportManager'
@@ -208,6 +210,46 @@ function GuideLibraryContent({ onNavigateBack, onLogout, userEmail }: Omit<Guide
     return () => { cancelled = true }
   }, [dialogOpen, userEmail, kind])
 
+  // Kladder der lige nu gemmes (kladden) eller slettes (null) i baggrunden – en skrivning til M:
+  // tager op til 90 s, saa listen viser resultatet med det samme. En kladde, der ikke kunne gemmes,
+  // bliver staaende her, saa arbejdet stadig kan genoptages i denne session.
+  const [draftOverrides, setDraftOverrides] = useState<Record<string, GuideDraft | null>>({})
+  const draftWriteSequence = useRef(new Map<string, number>())
+  const shownDrafts = useMemo(() => {
+    const merged = drafts.filter((draft) => !(draft.guideId in draftOverrides))
+    for (const draft of Object.values(draftOverrides)) if (draft) merged.push(draft)
+    return merged.sort((a, b) => (b.lastAutoSavedAt || 0) - (a.lastAutoSavedAt || 0))
+  }, [drafts, draftOverrides])
+
+  const changeDraftInBackground = useCallback((guideId: string, draft: GuideDraft | null, failureMessage?: string): Promise<boolean> => {
+    const sequence = (draftWriteSequence.current.get(guideId) || 0) + 1
+    draftWriteSequence.current.set(guideId, sequence)
+    const isLatest = () => draftWriteSequence.current.get(guideId) === sequence
+    const clearOverride = () => setDraftOverrides((current) => {
+      if (!(guideId in current)) return current
+      const next = { ...current }
+      delete next[guideId]
+      return next
+    })
+    setDraftOverrides((current) => ({ ...current, [guideId]: draft }))
+    return trackPendingWrite(draft ? saveDraft(draft, kind) : deleteDraft(guideId, kind)).then(() => {
+      setDrafts((current) => {
+        const rest = current.filter((entry) => entry.guideId !== guideId)
+        return draft ? [...rest, draft] : rest
+      })
+      if (isLatest()) clearOverride()
+      return true
+    }, (error) => {
+      console.error('Kunne ikke gemme/slette guide-kladde:', error)
+      toast.error(failureMessage || (draft
+        ? t.guideEditor.draftSaveFailed
+        : (language === 'da' ? 'Kladden blev ikke slettet — prøv igen' : language === 'fi' ? 'Luonnosta ei poistettu — yritä uudelleen' : language === 'sv' ? 'Utkastet togs inte bort — försök igen' : 'The draft was not deleted — please try again')))
+      // En sletning, der fejlede, viser kladden igen; en kladde, der ikke kunne gemmes, bliver staaende.
+      if (!draft && isLatest()) clearOverride()
+      return false
+    })
+  }, [kind, t, language])
+
   const loadOtherTeamGuides = () => {
     const request = ++otherTeamRequest.current
     if (!selectedTeamId) { setIsLoadingOtherTeamGuides(false); return }
@@ -234,32 +276,46 @@ function GuideLibraryContent({ onNavigateBack, onLogout, userEmail }: Omit<Guide
   }, [selectedTeamId, teams])
 
   // Anmodningen gemmes i den EJENDE teams egen store (registry:submit-guide-access-request),
-  // så deres manager ser den som en helt normal del af deres eget team.
+  // så deres manager ser den som en helt normal del af deres eget team. Den vises som
+  // "afventer" med det samme; skrivningen til det andet teams drev sker i baggrunden.
   const handleRequestAccess = async (guide: Guide) => {
     const team = teams.find(tm => tm.teamId === selectedTeamId)
     if (!team || !window.electronRegistry) return
+    const registry = window.electronRegistry
     setSubmittingRequestGuideId(guide.id)
+    let requestingTeamCode = currentTeamCode
     try {
-      const currentTeam = await window.electronRegistry.getCurrentTeam()
-      const request: GuideAccessRequest = {
-        id: newId('guide-access'),
-        guideId: guide.id,
-        guideTitle: guide.title,
-        requestingTeamCode: currentTeam?.folderName || '',
-        requestingUserEmail: userEmail,
-        requestingUserName: usersByEmail?.[userEmail]?.fullName || userEmail,
-        status: 'pending',
-        requestedAt: new Date().toISOString(),
-      }
-      const submit = kind === 'knowledge' ? window.electronRegistry.submitKnowledgeAccessRequest : window.electronRegistry.submitGuideAccessRequest
-      await submit(team.folderName, request)
-      toast.success(t.guideLibrary.accessRequest.submitted)
-      loadOtherTeamGuides()
+      if (!requestingTeamCode) requestingTeamCode = (await registry.getCurrentTeam())?.folderName
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t.guideLibrary.accessRequest.submitFailed)
+      return
     } finally {
       setSubmittingRequestGuideId(null)
     }
+    const request: GuideAccessRequest = {
+      id: newId('guide-access'),
+      guideId: guide.id,
+      guideTitle: guide.title,
+      requestingTeamCode: requestingTeamCode || '',
+      requestingUserEmail: userEmail,
+      requestingUserName: usersByEmail?.[userEmail]?.fullName || userEmail,
+      status: 'pending',
+      requestedAt: new Date().toISOString(),
+    }
+    const shownFor = otherTeamRequest.current
+    setOtherTeamRequests(current => [...current, request])
+    toast.success(t.guideLibrary.accessRequest.submitted)
+    const submit = kind === 'knowledge' ? registry.submitKnowledgeAccessRequest : registry.submitGuideAccessRequest
+    void trackPendingWrite(Promise.resolve(submit(team.folderName, request))).then((ownRows: unknown) => {
+      if (shownFor !== otherTeamRequest.current || !Array.isArray(ownRows)) return
+      // Serveren tildeler sit eget id; erstat den viste anmodning med de gemte raekker.
+      const saved = ownRows as GuideAccessRequest[]
+      setOtherTeamRequests(current => [...current.filter(entry => entry.id !== request.id && !saved.some(row => row.id === entry.id)), ...saved])
+    }, (error: unknown) => {
+      console.error('Adgangsanmodningen kunne ikke gemmes:', error)
+      if (shownFor === otherTeamRequest.current) setOtherTeamRequests(current => current.filter(entry => entry.id !== request.id))
+      toast.error(error instanceof Error ? error.message : t.guideLibrary.accessRequest.submitFailed)
+    })
   }
 
   // Nyeste anmodning fra MIG for en given guide (der kan i teorien være flere over tid,
@@ -374,7 +430,13 @@ function GuideLibraryContent({ onNavigateBack, onLogout, userEmail }: Omit<Guide
     await upsertInKvArray(keys.reviewRequests, [updated])
   }
 
-  const runReviewAction = async (key: string, action: () => Promise<void>) => {
+  const changeNotSavedMessage = () => lt(language === 'da' ? 'Ændringen blev ikke gemt — prøv igen' : language === 'fi' ? 'Muutosta ei tallennettu — yritä uudelleen' : language === 'sv' ? 'Ändringen sparades inte — försök igen' : 'The change was not saved — please try again')
+
+  /** Gemmer anmodningen i baggrunden; listerne (useKV) viser den med det samme og ruller tilbage ved fejl. */
+  const saveReviewRequestInBackground = (updated: GuideReviewRequest, failure = changeNotSavedMessage()) =>
+    saveInBackground(updateReviewRequest(updated), { failure })
+
+  const runReviewAction = async (key: string, action: () => void | Promise<void>) => {
     if (reviewBusyKey) return
     setReviewBusyKey(key)
     try {
@@ -414,7 +476,17 @@ function GuideLibraryContent({ onNavigateBack, onLogout, userEmail }: Omit<Guide
     setImportDraft(null)
   }
 
-  const handleSaveGuide = async (guide: Guide, changeNote?: string) => {
+  // Gemmer review-anmodningen i baggrunden. Kladden skjules med det samme og slettes foerst, naar
+  // anmodningen er gemt; fejler gemningen, gemmes arbejdet i stedet som kladde, saa intet gaar tabt.
+  const submitReviewInBackground = (request: GuideReviewRequest, draft: GuideDraft) => {
+    draftWriteSequence.current.set(draft.guideId, (draftWriteSequence.current.get(draft.guideId) || 0) + 1)
+    setDraftOverrides((current) => ({ ...current, [draft.guideId]: null }))
+    void saveInBackground(updateReviewRequest(request), {
+      failure: lt(language === 'da' ? 'Guiden blev ikke gemt på det fælles drev — dit arbejde er bevaret som kladde' : language === 'fi' ? 'Opasta ei tallennettu yhteiselle asemalle — työsi säilytettiin luonnoksena' : language === 'sv' ? 'Guiden sparades inte på den gemensamma enheten — ditt arbete har sparats som utkast' : 'The guide was not saved to the shared drive — your work was kept as a draft'),
+    }).then((saved) => { void changeDraftInBackground(draft.guideId, saved ? null : draft) })
+  }
+
+  const handleSaveGuide = async (guide: Guide, changeNote: string | undefined, draft: GuideDraft): Promise<boolean> => {
     const now = Date.now()
     const displayName = usersByEmail?.[userEmail]?.fullName || userEmail
 
@@ -455,12 +527,12 @@ function GuideLibraryContent({ onNavigateBack, onLogout, userEmail }: Omit<Guide
         reviewedBy: undefined,
         reviewedAt: undefined,
       }
-      await updateReviewRequest(updated)
+      submitReviewInBackground(updated, draft)
       toast.success(editingAsReviewer
         ? (language === 'da' ? 'Reviewerens rettelser er gemt i forslaget' : language === 'fi' ? 'Tarkistajan muutokset tallennettiin ehdotukseen' : language === 'sv' ? 'Granskarens ändringar sparades i förslaget' : 'Reviewer changes saved to the proposal')
         : lt(language === 'da' ? 'Guiden er sendt til review igen' : language === 'fi' ? 'Opas lähetettiin uudelleen tarkistettavaksi' : language === 'sv' ? 'Guiden skickades till granskning igen' : 'Guide resubmitted for review'))
       closeGuideEditor()
-      return
+      return true
     }
 
     const [latestLocalGuides, latestSharedGuides] = await Promise.all([
@@ -472,7 +544,7 @@ function GuideLibraryContent({ onNavigateBack, onLogout, userEmail }: Omit<Guide
     const published = intendedAsUpdate ? latestPublishedGuides.find((item) => item.id === guide.id) : undefined
     if (intendedAsUpdate && !published) {
       toast.error(lt(language === 'da' ? 'Den udgivne guide findes ikke længere. Genindlæs biblioteket og prøv igen.' : language === 'fi' ? 'Julkaistua opasta ei enää ole. Lataa kirjasto uudelleen ja yritä uudelleen.' : language === 'sv' ? 'Den publicerade guiden finns inte längre. Ladda om biblioteket och försök igen.' : 'The published guide no longer exists. Reload the library and try again.'))
-      return
+      return false
     }
     const hasIdCollision = !intendedAsUpdate && latestPublishedGuides.some((item) => item.id === guide.id)
     const submittedGuide = hasIdCollision
@@ -493,10 +565,11 @@ function GuideLibraryContent({ onNavigateBack, onLogout, userEmail }: Omit<Guide
       updatedAt: now,
       changeNote,
     }
-    await updateReviewRequest(request)
+    submitReviewInBackground(request, draft)
     toast.success(lt(language === 'da' ? 'Guiden er sendt til review' : language === 'fi' ? 'Opas lähetettiin tarkistettavaksi' : language === 'sv' ? 'Guiden skickades till granskning' : 'Guide submitted for review'))
     closeGuideEditor()
     setWorkflowView('workflow')
+    return true
   }
 
   const handleEditGuide = (guide: Guide) => {
@@ -518,7 +591,7 @@ function GuideLibraryContent({ onNavigateBack, onLogout, userEmail }: Omit<Guide
     setDialogOpen(true)
   }
 
-  const handleDeleteGuide = async (id: string) => {
+  const handleDeleteGuide = (id: string) => {
     const guide = myGuides.find((g) => g.id === id)
     if (!guide) return
     const existingRequest = (reviewRequests || []).find((request) => request.guideId === id && isOpenGuideReview(request))
@@ -527,7 +600,7 @@ function GuideLibraryContent({ onNavigateBack, onLogout, userEmail }: Omit<Guide
       return
     }
     const now = Date.now()
-    await updateReviewRequest({
+    void saveReviewRequestInBackground({
       id: newId('guide-review'),
       guideId: guide.id,
       guideTitle: guide.title,
@@ -565,16 +638,15 @@ function GuideLibraryContent({ onNavigateBack, onLogout, userEmail }: Omit<Guide
     setDialogOpen(true)
   }
 
-  const handleDeleteDraft = async (draft: GuideDraft) => {
-    await deleteDraft(draft.guideId, kind)
-    setDrafts((current) => current.filter((entry) => entry.guideId !== draft.guideId))
+  const handleDeleteDraft = (draft: GuideDraft) => {
+    void changeDraftInBackground(draft.guideId, null)
     toast.success(t.guideEditor.draftDeleted)
   }
 
-  const handleEditReviewRequest = async (request: GuideReviewRequest, asReviewer: boolean) => {
+  const handleEditReviewRequest = (request: GuideReviewRequest, asReviewer: boolean) => {
     if (!request.proposedGuide) {
       if (!asReviewer && request.action === 'delete') {
-        await updateReviewRequest({ ...request, status: 'pending', submittedAt: Date.now(), updatedAt: Date.now(), reviewerComment: undefined })
+        void saveReviewRequestInBackground({ ...request, status: 'pending', submittedAt: Date.now(), updatedAt: Date.now(), reviewerComment: undefined })
         toast.success(language === 'da' ? 'Sletningen er sendt til review igen' : language === 'fi' ? 'Poistaminen lähetettiin uudelleen tarkistettavaksi' : language === 'sv' ? 'Borttagningen skickades till granskning igen' : 'Deletion resubmitted for review')
       }
       return
@@ -585,13 +657,13 @@ function GuideLibraryContent({ onNavigateBack, onLogout, userEmail }: Omit<Guide
     setDialogOpen(true)
   }
 
-  const handleClaimReview = async (request: GuideReviewRequest) => {
+  const handleClaimReview = (request: GuideReviewRequest) => {
     if (!isGuideReviewer || !canReviewGuideRequest(request, userEmail, isManager) || (request.claimedBy && request.claimedBy !== userEmail && !isManager)) return
-    await updateReviewRequest({ ...request, claimedBy: userEmail, claimedAt: Date.now(), updatedAt: Date.now() })
+    void saveReviewRequestInBackground({ ...request, claimedBy: userEmail, claimedAt: Date.now(), updatedAt: Date.now() })
   }
 
-  const handleReturnReview = async (request: GuideReviewRequest, comment: string) => {
-    await updateReviewRequest({
+  const handleReturnReview = (request: GuideReviewRequest, comment: string) => {
+    void saveReviewRequestInBackground({
       ...request,
       status: 'changes_requested',
       reviewerComment: comment,
@@ -604,22 +676,28 @@ function GuideLibraryContent({ onNavigateBack, onLogout, userEmail }: Omit<Guide
     toast.success(lt(language === 'da' ? 'Guiden er sendt tilbage til forfatteren' : language === 'fi' ? 'Opas palautettiin tekijälle' : language === 'sv' ? 'Guiden skickades tillbaka till författaren' : 'Guide returned to the author'))
   }
 
-  const handleWithdrawReview = async (request: GuideReviewRequest) => {
+  const handleWithdrawReview = (request: GuideReviewRequest) => {
     if (request.submittedBy.trim().toLowerCase() !== normalizedUserEmail) return
-    await updateReviewRequest({ ...request, status: 'draft', claimedBy: undefined, claimedAt: undefined, updatedAt: Date.now() })
+    void saveReviewRequestInBackground({ ...request, status: 'draft', claimedBy: undefined, claimedAt: undefined, updatedAt: Date.now() })
     toast.success(language === 'da' ? 'Revisionen er trukket tilbage som kladde' : language === 'fi' ? 'Versio palautettiin luonnokseksi' : language === 'sv' ? 'Revisionen återkallades som utkast' : 'Revision withdrawn to draft')
   }
 
   // Fjerner en aaben anmodning helt (den udgivne guide roeres ikke). Sidste
   // udvej mod fastlaaste anmodninger — kladder blokerer ellers nye revisioner.
-  const handleDiscardReview = async (request: GuideReviewRequest) => {
+  const handleDiscardReview = (request: GuideReviewRequest) => {
     const isOwn = request.submittedBy.trim().toLowerCase() === normalizedUserEmail
     if (!isOwn && !isManager) return
     if (!isOpenGuideReview(request)) return
-    await removeFromKvArray(keys.reviewRequests, [request.id])
+    void saveInBackground(removeFromKvArray(keys.reviewRequests, [request.id]), { failure: changeNotSavedMessage() })
     toast.success(language === 'da' ? 'Anmodningen er kasseret' : language === 'fi' ? 'Pyyntö hylättiin' : language === 'sv' ? 'Begäran kasserades' : 'Request discarded')
   }
 
+  const approvedMessage = (request: GuideReviewRequest) => lt(request.action === 'delete'
+    ? (language === 'da' ? 'Guiden er godkendt til sletning og arkiveret' : language === 'fi' ? 'Oppaan poistaminen hyväksyttiin ja opas arkistoitiin' : language === 'sv' ? 'Guiden godkändes för borttagning och arkiverades' : 'Guide deletion approved and archived')
+    : (language === 'da' ? 'Guiden er godkendt og udgivet' : language === 'fi' ? 'Opas hyväksyttiin ja julkaistiin' : language === 'sv' ? 'Guiden godkändes och publicerades' : 'Guide approved and published'))
+
+  // Kun laesningen af de nyeste lister (konfliktkontrol, under et sekund) venter med spinner;
+  // selve godkendelsen vises med det samme og gemmes i baggrunden (approveInBackground).
   const handleApproveReview = async (request: GuideReviewRequest) => {
     if (!isGuideReviewer || !canReviewGuideRequest(request, userEmail, isManager)) return
     const [latestLocalGuides, latestSharedGuides, latestArchived] = await Promise.all([
@@ -633,64 +711,94 @@ function GuideLibraryContent({ onNavigateBack, onLogout, userEmail }: Omit<Guide
     // men FOER requesten blev lukket (fx netvaerksfejl mod det delte drev).
     // Saa er der ingen konflikt — luk blot requesten som godkendt.
     if (isGuideReviewAlreadyApplied(request, published, latestArchived || [])) {
-      await closeApprovedReview(request)
+      toast.success(approvedMessage(request))
+      void closeApprovedReview(request)
       return
     }
 
     const hasConflict = hasGuideReviewConflict(request, published)
     if (hasConflict) {
-      await handleReturnReview(request, lt(language === 'da' ? 'Den udgivne guide er ændret siden indsendelsen. Opret revisionen igen fra den nyeste version.' : language === 'fi' ? 'Julkaistua opasta on muutettu lähetyksen jälkeen. Luo versio uudelleen uusimmasta versiosta.' : language === 'sv' ? 'Den publicerade guiden har ändrats sedan inlämningen. Skapa revisionen igen från den senaste versionen.' : 'The published guide changed after submission. Recreate the revision from the latest version.'))
+      handleReturnReview(request, lt(language === 'da' ? 'Den udgivne guide er ændret siden indsendelsen. Opret revisionen igen fra den nyeste version.' : language === 'fi' ? 'Julkaistua opasta on muutettu lähetyksen jälkeen. Luo versio uudelleen uusimmasta versiosta.' : language === 'sv' ? 'Den publicerade guiden har ändrats sedan inlämningen. Skapa revisionen igen från den senaste versionen.' : 'The published guide changed after submission. Recreate the revision from the latest version.'))
       toast.error(language === 'da' ? 'Revisionen kunne ikke godkendes på grund af en versionskonflikt' : language === 'fi' ? 'Versiota ei voitu hyväksyä versiokonfliktin vuoksi' : language === 'sv' ? 'Revisionen kunde inte godkännas på grund av en versionskonflikt' : 'The revision could not be approved because of a version conflict')
       return
     }
 
-    if (request.action === 'delete') {
-      if (!published) return
-      await upsertInKvArray(keys.archived, [{
-        id: `guide-archive-${request.id}`, guide: structuredClone(published), archivedAt: Date.now(),
-        archivedBy: userEmail, requestId: request.id,
-      }])
-      if (isSharedGuide(published)) await removeFromKvArray(keys.shared, [published.id])
-      else await removeFromKvArray(keys.items, [published.id])
-    } else if (request.proposedGuide) {
+    if (request.action === 'delete' && !published) return
+    toast.success(approvedMessage(request))
+    void approveInBackground(request, published)
+  }
+
+  /**
+   * Godkendelsen vises med det samme alle steder (anmodningen som godkendt, guiden udgivet/fjernet)
+   * og gemmes i baggrunden. Raekkefoelgen er bevidst: guidens indhold (og ved sletning arkivet) skal
+   * vaere gemt, FOER guiden fjernes og anmodningen lukkes. Fejler et trin, rulles visningen tilbage
+   * ved at visningerne genindlaeser det gemte, og et nyt tryk paa Godkend er sikkert (idempotent).
+   */
+  const approveInBackground = async (request: GuideReviewRequest, published: Guide | undefined) => {
+    const now = Date.now()
+    const shownAsApproved: GuideReviewRequest = { ...request, status: 'approved', reviewedBy: userEmail, reviewedAt: now, updatedAt: now }
+    const predictions = [beginKvPrediction(keys.reviewRequests, { op: 'upsert', items: [shownAsApproved] })]
+    try {
+      if (request.action === 'delete') {
+        if (!published) return
+        const fromKey = isSharedGuide(published) ? keys.shared : keys.items
+        predictions.push(beginKvPrediction(fromKey, { op: 'remove', ids: [published.id] }))
+        await upsertInKvArray(keys.archived, [{
+          id: `guide-archive-${request.id}`, guide: structuredClone(published), archivedAt: now,
+          archivedBy: userEmail, requestId: request.id,
+        }])
+        await removeFromKvArray(fromKey, [published.id])
+        await closeApprovedReview(request)
+        return
+      }
+      if (!request.proposedGuide) {
+        await closeApprovedReview(request)
+        return
+      }
       const approvedGuide = {
         ...request.proposedGuide,
         updatedBy: request.reviewerEditedBy || request.proposedGuide.updatedBy,
-        updatedAt: Date.now(),
-        lastReviewedAt: Date.now(),
-        nextReviewAt: computeNextReviewAt(Date.now(), request.proposedGuide.reviewIntervalMonths),
+        updatedAt: now,
+        lastReviewedAt: now,
+        nextReviewAt: computeNextReviewAt(now, request.proposedGuide.reviewIntervalMonths),
       }
       await publishGuide(approvedGuide)
-      try {
-        await saveVersionSnapshot(approvedGuide, userEmail, request.changeNote, kind)
-      } catch (historyError) {
-        console.error('Guiden blev udgivet, men versionshistorikken kunne ikke opdateres:', historyError)
-        toast.warning(lt(language === 'da' ? 'Guiden blev udgivet, men versionshistorikken kunne ikke gemmes' : language === 'fi' ? 'Opas julkaistiin, mutta versiohistoriaa ei voitu tallentaa' : language === 'sv' ? 'Guiden publicerades, men versionshistoriken kunde inte sparas' : 'Guide published, but version history could not be saved'))
-      }
-      if (request.action === 'restore') {
-        const archiveEntry = (archivedGuides || []).find((entry) => entry.guide.id === request.guideId && !entry.restoredAt)
-        if (archiveEntry) await upsertInKvArray(keys.archived, [{ ...archiveEntry, restoredAt: Date.now(), restoredBy: userEmail }])
-      }
+      // Guiden er udgivet; historik, arkivmarkering og lukning af anmodningen er uafhaengige noegler.
+      const archiveEntry = request.action === 'restore'
+        ? (archivedGuides || []).find((entry) => entry.guide.id === request.guideId && !entry.restoredAt)
+        : undefined
+      await Promise.all([
+        trackPendingWrite(saveVersionSnapshot(approvedGuide, userEmail, request.changeNote, kind)).catch((historyError) => {
+          console.error('Guiden blev udgivet, men versionshistorikken kunne ikke opdateres:', historyError)
+          toast.warning(lt(language === 'da' ? 'Guiden blev udgivet, men versionshistorikken kunne ikke gemmes' : language === 'fi' ? 'Opas julkaistiin, mutta versiohistoriaa ei voitu tallentaa' : language === 'sv' ? 'Guiden publicerades, men versionshistoriken kunde inte sparas' : 'Guide published, but version history could not be saved'))
+        }),
+        archiveEntry
+          ? upsertInKvArray(keys.archived, [{ ...archiveEntry, restoredAt: now, restoredBy: userEmail }]).catch((archiveError) => {
+              console.error('Guiden blev gendannet, men arkivet kunne ikke markeres:', archiveError)
+              toast.warning(changeNotSavedMessage())
+            })
+          : Promise.resolve(),
+        closeApprovedReview(request),
+      ])
+    } catch (error) {
+      console.error('Godkendelsen kunne ikke gemmes:', error)
+      toast.error(lt(language === 'da' ? 'Godkendelsen blev ikke gemt på det fælles drev — prøv igen' : language === 'fi' ? 'Hyväksyntää ei tallennettu yhteiselle asemalle — yritä uudelleen' : language === 'sv' ? 'Godkännandet sparades inte på den gemensamma enheten — försök igen' : 'The approval was not saved to the shared drive — please try again'))
+    } finally {
+      predictions.forEach((end) => end())
     }
-
-    await closeApprovedReview(request)
   }
 
   /** Sidste trin af en godkendelse. Fejler lukningen (flaky drev), er nyt tryk paa Godkend sikkert, da godkendelse er idempotent. */
-  const closeApprovedReview = async (request: GuideReviewRequest) => {
+  const closeApprovedReview = async (request: GuideReviewRequest): Promise<void> => {
     try {
       await updateReviewRequest({ ...request, status: 'approved', reviewedBy: userEmail, reviewedAt: Date.now(), updatedAt: Date.now() })
     } catch (error) {
       console.error('Godkendelsen slog igennem, men anmodningen kunne ikke lukkes:', error)
       toast.error(lt(language === 'da' ? 'Guiden er godkendt, men anmodningen kunne ikke markeres som afsluttet. Tryk Godkend igen for at afslutte den.' : language === 'fi' ? 'Opas hyväksyttiin, mutta pyyntöä ei voitu merkitä valmiiksi. Paina Hyväksy uudelleen.' : language === 'sv' ? 'Guiden godkändes, men begäran kunde inte markeras som slutförd. Tryck på Godkänn igen för att slutföra den.' : 'The guide was approved, but the request could not be marked as completed. Press Approve again to finish it.'))
-      return
     }
-    toast.success(lt(request.action === 'delete'
-      ? (language === 'da' ? 'Guiden er godkendt til sletning og arkiveret' : language === 'fi' ? 'Oppaan poistaminen hyväksyttiin ja opas arkistoitiin' : language === 'sv' ? 'Guiden godkändes för borttagning och arkiverades' : 'Guide deletion approved and archived')
-      : (language === 'da' ? 'Guiden er godkendt og udgivet' : language === 'fi' ? 'Opas hyväksyttiin ja julkaistiin' : language === 'sv' ? 'Guiden godkändes och publicerades' : 'Guide approved and published')))
   }
 
-  const handleRestoreArchived = async (entry: ArchivedGuideEntry) => {
+  const handleRestoreArchived = (entry: ArchivedGuideEntry) => {
     const existing = (reviewRequests || []).find((request) => request.guideId === entry.guide.id && request.action === 'restore' && isOpenGuideReview(request))
     if (existing) {
       toast.info(language === 'da' ? 'Der findes allerede en gendannelsesanmodning' : language === 'fi' ? 'Palautuspyyntö on jo olemassa' : language === 'sv' ? 'Det finns redan en begäran om återställning' : 'A restore request already exists')
@@ -698,7 +806,7 @@ function GuideLibraryContent({ onNavigateBack, onLogout, userEmail }: Omit<Guide
     }
     const now = Date.now()
     const restored: Guide = { ...structuredClone(entry.guide), version: bumpVersion(entry.guide.version), updatedBy: userEmail, updatedAt: now }
-    await updateReviewRequest({
+    void saveReviewRequestInBackground({
       id: newId('guide-review'), guideId: restored.id, guideTitle: restored.title,
       action: 'restore', status: 'pending', baseGuide: entry.guide, proposedGuide: restored,
       submittedBy: userEmail, submittedByName: usersByEmail?.[userEmail]?.fullName || userEmail,
@@ -707,7 +815,6 @@ function GuideLibraryContent({ onNavigateBack, onLogout, userEmail }: Omit<Guide
     })
     toast.success(language === 'da' ? 'Gendannelsen er sendt til review' : language === 'fi' ? 'Palautus lähetettiin tarkistettavaksi' : language === 'sv' ? 'Återställningen skickades till granskning' : 'Restore submitted for review')
   }
-
   const handleImportFileSelected = (file: File | undefined) => {
     if (!file) return
     if (importMode === 'pdf' ? !/\.pdf$/i.test(file.name) : !/\.docx$/i.test(file.name)) {
@@ -753,7 +860,7 @@ function GuideLibraryContent({ onNavigateBack, onLogout, userEmail }: Omit<Guide
 
   const handleChooseExportRoot = async () => {
     try {
-      const root = await chooseAndSaveExportRoot(kind)
+      const root = await chooseAndSaveExportRoot(kind, () => toast.error(lt(language === 'da' ? 'Mappen kan bruges nu, men valget kunne ikke huskes på det fælles drev' : language === 'fi' ? 'Kansiota voi käyttää nyt, mutta valintaa ei voitu tallentaa yhteiselle asemalle' : language === 'sv' ? 'Mappen kan användas nu, men valet kunde inte sparas på den gemensamma enheten' : 'The folder can be used now, but the choice could not be saved to the shared drive')))
       if (root) {
         setExportRootState(root)
         toast.success(t.guideLibrary.toasts.exportFolderChosen)
@@ -1140,16 +1247,16 @@ function GuideLibraryContent({ onNavigateBack, onLogout, userEmail }: Omit<Guide
           </>}
         </header>
 
-        {workflowView !== 'workflow' && drafts.length > 0 && (
+        {workflowView !== 'workflow' && shownDrafts.length > 0 && (
           <div className="mb-6 rounded-md border border-dashed border-primary/40 bg-primary/5 p-4">
             <div className="flex items-center gap-2 mb-3">
               <FileDashed size={20} weight="bold" className="text-primary" />
               <h3 className="font-bold">{t.guideEditor.draftsTitle}</h3>
-              <Badge variant="secondary">{drafts.length}</Badge>
+              <Badge variant="secondary">{shownDrafts.length}</Badge>
             </div>
             <p className="text-sm text-muted-foreground mb-3">{t.guideEditor.draftsBody}</p>
             <div className="space-y-2">
-              {drafts.map((draft) => (
+              {shownDrafts.map((draft) => (
                 <div key={draft.guideId} className="flex items-center gap-3 rounded-md border bg-card p-3">
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold truncate">{draftLabel(draft) || t.guideEditor.draftUntitled}</div>
@@ -1159,7 +1266,7 @@ function GuideLibraryContent({ onNavigateBack, onLogout, userEmail }: Omit<Guide
                     </div>
                   </div>
                   <Button size="sm" onClick={() => handleResumeDraft(draft)} className="shrink-0">{t.guideEditor.draftResume}</Button>
-                  <Button size="sm" variant="ghost" loading={reviewBusyKey === `draft:${draft.guideId}`} onClick={() => runReviewAction(`draft:${draft.guideId}`, () => handleDeleteDraft(draft))} className="shrink-0 text-destructive hover:text-destructive" aria-label={t.guideEditor.draftDiscard}>
+                  <Button size="sm" variant="ghost" onClick={() => handleDeleteDraft(draft)} className="shrink-0 text-destructive hover:text-destructive" aria-label={t.guideEditor.draftDiscard}>
                     <Trash size={16} />
                   </Button>
                 </div>
@@ -1253,6 +1360,7 @@ function GuideLibraryContent({ onNavigateBack, onLogout, userEmail }: Omit<Guide
           }
         }}
         onSave={handleSaveGuide}
+        onDraftChange={(guideId, draft) => { void changeDraftInBackground(guideId, draft) }}
         editGuide={editGuide}
         categories={categories || defaultCategories}
         onCreateCategory={handleCreateCategory}

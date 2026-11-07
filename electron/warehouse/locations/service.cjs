@@ -109,7 +109,7 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
   async function putAway(user, { pallets, actionId } = {}) {
     const team = teamOf(user)
     if (!Array.isArray(pallets) || !pallets.length || pallets.length > 200) throw codeError('PALLETS_INVALID', 'Ingen paller at sætte på plads')
-    const result = await repo.transact(team, { actionId }, tx => {
+    const result = await repo.transact(team, { actionId, writes: ['pallets'] }, tx => {
       const created = []
       const filled = []
       for (const input of pallets) {
@@ -141,7 +141,7 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
 
   async function take(user, { pallet: id, quantity, actionId } = {}) {
     const team = teamOf(user)
-    return repo.transact(team, { actionId }, tx => {
+    return repo.transact(team, { actionId, writes: ['pallets'] }, tx => {
       const pallet = palletIn(tx, id)
       const older = rules.fifo(tx, pallet.material, { now: now() }).find(item => item.id !== pallet.id && (item.receivedAt || 0) < (pallet.receivedAt || 0)) || null
       const { left, taken } = takeFrom(tx, pallet, quantity)
@@ -156,7 +156,7 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
     // From a shelf (when there is no reserve pallet): the quantity taken is required, the shelf line goes down by it.
     if (shelf) {
       const amount = quantityOf(quantity)
-      return repo.transact(team, { actionId }, tx => {
+      return repo.transact(team, { actionId, writes: ['stock'] }, tx => {
         const place = pickIn(tx, location)
         const from = shelfIn(tx, shelf)
         const wanted = pickMaterial(place, material)
@@ -166,7 +166,7 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
         return { line: left }
       })
     }
-    return repo.transact(team, { actionId }, tx => {
+    return repo.transact(team, { actionId, writes: ['pallets'] }, tx => {
       const place = pickIn(tx, location)
       const pallet = palletIn(tx, id)
       pickMaterial(place, pallet.material)
@@ -179,7 +179,7 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
 
   async function move(user, { pallet: id, to, actionId } = {}) {
     const team = teamOf(user)
-    return repo.transact(team, { actionId }, tx => {
+    return repo.transact(team, { actionId, writes: ['pallets'] }, tx => {
       const pallet = palletIn(tx, id)
       const target = roomIn(tx, to)
       const from = pallet.location
@@ -203,7 +203,7 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
     const team = teamOf(user)
     const next = String(sloc || '').trim().toUpperCase()
     if (!SLOC.test(next)) throw codeError('SLOC_INVALID', 'Storage location skal være som D000')
-    return repo.transact(team, { actionId }, tx => {
+    return repo.transact(team, { actionId, writes: ['pallets'] }, tx => {
       const pallet = palletIn(tx, id)
       const from = pallet.sloc
       pallet.sloc = next
@@ -218,7 +218,7 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
     const team = teamOf(user)
     const code = materialOf(material)
     const amount = quantityOf(quantity)
-    const result = await repo.transact(team, { actionId }, tx => {
+    const result = await repo.transact(team, { actionId, writes: ['stock'] }, tx => {
       const place = shelfIn(tx, location, { active: true })
       const line = shelves.putStock(tx.stock, { location: place.id, material: code, quantity: amount, by: by(user), at: now() })
       tx.event({ type: 'shelf-put', by: by(user), location: place.id, material: code, quantity: amount })
@@ -233,7 +233,7 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
     const team = teamOf(user)
     const code = materialOf(material)
     const amount = quantityOf(quantity, { optional: true })
-    return repo.transact(team, { actionId }, tx => {
+    return repo.transact(team, { actionId, writes: ['stock'] }, tx => {
       const place = shelfIn(tx, location)
       const { left, taken } = shelves.takeStock(tx.stock, { location: place.id, material: code, quantity: amount })
       tx.event({ type: 'shelf-take', by: by(user), location: place.id, material: code, quantity: taken })
@@ -246,7 +246,7 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
     const team = teamOf(user)
     const code = materialOf(material)
     const amount = quantityOf(quantity, { optional: true })
-    return repo.transact(team, { actionId }, tx => {
+    return repo.transact(team, { actionId, writes: ['stock'] }, tx => {
       const source = shelfIn(tx, from)
       const target = shelfIn(tx, to, { active: true })
       const { taken } = shelves.takeStock(tx.stock, { location: source.id, material: code, quantity: amount })
@@ -262,7 +262,7 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
     const team = teamOf(user)
     const code = materialOf(material)
     const amount = quantityOf(quantity, { min: 0 })
-    return repo.transact(team, { actionId }, tx => {
+    return repo.transact(team, { actionId, writes: ['stock'] }, tx => {
       const place = shelfIn(tx, location)
       const id = shelves.stockId(place.id, code)
       const before = tx.stock[id]?.quantity ?? 0
@@ -288,7 +288,7 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
   async function editPallet(user, { pallet: id, changes, actionId } = {}) {
     const team = teamOf(user)
     const clean = Object.fromEntries(Object.entries(changes || {}).filter(([field]) => Object.hasOwn(EDITABLE, field)).map(([field, value]) => [field, EDITABLE[field](value)]))
-    return repo.transact(team, { actionId }, tx => {
+    return repo.transact(team, { actionId, writes: ['pallets'] }, tx => {
       const pallet = palletIn(tx, id)
       const diff = {}
       for (const [field, value] of Object.entries(clean)) {
@@ -490,9 +490,9 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
   /** Every place of the hub in name order with how full it is (the administration list). */
   async function list(user) {
     const team = teamOf(user)
-    const state = await repo.read(team)
+    // Independent round trips to M: at once.
+    const [state, canAdmin] = await Promise.all([repo.read(team), requireAdmin(user).then(() => true, () => false)])
     const occupied = rules.occupancy(state)
-    const canAdmin = await requireAdmin(user).then(() => true, () => false)
     const lines = {}
     for (const line of Object.values(state.stock || {})) lines[line.location] = (lines[line.location] || 0) + 1
     const locations = Object.values(state.locations).sort((a, b) => a.name.localeCompare(b.name, 'da', { numeric: true })).map(location => ({ ...location, used: occupied[location.id].used, stockCount: lines[location.id] || 0 }))
@@ -584,6 +584,9 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
       const input = toPick ? { ...changes, fixedMaterials: [...new Set([...(changes.fixedMaterials ?? previous.fixedMaterials ?? []), ...pallets.map(pallet => pallet.material)])] } : changes
       // A pick place made by the drawing may still be without its materials.
       const next = { ...locationFrom(input, previous, { emptyPick: drawn }), updatedAt: now(), updatedBy: by(user) }
+      // Saved without a change: nothing is written (not even the edit time), so M: is not touched.
+      const FIELDS = ['name', 'area', 'type', 'purpose', 'capacity', 'fixedMaterials', 'rack', 'shelf', 'note']
+      if (!toPick && next.id === previous.id && FIELDS.every(field => JSON.stringify(previous[field] ?? null) === JSON.stringify(next[field] ?? null))) return { location: previous }
       const physical = next.id !== previous.id || next.name !== previous.name || next.type !== previous.type || next.capacity !== previous.capacity
         || (next.purpose !== previous.purpose && DRAWN_PURPOSES.includes(next.purpose) && DRAWN_PURPOSES.includes(previous.purpose))
       if (drawn && physical) throw codeError('LOCATION_ON_DRAWING', 'Ret navn, type og kapacitet på tegningen')
@@ -611,7 +614,7 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
         }
       }
       tx.locations[next.id] = next
-      const diff = Object.fromEntries(['name', 'area', 'type', 'purpose', 'capacity', 'fixedMaterials', 'rack', 'shelf', 'note'].filter(field => JSON.stringify(previous[field] ?? null) !== JSON.stringify(next[field] ?? null)).map(field => [field, [previous[field] ?? null, next[field]]]))
+      const diff = Object.fromEntries(FIELDS.filter(field => JSON.stringify(previous[field] ?? null) !== JSON.stringify(next[field] ?? null)).map(field => [field, [previous[field] ?? null, next[field]]]))
       if (Object.keys(diff).length) tx.event({ type: 'location', by: by(user), location: next.id, from: previous.id, to: next.id, changes: diff })
       return { location: next }
     })
@@ -873,11 +876,12 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
     return { events: events.map(event => ({ ...publicEvent(event), ...(canUndo ? verdict(event) : { canUndo: false }) })), canUndo: admin, people }
   }
 
-  async function undo(user, { eventId, actionId } = {}) {
+  async function undo(user, { eventId, at, actionId } = {}) {
     const team = await requireAdmin(user)
     // The event is looked up under the repository's lock: with M: down that fails as a storage error, so it is queued.
+    // Its time (from the log line) picks the month file, so only that one is locked.
     try {
-      return await repo.undo(team, { eventId, by: by(user), actionId })
+      return await repo.undo(team, { eventId, ...(Number.isFinite(at) ? { at } : {}), by: by(user), actionId })
     } catch (error) {
       if (error.code !== 'UNDO_CONFLICT') throw error
       const all = await repo.history(team, { months: 4 })

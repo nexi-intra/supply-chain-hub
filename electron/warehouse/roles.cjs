@@ -28,19 +28,14 @@ function createRoles({ storeFor, listTeamUsers, now = Date.now }) {
     return { admins: value.admins || {}, statusManagers: value.statusManagers || {}, locationAdmins: value.locationAdmins || {}, log: Array.isArray(value.log) ? value.log : [] }
   }
 
+  /** Read-change-write under the roles file's lock (the lock 1.6.6's compareAndSet uses): no extra read, no retried write. */
   async function change(team, fn) {
-    const target = storeFor(team)
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const current = await target.getAsync(ROLES_KEY, { skipCache: true })
-      const next = fn({ admins: { ...(current?.admins || {}) }, statusManagers: { ...(current?.statusManagers || {}) }, locationAdmins: { ...(current?.locationAdmins || {}) }, log: [...(current?.log || [])] })
-      try {
-        await target.updateAsync(ROLES_KEY, { op: 'compareAndSet', expected: current, value: next })
-        return next
-      } catch (error) {
-        if (error.code !== 'KV_CONFLICT') throw error
-      }
-    }
-    throw codeError('KV_CONFLICT')
+    let next
+    await storeFor(team).mutateAsync(ROLES_KEY, current => {
+      next = fn({ admins: { ...(current?.admins || {}) }, statusManagers: { ...(current?.statusManagers || {}) }, locationAdmins: { ...(current?.locationAdmins || {}) }, log: [...(current?.log || [])] })
+      return next
+    })
+    return next
   }
 
   /** 'manager' (from the Hub), 'status-manager' or 'admin' (appointed in CountPoint) or 'user'. */

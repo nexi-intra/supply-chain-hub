@@ -81,6 +81,24 @@ describe('sendInternalMessage', () => {
     await expect(sendInternalMessage({ from: 'me@test', to: 'zoe@other', subject: 'Hej', message: 'Hej' })).rejects.toThrow('USER_NOT_FOUND')
     expect(update).not.toHaveBeenCalled()
   })
+
+  it('saves the mail and the notification at the same time (a write to M: takes 20 s)', async () => {
+    const { update } = fixture({ users: { 'bo@test': { email: 'bo@test' } } })
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const original = update.getMockImplementation()!
+    update.mockImplementation(async (key, operation) => { await gate; return original(key, operation) })
+    const sending = sendInternalMessage({ from: 'me@test', to: 'bo@test', subject: 'Hej', message: 'Hej' })
+    await vi.waitFor(() => expect(update).toHaveBeenCalledTimes(2))
+    release()
+    await sending
+  })
+
+  it('takes the notification back when the mail itself could not be saved', async () => {
+    const { store } = fixture({ users: { 'bo@test': { email: 'bo@test' } } }, 'emails')
+    await expect(sendInternalMessage({ from: 'me@test', to: 'bo@test', subject: 'Hej', message: 'Hej' })).rejects.toThrow('disk full')
+    await vi.waitFor(() => expect(store.get('email-notifications')).toEqual([]))
+  })
 })
 
 describe('createTeamTodo', () => {
@@ -117,5 +135,12 @@ describe('registerSickLeave', () => {
     const { notified } = await registerSickLeave({ reporterEmail: 'boss@test', reporterName: 'Boss', userEmail: 'me@test', userName: 'Me', date: new Date('2026-10-07T12:00:00'), type: 'self' })
     expect(notified).toBe(false)
     expect(store.get('sick-leave-entries')).toEqual([expect.objectContaining({ reportedBy: 'boss@test', type: 'self' })])
+  })
+
+  it('saves the entry and the notice at the same time, and takes the notice back when the entry fails', async () => {
+    const { store, update } = fixture({}, 'sick-leave-entries')
+    await expect(registerSickLeave({ reporterEmail: 'me@test', reporterName: 'Me', userEmail: 'me@test', userName: 'Me', date: new Date('2026-10-07T12:00:00'), type: 'self' })).rejects.toThrow('disk full')
+    expect(update.mock.calls.slice(0, 2).map(([key]) => key).sort()).toEqual(['email-notifications', 'sick-leave-entries'])
+    await vi.waitFor(() => expect(store.get('email-notifications')).toEqual([]))
   })
 })

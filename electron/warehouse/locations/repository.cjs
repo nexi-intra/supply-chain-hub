@@ -26,7 +26,7 @@ function createLocationRepository({ storeFor, now = Date.now, newId }) {
     return Object.fromEntries(STATE_KEYS.map((name, index) => [name, values[index] ?? structuredClone(EMPTY[name])]))
   }
 
-  const readLocked = locked => Object.fromEntries(STATE_KEYS.map(name => [name, locked.get(KEYS[name]) ?? structuredClone(EMPTY[name])]))
+  const readLocked = (locked, names = STATE_KEYS) => Object.fromEntries(names.map(name => [name, locked.get(KEYS[name]) ?? structuredClone(EMPTY[name])]))
   /** Writes the changed keys, the change stamp and the applied action id. */
   function writeState(locked, before, next, { at, actionId, changed }) {
     if (actionId) next.meta.applied = [...(next.meta.applied || []), actionId].slice(-KEEP_APPLIED)
@@ -70,6 +70,9 @@ function createLocationRepository({ storeFor, now = Date.now, newId }) {
    * already recorded returns { duplicate: true } without running `fn`: a replayed action is never applied twice.
    * All events of the transaction share one `tx` id; the first carries the change, unless `snapshot: false` (import).
    * With `withLayout` the drawing's keys are locked too and on `tx` as `layout`, `layoutVersions` and `draft`.
+   * `writes` (a daily action: e.g. ['pallets']) locks only those keys, the places, meta and the history: every lock file
+   * costs seconds on M:. The other keys (which such an action never reads to decide) are read without a lock, and
+   * changing one of them fails the transaction.
    */
   async function transact(team, options, fn) {
     if (typeof options === 'function') [fn, options] = [options, {}]
@@ -79,8 +82,13 @@ function createLocationRepository({ storeFor, now = Date.now, newId }) {
     const at = now()
     const historyKey = monthKey(at)
     const layoutKeys = withLayout ? Object.values(LAYOUT_TX) : []
-    return store.withLockedKeysAsync([...STATE_KEYS.map(name => KEYS[name]), ...layoutKeys, historyKey], locked => {
-      const before = withLayout ? { ...readLocked(locked), ...readLayoutLocked(locked) } : readLocked(locked)
+    const lockedNames = Array.isArray(options?.writes) ? STATE_KEYS.filter(name => name === 'meta' || name === 'locations' || options.writes.includes(name)) : STATE_KEYS
+    const readOnly = STATE_KEYS.filter(name => !lockedNames.includes(name))
+    const unlocked = await Promise.all(readOnly.map(name => store.getAsync(KEYS[name], { skipCache: true })))
+    const outside = Object.fromEntries(readOnly.map((name, index) => [name, unlocked[index] ?? structuredClone(EMPTY[name])]))
+    return store.withLockedKeysAsync([...lockedNames.map(name => KEYS[name]), ...layoutKeys, historyKey], locked => {
+      const state = { ...readLocked(locked, lockedNames), ...outside }
+      const before = withLayout ? { ...state, ...readLayoutLocked(locked) } : state
       if (actionId && (before.meta.applied || []).includes(actionId)) return { duplicate: true }
       const tx = structuredClone(before)
       const events = []
@@ -106,9 +114,11 @@ function createLocationRepository({ storeFor, now = Date.now, newId }) {
     const store = storeFor(team)
     const undoneAt = now()
     const currentKey = monthKey(undoneAt)
-    // By event id the event is looked up under the lock in the last UNDO_MONTHS months, so nothing is read before it.
+    // By event id the event is looked up under the lock in the last UNDO_MONTHS months, so nothing is read before it;
+    // with its time as well, only that month is locked (one lock file less per month on M:).
     const start = new Date(undoneAt)
-    const months = eventId ? Array.from({ length: UNDO_MONTHS }, (_, back) => monthKey(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() - back, 1))) : [monthKey(at)]
+    const recent = Array.from({ length: UNDO_MONTHS }, (_, back) => monthKey(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() - back, 1)))
+    const months = !eventId ? [monthKey(at)] : Number.isFinite(at) && recent.includes(monthKey(at)) ? [monthKey(at)] : recent
     return store.withLockedKeysAsync([...STATE_KEYS.map(name => KEYS[name]), ...months, currentKey], locked => {
       const before = readLocked(locked)
       if (actionId && (before.meta.applied || []).includes(actionId)) return { duplicate: true }

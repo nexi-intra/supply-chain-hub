@@ -328,12 +328,13 @@ export function LayoutEditor({ user, onDone }: { user: WarehouseUser; onDone: ()
     setPublishing(true)
   }
 
-  async function published(version: number) {
+  async function published(version: number, next?: LayoutDraft) {
     setPublishing(false)
     setPlan(null)
     toast.success(t(`Tegningen er udgivet (version ${version})`, `The drawing is published (version ${version})`))
-    // The publish deleted the draft, so this starts a new one on the new version.
-    await load()
+    // The publish made the next draft on the new version in the same write.
+    if (next) show(next)
+    else await load()
   }
 
   async function onFile(file: File) {
@@ -360,8 +361,10 @@ export function LayoutEditor({ user, onDone }: { user: WarehouseUser; onDone: ()
     pausedRef.current = true
     setPendingAction('discard')
     try {
-      await bridge.discardLayoutDraft()
-      await load()
+      const { draft: next } = await bridge.discardLayoutDraft()
+      // The discard started the next draft from the published drawing in the same write.
+      if (next) show(next)
+      else await load()
       setDialog(null)
       toast.success(t('Kladden er kasseret', 'The draft has been discarded'))
     } catch (error) {
@@ -514,7 +517,7 @@ export function LayoutEditor({ user, onDone }: { user: WarehouseUser; onDone: ()
       {publishing && !stale && (
         <PublishPanel
           draft={draft} team={user.team} dispatch={dispatch} save={flush} onPlan={setPlan} onStale={onStale}
-          onFindSlot={findSlot} onShow={id => { dispatch({ type: 'select', id }); setPublishing(false) }} onPublished={version => void published(version)} onClose={() => setPublishing(false)}
+          onFindSlot={findSlot} onShow={id => { dispatch({ type: 'select', id }); setPublishing(false) }} onPublished={(version, next) => void published(version, next)} onClose={() => setPublishing(false)}
         />
       )}
       {dialog?.kind === 'busy' && (

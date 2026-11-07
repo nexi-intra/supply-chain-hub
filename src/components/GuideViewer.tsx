@@ -253,7 +253,7 @@ export function GuideViewer({ guide: sourceGuide, open, onOpenChange, onEdit, fi
     try {
       let root = await getExportRoot(kind)
       if (!root) {
-        root = await chooseAndSaveExportRoot(kind)
+        root = await chooseAndSaveExportRoot(kind, () => toast.error(appLanguage === 'da' ? 'Eksportmappen kunne ikke huskes på det fælles drev' : appLanguage === 'fi' ? 'Vientikansiota ei voitu tallentaa yhteiselle asemalle' : appLanguage === 'sv' ? 'Exportmappen kunde inte sparas på den gemensamma enheten' : 'The export folder could not be saved to the shared drive'))
         if (!root) return
       }
       const filePath = guide?.preserveWordLayout

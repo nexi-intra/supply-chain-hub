@@ -43,10 +43,14 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId }) 
     const createdAt = now()
     const meta = { id, team, name: cleanName, scope: snapshot.scope, status: 'open', owner: { email: owner.email, name: owner.name }, createdAt, fetchedAt: snapshot.fetchedAt, snapshotVersion: 1, statusId }
     const target = store(team)
-    await target.setAsync(key(id, 'expected'), snapshot)
-    await target.setAsync(key(id, 'placements'), placements)
-    await target.updateAsync(key(id, 'members'), { op: 'setField', field: owner.email, value: { email: owner.email, name: owner.name, role: 'owner', status: 'approved', requestedAt: createdAt, decidedAt: createdAt } })
-    await target.setAsync(key(id, 'meta'), meta)
+    // Each write to M: takes 15–90 s, so the count's own files are written at once; the index entry comes last,
+    // so no other PC sees the count before its files are there.
+    await Promise.all([
+      target.setAsync(key(id, 'expected'), snapshot),
+      target.setAsync(key(id, 'placements'), placements),
+      target.updateAsync(key(id, 'members'), { op: 'setField', field: owner.email, value: { email: owner.email, name: owner.name, role: 'owner', status: 'approved', requestedAt: createdAt, decidedAt: createdAt } }),
+      target.setAsync(key(id, 'meta'), meta),
+    ])
     await target.updateAsync(INDEX_KEY, { op: 'setField', field: id, value: indexEntry(meta) })
     return meta
   }
@@ -63,10 +67,33 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId }) 
 
   /** The tombstone is written first, so other PCs stop using the count even if removing its files is interrupted. */
   async function deleteCount(team, id, by) {
+    await deleteCounts(team, [id], by)
+  }
+
+  /** Several counts at once: one write of the index with all tombstones, then their files are removed in parallel. */
+  async function deleteCounts(team, ids, by) {
+    await markDeleted(team, ids, by)
+    await removeCountFiles(team, ids)
+  }
+
+  async function markDeleted(team, ids, by) {
+    if (!ids.length) return
+    for (const id of ids) key(id, '')
+    const at = now()
+    const deletedBy = { email: by.email, name: by.name }
+    await store(team).mutateAsync(INDEX_KEY, index => {
+      const next = index && typeof index === 'object' ? index : {}
+      for (const id of ids) next[id] = { id, deleted: true, deletedAt: at, deletedBy }
+      return next
+    })
+  }
+
+  async function removeCountFiles(team, ids) {
+    if (!ids.length) return
     const target = store(team)
-    const prefix = `${key(id, '')}`
-    await target.updateAsync(INDEX_KEY, { op: 'setField', field: id, value: { id, deleted: true, deletedAt: now(), deletedBy: { email: by.email, name: by.name } } })
-    for (const name of (await target.keysAsync()).filter(item => item.startsWith(prefix))) await target.deleteAsync(name)
+    const prefixes = ids.map(id => key(id, ''))
+    const names = (await target.keysAsync()).filter(item => prefixes.some(prefix => item.startsWith(prefix)))
+    await Promise.all(names.map(name => target.deleteAsync(name)))
   }
 
   async function getMeta(team, id) {
@@ -75,14 +102,22 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId }) 
     return meta
   }
 
+  /** All changed fields in one locked write of the meta file, and the index entry in parallel with it. */
   async function updateMeta(team, id, changes) {
+    const fields = Object.entries(changes)
+    if (fields.some(([field]) => ['id', 'team', 'owner', 'createdAt'].includes(field))) throw codeError('COUNT_INVALID')
+    if (!fields.length) return undefined
     const target = store(team)
-    let meta
-    for (const [field, value] of Object.entries(changes)) {
-      if (['id', 'team', 'owner', 'createdAt'].includes(field)) throw codeError('COUNT_INVALID')
-      meta = await target.updateAsync(key(id, 'meta'), { op: 'setField', field, value })
-    }
-    if (meta) await target.updateAsync(INDEX_KEY, { op: 'setField', field: id, value: indexEntry(meta) })
+    const metaKey = key(id, 'meta')
+    const current = await target.getAsync(metaKey, { skipCache: true })
+    if (!current) throw codeError('COUNT_NOT_FOUND')
+    const [meta] = await Promise.all([
+      target.mutateAsync(metaKey, stored => {
+        if (!stored) throw codeError('COUNT_NOT_FOUND')
+        return { ...stored, ...changes }
+      }),
+      target.updateAsync(INDEX_KEY, { op: 'setField', field: id, value: indexEntry({ ...current, ...changes }) }),
+    ])
     return meta
   }
 
@@ -93,8 +128,11 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId }) 
   async function replaceSnapshot(team, id, snapshot) {
     const target = store(team)
     const current = await target.getAsync(key(id, 'expected'), { skipCache: true })
-    if (current) await target.setAsync(key(id, 'expected-prev'), current)
-    await target.setAsync(key(id, 'expected'), snapshot)
+    // Two different files: the backup of the old snapshot and the new one are written at the same time.
+    await Promise.all([
+      current ? target.setAsync(key(id, 'expected-prev'), current) : null,
+      target.setAsync(key(id, 'expected'), snapshot),
+    ])
   }
 
   async function saveOwnPlacement(team, { name, area = '', type = '', createdBy }) {
@@ -125,19 +163,18 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId }) 
     return changeKey(team, STATUSES_KEY, change)
   }
 
+  /**
+   * Read-change-write under the key's file lock (the same lock 1.6.6 uses for compareAndSet), so nobody can write in
+   * between: no extra read before the write and no retried 20-s write after a conflict. A throwing `change` writes nothing.
+   */
   async function changeKey(team, storeKey, change) {
-    const target = store(team)
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const current = await target.getAsync(storeKey, { skipCache: true })
-      const { all, result } = change(structuredClone(current || {}))
-      try {
-        await target.updateAsync(storeKey, { op: 'compareAndSet', expected: current, value: all })
-        return result
-      } catch (error) {
-        if (error.code !== 'KV_CONFLICT') throw error
-      }
-    }
-    throw codeError('KV_CONFLICT')
+    let result
+    await store(team).mutateAsync(storeKey, current => {
+      const outcome = change(current && typeof current === 'object' ? current : {})
+      result = outcome.result
+      return outcome.all
+    })
+    return result
   }
 
   async function listStatuses(team) {
@@ -242,6 +279,9 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId }) 
     deleteStatus,
     isDeleted,
     deleteCount,
+    deleteCounts,
+    markDeleted,
+    removeCountFiles,
     getMeta,
     updateMeta,
     getSnapshot: (team, id) => store(team).getAsync(key(id, 'expected')),
@@ -255,6 +295,8 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId }) 
     deleteClaim: (team, id, area) => deleteField(team, id, 'claims', area),
     getApprovals: (team, id) => getObject(team, id, 'approvals'),
     setApproval: (team, id, material, value) => setField(team, id, 'approvals', material, value),
+    /** Several approvals in one locked write (same file and format as setApproval): `change(all)` returns { all, result }. */
+    changeApprovals: (team, id, change) => changeKey(team, key(id, 'approvals'), change),
     getMaterialLocks: (team, id) => getObject(team, id, 'materiallaase'),
     /** compare-and-set on all locks of a count: `change(all)` returns { all, result }. */
     changeMaterialLocks: (team, id, change) => changeKey(team, key(id, 'materiallaase'), change),

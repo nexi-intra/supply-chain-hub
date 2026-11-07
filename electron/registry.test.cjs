@@ -70,6 +70,54 @@ function temporaryPlatformRoot(t) {
   return directory
 }
 
+// A registry write on M: takes 15-90 s; the synchronous one froze the whole app (every window, every click) meanwhile.
+test('async registry mutations never touch the disk synchronously and give the same result', async (t) => {
+  const root = temporaryPlatformRoot(t)
+  const syncCalls = []
+  const spied = ['readFileSync', 'writeFileSync', 'renameSync', 'openSync', 'mkdirSync', 'unlinkSync']
+  const real = Object.fromEntries(spied.map(name => [name, fs[name]]))
+  for (const name of spied) fs[name] = (...args) => { syncCalls.push(`${name} ${args[0]}`); return real[name](...args) }
+  t.after(() => { for (const name of spied) fs[name] = real[name] })
+  await registry.createTeamAsync(root, { teamId: 'TCD', name: 'Test A', folderName: 'TCD' })
+  await registry.createTeamAsync(root, { teamId: 'TRR', name: 'Test B', folderName: 'TRR' })
+  await registry.assignUserToTeamAsync(root, 'Boss@example.com', 'TCD')
+  assert.deepEqual(await registry.setManagerAccessAsync(root, 'boss@example.com', ['TRR']), { email: 'boss@example.com', teamIds: ['TRR'] })
+  assert.equal((await registry.updateTeamAsync(root, 'TRR', { name: 'Renamed', abbreviation: 'trr' })).name, 'Renamed')
+  await registry.setCreatorEmailAsync(root, ' Creator@example.com ')
+  assert.equal(await registry.forgetUserAsync(root, 'boss@example.com'), true)
+  assert.deepEqual(syncCalls, [])
+  for (const name of spied) fs[name] = real[name]
+  assert.equal(registry.lookupTeamForEmail(root, 'boss@example.com'), null)
+  assert.deepEqual(registry.listManagerAccess(root), [])
+  assert.equal(registry.getCreatorEmail(root), 'creator@example.com')
+  assert.deepEqual(registry.listTeams(root).map(team => team.name).sort(), ['Renamed', 'Test A'])
+  assert.ok(!fs.existsSync(path.join(registry.registryDir(root), 'mutation.lock')), 'the lock is released')
+})
+
+test('an async mutation uses the same lock file as the synchronous one (1.6.6 clients) and validates before writing', async (t) => {
+  const root = temporaryPlatformRoot(t)
+  registry.createTeam(root, { teamId: 'TCD', name: 'Test A', folderName: 'TCD' })
+  registry.assignUserToTeam(root, 'a@example.com', 'TCD')
+  await assert.rejects(registry.assignUserToTeamAsync(root, 'a@example.com', 'NOPE'), /Teamet findes ikke/)
+  const lock = path.join(registry.registryDir(root), 'mutation.lock')
+  fs.writeFileSync(lock, 'other-client')
+  await assert.rejects(registry.assignUserToTeamAsync(root, 'b@example.com', 'TCD'), error => error.code === 'KV_LOCK_BUSY')
+  assert.equal(registry.lookupTeamForEmail(root, 'b@example.com'), null)
+  fs.unlinkSync(lock)
+})
+
+test('an async mutation reads fresh and keeps a colleague\'s change', async (t) => {
+  const root = temporaryPlatformRoot(t)
+  registry.createTeam(root, { teamId: 'TCD', name: 'Test A', folderName: 'TCD' })
+  registry.assignUserToTeam(root, 'me@example.com', 'TCD')
+  const directory = registry.userDirectoryPath(root)
+  const onShare = JSON.parse(fs.readFileSync(directory, 'utf8'))
+  onShare['colleague@example.com'] = 'TCD'
+  fs.writeFileSync(directory, JSON.stringify(onShare))
+  await registry.assignUserToTeamAsync(root, 'third@example.com', 'TCD')
+  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(directory, 'utf8'))).sort(), ['colleague@example.com', 'me@example.com', 'third@example.com'])
+})
+
 test('lookupTeamForEmail returns null when nothing is registered', (t) => {
   const root = temporaryPlatformRoot(t)
   assert.equal(registry.lookupTeamForEmail(root, 'nobody@example.com'), null)

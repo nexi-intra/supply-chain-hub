@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowLeft, CloudSlash } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { isAnyModalOpen } from '@/lib/modalStack'
 import { errorMessage } from '@/lib/warehouse/errors'
 import type { LocationsTarget } from '@/lib/warehouse/locations'
+import { startLocationsRead } from '@/lib/warehouse/locationActions'
 import { t } from '@/lib/warehouse/text'
 import type { LocationList, WarehouseUser } from '@/types/warehouse'
 import { Admin } from './Admin'
@@ -38,9 +39,14 @@ export function Locations({ user, initial }: { user: WarehouseUser; initial: Loc
   const [tags, setTags] = useState<string[]>([])
   // A published drawing makes the places (the create and import entries give way to it) and opens the map for everyone.
   const [drawing, setDrawing] = useState<LocationList['drawing']>(null)
+  const overviewRead = useRef(false)
   useEffect(() => {
     let current = true
-    window.electronWarehouse!.locations.overview().then(result => { if (current) { setTags(result.tags); setDrawing(result.drawing) } }).catch(() => {})
+    const fresh = startLocationsRead()
+    window.electronWarehouse!.locations.overview().then(result => {
+      // An answer read while one of this PC's actions was on its way may be older than the screen; the action's end reads again.
+      if (current && (fresh() || !overviewRead.current)) { overviewRead.current = true; setTags(result.tags); setDrawing(result.drawing) }
+    }).catch(() => {})
     return () => { current = false }
   }, [version])
   const drawn = Boolean(drawing)
@@ -106,13 +112,13 @@ export function Locations({ user, initial }: { user: WarehouseUser; initial: Loc
       {target.kind === 'take' && <TakePallet material={target.id} version={version} onDone={() => setVersion(value => value + 1)} />}
       {target.kind === 'refill' && <Refill id={target.id} version={version} onDone={() => setVersion(value => value + 1)} />}
       {target.kind === 'fetch' && <FetchGuide key={target.id || ''} material={target.id} version={version} onOpen={setTarget} />}
-      {target.kind === 'log' && <LocationsLog key={target.id || ''} query={target.id} version={version} onOpen={setTarget} onChanged={() => setVersion(value => value + 1)} />}
+      {target.kind === 'log' && <LocationsLog key={target.id || ''} user={user} query={target.id} version={version} onOpen={setTarget} onChanged={() => setVersion(value => value + 1)} />}
       {target.kind === 'move' && <MovePallet pallet={target.id} version={version} onDone={() => setVersion(value => value + 1)} />}
       {target.kind === 'material' && <MaterialCard material={target.id} version={version} onOpen={setTarget} />}
-      {target.kind === 'location' && <LocationCard location={target.id} version={version} canAdmin={canAdmin} drawing={drawing} onOpen={setTarget} onChanged={() => setVersion(value => value + 1)} />}
-      {target.kind === 'rack' && <RackCard rack={target.id} version={version} canAdmin={canAdmin} drawn={drawn} drawing={drawing} onOpen={setTarget} onChanged={() => setVersion(value => value + 1)} />}
-      {target.kind === 'pallet' && <PalletCard pallet={target.id} version={version} tags={tags} onOpen={setTarget} onChanged={() => setVersion(value => value + 1)} />}
-      {target.kind === 'admin' && <Admin user={user} version={version} onOpen={setTarget} onChanged={() => setVersion(value => value + 1)} />}
+      {target.kind === 'location' && <LocationCard key={target.id} location={target.id} version={version} canAdmin={canAdmin} drawing={drawing} onOpen={setTarget} onChanged={() => setVersion(value => value + 1)} />}
+      {target.kind === 'rack' && <RackCard key={target.id} rack={target.id} version={version} canAdmin={canAdmin} drawn={drawn} drawing={drawing} onOpen={setTarget} onChanged={() => setVersion(value => value + 1)} />}
+      {target.kind === 'pallet' && <PalletCard key={target.id} pallet={target.id} version={version} tags={tags} onOpen={setTarget} onChanged={() => setVersion(value => value + 1)} />}
+      {target.kind === 'admin' && <Admin user={user} version={version} onOpen={setTarget} onChanged={() => setVersion(value => value + 1)} onTags={setTags} />}
       {target.kind === 'import' && <ImportSheet onDone={() => { setVersion(value => value + 1); setTarget({ kind: 'home' }) }} />}
       {target.kind === 'layout' && canAdmin && <LayoutEditor user={user} onDone={toHome} />}
       {target.kind === 'map' && <LocationsMap key={target.id || ''} user={user} focus={target.id} drawing={drawing} version={version} onOpen={setTarget} />}

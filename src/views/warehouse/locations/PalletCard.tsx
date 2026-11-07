@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowsLeftRight, HandGrabbing, PencilSimple, Swap } from '@phosphor-icons/react'
+import { ArrowsLeftRight, HandGrabbing, PencilSimple, Swap, Warning } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -12,12 +12,14 @@ import { Textarea } from '@/components/warehouse/ui'
 import { cn } from '@/lib/utils'
 import { errorCode, errorMessage } from '@/lib/warehouse/errors'
 import { formatNumber } from '@/lib/warehouse/format'
-import { deferredText, formatAge, formatDate, isDeferred, materialLabel, newActionId, reasonLabel, type LocationsTarget } from '@/lib/warehouse/locations'
+import { matdocOf, moveTargetCheck, sendLocationAction, startLocationsRead } from '@/lib/warehouse/locationActions'
+import { formatAge, formatDate, locationKeyOf, materialLabel, newActionId, reasonLabel, type LocationsTarget } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
-import type { Deferred, PalletCard as PalletCardData, PalletView, SlotSuggestion } from '@/types/warehouse'
+import type { LocationList, PalletCard as PalletCardData, PalletView, SlotSuggestion } from '@/types/warehouse'
 import { HistoryList } from './HistoryList'
 
 type Dialogs = 'edit' | 'move' | 'sloc' | null
+const DAY_MS = 86400000
 
 /** One pallet with all its fields and history: edit it, move it, or change its storage location. */
 export function PalletCard({ pallet: id, version, tags, onOpen, onChanged }: { pallet: string; version: number; tags: string[]; onOpen: (target: LocationsTarget) => void; onChanged: () => void }) {
@@ -26,20 +28,24 @@ export function PalletCard({ pallet: id, version, tags, onOpen, onChanged }: { p
   const [dialog, setDialog] = useState<Dialogs>(null)
   useEffect(() => {
     let current = true
+    // A re-read during this PC's own change on its way to M: is older than the card, which already shows the change.
+    const fresh = startLocationsRead()
     window.electronWarehouse!.locations.palletCard({ pallet: id })
-      .then(result => { if (current) { setCard(result); setGone(false) } })
-      .catch(error => { if (!current) return; if (errorCode(error) === 'PALLET_GONE') setGone(true); else toast.error(errorMessage(error)) })
+      .then(result => { if (current) { setCard(value => (value && !fresh() ? value : result)); setGone(false) } })
+      .catch(error => { if (!current) return; if (errorCode(error) === 'PALLET_GONE') { if (fresh()) setGone(true) } else toast.error(errorMessage(error)) })
     return () => { current = false }
   }, [id, version])
 
   if (gone) return <p className="text-sm text-muted-foreground">{t('Pallen er ikke på lageret længere.', 'The pallet is no longer in stock.')}</p>
   if (!card) return <Skeleton className="h-80 rounded-xl" />
   const pallet = card.pallet
-  const done = (result: object, text: string) => {
-    if (isDeferred(result)) toast.warning(deferredText(result as Deferred))
-    else toast.success(text)
+  // The card shows the change and the dialog closes at once; M: gets it in the background (15-40 s). A refusal puts the
+  // changed fields back and says why.
+  const send = (patch: Partial<PalletView>, write: () => Promise<object>, success: string) => {
+    const before = Object.fromEntries(Object.keys(patch).map(field => [field, pallet[field as keyof PalletView]])) as Partial<PalletView>
+    setCard(value => value && { ...value, pallet: { ...value.pallet, ...patch } })
     setDialog(null)
-    onChanged()
+    void sendLocationAction(write, { success, rollback: () => setCard(value => value && { ...value, pallet: { ...value.pallet, ...before } }), settled: onChanged })
   }
 
   const field = (label: string, content: React.ReactNode) => (
@@ -86,25 +92,19 @@ export function PalletCard({ pallet: id, version, tags, onOpen, onChanged }: { p
         <CardContent><HistoryList events={card.history} /></CardContent>
       </Card>
 
-      {dialog === 'edit' && <EditDialog pallet={pallet} tags={tags} onClose={() => setDialog(null)} onDone={result => done(result, t('Pallen er rettet', 'The pallet has been edited'))} />}
-      {dialog === 'move' && <MoveDialog pallet={pallet} onClose={() => setDialog(null)} onDone={(result, to) => done(result, t(`Pallen står nu på ${to}`, `The pallet is now on ${to}`))} />}
-      {dialog === 'sloc' && <SlocDialog pallet={pallet} onClose={() => setDialog(null)} onDone={(result, sloc) => done(result, t(`Storage location er nu ${sloc} i Hubben`, `Storage location is now ${sloc} in the Hub`))} />}
+      {dialog === 'edit' && <EditDialog pallet={pallet} tags={tags} onClose={() => setDialog(null)} onSend={(patch, write) => send(patch, write, t('Pallen er rettet', 'The pallet has been edited'))} />}
+      {dialog === 'move' && <MoveDialog pallet={pallet} onClose={() => setDialog(null)} onSend={(to, write) => send({ location: to.id }, write, t(`Pallen står nu på ${to.name}`, `The pallet is now on ${to.name}`))} />}
+      {dialog === 'sloc' && <SlocDialog pallet={pallet} onClose={() => setDialog(null)} onSend={(sloc, write) => send({ sloc }, write, t(`Storage location er nu ${sloc} i Hubben`, `Storage location is now ${sloc} in the Hub`))} />}
     </div>
   )
 }
 
-function useSubmit() {
-  const [busy, setBusy] = useState(false)
-  const run = async (job: () => Promise<void>) => {
-    setBusy(true)
-    try { await job() } catch (error) { toast.error(errorMessage(error)) } finally { setBusy(false) }
-  }
-  return { busy, run }
-}
-
+type Send<T> = (value: T, write: () => Promise<object>) => void
+type Listed = LocationList['locations'][number]
 const dayOf = (ms: number) => { const date = new Date(ms); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}` }
+const serialsFrom = (text: string) => [...new Set(text.split(/[\s,;]+/).map(serial => serial.trim().toUpperCase()).filter(Boolean))]
 
-function EditDialog({ pallet, tags, onClose, onDone }: { pallet: PalletView; tags: string[]; onClose: () => void; onDone: (result: object) => void }) {
+function EditDialog({ pallet, tags, onClose, onSend }: { pallet: PalletView; tags: string[]; onClose: () => void; onSend: Send<Partial<PalletView>> }) {
   const [material, setMaterial] = useState(pallet.material)
   const [quantity, setQuantity] = useState(pallet.quantity === null ? '' : String(pallet.quantity))
   const [date, setDate] = useState(dayOf(pallet.receivedAt))
@@ -112,16 +112,23 @@ function EditDialog({ pallet, tags, onClose, onDone }: { pallet: PalletView; tag
   const [serials, setSerials] = useState(pallet.serials.join('\n'))
   const [chosen, setChosen] = useState<string[]>(pallet.tags)
   const [note, setNote] = useState(pallet.note)
-  const { busy, run } = useSubmit()
-  const save = () => run(async () => {
-    const result = await window.electronWarehouse!.locations.editPallet({
+  // Checked here as the backend does, so a typing error is shown before the dialog closes.
+  const matdoc = document.trim() ? matdocOf(document) : null
+  const documentInvalid = Boolean(document.trim()) && !matdoc
+  const code = material.trim().toUpperCase()
+  const changes = { material: code, quantity: quantity.trim() === '' ? null : Number(quantity), receivedAt: date === dayOf(pallet.receivedAt) ? pallet.receivedAt : new Date(`${date}T12:00:00`).getTime(), document: matdoc, serials: serialsFrom(serials), tags: [...new Set(chosen)], note: note.trim().slice(0, 500) }
+  const changed = (Object.keys(changes) as (keyof typeof changes)[]).filter(field => JSON.stringify(pallet[field] ?? null) !== JSON.stringify(changes[field] ?? null))
+  function save() {
+    // Nothing changed: nothing to write on M:.
+    if (!changed.length) { onClose(); return }
+    const patch: Partial<PalletView> = { ...changes, ...(code !== pallet.material ? { description: '' } : {}), ...(changes.receivedAt !== pallet.receivedAt ? { ageDays: Math.max(0, Math.floor((Date.now() - changes.receivedAt) / DAY_MS)) } : {}) }
+    onSend(patch, () => window.electronWarehouse!.locations.editPallet({
       actionId: newActionId(), label: t(`Ret pallen med ${pallet.material} på ${pallet.location}`, `Edit the pallet with ${pallet.material} on ${pallet.location}`), pallet: pallet.id,
-      changes: { material, quantity: quantity.trim() === '' ? null : Number(quantity), receivedAt: new Date(`${date}T12:00:00`).getTime(), document: document.trim() || null, serials: serials.split(/[\s,;]+/).filter(Boolean), tags: chosen, note },
-    })
-    onDone(result)
-  })
+      changes: { material: code, quantity: changes.quantity, receivedAt: changes.receivedAt, document: changes.document, serials: changes.serials, tags: chosen, note },
+    }))
+  }
   return (
-    <Dialog open onOpenChange={open => { if (!open && !busy) onClose() }}>
+    <Dialog open onOpenChange={open => { if (!open) onClose() }}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>{t('Ret pallen', 'Edit the pallet')}</DialogTitle>
@@ -131,7 +138,10 @@ function EditDialog({ pallet, tags, onClose, onDone }: { pallet: PalletView; tag
           <div className="space-y-1.5"><Label htmlFor="edit-material">{t('Materiale', 'Material')}</Label><Input id="edit-material" className="font-mono" value={material} onChange={event => setMaterial(event.target.value.toUpperCase())} /></div>
           <div className="space-y-1.5"><Label htmlFor="edit-quantity">{t('Antal', 'Quantity')}</Label><Input id="edit-quantity" inputMode="numeric" value={quantity} onChange={event => setQuantity(event.target.value.replace(/\D/g, ''))} /></div>
           <div className="space-y-1.5"><Label htmlFor="edit-date">{t('Dato', 'Date')}</Label><Input id="edit-date" type="date" value={date} onChange={event => setDate(event.target.value || date)} /></div>
-          <div className="space-y-1.5"><Label htmlFor="edit-document">{t('49/50-nummer', '49/50 number')}</Label><Input id="edit-document" className="font-mono" value={document} onChange={event => setDocument(event.target.value)} /></div>
+          <div className="space-y-1.5">
+            <Label htmlFor="edit-document">{t('49/50-nummer', '49/50 number')}</Label><Input id="edit-document" className="font-mono" value={document} aria-invalid={documentInvalid} onChange={event => setDocument(event.target.value)} />
+            {documentInvalid && <p className="text-xs text-destructive">{t('Skriv 49/50-nummeret som fx "5000032337 2026 0001"', 'Type the 49/50 number like "5000032337 2026 0001"')}</p>}
+          </div>
         </div>
         <div className="space-y-1.5"><Label htmlFor="edit-serials">{t('Serienumre (et pr. linje)', 'Serial numbers (one per line)')}</Label><Textarea id="edit-serials" className="font-mono text-xs" value={serials} onChange={event => setSerials(event.target.value)} /></div>
         {tags.length > 0 && (
@@ -144,31 +154,36 @@ function EditDialog({ pallet, tags, onClose, onDone }: { pallet: PalletView; tag
         )}
         <div className="space-y-1.5"><Label htmlFor="edit-note">{t('Note', 'Note')}</Label><Input id="edit-note" value={note} maxLength={500} onChange={event => setNote(event.target.value)} /></div>
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={busy}>{t('Annullér', 'Cancel')}</Button>
-          <Button onClick={() => save()} loading={busy}>{t('Gem', 'Save')}</Button>
+          <Button variant="ghost" onClick={onClose}>{t('Annullér', 'Cancel')}</Button>
+          <Button onClick={() => save()} disabled={!code || code.length > 40 || documentInvalid}>{t('Gem', 'Save')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   )
 }
 
-function MoveDialog({ pallet, onClose, onDone }: { pallet: PalletView; onClose: () => void; onDone: (result: object, to: string) => void }) {
+function MoveDialog({ pallet, onClose, onSend }: { pallet: PalletView; onClose: () => void; onSend: Send<Listed> }) {
   const [to, setTo] = useState('')
   const [slots, setSlots] = useState<SlotSuggestion[]>([])
-  const { busy, run } = useSubmit()
+  // Every place, so the new place is checked here as the backend does (exists, active, room) before the dialog closes.
+  const [places, setPlaces] = useState<Record<string, Listed> | null>(null)
   useEffect(() => { window.electronWarehouse!.locations.suggest({ material: pallet.material }).then(result => setSlots(result.slots.filter(slot => slot.location !== pallet.location))).catch(() => {}) }, [pallet.material, pallet.location])
-  const save = () => run(async () => {
-    const result = await window.electronWarehouse!.locations.move({ actionId: newActionId(), label: t(`Flyt ${pallet.material} fra ${pallet.location} til ${to}`, `Move ${pallet.material} from ${pallet.location} to ${to}`), pallet: pallet.id, to })
-    onDone(result, to.trim().toUpperCase())
-  })
+  useEffect(() => { window.electronWarehouse!.locations.list().then(result => setPlaces(Object.fromEntries(result.locations.map(location => [location.id, location])))).catch(() => setPlaces({})) }, [])
+  const target = places?.[locationKeyOf(to)] || null
+  const { note, blocked } = moveTargetCheck(to, target, pallet.location)
+  function save() {
+    if (!target || blocked) return
+    onSend(target, () => window.electronWarehouse!.locations.move({ actionId: newActionId(), label: t(`Flyt ${pallet.material} fra ${pallet.location} til ${target.name}`, `Move ${pallet.material} from ${pallet.location} to ${target.name}`), pallet: pallet.id, to: target.id }))
+  }
   return (
-    <Dialog open onOpenChange={open => { if (!open && !busy) onClose() }}>
+    <Dialog open onOpenChange={open => { if (!open) onClose() }}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{t(`Flyt pallen fra ${pallet.location}`, `Move the pallet from ${pallet.location}`)}</DialogTitle>
           <DialogDescription>{materialLabel(pallet.material, pallet.description)}</DialogDescription>
         </DialogHeader>
-        <Input autoFocus className="font-mono" value={to} placeholder="A2.4" onChange={event => setTo(event.target.value.toUpperCase())} onKeyDown={event => { if (event.key === 'Enter' && to.trim()) void save() }} aria-label={t('Ny plads', 'New place')} />
+        <Input autoFocus className="font-mono" value={to} placeholder="A2.4" onChange={event => setTo(event.target.value.toUpperCase())} onKeyDown={event => { if (event.key === 'Enter') save() }} aria-label={t('Ny plads', 'New place')} />
+        {places && note && <p className={cn('flex items-center gap-1.5 text-sm', blocked ? 'text-destructive' : 'text-amber-700 dark:text-amber-400')}><Warning size={14} /> {note}</p>}
         <div className="flex flex-wrap gap-2">
           {slots.map(slot => (
             <button key={slot.location} type="button" onClick={() => setTo(slot.location)} className={cn('rounded-md border px-2.5 py-1 text-xs', to === slot.location ? 'border-primary bg-primary text-primary-foreground' : 'hover:bg-secondary')}>
@@ -177,24 +192,20 @@ function MoveDialog({ pallet, onClose, onDone }: { pallet: PalletView; onClose: 
           ))}
         </div>
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={busy}>{t('Annullér', 'Cancel')}</Button>
-          <Button onClick={() => save()} disabled={!to.trim()} loading={busy}>{t('Flyt', 'Move')}</Button>
+          <Button variant="ghost" onClick={onClose}>{t('Annullér', 'Cancel')}</Button>
+          <Button onClick={() => save()} disabled={!places || blocked} loading={!places && Boolean(to.trim())}>{t('Flyt', 'Move')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   )
 }
 
-function SlocDialog({ pallet, onClose, onDone }: { pallet: PalletView; onClose: () => void; onDone: (result: object, sloc: string) => void }) {
+function SlocDialog({ pallet, onClose, onSend }: { pallet: PalletView; onClose: () => void; onSend: Send<string> }) {
   const [sloc, setSloc] = useState(pallet.sloc)
-  const { busy, run } = useSubmit()
   const valid = /^[A-Z]\d{3}$/.test(sloc)
-  const save = () => run(async () => {
-    const result = await window.electronWarehouse!.locations.changeSloc({ actionId: newActionId(), label: t(`Storage location ${sloc} for ${pallet.material} på ${pallet.location}`, `Storage location ${sloc} for ${pallet.material} on ${pallet.location}`), pallet: pallet.id, sloc })
-    onDone(result, sloc)
-  })
+  const save = () => onSend(sloc, () => window.electronWarehouse!.locations.changeSloc({ actionId: newActionId(), label: t(`Storage location ${sloc} for ${pallet.material} på ${pallet.location}`, `Storage location ${sloc} for ${pallet.material} on ${pallet.location}`), pallet: pallet.id, sloc }))
   return (
-    <Dialog open onOpenChange={open => { if (!open && !busy) onClose() }}>
+    <Dialog open onOpenChange={open => { if (!open) onClose() }}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{t('Skift storage location', 'Change storage location')}</DialogTitle>
@@ -202,8 +213,8 @@ function SlocDialog({ pallet, onClose, onDone }: { pallet: PalletView; onClose: 
         </DialogHeader>
         <Input autoFocus className="w-32 font-mono" maxLength={4} value={sloc} onChange={event => setSloc(event.target.value.toUpperCase())} aria-invalid={!valid} aria-label="Storage location" />
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={busy}>{t('Annullér', 'Cancel')}</Button>
-          <Button onClick={() => save()} disabled={!valid || sloc === pallet.sloc} loading={busy}>{t('Skift', 'Change')}</Button>
+          <Button variant="ghost" onClick={onClose}>{t('Annullér', 'Cancel')}</Button>
+          <Button onClick={() => save()} disabled={!valid || sloc === pallet.sloc}>{t('Skift', 'Change')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

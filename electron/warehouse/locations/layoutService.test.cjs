@@ -59,7 +59,7 @@ test('one draft at a time: another admin must take over', async () => {
   assert.deepEqual([saved.basedOn, saved.decisions], [0, decisions], 'basedOn stays the stored draft\'s; decisions are the editor\'s')
 })
 
-test('publish writes places and drawing together, keeps 20 versions and clears the draft', async () => {
+test('publish writes places, drawing and the next draft together, and keeps 20 versions', async () => {
   const { layouts, locations, repo } = setup()
   // A1.1 med palle; kladde omdøber slot s1 til A1.9
   await locations.createLocation(MONA, { name: 'A1.1', type: 'Palle', purpose: 'reserve' })
@@ -72,7 +72,10 @@ test('publish writes places and drawing together, keeps 20 versions and clears t
   const result = await publishNow(layouts, MONA)
   assert.deepEqual([result.version, result.counts.rename], [1, 1])
   assert.equal((await locations.locationCard(ANNA, { location: 'A1.9' })).pallets.length, 1)
-  assert.equal((await layouts.draft(MONA)).draft, null)
+  // The next draft is the new drawing, made in the publish's own write (the editor shows it without another save).
+  const { draft: next } = await layouts.draft(MONA)
+  assert.deepEqual(result.draft, next)
+  assert.deepEqual([next.basedOn, next.rev, next.editedBy, next.items[0].slots[0].name, 'publishedAt' in next], [1, 1, MONA_REF, 'A1.9', false])
   assert.deepEqual((await repo.read('TCD')).meta.layout, { version: 1, linked: ['A1.9'] })
   const { layout } = await layouts.layout(ANNA)
   assert.deepEqual(Object.keys(layout), ['version', 'hall', 'notes', 'items', 'outside', 'publishedAt', 'publishedBy'])
@@ -100,11 +103,11 @@ test('an autosave of a draft that was published away by another admin is refused
   const { draft: stale } = await layouts.startDraft(MONA); assert.equal(stale.basedOn, 0)
   await layouts.saveDraft(ADA, { draft: stale, takeOver: true })
   assert.equal((await publishNow(layouts, ADA)).version, 1)
-  assert.equal((await layouts.draft(MONA)).draft, null)
+  assert.equal((await layouts.draft(MONA)).draft.editedBy.email, 'ada@x.test', 'the next draft is the publishing admin\'s')
   await assert.rejects(layouts.saveDraft(MONA, { draft: stale }), err => err.code === 'LAYOUT_STALE' && /udgivet af Ada/.test(err.message))
-  assert.equal((await layouts.draft(MONA)).draft, null, 'no draft is recreated')
+  assert.equal((await layouts.draft(MONA)).draft.basedOn, 1, 'the stale draft is not saved')
   const { draft: fresh } = await layouts.startDraft(MONA); assert.equal(fresh.basedOn, 1)
-  assert.deepEqual(await layouts.saveDraft(MONA, { draft: fresh }), { editedAt: 2000, rev: 1 })
+  assert.deepEqual(await layouts.saveDraft(MONA, { draft: fresh, takeOver: true }), { editedAt: 2000, rev: 1 })
   assert.equal((await layouts.draft(MONA)).draft.basedOn, 1)
 })
 
@@ -203,13 +206,18 @@ test('a blocked plan writes nothing', async () => {
   assert.ok((await layouts.draft(MONA)).draft, 'the draft is kept')
 })
 
-test('without a draft there is nothing to preview or publish; a discarded draft is gone', async () => {
+test('without a draft there is nothing to preview or publish; a discarded draft is replaced by a fresh one in the same write', async () => {
   const { layouts } = setup()
   await assert.rejects(layouts.previewPublish(MONA), { code: 'LAYOUT_NO_DRAFT' })
   await assert.rejects(layouts.publish(MONA), { code: 'LAYOUT_NO_DRAFT' })
-  await layouts.startDraft(MONA)
-  assert.deepEqual(await layouts.discardDraft(MONA), { ok: true })
-  assert.deepEqual(await layouts.draft(MONA), { draft: null, version: 0 })
+  const { draft: started } = await layouts.startDraft(MONA)
+  await layouts.saveDraft(MONA, { draft: { ...started, items: [rackWith([P('s1', 'A1.1')])] } })
+  const { ok, draft } = await layouts.discardDraft(MONA)
+  assert.equal(ok, true)
+  assert.deepEqual([draft.items, draft.basedOn, draft.editedBy.email], [[], 0, 'mona@x.test'], 'the published drawing (none yet) again')
+  assert.equal(draft.rev, 3, 'above the discarded revision, so a PC holding it cannot save it back')
+  assert.deepEqual(await layouts.draft(MONA), { draft, version: 0 })
+  await assert.rejects(layouts.saveDraft(MONA, { draft: { ...started, rev: 2 } }), { code: 'LAYOUT_STALE' })
 })
 
 test('only the admin who edits the draft can publish it; another admin takes over first', async () => {
@@ -232,8 +240,9 @@ test('only the admin who edits the draft can discard it; another admin takes ove
   await assert.rejects(layouts.discardDraft(ADA), err => err.code === 'LAYOUT_DRAFT_BUSY' && /Mona/.test(err.message))
   assert.ok((await layouts.draft(MONA)).draft, 'the draft is kept')
   await layouts.saveDraft(ADA, { draft, takeOver: true })
-  assert.deepEqual(await layouts.discardDraft(ADA), { ok: true })
-  assert.equal((await layouts.draft(MONA)).draft, null)
+  const discarded = await layouts.discardDraft(ADA)
+  assert.equal(discarded.ok, true)
+  assert.equal((await layouts.draft(MONA)).draft.editedBy.email, 'ada@x.test', 'the fresh draft is the discarding admin\'s')
 })
 
 test('openVersion puts an old drawing back as a draft on top of the current one', async () => {

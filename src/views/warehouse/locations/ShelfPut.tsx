@@ -8,7 +8,8 @@ import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { formatNumber } from '@/lib/warehouse/format'
-import { deferredText, isDeferred, isShelfPlace, locationKeyOf, materialLabel, newActionId, singleFlight } from '@/lib/warehouse/locations'
+import { addToStock, sendLocationAction, startLocationsRead } from '@/lib/warehouse/locationActions'
+import { isShelfPlace, locationKeyOf, materialLabel, newActionId, singleFlight } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
 import type { LocationCard, MaterialCard } from '@/types/warehouse'
 import { MaterialPicker } from './MaterialPicker'
@@ -27,20 +28,25 @@ export function ShelfPut({ shelf: initial, version, onDone }: { shelf?: string; 
   const [quantity, setQuantity] = useState('')
   const [document, setDocument] = useState('')
   const [looking, setLooking] = useState(false)
-  const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState<string | null>(null)
-  // Enter pressed twice during a slow write on M: must not put the quantity on twice.
+  // What is typed now: a refused put comes back only into an empty form.
+  const materialRef = useRef<string | null>(null)
+  const quantityRef = useRef('')
+  materialRef.current = material
+  quantityRef.current = quantity
+  // Enter pressed twice must not put the quantity on twice.
   const once = useRef(singleFlight()).current
   const bridge = window.electronWarehouse!.locations
 
-  // The shelf as it is now: is it a lagerhylde, and what stands there.
+  // The shelf as it is now: is it a lagerhylde, and what stands there. A re-read during a put on its way is older than the screen.
   useEffect(() => {
     const name = shelf.trim()
     if (!name) { setPlace(null); setPlaceError(null); return }
     let current = true
     const timer = window.setTimeout(() => {
+      const fresh = startLocationsRead()
       bridge.locationCard({ location: name })
-        .then(result => { if (current) { setPlace(result); setPlaceError(isShelfPlace(result.location) ? null : t(`${result.location.name} er ikke en lagerhylde`, `${result.location.name} is not a storage shelf`)) } })
+        .then(result => { if (current) { setPlace(value => (value?.location.id === result.location.id && !fresh() ? value : result)); setPlaceError(isShelfPlace(result.location) ? null : t(`${result.location.name} er ikke en lagerhylde`, `${result.location.name} is not a storage shelf`)) } })
         .catch(() => { if (current) { setPlace(null); setPlaceError(t(`${name.toUpperCase()} findes ikke`, `${name.toUpperCase()} does not exist`)) } })
     }, 200)
     return () => { current = false; window.clearTimeout(timer) }
@@ -76,25 +82,30 @@ export function ShelfPut({ shelf: initial, version, onDone }: { shelf?: string; 
   const existing = place && material ? place.stock.find(line => line.material === material) : undefined
   const valid = Boolean(place && !placeError && material && amount >= 1)
 
+  // Shown at once (the shelf's lines and the material's shelves count it); M: gets it in the background (15-40 s).
+  // A refusal puts the material and quantity back, unless something new has been typed since.
   const save = () => once(async () => {
     if (!valid || !place || !material) return
-    setBusy(true)
-    try {
-      const result = await bridge.shelfPut({ actionId: newActionId(), label: t(`Læg ${material} på ${place.location.name}`, `Put ${material} on ${place.location.name}`), location: place.location.id, material, quantity: amount })
-      if (isDeferred(result)) toast.warning(deferredText(result))
-      else toast.success(t(`Lagt på ${place.location.name}: ${formatNumber(amount)} stk. ${material}`, `Put on ${place.location.name}: ${formatNumber(amount)} pcs ${material}`))
-      setSaved(t(`${formatNumber(amount)} stk. ${material} på ${place.location.name}`, `${formatNumber(amount)} pcs ${material} on ${place.location.name}`))
-      // The same shelf often gets several materials: it stays, the rest is cleared for the next.
-      setQuery('')
-      setMaterial(null)
-      setQuantity('')
-      setDocument('')
-      onDone()
-    } catch (error) {
-      toast.error(errorMessage(error))
-    } finally {
-      setBusy(false)
-    }
+    const [shelfCard, code, count, typed, doc] = [place, material, amount, query, document]
+    const description = card?.material === code ? card.description : ''
+    const text = t(`${formatNumber(count)} stk. ${code} på ${shelfCard.location.name}`, `${formatNumber(count)} pcs ${code} on ${shelfCard.location.name}`)
+    const line = { location: shelfCard.location.id, material: code, description }
+    setSaved(text)
+    setPlace(value => (value?.location.id === line.location ? { ...value, stock: addToStock(value.stock, line, count) } : value))
+    // The same shelf often gets several materials: it stays, the rest is cleared for the next.
+    setQuery('')
+    setMaterial(null)
+    setQuantity('')
+    setDocument('')
+    void sendLocationAction(() => bridge.shelfPut({ actionId: newActionId(), label: t(`Læg ${code} på ${shelfCard.location.name}`, `Put ${code} on ${shelfCard.location.name}`), location: shelfCard.location.id, material: code, quantity: count }), {
+      success: t(`Lagt på ${shelfCard.location.name}: ${formatNumber(count)} stk. ${code}`, `Put on ${shelfCard.location.name}: ${formatNumber(count)} pcs ${code}`),
+      rollback: () => {
+        setSaved(value => (value === text ? null : value))
+        setPlace(value => (value?.location.id === line.location ? { ...value, stock: addToStock(value.stock, line, -count) } : value))
+        if (!materialRef.current && !quantityRef.current) { setQuery(typed); setMaterial(code); setQuantity(String(count)); setDocument(doc) }
+      },
+      settled: onDone,
+    })
   })
 
   return (
@@ -158,7 +169,7 @@ export function ShelfPut({ shelf: initial, version, onDone }: { shelf?: string; 
           </div>
 
           <div className="flex justify-end">
-            <Button size="lg" onClick={() => save()} disabled={!valid} loading={busy}><Stack size={18} /> {t('Gem', 'Save')}</Button>
+            <Button size="lg" onClick={() => void save()} disabled={!valid}><Stack size={18} /> {t('Gem', 'Save')}</Button>
           </div>
         </CardContent>
       </Card>

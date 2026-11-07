@@ -13,7 +13,7 @@ import { hasManagerAccess } from '@/lib/userRoles'
 import type { Guide, GuideReviewRequest } from '@/lib/guideTypes'
 import type { ImprovementCase } from '@/lib/improvements'
 import type { BirthdayEntry, Email, VacationEntry } from '@/lib/types'
-import type { LibraryLink, LinksSnapshot } from '@/lib/links'
+import { subscribeLinksPrediction, type LibraryLink, type LinksSnapshot } from '@/lib/links'
 import type { Project } from '@/views/ProjectBoard'
 
 /** Data this hook already holds in memory; the Ctrl+K palette searches it without extra reads. */
@@ -102,7 +102,9 @@ export function useHubNotificationItems(userEmail: string): HubNotificationsValu
     const load = () => { api.snapshot().then(value => { if (active) setLinks(value) }, () => {}) }
     load()
     const stop = api.onChanged(load)
-    return () => { active = false; stop() }
+    // A command in the Link Library is shown here at once too, not only when it is saved.
+    const stopPrediction = subscribeLinksPrediction(value => { if (active) setLinks(value) })
+    return () => { active = false; stop(); stopPrediction() }
   }, [userEmail])
 
   useEffect(() => {

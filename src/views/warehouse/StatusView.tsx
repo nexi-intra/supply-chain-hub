@@ -12,6 +12,7 @@ import type { CountStatus, StatusArchive, StatusHistoryEntry } from '@/types/war
 import { ArchiveMaterials, DifferenceFigures, formatShare } from './Archive'
 import { StatusFigures } from './Counts'
 import { DeleteStatusDialog, StatusChecklistCard, UnlockDialog } from './StatusChecklist'
+import { withoutDeleted } from './pendingDeletes'
 import { t } from '@/lib/warehouse/text'
 
 const actions = (): Record<string, string> => ({ started: t('Startet', 'Started'), locked: t('Godkendt og låst', 'Approved and locked'), unlocked: t('Låst op', 'Unlocked') })
@@ -27,7 +28,7 @@ export function StatusView({ id, onBack, onOpenCount }: { id: string; onBack: ()
 
   const load = useCallback(async () => {
     try {
-      const overview = await window.electronWarehouse!.statuses.overview()
+      const overview = withoutDeleted(await window.electronWarehouse!.statuses.overview())
       const found = overview.statuses.find(item => item.id === id)
       if (!found) throw new Error('STATUS_NOT_FOUND')
       setStatus(found)

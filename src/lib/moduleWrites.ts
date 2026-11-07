@@ -20,9 +20,12 @@ export async function setHomeOfficeDay(userEmail: string, date: string, isHomeOf
     await (stale.length ? upsertInKvArray('home-office-exceptions', [entry]) : appendToKvArray('home-office-exceptions', [entry]))
     return entry
   }
-  await removeFromKvArray<HomeOfficeException>('home-office-exceptions', stale)
-  const entry: HomeOfficeException = { id: newId('homeoffice'), userEmail, date, isHomeOffice }
-  await appendToKvArray('home-office-exceptions', [entry])
+  // Several old exceptions for the day: the first is replaced in place and the rest removed, at the same time.
+  const entry: HomeOfficeException = { id: stale[0], userEmail, date, isHomeOffice }
+  await Promise.all([
+    upsertInKvArray('home-office-exceptions', [entry]),
+    removeFromKvArray<HomeOfficeException>('home-office-exceptions', stale.slice(1)),
+  ])
   return entry
 }
 
@@ -68,11 +71,16 @@ export interface SendMessageParams {
   threadId?: string | null
 }
 
+/** Whether `to` is one of the team's users (the users record is keyed by e-mail). */
+export function isTeamRecipient(users: Record<string, { email: string }> | null | undefined, to: string): boolean {
+  return Boolean(users) && (Object.values(users!).some(user => user?.email === to) || Boolean(users![to]))
+}
+
 /** Internal mail to a colleague in the same team; throws USER_NOT_FOUND when the recipient is not in the team's users. */
 export async function sendInternalMessage({ from, to, subject, message, threadId }: SendMessageParams): Promise<Email> {
   if (!to || !subject.trim() || !message.trim()) throw new Error('MISSING_FIELDS')
   const users = (await window.kv.get<Record<string, { email: string }>>('users')) || {}
-  if (!Object.values(users).some(user => user?.email === to) && !users[to]) throw new Error('USER_NOT_FOUND')
+  if (!isTeamRecipient(users, to)) throw new Error('USER_NOT_FOUND')
   const email: Email = {
     id: newId('email'),
     from,
@@ -83,8 +91,7 @@ export async function sendInternalMessage({ from, to, subject, message, threadId
     read: false,
     ...(threadId ? { threadId } : {}),
   }
-  await appendToKvArray('emails', [email])
-  await appendToKvArray('email-notifications', [{
+  const notification = {
     id: newId('notif'),
     type: 'email' as const,
     message: `Ny email fra ${from}: ${email.subject}`,
@@ -92,7 +99,18 @@ export async function sendInternalMessage({ from, to, subject, message, threadId
     read: false,
     from,
     emailId: email.id,
-  }])
+  }
+  // Two different keys: saved at the same time (each write to M: takes up to 30 s). A notice without its mail is
+  // taken back again.
+  const [mail, notice] = await Promise.allSettled([
+    appendToKvArray('emails', [email]),
+    appendToKvArray('email-notifications', [notification]),
+  ])
+  if (mail.status === 'rejected') {
+    if (notice.status === 'fulfilled') void removeFromKvArray('email-notifications', [notification.id]).catch(error => console.error('Kunne ikke fjerne notifikationen:', error))
+    throw mail.reason
+  }
+  if (notice.status === 'rejected') console.error('Kunne ikke gemme notifikationen:', notice.reason)
   return email
 }
 

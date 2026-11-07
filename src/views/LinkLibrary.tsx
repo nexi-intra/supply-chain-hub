@@ -15,9 +15,10 @@ import { useLanguage } from '@/contexts/LanguageContext'
 import { useKV } from '@/hooks/useKV'
 import { isAnyModalOpen } from '@/lib/modalStack'
 import { consumeNavigationParams, peekNavigationParams } from '@/lib/appNavigation'
-import { filterLinks, isAllowedLinkUrl, linkFavoritesKey, type LibraryLink, type LinkCommand, type LinkCommandInput, type LinkFields, type LinkReportReason, type LinksSnapshot } from '@/lib/links'
+import { filterLinks, isAllowedLinkUrl, linkFavoritesKey, predictLinksCommand, publishLinksPrediction, type LibraryLink, type LinkCommand, type LinkCommandInput, type LinkFields, type LinkReportReason, type LinksSnapshot } from '@/lib/links'
 import { getLinksLabels, type LinksLabels } from '@/lib/linksLabels'
 import { cn } from '@/lib/utils'
+import { trackPendingWrite } from '@/lib/pendingWrites'
 import { AutoText } from '@/components/AutoText'
 import { TranslationNote, TranslationScope } from '@/components/TranslationScope'
 
@@ -51,9 +52,17 @@ export function LinkLibrary({ onNavigateBack, userEmail }: LinkLibraryProps) {
   const [favorites, setFavorites] = useKV<string[]>(linkFavoritesKey(userEmail), [])
   const highlight = useRef(initialParams?.itemId ?? null)
 
+  // Commands still on their way to the shared drive: until the last one is done, a read would show the library
+  // without them, so it waits.
+  const commandsInFlight = useRef(0)
+  const snapshotRef = useRef<LinksSnapshot | null>(null)
+  snapshotRef.current = snapshot
   const load = useCallback(async () => {
-    if (!api) return
-    try { setSnapshot(await api.snapshot()) } catch (error) { console.error('Link Library:', error) }
+    if (!api || commandsInFlight.current > 0) return
+    try {
+      const next = await api.snapshot()
+      if (commandsInFlight.current === 0) setSnapshot(next)
+    } catch (error) { console.error('Link Library:', error) }
   }, [api])
   useEffect(() => {
     void load()
@@ -87,11 +96,33 @@ export function LinkLibrary({ onNavigateBack, userEmail }: LinkLibraryProps) {
       void load()
       return true
     } catch (error) {
-      toast.error(String(error).includes('LINKS_DUPLICATE') ? labels.toasts.duplicate : labels.toasts.failed)
+      toast.error(commandError(error))
       return false
     } finally {
       setBusy(false)
     }
+  }
+
+  const commandError = (error: unknown) => String(error).includes('LINKS_DUPLICATE') ? labels.toasts.duplicate : labels.toasts.failed
+
+  /** Shown at once and saved in the background; the main process decides, and the library is read again afterwards. */
+  const runInBackground = (command: LinkCommandInput, success: string) => {
+    const current = snapshotRef.current
+    if (!api || !current) return
+    const predicted = predictLinksCommand(current, command)
+    snapshotRef.current = predicted
+    setSnapshot(predicted)
+    publishLinksPrediction(predicted)
+    setDialog(null)
+    toast.success(success)
+    commandsInFlight.current++
+    void trackPendingWrite(api.command({ ...command, operationId: crypto.randomUUID() } as LinkCommand)).catch(error => {
+      console.error('Link Library:', error)
+      toast.error(commandError(error))
+    }).finally(() => {
+      commandsInFlight.current--
+      void load()
+    })
   }
 
   const openLink = async (link: LibraryLink) => {
@@ -189,10 +220,10 @@ export function LinkLibrary({ onNavigateBack, userEmail }: LinkLibraryProps) {
                 labels={labels}
                 busy={busy}
                 onOpen={link => void openLink(link)}
-                onApprove={link => void run({ type: 'approve', linkId: link.id }, labels.toasts.approved)}
+                onApprove={link => runInBackground({ type: 'approve', linkId: link.id }, labels.toasts.approved)}
                 onReject={link => setDialog({ kind: 'reject', link })}
-                onSuggestion={(linkId, suggestionId, accept) => void run({ type: 'resolve-suggestion', linkId, suggestionId, accept }, labels.toasts.resolved)}
-                onReport={(linkId, reportId, action) => void run({ type: 'resolve-report', linkId, reportId, action }, action === 'delete' ? labels.toasts.deleted : labels.toasts.resolved)}
+                onSuggestion={(linkId, suggestionId, accept) => runInBackground({ type: 'resolve-suggestion', linkId, suggestionId, accept }, labels.toasts.resolved)}
+                onReport={(linkId, reportId, action) => runInBackground({ type: 'resolve-report', linkId, reportId, action }, action === 'delete' ? labels.toasts.deleted : labels.toasts.resolved)}
               />
             </TabsContent>
           )}
@@ -215,19 +246,13 @@ export function LinkLibrary({ onNavigateBack, userEmail }: LinkLibraryProps) {
         />
       )}
       {dialog?.kind === 'suggest' && (
-        <SuggestDialog labels={labels} link={dialog.link} busy={busy} onClose={() => setDialog(null)} onSend={async changes => {
-          if (await run({ type: 'suggest', linkId: dialog.link.id, ...changes }, labels.toasts.suggested)) setDialog(null)
-        }} />
+        <SuggestDialog labels={labels} link={dialog.link} busy={busy} onClose={() => setDialog(null)} onSend={changes => runInBackground({ type: 'suggest', linkId: dialog.link.id, ...changes }, labels.toasts.suggested)} />
       )}
       {dialog?.kind === 'report' && (
-        <ReportDialog labels={labels} busy={busy} onClose={() => setDialog(null)} onSend={async (reason, note) => {
-          if (await run({ type: 'report', linkId: dialog.link.id, reason, note }, labels.toasts.reported)) setDialog(null)
-        }} />
+        <ReportDialog labels={labels} busy={busy} onClose={() => setDialog(null)} onSend={(reason, note) => runInBackground({ type: 'report', linkId: dialog.link.id, reason, note }, labels.toasts.reported)} />
       )}
       {dialog?.kind === 'reject' && (
-        <NoteDialog title={`${labels.review.reject}: ${dialog.link.title}`} label={labels.review.rejectNote} action={labels.review.reject} cancel={labels.form.cancel} busy={busy} onClose={() => setDialog(null)} onConfirm={async note => {
-          if (await run({ type: 'reject', linkId: dialog.link.id, note }, labels.toasts.rejected)) setDialog(null)
-        }} />
+        <NoteDialog title={`${labels.review.reject}: ${dialog.link.title}`} label={labels.review.rejectNote} action={labels.review.reject} cancel={labels.form.cancel} busy={busy} onClose={() => setDialog(null)} onConfirm={note => runInBackground({ type: 'reject', linkId: dialog.link.id, note }, labels.toasts.rejected)} />
       )}
       {dialog?.kind === 'delete' && (
         <Dialog open onOpenChange={open => { if (!open) setDialog(null) }}>
@@ -236,7 +261,7 @@ export function LinkLibrary({ onNavigateBack, userEmail }: LinkLibraryProps) {
             <p className="text-sm text-muted-foreground">{dialog.link.title}</p>
             <DialogFooter>
               <Button variant="outline" onClick={() => setDialog(null)}>{labels.form.cancel}</Button>
-              <Button variant="destructive" disabled={busy} onClick={async () => { if (await run({ type: 'delete', linkId: dialog.link.id }, labels.toasts.deleted)) setDialog(null) }}>{labels.delete}</Button>
+              <Button variant="destructive" disabled={busy} onClick={() => runInBackground({ type: 'delete', linkId: dialog.link.id }, labels.toasts.deleted)}>{labels.delete}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

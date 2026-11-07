@@ -322,11 +322,20 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
       // status/recipient payloads from the signup form.
       const managers = Object.values(target.get('users', { skipCache: true }) || {}).filter(user => (!user.status || user.status === 'approved') && (user.role === 'manager' || user.role === 'admin' || (!user.role && user.isManager)))
       const labels = request.language === 'en' ? ['New signup request', 'A user requests access'] : request.language === 'fi' ? ['Uusi rekisteröitymispyyntö', 'Käyttäjä pyytää käyttöoikeutta'] : request.language === 'sv' ? ['Ny registreringsbegäran', 'En användare begär åtkomst'] : ['Ny tilmeldingsanmodning', 'En bruger anmoder om adgang']
-      try { for (const manager of managers) {
-        const id = crypto.randomUUID(), message = `${labels[1]}: ${request.fullName.trim()} (${email}), ${request.phone.trim()}`
-        target.update('emails', { op: 'append', items: [{ id, from: email, to: manager.email, subject: labels[0], message, timestamp: now(), read: false }] })
-        target.update('email-notifications', { op: 'append', items: [{ id: `${id}-notification`, to: manager.email, subject: labels[0], body: message, timestamp: new Date(now()).toISOString(), type: 'user-signup', read: false }] })
-      } } catch { console.error('Supply Chain Hub: signup saved, manager notification could not be saved') }
+      try {
+        // One append per key for all managers: each write locks a file on the shared drive (up to 90 s), and this was
+        // two writes per manager one after another.
+        const mails = [], notices = []
+        for (const manager of managers) {
+          const id = crypto.randomUUID(), message = `${labels[1]}: ${request.fullName.trim()} (${email}), ${request.phone.trim()}`
+          mails.push({ id, from: email, to: manager.email, subject: labels[0], message, timestamp: now(), read: false })
+          notices.push({ id: `${id}-notification`, to: manager.email, subject: labels[0], body: message, timestamp: new Date(now()).toISOString(), type: 'user-signup', read: false })
+        }
+        if (mails.length) {
+          target.update('emails', { op: 'append', items: mails })
+          target.update('email-notifications', { op: 'append', items: notices })
+        }
+      } catch { console.error('Supply Chain Hub: signup saved, manager notification could not be saved') }
       return { email, status: 'pending' }
       })
     }, true)

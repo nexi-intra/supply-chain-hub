@@ -12,6 +12,7 @@ import { Textarea } from '@/components/warehouse/ui'
 import { errorMessage } from '@/lib/warehouse/errors'
 import type { CountStatus, StatusChecklist } from '@/types/warehouse'
 import { currentWarehouseLanguage, t } from '@/lib/warehouse/text'
+import { deleteInBackground } from './pendingDeletes'
 
 const SHOWN_MATERIALS = 8
 
@@ -117,21 +118,18 @@ function LockDialog({ status, onClose, onLocked }: { status: CountStatus; onClos
 
 export function DeleteStatusDialog({ status, onClose, onDeleted }: { status: CountStatus; onClose: () => void; onDeleted: () => void }) {
   const [typed, setTyped] = useState('')
-  const [deleting, setDeleting] = useState(false)
   const matches = typed.trim() === status.name.trim()
-  const remove = async () => {
-    setDeleting(true)
-    try {
-      const result = await window.electronWarehouse!.statuses.remove(status.id)
-      toast.success(t(`"${status.name}" er slettet`, `"${status.name}" has been deleted`), { description: t(`${result.counts} ${result.counts === 1 ? 'optælling' : 'optællinger'} blev slettet med den.`, `${result.counts} ${result.counts === 1 ? 'count was' : 'counts were'} deleted with it.`) })
-      onDeleted()
-    } catch (error) {
-      toast.error(errorMessage(error))
-      setDeleting(false)
-    }
+  // Gone at once (with its counts) from every list; the delete on M: runs in the background, and all comes back if it fails.
+  const remove = () => {
+    if (!matches) return
+    const counts = status.counts.length
+    toast.success(t(`"${status.name}" er slettet`, `"${status.name}" has been deleted`), { description: t(`${counts} ${counts === 1 ? 'optælling' : 'optællinger'} blev slettet med den.`, `${counts} ${counts === 1 ? 'count was' : 'counts were'} deleted with it.`) })
+    onDeleted()
+    deleteInBackground({ status: status.id, counts: status.counts.map(item => item.id) }, () => window.electronWarehouse!.statuses.remove(status.id))
+      .catch(error => toast.error(t(`"${status.name}" blev ikke slettet`, `"${status.name}" was not deleted`), { description: errorMessage(error) }))
   }
   return (
-    <Dialog open onOpenChange={value => { if (!value && !deleting) onClose() }}>
+    <Dialog open onOpenChange={value => { if (!value) onClose() }}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{t('Slet status', 'Delete status')}</DialogTitle>
@@ -141,11 +139,11 @@ export function DeleteStatusDialog({ status, onClose, onDeleted }: { status: Cou
         </DialogHeader>
         <div className="space-y-2">
           <Label htmlFor="delete-status-confirm">{t('Skriv statussens navn for at bekræfte:', 'Type the name of the status to confirm:')} <strong>{status.name}</strong></Label>
-          <Input id="delete-status-confirm" value={typed} autoComplete="off" onChange={event => setTyped(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && matches) void remove() }} />
+          <Input id="delete-status-confirm" value={typed} autoComplete="off" onChange={event => setTyped(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && matches) remove() }} />
         </div>
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={deleting}>{t('Annullér', 'Cancel')}</Button>
-          <Button variant="destructive" onClick={() => remove()} disabled={!matches} loading={deleting}><Trash size={18} /> {t('Slet status', 'Delete status')}</Button>
+          <Button variant="ghost" onClick={onClose}>{t('Annullér', 'Cancel')}</Button>
+          <Button variant="destructive" onClick={() => remove()} disabled={!matches}><Trash size={18} /> {t('Slet status', 'Delete status')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

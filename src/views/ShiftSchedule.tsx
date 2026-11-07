@@ -11,6 +11,8 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
 import { useKV } from '@/hooks/useKV'
+import { saveListChange, saveRecordChange } from '@/lib/kvChanges'
+import { saveInBackground } from '@/lib/saveInBackground'
 import { UserProfile } from '@/components/UserProfile'
 import { toast } from 'sonner'
 import { AutoText as DetectedText } from '@/components/AutoText'
@@ -80,10 +82,17 @@ const SHIFT_GRID_LABELS = {
 
 export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEmail }: ShiftScheduleProps) {
   const grid = SHIFT_GRID_LABELS[useLanguage().language] ?? SHIFT_GRID_LABELS.da
-  const [roles, setRoles] = useKV<ShiftRole[]>('shift-roles', [])
-  const [assignments, setAssignments] = useKV<ShiftAssignment[]>('shift-assignments', [])
-  const [dayNotes, setDayNotes] = useKV<ShiftDayNotes>('team-status-notes', {})
-  const [shiftPatterns, setShiftPatterns] = useKV<ShiftPatternRule[]>('shift-patterns', [])
+  const [roles] = useKV<ShiftRole[]>('shift-roles', [])
+  const [assignments] = useKV<ShiftAssignment[]>('shift-assignments', [])
+  const [dayNotes] = useKV<ShiftDayNotes>('team-status-notes', {})
+  const [shiftPatterns] = useKV<ShiftPatternRule[]>('shift-patterns', [])
+  // The schedule is also shown on the Hub (team tasks, team status) and in Min uge. Each edit is saved as only the
+  // changed items under the file lock, so every open view shows it at once and a failed save is rolled back everywhere.
+  const saveFailed = 'Ændringen blev ikke gemt – prøv igen'
+  const setRoles = (change: (current: ShiftRole[]) => ShiftRole[]) => saveInBackground(saveListChange('shift-roles', roles || [], change(roles || [])), { failure: saveFailed })
+  const setAssignments = (change: (current: ShiftAssignment[]) => ShiftAssignment[]) => saveInBackground(saveListChange('shift-assignments', assignments || [], change(assignments || [])), { failure: saveFailed })
+  const setDayNotes = (change: (current: ShiftDayNotes) => ShiftDayNotes) => saveInBackground(saveRecordChange('team-status-notes', dayNotes || {}, change(dayNotes || {})), { failure: saveFailed })
+  const setShiftPatterns = (change: (current: ShiftPatternRule[]) => ShiftPatternRule[]) => saveInBackground(saveListChange('shift-patterns', shiftPatterns || [], change(shiftPatterns || [])), { failure: saveFailed })
   const [colorOverrides] = useKV<EmployeeColorOverrides>(EMPLOYEE_COLOR_OVERRIDES_KEY, {})
   const [employees, setEmployees] = useState<TeamEmployee[]>([])
   const [sickLeaveEntries, setSickLeaveEntries] = useKV<SickLeaveEntry[]>('sick-leave-entries', [])

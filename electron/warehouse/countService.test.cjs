@@ -498,7 +498,7 @@ test('a manager locks the status when every count is closed and every material a
   assert.equal(locked.state, 'locked')
   assert.equal(locked.lockedBy.email, 'mona@example.test')
   assert.deepEqual(locked.reports.map(report => `${report.version}:${report.file}:${report.counts.length}`), ['1:Status Q4 2026 v1.xlsx:1'])
-  assert.deepEqual(ctx.written.map(item => `${item.kind}:${item.language}`), ['count:da', 'status:da'], 'Danish unless the manager asks for English')
+  assert.deepEqual(ctx.written.map(item => `${item.kind}:${item.language}`).sort(), ['count:da', 'status:da'], 'Danish unless the manager asks for English (the reports are written at the same time)')
   await assert.rejects(mona.lockStatus(MONA, 'st0open1'), { code: 'STATUS_LOCKED' })
   await assert.rejects(anna.reopenCount(ANNA, id), { code: 'STATUS_LOCKED' })
   const overview = await anna.statusOverview(ANNA)
@@ -522,8 +522,9 @@ test('a manager locks the status when every count is closed and every material a
   await anna.closeCount(ANNA, id)
   const again = await mona.lockStatus(MONA, 'st0open1', { language: 'en' })
   assert.deepEqual(again.reports.map(report => report.version), [1, 2])
-  assert.deepEqual(ctx.written.at(-1), { kind: 'status', team: 'TCD', version: 2, counts: 1, history: ['locked', 'unlocked', 'locked'], language: 'en' })
-  assert.equal(ctx.written.at(-2).language, 'en', 'the count reports follow the language of the manager who locks')
+  const lastTwo = ctx.written.slice(-2)
+  assert.deepEqual(lastTwo.find(item => item.kind === 'status'), { kind: 'status', team: 'TCD', version: 2, counts: 1, history: ['locked', 'unlocked', 'locked'], language: 'en' })
+  assert.equal(lastTwo.find(item => item.kind === 'count').language, 'en', 'the count reports follow the language of the manager who locks')
 
   await mona.startStatus(MONA, { year: 2027, quarter: 1 })
   await assert.rejects(mona.unlockStatus(MONA, 'st0open1', { reason: 'Rettelse' }), { code: 'STATUS_ALREADY_OPEN' })
@@ -1099,14 +1100,117 @@ test('choosing a material you already count, or one someone else counts, answers
   await anna.decideMember(ANNA, id, { email: BO.email, approve: true })
   const store = ctx.storeFor('TCD')
   const updateAsync = store.updateAsync
+  const mutateAsync = store.mutateAsync
   let lockWrites = 0
   store.updateAsync = (key, operation) => {
     if (key.endsWith('-materiallaase')) lockWrites++
     return updateAsync(key, operation)
+  }
+  store.mutateAsync = (key, callback) => {
+    if (key.endsWith('-materiallaase')) lockWrites++
+    return mutateAsync(key, callback)
   }
   assert.equal((await anna.lockMaterial(ANNA, id, { material: 'INT4300-4921-0' })).holder.name, 'Anna')
   assert.equal(lockWrites, 1, 'taking a free material is saved')
   assert.equal((await anna.lockMaterial(ANNA, id, { material: 'INT4300-4921-0' })).holder.name, 'Anna')
   await assert.rejects(bo.lockMaterial(BO, id, { material: 'INT4300-4921-0' }), { code: 'MATERIAL_LOCKED' })
   assert.equal(lockWrites, 1, 'a write to M: takes seconds; nothing to change means nothing to write')
+})
+// ---------- Writes to M: take 15-90 s each: one write instead of many, and different files at the same time ----------
+/** Records every write to the drive for the keys `watch` picks, and how many of them ran at the same time. */
+function watchWrites(store, { delayMs = 0, watch = () => true } = {}) {
+  const watched = { writes: [], most: 0 }
+  let inFlight = 0
+  for (const name of ['setAsync', 'updateAsync', 'mutateAsync', 'deleteAsync']) {
+    const original = store[name]
+    store[name] = async (key, ...args) => {
+      if (!watch(key)) return original.call(store, key, ...args)
+      watched.writes.push(key)
+      inFlight++
+      watched.most = Math.max(watched.most, inFlight)
+      try {
+        if (delayMs) await new Promise(resolve => setTimeout(resolve, delayMs))
+        return await original.call(store, key, ...args)
+      } finally {
+        inFlight--
+      }
+    }
+  }
+  return watched
+}
+
+test('"Godkend alle uden difference" is one write of the approvals for every material, and keeps earlier approvals', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const mona = ctx.service('pc3')
+  const { id } = await newCount(ctx, anna)
+  for (const serialNo of ['N1', 'N2', 'U1']) await anna.scan(ANNA, id, { serial: serialNo, place: 'A1.1' })
+  await anna.flush(ANNA, id)
+  await mona.setApproval(MONA, id, { material: 'INT4300-4921-0', status: 'approved', comment: 'Tjekket' })
+  const watched = watchWrites(ctx.storeFor('TCD'), { watch: key => key.endsWith('-approvals') })
+  assert.deepEqual(await mona.approveAllWithoutDifference(MONA, id), { approved: 1 })
+  assert.equal(watched.writes.length, 1, 'one write, not one per material')
+  const approvals = await ctx.repo.getApprovals('TCD', id)
+  assert.deepEqual([approvals['INT4300-4921-0'].comment, approvals['INT4300-4921-0-R'].status, approvals['INT4300-4921-0-R'].comment], ['Tjekket', 'approved', 'Ingen difference'])
+  assert.ok(approvals['INT4300-4921-0-R'].frozen.length > 0, 'the figures are frozen as with a single approval')
+  assert.equal(approvals['R162-0717'], undefined, 'a material with a difference is not approved')
+  assert.deepEqual(await mona.approveAllWithoutDifference(MONA, id), { approved: 0 })
+})
+
+test('approving writes the approval and releases the material lock at the same time', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const mona = ctx.service('pc3')
+  const { id } = await newCount(ctx, anna)
+  await anna.lockMaterial(ANNA, id, { material: 'R162-0717' })
+  const watched = watchWrites(ctx.storeFor('TCD'), { delayMs: 30, watch: key => /-(approvals|materiallaase)$/.test(key) })
+  await mona.setApproval(MONA, id, { material: 'R162-0717', status: 'approved' })
+  assert.deepEqual(watched.writes.map(key => key.split('-').at(-1)).sort(), ['approvals', 'materiallaase'])
+  assert.equal(watched.most, 2, 'both writes ran at once')
+  assert.deepEqual(await ctx.repo.getMaterialLocks('TCD', id), {})
+})
+
+test('closing a count writes its meta once, with the index entry and the summary at the same time', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const { id } = await newCount(ctx, anna)
+  const watched = watchWrites(ctx.storeFor('TCD'), { delayMs: 30, watch: key => /-(meta|summary)$/.test(key) || key === 'counts-index' })
+  const meta = await anna.closeCount(ANNA, id)
+  assert.deepEqual([meta.status, meta.closedBy.name], ['closed', 'Anna'])
+  assert.deepEqual(watched.writes.map(key => key.split('-').at(-1)).sort(), ['index', 'meta', 'summary'], 'three fields of the meta in one write')
+  assert.equal(watched.most, 3)
+  const index = await ctx.repo.listCounts('TCD')
+  assert.equal(index.find(entry => entry.id === id).status, 'closed')
+  assert.equal((await ctx.repo.getMeta('TCD', id)).closedAt, ctx.clock.now)
+})
+
+test('posted SAP documents mark all their approved materials "Bogført i SAP" in one write', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const mona = ctx.service('pc3')
+  const { id } = await newCount(ctx, anna)
+  await mona.setApproval(MONA, id, { material: 'R162-0717', status: 'approved' })
+  await mona.setApproval(MONA, id, { material: 'INT4300-4921-0', status: 'approved' })
+  await assert.rejects(anna.markPosted(ANNA, id, ['R162-0717']), { code: 'MANAGER_ONLY' })
+  const watched = watchWrites(ctx.storeFor('TCD'), { watch: key => key.endsWith('-approvals') })
+  assert.deepEqual(await mona.markPosted(MONA, id, ['r162-0717', 'INT4300-4921-0', 'INT4300-4921-0-R']), { posted: ['R162-0717', 'INT4300-4921-0'], skipped: ['INT4300-4921-0-R'] })
+  assert.equal(watched.writes.length, 1)
+  const approvals = await ctx.repo.getApprovals('TCD', id)
+  assert.deepEqual([approvals['R162-0717'].status, approvals['R162-0717'].postedBy.name, approvals['INT4300-4921-0-R']], ['posted', 'Mona', undefined])
+})
+
+test('deleting a status marks all its counts deleted in one write of the index', async () => {
+  const ctx = setup()
+  ctx.sap.mb52[0] = stock('INT4300-4921-0', 'D000', 2, 1, 2000, 1000)
+  ctx.sap.serials.push(serial('B1', 'INT4300-4921-0', 'D000', 'blocked'))
+  const anna = ctx.service('pc1')
+  const mona = ctx.service('pc3')
+  const create = async scope => anna.createCount(ANNA, { token: (await anna.preview(ANNA, { scope })).token, name: scope.stockTypes[0] })
+  const first = await create({ type: 'slocs', slocs: ['D000'], stockTypes: ['unrestricted'] })
+  const second = await create({ type: 'slocs', slocs: ['D000'], stockTypes: ['blocked'] })
+  const watched = watchWrites(ctx.storeFor('TCD'), { watch: key => key === 'counts-index' || key === 'statusser' })
+  assert.deepEqual(await mona.deleteStatus(MONA, 'st0open1'), { ok: true, counts: 2 })
+  assert.deepEqual(watched.writes.sort(), ['counts-index', 'statusser'])
+  assert.deepEqual(await ctx.repo.listCounts('TCD'), [])
+  assert.deepEqual((await ctx.storeFor('TCD').keysAsync()).filter(key => key.includes(first.id) || key.includes(second.id)), [], 'the files of both counts are gone')
 })

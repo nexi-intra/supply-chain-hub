@@ -21,7 +21,7 @@ type Props = {
   onPlan: (plan: PublishPlan) => void
   onFindSlot: (name: string) => void
   onShow: (itemId: string) => void
-  onPublished: (version: number) => void
+  onPublished: (version: number, next?: LayoutDraft) => void
   onStale: () => void
   onClose: () => void
 }
@@ -78,10 +78,13 @@ export function PublishPanel({ draft, team, dispatch, save, onPlan, onFindSlot, 
   const [publishing, setPublishing] = useState(false)
   const [round, setRound] = useState(0)
   const seq = useRef(0)
+  // The draft the shown preview was saved and made from: publishing it needs no new save first.
+  const previewed = useRef<LayoutDraft | null>(null)
 
   // The backend previews the stored draft, so every change made here is saved before the preview is fetched again.
   useEffect(() => {
     const at = ++seq.current
+    previewed.current = null
     setBusy(true)
     void (async () => {
       try {
@@ -91,6 +94,7 @@ export function PublishPanel({ draft, team, dispatch, save, onPlan, onFindSlot, 
         }
         const next = await window.electronWarehouse!.locations.layoutPreview()
         if (at !== seq.current) return
+        previewed.current = draft
         setPlan(next)
         setError(null)
         onPlan(next)
@@ -112,10 +116,12 @@ export function PublishPanel({ draft, team, dispatch, save, onPlan, onFindSlot, 
     if (!plan) return
     setPublishing(true)
     try {
-      if (!(await save())) return
+      // Saved just before the preview and unchanged since: the publish itself checks the revision and the editor
+      // (LAYOUT_STALE / LAYOUT_DRAFT_BUSY), so a second save would only add a write on M:.
+      if (previewed.current !== draft && !(await save())) return
       // Only the previewed revision is published; a change since then is refused (LAYOUT_STALE).
-      const { version } = await window.electronWarehouse!.locations.publishLayout({ rev: plan.rev })
-      onPublished(version)
+      const { version, draft: next } = await window.electronWarehouse!.locations.publishLayout({ rev: plan.rev })
+      onPublished(version, next)
     } catch (failure) {
       toast.error(errorMessage(failure))
       if (errorCode(failure) === 'LAYOUT_STALE') onStale()

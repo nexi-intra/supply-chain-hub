@@ -114,14 +114,14 @@ test('the manager posts counted documents; only what MI22 confirms is posted, an
   const approvals = []
   const repo = { getPiDocs: async () => structuredClone(stored), changePiDocs: async (team, id, change) => { stored = change(structuredClone(stored)).all } }
   const writer = { postDocuments: async () => ({ posted: ['105000894'], open: ['105000893'], materialDocs: { 105000894: '4905204847' }, differences: [{ docNo: '105000894', material: 'R1', book: 483, counted: 480, diff: -3, amount: 151.59 }, { docNo: '105000893', material: 'INT1-0', book: 1, counted: 1, diff: 0, amount: 0 }] }) }
-  const counts = { countDoc: async () => ({ rows: [] }), setApproval: async (user, id, request) => { approvals.push(request) } }
+  const counts = { countDoc: async () => ({ rows: [] }), markPosted: async (user, id, materials) => { approvals.push(materials); return { posted: materials, skipped: [] } } }
   const service = createPiDocService({ counts, repo, roles: { roleOf: async user => (user.email === 'anna@x' ? 'admin' : 'manager') }, writer, system: 'QS4' })
   await assert.rejects(service.post(ANNA, 'c1', ['D2']), { code: 'PIDOC_FORBIDDEN' })
   const result = await service.post(MONA, 'c1', ['D1', 'D2'])
   assert.deepEqual([result.posted, result.open], [['105000894'], ['105000893']])
   assert.deepEqual([stored.D2.status, stored.D2.materialDoc, stored.D2.differences[0].diff, stored.D2.postedBy.email], ['posted', '4905204847', -3, 'mona@x'])
   assert.equal(stored.D1.status, 'counted', 'not confirmed by MI22: stays ready to post')
-  assert.deepEqual(approvals, [{ material: 'R1', status: 'posted' }, { material: 'R2', status: 'posted' }])
+  assert.deepEqual(approvals, [['R1', 'R2']], 'every material of the posted documents is marked in one write')
 })
 
 test('a wrong document is deleted by a manager (created or printed only) and frees its materials', async () => {

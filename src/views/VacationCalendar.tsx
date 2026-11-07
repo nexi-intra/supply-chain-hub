@@ -17,7 +17,7 @@ import { AutoText } from '@/components/AutoText'
 import { cn, newId } from '@/lib/utils'
 import { getEmployeeColorByEmail, EMPLOYEE_COLOR_OVERRIDES_KEY, type EmployeeColorOverrides } from '@/lib/employeeColors'
 import { getWeekNumber as getISOWeekNumber, parseLocalDate } from '@/lib/dateUtils'
-import { appendToKvArray, removeFromKvArray } from '@/lib/kvArrays'
+import { appendToKvArray, removeFromKvArray, updateKvArrayItem } from '@/lib/kvArrays'
 import { isAnyModalOpen } from '@/lib/modalStack'
 import { useLanguage } from '@/contexts/LanguageContext'
 import { vacationApprovedEmail, vacationRejectedEmail, vacationCancelledByEmployeeEmail } from '@/lib/emailTemplates'
@@ -43,7 +43,7 @@ const weekdayNames = (locale: string) => Array.from({ length: 7 }, (_, day) => {
 })
 
 export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUserEmail }: VacationCalendarProps) {
-  const [vacations, setVacations] = useKV<VacationEntry[]>('vacation-entries', [])
+  const [vacations] = useKV<VacationEntry[]>('vacation-entries', [])
   const [colorOverrides] = useKV<EmployeeColorOverrides>(EMPLOYEE_COLOR_OVERRIDES_KEY, {})
   const [homeOfficePatterns] = useKV<Record<string, HomeOfficePattern>>('home-office-patterns', {})
   const [homeOfficeExceptions] = useKV<HomeOfficeException[]>('home-office-exceptions', [])
@@ -184,17 +184,24 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
     }
   }
 
+  // Under the file lock, and shown at once in every open view of 'vacation-entries' (hub, notification bell) – a
+  // useKV setter only updated this screen's copy until the write was on the shared drive (up to 90 s).
+  const saveDecision = (id: string, status: VacationStatus) => {
+    void updateKvArrayItem<VacationEntry>('vacation-entries', id, current => ({
+      ...current, status, reviewedBy: userEmail, reviewedAt: new Date().toISOString(),
+    })).then(updated => {
+      if (!updated) toast.error('Ferie anmodningen findes ikke længere')
+    }, error => {
+      console.error('Error saving vacation decision:', error)
+      toast.error('Kunne ikke gemme beslutningen – prøv igen')
+    })
+  }
+
   const handleApproveVacation = async (id: string) => {
     const vacation = (vacations || []).find(v => v.id === id)
     if (!vacation) return
 
-    setVacations((current) =>
-      (current || []).map((v) =>
-        v.id === id
-          ? { ...v, status: 'approved' as VacationStatus, reviewedBy: userEmail, reviewedAt: new Date().toISOString() }
-          : v
-      )
-    )
+    saveDecision(id, 'approved')
     toast.success('Ferie godkendt')
 
     try {
@@ -232,13 +239,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
     const vacation = (vacations || []).find(v => v.id === id)
     if (!vacation) return
 
-    setVacations((current) =>
-      (current || []).map((v) =>
-        v.id === id
-          ? { ...v, status: 'rejected' as VacationStatus, reviewedBy: userEmail, reviewedAt: new Date().toISOString() }
-          : v
-      )
-    )
+    saveDecision(id, 'rejected')
     toast.error('Ferie afvist')
 
     try {
@@ -457,7 +458,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => handleApproveVacation(vacation.id)}
+              onClick={() => { void handleApproveVacation(vacation.id) }}
               className="text-green-600 hover:bg-green-500/10"
             >
               <Check size={20} weight="bold" />
@@ -465,7 +466,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => handleRejectVacation(vacation.id)}
+              onClick={() => { void handleRejectVacation(vacation.id) }}
               className="text-red-600 hover:bg-red-500/10"
             >
               <X size={20} weight="bold" />
@@ -476,7 +477,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => handleDeleteVacation(vacation.id)}
+            onClick={() => { void handleDeleteVacation(vacation.id) }}
             className="text-destructive hover:bg-destructive/10"
           >
             <Trash size={20} />

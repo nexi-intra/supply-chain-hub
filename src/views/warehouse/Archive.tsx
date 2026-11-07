@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { formatDateTime, formatMoney, formatNumber, stockLabel } from '@/lib/warehouse/format'
 import { t, warehouseLocale } from '@/lib/warehouse/text'
+import { withoutDeleted } from './pendingDeletes'
 import { cn } from '@/lib/utils'
 import type { ArchiveLine, WarehouseUser, CountStatus, DifferenceTotals, StatusArchive } from '@/types/warehouse'
 
@@ -23,7 +24,7 @@ export function Archive({ user, onOpenStatus }: { user: WarehouseUser; onOpenSta
 
   const load = useCallback(async () => {
     try {
-      const overview = await window.electronWarehouse!.statuses.overview()
+      const overview = withoutDeleted(await window.electronWarehouse!.statuses.overview())
       setStatuses(overview.statuses.filter(status => status.state === 'locked').sort((a, b) => (b.lockedAt ?? 0) - (a.lockedAt ?? 0)))
       setFailed(null)
     } catch (error) {

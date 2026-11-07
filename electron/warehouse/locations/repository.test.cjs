@@ -48,6 +48,42 @@ test('transact writes all changed keys and the events at once; a thrown error wr
   assert.deepEqual((await repo.read('TRR')).pallets, {}, 'teams are apart')
 })
 
+test('a daily action locks only what it writes, the places, meta and the history; changing another key writes nothing', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'locations-repo-'))
+  const store = createStore(root)
+  const locks = []
+  const spied = { ...store, withLockedKeysAsync: (keys, fn) => { locks.push([...keys].sort()); return store.withLockedKeysAsync(keys, fn) } }
+  const repo = createLocationRepository({ storeFor: () => spied, now: () => Date.UTC(2026, 9, 20, 8), newId: () => `id${locks.length}` })
+  await repo.transact('TCD', tx => {
+    tx.locations['A2.4'] = { id: 'A2.4', name: 'A2.4', type: 'Palle', purpose: 'reserve' }
+    tx.stock['E9 H1|M1'] = { id: 'E9 H1|M1', location: 'E9 H1', material: 'M1', quantity: 3 }
+    tx.tags = ['Brandskab']
+  })
+  assert.deepEqual(locks[0], ['history-2026-10', 'locations', 'meta', 'pallets', 'stock', 'tags'], 'without `writes` every key is locked')
+
+  const result = await repo.transact('TCD', { actionId: 'a1', writes: ['pallets'] }, tx => {
+    assert.deepEqual([tx.locations['A2.4'].name, tx.stock['E9 H1|M1'].quantity, tx.tags], ['A2.4', 3, ['Brandskab']], 'the other keys are read as they are')
+    tx.pallets.p1 = { id: 'p1', location: 'A2.4', material: 'M1', quantity: 1 }
+    tx.event({ type: 'putaway', pallet: 'p1', location: 'A2.4' })
+    return 'done'
+  })
+  assert.equal(result, 'done')
+  assert.deepEqual(locks[1], ['history-2026-10', 'locations', 'meta', 'pallets'])
+  const state = await repo.read('TCD')
+  assert.deepEqual([state.pallets.p1.location, state.meta.applied], ['A2.4', ['a1']])
+  assert.ok((await repo.history('TCD'))[0].change, 'the change is still recorded for undo')
+
+  await assert.rejects(repo.transact('TCD', { actionId: 'a2', writes: ['pallets'] }, tx => {
+    delete tx.pallets.p1
+    tx.stock['E9 H1|M1'].quantity = 0
+    tx.event({ type: 'take', pallet: 'p1' })
+  }), /KV_INVALID_OPERATION/)
+  const after = await repo.read('TCD')
+  assert.ok(after.pallets.p1, 'nothing written')
+  assert.deepEqual([after.stock['E9 H1|M1'].quantity, after.meta.applied], [3, ['a1']])
+  assert.equal((await repo.history('TCD')).length, 1)
+})
+
 test('history is split per month and filtered by location, pallet and material', async () => {
   const { repo, clock } = setup()
   await repo.transact('TCD', tx => tx.event({ type: 'putaway', pallet: 'p1', location: 'A2.4', material: 'R162-0717' }))
@@ -148,6 +184,27 @@ test('an undo of an event from last month locks and marks that month', async () 
   const events = await repo.history('TCD', { months: 2 })
   assert.equal(events.find(event => event.id === put.id).undoneBy.name, 'Mona', 'October is marked')
   assert.equal(new Date(events.find(event => event.type === 'undo').at).getUTCMonth(), 10, 'the undo is in November')
+})
+
+test('an undo by event id with its time locks only that month and the current one', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'locations-repo-'))
+  const store = createStore(root)
+  const locks = []
+  const spied = { ...store, withLockedKeysAsync: (keys, fn) => { locks.push([...new Set(keys.filter(key => key.startsWith('history-')))].sort()); return store.withLockedKeysAsync(keys, fn) } }
+  const clock = { now: Date.UTC(2026, 9, 20, 8) }
+  let ids = 0
+  const repo = createLocationRepository({ storeFor: () => spied, now: () => clock.now, newId: () => `id${++ids}` })
+  await repo.transact('TCD', tx => { tx.locations['A2.4'] = place('A2.4') })
+  await putPallet(repo, 'p1')
+  await putPallet(repo, 'p2')
+  const [second, first] = await repo.history('TCD', { type: 'putaway' })
+  clock.now = Date.UTC(2026, 11, 2, 8)
+  locks.length = 0
+  assert.deepEqual(await repo.undo('TCD', { eventId: first.id, at: first.at, by: MONA }), { undone: 1 })
+  assert.deepEqual(locks, [['history-2026-10', 'history-2026-12']])
+  locks.length = 0
+  assert.deepEqual(await repo.undo('TCD', { eventId: second.id, by: MONA }), { undone: 1 }, 'without the time the recent months are searched')
+  assert.deepEqual(locks, [['history-2026-09', 'history-2026-10', 'history-2026-11', 'history-2026-12']])
 })
 
 test('history filters by person, type and since', async () => {

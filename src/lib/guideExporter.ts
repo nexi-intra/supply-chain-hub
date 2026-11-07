@@ -8,6 +8,7 @@ import { guideToDocModel } from './docModel'
 import { fileStorage } from './fileStorage'
 import type { Guide } from './guideTypes'
 import type { LibraryKind } from './libraryConfig'
+import { trackPendingWrite } from './pendingWrites'
 
 export interface GuideLibrarySettings {
   exportRoot: string | null
@@ -58,10 +59,18 @@ export async function setExportRoot(exportRoot: string | null, kind: LibraryKind
   await window.kv.set(SETTINGS_KEYS[kind], { exportRoot } satisfies GuideLibrarySettings)
 }
 
-/** Åbner mappe-dialog og gemmer valget. Returnerer den nye rod eller null. */
-export async function chooseAndSaveExportRoot(kind: LibraryKind = 'guides'): Promise<string | null> {
+/**
+ * Åbner mappe-dialog og returnerer den nye rod (eller null) med det samme. Valget huskes i
+ * baggrunden – en skrivning til M: tager op til 90 s, og mappen kan bruges uden at vente på den.
+ */
+export async function chooseAndSaveExportRoot(kind: LibraryKind = 'guides', onSaveFailed?: (error: unknown) => void): Promise<string | null> {
   const root = await getExportTarget().chooseRoot()
-  if (root) await setExportRoot(root, kind)
+  if (root) {
+    void trackPendingWrite(setExportRoot(root, kind)).catch((error) => {
+      console.error('Kunne ikke huske eksportmappen:', error)
+      onSaveFailed?.(error)
+    })
+  }
   return root
 }
 

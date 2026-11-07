@@ -101,7 +101,9 @@ test('the drawing is reached over IPC without the local queue; only a publish te
   assert.deepEqual(broadcasts.filter(([channel]) => channel === 'warehouse:locations:changed').map(([, payload]) => payload), [{ team: 'TCD' }])
   assert.equal((await call('anna', 'locations:layout')).layout.version, 1)
   assert.deepEqual((await call('anna', 'locations:list')).drawing, { version: 1, linked: [] })
-  await assert.rejects(call('mona', 'locations:layout-publish'), /LAYOUT_NO_DRAFT/)
+  // The publish starts the next draft on the new drawing; publishing it needs its own preview (revision) first.
+  assert.equal(published.draft.basedOn, 1)
+  await assert.rejects(call('mona', 'locations:layout-publish'), /LAYOUT_STALE/)
   assert.deepEqual(await call('anna', 'locations:pending'), { pending: 0, failures: [] })
 })
 

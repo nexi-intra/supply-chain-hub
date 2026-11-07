@@ -1002,7 +1002,8 @@ export interface LocationsBridge {
   /** When Placeringer last changed, from any PC. */
   stamp(): Promise<{ changedAt: number }>
   log(request?: { query?: string; person?: string; type?: LocationEventType; days?: number }): Promise<LocationLog>
-  undo(request: WithActionId<{ eventId: string }>): Promise<{ undone: number } | Deferred>
+  /** `at` (the event's time) picks its month file, so the undo locks fewer files on M:. */
+  undo(request: WithActionId<{ eventId: string; at?: number }>): Promise<{ undone: number } | Deferred>
   rackCard(request: { rack: string }): Promise<RackCard>
   mapContents(): Promise<MapContents>
   shelfPut(request: WithActionId<{ location: string; material: string; quantity: number }>): Promise<{ line: StockLine } | Deferred>
@@ -1034,9 +1035,10 @@ export interface LocationsBridge {
   startLayoutDraft(): Promise<{ draft: LayoutDraft }>
   /** Saves on the draft's revision `draft.rev`. `takeOver` without a draft makes you the editor of the stored draft and returns it. */
   saveLayoutDraft(request: { draft?: LayoutDraft; takeOver?: boolean }): Promise<{ editedAt: number; rev: number; draft?: LayoutDraft }>
-  discardLayoutDraft(): Promise<{ ok: true }>
-  /** Publishes the stored draft if it is still revision `rev` (the previewed one). */
-  publishLayout(request: { rev: number }): Promise<{ version: number; counts: PublishPlan['counts'] }>
+  /** Discards the draft and returns the next one, started from the published drawing in the same write. */
+  discardLayoutDraft(): Promise<{ ok: true; draft?: LayoutDraft }>
+  /** Publishes the stored draft if it is still revision `rev` (the previewed one); `draft` is the next one, on the new drawing. */
+  publishLayout(request: { rev: number }): Promise<{ version: number; counts: PublishPlan['counts']; draft?: LayoutDraft }>
   /** Opens an older version as the draft. */
   openLayoutVersion(request: { version: number; takeOver?: boolean }): Promise<{ draft: LayoutDraft }>
   onChanged(listener: (payload: { team: TeamId }) => void): () => void
@@ -1137,7 +1139,8 @@ export interface WarehouseBridge {
     latest(): Promise<SapCheckEntry | null>
     run(request: { scope: SapCheckScope }): Promise<SapCheck>
     setSettings(request: { to: string; cc: string; language: MailLanguage }): Promise<SapCheckSettings>
-    mail(request: { id: string; mode: 'new' | 'all'; language: MailLanguage; scope: SapCheckScope }): Promise<{ file: string; count: number; to: string }>
+    /** `to`/`cc`: addresses typed but not saved yet (saved alongside), used instead of the saved ones. */
+    mail(request: { id: string; mode: 'new' | 'all'; language: MailLanguage; scope: SapCheckScope; to?: string; cc?: string }): Promise<{ file: string; count: number; to: string }>
   }
   locations: LocationsBridge
 }

@@ -7,13 +7,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/warehouse/ui'
+import { trackPendingWrite } from '@/lib/pendingWrites'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { formatNumber, formatTime, scopeStockTypes, stockLabel } from '@/lib/warehouse/format'
-import { createSingleFlight } from '@/lib/warehouse/singleFlight'
 import { cn } from '@/lib/utils'
 import type { CountLine, CountListLine, StockType } from '@/types/warehouse'
 import type { PanelProps } from './CountView'
-import { isApproved, isSubmitted, lockOf, mayCount, MaterialsInProgress, RequestButton, SubmitDialog } from './MaterialWork'
+import { isApproved, isSubmitted, lockOf, mayCount, MaterialsInProgress, RequestButton, SubmitDialog, type SubmitRetry } from './MaterialWork'
+import { takeLock, withLine, withoutLine } from './optimisticState'
 import { t } from '@/lib/warehouse/text'
 
 type Filter = 'all' | 'missing' | 'uncounted' | 'over'
@@ -29,7 +30,7 @@ interface MaterialGroup {
   lines: CountLine[]
 }
 
-export function LinesPanel({ id, open, state, refresh, reloadOpen }: PanelProps) {
+export function LinesPanel({ id, open, state, reloadOpen, optimistic, person }: PanelProps) {
   const [area, setArea] = useState('')
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
@@ -73,7 +74,7 @@ export function LinesPanel({ id, open, state, refresh, reloadOpen }: PanelProps)
 
   return (
     <div className="space-y-5">
-      {canWrite && state.materialLocks.length > 0 && <MaterialsInProgress id={id} state={state} refresh={refresh} isOwner={state.me.isOwner} />}
+      {canWrite && state.materialLocks.length > 0 && <MaterialsInProgress id={id} state={state} optimistic={optimistic} person={person} isOwner={state.me.isOwner} />}
       <Card>
         <CardHeader>
           <CardTitle className="text-base">{t(`Tællelister pr. materiale (${formatNumber(totals.matching)} af ${formatNumber(groups.length)} stemmer)`, `Count lists per material (${formatNumber(totals.matching)} of ${formatNumber(groups.length)} match)`)}</CardTitle>
@@ -106,14 +107,14 @@ export function LinesPanel({ id, open, state, refresh, reloadOpen }: PanelProps)
             <div className="hidden grid-cols-[minmax(200px,1.3fr)_80px_80px_110px_minmax(330px,1.7fr)] gap-3 bg-muted/50 px-3 py-2 text-xs uppercase tracking-wide text-muted-foreground lg:grid">
               <span>{t('Materiale', 'Material')}</span><span className="text-right">SAP</span><span className="text-right">{t('Fundet', 'Found')}</span><span className="text-right">{t('Mangler', 'Missing')}</span><span>{canWrite ? t('Tæl', 'Count') : ''}</span>
             </div>
-            {visible.slice(0, 300).map(group => <MaterialRow key={group.key} id={id} open={open} state={state} group={group} showType={types.length > 1 || group.stockType === 'blocked'} canWrite={canWrite} refresh={refresh} reloadOpen={reloadOpen} />)}
+            {visible.slice(0, 300).map(group => <MaterialRow key={group.key} id={id} open={open} state={state} group={group} showType={types.length > 1 || group.stockType === 'blocked'} canWrite={canWrite} reloadOpen={reloadOpen} optimistic={optimistic} person={person} />)}
             {visible.length === 0 && <p className="px-3 py-6 text-center text-sm text-muted-foreground">{groups.length ? t('Ingen materialer matcher.', 'No materials match.') : t('Ingen materialer, der tælles som antal.', 'No materials counted by quantity.')}</p>}
           </div>
           {visible.length > 300 && <p className="text-xs text-muted-foreground">{t(`Viser 300 af ${formatNumber(visible.length)} – brug område eller søgning.`, `Showing 300 of ${formatNumber(visible.length)} – use area or search.`)}</p>}
         </CardContent>
       </Card>
 
-      {canWrite && <AddLine id={id} open={open} types={types} refresh={refresh} reloadOpen={reloadOpen} />}
+      {canWrite && <AddLine id={id} open={open} state={state} types={types} reloadOpen={reloadOpen} optimistic={optimistic} person={person} />}
 
       <Card>
         <CardHeader>
@@ -136,7 +137,7 @@ export function LinesPanel({ id, open, state, refresh, reloadOpen }: PanelProps)
                   </tr>
                 </thead>
                 <tbody>
-                  {state.lines.map(line => <OwnRow key={line.lineId} id={id} line={line} description={descriptions.get(line.material) || ''} canWrite={canWrite} refresh={refresh} />)}
+                  {state.lines.map(line => <OwnRow key={line.lineId} id={id} line={line} description={descriptions.get(line.material) || ''} canWrite={canWrite} optimistic={optimistic} person={person} />)}
                 </tbody>
               </table>
             </div>
@@ -162,12 +163,23 @@ function Total({ label, value, tone }: { label: string; value: number; tone?: 'o
 
 const OTHER = '__other__'
 
+const newLineId = () => `ln-${crypto.randomUUID()}`
+
+/** A new own location is saved in the background; the line does not wait for it (it carries the area itself). */
+function saveOwnPlace(name: string, area: string, reloadOpen: () => Promise<void>) {
+  trackPendingWrite(window.electronWarehouse!.placements.save({ name, area }))
+    .then(() => reloadOpen())
+    .catch(error => toast.error(t(`Placeringen ${name} kunne ikke gemmes`, `The location ${name} could not be saved`), { description: errorMessage(error) }))
+}
+
 interface PlaceOption { place: string; area: string; sloc?: string; lineId?: string; sheetQty: number | null }
 
-function MaterialRow({ id, open, state, group, showType, canWrite, refresh, reloadOpen }: Pick<PanelProps, 'id' | 'open' | 'state' | 'refresh' | 'reloadOpen'> & { group: MaterialGroup; showType: boolean; canWrite: boolean }) {
+type RowProps = Pick<PanelProps, 'id' | 'open' | 'state' | 'reloadOpen' | 'optimistic' | 'person'>
+
+function MaterialRow({ id, open, state, group, showType, canWrite, reloadOpen, optimistic, person }: RowProps & { group: MaterialGroup; showType: boolean; canWrite: boolean }) {
   const lock = lockOf(state, group.material)
   const taken = !mayCount(lock, state.me.email)
-  const [submitting, setSubmitting] = useState(false)
+  const [submitting, setSubmitting] = useState<{ retry?: SubmitRetry } | null>(null)
   const countedAt = new Map(group.lines.map(line => [line.place.toLowerCase(), line]))
   const options: PlaceOption[] = [
     ...group.suggestions.map(line => ({ place: line.place, area: line.area, sloc: line.sloc, lineId: line.lineId, sheetQty: line.sheetQty })),
@@ -177,8 +189,6 @@ function MaterialRow({ id, open, state, group, showType, canWrite, refresh, relo
   const [choice, setChoice] = useState(firstOpen?.place ?? options[0]?.place ?? OTHER)
   const [otherPlace, setOtherPlace] = useState('')
   const [qty, setQty] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [once] = useState(createSingleFlight)
   const qtyRef = useRef<HTMLInputElement>(null)
   const missing = group.sapQty - group.counted
 
@@ -189,7 +199,8 @@ function MaterialRow({ id, open, state, group, showType, canWrite, refresh, relo
     qtyRef.current?.focus()
   }
 
-  const save = () => once(async () => {
+  // The line and the counted quantity show at once (the material is taken for you); the save runs in the background.
+  const save = () => {
     const place = (choice === OTHER ? otherPlace : choice).trim()
     const value = Number(qty)
     if (!place) { toast.error(t('Vælg eller skriv en placering', 'Choose or type a location')); return }
@@ -197,25 +208,21 @@ function MaterialRow({ id, open, state, group, showType, canWrite, refresh, relo
     const option = options.find(item => item.place.toLowerCase() === place.toLowerCase())
     const existing = countedAt.get(place.toLowerCase())
     const known = open.places.find(item => item.name.toLowerCase() === place.toLowerCase())
-    setSaving(true)
-    try {
-      if (!option && !known) {
-        await window.electronWarehouse!.placements.save({ name: place, area: '' })
-        await reloadOpen()
-      }
-      await window.electronWarehouse!.counts.saveLine({ id, line: { lineId: existing?.lineId ?? option?.lineId, place, area: option?.area || existing?.area || known?.area || '', material: group.material, sloc: option?.sloc, stockType: group.stockType, qty: value, comment: '' } })
-      toast.success(t(`Gemt: ${formatNumber(value)} × ${group.material} på ${place}`, `Saved: ${formatNumber(value)} × ${group.material} in ${place}`))
-      setQty('')
-      setOtherPlace('')
-      const next = options.find(item => item.place.toLowerCase() !== place.toLowerCase() && !countedAt.has(item.place.toLowerCase()))
-      setChoice(next?.place ?? place)
-      await refresh()
-    } catch (error) {
-      toast.error(errorMessage(error))
-    } finally {
-      setSaving(false)
-    }
-  })
+    const lineId = existing?.lineId ?? option?.lineId ?? newLineId()
+    const area = option?.area || existing?.area || known?.area || ''
+    if (!option && !known) saveOwnPlace(place, '', reloadOpen)
+    const line: CountLine = { lineId, place, area, material: group.material, sloc: option?.sloc || existing?.sloc || '', stockType: group.stockType, qty: value, status: 'counted', comment: '', by: person.email, byName: person.name, at: Date.now() }
+    toast.success(t(`Gemt: ${formatNumber(value)} × ${group.material} på ${place}`, `Saved: ${formatNumber(value)} × ${group.material} in ${place}`))
+    setQty('')
+    setOtherPlace('')
+    const next = options.find(item => item.place.toLowerCase() !== place.toLowerCase() && !countedAt.has(item.place.toLowerCase()))
+    setChoice(next?.place ?? place)
+    void optimistic(
+      current => takeLock(group.material, person)(withLine(line)(current)),
+      () => window.electronWarehouse!.counts.saveLine({ id, line: { lineId, place, area, material: group.material, sloc: option?.sloc, stockType: group.stockType, qty: value, comment: '' } }),
+      { onError: () => { setQty(current => current || String(value)); return false } },
+    )
+  }
 
   return (
     <div className={cn('grid gap-3 border-t px-3 py-3 first:border-t-0 lg:grid-cols-[minmax(200px,1.3fr)_80px_80px_110px_minmax(330px,1.7fr)] lg:items-start', group.lines.length > 0 && missing === 0 && 'bg-emerald-500/5')}>
@@ -254,7 +261,7 @@ function MaterialRow({ id, open, state, group, showType, canWrite, refresh, relo
       {canWrite && taken ? (
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <span className="inline-flex items-center gap-1.5 text-muted-foreground"><LockKey size={16} /> {t(`Tælles af ${lock!.holder.name}`, `Counted by ${lock!.holder.name}`)}</span>
-          <RequestButton id={id} material={group.material} state={state} refresh={refresh} />
+          <RequestButton id={id} material={group.material} state={state} optimistic={optimistic} person={person} />
         </div>
       ) : canWrite ? (
         <div className="flex flex-wrap items-center gap-2">
@@ -264,45 +271,30 @@ function MaterialRow({ id, open, state, group, showType, canWrite, refresh, relo
           </NativeSelect>
           {choice === OTHER && <Input value={otherPlace} list="line-places" maxLength={60} onChange={event => setOtherPlace(event.target.value)} placeholder={t('Placering', 'Location')} className="h-9 w-40" aria-label={t(`Anden placering for ${group.material}`, `Other location for ${group.material}`)} />}
           <Input ref={qtyRef} value={qty} inputMode="numeric" onChange={event => setQty(event.target.value.replace(/[^\d]/g, ''))} onKeyDown={event => { if (event.key === 'Enter') void save() }} className="h-9 w-24 text-right tabular-nums" placeholder={t('Antal', 'Quantity')} aria-label={t(`Antal for ${group.material}`, `Quantity for ${group.material}`)} />
-          <Button size="sm" className="h-9" loading={saving} onClick={() => save()} aria-label={t(`Gem antal for ${group.material}`, `Save quantity for ${group.material}`)}><FloppyDisk size={16} /> {t('Gem', 'Save')}</Button>
-          {group.lines.length > 0 && !isSubmitted(state, group.material) && <Button size="sm" variant="outline" className="h-9" onClick={() => setSubmitting(true)} aria-label={t(`Send ${group.material} til godkendelse`, `Send ${group.material} for approval`)}><PaperPlaneTilt size={16} /> {t('Send til godkendelse', 'Send for approval')}</Button>}
+          <Button size="sm" className="h-9" onClick={() => save()} aria-label={t(`Gem antal for ${group.material}`, `Save quantity for ${group.material}`)}><FloppyDisk size={16} /> {t('Gem', 'Save')}</Button>
+          {group.lines.length > 0 && !isSubmitted(state, group.material) && <Button size="sm" variant="outline" className="h-9" onClick={() => setSubmitting({})} aria-label={t(`Send ${group.material} til godkendelse`, `Send ${group.material} for approval`)}><PaperPlaneTilt size={16} /> {t('Send til godkendelse', 'Send for approval')}</Button>}
         </div>
       ) : <div />}
-      {submitting && <SubmitDialog id={id} material={group.material} state={state} onClose={() => setSubmitting(false)} onSent={async () => { setSubmitting(false); await refresh() }} />}
+      {submitting && <SubmitDialog key={submitting.retry?.serverDiff ?? 'new'} id={id} material={group.material} state={state} optimistic={optimistic} person={person} retry={submitting.retry} onClose={() => setSubmitting(null)} onServerDiff={retry => setSubmitting({ retry })} />}
     </div>
   )
 }
 
-function OwnRow({ id, line, description, canWrite, refresh }: { id: string; line: CountLine; description: string; canWrite: boolean; refresh: () => Promise<void> }) {
-  const [busy, setBusy] = useState<'edit' | 'remove' | null>(null)
-  const edit = async () => {
-    if (busy) return
+function OwnRow({ id, line, description, canWrite, optimistic, person }: Pick<PanelProps, 'id' | 'optimistic' | 'person'> & { line: CountLine; description: string; canWrite: boolean }) {
+  // Shown at once; saved in the background and taken back if the drive refuses it.
+  const edit = () => {
     const answer = window.prompt(t(`Nyt antal for ${line.material} på ${line.place}:`, `New quantity for ${line.material} in ${line.place}:`), String(line.qty))
     if (answer === null) return
     const qty = Number(answer)
     if (!Number.isInteger(qty) || qty < 0) { toast.error(t('Skriv et helt antal', 'Type a whole number')); return }
-    setBusy('edit')
-    try {
-      await window.electronWarehouse!.counts.saveLine({ id, line: { lineId: line.lineId, place: line.place, area: line.area, material: line.material, sloc: line.sloc, stockType: line.stockType, qty, status: line.status, comment: line.comment } })
-      await refresh()
-    } catch (error) {
-      toast.error(errorMessage(error))
-    } finally {
-      setBusy(null)
-    }
+    void optimistic(
+      current => takeLock(line.material, person)(withLine({ ...line, qty, by: person.email, byName: person.name, at: Date.now() })(current)),
+      () => window.electronWarehouse!.counts.saveLine({ id, line: { lineId: line.lineId, place: line.place, area: line.area, material: line.material, sloc: line.sloc, stockType: line.stockType, qty, status: line.status, comment: line.comment } }),
+    )
   }
-  const remove = async () => {
-    if (busy) return
+  const remove = () => {
     if (!window.confirm(t(`Slet linjen ${line.material} på ${line.place}?`, `Delete the line ${line.material} in ${line.place}?`))) return
-    setBusy('remove')
-    try {
-      await window.electronWarehouse!.counts.deleteLine({ id, lineId: line.lineId })
-      await refresh()
-    } catch (error) {
-      toast.error(errorMessage(error))
-    } finally {
-      setBusy(null)
-    }
+    void optimistic(withoutLine(line.lineId), () => window.electronWarehouse!.counts.deleteLine({ id, lineId: line.lineId }))
   }
   return (
     <tr className="border-t">
@@ -315,8 +307,8 @@ function OwnRow({ id, line, description, canWrite, refresh }: { id: string; line
       <td className="px-3 py-2 text-right">
         {canWrite && (
           <div className="flex justify-end gap-1">
-            <Button size="sm" variant="ghost" loading={busy === 'edit'} disabled={busy !== null} onClick={() => edit()} aria-label={t('Ret antal', 'Edit quantity')}><PencilSimple size={16} /></Button>
-            <Button size="sm" variant="ghost" loading={busy === 'remove'} disabled={busy !== null} onClick={() => remove()} aria-label={t('Slet linje', 'Delete line')}><Trash size={16} /></Button>
+            <Button size="sm" variant="ghost" onClick={() => edit()} aria-label={t('Ret antal', 'Edit quantity')}><PencilSimple size={16} /></Button>
+            <Button size="sm" variant="ghost" onClick={() => remove()} aria-label={t('Slet linje', 'Delete line')}><Trash size={16} /></Button>
           </div>
         )}
       </td>
@@ -324,15 +316,13 @@ function OwnRow({ id, line, description, canWrite, refresh }: { id: string; line
   )
 }
 
-function AddLine({ id, open, types, refresh, reloadOpen }: Pick<PanelProps, 'id' | 'open' | 'refresh' | 'reloadOpen'> & { types: StockType[] }) {
+function AddLine({ id, open, state, types, reloadOpen, optimistic, person }: Pick<PanelProps, 'id' | 'open' | 'state' | 'reloadOpen' | 'optimistic' | 'person'> & { types: StockType[] }) {
   const [place, setPlace] = useState('')
   const [newArea, setNewArea] = useState('')
   const [material, setMaterial] = useState('')
   const [stockType, setStockType] = useState<StockType>(types[0])
   const [qty, setQty] = useState('')
   const [comment, setComment] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [once] = useState(createSingleFlight)
   const materials = useMemo(() => {
     const seen = new Map<string, string>()
     for (const item of open.materials) if (!seen.has(item.material)) seen.set(item.material, item.description)
@@ -342,27 +332,35 @@ function AddLine({ id, open, types, refresh, reloadOpen }: Pick<PanelProps, 'id'
   const materialInfo = open.materials.filter(item => item.material === material.trim().toUpperCase())
   const serialManaged = materialInfo.some(item => item.serialManaged)
 
-  const save = () => once(async () => {
+  // The line shows at once (the material is taken for you); the save runs in the background. A new location is saved
+  // alongside it, not before it.
+  const save = () => {
     const value = Number(qty)
     if (!place.trim() || !material.trim() || qty.trim() === '' || !Number.isInteger(value) || value < 0) { toast.error(t('Udfyld placering, materiale og et helt antal', 'Fill in location, material and a whole number')); return }
-    setSaving(true)
-    try {
-      if (!known) {
-        await window.electronWarehouse!.placements.save({ name: place, area: newArea })
-        await reloadOpen()
-      }
-      await window.electronWarehouse!.counts.saveLine({ id, line: { place, area: known?.area || newArea, material, stockType, qty: value, comment } })
-      toast.success(t(`Gemt: ${formatNumber(value)} × ${material.toUpperCase()} på ${place}`, `Saved: ${formatNumber(value)} × ${material.toUpperCase()} in ${place}`))
-      setMaterial('')
-      setQty('')
-      setComment('')
-      await refresh()
-    } catch (error) {
-      toast.error(errorMessage(error))
-    } finally {
-      setSaving(false)
-    }
-  })
+    const code = material.trim().toUpperCase()
+    const area = known?.area || newArea
+    const lineId = newLineId()
+    if (!known) saveOwnPlace(place, newArea, reloadOpen)
+    const sloc = state.rows.find(row => row.material === code && row.stockType === stockType)?.sloc || ''
+    const line: CountLine = { lineId, place: place.trim(), area, material: code, sloc, stockType, qty: value, status: 'counted', comment: comment.trim(), by: person.email, byName: person.name, at: Date.now() }
+    const typed = { material, qty, comment }
+    toast.success(t(`Gemt: ${formatNumber(value)} × ${code} på ${place}`, `Saved: ${formatNumber(value)} × ${code} in ${place}`))
+    setMaterial('')
+    setQty('')
+    setComment('')
+    void optimistic(
+      current => takeLock(code, person)(withLine(line)(current)),
+      () => window.electronWarehouse!.counts.saveLine({ id, line: { lineId, place, area, material, stockType, qty: value, comment } }),
+      {
+        onError: () => {
+          setMaterial(current => current || typed.material)
+          setQty(current => current || typed.qty)
+          setComment(current => current || typed.comment)
+          return false
+        },
+      },
+    )
+  }
 
   return (
     <Card>
@@ -406,7 +404,7 @@ function AddLine({ id, open, types, refresh, reloadOpen }: Pick<PanelProps, 'id'
             <Label htmlFor="line-comment">{t('Kommentar (valgfri)', 'Comment (optional)')}</Label>
             <Input id="line-comment" value={comment} maxLength={200} onChange={event => setComment(event.target.value)} />
           </div>
-          <Button onClick={() => save()} loading={saving}><Plus size={18} weight="bold" /> {t('Gem linje', 'Save line')}</Button>
+          <Button onClick={() => save()}><Plus size={18} weight="bold" /> {t('Gem linje', 'Save line')}</Button>
         </div>
       </CardContent>
     </Card>

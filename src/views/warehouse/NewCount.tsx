@@ -13,6 +13,7 @@ import { fetchSteps, formatMoney, formatNumber, kindLabel, stockLabel } from '@/
 import { cn } from '@/lib/utils'
 import type { WarehouseUser, CountPreview, FetchStep, Kind, StockType, TakenScope } from '@/types/warehouse'
 import { t } from '@/lib/warehouse/text'
+import { withoutDeleted } from './pendingDeletes'
 
 interface NewCountProps {
   user: WarehouseUser
@@ -80,7 +81,7 @@ export function NewCount({ user, onCancel, onCreated }: NewCountProps) {
 
   useEffect(() => window.electronWarehouse!.sap.onFetchProgress(progress => setStep(progress.step)), [])
   useEffect(() => {
-    window.electronWarehouse!.statuses.overview().then(overview => setTaken(overview.active?.taken ?? [])).catch(() => setTaken([]))
+    window.electronWarehouse!.statuses.overview().then(overview => setTaken(withoutDeleted(overview).active?.taken ?? [])).catch(() => setTaken([]))
   }, [])
 
   const toggleSloc = (sloc: string, on: boolean) => setSlocs(current => (on ? [...current, sloc] : current.filter(item => item !== sloc)))

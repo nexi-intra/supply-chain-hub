@@ -11,9 +11,10 @@ import { NativeSelect, Textarea } from '@/components/warehouse/ui'
 import { cn } from '@/lib/utils'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { drawnPurposeOf } from '@/lib/warehouse/layout/slots'
-import { isShelfPlace, linkedChanges, linkedPurposes, palletLimitOf, PURPOSES, purposeLabel, storedCapacityOf, TYPES, typeLabel, type LocationsTarget } from '@/lib/warehouse/locations'
+import { isPlaceHidden, sendLocationAction, startLocationsRead, type LocationActionOptions } from '@/lib/warehouse/locationActions'
+import { isShelfPlace, linkedChanges, linkedPurposes, locationKeyOf, palletLimitOf, PURPOSES, purposeLabel, storedCapacityOf, TYPES, typeLabel, type LocationsTarget } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
-import type { DeleteResult, LayoutOwner, LocationInput, LocationList, LocationPurpose, LocationType, WarehouseUser } from '@/types/warehouse'
+import type { DeleteResult, LayoutOwner, LocationInput, LocationList, LocationPurpose, LocationType, RackCard as RackCardData, WarehouseUser } from '@/types/warehouse'
 
 type Listed = LocationList['locations'][number]
 type Dialogs = { kind: 'create' } | { kind: 'edit'; location: Listed } | { kind: 'series' } | { kind: 'tags' } | { kind: 'rack' } | { kind: 'delete' } | { kind: 'deleted'; result: DeleteResult } | null
@@ -24,9 +25,35 @@ const SHELF_NAME = /^(.+?)\s+H(\d{1,2})$/i
 const isEmpty = (location: Listed) => location.used === 0 && location.stockCount === 0
 /** "3/1", "7" on a floor, "2 mat." on a shelf. */
 const usedText = (location: Listed) => (isShelfPlace(location) ? t(`${location.stockCount} mat.`, `${location.stockCount} mat.`) : Number.isFinite(palletLimitOf(location)) ? `${location.used}/${palletLimitOf(location)}` : String(location.used))
+/** The backend's list order. */
+const sortedByName = (locations: Listed[]) => [...locations].sort((a, b) => a.name.localeCompare(b.name, 'da', { numeric: true }))
+/** Why the backend keeps a place it is asked to delete (as deleteLocations decides), or null when it is deleted. */
+function keptReason(location: Listed, linked: Set<string>): string | null {
+  if (linked.has(location.id)) return t(`${location.name} er på tegningen – fjern den på tegningen`, `${location.name} is on the drawing – remove it on the drawing`)
+  if (location.used) return t(`Der står ${location.used === 1 ? '1 palle' : `${location.used} paller`} på ${location.name}`, `There ${location.used === 1 ? 'is 1 pallet' : `are ${location.used} pallets`} on ${location.name}`)
+  if (location.stockCount) return t(`Der står ${location.stockCount === 1 ? '1 materiale' : `${location.stockCount} materialer`} på ${location.name}`, `There ${location.stockCount === 1 ? 'is 1 material' : `are ${location.stockCount} materials`} on ${location.name}`)
+  return null
+}
+const areaOfName = (name: string) => /^[A-Za-zÆØÅæøå]+/.exec(name.trim())?.[0].toUpperCase() ?? ''
+/** The place as the backend's locationFrom stores it, shown in the list before M: has it; `previous` keeps what is not changed. */
+function placeFrom(input: Partial<LocationInput>, previous: Listed | null): Listed {
+  const name = String(input.name ?? previous?.name ?? '').trim().replace(/\s+/g, ' ')
+  const type = input.type ?? previous?.type ?? 'Palle'
+  const capacity = type === 'Palle' ? (previous?.type === 'Palle' ? previous.capacity || 1 : 1) : type === 'Gulv' ? 0 : input.capacity ?? (previous?.capacity || 1)
+  const shelf = type === 'Hylde' ? SHELF_NAME.exec(name) : null
+  return {
+    id: locationKeyOf(name), name, area: String(input.area ?? previous?.area ?? areaOfName(name)).trim().toUpperCase() || areaOfName(name), type, purpose: input.purpose ?? previous?.purpose ?? 'reserve', capacity,
+    fixedMaterials: input.fixedMaterials ?? previous?.fixedMaterials ?? [], ...(shelf ? { rack: shelf[1].toUpperCase(), shelf: Number(shelf[2]) } : {}),
+    active: previous?.active ?? true, note: String(input.note ?? previous?.note ?? '').trim().slice(0, 500), updatedAt: Date.now(), updatedBy: { email: '', name: '' },
+    used: previous?.used ?? 0, stockCount: previous?.stockCount ?? 0,
+  }
+}
+/** A dialog's places sent to M: in the background: shown at once in place of `replaced`. */
+type SendRows = (rows: Listed[], replaced: Listed[], write: () => Promise<unknown>, success: string) => void
 
 /** Maintain the hub's places: list per area, type and "only empty"; create one, a series or a rack; edit; select many to delete or deactivate; labels. */
-export function Admin({ user, version, onOpen, onChanged }: { user: WarehouseUser; version: number; onOpen: (target: LocationsTarget) => void; onChanged: () => void }) {
+// Every change shows in the list at once and is written to M: in the background (15-40 s); a refusal puts the list back.
+export function Admin({ user, version, onOpen, onChanged, onTags }: { user: WarehouseUser; version: number; onOpen: (target: LocationsTarget) => void; onChanged: () => void; onTags: (tags: string[]) => void }) {
   const [list, setList] = useState<LocationList | null>(null)
   const [area, setArea] = useState('')
   const [filter, setFilter] = useState('')
@@ -34,14 +61,18 @@ export function Admin({ user, version, onOpen, onChanged }: { user: WarehouseUse
   const [type, setType] = useState<LocationType | ''>('')
   const [onlyEmpty, setOnlyEmpty] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [busy, setBusy] = useState(false)
-  const [togglingId, setTogglingId] = useState<string | null>(null)
   const [dialog, setDialog] = useState<Dialogs>(null)
   const bridge = window.electronWarehouse!.locations
 
   useEffect(() => {
     let current = true
-    bridge.list().then(result => { if (current) setList(result) }).catch(error => toast.error(errorMessage(error)))
+    // A re-read during this PC's own change on its way to M: is older than the list, which already shows the change.
+    const fresh = startLocationsRead()
+    bridge.list().then(result => {
+      if (!current) return
+      const next = { ...result, locations: result.locations.filter(location => !isPlaceHidden(location.id)) }
+      setList(value => (value && !fresh() ? value : next))
+    }).catch(error => toast.error(errorMessage(error)))
     return () => { current = false }
   }, [bridge, version])
 
@@ -58,53 +89,83 @@ export function Admin({ user, version, onOpen, onChanged }: { user: WarehouseUse
   if (!list) return <Skeleton className="h-96 rounded-xl" />
   if (!list.canAdmin) return <p className="text-sm text-muted-foreground">{t('Kun managere og admins kan vedligeholde placeringer.', 'Only managers and admins can maintain locations.')}</p>
 
-  async function setActive(location: Listed, active: boolean) {
-    if (togglingId) return
-    setTogglingId(location.id)
-    try {
-      await bridge.setActive({ location: location.id, active })
-      if (active) toast.success(t(`${location.name} er aktiv igen`, `${location.name} is active again`))
-      else if (location.used > 0) toast.success(t(`${location.name} er deaktiveret`, `${location.name} is deactivated`), { description: t('Pallerne bliver stående, men tælles ikke med i FIFO, mens pladsen er deaktiveret.', 'The pallets stay, but are left out of FIFO while the place is deactivated.') })
-      else toast.success(t(`${location.name} er deaktiveret`, `${location.name} is deactivated`))
-      onChanged()
-    } catch (error) {
-      toast.error(errorMessage(error))
-    } finally {
-      setTogglingId(null)
-    }
+  const patchList = (change: (locations: Listed[]) => Listed[]) => setList(value => value && { ...value, locations: change(value.locations) })
+  const withActive = (ids: Set<string>, active: boolean) => patchList(locations => locations.map(location => (ids.has(location.id) ? { ...location, active } : location)))
+  /** Rows put back (a refused delete) or added (a create), in the backend's name order. */
+  const putBack = (rows: Listed[]) => patchList(locations => sortedByName([...locations.filter(location => !rows.some(row => row.id === location.id)), ...rows]))
+  const removeRows = (ids: Set<string>) => patchList(locations => locations.filter(location => !ids.has(location.id)))
+
+  function setActive(location: Listed, active: boolean) {
+    const ids = new Set([location.id])
+    withActive(ids, active)
+    if (active) toast.success(t(`${location.name} er aktiv igen`, `${location.name} is active again`))
+    else if (location.used > 0) toast.success(t(`${location.name} er deaktiveret`, `${location.name} is deactivated`), { description: t('Pallerne bliver stående, men tælles ikke med i FIFO, mens pladsen er deaktiveret.', 'The pallets stay, but are left out of FIFO while the place is deactivated.') })
+    else toast.success(t(`${location.name} er deaktiveret`, `${location.name} is deactivated`))
+    void sendLocationAction(() => bridge.setActive({ location: location.id, active }), { rollback: () => withActive(ids, location.active), settled: onChanged })
   }
 
-  const closeAndReload = () => { setDialog(null); onChanged() }
   const toggle = (id: string) => setSelected(value => { const next = new Set(value); if (next.has(id)) next.delete(id); else next.add(id); return next })
 
-  async function deleteChosen() {
-    setBusy(true)
-    try {
-      const result = await bridge.deleteLocations({ locations: chosen.map(location => location.id) })
-      toast.success(t(`${result.deleted.length} placeringer slettet`, `${result.deleted.length} locations deleted`))
-      setSelected(new Set())
-      onChanged()
-      setDialog(result.kept.length ? { kind: 'deleted', result } : null)
-    } catch (error) {
-      toast.error(errorMessage(error))
-    } finally {
-      setBusy(false)
-    }
+  // Only empty places that are not on the drawing are deleted (as the backend decides); the rest stay, with the reason.
+  function deleteChosen() {
+    const kept = chosen.flatMap(location => { const reason = keptReason(location, linked); return reason ? [{ name: location.name, reason }] : [] })
+    const doomed = chosen.filter(location => !keptReason(location, linked))
+    setSelected(new Set())
+    setDialog(kept.length ? { kind: 'deleted', result: { deleted: doomed.map(location => location.name), kept } } : null)
+    if (!doomed.length) return
+    const ids = new Set(doomed.map(location => location.id))
+    removeRows(ids)
+    void sendLocationAction(() => bridge.deleteLocations({ locations: [...ids] }), {
+      success: t(`${doomed.length} placeringer slettet`, `${doomed.length} locations deleted`),
+      confirmed: result => { if (result.kept.length) toast.error(t(`${result.kept.length} placeringer blev ikke slettet`, `${result.kept.length} locations were not deleted`), { description: result.kept.map(item => item.reason).join('\n') }) },
+      rollback: () => putBack(doomed),
+      hides: [...ids],
+      settled: onChanged,
+    })
   }
 
-  async function deactivateChosen() {
-    setBusy(true)
-    try {
-      const { changed } = await bridge.setActiveMany({ locations: chosen.map(location => location.id), active: false })
-      toast.success(t(`${changed} placeringer deaktiveret`, `${changed} locations deactivated`))
-      setSelected(new Set())
-      onChanged()
-    } catch (error) {
-      toast.error(errorMessage(error))
-    } finally {
-      setBusy(false)
-    }
+  function deactivateChosen() {
+    const changed = chosen.filter(location => location.active)
+    setSelected(new Set())
+    toast.success(t(`${changed.length} placeringer deaktiveret`, `${changed.length} locations deactivated`))
+    if (!changed.length) return
+    const ids = new Set(changed.map(location => location.id))
+    withActive(ids, false)
+    void sendLocationAction(() => bridge.setActiveMany({ locations: [...ids], active: false }), { rollback: () => withActive(ids, true), settled: onChanged })
   }
+
+  /** A dialog's places shown at once (`rows`, replacing `replaced`); a refusal takes them out and puts `replaced` back. */
+  function sendRows(rows: Listed[], replaced: Listed[], write: () => Promise<unknown>, success: string, extra: Partial<LocationActionOptions<unknown>> = {}) {
+    setDialog(null)
+    const gone = new Set(replaced.map(location => location.id))
+    patchList(locations => sortedByName([...locations.filter(location => !gone.has(location.id) && !rows.some(row => row.id === location.id)), ...rows]))
+    void sendLocationAction(write, {
+      success,
+      rollback: () => {
+        const added = new Set(rows.map(row => row.id))
+        patchList(locations => sortedByName([...locations.filter(location => !added.has(location.id)), ...replaced]))
+      },
+      settled: onChanged,
+      ...extra,
+    })
+  }
+
+  function saveTags(tags: string[]) {
+    const before = list?.tags ?? []
+    setDialog(null)
+    // Unchanged: nothing to write on M:.
+    if (JSON.stringify(tags) === JSON.stringify(before)) return
+    setList(value => value && { ...value, tags })
+    onTags(tags)
+    void sendLocationAction(() => bridge.setTags({ tags }), {
+      success: t('Mærkaterne er gemt', 'The labels are saved'),
+      rollback: () => { setList(value => value && { ...value, tags: before }); onTags(before) },
+      settled: onChanged,
+    })
+  }
+
+  // Names already in the list: creating one again is refused by the backend, so it is said in the dialog.
+  const taken = (id: string) => Boolean(list?.locations.some(location => location.id === id))
 
   return (
     <div className="space-y-4">
@@ -143,8 +204,8 @@ export function Admin({ user, version, onOpen, onChanged }: { user: WarehouseUse
           <>
             <span className="text-sm">{t(`${chosen.length} valgt`, `${chosen.length} selected`)}</span>
             <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>{t('Fravælg', 'Clear')}</Button>
-            <Button size="sm" variant="outline" onClick={() => deactivateChosen()} disabled={busy} loading={busy && !dialog}><Prohibit size={14} /> {t('Deaktivér valgte', 'Deactivate selected')}</Button>
-            <Button size="sm" variant="destructive" onClick={() => setDialog({ kind: 'delete' })} disabled={busy}><Trash size={14} /> {t('Slet valgte', 'Delete selected')}</Button>
+            <Button size="sm" variant="outline" onClick={() => deactivateChosen()}><Prohibit size={14} /> {t('Deaktivér valgte', 'Deactivate selected')}</Button>
+            <Button size="sm" variant="destructive" onClick={() => setDialog({ kind: 'delete' })}><Trash size={14} /> {t('Slet valgte', 'Delete selected')}</Button>
           </>
         )}
       </div>
@@ -179,7 +240,7 @@ export function Admin({ user, version, onOpen, onChanged }: { user: WarehouseUse
                 <td className="max-w-64 truncate px-3 py-1.5 font-mono text-xs">{location.fixedMaterials.join(', ')}</td>
                 <td className="px-3 py-1.5 text-right whitespace-nowrap">
                   <Button size="sm" variant="ghost" onClick={() => setDialog({ kind: 'edit', location })} aria-label={t(`Ret ${location.name}`, `Edit ${location.name}`)}><PencilSimple size={14} /></Button>
-                  <Button size="sm" variant="ghost" loading={togglingId === location.id} onClick={() => setActive(location, !location.active)}>{location.active ? t('Deaktivér', 'Deactivate') : t('Aktivér', 'Activate')}</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setActive(location, !location.active)}>{location.active ? t('Deaktivér', 'Deactivate') : t('Aktivér', 'Activate')}</Button>
                 </td>
               </tr>
             ))}
@@ -187,20 +248,20 @@ export function Admin({ user, version, onOpen, onChanged }: { user: WarehouseUse
         </table>
       </div>
 
-      {(dialog?.kind === 'create' || dialog?.kind === 'edit') && <LocationDialog location={dialog.kind === 'edit' ? dialog.location : null} linked={dialog.kind === 'edit' && linked.has(dialog.location.id)} team={user.team} onClose={() => setDialog(null)} onDone={closeAndReload} />}
-      {dialog?.kind === 'series' && <SeriesDialog onClose={() => setDialog(null)} onDone={closeAndReload} />}
-      {dialog?.kind === 'tags' && <TagsDialog tags={list.tags} onClose={() => setDialog(null)} onDone={closeAndReload} />}
-      {dialog?.kind === 'rack' && <RackDialog onClose={() => setDialog(null)} onDone={rack => { setDialog(null); onChanged(); onOpen({ kind: 'rack', id: rack }) }} />}
+      {(dialog?.kind === 'create' || dialog?.kind === 'edit') && <LocationDialog location={dialog.kind === 'edit' ? dialog.location : null} linked={dialog.kind === 'edit' && linked.has(dialog.location.id)} team={user.team} taken={taken} onClose={() => setDialog(null)} onSend={sendRows} />}
+      {dialog?.kind === 'series' && <SeriesDialog taken={taken} onClose={() => setDialog(null)} onSend={sendRows} />}
+      {dialog?.kind === 'tags' && <TagsDialog tags={list.tags} onClose={() => setDialog(null)} onSave={saveTags} />}
+      {dialog?.kind === 'rack' && <RackDialog taken={taken} onClose={() => setDialog(null)} onSend={(rows, write, success, card) => { sendRows(rows, [], write, success, { rack: card }); onOpen({ kind: 'rack', id: card.rack }) }} />}
       {dialog?.kind === 'delete' && (
-        <Dialog open onOpenChange={open => { if (!open && !busy) setDialog(null) }}>
+        <Dialog open onOpenChange={open => { if (!open) setDialog(null) }}>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>{t(`Slet ${chosen.length} placeringer?`, `Delete ${chosen.length} locations?`)}</DialogTitle>
               <DialogDescription>{t('Kun tomme slettes – står der paller eller varer, bliver pladsen og du får at vide hvorfor. Sletningen står i loggen og kan fortrydes.', 'Only empty ones are deleted – a place with pallets or goods stays, and you are told why. The deletion is logged and can be undone.')}</DialogDescription>
             </DialogHeader>
             <DialogFooter>
-              <Button variant="ghost" onClick={() => setDialog(null)} disabled={busy}>{t('Annullér', 'Cancel')}</Button>
-              <Button variant="destructive" onClick={() => deleteChosen()} loading={busy}><Trash size={16} /> {t('Slet', 'Delete')}</Button>
+              <Button variant="ghost" onClick={() => setDialog(null)}>{t('Annullér', 'Cancel')}</Button>
+              <Button variant="destructive" onClick={() => deleteChosen()}><Trash size={16} /> {t('Slet', 'Delete')}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -226,7 +287,7 @@ export function Admin({ user, version, onOpen, onChanged }: { user: WarehouseUse
 const materialsFrom = (text: string) => [...new Set(text.toUpperCase().split(/[\s,;]+/).filter(Boolean))]
 
 /** `linked`: the place is on the published drawing, which owns its name, type, capacity and reserve/pick. */
-function LocationDialog({ location, linked, team, onClose, onDone }: { location: Listed | null; linked: boolean; team: LayoutOwner; onClose: () => void; onDone: () => void }) {
+function LocationDialog({ location, linked, team, taken, onClose, onSend }: { location: Listed | null; linked: boolean; team: LayoutOwner; taken: (id: string) => boolean; onClose: () => void; onSend: SendRows }) {
   const [name, setName] = useState(location?.name || '')
   const [area, setArea] = useState(location?.area || '')
   const [type, setType] = useState<LocationType>(location?.type || 'Palle')
@@ -234,7 +295,6 @@ function LocationDialog({ location, linked, team, onClose, onDone }: { location:
   const [capacity, setCapacity] = useState(String(location?.capacity || 1))
   const [materials, setMaterials] = useState((location?.fixedMaterials || []).join(' '))
   const [note, setNote] = useState(location?.note || '')
-  const [busy, setBusy] = useState(false)
   const [drawnPurpose, setDrawnPurpose] = useState<'reserve' | 'pick' | null>(null)
   const [layoutError, setLayoutError] = useState('')
   useEffect(() => {
@@ -258,23 +318,24 @@ function LocationDialog({ location, linked, team, onClose, onDone }: { location:
   // A place on the drawing may still be without its materials (the backend allows it).
   const needsMaterial = !linked && (purpose === 'pick' || purpose === 'station') && !becomesPick
 
-  async function save() {
+  // A place with this name exists already: the backend refuses it (LOCATION_EXISTS), so it is said here.
+  const clash = Boolean(name.trim()) && locationKeyOf(name) !== location?.id && taken(locationKeyOf(name))
+
+  function save() {
     const input: LocationInput = { name, area: area.trim() || undefined, type, purpose, ...(hasCapacity(type) ? { capacity: Number(capacity) } : {}), fixedMaterials: materialsFrom(materials), note }
-    setBusy(true)
-    try {
-      if (location) await window.electronWarehouse!.locations.editLocation({ location: location.id, changes: linked ? linkedChanges(input) : input, usePallets: becomesPick })
-      else await window.electronWarehouse!.locations.createLocation(input)
-      toast.success(location ? t(`${name} er rettet`, `${name} has been edited`) : t(`${name} er oprettet`, `${name} has been created`))
-      onDone()
-    } catch (error) {
-      toast.error(errorMessage(error))
-    } finally {
-      setBusy(false)
-    }
+    const changes = linked ? linkedChanges(input) : input
+    // The pallets of a place made a pick place are used up there.
+    const row = { ...placeFrom(changes, location), ...(becomesPick ? { used: 0 } : {}) }
+    // Saved without a change: nothing to write on M:.
+    if (location && !becomesPick && (['name', 'area', 'type', 'purpose', 'capacity', 'fixedMaterials', 'note'] as const).every(field => JSON.stringify(row[field]) === JSON.stringify(location[field]))) { onClose(); return }
+    const bridge = window.electronWarehouse!.locations
+    onSend([row], location ? [location] : [],
+      location ? () => bridge.editLocation({ location: location.id, changes, usePallets: becomesPick }) : () => bridge.createLocation(input),
+      location ? t(`${row.name} er rettet`, `${row.name} has been edited`) : t(`${row.name} er oprettet`, `${row.name} has been created`))
   }
 
   return (
-    <Dialog open onOpenChange={open => { if (!open && !busy) onClose() }}>
+    <Dialog open onOpenChange={open => { if (!open) onClose() }}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>{location ? t(`Ret ${location.name}`, `Edit ${location.name}`) : t('Opret placering', 'Create location')}</DialogTitle>
@@ -308,40 +369,39 @@ function LocationDialog({ location, linked, team, onClose, onDone }: { location:
           <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">{t(`Der står ${palletsHere} paller på ${location!.name} – med plads til ${limit} står pladsen som fuld.`, `There are ${palletsHere} pallets on ${location!.name} – with room for ${limit} the place shows as full.`)}</p>
         )}
         <div className="space-y-1.5"><Label htmlFor="loc-note">{t('Note', 'Note')}</Label><Input id="loc-note" value={note} maxLength={500} onChange={event => setNote(event.target.value)} /></div>
+        {clash && <p role="alert" className="text-sm text-destructive">{t(`${name.trim()} findes allerede`, `${name.trim()} already exists`)}</p>}
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={busy}>{t('Annullér', 'Cancel')}</Button>
-          <Button onClick={() => save()} loading={busy} disabled={!name.trim() || (needsMaterial && !materialsFrom(materials).length)}>{becomesPick ? t('Gem – pallen bliver pluk-palle', 'Save – the pallet becomes the pick pallet') : t('Gem', 'Save')}</Button>
+          <Button variant="ghost" onClick={onClose}>{t('Annullér', 'Cancel')}</Button>
+          <Button onClick={() => save()} disabled={!name.trim() || clash || (needsMaterial && !materialsFrom(materials).length)}>{becomesPick ? t('Gem – pallen bliver pluk-palle', 'Save – the pallet becomes the pick pallet') : t('Gem', 'Save')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   )
 }
 
-function SeriesDialog({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+function SeriesDialog({ taken, onClose, onSend }: { taken: (id: string) => boolean; onClose: () => void; onSend: SendRows }) {
   const [prefix, setPrefix] = useState('')
   const [aisles, setAisles] = useState(['1', '1'])
   const [places, setPlaces] = useState(['1', '6'])
   const [type, setType] = useState<LocationType>('Palle')
   const [purpose, setPurpose] = useState<LocationPurpose>('reserve')
   const [capacity, setCapacity] = useState('1')
-  const [busy, setBusy] = useState(false)
   const range = (pair: string[]): [number, number] => [Number(pair[0] || 0), Number(pair[1] || 0)]
   const [a, p] = [range(aisles), range(places)]
   const valid = prefix.trim() && a[1] >= a[0] && p[1] >= p[0]
   const total = valid ? (a[1] - a[0] + 1) * (p[1] - p[0] + 1) : 0
   const names = valid ? [`${prefix.trim()}${a[0]}.${p[0]}`, `${prefix.trim()}${a[0]}.${Math.min(p[0] + 1, p[1])}`, `${prefix.trim()}${a[1]}.${p[1]}`] : []
 
-  async function save() {
-    setBusy(true)
-    try {
-      const result = await window.electronWarehouse!.locations.createSeries({ prefix: prefix.trim(), aisles: a, places: p, type, purpose, ...(hasCapacity(type) ? { capacity: Number(capacity) || 1 } : {}) })
-      toast.success(t(`${result.created.length} placeringer oprettet${result.skipped.length ? `, ${result.skipped.length} fandtes allerede` : ''}`, `${result.created.length} locations created${result.skipped.length ? `, ${result.skipped.length} already existed` : ''}`))
-      onDone()
-    } catch (error) {
-      toast.error(errorMessage(error))
-    } finally {
-      setBusy(false)
-    }
+  // As the backend makes the series: names that exist are skipped.
+  function save() {
+    const start = prefix.trim()
+    const wanted: Listed[] = []
+    for (let aisle = a[0]; aisle <= a[1]; aisle++) for (let place = p[0]; place <= p[1]; place++) wanted.push(placeFrom({ name: `${start}${aisle}.${place}`, type, purpose, capacity: hasCapacity(type) ? Number(capacity) || 1 : 1 }, null))
+    const created = wanted.filter(location => !taken(location.id))
+    const skipped = wanted.length - created.length
+    const success = t(`${created.length} placeringer oprettet${skipped ? `, ${skipped} fandtes allerede` : ''}`, `${created.length} locations created${skipped ? `, ${skipped} already existed` : ''}`)
+    if (!created.length) { toast.success(success); onClose(); return }
+    onSend(created, [], () => window.electronWarehouse!.locations.createSeries({ prefix: start, aisles: a, places: p, type, purpose, ...(hasCapacity(type) ? { capacity: Number(capacity) || 1 } : {}) }), success)
   }
 
   const pairInput = (label: string, id: string, pair: string[], set: (value: string[]) => void) => (
@@ -356,7 +416,7 @@ function SeriesDialog({ onClose, onDone }: { onClose: () => void; onDone: () => 
   )
 
   return (
-    <Dialog open onOpenChange={open => { if (!open && !busy) onClose() }}>
+    <Dialog open onOpenChange={open => { if (!open) onClose() }}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>{t('Opret serie', 'Create series')}</DialogTitle>
@@ -376,40 +436,34 @@ function SeriesDialog({ onClose, onDone }: { onClose: () => void; onDone: () => 
           </p>
         )}
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={busy}>{t('Annullér', 'Cancel')}</Button>
-          <Button onClick={() => save()} loading={busy} disabled={!valid || total > SERIES_MAX}>{t('Opret', 'Create')}</Button>
+          <Button variant="ghost" onClick={onClose}>{t('Annullér', 'Cancel')}</Button>
+          <Button onClick={() => save()} disabled={!valid || total > SERIES_MAX}>{t('Opret', 'Create')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   )
 }
 
-/** "Opret reol": a rack with its shelves "E9 H1" … "E9 Hn" in one go. */
-function RackDialog({ onClose, onDone }: { onClose: () => void; onDone: (rack: string) => void }) {
+/** "Opret reol": a rack with its shelves "E9 H1" … "E9 Hn" in one go; its card opens at once, as it will be. */
+function RackDialog({ taken, onClose, onSend }: { taken: (id: string) => boolean; onClose: () => void; onSend: (rows: Listed[], write: () => Promise<unknown>, success: string, card: RackCardData) => void }) {
   const [name, setName] = useState('')
   const [shelves, setShelves] = useState('5')
   const [area, setArea] = useState('')
   const [purpose, setPurpose] = useState<'reserve' | 'pick'>('reserve')
-  const [busy, setBusy] = useState(false)
   const count = Number(shelves || 0)
   const rack = name.trim().replace(/\s+/g, ' ').toUpperCase()
   const valid = Boolean(rack) && count >= 1 && count <= 20
+  const rows = valid ? Array.from({ length: count }, (_, index) => placeFrom({ name: `${rack} H${index + 1}`, type: 'Hylde', purpose, ...(area.trim() ? { area: area.trim() } : {}) }, null)) : []
+  // The backend refuses the rack when one of its shelves exists (LOCATION_EXISTS), so it is said here.
+  const clash = rows.filter(location => taken(location.id)).map(location => location.name)
 
-  async function save() {
-    setBusy(true)
-    try {
-      await window.electronWarehouse!.locations.createRack({ name: rack, shelves: count, area: area.trim() || undefined, purpose })
-      toast.success(t(`Reol ${rack} oprettet med ${count} hylder`, `Rack ${rack} created with ${count} shelves`))
-      onDone(rack)
-    } catch (error) {
-      toast.error(errorMessage(error))
-    } finally {
-      setBusy(false)
-    }
+  function save() {
+    const card: RackCardData = { rack, area: rows[0].area, purpose, shelves: [...rows].reverse().map(location => ({ location, stock: [] })), history: [] }
+    onSend(rows, () => window.electronWarehouse!.locations.createRack({ name: rack, shelves: count, area: area.trim() || undefined, purpose }), t(`Reol ${rack} oprettet med ${count} hylder`, `Rack ${rack} created with ${count} shelves`), card)
   }
 
   return (
-    <Dialog open onOpenChange={open => { if (!open && !busy) onClose() }}>
+    <Dialog open onOpenChange={open => { if (!open) onClose() }}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>{t('Opret reol', 'Create rack')}</DialogTitle>
@@ -428,32 +482,22 @@ function RackDialog({ onClose, onDone }: { onClose: () => void; onDone: (rack: s
         </div>
         {valid && <p className="rounded-md bg-muted/40 px-3 py-2 text-sm">{t(`${count} hylder:`, `${count} shelves:`)} <span className="font-mono">{rack} H1{count > 1 ? ` … ${rack} H${count}` : ''}</span></p>}
         {count > 20 && <p className="text-sm text-destructive">{t('Højst 20 hylder.', 'At most 20 shelves.')}</p>}
+        {clash.length > 0 && <p role="alert" className="text-sm text-destructive">{t(`${clash.join(', ')} findes allerede`, `${clash.join(', ')} already exist${clash.length === 1 ? 's' : ''}`)}</p>}
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={busy}>{t('Annullér', 'Cancel')}</Button>
-          <Button onClick={() => save()} loading={busy} disabled={!valid}>{t('Opret', 'Create')}</Button>
+          <Button variant="ghost" onClick={onClose}>{t('Annullér', 'Cancel')}</Button>
+          <Button onClick={() => save()} disabled={!valid || clash.length > 0}>{t('Opret', 'Create')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   )
 }
 
-function TagsDialog({ tags, onClose, onDone }: { tags: string[]; onClose: () => void; onDone: () => void }) {
+function TagsDialog({ tags, onClose, onSave }: { tags: string[]; onClose: () => void; onSave: (tags: string[]) => void }) {
   const [text, setText] = useState(tags.join('\n'))
-  const [busy, setBusy] = useState(false)
-  async function save() {
-    setBusy(true)
-    try {
-      await window.electronWarehouse!.locations.setTags({ tags: text.split('\n').map(item => item.trim()).filter(Boolean) })
-      toast.success(t('Mærkaterne er gemt', 'The labels are saved'))
-      onDone()
-    } catch (error) {
-      toast.error(errorMessage(error))
-    } finally {
-      setBusy(false)
-    }
-  }
+  // The backend's tagsOf: trimmed, each once, at most 100.
+  const save = () => onSave([...new Set(text.split('\n').map(item => item.trim()).filter(Boolean))].slice(0, 100))
   return (
-    <Dialog open onOpenChange={open => { if (!open && !busy) onClose() }}>
+    <Dialog open onOpenChange={open => { if (!open) onClose() }}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{t('Mærkater', 'Labels')}</DialogTitle>
@@ -462,8 +506,8 @@ function TagsDialog({ tags, onClose, onDone }: { tags: string[]; onClose: () => 
         <Textarea value={text} onChange={event => setText(event.target.value)} className="min-h-40" aria-label={t('Mærkater', 'Labels')} />
         <div className="flex flex-wrap gap-1">{text.split('\n').map(item => item.trim()).filter(Boolean).map(item => <Badge key={item} variant="outline">{item}</Badge>)}</div>
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={busy}>{t('Annullér', 'Cancel')}</Button>
-          <Button onClick={() => save()} loading={busy}>{t('Gem', 'Save')}</Button>
+          <Button variant="ghost" onClick={onClose}>{t('Annullér', 'Cancel')}</Button>
+          <Button onClick={() => save()}>{t('Gem', 'Save')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

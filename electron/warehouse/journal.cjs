@@ -45,6 +45,7 @@ function createJournal({ countId, team, user, deviceId, localDir, remote, chunkS
   let lastFlushAt = null
   let timer = null
   let closed = false
+  let stopped = false
 
   // To køer: den lokale (alt der skriver den lokale fil eller udskifter `events`) er altid kort,
   // så en scanning aldrig venter på M:. Upload-køen sikrer, at kun én flush kører ad gangen.
@@ -152,6 +153,8 @@ function createJournal({ countId, team, user, deviceId, localDir, remote, chunkS
         const snapshot = events.slice()
         const target = snapshot.length
         for (let index = Math.floor(uploaded / chunkSize); index * chunkSize < target; index++) {
+          // Stopped (the count was deleted): no further chunks, or they would be left on M: after its files are removed.
+          if (stopped) break
           const slice = snapshot.slice(index * chunkSize, Math.min((index + 1) * chunkSize, target))
           await remote.setAsync(chunkKey(countId, writer, index), { writer, by: user.email, full: slice.length === chunkSize, events: slice })
         }
@@ -178,10 +181,15 @@ function createJournal({ countId, team, user, deviceId, localDir, remote, chunkS
     return result
   }
 
-  /** Stop without uploading anything (the count was deleted). */
+  /**
+   * Stop without uploading anything (the count was deleted). Resolves when a local save or an upload already on its way
+   * has finished, so the caller can remove the count's files without one being written again afterwards.
+   */
   function stop() {
     if (timer) { clearTimeout(timer); timer = null }
     closed = true
+    stopped = true
+    return Promise.all([local(() => {}), upload(() => {})]).then(() => {}, () => {})
   }
 
   return { load, append, flush, close, stop, status, events: () => events.slice(), writer }

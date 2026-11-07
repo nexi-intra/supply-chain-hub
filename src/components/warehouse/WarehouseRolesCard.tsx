@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { CircleNotch, Warehouse } from '@phosphor-icons/react'
+import { Warehouse } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
@@ -7,6 +7,7 @@ import { useLanguage } from '@/contexts/LanguageContext'
 import type { Language } from '@/lib/translations'
 import { isWarehouseTeam } from '@/lib/warehouseLabels'
 import { errorMessage } from '@/lib/warehouse/errors'
+import { trackPendingWrite } from '@/lib/pendingWrites'
 import type { AppRole, RolesView } from '@/types/warehouse'
 
 type Editable = Exclude<AppRole, 'manager'>
@@ -104,7 +105,6 @@ export function WarehouseRolesCard() {
   const { language } = useLanguage()
   const labels = LABELS[language] ?? LABELS.en
   const [view, setView] = useState<RolesView | null>(null)
-  const [saving, setSaving] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     const bridge = window.electronWarehouse
@@ -120,30 +120,23 @@ export function WarehouseRolesCard() {
 
   if (!view) return null
 
-  const setRole = async (email: string, name: string, role: Editable) => {
-    setSaving(email)
-    try {
-      await window.electronWarehouse!.roles.setRole({ email, role })
-      toast.success(labels.saved(name, labels.roles[role]))
-      await load()
-    } catch (error) {
+  // The new role shows at once and is saved in the background; a failed save puts the old role back.
+  const changeRole = (email: string, patch: Partial<RolesView['users'][number]>, write: () => Promise<unknown>, success: string) => {
+    const before = view.users.find(item => item.email === email)
+    if (!before) return
+    const after = { ...before, ...patch }
+    const swap = (from: typeof before, to: typeof before) => setView(current => current && { ...current, users: current.users.map(item => item === from ? to : item) })
+    swap(before, after)
+    toast.success(success)
+    void trackPendingWrite(write()).catch(error => {
+      swap(after, before)
       toast.error(language === 'da' ? errorMessage(error, labels.failed) : labels.failed)
-    } finally {
-      setSaving(null)
-    }
+    })
   }
-  const setLocationAdmin = async (email: string, name: string, admin: boolean) => {
-    setSaving(email)
-    try {
-      await window.electronWarehouse!.roles.setLocationAdmin({ email, admin })
-      toast.success(labels.locationSaved(name, admin))
-      await load()
-    } catch (error) {
-      toast.error(language === 'da' ? errorMessage(error, labels.failed) : labels.failed)
-    } finally {
-      setSaving(null)
-    }
-  }
+  const setRole = (email: string, name: string, role: Editable) =>
+    changeRole(email, { role }, () => window.electronWarehouse!.roles.setRole({ email, role }), labels.saved(name, labels.roles[role]))
+  const setLocationAdmin = (email: string, name: string, admin: boolean) =>
+    changeRole(email, { locationRole: admin ? 'location-admin' : 'user' }, () => window.electronWarehouse!.roles.setLocationAdmin({ email, admin }), labels.locationSaved(name, admin))
   const choices = (current: Editable): Editable[] => view.canGrantStatusManager || current === 'status-manager' ? ['user', 'admin', 'status-manager'] : ['user', 'admin']
 
   return (
@@ -163,15 +156,14 @@ export function WarehouseRolesCard() {
               <div className="truncate text-sm text-muted-foreground">{item.email}</div>
             </div>
             {item.role === 'manager' ? <Badge variant="secondary">{labels.automatic}</Badge> : (
-              <div className="flex shrink-0 flex-wrap items-center justify-end gap-4" aria-busy={saving === item.email || undefined}>
-                {saving === item.email && <CircleNotch size={18} aria-hidden="true" className="text-muted-foreground motion-safe:animate-spin" />}
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-4">
                 <label className="flex items-center gap-2">
                   <span className="text-xs text-muted-foreground"><span className="font-medium text-foreground">{labels.counts}</span><span className="hidden sm:inline"> · {labels.roleHelp[item.role]}</span></span>
                   <select
                     className="h-9 rounded-md border border-input bg-background px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50"
                     value={item.role}
                     aria-label={labels.aria(item.fullName)}
-                    disabled={!view.canEdit || saving === item.email || (item.role === 'status-manager' && !view.canGrantStatusManager)}
+                    disabled={!view.canEdit || (item.role === 'status-manager' && !view.canGrantStatusManager)}
                     onChange={event => void setRole(item.email, item.fullName, event.target.value as Editable)}
                   >
                     {choices(item.role).map(role => <option key={role} value={role}>{labels.roles[role]}</option>)}
@@ -183,7 +175,7 @@ export function WarehouseRolesCard() {
                     className="h-9 rounded-md border border-input bg-background px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50"
                     value={locationOf(item.locationRole)}
                     aria-label={labels.locationAria(item.fullName)}
-                    disabled={!view.canGrantStatusManager || saving === item.email}
+                    disabled={!view.canGrantStatusManager}
                     onChange={event => void setLocationAdmin(item.email, item.fullName, event.target.value === 'location-admin')}
                   >
                     {(['user', 'location-admin'] as const).map(role => <option key={role} value={role}>{labels.locationRoles[role]}</option>)}

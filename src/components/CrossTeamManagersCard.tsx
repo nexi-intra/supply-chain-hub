@@ -13,6 +13,7 @@ import { useLanguage } from '@/contexts/LanguageContext'
 import { getHubAccessLabels } from '@/lib/hubAccessLabels'
 import type { ManagerAccessEntry, RegisteredTeam, RegistryUserOption } from '@/lib/electronRegistryBridge'
 import { cn } from '@/lib/utils'
+import { trackPendingWrite } from '@/lib/pendingWrites'
 
 /** Creator Panel: give a person manager rights in teams other than their own. */
 export function CrossTeamManagersCard({ teams }: { teams: RegisteredTeam[] }) {
@@ -22,7 +23,6 @@ export function CrossTeamManagersCard({ teams }: { teams: RegisteredTeam[] }) {
   const [people, setPeople] = useState<RegistryUserOption[]>([])
   const [editing, setEditing] = useState<{ email: string; teamIds: string[]; isNew: boolean } | null>(null)
   const [search, setSearch] = useState('')
-  const [saving, setSaving] = useState(false)
   const [removing, setRemoving] = useState<ManagerAccessEntry | null>(null)
 
   const load = async () => {
@@ -52,31 +52,41 @@ export function CrossTeamManagersCard({ teams }: { teams: RegisteredTeam[] }) {
       .slice(0, 8)
   }, [people, entries, search])
 
-  const save = async () => {
+  // Shown and closed at once (the registry write can take a long time on M:); a failed save puts the entry back.
+  const save = () => {
     if (!editing?.email) return
-    setSaving(true)
-    try {
-      await window.electronRegistry!.setManagerAccess(editing.email, editing.teamIds)
-      toast.success(labels.saved)
-      setEditing(null)
-      await load()
-    } catch (error) {
-      console.error(error)
-      toast.error(labels.saveFailed)
-    } finally {
-      setSaving(false)
+    const { email, teamIds } = editing
+    const previous = entries.find(entry => entry.email === email)
+    const person = people.find(item => item.email === email)
+    const shown: ManagerAccessEntry | null = teamIds.length === 0 ? null : {
+      email,
+      fullName: previous?.fullName || person?.fullName || email,
+      homeTeamId: previous?.homeTeamId ?? person?.primaryTeamId ?? null,
+      teamIds,
+      updatedAt: new Date().toISOString(),
     }
+    const putBack = (entry: ManagerAccessEntry | null | undefined) => setEntries(current => {
+      const others = current.filter(item => item.email !== email)
+      return entry ? [...others, entry].sort((a, b) => a.email.localeCompare(b.email)) : others
+    })
+    putBack(shown)
+    setEditing(null)
+    toast.success(labels.saved)
+    void trackPendingWrite(window.electronRegistry!.setManagerAccess(email, teamIds)).then(() => load(), error => {
+      console.error(error)
+      putBack(previous)
+      toast.error(labels.saveFailed)
+    })
   }
 
-  const remove = async (entry: ManagerAccessEntry) => {
-    try {
-      await window.electronRegistry!.setManagerAccess(entry.email, [])
-      toast.success(labels.removed(entry.fullName))
-      await load()
-    } catch (error) {
+  const remove = (entry: ManagerAccessEntry) => {
+    setEntries(current => current.filter(item => item.email !== entry.email))
+    toast.success(labels.removed(entry.fullName))
+    void trackPendingWrite(window.electronRegistry!.setManagerAccess(entry.email, [])).catch(error => {
       console.error(error)
+      setEntries(current => [...current.filter(item => item.email !== entry.email), entry].sort((a, b) => a.email.localeCompare(b.email)))
       toast.error(labels.saveFailed)
-    }
+    })
   }
 
   return (
@@ -120,7 +130,7 @@ export function CrossTeamManagersCard({ teams }: { teams: RegisteredTeam[] }) {
         </div>
       )}
 
-      <Dialog open={!!editing} onOpenChange={open => { if (!open && !saving) setEditing(null) }}>
+      <Dialog open={!!editing} onOpenChange={open => { if (!open) setEditing(null) }}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>{editing?.isNew ? labels.dialogTitleAdd : labels.dialogTitleEdit}</DialogTitle>
@@ -173,8 +183,8 @@ export function CrossTeamManagersCard({ teams }: { teams: RegisteredTeam[] }) {
             </div>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setEditing(null)} disabled={saving}>{labels.cancel}</Button>
-            <Button onClick={() => save()} disabled={saving || !editing?.email || (editing.isNew && editing.teamIds.length === 0)}>{labels.save}</Button>
+            <Button variant="outline" onClick={() => setEditing(null)}>{labels.cancel}</Button>
+            <Button onClick={save} disabled={!editing?.email || (editing.isNew && editing.teamIds.length === 0)}>{labels.save}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

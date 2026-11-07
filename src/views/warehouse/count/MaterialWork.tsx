@@ -10,7 +10,15 @@ import { Label } from '@/components/ui/label'
 import { errorCode, errorMessage } from '@/lib/warehouse/errors'
 import { formatNumber } from '@/lib/warehouse/format'
 import type { CountState, MaterialLock } from '@/types/warehouse'
+import type { PanelProps } from './CountView'
+import { answerRequest, askToCount, releaseLock, takeLock, withApprovals, withMaterialLock } from './optimisticState'
 import { t } from '@/lib/warehouse/text'
+
+/** What a material action needs from the count: it shows the change at once and saves in the background. */
+export type CountActions = Pick<PanelProps, 'id' | 'state' | 'optimistic' | 'person'>
+
+/** The submit dialog again, after the drive found a difference the screen did not show yet. */
+export interface SubmitRetry { comment: string; serverDiff: string }
 
 export const lockOf = (state: CountState, material: string) => state.materialLocks.find(lock => lock.material === material) || null
 export const mayCount = (lock: MaterialLock | null, email: string) => !lock || lock.holder.email === email || lock.helpers.some(helper => helper.email === email)
@@ -28,48 +36,40 @@ export function materialTotals(state: CountState, material: string) {
   }
 }
 
-export function RequestButton({ id, material, state, refresh }: { id: string; material: string; state: CountState; refresh: () => Promise<void> }) {
+export function RequestButton({ id, material, state, optimistic, person }: CountActions & { material: string }) {
   const lock = lockOf(state, material)
-  const [busy, setBusy] = useState(false)
   if (hasAsked(lock, state.me.email)) return <Badge variant="outline">{t(`Anmodning sendt til ${lock!.holder.name}`, `Request sent to ${lock!.holder.name}`)}</Badge>
-  const ask = async () => {
-    setBusy(true)
-    try {
-      await window.electronWarehouse!.counts.requestMaterial({ id, material })
-      toast.success(t(`Anmodning sendt til ${lock?.holder.name || 'den, der tæller'}`, `Request sent to ${lock?.holder.name || 'the person counting'}`))
-      await refresh()
-    } catch (error) {
-      toast.error(errorMessage(error))
-    } finally {
-      setBusy(false)
-    }
+  // Shown at once as "Anmodning sendt"; a material that became free meanwhile is taken instead (as the drive does).
+  const ask = () => {
+    toast.success(t(`Anmodning sendt til ${lock?.holder.name || 'den, der tæller'}`, `Request sent to ${lock?.holder.name || 'the person counting'}`))
+    void optimistic(current => (lockOf(current, material) ? askToCount(material, person) : takeLock(material, person))(current), () => window.electronWarehouse!.counts.requestMaterial({ id, material }))
   }
-  return <Button size="sm" variant="outline" loading={busy} onClick={() => ask()} aria-label={t(`Anmod om at tælle med på ${material}`, `Ask to help count ${material}`)}><HandWaving size={16} /> {t('Anmod om at tælle med', 'Ask to help count')}</Button>
+  return <Button size="sm" variant="outline" onClick={() => ask()} aria-label={t(`Anmod om at tælle med på ${material}`, `Ask to help count ${material}`)}><HandWaving size={16} /> {t('Anmod om at tælle med', 'Ask to help count')}</Button>
 }
 
-export function SubmitDialog({ id, material, state, onClose, onSent }: { id: string; material: string; state: CountState; onClose: () => void; onSent: () => Promise<void> }) {
+export function SubmitDialog({ id, material, state, optimistic, person, retry, onClose, onServerDiff }: CountActions & { material: string; retry?: SubmitRetry | null; onClose: () => void; onServerDiff: (retry: SubmitRetry) => void }) {
   const totals = materialTotals(state, material)
-  const [comment, setComment] = useState('')
-  const [sending, setSending] = useState(false)
-  const [serverDiff, setServerDiff] = useState<string | null>(null)
+  const [comment, setComment] = useState(retry?.comment ?? '')
+  const serverDiff = retry?.serverDiff ?? null
   const hasDiff = totals.diff !== 0 || serverDiff !== null
 
-  const send = async () => {
-    setSending(true)
-    try {
-      await window.electronWarehouse!.counts.submitMaterial({ id, material, comment, acceptDiff: hasDiff })
-      toast.success(t(`${material} er sendt til godkendelse`, `${material} was sent for approval`), { description: hasDiff ? t('Med difference – manageren får besked.', 'With a difference – the manager is notified.') : t('Manageren får besked.', 'The manager is notified.') })
-      await onSent()
-    } catch (error) {
-      if (errorCode(error) === 'SUBMIT_HAS_DIFF') setServerDiff(errorMessage(error))
-      else toast.error(errorMessage(error))
-    } finally {
-      setSending(false)
-    }
+  // The dialog closes at once and the material shows "Sendt til godkendelse"; the write runs in the background. If the
+  // drive finds a difference the screen did not show yet, the dialog comes back with it.
+  const send = () => {
+    const acceptDiff = hasDiff
+    const text = comment.trim().slice(0, 300)
+    onClose()
+    toast.success(t(`${material} er sendt til godkendelse`, `${material} was sent for approval`), { description: hasDiff ? t('Med difference – manageren får besked.', 'With a difference – the manager is notified.') : t('Manageren får besked.', 'The manager is notified.') })
+    const value = { status: 'submitted' as const, by: person, at: Date.now(), sapQty: totals.sapQty, counted: totals.counted, diff: totals.diff, comment: text }
+    void optimistic(
+      current => withMaterialLock(material, () => null)(withApprovals({ [material]: value })(current)),
+      () => window.electronWarehouse!.counts.submitMaterial({ id, material, comment, acceptDiff }),
+      { onError: error => { if (errorCode(error) !== 'SUBMIT_HAS_DIFF') return false; toast.error(errorMessage(error)); onServerDiff({ comment, serverDiff: errorMessage(error) }); return true } },
+    )
   }
 
   return (
-    <Dialog open onOpenChange={value => { if (!value && !sending) onClose() }}>
+    <Dialog open onOpenChange={value => { if (!value) onClose() }}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{t(`Send ${material} til godkendelse`, `Send ${material} for approval`)}</DialogTitle>
@@ -91,8 +91,8 @@ export function SubmitDialog({ id, material, state, onClose, onSent }: { id: str
           <Input id="submit-comment" value={comment} maxLength={300} onChange={event => setComment(event.target.value)} placeholder={hasDiff ? t('Fx 3 stk. ligger til reparation', 'E.g. 3 pcs are in repair') : ''} />
         </div>
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={sending}>{t('Annullér', 'Cancel')}</Button>
-          <Button onClick={() => send()} loading={sending} variant={hasDiff ? 'destructive' : 'default'}><PaperPlaneTilt size={18} /> {hasDiff ? t('Send med difference', 'Send with difference') : t('Send til godkendelse', 'Send for approval')}</Button>
+          <Button variant="ghost" onClick={onClose}>{t('Annullér', 'Cancel')}</Button>
+          <Button onClick={() => send()} variant={hasDiff ? 'destructive' : 'default'}><PaperPlaneTilt size={18} /> {hasDiff ? t('Send med difference', 'Send with difference') : t('Send til godkendelse', 'Send for approval')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -100,26 +100,21 @@ export function SubmitDialog({ id, material, state, onClose, onSent }: { id: str
 }
 
 /** The materials being counted right now: mine (release, send to approval), requests to answer, and the others' locks. */
-export function MaterialsInProgress({ id, state, refresh, isOwner }: { id: string; state: CountState; refresh: () => Promise<void>; isOwner: boolean }) {
-  const [submitting, setSubmitting] = useState<string | null>(null)
+export function MaterialsInProgress({ id, state, optimistic, person, isOwner }: CountActions & { isOwner: boolean }) {
+  const [submitting, setSubmitting] = useState<{ material: string; retry?: SubmitRetry } | null>(null)
   const email = state.me.email
   const mine = state.materialLocks.filter(lock => mayCount(lock, email))
   const others = state.materialLocks.filter(lock => !mayCount(lock, email))
   const toAnswer = state.materialLocks.filter(lock => (lock.holder.email === email || isOwner) && lock.requests.length > 0)
 
-  const [pending, setPending] = useState<string | null>(null)
-  const run = async (key: string, action: () => Promise<unknown>, done?: string) => {
-    if (pending) return
-    setPending(key)
-    try {
-      await action()
-      if (done) toast.success(done)
-      await refresh()
-    } catch (error) {
-      toast.error(errorMessage(error))
-    } finally {
-      setPending(null)
-    }
+  // Shown at once; the write to M: (15–90 s) runs in the background and is taken back if it fails.
+  const answer = (material: string, asker: { email: string; name: string }, allow: boolean) => {
+    if (allow) toast.success(t(`${asker.name} må nu tælle med`, `${asker.name} may now help count`))
+    void optimistic(answerRequest(material, asker.email, allow), () => window.electronWarehouse!.counts.answerMaterialRequest({ id, material, email: asker.email, allow }))
+  }
+  const release = (material: string) => {
+    toast.success(t(`${material} er frigivet`, `${material} is released`))
+    void optimistic(releaseLock(material, email), () => window.electronWarehouse!.counts.releaseMaterial({ id, material }))
   }
 
   return (
@@ -133,8 +128,8 @@ export function MaterialsInProgress({ id, state, refresh, isOwner }: { id: strin
           <div key={`${lock.material}-${request.email}`} className="space-y-2 rounded-lg border border-primary/40 bg-primary/5 p-3">
             <p><strong>{request.name}</strong> {t('vil tælle med på', 'wants to help count')} <span className="font-mono">{lock.material}</span></p>
             <div className="flex gap-2">
-              <Button size="sm" loading={pending === `allow:${lock.material}:${request.email}`} onClick={() => run(`allow:${lock.material}:${request.email}`, () => window.electronWarehouse!.counts.answerMaterialRequest({ id, material: lock.material, email: request.email, allow: true }), t(`${request.name} må nu tælle med`, `${request.name} may now help count`))}>{t('Tillad', 'Allow')}</Button>
-              <Button size="sm" variant="ghost" loading={pending === `deny:${lock.material}:${request.email}`} onClick={() => run(`deny:${lock.material}:${request.email}`, () => window.electronWarehouse!.counts.answerMaterialRequest({ id, material: lock.material, email: request.email, allow: false }))}>{t('Afvis', 'Reject')}</Button>
+              <Button size="sm" onClick={() => answer(lock.material, request, true)}>{t('Tillad', 'Allow')}</Button>
+              <Button size="sm" variant="ghost" onClick={() => answer(lock.material, request, false)}>{t('Afvis', 'Reject')}</Button>
             </div>
           </div>
         )))}
@@ -153,8 +148,8 @@ export function MaterialsInProgress({ id, state, refresh, isOwner }: { id: strin
                 {lock.holder.email !== email && <p className="text-xs text-muted-foreground">{t(`Du tæller med hos ${lock.holder.name}`, `You are helping ${lock.holder.name}`)}</p>}
                 {lock.helpers.length > 0 && lock.holder.email === email && <p className="text-xs text-muted-foreground">{t('Tæller med', 'Helping')}: {lock.helpers.map(helper => helper.name).join(', ')}</p>}
                 <div className="flex flex-wrap gap-1.5">
-                  <Button size="sm" className="h-7 px-2 text-xs" onClick={() => setSubmitting(lock.material)} aria-label={t(`Send ${lock.material} til godkendelse`, `Send ${lock.material} for approval`)}><PaperPlaneTilt size={14} /> {t('Send til godkendelse', 'Send for approval')}</Button>
-                  <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" loading={pending === `release:${lock.material}`} onClick={() => run(`release:${lock.material}`, () => window.electronWarehouse!.counts.releaseMaterial({ id, material: lock.material }), t(`${lock.material} er frigivet`, `${lock.material} is released`))} aria-label={t(`Frigiv ${lock.material}`, `Release ${lock.material}`)}>{t('Frigiv', 'Release')}</Button>
+                  <Button size="sm" className="h-7 px-2 text-xs" onClick={() => setSubmitting({ material: lock.material })} aria-label={t(`Send ${lock.material} til godkendelse`, `Send ${lock.material} for approval`)}><PaperPlaneTilt size={14} /> {t('Send til godkendelse', 'Send for approval')}</Button>
+                  <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => release(lock.material)} aria-label={t(`Frigiv ${lock.material}`, `Release ${lock.material}`)}>{t('Frigiv', 'Release')}</Button>
                 </div>
               </div>
             )
@@ -170,15 +165,15 @@ export function MaterialsInProgress({ id, state, refresh, isOwner }: { id: strin
                 <span className="font-mono">{lock.material}</span>
                 <span className="text-muted-foreground">{lock.holder.name}</span>
                 <span className="ml-auto flex gap-1">
-                  <RequestButton id={id} material={lock.material} state={state} refresh={refresh} />
-                  {isOwner && <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" loading={pending === `release:${lock.material}`} onClick={() => run(`release:${lock.material}`, () => window.electronWarehouse!.counts.releaseMaterial({ id, material: lock.material }), t(`${lock.material} er frigivet`, `${lock.material} is released`))}>{t('Frigiv', 'Release')}</Button>}
+                  <RequestButton id={id} material={lock.material} state={state} optimistic={optimistic} person={person} />
+                  {isOwner && <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => release(lock.material)}>{t('Frigiv', 'Release')}</Button>}
                 </span>
               </div>
             ))}
           </div>
         )}
       </CardContent>
-      {submitting && <SubmitDialog id={id} material={submitting} state={state} onClose={() => setSubmitting(null)} onSent={async () => { setSubmitting(null); await refresh() }} />}
+      {submitting && <SubmitDialog key={submitting.retry?.serverDiff ?? 'new'} id={id} material={submitting.material} state={state} optimistic={optimistic} person={person} retry={submitting.retry} onClose={() => setSubmitting(null)} onServerDiff={retry => setSubmitting({ material: submitting.material, retry })} />}
     </Card>
   )
 }

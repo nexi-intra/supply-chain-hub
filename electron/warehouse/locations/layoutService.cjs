@@ -88,11 +88,14 @@ function createLayoutService({ repo, locations, now = Date.now }) {
     return { editedAt, rev: saved.rev }
   }
 
+  /** Discards the draft and starts the next one from the published drawing in the same write (the editor shows it at once). */
   async function discardDraft(user) {
-    const team = await locations.requireAdmin(user)
+    const team = locations.teamOf(user)
+    const [, { layout: published }] = await Promise.all([locations.requireAdmin(user), repo.readLayout(team)])
     const editor = by(user)
-    await repo.writeDraft(team, current => { checkEditor(current, editor, false); return null })
-    return { ok: true }
+    // A revision above the discarded draft's, so a PC still holding that one cannot save it back.
+    const draft = await repo.writeDraft(team, current => { checkEditor(current, editor, false); return draftFrom(published ?? emptyLayout(), published?.version ?? 0, user, revOf(current) + 1) })
+    return { ok: true, draft }
   }
 
   async function previewPublish(user) {
@@ -126,7 +129,8 @@ function createLayoutService({ repo, locations, now = Date.now }) {
       const stillOutside = new Set(plan.outside.map(entry => locationKey(entry.name)))
       const outside = decisions.outside.filter(name => stillOutside.has(locationKey(name)))
       tx.layout = { ...drawing, outside, version, publishedAt, publishedBy }
-      tx.draft = null
+      // The next draft starts from the new drawing in the same write, so the editor shows it without another save.
+      tx.draft = draftFrom(tx.layout, version, user)
       tx.meta.layout = { version, linked }
       const { create, rename, change, remove } = plan.counts
       tx.event({
@@ -138,7 +142,7 @@ function createLayoutService({ repo, locations, now = Date.now }) {
           changed: plan.change.map(entry => entry.name),
         },
       })
-      return { version, counts: plan.counts }
+      return { version, counts: plan.counts, draft: tx.draft }
     })
   }
 

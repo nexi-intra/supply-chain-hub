@@ -7,7 +7,7 @@
 const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
-const { withFileLock } = require('./fileLock.cjs')
+const { withFileLock, withFileLockAsync } = require('./fileLock.cjs')
 
 function registryDir(platformRoot) {
   return path.join(platformRoot, '_registry')
@@ -35,6 +35,8 @@ function platformConfigPath(platformRoot) {
 const CACHE_TTL_MS = 30000
 const readCache = new Map()
 let freshDepth = 0
+// Set only while an async mutation's synchronous part runs: { files: resolved path -> fresh value, writes: path -> data }.
+let transaction = null
 
 function invalidateCache(filePath) {
   if (filePath === undefined) readCache.clear()
@@ -77,6 +79,8 @@ async function whenRefreshed() {
 
 function readJsonSafe(filePath, fallback) {
   const key = path.resolve(filePath)
+  // Inside an async mutation the files were read fresh (asynchronously) under the lock.
+  if (transaction && transaction.files.has(key)) return structuredClone(transaction.files.get(key) ?? fallback)
   const cached = freshDepth === 0 && readCache.get(key)
   if (cached) {
     // Udloebet cache serveres straks; en synkron SMB-laesning ville fryse main-traaden.
@@ -116,6 +120,12 @@ async function prefetchAsync(platformRoot) {
 }
 
 function writeJsonAtomic(filePath, data) {
+  if (transaction) {
+    // Collected and written asynchronously when the (synchronous) mutation has decided everything.
+    transaction.files.set(path.resolve(filePath), structuredClone(data))
+    transaction.writes.set(filePath, data)
+    return
+  }
   invalidateCache(filePath)
   fs.mkdirSync(path.dirname(filePath), { recursive: true })
   const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`
@@ -326,6 +336,53 @@ function withIdentityTransaction(platformRoot, callback) {
   }))
 }
 const locked = mutate => (platformRoot, ...args) => withFileLock(path.join(registryDir(platformRoot), 'mutation.lock'), () => withFreshReads(() => mutate(platformRoot, ...args)))
+
+async function writeJsonAtomicAsync(filePath, data) {
+  invalidateCache(filePath)
+  await fs.promises.mkdir(path.dirname(filePath), { recursive: true })
+  const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`
+  await fs.promises.writeFile(tmp, JSON.stringify(data, null, 2))
+  let lastError
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      await fs.promises.rename(tmp, filePath)
+      readCache.set(path.resolve(filePath), { at: Date.now(), value: structuredClone(data) })
+      return
+    } catch (error) {
+      lastError = error
+      if (!['EPERM', 'EACCES'].includes(error.code)) break
+      await new Promise(resolve => setTimeout(resolve, 10 * (attempt + 1)))
+    }
+  }
+  await fs.promises.unlink(tmp).catch(() => {})
+  throw lastError
+}
+
+async function readFreshAsync(filePath) {
+  try {
+    const value = JSON.parse(await fs.promises.readFile(filePath, 'utf8'))
+    if (!isRegistryObject(value)) throw new Error('Registret har et ugyldigt format')
+    return value
+  } catch (error) {
+    if (error.code === 'ENOENT') return undefined
+    throw error
+  }
+}
+
+// Async twin of `locked`: the same lock file and the same mutation code, but every read and write on the share is
+// awaited, so the main process (the whole app) never waits for M:. The registry files are read fresh in parallel
+// under the lock, the synchronous mutation runs against them (no await inside it, so nothing interleaves), and the
+// files it changed are written in parallel before the lock is released.
+const lockedAsync = mutate => (platformRoot, ...args) => withFileLockAsync(path.join(registryDir(platformRoot), 'mutation.lock'), async () => {
+  const paths = [teamsPath(platformRoot), userDirectoryPath(platformRoot), managerAccessPath(platformRoot), platformConfigPath(platformRoot)]
+  const values = await Promise.all(paths.map(readFreshAsync))
+  const pending = { files: new Map(paths.map((filePath, index) => [path.resolve(filePath), values[index]])), writes: new Map() }
+  let result
+  transaction = pending
+  try { result = mutate(platformRoot, ...args) } finally { transaction = null }
+  await Promise.all([...pending.writes].map(([filePath, data]) => writeJsonAtomicAsync(filePath, data)))
+  return result
+})
 module.exports = {
   invalidateCache,
   prefetchAsync,
@@ -351,5 +408,12 @@ module.exports = {
   updateTeam: locked(updateTeam),
   getCreatorEmail,
   setCreatorEmail: locked(setCreatorEmail),
+  // Async twins for the IPC handlers (never block the main process on M:).
+  assignUserToTeamAsync: lockedAsync(assignUserToTeam),
+  forgetUserAsync: lockedAsync(forgetUser),
+  setManagerAccessAsync: lockedAsync(setManagerAccess),
+  createTeamAsync: lockedAsync(createTeam),
+  updateTeamAsync: lockedAsync(updateTeam),
+  setCreatorEmailAsync: lockedAsync(setCreatorEmail),
   withIdentityTransaction,
 }

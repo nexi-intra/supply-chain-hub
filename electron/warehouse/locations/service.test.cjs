@@ -41,6 +41,30 @@ function setup() {
   return { clock, learned, missing, pc1, pc2: service(), seed }
 }
 
+test('a daily action locks only what it changes (pallets or shelf stock), the places, meta and the month on M:', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'locations-service-'))
+  const store = createStore(root)
+  const locks = []
+  const spied = { ...store, withLockedKeysAsync: (keys, fn) => { locks.push([...new Set(keys)].sort()); return store.withLockedKeysAsync(keys, fn) } }
+  let ids = 0
+  const repo = createLocationRepository({ storeFor: () => spied, now: () => day(2026, 10, 20), newId: () => `id${++ids}` })
+  const service = createLocationService({ repo, catalog: { describe: async () => ({}) }, fetcher: {}, isLocationAdmin: async user => user.email === 'ada@x.test', now: () => day(2026, 10, 20), newId: () => `id${++ids}` })
+  await repo.transact('TCD', tx => { tx.locations['C16.2'] = place('C16.2'); tx.locations['E9 H1'] = place('E9 H1', { type: 'Hylde', rack: 'E9', shelf: 1 }); tx.meta.shelvesMigratedAt = 1 })
+  locks.length = 0
+  const { created: [pallet] } = await service.putAway(ANNA, { pallets: [{ location: 'C16.2', material: 'R162-0717', quantity: 5 }], actionId: 'a1' })
+  await service.changeSloc(ANNA, { pallet: pallet.id, sloc: 'D004', actionId: 'a2' })
+  await service.shelfPut(ANNA, { location: 'E9 H1', material: 'R162-0717', quantity: 3, actionId: 'a3' })
+  assert.deepEqual(locks, [
+    ['history-2026-10', 'locations', 'meta', 'pallets'],
+    ['history-2026-10', 'locations', 'meta', 'pallets'],
+    ['history-2026-10', 'locations', 'meta', 'stock'],
+  ])
+  const [put] = await repo.history('TCD', { type: 'shelf-put' })
+  locks.length = 0
+  assert.deepEqual(await service.undo(ADA, { eventId: put.id, at: put.at }), { undone: 1 })
+  assert.deepEqual(locks, [['history-2026-10', 'locations', 'meta', 'pallets', 'stock', 'tags']], 'an undo with the event time locks only its month')
+})
+
 test('a whole goods receipt is put away in one go; a pallet on a pick place is used up there', async () => {
   const { pc1, seed } = setup()
   await seed([place('C16.2'), place('C16.3'), place('H26', { purpose: 'pick', type: 'Hylde', fixedMaterials: ['R162-0717'] })])

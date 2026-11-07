@@ -195,10 +195,11 @@ class FileStorageService {
       }>(`${fileId}_meta`)
 
       if (metadata) {
-        await window.kv.delete(`${fileId}_meta`)
-        for (let i = 0; i < metadata.chunkCount; i++) {
-          await window.kv.delete(`${fileId}_chunk_${i}`)
-        }
+        // Parallelt: hver sletning er en rundtur til M:.
+        await Promise.all([
+          window.kv.delete(`${fileId}_meta`),
+          ...Array.from({ length: metadata.chunkCount || 0 }, (_, i) => window.kv.delete(`${fileId}_chunk_${i}`)),
+        ])
       } else {
         await window.kv.delete(fileId)
       }

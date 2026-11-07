@@ -20,6 +20,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { toast } from 'sonner'
 import { hashPassword, verifyPassword } from '@/lib/passwords'
+import { saveInBackground } from '@/lib/saveInBackground'
+import { trackPendingWrite } from '@/lib/pendingWrites'
 import { useLanguage } from '@/contexts/LanguageContext'
 import { DesktopNotificationsSetting } from '@/components/DesktopNotificationsSetting'
 import { useMyHubs } from '@/hooks/useMyHubs'
@@ -138,7 +140,9 @@ export function UserProfile({ userEmail, displayName, onLogout, onAdminClick, sh
         toast.success(t.profile.passwordUpdated)
       } else if (phoneNumber !== userData.phone) {
         if (window.electronAuth) {
-          await window.electronAuth.profile({ phone: phoneNumber })
+          // Only the phone number: nothing to check first, so the dialog closes at once and the save (up to 90 s on the
+          // shared drive) runs in the background.
+          void saveInBackground(trackPendingWrite(window.electronAuth.profile({ phone: phoneNumber })), { failure: t.profile.errors.generic })
           toast.success(t.profile.settingsUpdated)
           setSettingsOpen(false)
           return

@@ -113,12 +113,20 @@ function createSapCheckService({ sharedStore, storeFor = null, fetcher, roles, r
     const previous = await previousChecks(slocs)
     const result = followUp(previousErrorsFor(previous, slocs), errors, at)
     const check = { id: newId(), scope: chosen, at, by: me(user), slocs, sapUser: fetched.sapUser || '', fetchedAt: fetched.fetchedAt || at, errors: result.errors, fixed: result.fixed, summary: summarize(result), comparison: merged.comparison, previousId: previous[0]?.id || null, mail: null }
-    await sharedStore.setAsync(checkKey(check.id), check)
-    await sharedStore.updateAsync(INDEX_KEY, { op: 'setField', field: check.id, value: entryOf(check) })
-    for (const old of (await entries()).slice(keep)) {
-      await sharedStore.updateAsync(INDEX_KEY, { op: 'deleteField', field: old.id })
-      await sharedStore.deleteAsync(checkKey(old.id)).catch(() => {})
-    }
+    // The new check, the index (new entry in, the oldest beyond `keep` out, in one locked write) and the removal of the
+    // old check files are separate files: all run at the same time instead of 2 + 2 writes per old check.
+    const old = [check, ...(await entries())].sort((a, b) => b.at - a.at).slice(keep).filter(entry => entry.id !== check.id)
+    const oldIds = new Set(old.map(entry => entry.id))
+    await Promise.all([
+      sharedStore.setAsync(checkKey(check.id), check),
+      sharedStore.mutateAsync(INDEX_KEY, all => {
+        const next = all && typeof all === 'object' ? all : {}
+        next[check.id] = entryOf(check)
+        for (const id of oldIds) delete next[id]
+        return next
+      }),
+      ...old.map(entry => sharedStore.deleteAsync(checkKey(entry.id)).catch(() => {})),
+    ])
     return check
   }
 
@@ -132,16 +140,18 @@ function createSapCheckService({ sharedStore, storeFor = null, fetcher, roles, r
   /**
    * `scope` 'D301' (all errors of the check), 'TCD' or 'TRR' (that team's storage locations).
    * `language` 'da' or 'en' (anything else = Danish); without it, the saved language is used.
+   * `to`/`cc`: addresses typed on the screen but not saved yet (they are saved in parallel), instead of the saved ones.
    */
-  async function createMail(user, { id, mode, language, scope } = {}) {
+  async function createMail(user, { id, mode, language, scope, to, cc } = {}) {
     await requireMailer(user)
+    const typed = to === undefined && cc === undefined ? null : { to: parseAddresses(to), cc: parseAddresses(cc) }
     const check = await getCheck(id)
     const chosen = mode === 'new' ? 'new' : 'all'
     const mailScope = ['TCD', 'TRR'].includes(scope) ? scope : 'D301'
     const inScope = check.errors.filter(error => mailScope === 'D301' || teamOfSloc(error.sloc) === mailScope)
     const errors = chosen === 'new' ? inScope.filter(error => error.status === 'new') : inScope
     if (!errors.length) throw codeError('SAP_CHECK_NOTHING', chosen === 'new' ? 'Der er ingen nye fejl siden sidste tjek' : 'Der er ingen fejl at sende')
-    const settings = await settingsOf(user)
+    const settings = { ...(await settingsOf(user)), ...(typed || {}) }
     const lang = language === undefined || language === null ? settings.language : languageOf(language)
     const label = mailScope === 'D301' ? (check.scope === 'D301' ? 'TCD + TRR' : check.scope) : mailScope
     const mailCheck = { ...check, slocs: check.slocs.filter(sloc => mailScope === 'D301' || teamOfSloc(sloc) === mailScope), fixed: (check.fixed || []).filter(error => mailScope === 'D301' || teamOfSloc(error.sloc) === mailScope) }
@@ -154,10 +164,19 @@ function createSapCheckService({ sharedStore, storeFor = null, fetcher, roles, r
       throw codeError('OUTLOOK_UNAVAILABLE', `Outlook kunne ikke åbne kladden (${reason}). Excel-filen er gemt i rapportmappen: ${path.basename(file)}`)
     }
     const mail = { by: me(user), at: now(), mode: chosen, scope: mailScope, language: lang, count: errors.length, file: path.basename(file) }
-    const fresh = await getCheck(check.id)
-    const mails = [...(fresh.mails || (fresh.mail ? [fresh.mail] : [])), mail]
-    await sharedStore.setAsync(checkKey(check.id), { ...fresh, mail, mails })
-    await sharedStore.updateAsync(INDEX_KEY, { op: 'setField', field: check.id, value: entryOf({ ...fresh, mail }) })
+    // The check and the index are different files: both are written at the same time, each read-change-written under
+    // its lock so a mail made meanwhile on another PC is kept.
+    await Promise.all([
+      sharedStore.mutateAsync(checkKey(check.id), fresh => {
+        const current = fresh || check
+        return { ...current, mail, mails: [...(current.mails || (current.mail ? [current.mail] : [])), mail] }
+      }),
+      sharedStore.mutateAsync(INDEX_KEY, all => {
+        const next = all && typeof all === 'object' ? all : {}
+        next[check.id] = { ...(next[check.id] || entryOf(check)), mail }
+        return next
+      }),
+    ])
     return { file: mail.file, count: mail.count, to: settings.to }
   }
 

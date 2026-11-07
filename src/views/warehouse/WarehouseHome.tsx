@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import { Barcode, ClipboardText, MapPin, Package } from '@phosphor-icons/react'
 import { SectionTile } from '@/components/arcade/SectionTile'
 import { t } from '@/lib/warehouse/text'
+import { withoutDeleted } from './pendingDeletes'
 import type { WarehouseUser } from '@/types/warehouse'
 
 export type WarehouseTool = 'counts' | 'locations'
@@ -56,7 +57,7 @@ export function WarehouseHome({ user, onOpen }: { user: WarehouseUser; onOpen: (
   useEffect(() => {
     let current = true
     window.electronWarehouse?.statuses.overview()
-      .then(overview => { if (current && overview.active) setActiveStatus(`${overview.active.name} · ${overview.active.progress.percent} %`) })
+      .then(raw => { const overview = withoutDeleted(raw); if (current && overview.active) setActiveStatus(`${overview.active.name} · ${overview.active.progress.percent} %`) })
       .catch(() => {})
     return () => { current = false }
   }, [user.team])

@@ -4,8 +4,40 @@
 // KV-skrivning og manager-notifikation. Ingen ny/parallel skrivevej.
 import { newId } from './utils'
 import { appendToKvArray } from './kvArrays'
+import { beginKvPrediction } from '../hooks/useKV'
 import { vacationRequestEmail, vacationRequestConfirmationEmail } from './emailTemplates'
 import type { VacationEntry } from './types'
+
+/**
+ * Decides several vacation requests in ONE write: a write to M: takes 20-90 s, and the Manager Panel's "Godkend valgte"
+ * made one write per request. The list is stored only if nobody changed it meanwhile (else it is tried again on the
+ * fresh list), like the single decision. Returns the decided entries; requests deleted meanwhile are left out.
+ */
+export async function decideVacationRequests(ids: string[], status: 'approved' | 'rejected', reviewerEmail: string, now = new Date()): Promise<VacationEntry[]> {
+  const wanted = new Set(ids)
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const current = await window.kv.get<VacationEntry[]>('vacation-entries')
+    const decided: VacationEntry[] = []
+    const next = (current || []).map(entry => {
+      if (!entry || !wanted.has(entry.id)) return entry
+      const updated: VacationEntry = { ...entry, status, reviewedBy: reviewerEmail, reviewedAt: now.toISOString() }
+      decided.push(updated)
+      return updated
+    })
+    if (decided.length === 0) return []
+    // Open views (useKV) show the decision at once.
+    const end = beginKvPrediction('vacation-entries', { op: 'upsert', items: decided })
+    try {
+      await window.kv.compareAndSet('vacation-entries', current, next)
+      return decided
+    } catch (error) {
+      if (attempt === 4 || !String(error).includes('KV_CONFLICT')) throw error
+    } finally {
+      end()
+    }
+  }
+  return []
+}
 
 export interface SubmitVacationRequestParams {
   userEmail: string

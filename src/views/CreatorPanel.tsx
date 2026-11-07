@@ -24,6 +24,7 @@ import { hasCreatorAccess } from '@/lib/userRoles'
 import { hashPassword } from '@/lib/passwords'
 import { setKvObjectField } from '@/lib/kvArrays'
 import { isAnyModalOpen } from '@/lib/modalStack'
+import { trackPendingWrite } from '@/lib/pendingWrites'
 import { useLanguage } from '@/contexts/LanguageContext'
 import type { RegisteredTeam, TeamAdministration } from '@/lib/electronRegistryBridge'
 
@@ -43,9 +44,6 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
   const [users, setUsers] = useState<Array<{ email: string; fullName: string }>>([])
 
   const [isCreateTeamOpen, setIsCreateTeamOpen] = useState(false)
-  const [isCreatingTeam, setIsCreatingTeam] = useState(false)
-  const [isSavingTeam, setIsSavingTeam] = useState(false)
-  const createTeamInProgress = useRef(false)
   const [newTeamName, setNewTeamName] = useState('')
   const [newTeamCode, setNewTeamCode] = useState('')
 
@@ -89,7 +87,12 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
   const loadTeams = async () => {
     if (!window.electronRegistry) return
     const list = await window.electronRegistry.listTeamAdministration(userEmail)
-    const sorted = list.sort((a, b) => a.name.localeCompare(b.name))
+    showTeams(list)
+  }
+
+  // Both lists show the same teams; a change is shown in both at once.
+  const showTeams = (list: TeamAdministration[]) => {
+    const sorted = [...list].sort((a, b) => a.name.localeCompare(b.name))
     setTeamAdministrations(sorted)
     setTeams(sorted)
   }
@@ -99,29 +102,39 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
     setUsers(Object.values(usersData))
   }
 
-  const handleCreateTeam = async () => {
-    if (createTeamInProgress.current) return
+  // The team shows at once and the dialog closes; the registry is written in the background. If that fails (e.g. the
+  // code was taken meanwhile), the team disappears again and the dialog opens with what was typed.
+  const handleCreateTeam = () => {
     const name = newTeamName.trim()
     const code = newTeamCode.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '')
     if (!name || !code) {
       toast.error(t.creatorPanel.teams.fieldsRequired)
       return
     }
-    createTeamInProgress.current = true
-    setIsCreatingTeam(true)
-    try {
-      await window.electronRegistry?.createTeam({ teamId: code, name, folderName: code })
-      toast.success(t.creatorPanel.teams.createdToast)
-      setIsCreateTeamOpen(false)
-      setNewTeamName('')
-      setNewTeamCode('')
-      loadTeams()
-    } catch {
+    if (teamAdministrations.some(team => team.teamId === code || team.folderName.toLowerCase() === code.toLowerCase())) {
       toast.error(t.creatorPanel.teams.codeExists)
-    } finally {
-      createTeamInProgress.current = false
-      setIsCreatingTeam(false)
+      return
     }
+
+    const form = { name: newTeamName, code: newTeamCode }
+    const created: TeamAdministration = { teamId: code, name, abbreviation: code, folderName: code, createdAt: new Date().toISOString(), managers: [] }
+    showTeams([...teamAdministrations.filter(team => team.teamId !== code), created])
+    toast.success(t.creatorPanel.teams.createdToast)
+    setIsCreateTeamOpen(false)
+    setNewTeamName('')
+    setNewTeamCode('')
+    void trackPendingWrite(Promise.resolve(window.electronRegistry?.createTeam({ teamId: code, name, folderName: code }))).then(
+      () => { void loadTeams() },
+      error => {
+        console.error('Kunne ikke oprette team:', error)
+        setTeamAdministrations(current => current.filter(team => team !== created))
+        setTeams(current => current.filter(team => team !== created))
+        toast.error(t.creatorPanel.teams.codeExists)
+        setNewTeamName(form.name)
+        setNewTeamCode(form.code)
+        setIsCreateTeamOpen(true)
+      },
+    )
   }
 
   const openEditTeam = (team: TeamAdministration) => {
@@ -131,7 +144,9 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
     setIsEditTeamOpen(true)
   }
 
-  const handleUpdateTeam = async () => {
+  // Shown and closed at once; a failed save (e.g. the abbreviation is used by another team) puts the team back and
+  // opens the dialog again.
+  const handleUpdateTeam = () => {
     const name = editTeamName.trim()
     const abbreviation = editTeamAbbreviation.trim().toUpperCase()
     if (!name || !abbreviation) {
@@ -142,22 +157,32 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
       toast.error(t.creatorPanel.teams.invalidAbbreviation)
       return
     }
-    if (!editingTeamId || !window.electronRegistry || isSavingTeam) return
+    const previous = teamAdministrations.find(team => team.teamId === editingTeamId)
+    if (!editingTeamId || !window.electronRegistry || !previous) return
 
-    setIsSavingTeam(true)
-    try {
-      await window.electronRegistry.updateTeam(userEmail, editingTeamId, { name, abbreviation })
-      void loadTeams()
-      setIsEditTeamOpen(false)
-      toast.success(t.creatorPanel.teams.updatedToast)
-    } catch (error) {
-      console.error('Kunne ikke opdatere team:', error)
-      toast.error(error instanceof Error ? error.message : String(error))
-    } finally {
-      setIsSavingTeam(false)
-    }
+    const teamId = editingTeamId
+    const updated: TeamAdministration = { ...previous, name, abbreviation }
+    const putBack = (team: TeamAdministration) => showTeams(teamAdministrations.map(item => item.teamId === teamId ? team : item))
+    putBack(updated)
+    setIsEditTeamOpen(false)
+    toast.success(t.creatorPanel.teams.updatedToast)
+    void trackPendingWrite(window.electronRegistry.updateTeam(userEmail, teamId, { name, abbreviation })).then(
+      () => { void loadTeams() },
+      error => {
+        console.error('Kunne ikke opdatere team:', error)
+        setTeamAdministrations(current => current.map(item => item === updated ? previous : item))
+        setTeams(current => current.map(item => item === updated ? previous : item))
+        toast.error(error instanceof Error ? error.message : String(error))
+        setEditingTeamId(teamId)
+        setEditTeamName(name)
+        setEditTeamAbbreviation(abbreviation)
+        setIsEditTeamOpen(true)
+      },
+    )
   }
 
+  // Waits (spinner): the account must be written in the other team's folder, so the app switches to that team for the
+  // write and back again; nothing else may run in between.
   const handleCreateUser = async () => {
     if (createUserInProgress.current) return
     const name = newUserName.trim()
@@ -172,13 +197,13 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
     createUserInProgress.current = true
     setIsCreatingUser(true)
     try {
-      const homeTeam = await window.electronRegistry.lookupTeam(userEmail)
+      const [homeTeam, password] = await Promise.all([window.electronRegistry.lookupTeam(userEmail), hashPassword(newUserPassword)])
       try {
         await window.electronRegistry.switchToTeam(targetTeam.folderName)
         await window.electronRegistry.assignUser(email, targetTeam.teamId)
         await setKvObjectField('users', email, {
           email,
-          password: await hashPassword(newUserPassword),
+          password,
           fullName: name,
           role: newUserRole,
           isManager: newUserRole === 'manager',
@@ -186,7 +211,8 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
         })
       } finally {
         if (homeTeam) await window.electronRegistry.switchToTeam(homeTeam.folderName)
-        await Promise.all([loadTeams(), loadUsers()])
+        // Read again without the dialog waiting for it.
+        void Promise.all([loadTeams(), loadUsers()]).catch(error => console.error('Kunne ikke genindlæse teams:', error))
       }
       setIsCreateUserOpen(false)
       setNewUserTeamId('')
@@ -469,7 +495,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
         </Tabs>
       </div>
 
-      <Dialog open={isCreateTeamOpen} onOpenChange={(open) => { if (!createTeamInProgress.current) setIsCreateTeamOpen(open) }}>
+      <Dialog open={isCreateTeamOpen} onOpenChange={setIsCreateTeamOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>{t.creatorPanel.teams.createTeam}</DialogTitle>
@@ -486,10 +512,10 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" disabled={isCreatingTeam} onClick={() => setIsCreateTeamOpen(false)}>{t.common.cancel}</Button>
-            <Button onClick={handleCreateTeam} loading={isCreatingTeam} className="gap-2">
+            <Button variant="outline" onClick={() => setIsCreateTeamOpen(false)}>{t.common.cancel}</Button>
+            <Button onClick={handleCreateTeam} className="gap-2">
               <Plus size={18} weight="bold" />
-              {isCreatingTeam ? language === 'da' ? 'Gemmer…' : language === 'fi' ? 'Tallennetaan…' : language === 'sv' ? 'Sparar…' : 'Saving…' : t.creatorPanel.teams.createTeam}
+              {t.creatorPanel.teams.createTeam}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -518,7 +544,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditTeamOpen(false)}>{t.common.cancel}</Button>
-            <Button onClick={handleUpdateTeam} loading={isSavingTeam}>{t.common.save}</Button>
+            <Button onClick={handleUpdateTeam}>{t.common.save}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

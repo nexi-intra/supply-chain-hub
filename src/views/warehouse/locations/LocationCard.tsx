@@ -8,41 +8,44 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { formatNumber } from '@/lib/warehouse/format'
 import { canShowOnMap } from '@/lib/warehouse/layout/map'
+import { addToStock, sendLocationAction, startLocationsRead } from '@/lib/warehouse/locationActions'
 import { formatAge, formatDate, isShelfPlace, materialLabel, purposeLabel, typeLabel, type LocationsTarget } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
 import type { LocationCard as LocationCardData, LocationList } from '@/types/warehouse'
 import { HistoryList } from './HistoryList'
-import { ShelfLines } from './ShelfLines'
+import { ShelfLines, type StockChange } from './ShelfLines'
 
 /** One place: what it is for, what stands there and what happened there. */
 export function LocationCard({ location, version, canAdmin, drawing, onOpen, onChanged }: { location: string; version: number; canAdmin: boolean; drawing: LocationList['drawing']; onOpen: (target: LocationsTarget) => void; onChanged: () => void }) {
   const [card, setCard] = useState<LocationCardData | null>(null)
-  const [deleting, setDeleting] = useState(false)
   useEffect(() => {
     let current = true
-    window.electronWarehouse!.locations.locationCard({ location }).then(result => { if (current) setCard(result) }).catch(error => toast.error(errorMessage(error)))
+    // A re-read during this PC's own change on its way to M: is older than the card, which already shows the change.
+    const fresh = startLocationsRead()
+    window.electronWarehouse!.locations.locationCard({ location }).then(result => { if (current) setCard(value => (value && !fresh() ? value : result)) }).catch(error => toast.error(errorMessage(error)))
     return () => { current = false }
   }, [location, version])
 
   if (!card) return <Skeleton className="h-80 rounded-xl" />
   const place = card.location
   const shelf = isShelfPlace(place)
+  const onDrawing = Boolean(drawing?.linked.includes(place.id))
 
-  async function remove() {
-    if (deleting) return
-    setDeleting(true)
-    try {
-      const result = await window.electronWarehouse!.locations.deleteLocations({ locations: [place.id] })
-      if (result.kept.length) { toast.error(result.kept[0].reason); return }
-      toast.success(t(`${place.name} er slettet`, `${place.name} has been deleted`))
-      onChanged()
-      onOpen(place.rack ? { kind: 'rack', id: place.rack } : { kind: 'admin' })
-    } catch (error) {
-      toast.error(errorMessage(error))
-    } finally {
-      setDeleting(false)
-    }
+  // Gone from the screen at once; M: deletes it in the background (15-40 s) and says why if it could not.
+  function remove() {
+    onOpen(place.rack ? { kind: 'rack', id: place.rack } : { kind: 'admin' })
+    void sendLocationAction(() => window.electronWarehouse!.locations.deleteLocations({ locations: [place.id] }), {
+      success: t(`${place.name} er slettet`, `${place.name} has been deleted`),
+      confirmed: result => { if (result.kept.length) toast.error(result.kept[0].reason) },
+      hides: [place.id],
+      settled: onChanged,
+    })
   }
+  const applyStock = (changes: StockChange[]) => setCard(value => {
+    if (!value) return value
+    const stock = changes.filter(change => change.line.location === value.location.id).reduce((lines, change) => addToStock(lines, change.line, change.delta), value.stock)
+    return { ...value, stock }
+  })
   const occupancyText = shelf
     ? t(`${card.stock.length} materialer`, `${card.stock.length} materials`)
     : card.occupancy.capacity === null
@@ -61,9 +64,9 @@ export function LocationCard({ location, version, canAdmin, drawing, onOpen, onC
         {(place.purpose === 'reserve' || place.purpose === 'pick') && <span className="ml-auto text-sm">{occupancyText}</span>}
         {canShowOnMap(place.id, drawing) && <Button size="sm" variant="outline" onClick={() => onOpen({ kind: 'map', id: place.id })}><MapTrifold size={16} /> {t('Vis på kort', 'Show on map')}</Button>}
         {canAdmin && (
-          <Button size="sm" variant="ghost" className="text-destructive" disabled={card.pallets.length > 0 || card.stock.length > 0}
-            title={card.pallets.length || card.stock.length ? t('Kun en tom placering kan slettes', 'Only an empty location can be deleted') : undefined}
-            loading={deleting} onClick={() => remove()}><Trash size={14} /> {t('Slet', 'Delete')}</Button>
+          <Button size="sm" variant="ghost" className="text-destructive" disabled={card.pallets.length > 0 || card.stock.length > 0 || onDrawing}
+            title={onDrawing ? t('Pladsen er på tegningen – fjern den på tegningen', 'The place is on the drawing – remove it on the drawing') : card.pallets.length || card.stock.length ? t('Kun en tom placering kan slettes', 'Only an empty location can be deleted') : undefined}
+            onClick={() => remove()}><Trash size={14} /> {t('Slet', 'Delete')}</Button>
         )}
       </div>
       {place.note && <p className="text-sm text-muted-foreground">{place.note}</p>}
@@ -88,7 +91,7 @@ export function LocationCard({ location, version, canAdmin, drawing, onOpen, onC
             <CardTitle className="text-base">{t('På hylden', 'On the shelf')}</CardTitle>
             <Button size="sm" variant="outline" onClick={() => onOpen({ kind: 'shelf', id: place.name })}>{t('Læg på hylde', 'Put on shelf')}</Button>
           </CardHeader>
-          <CardContent><ShelfLines shelf={place.name} lines={card.stock} onOpen={onOpen} onChanged={onChanged} /></CardContent>
+          <CardContent><ShelfLines shelf={place.name} lines={card.stock} onOpen={onOpen} onApply={applyStock} onChanged={onChanged} /></CardContent>
         </Card>
       )}
 

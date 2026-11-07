@@ -9,6 +9,8 @@ import { House, Trash, Plus } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { useLanguage } from '@/contexts/LanguageContext'
 import { useKV } from '@/hooks/useKV'
+import { appendToKvArray, removeFromKvArray, setKvObjectField, upsertInKvArray } from '@/lib/kvArrays'
+import { saveInBackground } from '@/lib/saveInBackground'
 import { newId } from '@/lib/utils'
 import { parseLocalDate, toIsoDateString } from '@/lib/dateUtils'
 import { format } from 'date-fns'
@@ -31,8 +33,8 @@ const WEEKDAY_ORDER: Array<{ day: number; key: 'monday' | 'tuesday' | 'wednesday
 export function HomeOfficeDialog({ userEmail }: HomeOfficeDialogProps) {
   const { t } = useLanguage()
   const [open, setOpen] = useState(false)
-  const [patterns, setPatterns] = useKV<Record<string, HomeOfficePattern>>('home-office-patterns', {})
-  const [exceptions, setExceptions] = useKV<HomeOfficeException[]>('home-office-exceptions', [])
+  const [patterns] = useKV<Record<string, HomeOfficePattern>>('home-office-patterns', {})
+  const [exceptions] = useKV<HomeOfficeException[]>('home-office-exceptions', [])
   const [selectedWeekdays, setSelectedWeekdays] = useState<number[]>([])
   const [weekIntervals, setWeekIntervals] = useState<Record<number, string>>({})
   const [firstDates, setFirstDates] = useState<Record<number, string>>({})
@@ -81,7 +83,9 @@ export function HomeOfficeDialog({ userEmail }: HomeOfficeDialogProps) {
         repeat[day] = { intervalWeeks, startDate }
       }
     }
-    setPatterns(current => ({ ...(current || {}), [userEmail]: { weekdays: selectedWeekdays, ...(Object.keys(repeat).length ? { repeat } : {}) } }))
+    const pattern: HomeOfficePattern = { weekdays: selectedWeekdays, ...(Object.keys(repeat).length ? { repeat } : {}) }
+    // Only this user's field, under the file lock: every open view (calendar, hub) shows it at once.
+    void saveInBackground(setKvObjectField('home-office-patterns', userEmail, pattern), { failure: t.profile.errors.generic })
     toast.success(t.homeOfficeDialog.patternSaved)
   }
 
@@ -90,22 +94,24 @@ export function HomeOfficeDialog({ userEmail }: HomeOfficeDialogProps) {
       toast.error(t.homeOfficeDialog.selectDateError)
       return
     }
+    // The user's old exception for the day is replaced in place, any further ones removed.
+    const stale = (exceptions || []).filter(e => e.userEmail === userEmail && e.date === newExceptionDate).map(e => e.id)
     const entry: HomeOfficeException = {
-      id: newId('homeoffice'),
+      id: stale[0] || newId('homeoffice'),
       userEmail,
       date: newExceptionDate,
       isHomeOffice: newExceptionStatus === 'home',
     }
-    setExceptions(current => [
-      ...(current || []).filter(e => !(e.userEmail === userEmail && e.date === newExceptionDate)),
-      entry,
-    ])
+    const write = stale.length
+      ? Promise.all([upsertInKvArray('home-office-exceptions', [entry]), removeFromKvArray('home-office-exceptions', stale.slice(1))])
+      : appendToKvArray('home-office-exceptions', [entry])
+    void saveInBackground(write, { failure: t.profile.errors.generic })
     setNewExceptionDate('')
     toast.success(t.homeOfficeDialog.exceptionAdded)
   }
 
   const handleRemoveException = (id: string) => {
-    setExceptions(current => (current || []).filter(e => e.id !== id))
+    void saveInBackground(removeFromKvArray('home-office-exceptions', [id]), { failure: t.profile.errors.generic })
     toast.success(t.homeOfficeDialog.exceptionRemoved)
   }
 

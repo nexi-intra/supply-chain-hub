@@ -1,19 +1,21 @@
-import { useCallback, useEffect, useState } from 'react'
-import { ArrowLeft, CircleNotch, Lightbulb } from '@phosphor-icons/react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { ArrowLeft, Lightbulb } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Skeleton } from '@/components/ui/skeleton'
+import { trackPendingWrite } from '@/lib/pendingWrites'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { formatDateTime, formatNumber, kindLabel } from '@/lib/warehouse/format'
-import type { Kind, RulesView } from '@/types/warehouse'
+import type { Kind, RulesView, WarehouseUser } from '@/types/warehouse'
 import { t } from '@/lib/warehouse/text'
 
-export function Rules({ onBack }: { onBack: () => void }) {
+export function Rules({ user, onBack }: { user: WarehouseUser; onBack: () => void }) {
   const [view, setView] = useState<RulesView | null>(null)
-  const [saving, setSaving] = useState<string | null>(null)
+  // The newest change per storage location: a failed older write must not take back a newer one.
+  const versions = useRef(new Map<string, number>())
 
   const load = useCallback(async () => {
     try {
@@ -24,18 +26,27 @@ export function Rules({ onBack }: { onBack: () => void }) {
   }, [])
   useEffect(() => { void load() }, [load])
 
-  const save = async (sloc: string, kinds: Kind[]) => {
+  // Shown at once; the write to M: (15–90 s) runs in the background and is taken back if it fails.
+  const save = (sloc: string, kinds: Kind[]) => {
     if (!kinds.length) { toast.error(t('Vælg mindst én type', 'Choose at least one type')); return }
-    setSaving(sloc)
-    try {
-      await window.electronWarehouse!.rules.set({ sloc, kinds })
-      await load()
-      toast.success(t(`Lagerregel for ${sloc} er gemt`, `Storage rule for ${sloc} saved`))
-    } catch (error) {
-      toast.error(errorMessage(error))
-    } finally {
-      setSaving(null)
-    }
+    if (!view) return
+    const ordered = view.kinds.filter(kind => kinds.includes(kind))
+    const previous = { rule: view.rules[sloc], stored: view.stored[sloc] }
+    const version = (versions.current.get(sloc) || 0) + 1
+    versions.current.set(sloc, version)
+    const show = (rule: Kind[] | null, stored: RulesView['stored'][string] | undefined) => setView(current => {
+      if (!current) return current
+      const nextStored = { ...current.stored }
+      if (stored) nextStored[sloc] = stored
+      else delete nextStored[sloc]
+      return { ...current, rules: { ...current.rules, [sloc]: rule }, stored: nextStored }
+    })
+    show(ordered, { kinds: ordered, updatedBy: { email: user.email, name: user.fullName || user.email }, updatedAt: Date.now() })
+    toast.success(t(`Lagerregel for ${sloc} er gemt`, `Storage rule for ${sloc} saved`))
+    trackPendingWrite(window.electronWarehouse!.rules.set({ sloc, kinds: ordered })).catch(error => {
+      if (versions.current.get(sloc) === version) show(previous.rule, previous.stored)
+      toast.error(t(`Lagerreglen for ${sloc} blev ikke gemt`, `The storage rule for ${sloc} was not saved`), { description: errorMessage(error) })
+    })
   }
 
   if (!view) return <Skeleton className="h-96 rounded-xl" />
@@ -71,15 +82,15 @@ export function Rules({ onBack }: { onBack: () => void }) {
                   const suggestion = view.suggestions?.bySloc[sloc]
                   const stored = view.stored[sloc]
                   return (
-                    <tr key={sloc} className="border-t" aria-busy={saving === sloc || undefined}>
-                      <td className="px-3 py-2 font-mono font-semibold">{sloc}{!allowed && <Badge variant="outline" className="ml-2">{t('Ingen regel', 'No rule')}</Badge>}{saving === sloc && <CircleNotch size={14} aria-hidden="true" className="ml-2 inline text-muted-foreground motion-safe:animate-spin" />}</td>
+                    <tr key={sloc} className="border-t">
+                      <td className="px-3 py-2 font-mono font-semibold">{sloc}{!allowed && <Badge variant="outline" className="ml-2">{t('Ingen regel', 'No rule')}</Badge>}</td>
                       {kinds.map(kind => (
                         <td key={kind} className="px-3 py-2">
                           <Checkbox
                             checked={Boolean(allowed?.includes(kind))}
-                            disabled={!view.canEdit || saving === sloc}
+                            disabled={!view.canEdit}
                             aria-label={`${sloc}: ${kindLabel(kind)}`}
-                            onCheckedChange={value => void save(sloc, value === true ? [...(allowed || []), kind] : (allowed || []).filter(item => item !== kind))}
+                            onCheckedChange={value => save(sloc, value === true ? [...(allowed || []), kind] : (allowed || []).filter(item => item !== kind))}
                           />
                         </td>
                       ))}
@@ -89,7 +100,7 @@ export function Rules({ onBack }: { onBack: () => void }) {
                             <Lightbulb size={14} />
                             {suggestion.suggested.map(kindLabel).join(' + ')}
                             <span className="text-muted-foreground">({kinds.map(kind => `${formatNumber(suggestion.quantities[kind] || 0)}`).join(' / ')})</span>
-                            {view.canEdit && JSON.stringify(suggestion.suggested) !== JSON.stringify(allowed) && <Button size="sm" variant="link" className="h-auto px-1" loading={saving === sloc} onClick={() => save(sloc, suggestion.suggested)}>{t('Brug', 'Use')}</Button>}
+                            {view.canEdit && JSON.stringify(suggestion.suggested) !== JSON.stringify(allowed) && <Button size="sm" variant="link" className="h-auto px-1" onClick={() => save(sloc, suggestion.suggested)}>{t('Brug', 'Use')}</Button>}
                           </span>
                         ) : <span className="text-muted-foreground">–</span>}
                       </td>

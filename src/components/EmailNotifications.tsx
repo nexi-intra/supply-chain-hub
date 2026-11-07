@@ -26,7 +26,6 @@ export function EmailNotifications({ open, onOpenChange, userEmail }: EmailNotif
   const [users, setUsers] = useState<Record<string, { fullName: string; email: string }>>({})
   const [isReplying, setIsReplying] = useState(false)
   const [replyMessage, setReplyMessage] = useState('')
-  const [isSending, setIsSending] = useState(false)
 
   useEffect(() => {
     if (open) {
@@ -62,52 +61,60 @@ export function EmailNotifications({ open, onOpenChange, userEmail }: EmailNotif
   // Alle tre handlinger opdaterer listen straks og skriver atomart i baggrunden.
   // Tidligere blev HELE mail-arrayet laest og skrevet tilbage, hvilket baade var
   // langsomt og kunne overskrive en kollegas samtidige aendring.
-  const handleMarkAsRead = async (id: string) => {
+  const notSaved = () => toast.error(language === 'da' ? 'Ændringen blev ikke gemt — prøv igen' : language === 'fi' ? 'Muutosta ei tallennettu — yritä uudelleen' : language === 'sv' ? 'Ändringen sparades inte — försök igen' : 'The change was not saved — please try again')
+
+  const handleMarkAsRead = (id: string) => {
     const target = emails.find(e => e.id === id)
     setEmails(prevEmails => prevEmails.filter(e => e.id !== id))
     if (selectedEmail?.id === id) setSelectedEmail(null)
     toast.success(language === 'da' ? 'Markeret som læst' : language === 'fi' ? 'Merkitty luetuksi' : language === 'sv' ? 'Markerat som läst' : 'Marked as read')
     if (target) {
-      await upsertInKvArray<Email>('emails', [{ ...target, read: true }]).catch(error => console.error('Kunne ikke markere mailen som laest:', error))
+      void upsertInKvArray<Email>('emails', [{ ...target, read: true }]).catch(error => {
+        console.error('Kunne ikke markere mailen som laest:', error)
+        notSaved()
+        void loadEmails()
+      })
     }
   }
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = (id: string) => {
     setEmails(prevEmails => prevEmails.filter(e => e.id !== id))
     if (selectedEmail?.id === id) setSelectedEmail(null)
     toast.success(t.emailNotifications.deleted)
-    await removeFromKvArray<Email>('emails', [id]).catch(error => console.error('Kunne ikke slette mailen:', error))
+    void removeFromKvArray<Email>('emails', [id]).catch(error => {
+      console.error('Kunne ikke slette mailen:', error)
+      notSaved()
+      void loadEmails()
+    })
   }
 
-  const handleSendReply = async () => {
+  const handleSendReply = () => {
     if (!selectedEmail || !replyMessage.trim()) {
       toast.error(language === 'da' ? 'Skriv en besked' : language === 'fi' ? 'Kirjoita viesti' : language === 'sv' ? 'Skriv ett meddelande' : 'Write a message')
       return
     }
 
-    setIsSending(true)
-
-    try {
-      const newEmail: Email = {
-        id: `${Date.now()}-${Math.random()}`,
-        from: userEmail,
-        to: selectedEmail.from,
-        subject: `Re: ${selectedEmail.subject}`,
-        message: replyMessage,
-        timestamp: Date.now(),
-        read: false
-      }
-
-      toast.success(language === 'da' ? 'Svar sendt' : language === 'fi' ? 'Vastaus' : language === 'sv' ? 'Svar skickat' : 'Reply sent')
-      setReplyMessage('')
-      setIsReplying(false)
-
-      await appendToKvArray<Email>('emails', [newEmail])
-    } catch (error) {
-      toast.error(language === 'da' ? 'Kunne ikke sende svar' : language === 'fi' ? 'Vastauksen lähettäminen epäonnistui' : language === 'sv' ? 'Det gick inte att skicka svaret' : 'Failed to send reply')
-    } finally {
-      setIsSending(false)
+    const newEmail: Email = {
+      id: `${Date.now()}-${Math.random()}`,
+      from: userEmail,
+      to: selectedEmail.from,
+      subject: `Re: ${selectedEmail.subject}`,
+      message: replyMessage,
+      timestamp: Date.now(),
+      read: false
     }
+
+    toast.success(language === 'da' ? 'Svar sendt' : language === 'fi' ? 'Vastaus' : language === 'sv' ? 'Svar skickat' : 'Reply sent')
+    setReplyMessage('')
+    setIsReplying(false)
+
+    // Saved in the background (up to 90 s on the shared drive); on failure the reply is opened again with its text.
+    void appendToKvArray<Email>('emails', [newEmail]).catch(error => {
+      console.error('Kunne ikke sende svaret:', error)
+      toast.error(language === 'da' ? 'Kunne ikke sende svar' : language === 'fi' ? 'Vastauksen lähettäminen epäonnistui' : language === 'sv' ? 'Det gick inte att skicka svaret' : 'Failed to send reply')
+      setReplyMessage(current => current || newEmail.message)
+      setIsReplying(true)
+    })
   }
 
   const getSenderName = (email: string) => {
@@ -248,11 +255,11 @@ export function EmailNotifications({ open, onOpenChange, userEmail }: EmailNotif
                       <div className="flex gap-2">
                         <Button
                           onClick={handleSendReply}
-                          disabled={isSending || !replyMessage.trim()}
+                          disabled={!replyMessage.trim()}
                           className="flex-1 gap-2"
                         >
                           <PaperPlaneTilt size={18} />
-                          {isSending ? (language === 'da' ? 'Sender...' : language === 'fi' ? 'Lähetetään...' : language === 'sv' ? 'Skickar...' : 'Sending...') : (language === 'da' ? 'Send svar' : language === 'fi' ? 'Lähetä vastaus' : language === 'sv' ? 'Skicka svar' : 'Send reply')}
+                          {language === 'da' ? 'Send svar' : language === 'fi' ? 'Lähetä vastaus' : language === 'sv' ? 'Skicka svar' : 'Send reply'}
                         </Button>
                         <Button
                           onClick={() => {

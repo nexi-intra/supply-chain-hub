@@ -7,26 +7,23 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { t } from '@/lib/warehouse/text'
+import { deleteInBackground } from '../pendingDeletes'
 
 export function DeleteCountDialog({ id, name, onClose, onDeleted }: { id: string; name: string; onClose: () => void; onDeleted: () => void }) {
   const [typed, setTyped] = useState('')
-  const [deleting, setDeleting] = useState(false)
   const matches = typed.trim() === name.trim()
 
-  const remove = async () => {
-    setDeleting(true)
-    try {
-      await window.electronWarehouse!.counts.remove(id)
-      toast.success(t(`Optællingen "${name}" er slettet`, `The count "${name}" has been deleted`))
-      onDeleted()
-    } catch (error) {
-      toast.error(errorMessage(error))
-      setDeleting(false)
-    }
+  // Gone at once from every list; the delete on M: runs in the background, and the count comes back if it fails.
+  const remove = () => {
+    if (!matches) return
+    toast.success(t(`Optællingen "${name}" er slettet`, `The count "${name}" has been deleted`))
+    onDeleted()
+    deleteInBackground({ counts: [id] }, () => window.electronWarehouse!.counts.remove(id))
+      .catch(error => toast.error(t(`Optællingen "${name}" blev ikke slettet`, `The count "${name}" was not deleted`), { description: errorMessage(error) }))
   }
 
   return (
-    <Dialog open onOpenChange={value => { if (!value && !deleting) onClose() }}>
+    <Dialog open onOpenChange={value => { if (!value) onClose() }}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{t('Slet optælling', 'Delete count')}</DialogTitle>
@@ -36,11 +33,11 @@ export function DeleteCountDialog({ id, name, onClose, onDeleted }: { id: string
         </DialogHeader>
         <div className="space-y-2">
           <Label htmlFor="delete-confirm">{t('Skriv optællingens navn for at bekræfte:', 'Type the name of the count to confirm:')} <strong>{name}</strong></Label>
-          <Input id="delete-confirm" value={typed} autoComplete="off" onChange={event => setTyped(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && matches) void remove() }} />
+          <Input id="delete-confirm" value={typed} autoComplete="off" onChange={event => setTyped(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && matches) remove() }} />
         </div>
         <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={deleting}>{t('Annullér', 'Cancel')}</Button>
-          <Button variant="destructive" onClick={() => remove()} disabled={!matches} loading={deleting}><Trash size={18} /> {t('Slet optælling', 'Delete count')}</Button>
+          <Button variant="ghost" onClick={onClose}>{t('Annullér', 'Cancel')}</Button>
+          <Button variant="destructive" onClick={() => remove()} disabled={!matches}><Trash size={18} /> {t('Slet optælling', 'Delete count')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

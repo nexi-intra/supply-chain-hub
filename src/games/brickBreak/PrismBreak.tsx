@@ -70,7 +70,7 @@ export function PrismBreak({ userEmail }: { userEmail?: string }) {
   const pointerDownRef = useRef(false)
   const finishRef = useRef<() => void>(() => {})
 
-  const { leaderboard, refresh } = useNestedLeaderboard(NEW_LEADERBOARD_KEY, DIFFICULTIES)
+  const { leaderboard, refresh, showScore } = useNestedLeaderboard(NEW_LEADERBOARD_KEY, DIFFICULTIES)
   const { otherTeams } = useCrossTeamLeaderboard<Record<Difficulty, LeaderboardEntry[]>>(NEW_LEADERBOARD_KEY)
   const boards = useMemo(
     () => Object.fromEntries(DIFFICULTIES.map((id) => [id, mergeNestedLeaderboard(leaderboard, users, otherTeams, id)])) as Record<Difficulty, CrossTeamEntry[]>,
@@ -228,25 +228,16 @@ export function PrismBreak({ userEmail }: { userEmail?: string }) {
     setResult({ stats, isNewRecord: stats.score > 0 && (previousBest === null || stats.score > previousBest) })
     goTo('ended')
     if (!userEmail) return
-    const save = async () => {
-      try {
-        await submitHighscore(
-          NEW_LEADERBOARD_KEY,
-          { email: userEmail, score: stats.score, level: stats.level, timestamp: Date.now() },
-          { path: [game.difficulty], categories: DIFFICULTIES },
-        )
-        refresh()
-      } catch (error) {
-        console.error('Kunne ikke gemme Prism Break-score:', error)
-        toast.error(scoreSaveFailedMessage(language))
-      }
-      try {
-        await recordGamePlay(PLAY_COUNTS_KEY, userEmail, game.difficulty)
-      } catch (error) {
-        console.error('Kunne ikke tælle Prism Break-runde:', error)
-      }
-    }
-    void save()
+    // The game-over list shows the score at once; the score and the play count are saved at the same time, in the
+    // background (each write takes up to 90 s on the shared drive). A failed save takes the score off the list again.
+    const entry = { email: userEmail, score: stats.score, level: stats.level, timestamp: Date.now() }
+    showScore(entry, game.difficulty)
+    void submitHighscore(NEW_LEADERBOARD_KEY, entry, { path: [game.difficulty], categories: DIFFICULTIES }).then(refresh, error => {
+      console.error('Kunne ikke gemme Prism Break-score:', error)
+      toast.error(scoreSaveFailedMessage(language))
+      refresh()
+    })
+    void recordGamePlay(PLAY_COUNTS_KEY, userEmail, game.difficulty).catch(error => console.error('Kunne ikke tælle Prism Break-runde:', error))
   }
 
   useGameOverRetry(phase === 'ended', startGame)

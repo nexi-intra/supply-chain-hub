@@ -18,6 +18,7 @@ import { DesktopNotificationBridge } from '@/components/DesktopNotificationBridg
 import { HubNotificationsProvider } from '@/contexts/HubNotificationsContext'
 import { toast, Toaster } from 'sonner'
 import { setKvObjectField, deleteKvObjectField } from '@/lib/kvArrays'
+import { trackPendingWrite } from '@/lib/pendingWrites'
 import { NAVIGATE_EVENT, peekNavigationParams, type AppViewId } from '@/lib/appNavigation'
 import { watchInactivity } from '@/lib/inactivityWatcher'
 import { HubPicker } from '@/components/HubPicker'
@@ -119,12 +120,12 @@ async function createSession(userId: string, email: string, duration: number): P
   const createdAt = Date.now()
   
   const sessions = await window.kv.get<Record<string, StoredSession>>('active-sessions') || {}
-  // Ryd udløbne sessioner, så den delte fil ikke vokser ubegrænset.
+  // Ryd udløbne sessioner, så den delte fil ikke vokser ubegrænset – samtidig med den nye, ikke én ad gangen.
   const now = Date.now()
-  for (const key of Object.keys(sessions)) {
-    if (sessions[key].expiresAt < now) await deleteKvObjectField('active-sessions', key)
-  }
-  await setKvObjectField('active-sessions', token, { token, email, userId, expiresAt, createdAt })
+  await Promise.all([
+    ...Object.keys(sessions).filter(key => sessions[key].expiresAt < now).map(key => deleteKvObjectField('active-sessions', key)),
+    setKvObjectField('active-sessions', token, { token, email, userId, expiresAt, createdAt }),
+  ])
   
   return token
 }
@@ -265,7 +266,9 @@ function App() {
         // over (netop det scenarie tvungen-version-valg findes for at undgaa).
         setSuppressUpdatePopup(true)
 
-        await deleteKvObjectField('force-update-requests', userSession.email)
+        // The request must be gone from the shared drive before the install restarts the app (otherwise it would
+        // install again after the restart); the update check runs while it is removed.
+        const removal = deleteKvObjectField('force-update-requests', userSession.email)
         toast.info(
           request.version
             ? `En manager har udløst en tvungen opdatering til v${request.version} — appen opdateres automatisk om lidt…`
@@ -276,9 +279,10 @@ function App() {
         if (request.version) {
           // Manageren har valgt en specifik version — installér den direkte,
           // uanset om den er nyere/ældre end den aktuelt publicerede.
+          await removal
           await window.electronUpdates!.install(request.version)
         } else {
-          const manifest = await window.electronUpdates!.check()
+          const [manifest] = await Promise.all([window.electronUpdates!.check(), removal])
           if (manifest) {
             await window.electronUpdates!.install()
           }
@@ -332,7 +336,9 @@ function App() {
         const users = await window.kv.get<Record<string, { status?: string }>>('users') || {}
         const user = users[session.email] || users[session.email.toLowerCase()]
         if (user && user.status !== 'pending' && user.status !== 'rejected') {
-          await renewSession(token)
+          // The session is valid (resumed above); extending it is a write to the shared drive (up to 90 s), so the
+          // hub opens at once and the renewal finishes in the background.
+          void trackPendingWrite(renewSession(token)).catch(error => console.error('Kunne ikke forlænge sessionen:', error))
           if (cancelled) return true
           setUserSession({
             userId: session.userId,
@@ -420,8 +426,10 @@ function App() {
     setUserSession({ userId, email, token, expiresAt, remembered: rememberMe })
   }
 
-  const handleLogout = async () => {
-    try { if (userSession?.token) await deleteSession(userSession.token) } catch (error) { console.error('Session cleanup failed during logout', error) }
+  const handleLogout = () => {
+    // The desktop app forgets the session at once when logout is called; removing it from the shared drive (up to
+    // 90 s) finishes in the background, so the login screen shows straight away.
+    if (userSession?.token) void trackPendingWrite(deleteSession(userSession.token)).catch(error => console.error('Session cleanup failed during logout', error))
     localStorage.removeItem(REMEMBER_TOKEN_KEY)
     
     setUserSession(null)

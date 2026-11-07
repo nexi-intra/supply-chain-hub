@@ -124,12 +124,14 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
     }
     if (quantities.length) {
       await writer.enterCounts({ docNo: doc.docNo, year: doc.year, entries: quantities })
-      for (const entry of quantities) await remember(entry.material, { qty: entry.qty })
+      // One write for every quantity entered (was one 20-s write per material).
+      const enteredAt = now()
+      for (const entry of quantities) done[entry.material] = { qty: entry.qty, by: lower(user.email), at: enteredAt }
     }
     const at = now()
     await repo.changePiDocs(user.team, id, all => {
       if (all[docId]?.status !== 'printed') throw codeError('PIDOC_CHANGED', 'Dokumentet er ændret i mellemtiden')
-      all[docId] = { ...all[docId], status: 'counted', countedBy: by(user, at) }
+      all[docId] = { ...all[docId], entered: { ...(all[docId].entered || {}), ...done }, status: 'counted', countedBy: by(user, at) }
       return { all }
     })
     return list(user, id)
@@ -150,17 +152,29 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
     if (new Set(chosen.map(doc => doc.year)).size > 1) throw codeError('PIDOC_INVALID', 'Dokumenterne skal være fra samme år')
     const result = await writer.postDocuments({ docNos: chosen.map(doc => doc.docNo), year: chosen[0].year })
     const at = now()
-    await repo.changePiDocs(user.team, id, all => {
-      for (const doc of chosen) {
-        if (!result.posted.includes(doc.docNo) || all[doc.id]?.status !== 'counted') continue
-        const differences = result.differences.filter(item => item.docNo === doc.docNo).map(({ material, book, counted, diff, amount }) => ({ material, book, counted, diff, amount }))
-        all[doc.id] = { ...all[doc.id], status: 'posted', postedBy: by(user, at), materialDoc: result.materialDocs[doc.docNo] || null, differences }
+    const postedMaterials = chosen.filter(item => result.posted.includes(item.docNo)).flatMap(doc => doc.lines.map(line => line.material))
+    // The documents and the approvals are different files: both are written at the same time. The approvals are one
+    // write for every material of the posted documents ("Bogført i SAP"), not one write per material.
+    const markPosted = async () => {
+      if (!postedMaterials.length) return
+      try {
+        const marked = await counts.markPosted(user, id, postedMaterials)
+        for (const material of marked.skipped) console.error('CountPoint: could not mark as posted', material, 'APPROVAL_INVALID')
+      } catch (error) {
+        console.error('CountPoint: could not mark as posted', postedMaterials.join(', '), error.code || error.message)
       }
-      return { all }
-    })
-    for (const doc of chosen.filter(item => result.posted.includes(item.docNo))) {
-      for (const line of doc.lines) await counts.setApproval(user, id, { material: line.material, status: 'posted' }).catch(error => console.error('CountPoint: could not mark as posted', line.material, error.code || error.message))
     }
+    await Promise.all([
+      repo.changePiDocs(user.team, id, all => {
+        for (const doc of chosen) {
+          if (!result.posted.includes(doc.docNo) || all[doc.id]?.status !== 'counted') continue
+          const differences = result.differences.filter(item => item.docNo === doc.docNo).map(({ material, book, counted, diff, amount }) => ({ material, book, counted, diff, amount }))
+          all[doc.id] = { ...all[doc.id], status: 'posted', postedBy: by(user, at), materialDoc: result.materialDocs[doc.docNo] || null, differences }
+        }
+        return { all }
+      }),
+      markPosted(),
+    ])
     return { ...(await list(user, id)), posted: result.posted, open: result.open }
   }
 

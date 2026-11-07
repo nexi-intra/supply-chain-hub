@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowCounterClockwise, Barcode, CircleNotch, LockKey, LockKeyOpen, SpeakerHigh, SpeakerSlash, Trash } from '@phosphor-icons/react'
+import { ArrowCounterClockwise, Barcode, LockKey, LockKeyOpen, SpeakerHigh, SpeakerSlash, Trash } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -14,6 +14,7 @@ import type { ScanResult } from '@/types/warehouse'
 import type { PanelProps } from './CountView'
 import { MaterialFocus } from './MaterialFocus'
 import { isApproved, lockOf, mayCount, MaterialsInProgress } from './MaterialWork'
+import { takeLock, withClaim } from './optimisticState'
 import { RemoveSerialDialog } from './RemoveSerial'
 import { t } from '@/lib/warehouse/text'
 
@@ -29,7 +30,7 @@ interface SessionScan {
   at: number
 }
 
-export function ScanPanel({ id, open, state, refresh }: PanelProps) {
+export function ScanPanel({ id, open, state, refresh, optimistic, person }: PanelProps) {
   const placeKey = `warehouse-place-${id}`
   const focusKey = `warehouse-focus-${id}`
   const [place, setPlace] = useState(() => localStorage.getItem(placeKey) || '')
@@ -41,7 +42,6 @@ export function ScanPanel({ id, open, state, refresh }: PanelProps) {
   const [queueSize, setQueueSize] = useState(0)
   const [removing, setRemoving] = useState(false)
   const [undoing, setUndoing] = useState(false)
-  const [claimingArea, setClaimingArea] = useState<string | null>(null)
   const [taking, setTaking] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const queue = useRef<string[]>([])
@@ -54,24 +54,18 @@ export function ScanPanel({ id, open, state, refresh }: PanelProps) {
   useEffect(() => { if (focusMaterial && isApproved(state, focusMaterial)) setFocusMaterial('') }, [focusMaterial, state])
   useEffect(() => { inputRef.current?.focus() }, [])
 
-  const chooseMaterial = async (value: string) => {
+  const chooseMaterial = (value: string) => {
     const previous = focusMaterial
-    // Shown at once: taking the material is a write to M: and can take many seconds.
+    // Shown at once (also under "Materialer i gang"): taking the material is a write to M: and can take many seconds.
     setFocusMaterial(value)
     inputRef.current?.focus()
     const lock = value ? lockOf(state, value) : null
-    if (value && !(lock && mayCount(lock, state.me.email))) {
-      setTaking(value)
-      try {
-        await window.electronWarehouse!.counts.lockMaterial({ id, material: value })
-      } catch (error) {
-        toast.error(errorMessage(error))
-        setFocusMaterial(current => (current === value ? previous : current))
-      } finally {
-        setTaking(current => (current === value ? null : current))
-      }
-    }
-    void refresh()
+    if (!value || (lock && mayCount(lock, state.me.email))) return
+    setTaking(value)
+    void optimistic(takeLock(value, person), () => window.electronWarehouse!.counts.lockMaterial({ id, material: value })).then(saved => {
+      if (!saved) setFocusMaterial(current => (current === value ? previous : current))
+      setTaking(current => (current === value ? null : current))
+    })
   }
 
   const processQueue = async () => {
@@ -140,19 +134,12 @@ export function ScanPanel({ id, open, state, refresh }: PanelProps) {
 
   const claimedBy = new Map(state.claims.map(claim => [claim.area, claim]))
   const myClaims = state.claims.filter(claim => claim.email === state.me.email)
-  const toggleClaim = async (area: string) => {
-    if (claimingArea) return
-    setClaimingArea(area)
-    try {
-      const claim = claimedBy.get(area)
-      if (claim?.email === state.me.email) await window.electronWarehouse!.counts.release({ id, area })
-      else await window.electronWarehouse!.counts.claim({ id, area })
-      await refresh()
-    } catch (error) {
-      toast.error(errorMessage(error))
-    } finally {
-      setClaimingArea(null)
-    }
+  // Shown at once; the write to M: (15–90 s) runs in the background and is taken back if it fails.
+  const toggleClaim = (area: string) => {
+    const claim = claimedBy.get(area)
+    const at = Date.now()
+    if (claim?.email === state.me.email) void optimistic(withClaim(area, null), () => window.electronWarehouse!.counts.release({ id, area }))
+    else void optimistic(withClaim(area, { area, email: person.email, name: person.name, at, lastActivity: at }), () => window.electronWarehouse!.counts.claim({ id, area }))
   }
 
   const lastView = last ? outcomeView(last.result) : null
@@ -260,7 +247,7 @@ export function ScanPanel({ id, open, state, refresh }: PanelProps) {
       </div>
 
       <div className="space-y-5">
-        <MaterialsInProgress id={id} state={state} refresh={refresh} isOwner={state.me.isOwner} />
+        <MaterialsInProgress id={id} state={state} optimistic={optimistic} person={person} isOwner={state.me.isOwner} />
         {removing && <RemoveSerialDialog id={id} refresh={refresh} onClose={() => { setRemoving(false); inputRef.current?.focus() }} />}
 
         <Card>
@@ -287,13 +274,12 @@ export function ScanPanel({ id, open, state, refresh }: PanelProps) {
                     <button
                       key={area}
                       type="button"
-                      onClick={() => void toggleClaim(area)}
-                      disabled={(Boolean(claim) && !mine) || claimingArea === area}
-                      aria-busy={claimingArea === area || undefined}
+                      onClick={() => toggleClaim(area)}
+                      disabled={Boolean(claim) && !mine}
                       title={claim ? t(`${claim.name} tæller her`, `${claim.name} is counting here`) : t('Lås området', 'Lock the area')}
                       className={cn('inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 font-mono text-sm transition disabled:cursor-not-allowed', mine ? 'border-primary bg-primary text-primary-foreground' : claim ? 'bg-muted text-muted-foreground' : 'hover:border-primary')}
                     >
-                      {claimingArea === area ? <CircleNotch size={14} className="motion-safe:animate-spin" /> : claim ? <LockKey size={14} /> : <LockKeyOpen size={14} />}
+                      {claim ? <LockKey size={14} /> : <LockKeyOpen size={14} />}
                       {area}
                       {claim && !mine && <span className="font-sans text-xs">{claim.name.split(' ')[0]}</span>}
                     </button>

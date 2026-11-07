@@ -51,6 +51,19 @@ test('only managers, status managers and admins maintain locations', async () =>
   assert.deepEqual((await service.setTags(MONA, { tags: [' Brandskab', 'Brandskab', 'Sluse oppe'] })).tags, ['Brandskab', 'Sluse oppe'])
 })
 
+test('editLocation saved without a change writes nothing, not even the edit time', async () => {
+  const { service, repo } = setup()
+  await service.createLocation(MONA, { name: 'A1.1', type: 'Palle', purpose: 'reserve', note: 'Ved porten' })
+  const before = await repo.read('TCD')
+  const events = (await repo.history('TCD')).length
+  const result = await service.editLocation(ADA, { location: 'A1.1', changes: { name: 'A1.1', area: 'A', type: 'Palle', purpose: 'reserve', fixedMaterials: [], note: ' Ved porten ' } })
+  assert.deepEqual(result.location, before.locations['A1.1'])
+  assert.deepEqual(await repo.read('TCD'), before, 'no key is written')
+  assert.equal((await repo.history('TCD')).length, events, 'no event')
+  await service.editLocation(ADA, { location: 'A1.1', changes: { note: 'Ny note' } })
+  assert.equal((await repo.read('TCD')).locations['A1.1'].updatedBy.name, 'Ada', 'a real change is written')
+})
+
 test('createSeries makes C1.1–C20.6 once, skips existing names and refuses more than 500', async () => {
   const { service, repo } = setup()
   await service.createLocation(MONA, { name: 'C3.2', type: 'Palle', purpose: 'reserve' })

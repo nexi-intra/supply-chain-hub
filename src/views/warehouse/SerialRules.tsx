@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowLeft, Plus, Trash } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -6,15 +6,17 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
+import { trackPendingWrite } from '@/lib/pendingWrites'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { formatDateTime } from '@/lib/warehouse/format'
-import type { SerialRule, SerialRulesView } from '@/types/warehouse'
+import type { SerialRule, SerialRulesView, WarehouseUser } from '@/types/warehouse'
 import { t } from '@/lib/warehouse/text'
 
-export function SerialRules({ onBack }: { onBack: () => void }) {
+export function SerialRules({ user, onBack }: { user: WarehouseUser; onBack: () => void }) {
   const [view, setView] = useState<SerialRulesView | null>(null)
-  const [saving, setSaving] = useState<string | null>(null)
   const [material, setMaterial] = useState('')
+  // The newest change per material: a failed older write must not take back a newer one.
+  const versions = useRef(new Map<string, number>())
 
   const load = useCallback(async () => {
     try {
@@ -25,25 +27,30 @@ export function SerialRules({ onBack }: { onBack: () => void }) {
   }, [])
   useEffect(() => { void load() }, [load])
 
-  const save = async (code: string, unrestricted: boolean, done: string) => {
-    setSaving(code)
-    try {
-      await window.electronWarehouse!.serialRules.set({ material: code, unrestricted })
-      await load()
-      toast.success(done)
-      return true
-    } catch (error) {
+  // Shown at once; the write to M: (15–90 s) runs in the background and is taken back if the drive refuses it.
+  const save = (code: string, unrestricted: boolean, done: string, onFailed?: () => void) => {
+    if (!view) return
+    const previous = view.rules.find(rule => rule.material === code) || null
+    const version = (versions.current.get(code) || 0) + 1
+    versions.current.set(code, version)
+    const show = (rule: SerialRule | null) => setView(current => current && {
+      ...current,
+      rules: [...current.rules.filter(item => item.material !== code), ...(rule ? [rule] : [])].sort((a, b) => a.material.localeCompare(b.material)),
+    })
+    show(unrestricted ? { material: code, unrestricted: true, blocked: false, updatedBy: { email: user.email, name: user.fullName || user.email }, updatedAt: Date.now() } : null)
+    toast.success(done)
+    trackPendingWrite(window.electronWarehouse!.serialRules.set({ material: code, unrestricted })).catch(error => {
+      if (versions.current.get(code) === version) show(previous)
+      onFailed?.()
       toast.error(errorMessage(error))
-      return false
-    } finally {
-      setSaving(null)
-    }
+    })
   }
 
-  const add = async () => {
+  const add = () => {
     const code = material.trim().toUpperCase()
     if (!code) return
-    if (await save(code, true, t(`${code} bruger nu lange serienumre`, `${code} now uses long serial numbers`))) setMaterial('')
+    setMaterial('')
+    save(code, true, t(`${code} bruger nu lange serienumre`, `${code} now uses long serial numbers`), () => setMaterial(current => current || code))
   }
 
   if (!view) return <Skeleton className="h-96 rounded-xl" />
@@ -73,9 +80,9 @@ export function SerialRules({ onBack }: { onBack: () => void }) {
               <CardContent className="flex flex-wrap items-end gap-4">
                 <div className="space-y-1.5">
                   <Label htmlFor="serial-rule-material">{t('Materiale', 'Material')}</Label>
-                  <Input id="serial-rule-material" value={material} onChange={event => setMaterial(event.target.value.toUpperCase())} onKeyDown={event => { if (event.key === 'Enter') void add() }} placeholder="INT4300-7825-0" className="w-56 font-mono" />
+                  <Input id="serial-rule-material" value={material} onChange={event => setMaterial(event.target.value.toUpperCase())} onKeyDown={event => { if (event.key === 'Enter') add() }} placeholder="INT4300-7825-0" className="w-56 font-mono" />
                 </div>
-                <Button onClick={() => add()} loading={saving === material.trim().toUpperCase()} disabled={!material.trim()}><Plus size={18} weight="bold" /> {t('Tilføj', 'Add')}</Button>
+                <Button onClick={() => add()} disabled={!material.trim()}><Plus size={18} weight="bold" /> {t('Tilføj', 'Add')}</Button>
               </CardContent>
             </Card>
           )}
@@ -97,7 +104,7 @@ export function SerialRules({ onBack }: { onBack: () => void }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {view.rules.map(rule => <RuleRow key={rule.material} rule={rule} canEdit={view.canEdit} saving={saving === rule.material} onRemove={() => void save(rule.material, false, t(`${rule.material} bruger nu de korte serienumre`, `${rule.material} now uses the short serial numbers`))} />)}
+                      {view.rules.map(rule => <RuleRow key={rule.material} rule={rule} canEdit={view.canEdit} onRemove={() => save(rule.material, false, t(`${rule.material} bruger nu de korte serienumre`, `${rule.material} now uses the short serial numbers`))} />)}
                     </tbody>
                   </table>
                 </div>
@@ -110,14 +117,14 @@ export function SerialRules({ onBack }: { onBack: () => void }) {
   )
 }
 
-function RuleRow({ rule, canEdit, saving, onRemove }: { rule: SerialRule; canEdit: boolean; saving: boolean; onRemove: () => void }) {
+function RuleRow({ rule, canEdit, onRemove }: { rule: SerialRule; canEdit: boolean; onRemove: () => void }) {
   return (
     <tr className="border-t">
       <td className="px-3 py-2 font-mono font-semibold">{rule.material}</td>
       <td className="px-3 py-2 text-xs text-muted-foreground">{rule.updatedBy ? `${rule.updatedBy.name} · ${formatDateTime(rule.updatedAt)}` : '–'}</td>
       {canEdit && (
         <td className="px-3 py-2 text-right">
-          <Button size="sm" variant="ghost" loading={saving} onClick={onRemove} aria-label={t(`Fjern reglen for ${rule.material}`, `Remove the rule for ${rule.material}`)}><Trash size={16} /></Button>
+          <Button size="sm" variant="ghost" onClick={onRemove} aria-label={t(`Fjern reglen for ${rule.material}`, `Remove the rule for ${rule.material}`)}><Trash size={16} /></Button>
         </td>
       )}
     </tr>

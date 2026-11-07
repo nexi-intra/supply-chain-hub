@@ -8,7 +8,8 @@ import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { formatNumber } from '@/lib/warehouse/format'
-import { deferredText, formatAge, isDeferred, materialLabel, newActionId } from '@/lib/warehouse/locations'
+import { sendLocationAction, startLocationsRead, takeFromCard, takeFromCardShelf } from '@/lib/warehouse/locationActions'
+import { formatAge, materialLabel, newActionId } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
 import type { Location, MaterialCard } from '@/types/warehouse'
 
@@ -21,9 +22,6 @@ export function Refill({ id, version, onDone }: { id?: string; version: number; 
   const [material, setMaterial] = useState<string | null>(initialMaterial || null)
   const [card, setCard] = useState<MaterialCard | null>(null)
   const [quantity, setQuantity] = useState('')
-  const [busy, setBusy] = useState(false)
-  // Which shelf/pallet the running refill comes from, so only its button spins.
-  const [source, setSource] = useState<string | null>(null)
   const bridge = window.electronWarehouse!.locations
 
   useEffect(() => {
@@ -40,46 +38,36 @@ export function Refill({ id, version, onDone }: { id?: string; version: number; 
     return (places || []).filter(location => !query || location.id.includes(query) || location.fixedMaterials.some(code => code.includes(query)))
   }, [places, filter])
 
+  // A re-read during a refill on its way to M: is older than the card, which already shows the refill.
   useEffect(() => {
     if (!chosen) { setCard(null); return }
     let current = true
-    bridge.materialCard({ material: chosen }).then(result => { if (current) setCard(result) }).catch(error => toast.error(errorMessage(error)))
+    const fresh = startLocationsRead()
+    bridge.materialCard({ material: chosen }).then(result => { if (current) setCard(value => (value?.material === result.material && !fresh() ? value : result)) }).catch(error => toast.error(errorMessage(error)))
     return () => { current = false }
   }, [bridge, chosen, version])
 
-  async function refillFromShelf(shelf: MaterialCard['shelves'][number]) {
+  // Shown at once; M: gets it in the background (15-40 s) and the card is read again when it is done.
+  function refillFromShelf(shelf: MaterialCard['shelves'][number]) {
     if (!selected || !chosen || !quantity.trim()) return
-    setBusy(true)
-    setSource(shelf.location)
-    try {
-      const result = await bridge.refill({ actionId: newActionId(), label: t(`Fyld ${selected.name} op fra ${shelf.name}`, `Refill ${selected.name} from ${shelf.name}`), location: selected.id, shelf: shelf.location, material: chosen, quantity: Number(quantity) })
-      if (isDeferred(result)) toast.warning(deferredText(result))
-      else toast.success(t(`${selected.name} er fyldt op fra ${shelf.name}`, `${selected.name} has been refilled from ${shelf.name}`))
-      setQuantity('')
-      onDone()
-    } catch (error) {
-      toast.error(errorMessage(error))
-    } finally {
-      setBusy(false)
-    }
+    const amount = Number(quantity)
+    setCard(value => (value ? takeFromCardShelf(value, shelf.location, amount) : value))
+    setQuantity('')
+    void sendLocationAction(() => bridge.refill({ actionId: newActionId(), label: t(`Fyld ${selected.name} op fra ${shelf.name}`, `Refill ${selected.name} from ${shelf.name}`), location: selected.id, shelf: shelf.location, material: chosen, quantity: amount }), {
+      success: t(`${selected.name} er fyldt op fra ${shelf.name}`, `${selected.name} has been refilled from ${shelf.name}`),
+      settled: onDone,
+    })
   }
 
-  async function refill(pallet: MaterialCard['reserve'][number]) {
+  function refill(pallet: MaterialCard['reserve'][number]) {
     if (!selected) return
-    setBusy(true)
-    setSource(pallet.id)
-    try {
-      const amount = quantity.trim() ? Number(quantity) : undefined
-      const result = await bridge.refill({ actionId: newActionId(), label: t(`Fyld ${selected.name} op fra ${pallet.location}`, `Refill ${selected.name} from ${pallet.location}`), location: selected.id, pallet: pallet.id, quantity: amount })
-      if (isDeferred(result)) toast.warning(deferredText(result))
-      else toast.success(t(`${selected.name} er fyldt op fra ${pallet.location}`, `${selected.name} has been refilled from ${pallet.location}`))
-      setQuantity('')
-      onDone()
-    } catch (error) {
-      toast.error(errorMessage(error))
-    } finally {
-      setBusy(false)
-    }
+    const amount = quantity.trim() ? Number(quantity) : undefined
+    setCard(value => (value ? takeFromCard(value, pallet.id, amount) : value))
+    setQuantity('')
+    void sendLocationAction(() => bridge.refill({ actionId: newActionId(), label: t(`Fyld ${selected.name} op fra ${pallet.location}`, `Refill ${selected.name} from ${pallet.location}`), location: selected.id, pallet: pallet.id, quantity: amount }), {
+      success: t(`${selected.name} er fyldt op fra ${pallet.location}`, `${selected.name} has been refilled from ${pallet.location}`),
+      settled: onDone,
+    })
   }
 
   return (
@@ -137,7 +125,7 @@ export function Refill({ id, version, onDone }: { id?: string; version: number; 
                           {shelf.location === card.refillShelf && <Badge>{t('Forslag', 'Suggested')}</Badge>}
                           <span className="font-mono font-semibold">{shelf.name}</span>
                           <span>{t(`${formatNumber(shelf.quantity)} stk.`, `${formatNumber(shelf.quantity)} pcs`)}</span>
-                          <Button size="sm" className="ml-auto" variant={shelf.location === card.refillShelf ? 'default' : 'outline'} loading={busy && source === shelf.location} disabled={busy || !quantity.trim() || Number(quantity) > shelf.quantity} onClick={() => refillFromShelf(shelf)}>
+                          <Button size="sm" className="ml-auto" variant={shelf.location === card.refillShelf ? 'default' : 'outline'} disabled={!quantity.trim() || Number(quantity) > shelf.quantity} onClick={() => refillFromShelf(shelf)}>
                             <ArrowsClockwise size={16} /> {t(`Fyldt op fra ${shelf.name}`, `Refilled from ${shelf.name}`)}
                           </Button>
                         </div>
@@ -158,7 +146,7 @@ export function Refill({ id, version, onDone }: { id?: string; version: number; 
                           <span className="font-mono font-semibold">{pallet.location}</span>
                           <span className="text-muted-foreground">{formatAge(pallet.ageDays)}</span>
                           <span>{pallet.quantity === null ? '' : t(`${formatNumber(pallet.quantity)} stk.`, `${formatNumber(pallet.quantity)} pcs`)}</span>
-                          <Button size="sm" className="ml-auto" variant={index === 0 ? 'default' : 'outline'} loading={busy && source === pallet.id} disabled={busy} onClick={() => refill(pallet)}>
+                          <Button size="sm" className="ml-auto" variant={index === 0 ? 'default' : 'outline'} onClick={() => refill(pallet)}>
                             <ArrowsClockwise size={16} /> {t(`Fyldt op fra ${pallet.location}`, `Refilled from ${pallet.location}`)}
                           </Button>
                         </div>

@@ -9,10 +9,11 @@ import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { NativeSelect } from '@/components/warehouse/ui'
 import { SapActionButton } from '@/components/warehouse/SapActionButton'
+import { trackPendingWrite } from '@/lib/pendingWrites'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { fetchSteps, formatDateTime, formatNumber, stockLabel } from '@/lib/warehouse/format'
 import { cn } from '@/lib/utils'
-import type { WarehouseUser, FetchStep, MailLanguage, SapCheckOverview, SapCheckScope, SapError, SapErrorType, TeamId } from '@/types/warehouse'
+import type { WarehouseUser, FetchStep, MailLanguage, SapCheckOverview, SapCheckScope, SapCheckSettings, SapError, SapErrorType, TeamId } from '@/types/warehouse'
 import { t } from '@/lib/warehouse/text'
 
 const types = (): { type: SapErrorType; label: string; help: string }[] => [
@@ -73,8 +74,9 @@ export function SapCheck({ user, onBack }: { user: WarehouseUser; onBack: () => 
     const unsubscribe = window.electronWarehouse!.sap.onFetchProgress(progress => setStep(progress.step))
     try {
       const check = await window.electronWarehouse!.sapCheck.run({ scope })
+      setView(current => current && { ...current, latest: check })
       toast.success(check.summary.total ? t(`${formatNumber(check.summary.total)} SAP-fejl fundet`, `${formatNumber(check.summary.total)} SAP errors found`) : t('Ingen SAP-fejl fundet', 'No SAP errors found'), { description: check.summary.total ? t(`${formatNumber(check.summary.new)} nye · ${formatNumber(check.summary.open)} stadig ikke rettet · ${formatNumber(check.summary.fixed)} rettet siden sidst`, `${formatNumber(check.summary.new)} new · ${formatNumber(check.summary.open)} still not fixed · ${formatNumber(check.summary.fixed)} fixed since last time`) : undefined })
-      await load()
+      void load()
     } catch (error) {
       toast.error(errorMessage(error, t('Tjekket fejlede.', 'The check failed.')))
     } finally {
@@ -142,7 +144,7 @@ export function SapCheck({ user, onBack }: { user: WarehouseUser; onBack: () => 
         </div>
       )}
 
-      {latest && <MailCard view={view} reload={load} />}
+      {latest && <MailCard view={view} user={user} reload={load} onSettings={settings => setView(current => current && { ...current, settings })} />}
 
       {latest && (
         <Card>
@@ -258,14 +260,21 @@ export function SapCheck({ user, onBack }: { user: WarehouseUser; onBack: () => 
   )
 }
 
-function MailCard({ view, reload }: { view: SapCheckOverview; reload: () => Promise<void> }) {
+const EMAIL = /^[A-Za-z0-9._%+'-]{1,64}@[A-Za-z0-9.-]{1,190}\.[A-Za-z]{2,24}$/
+
+/** The same check and form as the drive (sapCheckService parseAddresses): null when an address is not valid. */
+function parseAddresses(value: string): string | null {
+  const list = [...new Set(value.split(/[;,\s]+/).map(item => item.trim().toLowerCase()).filter(Boolean))]
+  return list.length > 10 || list.some(address => !EMAIL.test(address)) ? null : list.join('; ')
+}
+
+function MailCard({ view, user, reload, onSettings }: { view: SapCheckOverview; user: WarehouseUser; reload: () => Promise<void>; onSettings: (settings: SapCheckSettings) => void }) {
   const latest = view.latest!
   const [to, setTo] = useState(view.settings.to)
   const [cc, setCc] = useState(view.settings.cc)
   const [language, setLanguage] = useState<MailLanguage>(view.settings.language)
   const [mode, setMode] = useState<'new' | 'all'>(latest.summary.new > 0 && latest.summary.open > 0 ? 'new' : 'all')
   const [mailScope, setMailScope] = useState<SapCheckScope>('D301')
-  const [saving, setSaving] = useState(false)
   const [mailing, setMailing] = useState(false)
   const dirty = to !== view.settings.to || cc !== view.settings.cc || language !== view.settings.language
   const scopeOptions: SapCheckScope[] = ['D301', ...(['TCD', 'TRR'] as const).filter(item => latest.slocs.some(sloc => teamOf(sloc) === item))]
@@ -285,30 +294,39 @@ function MailCard({ view, reload }: { view: SapCheckOverview; reload: () => Prom
     )
   }
 
-  const save = async () => {
-    setSaving(true)
-    try {
-      await window.electronWarehouse!.sapCheck.setSettings({ to, cc, language })
-      toast.success(t('Mailindstillingerne er gemt', 'The mail settings are saved'))
-      await reload()
-    } catch (error) {
-      toast.error(errorMessage(error))
-    } finally {
-      setSaving(false)
+  /** Shown as saved at once; the write to M: runs in the background and is taken back if it fails. False = invalid addresses. */
+  const saveSettings = (quiet = false) => {
+    const parsedTo = parseAddresses(to)
+    const parsedCc = parseAddresses(cc)
+    if (parsedTo === null || parsedCc === null) {
+      toast.error(t('Skriv gyldige mailadresser adskilt af semikolon (højst 10)', 'Type valid mail addresses separated by semicolons (at most 10)'))
+      return false
     }
+    const previous = view.settings
+    const next: SapCheckSettings = { to: parsedTo, cc: parsedCc, language, updatedBy: { email: user.email, name: user.fullName || user.email }, updatedAt: Date.now() }
+    onSettings(next)
+    if (!quiet) toast.success(t('Mailindstillingerne er gemt', 'The mail settings are saved'))
+    trackPendingWrite(window.electronWarehouse!.sapCheck.setSettings({ to, cc, language })).catch(error => {
+      onSettings(previous)
+      toast.error(t('Mailindstillingerne blev ikke gemt', 'The mail settings were not saved'), { description: errorMessage(error) })
+    })
+    return true
   }
 
+  // Outlook and the Excel file must exist before the toast: this waits (spinner). Typed addresses are saved alongside
+  // the mail, not before it.
   const mail = async () => {
+    const typed = dirty ? { to, cc } : {}
+    if (dirty && !saveSettings(true)) return
     setMailing(true)
     try {
-      if (dirty) await window.electronWarehouse!.sapCheck.setSettings({ to, cc, language })
-      const result = await window.electronWarehouse!.sapCheck.mail({ id: latest.id, mode, language, scope: mailScope })
+      const result = await window.electronWarehouse!.sapCheck.mail({ id: latest.id, mode, language, scope: mailScope, ...typed })
       toast.success(t('Mailen er åbnet i Outlook', 'The mail is open in Outlook'), {
         description: t(`${formatNumber(result.count)} fejl · ${result.file} er vedhæftet. Tjek kladden og tryk Send.`, `${formatNumber(result.count)} errors · ${result.file} is attached. Check the draft and press Send.`),
         action: { label: t('Åbn Excel', 'Open Excel'), onClick: () => { window.electronWarehouse!.counts.openReport(result.file).catch(error => toast.error(errorMessage(error))) } },
         duration: 6000,
       })
-      await reload()
+      void reload()
     } catch (error) {
       toast.error(errorMessage(error), { duration: 8000 })
     } finally {
@@ -332,7 +350,7 @@ function MailCard({ view, reload }: { view: SapCheckOverview; reload: () => Prom
             <Label htmlFor="sap-mail-cc">{t('Cc (valgfri)', 'Cc (optional)')}</Label>
             <Input id="sap-mail-cc" value={cc} onChange={event => setCc(event.target.value)} placeholder={t('Flere adresser adskilles med ;', 'Separate several addresses with ;')} />
           </div>
-          <Button variant="outline" onClick={() => save()} loading={saving} disabled={!dirty}><FloppyDisk size={16} /> {t('Gem indstillinger', 'Save settings')}</Button>
+          <Button variant="outline" onClick={() => { saveSettings() }} disabled={!dirty}><FloppyDisk size={16} /> {t('Gem indstillinger', 'Save settings')}</Button>
         </div>
         {view.settings.updatedBy && <p className="text-xs text-muted-foreground">{t(`Sidst ændret af ${view.settings.updatedBy.name} ${formatDateTime(view.settings.updatedAt)}.`, `Last changed by ${view.settings.updatedBy.name} ${formatDateTime(view.settings.updatedAt)}.`)}</p>}
         <div className="flex flex-wrap items-center gap-3">

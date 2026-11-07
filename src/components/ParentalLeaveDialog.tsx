@@ -23,10 +23,11 @@ interface ParentalLeaveDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   managerEmail: string
-  onSuccess: () => void
+  /** Called at once with the leave being registered; `saved` resolves when it is saved (false if it was not). */
+  onGranted: (entry: VacationEntry, saved: Promise<boolean>) => void
 }
 
-export function ParentalLeaveDialog({ open, onOpenChange, managerEmail, onSuccess }: ParentalLeaveDialogProps) {
+export function ParentalLeaveDialog({ open, onOpenChange, managerEmail, onGranted }: ParentalLeaveDialogProps) {
   const { t } = useLanguage()
   const [users, setUsers] = useState<User[]>([])
   const [selectedUser, setSelectedUser] = useState('')
@@ -70,7 +71,7 @@ export function ParentalLeaveDialog({ open, onOpenChange, managerEmail, onSucces
       manuallyGranted: true,
     }
 
-    // Optimistisk: luk og bekræft med det samme, skriv i baggrunden.
+    // Optimistisk: luk og bekræft med det samme, skriv i baggrunden. Manager Panel viser barslen straks.
     setSelectedUser('')
     setStartDate('')
     setEndDate('')
@@ -78,15 +79,15 @@ export function ParentalLeaveDialog({ open, onOpenChange, managerEmail, onSucces
     onOpenChange(false)
     toast.success(t.parentalLeave.registered)
 
+    const saved = appendToKvArray('vacation-entries', [entry]).then(() => true, error => {
+      console.error('Error registering parental leave:', error)
+      toast.error(t.parentalLeave.registerFailed)
+      return false
+    })
+    onGranted(entry, saved)
+
     void (async () => {
-      try {
-        await appendToKvArray('vacation-entries', [entry])
-        onSuccess()
-      } catch (error) {
-        console.error('Error registering parental leave:', error)
-        toast.error(t.parentalLeave.registerFailed)
-        return
-      }
+      if (!(await saved)) return
       try {
         const period = `${parseLocalDate(entry.startDate).toLocaleDateString()} – ${parseLocalDate(entry.endDate).toLocaleDateString()}`
         const message = {

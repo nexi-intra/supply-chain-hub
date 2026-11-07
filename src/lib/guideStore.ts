@@ -110,16 +110,13 @@ export async function saveVersionSnapshot(guide: Guide, savedBy: string, changeN
 
 /** Sletter versionshistorik og alle billeder når en guide slettes. */
 export async function deleteGuideArtifacts(guide: Guide, kind: LibraryKind = 'guides'): Promise<void> {
-  try {
-    await window.kv.delete(versionsKey(guide.id, kind))
-  } catch (error) {
-    console.error('Kunne ikke slette versionshistorik:', error)
-  }
-  for (const imageId of collectImageIds(guide)) {
-    try {
-      await fileStorage.deleteFile(`kv://${imageId}`)
-    } catch (error) {
+  // Uafhaengige noegler, saa sletningerne sendes samtidig i stedet for en rundtur til M: pr. billede.
+  await Promise.all([
+    window.kv.delete(versionsKey(guide.id, kind)).catch((error) => {
+      console.error('Kunne ikke slette versionshistorik:', error)
+    }),
+    ...collectImageIds(guide).map((imageId) => fileStorage.deleteFile(`kv://${imageId}`).catch((error) => {
       console.error(`Kunne ikke slette billede ${imageId}:`, error)
-    }
-  }
+    })),
+  ])
 }

@@ -123,40 +123,56 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   // ---------- Approve and lock a status (managers) ----------
   /** What still stands between the status and "Godkend og lås": open counts and materials not approved or posted. */
   async function statusChecklist(user, statusId) {
+    return (await checklistData(user, statusId)).checklist
+  }
+
+  /** The checklist and the report data it was made from (so locking does not read every count twice). Counts are read in parallel. */
+  async function checklistData(user, statusId, known = null) {
     const team = teamOf(user)
-    const status = await repo.getStatus(team, statusId)
-    const items = []
-    for (const entry of await statusCounts(team, statusId)) {
-      const data = await reportData(user, entry.id)
+    const status = known || await repo.getStatus(team, statusId)
+    const entries = await statusCounts(team, statusId)
+    const datas = await Promise.all(entries.map(entry => reportData(user, entry.id)))
+    const items = entries.map((entry, index) => {
+      const data = datas[index]
       const materials = new Map()
       for (const row of data.aggregate.rows) if (row.sapQty > 0 || row.counted > 0) materials.set(row.material, row.description)
       const pending = [...materials]
         .filter(([material]) => !['approved', 'posted'].includes(data.approvals?.[material]?.status))
         .map(([material, description]) => ({ material, description, status: data.approvals?.[material]?.status || 'open' }))
-      items.push({ id: entry.id, name: entry.name, owner: entry.owner, open: data.meta.status !== 'closed', materials: materials.size, pending })
-    }
-    return { statusId, state: status.state, ready: items.length > 0 && items.every(item => !item.open && !item.pending.length), counts: items }
+      return { id: entry.id, name: entry.name, owner: entry.owner, open: data.meta.status !== 'closed', materials: materials.size, pending }
+    })
+    return { status, datas, checklist: { statusId, state: status.state, ready: items.length > 0 && items.every(item => !item.open && !item.pending.length), counts: items } }
   }
 
   /** The final reports are written in the language of the manager who locks (Danish unless English is asked for). */
   async function lockStatus(user, statusId, { language } = {}) {
     if (!isManager(user)) throw codeError('MANAGER_ONLY', 'Kun managers kan godkende og låse en status')
     const team = teamOf(user)
-    const status = await repo.getStatus(team, statusId)
-    if (status.state !== 'open') throw lockedError()
-    const checklist = await statusChecklist(user, statusId)
+    const known = await repo.getStatus(team, statusId)
+    if (known.state !== 'open') throw lockedError()
+    const { status, datas, checklist } = await checklistData(user, statusId, known)
     if (!checklist.ready) throw codeError('STATUS_NOT_READY', checklist.counts.length ? 'Alle optællinger skal være afsluttet og alle materialer godkendt eller bogført' : 'Statussen har ingen optællinger')
     if (!reportWriter) throw codeError('REPORT_UNAVAILABLE')
-    const counts = []
     const reportLanguage = language === 'en' ? 'en' : 'da'
-    for (const item of checklist.counts) counts.push({ ...(await reportData(user, item.id)), language: reportLanguage })
+    const counts = datas.map(data => ({ ...data, language: reportLanguage }))
     const by = me(user)
     const lockedAt = now()
     const version = (status.reports || []).length + 1
-    const countFiles = []
-    for (const data of counts) countFiles.push({ countId: data.meta.id, name: data.meta.name, file: path.basename(await reportWriter.count(team, data)) })
     const finalStatus = { ...status, state: 'locked', lockedBy: by, lockedAt, history: [...(status.history || []), { at: lockedAt, by, action: 'locked' }] }
-    const file = path.basename(await reportWriter.status(team, { status: finalStatus, version, counts, language: reportLanguage }))
+    // Every report is its own Excel file: all are written at the same time. Counts with the same name would get the same
+    // file name, so those are written one after the other (the writer then picks "(2)").
+    const sameName = new Map()
+    const writeCount = data => {
+      const nameKey = String(data.meta.name || '').trim().toLowerCase()
+      const run = (sameName.get(nameKey) || Promise.resolve()).catch(() => {}).then(async () => ({ countId: data.meta.id, name: data.meta.name, file: path.basename(await reportWriter.count(team, data)) }))
+      sameName.set(nameKey, run)
+      return run
+    }
+    const [countFiles, statusFile] = await Promise.all([
+      Promise.all(counts.map(writeCount)),
+      reportWriter.status(team, { status: finalStatus, version, counts, language: reportLanguage }),
+    ])
+    const file = path.basename(statusFile)
     const reports = [...(status.reports || []), { version, file, at: lockedAt, counts: countFiles }]
     return repo.updateStatus(team, statusId, { state: 'locked', lockedBy: by, lockedAt, reports }, { action: 'locked', by }, { expectState: 'open' })
   }
@@ -171,14 +187,16 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     if (status.state !== 'locked') throw codeError('STATUS_NOT_LOCKED', 'Arkivet viser kun låste statusser')
     const cacheKey = `${team}:${statusId}:${status.lockedAt}`
     if (archives.has(cacheKey)) return archives.get(cacheKey)
+    const entries = await statusCounts(team, statusId)
+    const read = await Promise.all(entries.map(entry => Promise.all([reportData(user, entry.id), repo.getPiDocs(team, entry.id).catch(() => ({}))])))
     const counts = []
     const lines = []
-    for (const entry of await statusCounts(team, statusId)) {
-      const [data, docs] = await Promise.all([reportData(user, entry.id), repo.getPiDocs(team, entry.id).catch(() => ({}))])
+    entries.forEach((entry, index) => {
+      const [data, docs] = read[index]
       const own = archiveLines({ count: { id: entry.id, name: entry.name }, rows: data.aggregate.rows, approvals: data.approvals, docs: Object.values(docs) })
       counts.push({ id: entry.id, name: entry.name, totals: differenceTotals(own) })
       lines.push(...own)
-    }
+    })
     const result = { statusId, totals: differenceTotals(lines), counts, lines }
     archives.set(cacheKey, result)
     return result
@@ -975,8 +993,11 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const diff = sum('diff')
     if (diff !== 0 && acceptDiff !== true) throw codeError('SUBMIT_HAS_DIFF', `Der er en difference på ${diff > 0 ? '+' : ''}${diff} stk. på ${code}`)
     const value = { status: 'submitted', by: me(user), at: now(), sapQty: sum('sapQty'), counted: sum('counted'), diff, comment: clean(comment, 300) }
-    await repo.setApproval(state.team, state.id, code, value)
-    await repo.changeMaterialLocks(state.team, state.id, all => { delete all[code]; return { all, result: null } }).catch(() => {})
+    // Two different files, so the approval and the released lock are written at the same time.
+    await Promise.all([
+      repo.setApproval(state.team, state.id, code, value),
+      repo.changeMaterialLocks(state.team, state.id, all => { delete all[code]; return { all, result: null } }).catch(() => {}),
+    ])
     return value
   }
 
@@ -1010,8 +1031,13 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     await refresh(state, true)
     const approvals = await repo.getApprovals(state.team, state.id).catch(() => ({}))
     const aggregate = applyApprovals(state.aggregate, approvals)
-    await saveSummary(state, computeProgress({ snapshot: state.snapshot, aggregate, countLists: state.countLists, events: state.events || [], approvals, now: now() }), aggregate, true)
-    state.meta = await repo.updateMeta(state.team, state.id, { status: 'closed', closedAt: now(), closedBy: me(user) })
+    const progress = computeProgress({ snapshot: state.snapshot, aggregate, countLists: state.countLists, events: state.events || [], approvals, now: now() })
+    // The summary and the meta are different files: both writes run at the same time.
+    const [, meta] = await Promise.all([
+      saveSummary(state, progress, aggregate, true),
+      repo.updateMeta(state.team, state.id, { status: 'closed', closedAt: now(), closedBy: me(user) }),
+    ])
+    state.meta = meta
     return state.meta
   }
 
@@ -1039,8 +1065,12 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const state = await sapAction(user, id)
     const entry = pending.get(token)
     if (!entry || entry.countId !== state.id || entry.email !== lower(user.email)) throw codeError('PREVIEW_EXPIRED', 'Hent data fra SAP igen')
-    await repo.replaceSnapshot(state.team, state.id, entry.snapshot)
-    state.meta = await repo.updateMeta(state.team, state.id, { fetchedAt: entry.snapshot.fetchedAt, snapshotVersion: (state.meta.snapshotVersion || 1) + 1 })
+    // The snapshot (with its backup) and the meta are different files: all written at the same time.
+    const [, meta] = await Promise.all([
+      repo.replaceSnapshot(state.team, state.id, entry.snapshot),
+      repo.updateMeta(state.team, state.id, { fetchedAt: entry.snapshot.fetchedAt, snapshotVersion: (state.meta.snapshotVersion || 1) + 1 }),
+    ])
+    state.meta = meta
     pending.delete(token)
     state.snapshot = entry.snapshot
     state.index = indexSnapshot(entry.snapshot)
@@ -1072,8 +1102,11 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       : status === 'posted' ? { ...current, status: 'posted', postedBy: by, postedAt: now() }
       : status === 'approved' ? { status, comment: clean(comment, 300), by, at: now(), frozen: freezeRows(state.aggregate.rows, code, state.aggregate.serials.missing) }
       : { status, comment: clean(comment, 300), by, at: now() }
-    await repo.setApproval(state.team, state.id, code, value)
-    if (status === 'approved') await repo.changeMaterialLocks(state.team, state.id, all => { delete all[code]; return { all, result: null } }).catch(() => {})
+    // Approval and material locks are different files: an approved material's lock is released in the same round.
+    await Promise.all([
+      repo.setApproval(state.team, state.id, code, value),
+      status === 'approved' ? repo.changeMaterialLocks(state.team, state.id, all => { delete all[code]; return { all, result: null } }).catch(() => {}) : null,
+    ])
     return value
   }
 
@@ -1081,20 +1114,47 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const state = await refresh(await load(user, id), true)
     if (!isManager(user)) throw codeError('MANAGER_ONLY', 'Kun managers kan godkende')
     await assertStatusOpen(state.team, state.meta)
-    const approvals = await repo.getApprovals(state.team, state.id)
     const byMaterial = new Map()
     for (const row of state.aggregate.rows) {
       const entry = byMaterial.get(row.material) || { diff: false }
       if (row.diff !== 0) entry.diff = true
       byMaterial.set(row.material, entry)
     }
-    let approved = 0
-    for (const [material, entry] of byMaterial) {
-      if (entry.diff || ['approved', 'posted'].includes(approvals[material]?.status)) continue
-      await repo.setApproval(state.team, state.id, material, { status: 'approved', comment: 'Ingen difference', by: me(user), at: now(), frozen: freezeRows(state.aggregate.rows, material, state.aggregate.serials.missing) })
-      approved += 1
-    }
+    const by = me(user)
+    const at = now()
+    const candidates = [...byMaterial].filter(([, entry]) => !entry.diff).map(([material]) => material)
+    // One locked write of the approvals with every material (was one 20-s write per material). Already approved or
+    // posted materials are skipped under the lock, so an approval made meanwhile on another PC is kept.
+    const approved = await repo.changeApprovals(state.team, state.id, all => {
+      let count = 0
+      for (const material of candidates) {
+        if (['approved', 'posted'].includes(all[material]?.status)) continue
+        all[material] = { status: 'approved', comment: 'Ingen difference', by, at, frozen: freezeRows(state.aggregate.rows, material, state.aggregate.serials.missing) }
+        count += 1
+      }
+      return { all, result: count }
+    })
     return { approved }
+  }
+
+  /** "Bogført i SAP" for the materials of posted SAP documents, in one write. Only approved materials change. */
+  async function markPosted(user, id, materials = []) {
+    const state = await load(user, id)
+    if (!isManager(user)) throw codeError('MANAGER_ONLY', 'Kun managers kan godkende')
+    await assertStatusOpen(state.team, state.meta)
+    const codes = [...new Set(materials.map(normalizeMaterial))]
+    const by = me(user)
+    const at = now()
+    return repo.changeApprovals(state.team, state.id, all => {
+      const posted = []
+      const skipped = []
+      for (const code of codes) {
+        if (all[code]?.status !== 'approved') { skipped.push(code); continue }
+        all[code] = { ...all[code], status: 'posted', postedBy: by, postedAt: at }
+        posted.push(code)
+      }
+      return { all, result: { posted, skipped } }
+    })
   }
 
   // ---------- Storage rules (managers) and placements ----------
@@ -1163,7 +1223,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     if (missing.length) {
       const fetched = await fetcher.fetchLongSerials({ material: code, serials: missing })
       for (const row of fetched) longOf.set(row.serial, row.long)
-      if (fetched.length) await repo.saveLongSerials(state.team, fetched.map(row => ({ short: row.serial, long: row.long, material: code }))).catch(error => console.error('CountPoint: long serial cache not saved', error.code || error.message))
+      // A cache for next time: the serials are copied now, the 20-s write to M: runs in the background.
+      if (fetched.length) repo.saveLongSerials(state.team, fetched.map(row => ({ short: row.serial, long: row.long, material: code }))).catch(error => console.error('CountPoint: long serial cache not saved', error.code || error.message))
     }
     return { serials: short.map(serial => longOf.get(serial) || serial), long: true, total: short.length, withoutLong: short.filter(serial => !longOf.has(serial)), lookedUp: missing.length }
   }
@@ -1218,11 +1279,14 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     return codeError('COUNT_DELETED', 'Optællingen er slettet')
   }
 
+  /** Drops the count from this PC; resolves when its journals have stopped writing (see journal.stop). */
   function forget(team, id) {
+    const stopping = []
     for (const [key, state] of opened) {
-      if (state.team === team && state.id === id) { stopScanWarm(state); state.journal.stop(); opened.delete(key) }
+      if (state.team === team && state.id === id) { stopScanWarm(state); stopping.push(state.journal.stop()); opened.delete(key) }
     }
     for (const [key, value] of pending) if (value.countId === id) pending.delete(key)
+    return Promise.all(stopping)
   }
 
   async function throwIfDeleted(state) {
@@ -1242,11 +1306,26 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   }
 
   async function removeCount(team, id, by) {
-    forget(team, id)
-    await repo.deleteCount(team, id, by)
-    if (localCache) await localCache.remove(team, id).catch(() => {})
+    await removeCounts(team, [id], by)
+  }
+
+  /**
+   * One write with all tombstones (other PCs stop using the counts at once), then the files of every count are removed
+   * in parallel – together with `alongside` (e.g. removing the status), which needs the tombstones first.
+   */
+  async function removeCounts(team, ids, by, alongside = null) {
+    const stopped = Promise.all(ids.map(id => forget(team, id)))
+    await repo.markDeleted(team, ids, by)
+    // A journal upload or local save already on its way must finish first, or it would write a file again afterwards.
+    await stopped
+    const [, result] = await Promise.all([
+      Promise.all([repo.removeCountFiles(team, ids), ...ids.map(id => (localCache ? localCache.remove(team, id).catch(() => {}) : null))]),
+      alongside ? alongside() : null,
+    ])
+    // Local files last (fast): a journal stopped by forget() may still finish a local save meanwhile.
     const names = await fs.promises.readdir(journalsDir).catch(() => [])
-    for (const name of names.filter(item => item.startsWith(`${team}-${id}-`))) await fs.promises.rm(path.join(journalsDir, name), { force: true }).catch(() => {})
+    await Promise.all(names.filter(item => ids.some(id => item.startsWith(`${team}-${id}-`))).map(name => fs.promises.rm(path.join(journalsDir, name), { force: true }).catch(() => {})))
+    return result
   }
 
   /** Deletes a status and every count in it, locked or not. Saved Excel reports stay in the reports folder. */
@@ -1255,8 +1334,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const team = teamOf(user)
     await repo.getStatus(team, statusId)
     const counts = await statusCounts(team, statusId)
-    for (const entry of counts) await removeCount(team, entry.id, me(user))
-    await repo.deleteStatus(team, statusId)
+    await removeCounts(team, counts.map(entry => entry.id), me(user), () => repo.deleteStatus(team, statusId))
     return { ok: true, counts: counts.length }
   }
 
@@ -1286,7 +1364,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     lockMaterial: changes(lockMaterial), requestMaterial: changes(requestMaterial), answerMaterialRequest: changes(answerMaterialRequest), releaseMaterial: changes(releaseMaterial), submitMaterial: changes(submitMaterial),
     requestJoin: changes(requestJoin), decideMember: changes(decideMember), claimArea: changes(claimArea), releaseArea: changes(releaseArea),
     closeCount: changes(closeCount), reopenCount: changes(reopenCount), deleteCount: changes(deleteCount), previewRefetch, applyRefetch,
-    setApproval: changes(setApproval), approveAllWithoutDifference: changes(approveAllWithoutDifference),
+    setApproval: changes(setApproval), approveAllWithoutDifference: changes(approveAllWithoutDifference), markPosted: changes(markPosted),
     getRules, setRule, serialRules, setSerialRule, copySerials, countDoc, fetchDocStock, savePlacement: changes(savePlacement, 'team'), reportData, readCount, flush, closeAll,
   }
 }

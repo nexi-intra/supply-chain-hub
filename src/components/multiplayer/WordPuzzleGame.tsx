@@ -23,6 +23,7 @@ import {
   typeLetter, type Cursor, type Direction, type Draft, type DraftTile,
 } from '@/lib/multiplayerView'
 import { isAnyDialogOpen } from '@/lib/modalStack'
+import { createGameCommandQueue } from '@/lib/gameCommandQueue'
 import { reactionScope } from '@/lib/multiplayerReactions'
 import { BlankPicker } from './BlankPicker'
 import { HistoryCard, KeyboardHelp, MoveCard, PlayersCard, type PreviewState } from './GamePanels'
@@ -58,6 +59,8 @@ export const WordPuzzleGame = memo(function WordPuzzleGame({ gameId, languageHin
   const gameRef = useRef<MultiplayerGame | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const busyRef = useRef(false)
+  const [commands] = useState(createGameCommandQueue)
   const [sendingMove, setSendingMove] = useState(false)
   const inFlight = useRef(false)
   const dirty = useRef(false)
@@ -180,29 +183,35 @@ export const WordPuzzleGame = memo(function WordPuzzleGame({ gameId, languageHin
     // placementsKey stands in for placements so an equal move never restarts the debounce.
   }, [api, gameId, placementsKey, moveAllowed, errorText])
 
-  const run = useCallback(async (build: (revision: number) => MultiplayerCommand): Promise<boolean> => {
-    const current = gameRef.current
-    if (!api || !current || inFlight.current) return false
+  const run = useCallback(async (build: (revision: number) => MultiplayerCommand, { quiet = false }: { quiet?: boolean } = {}): Promise<boolean> => {
+    // A second move/pass while one is on its way is a double click; a chat message (quiet) never locks the board.
+    if (!api || !gameRef.current || (!quiet && busyRef.current)) return false
+    if (!quiet) { busyRef.current = true; setBusy(true) }
     inFlight.current = true
-    setBusy(true)
     try {
-      const result = await api.command(build(current.revision))
-      if (result.game) applyGame(result.game)
-      return true
-    } catch (error) {
-      toast.error(errorText(error))
-      const code = multiplayerErrorInfo(error).code
-      if (code === 'MULTIPLAYER_CONFLICT' || code === 'MULTIPLAYER_STATE' || code === 'MULTIPLAYER_NOT_YOUR_TURN') void load()
-      return false
+      return await commands.enqueue(async () => {
+        const current = gameRef.current
+        if (!current) return false
+        try {
+          const result = await api.command(build(current.revision))
+          if (result.game) applyGame(result.game)
+          return true
+        } catch (error) {
+          toast.error(errorText(error))
+          const code = multiplayerErrorInfo(error).code
+          if (code === 'MULTIPLAYER_CONFLICT' || code === 'MULTIPLAYER_STATE' || code === 'MULTIPLAYER_NOT_YOUR_TURN') void load()
+          return false
+        }
+      })
     } finally {
-      inFlight.current = false
-      setBusy(false)
-      if (dirty.current) {
+      inFlight.current = commands.active()
+      if (!quiet) { busyRef.current = false; setBusy(false) }
+      if (!inFlight.current && dirty.current) {
         dirty.current = false
         void load()
       }
     }
-  }, [api, applyGame, errorText, load])
+  }, [api, applyGame, errorText, load, commands])
 
   // Acknowledge this game's notifications while the match is on screen.
   const acknowledged = useRef(new Set<string>())
@@ -385,13 +394,13 @@ export const WordPuzzleGame = memo(function WordPuzzleGame({ gameId, languageHin
 
   const decideWords = (accept: boolean) => run(revision => ({ operationId: newOperationId(), type: 'approve-word', gameId, expectedRevision: revision, accept }))
 
-  const sendChat = useCallback((text: string) => run(() => ({ operationId: newOperationId(), type: 'chat', gameId, text })), [run, gameId])
+  const sendChat = useCallback((text: string) => run(() => ({ operationId: newOperationId(), type: 'chat', gameId, text }), { quiet: true }), [run, gameId])
 
   const rematch = async () => {
     const current = gameRef.current
-    if (!api || !current || inFlight.current) return
+    if (!api || !current || busyRef.current) return
     const opponent = opponentOf(current, myEmail)
-    inFlight.current = true
+    busyRef.current = true
     setBusy(true)
     try {
       await api.command({ operationId: newOperationId(), type: 'challenge', opponentEmail: opponent.email, language: current.language })
@@ -400,7 +409,7 @@ export const WordPuzzleGame = memo(function WordPuzzleGame({ gameId, languageHin
     } catch (error) {
       toast.error(errorText(error))
     } finally {
-      inFlight.current = false
+      busyRef.current = false
       setBusy(false)
     }
   }

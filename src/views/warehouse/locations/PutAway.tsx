@@ -11,7 +11,8 @@ import { cn } from '@/lib/utils'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { contextOf, type MapContext } from '@/lib/warehouse/layout/map'
 import { peekOf } from '@/lib/warehouse/layout/peek'
-import { deferredText, isDeferred, locationKeyOf, newActionId, reasonLabel, type LocationsTarget } from '@/lib/warehouse/locations'
+import { sendLocationAction, startLocationsRead, withPutAway } from '@/lib/warehouse/locationActions'
+import { locationKeyOf, newActionId, reasonLabel, type LocationsTarget } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
 import type { LocationList, MapContents, PalletInput, SlotSuggestion, WarehouseLayout, WarehouseUser } from '@/types/warehouse'
 import { PlacePeek } from './map/PlacePeek'
@@ -51,7 +52,6 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
   user: WarehouseUser; tags: string[]; drawing: LocationList['drawing']; version: number; onOpen: (target: LocationsTarget) => void; onDone: () => void
 }) {
   const [drafts, setDrafts] = useState<Draft[]>([blank()])
-  const [saving, setSaving] = useState(false)
   const [layout, setLayout] = useState<WarehouseLayout | null | undefined>(undefined)
   const [data, setData] = useState<{ list: LocationList; contents: MapContents } | null>(null)
   const [layoutFailed, setLayoutFailed] = useState(false)
@@ -93,8 +93,10 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
     const reads = dataRead.current
     const seq = ++reads.started
     const api = window.electronWarehouse!.locations
+    // A read during a put-away on its way to M: is older than the view, which already shows the pallets.
+    const fresh = startLocationsRead()
     Promise.all([api.list(), api.mapContents()])
-      .then(([list, contents]) => { if (alive.current && seq > reads.landed) { reads.landed = seq; setData({ list, contents }); setDataFailed(false) } })
+      .then(([list, contents]) => { if (alive.current && seq > reads.landed) { reads.landed = seq; setData(value => (value && !fresh() ? value : { list, contents })); setDataFailed(false) } })
       .catch(() => { if (alive.current && seq > reads.landed) setDataFailed(true) })
   }, [published, version])
 
@@ -133,7 +135,7 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
     }
   }
 
-  async function save() {
+  function save() {
     const ready = drafts.filter(item => item.material || item.location)
     const missing = ready.find(item => !item.material || !item.location)
     if (!ready.length || missing) { toast.error(t('Hver palle skal have materiale og plads.', 'Every pallet needs a material and a place.')); return }
@@ -141,23 +143,22 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
       location: item.location, material: item.material, quantity: item.quantity.trim() === '' ? null : Number(item.quantity), document: item.document || null,
       serials: item.serials, sloc: item.sloc, receivedAt: dateMs(item.date), tags: item.tags, note: item.note,
     }))
-    setSaving(true)
-    try {
-      const result = await bridge.putAway({ actionId: newActionId(), label: t('Sæt på plads: ', 'Put away: ') + pallets.map(item => `${item.material} → ${item.location}`).join(', '), pallets })
-      if (isDeferred(result)) toast.warning(deferredText(result))
-      else {
-        const count = result.created.length + result.filled.length
-        toast.success(count === 1 && result.created.length === 1 ? t(`Pallen står nu på ${result.created[0].location}`, `The pallet is now on ${result.created[0].location}`)
-          : count === 1 ? t(`${result.filled[0]} er fyldt op`, `${result.filled[0]} has been refilled`)
-          : t(`${count} paller er sat på plads`, `${count} pallets put away`))
-      }
-      setDrafts([blank()])
-      onDone()
-    } catch (error) {
-      toast.error(errorMessage(error))
-    } finally {
-      setSaving(false)
-    }
+    // The form is cleared and the result shown at once; M: gets the pallets in the background (15-40 s). A refusal (the
+    // place is full or unknown) brings the pallets back into the form, in front of anything typed since.
+    const kept = ready
+    const placeOf = (name: string) => data?.list.locations.find(location => location.id === locationKeyOf(name))
+    const pick = pallets.length === 1 && placeOf(pallets[0].location)?.purpose === 'pick'
+    const where = locationKeyOf(pallets[0].location)
+    setDrafts([blank()])
+    // The places view counts the new pallets at once, so the next pallet sees the place as taken.
+    setData(value => value && withPutAway(value, pallets))
+    void sendLocationAction(() => bridge.putAway({ actionId: newActionId(), label: t('Sæt på plads: ', 'Put away: ') + pallets.map(item => `${item.material} → ${item.location}`).join(', '), pallets }), {
+      success: pallets.length > 1 ? t(`${pallets.length} paller er sat på plads`, `${pallets.length} pallets put away`)
+        : pick ? t(`${where} er fyldt op`, `${where} has been refilled`)
+        : t(`Pallen står nu på ${where}`, `The pallet is now on ${where}`),
+      rollback: () => setDrafts(list => [...kept, ...list.filter(item => item.material || item.location || item.document)]),
+      settled: onDone,
+    })
   }
 
   return (
@@ -173,7 +174,7 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
       ))}
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" onClick={() => setDrafts(list => [...list, { ...blank(), sloc: list[list.length - 1]?.sloc || 'D000', date: list[list.length - 1]?.date || today() }])}><Plus size={16} /> {t('Tilføj næste palle', 'Add next pallet')}</Button>
-        <Button className="ml-auto" onClick={() => save()} loading={saving}><FloppyDisk size={16} /> {drafts.length > 1 ? t('Gem alle', 'Save all') : t('Gem', 'Save')}</Button>
+        <Button className="ml-auto" onClick={() => save()}><FloppyDisk size={16} /> {drafts.length > 1 ? t('Gem alle', 'Save all') : t('Gem', 'Save')}</Button>
       </div>
     </div>
   )

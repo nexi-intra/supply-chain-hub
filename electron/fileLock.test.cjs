@@ -147,13 +147,14 @@ test('the heartbeat stops when the lock is released', async t => {
 test('a lock whose owner keeps it fresh is never stolen, however long we watch it', t => {
   const target = fixture(t)
   fs.writeFileSync(target, 'slow-live-owner')
-  assert.throws(() => withFileLock(target, () => {}, { attempts: 1, staleMs: 40 }), { code: 'KV_LOCK_BUSY' })
-  const waitUntil = Date.now() + 60
+  const touch = () => { const now = new Date(); fs.utimesSync(target, now, now) }
+  touch()
+  assert.throws(() => withFileLock(target, () => {}, { attempts: 1, staleMs: 400 }), { code: 'KV_LOCK_BUSY' })
+  const waitUntil = Date.now() + 450
   while (Date.now() < waitUntil) { /* watched for longer than staleMs */ }
-  const now = new Date()
-  fs.utimesSync(target, now, now)
+  touch()
   let called = false
-  assert.throws(() => withFileLock(target, () => { called = true }, { attempts: 1, staleMs: 40 }), { code: 'KV_LOCK_BUSY' })
+  assert.throws(() => withFileLock(target, () => { called = true }, { attempts: 1, staleMs: 400 }), { code: 'KV_LOCK_BUSY' })
   assert.equal(called, false)
   assert.equal(fs.readFileSync(target, 'utf8'), 'slow-live-owner')
 })

@@ -39,10 +39,10 @@ import { getHomeOfficeUsersForDate } from '@/lib/homeOffice'
 import { getImprovementsLabels } from '@/lib/improvementsLabels'
 import { getLinksLabels } from '@/lib/linksLabels'
 import { getWarehouseLabels, isWarehouseTeam } from '@/lib/warehouseLabels'
-import { appendToKvArray, removeFromKvArray, upsertInKvArray } from '@/lib/kvArrays'
+import { appendToKvArray, removeFromKvArray, setKvObjectField, upsertInKvArray } from '@/lib/kvArrays'
 import { expandShiftPatterns } from '@/lib/shiftPatterns'
 import { buildHubTasks, filterHubTasks } from '@/lib/hubTasks'
-import { resolveShiftDayComment, setShiftDayNote, type ShiftDayNotes } from '@/lib/shiftDayComments'
+import { resolveShiftDayComment, shiftDayNoteKey, type ShiftDayNotes } from '@/lib/shiftDayComments'
 import { absentPeopleOn, type AbsenceKind } from '@/lib/absence'
 import { parseLocalDate, toIsoDateString } from '@/lib/dateUtils'
 import { useMyHubs } from '@/hooks/useMyHubs'
@@ -110,6 +110,11 @@ function computeSickToday(
 }
 
 
+// The overview's useKV sources start as these until their first read is back (a remembered value from earlier in the
+// session is a different object), so the widgets keep showing the remembered day instead of an empty one.
+const NOT_LOADED_LIST: never[] = []
+const NOT_LOADED_RECORD: Record<string, never> = {}
+
 export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
   const { t, language } = useLanguage()
   const { hubs } = useMyHubs()
@@ -127,8 +132,8 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
   // useKV abonnerer automatisk på ændringer — ingen manuel subscribe-boilerplate nødvendig.
   // Hentes her til badges og GuideReviewAlert; selve klokken læser sine egne kilder via HubNotificationsProvider (App.tsx).
   const [emails] = useKV<Email[]>('emails', [])
-  const [vacationsForBadge] = useKV<VacationEntry[]>('vacation-entries', [])
-  const [sickLeaveForBadge] = useKV<SickLeaveEntry[]>('sick-leave-entries', [])
+  const [vacationsForBadge] = useKV<VacationEntry[]>('vacation-entries', NOT_LOADED_LIST)
+  const [sickLeaveForBadge] = useKV<SickLeaveEntry[]>('sick-leave-entries', NOT_LOADED_LIST)
   const [guidesForAlerts] = useKV<Guide[]>('guides', [])
   const [guideReviewRequests] = useKV<GuideReviewRequest[]>('guide-review-requests', [], { initializeIfMissing: false })
   const [knowledgeReviewRequests] = useKV<GuideReviewRequest[]>(LIBRARY_KEYS.knowledge.reviewRequests, [], { initializeIfMissing: false })
@@ -138,11 +143,17 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
   const [seenVacationRequestIds] = useKV<string[]>(`seen-vacation-requests-${userEmail}`, [])
   const [dashboardPreferences, setDashboardPreferences] = useKV<DashboardPreferences>(`hub-dashboard-${userEmail}`, DEFAULT_DASHBOARD_PREFERENCES)
   // Til "Team status"-widgeten: faste brugere + manager-farveoverstyringer.
-  const [usersForStatus] = useKV<Record<string, { fullName: string }>>('users', {})
+  const [usersForStatus] = useKV<Record<string, { fullName: string }>>('users', NOT_LOADED_RECORD)
   const [colorOverrides] = useKV<EmployeeColorOverrides>(EMPLOYEE_COLOR_OVERRIDES_KEY, {})
   // Én faelles dagsnote pr. medarbejder (dato|email), uanset antal opgaver.
   // Ældre kommentarer paa tildelinger læses stadig som fallback.
-  const [teamStatusNotes, setTeamStatusNotes] = useKV<ShiftDayNotes>('team-status-notes', {})
+  const [teamStatusNotes] = useKV<ShiftDayNotes>('team-status-notes', NOT_LOADED_RECORD)
+  // The rest of today's overview. Read through useKV like the keys above, so a change made anywhere in the app (the
+  // schedule, a sick-leave registration, a vacation decision) shows here at once, also while it is being saved.
+  const [shiftAssignments] = useKV<ShiftAssignment[]>('shift-assignments', NOT_LOADED_LIST)
+  const [shiftRoles] = useKV<ShiftRole[]>('shift-roles', NOT_LOADED_LIST)
+  const [shiftPatterns] = useKV<ShiftPatternRule[]>('shift-patterns', NOT_LOADED_LIST)
+  const [weekMenus] = useKV<WeekMenu[]>('meal-plan-weeks', NOT_LOADED_LIST, { initializeIfMissing: false })
 
   const dashboardWidget = (id: DashboardWidgetId) => dashboardPreferences?.[id] || DEFAULT_DASHBOARD_PREFERENCES[id]
   const onlyAssignedTeamTasks = dashboardPreferences?.teamTasks?.onlyAssigned === true
@@ -358,113 +369,99 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
     loadName()
   }, [userEmail])
 
+  // "I dag" rolls over at midnight; checked every 5 minutes while the window is visible.
+  const [overviewDay, setOverviewDay] = useState(() => format(new Date(), 'yyyy-MM-dd'))
   useEffect(() => {
-    let overviewLoadSequence = 0
-    let disposed = false
-    const loadOverviewData = async () => {
-      const sequence = ++overviewLoadSequence
-      const today = format(new Date(), 'yyyy-MM-dd')
-      const currentDate = new Date()
-      
-      const [assignments = [], roles = [], sickLeave = [], vacations = [], usersData = {}, weekMenus = [], shiftPatterns = [], dayNotes = {}] = await Promise.all([
-        window.kv.get<ShiftAssignment[]>('shift-assignments'),
-        window.kv.get<ShiftRole[]>('shift-roles'),
-        window.kv.get<SickLeaveEntry[]>('sick-leave-entries'),
-        window.kv.get<VacationEntry[]>('vacation-entries'),
-        window.kv.get<Record<string, { fullName: string }>>('users'),
-        window.kv.get<WeekMenu[]>('meal-plan-weeks'),
-        window.kv.get<ShiftPatternRule[]>('shift-patterns'),
-        window.kv.get<ShiftDayNotes>('team-status-notes'),
-      ])
-      if (disposed || sequence !== overviewLoadSequence) return
-      
-      const isSickToday = (userEmail: string) => {
-        return sickLeave.some(s => 
-          s.userEmail === userEmail && 
-          s.status === 'approved' && 
-          isSameDay(parseISO(s.startDate), currentDate)
-        )
-      }
-      
-      const isOnVacationToday = (userEmail: string) => {
-        return vacations.some(v => {
-          if (v.userEmail !== userEmail || v.status !== 'approved') return false
-          const start = parseISO(v.startDate)
-          const end = parseISO(v.endDate)
-          return (isSameDay(start, currentDate) || isSameDay(end, currentDate) || (start < currentDate && end > currentDate))
-        })
-      }
-      
-      // Gentagne vagter gemmes ikke som raekker - de skal udfoldes her, ellers
-      // mangler personen bag et moenster i widgeten (opgaven vises, personen ikke).
-      const todaysAssignments = [
-        ...assignments.filter(a => a.date === today),
-        ...expandShiftPatterns(shiftPatterns, assignments, today, email => isSickToday(email) || isOnVacationToday(email)),
-      ]
-      
-      const assignedPeople = todaysAssignments.flatMap(assignment => {
-        const userEmail = usersData[assignment.employeeId] ? assignment.employeeId : Object.keys(usersData).find(email => usersData[email]?.fullName === assignment.employeeName)
-        if (!userEmail || isSickToday(userEmail) || isOnVacationToday(userEmail)) return []
-        return [{ roleId: assignment.roleId, name: assignment.employeeName, email: userEmail, comment: resolveShiftDayComment(dayNotes, today, userEmail, todaysAssignments) }]
+    const interval = setInterval(() => { if (document.visibilityState === 'visible') setOverviewDay(format(new Date(), 'yyyy-MM-dd')) }, 5 * 60 * 1000)
+    return () => clearInterval(interval)
+  }, [])
+
+  const overviewLoaded = [shiftAssignments, shiftRoles, shiftPatterns, sickLeaveForBadge, vacationsForBadge].every(source => source !== NOT_LOADED_LIST)
+    && usersForStatus !== NOT_LOADED_RECORD && teamStatusNotes !== NOT_LOADED_RECORD
+  useEffect(() => {
+    if (!overviewLoaded) return
+    const today = overviewDay
+    const currentDate = new Date()
+    const assignments = shiftAssignments || []
+    const roles = shiftRoles || []
+    const sickLeave = sickLeaveForBadge || []
+    const vacations = vacationsForBadge || []
+    const usersData = usersForStatus || {}
+    const dayNotes = teamStatusNotes || {}
+
+    const isSickToday = (userEmail: string) => {
+      return sickLeave.some(s => 
+        s.userEmail === userEmail && 
+        s.status === 'approved' && 
+        isSameDay(parseISO(s.startDate), currentDate)
+      )
+    }
+    
+    const isOnVacationToday = (userEmail: string) => {
+      return vacations.some(v => {
+        if (v.userEmail !== userEmail || v.status !== 'approved') return false
+        const start = parseISO(v.startDate)
+        const end = parseISO(v.endDate)
+        return (isSameDay(start, currentDate) || isSameDay(end, currentDate) || (start < currentDate && end > currentDate))
       })
-      setTeamTasks(buildHubTasks(roles, assignedPeople))
+    }
+    
+    // Gentagne vagter gemmes ikke som raekker - de skal udfoldes her, ellers
+    // mangler personen bag et moenster i widgeten (opgaven vises, personen ikke).
+    const todaysAssignments = [
+      ...assignments.filter(a => a.date === today),
+      ...expandShiftPatterns(shiftPatterns || [], assignments, today, email => isSickToday(email) || isOnVacationToday(email)),
+    ]
+    
+    const assignedPeople = todaysAssignments.flatMap(assignment => {
+      const userEmail = usersData[assignment.employeeId] ? assignment.employeeId : Object.keys(usersData).find(email => usersData[email]?.fullName === assignment.employeeName)
+      if (!userEmail || isSickToday(userEmail) || isOnVacationToday(userEmail)) return []
+      return [{ roleId: assignment.roleId, name: assignment.employeeName, email: userEmail, comment: resolveShiftDayComment(dayNotes, today, userEmail, todaysAssignments) }]
+    })
+    setTeamTasks(buildHubTasks(roles, assignedPeople))
+    
+    const users = Object.entries(usersData).map(([email, data]) => ({
+      email,
+      name: data.fullName
+    }))
+    setAllEmployees(users)
+    
+    const todaySick = sickLeave
+      .filter(s => s.status === 'approved' && isSameDay(parseISO(s.startDate), currentDate))
+      .map(s => s.userName)
+    setPeopleSick(todaySick)
+    
+    const todayOff = absentPeopleOn(vacations, usersData, today).map(({ name, kind, backDate }) => ({ name, kind, backDate }))
+    
+    setPeopleOff(todayOff)
+    
+    const getWeekNumber = (date: Date): number => {
+      const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
+      const dayNum = d.getUTCDay() || 7
+      d.setUTCDate(d.getUTCDate() + 4 - dayNum)
+      const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
+      return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7)
+    }
+    
+    const currentWeek = getWeekNumber(currentDate)
+    const currentYear = currentDate.getFullYear()
+    const currentWeekMenu = (weekMenus || []).find(w => w.weekNumber === currentWeek && w.year === currentYear)
+    
+    if (currentWeekMenu) {
+      const dayOfWeek = currentDate.getDay()
+      const dayKeys: Array<keyof typeof currentWeekMenu.meals> = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
       
-      const users = Object.entries(usersData).map(([email, data]) => ({
-        email,
-        name: data.fullName
-      }))
-      setAllEmployees(users)
-      
-      const todaySick = sickLeave
-        .filter(s => s.status === 'approved' && isSameDay(parseISO(s.startDate), new Date()))
-        .map(s => s.userName)
-      setPeopleSick(todaySick)
-      
-      const todayOff = absentPeopleOn(vacations, usersData, today).map(({ name, kind, backDate }) => ({ name, kind, backDate }))
-      
-      setPeopleOff(todayOff)
-      
-      const getWeekNumber = (date: Date): number => {
-        const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
-        const dayNum = d.getUTCDay() || 7
-        d.setUTCDate(d.getUTCDate() + 4 - dayNum)
-        const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
-        return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7)
-      }
-      
-      const currentWeek = getWeekNumber(currentDate)
-      const currentYear = currentDate.getFullYear()
-      const currentWeekMenu = weekMenus.find(w => w.weekNumber === currentWeek && w.year === currentYear)
-      
-      if (currentWeekMenu) {
-        const dayOfWeek = currentDate.getDay()
-        const dayKeys: Array<keyof typeof currentWeekMenu.meals> = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
-        
-        if (dayOfWeek >= 1 && dayOfWeek <= 5) {
-          const dayKey = dayKeys[dayOfWeek - 1]
-          setTodaysMeal(currentWeekMenu.meals[dayKey] || '')
-        } else {
-          setTodaysMeal('')
-        }
+      if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+        const dayKey = dayKeys[dayOfWeek - 1]
+        setTodaysMeal(currentWeekMenu.meals[dayKey] || '')
       } else {
         setTodaysMeal('')
       }
+    } else if (weekMenus !== NOT_LOADED_LIST) {
+      setTodaysMeal('')
     }
-    
-    loadOverviewData()
-
-    const overviewKeys = ['shift-assignments', 'shift-roles', 'shift-patterns', 'team-status-notes', 'sick-leave-entries', 'vacation-entries', 'users', 'meal-plan-weeks']
-    const unsubscribe = window.kv.subscribe((changedKeys) => {
-      if (changedKeys.some((key) => overviewKeys.includes(key))) loadOverviewData()
-    })
-    // Langsomt fallback-interval så "i dag" ruller korrekt over ved midnat; springes over mens vinduet er skjult.
-    const interval = setInterval(() => { if (document.visibilityState === 'visible') loadOverviewData() }, 5 * 60 * 1000)
-    return () => {
-      disposed = true
-      unsubscribe()
-      clearInterval(interval)
-    }
-  }, [userEmail])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overviewLoaded, overviewDay, shiftAssignments, shiftRoles, shiftPatterns, sickLeaveForBadge, vacationsForBadge, usersForStatus, teamStatusNotes, weekMenus])
 
   const handleModuleClick = (moduleId: string) => {
     if (moduleId === 'manager' && !isAdminOrManager) {
@@ -473,39 +470,43 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
     onNavigate(moduleId)
   }
 
-  const handleQuickAssign = async (taskOverride?: { roleId: string; roleName: string }, employeeEmailOverride?: string) => {
-    if (assigning) return
+  /** Resolves once the assignment is shown (true) or refused (false); the write itself continues in the background. */
+  const handleQuickAssign = async (taskOverride?: { roleId: string; roleName: string }, employeeEmailOverride?: string): Promise<boolean> => {
+    if (assigning) return false
     const task = taskOverride || selectedTaskForAssign
     const employeeEmailSel = employeeEmailOverride || selectedEmployeeForAssign
     if (!task || !employeeEmailSel) {
       toast.error(language === 'da' ? 'Vælg en medarbejder' : language === 'fi' ? 'Valitse työntekijä' : language === 'sv' ? 'Välj en medarbetare' : 'Select an employee')
-      return
+      return false
     }
 
     const today = format(new Date(), 'yyyy-MM-dd')
-    let assignments: ShiftAssignment[]
-    let sickLeave: SickLeaveEntry[]
-    let vacations: VacationEntry[]
-    setAssigning(true)
-    try {
-      // Read in parallel: on the shared drive each read costs a round trip.
-      ;[assignments, sickLeave, vacations] = await Promise.all([
-        window.kv.get<ShiftAssignment[]>('shift-assignments').then(value => value || []),
-        window.kv.get<SickLeaveEntry[]>('sick-leave-entries').then(value => value || []),
-        window.kv.get<VacationEntry[]>('vacation-entries').then(value => value || []),
-      ])
-    } catch (error) {
-      console.error('Kunne ikke tildele opgaven:', error)
-      toast.error(language === 'da' ? 'Tildelingen blev ikke gemt — prøv igen' : language === 'fi' ? 'Osoitusta ei tallennettu — yritä uudelleen' : language === 'sv' ? 'Tilldelningen sparades inte — försök igen' : 'The assignment was not saved — please try again')
-      return
-    } finally {
-      setAssigning(false)
+    // The live copies (with changes still being saved) answer at once; only before they are loaded is the drive read.
+    let assignments: ShiftAssignment[] = shiftAssignments
+    let sickLeave: SickLeaveEntry[] = sickLeaveForBadge
+    let vacations: VacationEntry[] = vacationsForBadge
+    if (!overviewLoaded) {
+      setAssigning(true)
+      try {
+        // Read in parallel: on the shared drive each read costs a round trip.
+        ;[assignments, sickLeave, vacations] = await Promise.all([
+          window.kv.get<ShiftAssignment[]>('shift-assignments').then(value => value || []),
+          window.kv.get<SickLeaveEntry[]>('sick-leave-entries').then(value => value || []),
+          window.kv.get<VacationEntry[]>('vacation-entries').then(value => value || []),
+        ])
+      } catch (error) {
+        console.error('Kunne ikke tildele opgaven:', error)
+        toast.error(language === 'da' ? 'Tildelingen blev ikke gemt — prøv igen' : language === 'fi' ? 'Osoitusta ei tallennettu — yritä uudelleen' : language === 'sv' ? 'Tilldelningen sparades inte — försök igen' : 'The assignment was not saved — please try again')
+        return false
+      } finally {
+        setAssigning(false)
+      }
     }
     
     const selectedEmployee = allEmployees.find(e => e.email === employeeEmailSel)
     if (!selectedEmployee) {
       toast.error(language === 'da' ? 'Medarbejder ikke fundet' : language === 'fi' ? 'Työntekijää ei löytynyt' : language === 'sv' ? 'Medarbetaren hittades inte' : 'Employee not found')
-      return
+      return false
     }
 
     const employeeName = selectedEmployee.name
@@ -527,12 +528,12 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
 
     if (isSickToday) {
       toast.error(language === 'da' ? `${employeeName} er syg i dag` : language === 'fi' ? `${employeeName} on sairas tänään` : language === 'sv' ? `${employeeName} är sjuk idag` : `${employeeName} is sick today`)
-      return
+            return false
     }
 
     if (isOnVacationToday) {
       toast.error(language === 'da' ? `${employeeName} har fri i dag` : language === 'fi' ? `${employeeName} on vapaa tänään` : language === 'sv' ? `${employeeName} är ledig idag` : `${employeeName} is off today`)
-      return
+            return false
     }
 
     const alreadyAssigned = assignments.some(
@@ -541,7 +542,7 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
 
     if (alreadyAssigned) {
       toast.error(language === 'da' ? `${employeeName} har allerede denne opgave` : language === 'fi' ? `${employeeName}:llä on jo tämä tehtävä` : language === 'sv' ? `${employeeName} har redan den här uppgiften` : `${employeeName} already has this task`)
-      return
+            return false
     }
 
     const newAssignment: ShiftAssignment = {
@@ -564,18 +565,17 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
     setSelectedTaskForAssign(null)
     setSelectedEmployeeForAssign('')
 
-    try {
-      await appendToKvArray<ShiftAssignment>('shift-assignments', [newAssignment])
-    } catch (error) {
+    void appendToKvArray<ShiftAssignment>('shift-assignments', [newAssignment]).catch(error => {
       console.error('Kunne ikke tildele opgaven:', error)
       setTeamTasks(prev => prev.map(entry => entry.roleId === task.roleId
         ? { ...entry, people: entry.people.filter(person => person.name !== employeeName) }
         : entry))
       toast.error(language === 'da' ? 'Tildelingen blev ikke gemt — prøv igen' : language === 'fi' ? 'Osoitusta ei tallennettu — yritä uudelleen' : language === 'sv' ? 'Tilldelningen sparades inte — försök igen' : 'The assignment was not saved — please try again')
-    }
+    })
+    return true
   }
 
-  const handleAddOrUpdateComment = async () => {
+  const handleAddOrUpdateComment = () => {
     if (!selectedUserForComment) return
 
     const today = format(new Date(), 'yyyy-MM-dd')
@@ -588,28 +588,32 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
       return
     }
     const commentText = newComment.trim() || undefined
+    const previousComment = person.currentComment
     // Vis kommentaren straks og luk dialogen; resten sker i baggrunden.
-    setTeamTasks(prev => prev.map(entry => ({
+    const showComment = (comment: string | undefined) => setTeamTasks(prev => prev.map(entry => ({
       ...entry,
-      people: entry.people.map(p => (p.email === email || (!p.email && p.name === person.name)) ? { ...p, comment: commentText } : p),
+      people: entry.people.map(p => (p.email === email || (!p.email && p.name === person.name)) ? { ...p, comment } : p),
     })))
-    const saveDayNote = setTeamStatusNotes(current => setShiftDayNote(current, today, email, commentText || ''))
+    showComment(commentText)
+    const saveDayNote = setKvObjectField('team-status-notes', shiftDayNoteKey(today, email), commentText || '')
     toast.success(language === 'da' ? 'Kommentar opdateret' : language === 'fi' ? 'Kommentti päivitetty' : language === 'sv' ? 'Kommentaren uppdaterad' : 'Comment updated')
     setShowCommentDialog(false)
     setSelectedUserForComment(null)
     setNewComment('')
 
-    try {
-      await saveDayNote
-      const assignments = (await window.kv.get<ShiftAssignment[]>('shift-assignments')) || []
+    // The day note and the older comment on today's assignments are different keys: saved at the same time.
+    const saveAssignmentComments = (async () => {
+      const assignments = overviewLoaded ? shiftAssignments : ((await window.kv.get<ShiftAssignment[]>('shift-assignments')) || [])
       const matching = assignments.filter(a => a.date === today && a.employeeId === email)
       if (matching.length > 0) {
         await upsertInKvArray<ShiftAssignment>('shift-assignments', matching.map(a => ({ ...a, comment: commentText })))
       }
-    } catch (error) {
+    })()
+    void Promise.all([saveDayNote, saveAssignmentComments]).catch(error => {
       console.error('Kunne ikke gemme kommentaren:', error)
+      showComment(previousComment)
       toast.error(language === 'da' ? 'Kommentaren blev ikke gemt — prøv igen' : language === 'fi' ? 'Kommenttia ei tallennettu — yritä uudelleen' : language === 'sv' ? 'Kommentaren sparades inte — försök igen' : 'The comment was not saved — please try again')
-    }
+    })
   }
 
   // Tildeler den valgte rolle til den valgte bruger fra Team status-widgeten.
@@ -617,6 +621,7 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
     if (!widgetAssignUser || !widgetAssignRoleId) return
     const role = (teamTasks || []).find((tk) => tk.roleId === widgetAssignRoleId)
     if (!role) return
+    // Waits only for the quick check (sick/off/already assigned); the assignment is saved in the background.
     await handleQuickAssign({ roleId: role.roleId, roleName: role.taskName }, widgetAssignUser.email)
     setShowWidgetAssignDialog(false)
     setWidgetAssignUser(null)
@@ -634,7 +639,7 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
     toast.success(language === 'da' ? `${employeeName} fjernet fra opgaven` : language === 'fi' ? `${employeeName} poistettu tehtävästä` : language === 'sv' ? `${employeeName} borttagen från uppgiften` : `${employeeName} removed from task`)
 
     try {
-      const assignments = (await window.kv.get<ShiftAssignment[]>('shift-assignments')) || []
+      const assignments = overviewLoaded ? shiftAssignments : ((await window.kv.get<ShiftAssignment[]>('shift-assignments')) || [])
       const matchingIds = assignments.filter(
         a => a.date === today && a.employeeName === employeeName && a.roleId === roleId
       ).map(a => a.id)
@@ -1624,7 +1629,7 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
             })}
           </div>
           <DialogFooter className="sm:justify-between gap-2">
-            <Button variant="outline" onClick={() => setDashboardPreferences(DEFAULT_DASHBOARD_PREFERENCES)}>{t.hub.dashboard.reset}</Button>
+            <Button variant="outline" onClick={() => { void setDashboardPreferences(DEFAULT_DASHBOARD_PREFERENCES) }}>{t.hub.dashboard.reset}</Button>
             <Button onClick={() => setShowDashboardEditor(false)}>{t.hub.dashboard.done}</Button>
           </DialogFooter>
         </DialogContent>

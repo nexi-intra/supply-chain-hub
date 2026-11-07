@@ -171,8 +171,8 @@ export function Auth({ onAuthenticated }: AuthProps) {
           type: 'user-signup',
           read: false,
         }))
-        await appendToKvArray('emails', newEmails)
-        await appendToKvArray('email-notifications', newNotifications)
+        // Different keys: saved at the same time.
+        await Promise.all([appendToKvArray('emails', newEmails), appendToKvArray('email-notifications', newNotifications)])
       } catch (error) {
         console.error('Kunne ikke sende signup-notifikation til managere:', error)
       }

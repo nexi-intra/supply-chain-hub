@@ -156,9 +156,9 @@ function WarehouseContent({ user, view, onNavigate }: { user: WarehouseUser; vie
       {view.kind === 'status' && <StatusView key={view.id} id={view.id} onBack={() => onNavigate(view.from === 'archive' ? { kind: 'archive' } : { kind: 'list' })} onOpenCount={id => onNavigate({ kind: 'count', id })} />}
       {view.kind === 'archive' && <Archive user={user} onOpenStatus={id => onNavigate({ kind: 'status', id, from: 'archive' })} />}
       {view.kind === 'new' && <NewCount user={user} onCancel={toList} onCreated={id => onNavigate({ kind: 'count', id })} />}
-      {view.kind === 'count' && <CountView key={view.id} id={view.id} onBack={toList} />}
-      {view.kind === 'rules' && <Rules onBack={toList} />}
-      {view.kind === 'serial-rules' && <SerialRules onBack={toList} />}
+      {view.kind === 'count' && <CountView key={view.id} id={view.id} user={user} onBack={toList} />}
+      {view.kind === 'rules' && <Rules user={user} onBack={toList} />}
+      {view.kind === 'serial-rules' && <SerialRules user={user} onBack={toList} />}
       {view.kind === 'sap-check' && <SapCheck user={user} onBack={toList} />}
     </div>
   )
