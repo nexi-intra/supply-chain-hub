@@ -6,11 +6,13 @@
 // det samme (beginKvPrediction) og læser den gemte værdi igen, når den er færdig.
 import { beginKvPrediction } from '../hooks/useKV'
 import type { KvOperation } from './kvPrediction'
+import { trackPendingWrite } from './pendingWrites'
 
 async function predicted<R>(key: string, operation: KvOperation, write: () => Promise<R>): Promise<R> {
   const end = beginKvPrediction(key, operation)
   try {
-    return await write()
+    // Shows "Gemmer …" while the write is on its way, also when the screen doesn't wait for it.
+    return await trackPendingWrite(write())
   } finally {
     end()
   }

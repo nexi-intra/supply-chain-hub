@@ -70,6 +70,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
   const [pendingUsers, setPendingUsers] = useState<User[]>([])
   const [vacationEntries, setVacationEntries] = useState<VacationEntry[]>([])
   const [allVacations, setAllVacations] = useState<VacationEntry[]>([])
+  const deletingVacationIds = useRef(new Set<string>())
   const [isLoading, setIsLoading] = useState(true)
   const [hasAccess, setHasAccess] = useState(false)
   const [editingUser, setEditingUser] = useState<User | null>(null)
@@ -257,7 +258,9 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
   }
 
   const loadVacationEntries = async () => {
-    const entries = await window.kv.get<VacationEntry[]>('vacation-entries') || []
+    const stored = await window.kv.get<VacationEntry[]>('vacation-entries') || []
+    // A delete still on its way to the shared drive must not reappear.
+    const entries = stored.filter(entry => !deletingVacationIds.current.has(entry.id))
     setVacationEntries(entries.filter(e => e.status === 'pending').sort((a, b) => {
       const dateA = new Date(a.startDate)
       const dateB = new Date(b.startDate)
@@ -270,6 +273,12 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
       if (isNaN(dateA.getTime()) || isNaN(dateB.getTime())) return 0
       return dateA.getTime() - dateB.getTime()
     }))
+  }
+
+  // A write to M: can take over a minute, so a change is shown in BOTH lists (pending requests and the overview) at once.
+  const patchVacationLists = (patch: (entries: VacationEntry[]) => VacationEntry[]) => {
+    setVacationEntries(current => patch(current).filter(entry => entry.status === 'pending'))
+    setAllVacations(current => patch(current).filter(entry => entry.status !== 'rejected'))
   }
 
   const loadBirthdays = async () => {
@@ -598,7 +607,8 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
    */
   const decideVacation = async (vacation: VacationEntry, status: 'approved' | 'rejected') => {
     const previous = vacationEntries
-    setVacationEntries(current => current.filter(entry => entry.id !== vacation.id))
+    const previousAll = allVacations
+    patchVacationLists(current => current.map(entry => entry.id === vacation.id ? { ...entry, status } : entry))
     if (status === 'approved') toast.success(t.managerPanel.vacationRequests.approvedToast)
     else toast.error(t.managerPanel.vacationRequests.rejectedToast)
 
@@ -608,6 +618,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
 
     if (!updated) {
       setVacationEntries(previous)
+      setAllVacations(previousAll)
       toast.error(t.managerPanel.vacationRequests.notFoundError)
       void loadVacationEntries()
       return
@@ -718,17 +729,19 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
     })
     // Vises straks og dialogen lukker; fejler gemningen, læses listen igen.
     const previousEntries = vacationEntries
-    setVacationEntries(current => current.map(entry => entry.id === editingVacation.id ? edit(entry) : entry))
+    const previousAll = allVacations
+    patchVacationLists(current => current.map(entry => entry.id === editingVacation.id ? edit(entry) : entry))
     setIsEditVacationDialogOpen(false)
     const editedEntry = await updateKvArrayItem<VacationEntry>('vacation-entries', editingVacation.id, edit)
       .catch(error => { console.error('Kunne ikke gemme ferien:', error); return undefined })
     if (!editedEntry) {
       toast.error(editedEntry === null ? t.managerPanel.vacationRequests.notFoundError : (language === 'da' ? 'Ændringen blev ikke gemt — prøv igen' : language === 'fi' ? 'Muutosta ei tallennettu — yritä uudelleen' : language === 'sv' ? 'Ändringen sparades inte — försök igen' : 'The change was not saved — please try again'))
       setVacationEntries(previousEntries)
+      setAllVacations(previousAll)
       void loadVacationEntries()
       return
     }
-    setVacationEntries(current => current.map(entry => entry.id === editedEntry.id ? editedEntry : entry))
+    patchVacationLists(current => current.map(entry => entry.id === editedEntry.id ? editedEntry : entry))
     toast.success(t.managerPanel.vacationOverview.updatedToast)
 
     // Barsel sender ingen ferie-mails.
@@ -776,26 +789,34 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
     setEditVacationNotes('')
   }
 
-  const deleteVacation = async (id: string) => {
-    const allVacationsData = await window.kv.get<VacationEntry[]>('vacation-entries') || []
-    const vacationToDelete = allVacationsData.find(v => v.id === id)
-    
+  // Returns at once: the vacation leaves both lists immediately and is deleted on the shared drive in the background
+  // (that write has taken 80 s). If it fails, the vacation comes back with an error.
+  const deleteVacation = (id: string) => {
+    const vacationToDelete = allVacations.find(v => v.id === id) ?? vacationEntries.find(v => v.id === id)
     if (!vacationToDelete) {
       toast.error(t.managerPanel.vacationOverview.notFoundError)
       return
     }
 
-    // Forsvinder straks fra listen; listen læses igen bagefter uden at knappen venter på det.
-    setVacationEntries(current => current.filter(entry => entry.id !== id))
-    try {
-      await removeFromKvArray('vacation-entries', [id])
-    } catch (error) {
-      void loadVacationEntries()
-      throw error
-    }
-    void loadVacationEntries()
+    patchVacationLists(current => current.filter(entry => entry.id !== id))
     toast.success(t.managerPanel.vacationOverview.deletedToast)
+    deletingVacationIds.current.add(id)
+    void removeFromKvArray('vacation-entries', [id]).then(
+      () => {
+        deletingVacationIds.current.delete(id)
+        void loadVacationEntries()
+        sendVacationDeletedEmail(vacationToDelete)
+      },
+      error => {
+        deletingVacationIds.current.delete(id)
+        console.error('Kunne ikke slette ferien:', error)
+        toast.error(t.profile.errors.generic)
+        void loadVacationEntries()
+      },
+    )
+  }
 
+  const sendVacationDeletedEmail = (vacationToDelete: VacationEntry) => {
     if (vacationToDelete.type === 'parental') return
     try {
       const emailContent = vacationDeletedEmail(
@@ -1546,7 +1567,6 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                                 variant="ghost" 
                                 size="icon" 
                                 className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                                loading={busyAction === `delete-vacation:${vacation.id}`}
                               >
                                 <Trash size={20} />
                               </Button>
@@ -1561,7 +1581,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                               <AlertDialogFooter>
                                 <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
                                 <AlertDialogAction
-                                  onClick={() => void runBusy(`delete-vacation:${vacation.id}`, () => deleteVacation(vacation.id))}
+                                  onClick={() => deleteVacation(vacation.id)}
                                   className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                                 >
                                   {t.managerPanel.vacationOverview.deleteAction}

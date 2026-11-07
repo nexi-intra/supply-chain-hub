@@ -126,6 +126,37 @@ test('release does not remove a lock now owned by another writer', t => {
   withFileLock(target, () => fs.writeFileSync(target, 'replacement-owner'))
   assert.equal(fs.readFileSync(target, 'utf8'), 'replacement-owner')
 })
+// Measured 07.11: a write on M: held its lock for 80 s, while other clients (1.6.6 too) treat a 30 s old lock as
+// abandoned - logged 05.11 as "fjerner forladt laas (32s gammel)". Two writers in one file lose changes.
+test('an async lock holder keeps its lock fresh while the write is still running', async t => {
+  const target = fixture(t)
+  await withFileLockAsync(target, async () => {
+    const old = new Date(Date.now() - 60000)
+    fs.utimesSync(target, old, old)
+    await new Promise(resolve => setTimeout(resolve, 120))
+    assert.ok(Date.now() - fs.statSync(target).mtimeMs < 5000, 'heartbeat must have refreshed the lock')
+  }, { heartbeatMs: 20 })
+  assert.ok(!fs.existsSync(target))
+})
+test('the heartbeat stops when the lock is released', async t => {
+  const target = fixture(t)
+  await withFileLockAsync(target, async () => {}, { heartbeatMs: 10 })
+  await new Promise(resolve => setTimeout(resolve, 50))
+  assert.ok(!fs.existsSync(target), 'a late heartbeat must not recreate the lock file')
+})
+test('a lock whose owner keeps it fresh is never stolen, however long we watch it', t => {
+  const target = fixture(t)
+  fs.writeFileSync(target, 'slow-live-owner')
+  assert.throws(() => withFileLock(target, () => {}, { attempts: 1, staleMs: 40 }), { code: 'KV_LOCK_BUSY' })
+  const waitUntil = Date.now() + 60
+  while (Date.now() < waitUntil) { /* watched for longer than staleMs */ }
+  const now = new Date()
+  fs.utimesSync(target, now, now)
+  let called = false
+  assert.throws(() => withFileLock(target, () => { called = true }, { attempts: 1, staleMs: 40 }), { code: 'KV_LOCK_BUSY' })
+  assert.equal(called, false)
+  assert.equal(fs.readFileSync(target, 'utf8'), 'slow-live-owner')
+})
 test('acquireFileLockAsync never reads the lock owner synchronously while waiting', async t => {
   const target = fixture(t)
   fs.writeFileSync(target, 'other-owner')

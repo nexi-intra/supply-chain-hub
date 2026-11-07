@@ -78,6 +78,19 @@ Oprettet 2026-11-07. Fortsættelse af [langsom-optaelling-placeringer.md](./lang
 - [x] Nyt lokalt build i `release-local` (07.11, startet og kontrolleret via `main.log`).
 - [x] Spil-knapper (omkamp, remis, ord-godkendelse, byt) viser spinner på den trykkede knap (`ActionChip`).
 
+## Fase 4 – Ferie og gemninger på 80 s (07.11, efter brugerens test)
+
+Målt i `main.log`: "giv fri dag" = 3 gemninger efter hinanden á 84 s; "slet ferie" 79 s – og ferien stod stadig i Manager-oversigten imens. Samme formiddag tog en ny fil 0,1–2,8 s at oprette → de 80 s var et overbelastet drev (backups/andre klienter), ikke koden.
+
+- [x] Giv fri dag, ferieansøgning, forældreorlov, on/offboarding: dialogen lukker straks, mail + notifikation parallelt i baggrunden (commit 3290993).
+- [x] Manager: slet/ret/godkend/afvis ferie opdaterer BÅDE afventende-listen og oversigten (`allVacations`) straks; sletning blokerer ikke andre knapper og genindlæsning viser ikke en ferie, der er ved at blive slettet.
+- [x] Ferie-kalender: sletning gemte listen to gange (useKV-setter + `removeFromKvArray`) → én gang.
+- [x] Alle `kvArrays`-hjælpere tæller med i "Gemmer på det fælles drev …".
+- [x] Lås-hjerteslag: en async holder fornyer låsens mtime hvert 10. s (højst 10 min), og en lås med troværdig frisk mtime stjæles aldrig. Før kunne en 80 s-gemning miste låsen efter 30 s (set 05.11: "fjerner forladt laas (32s gammel)") → to skrivere i samme fil.
+- [x] Luk app under gemning: vinduet bliver stående med "Gemmer dine sidste ændringer …" og lukker selv, når alt er gemt (højst 3 min, "Luk alligevel"). Før blev gemningen afbrudt efter 10 s.
+- [x] Log: langsom skrivning (≥ 5 s) logges med tid pr. trin (kø | lås | læs | tmp | omdøb | frigiv), så næste langsomme gemning kan placeres præcist.
+- [ ] Daglig fuld backup uden uforanderlige billeder (brugeren har sagt ja) – billederne skal stadig sikres én gang hver, før de udelades.
+
 ## Ikke gjort (bevidst) / næste skridt
 
 - IT: undtag `...\ai Tools\Supply Chain Hub Storage\` fra on-access-scanning – hver ny fil koster 3–10 s. Den største enkeltgevinst for HELE appen.

@@ -36,7 +36,8 @@ nativeIpcMain.handle = (channel, listener) => nativeHandle(channel, async (...ar
   const end = mainActivity.begin('ipc:' + channel)
   try { return await listener(...args) } finally { end() }
 })
-const { createStore, encryptPayload, whenWritesSettled } = require('./store.cjs')
+const { createStore, encryptPayload, whenWritesSettled, hasWritesInFlight } = require('./store.cjs')
+const { guardCloseWhileSaving } = require('./closeWhileSaving.cjs')
 // createStore() laver en synkron mkdirSync mod M: og starter med en tom laesecache.
 // Varme stier (auth ved hvert IPC-kald, hub-oversigter) genbruger derfor instansen pr. mappe.
 const reusableStores = new Map()
@@ -790,6 +791,18 @@ function createWindow() {
     if (event.level === 'error') diagnostics.write('error', 'RENDERER:', String(event.message).slice(0, 2000), `(${event.sourceId}:${event.lineNumber})`)
   })
   win.on('closed', () => diagnostics.write('info', 'window closed'))
+  guardCloseWhileSaving(win, {
+    hasPendingWrites: () => mainActivity.isBusy(isQuitWriteChannel) || hasWritesInFlight(),
+    whenSaved: () => {
+      diagnostics.write('info', 'lukning venter: gemninger er stadig på vej til drevet')
+      const startedAt = Date.now()
+      const left = () => Math.max(0, CLOSE_WHILE_SAVING_MAX_MS - (Date.now() - startedAt))
+      return mainActivity.whenIdle(isQuitWriteChannel, left()).then(() => whenWritesSettled(left()))
+        .then(settled => diagnostics.write('info', `lukning: gemninger ${settled ? 'færdige' : 'IKKE færdige'} efter ${Date.now() - startedAt} ms`))
+    },
+    showMessage: (options, signal) => dialog.showMessageBox(win, { ...options, signal }),
+    language: () => uiLanguage,
+  })
 
   // Opt-in diagnostics (set TCD_HUB_DEBUG=1): also surface the full renderer console in the terminal.
   if (process.env.TCD_HUB_DEBUG) {
@@ -1115,7 +1128,7 @@ app.whenReady().then(() => {
   ipcMain.handle('kv:data-dir', () => store.dataDir)
   ipcMain.handle('kv:storage-info', () => ({ dataDir: store.dataDir, source: dataDirSource }))
   ipcMain.handle('kv:connection-status', () => getStorageConnectionStatus())
-  ipcMain.handle('app:set-spellcheck-language', (event, language) => applySpellcheckLanguage(event.sender.session, String(language)))
+  ipcMain.handle('app:set-spellcheck-language', (event, language) => { uiLanguage = String(language); return applySpellcheckLanguage(event.sender.session, String(language)) })
   ipcMain.handle('kv:retry-sync', () => store.retrySyncNow())
   ipcMain.handle('kv:choose-data-dir', async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
@@ -1631,6 +1644,9 @@ app.on('before-quit', () => { localAI?.stop(); assistantBackend?.stop(); void wo
 // i alt). Ét fælles flag: app.quit() herunder udløser before-quit igen, og den
 // gang skal lukningen bare fortsætte.
 const QUIT_FLUSH_TIMEOUT_MS = 10000
+// Closing the window waits this long at most for writes still on their way (a write on M: has taken 80 s).
+const CLOSE_WHILE_SAVING_MAX_MS = 3 * 60 * 1000
+let uiLanguage = 'da'
 // IPC-kanaler der kan skrive brugerdata. En skrivning der stadig er i auth-tjek
 // har endnu ikke registreret sig i whenWritesSettled, så den skal ventes ud først.
 const QUIT_WRITE_CHANNEL_PREFIXES = ['ipc:kv:', 'ipc:multiplayer:', 'ipc:improvements:', 'ipc:highFives:', 'ipc:links:', 'ipc:warehouse:', 'ipc:registry:', 'ipc:auth:', 'ipc:assistant:record']

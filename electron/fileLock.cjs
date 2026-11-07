@@ -29,6 +29,13 @@ function lockBusy(code) {
 // ejer) ligge uroert i staleMs, foer den maa fjernes. Det er ogsaa immunt over
 // for en kollega-pc med forkert systemur.
 const MAX_TRUSTED_LOCK_AGE_MS = 30 * 24 * 60 * 60 * 1000
+// Clocks on two PCs differ a little; a lock dated further ahead than this is treated as untrustworthy instead.
+const FRESH_CLOCK_SKEW_MS = 60 * 1000
+// An async holder touches its lock this often, well inside the 30 s after which every client (1.6.6 included)
+// regards a lock as abandoned.
+const LOCK_HEARTBEAT_MS = 10 * 1000
+// A holder that hangs must not keep a key locked for ever: after this the lock ages again like any other.
+const LOCK_HEARTBEAT_MAX_MS = 10 * 60 * 1000
 const observedLocks = new Map()
 
 function readOwner(target) {
@@ -45,6 +52,12 @@ function isAbandonedLock(target, staleMs, mtimeMs, owner) {
   if (age >= staleMs && age < MAX_TRUSTED_LOCK_AGE_MS) {
     observedLocks.delete(target)
     return { abandoned: true, reason: `${Math.round(age / 1000)}s gammel` }
+  }
+  // A believable, recent mtime means the owner is alive (an async holder refreshes it while it writes). Before,
+  // a lock merely seen for staleMs was taken even then - so an 80 s write on M: lost its lock to another client.
+  if (age > -FRESH_CLOCK_SKEW_MS && age < staleMs) {
+    observedLocks.delete(target)
+    return { abandoned: false }
   }
   const seen = observedLocks.get(target)
   if (!seen || seen.owner !== owner) {
@@ -109,7 +122,7 @@ function withFileLock(target, mutate, options) {
 // Asynkron tvilling til IPC-skrivevejen: samme laasefil og ejerskabsmodel, men
 // ventetiden er await-baseret i stedet for Atomics.wait, saa Electrons
 // main-event-loop (og dermed AL input) aldrig blokeres af et langsomt SMB-drev.
-async function acquireFileLockAsync(target, { attempts = 50, delayMs = 100, createParent = true, staleMs = 0 } = {}) {
+async function acquireFileLockAsync(target, { attempts = 50, delayMs = 100, createParent = true, staleMs = 0, heartbeatMs = LOCK_HEARTBEAT_MS } = {}) {
   const startedAt = Date.now()
   if (createParent) await fs.promises.mkdir(path.dirname(target), { recursive: true })
   const owner = `${process.pid}:${crypto.randomUUID()}`
@@ -151,7 +164,24 @@ async function acquireFileLockAsync(target, { attempts = 50, delayMs = 100, crea
       await new Promise(resolve => setTimeout(resolve, Math.round(delayMs * jitter)))
     }
   }
-  return async () => { try { if (await fs.promises.readFile(target, 'utf8') === owner) await fs.promises.unlink(target) } catch { /* preserve ownership */ } }
+  // Heartbeat: keep the lock's mtime fresh while we hold it, so no client takes it for abandoned during a slow write.
+  let released = false
+  let touching = null
+  const heldSince = Date.now()
+  const heartbeat = setInterval(() => {
+    if (Date.now() - heldSince > LOCK_HEARTBEAT_MAX_MS) { clearInterval(heartbeat); return }
+    if (touching) return
+    const now = new Date()
+    touching = fs.promises.utimes(target, now, now).catch(() => {}).finally(() => { touching = null })
+  }, heartbeatMs)
+  heartbeat.unref?.()
+  return async () => {
+    if (released) return
+    released = true
+    clearInterval(heartbeat)
+    await touching
+    try { if (await fs.promises.readFile(target, 'utf8') === owner) await fs.promises.unlink(target) } catch { /* preserve ownership */ }
+  }
 }
 async function withFileLockAsync(target, mutate, options) {
   const release = await acquireFileLockAsync(target, options)

@@ -12,7 +12,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     items: [
       'Hurtigere på det fælles drev (M:): Hubben fryser ikke længere, mens den venter på drevet – login, log ud og gemning kører i baggrunden, så du kan arbejde videre',
       'Hubben belaster M: langt mindre: den tjekker kun, om en mappe er ændret, i stedet for at kigge på alle filer hvert andet sekund, og tjekker sjældnere, når vinduet er minimeret. Kollegers ændringer vises stadig inden for få sekunder',
-      'Hubben gemmer kun, når noget faktisk er ændret, og når du lukker den, venter den op til 10 sekunder på gemninger, der stadig er i gang',
+      'Hubben gemmer kun, når noget faktisk er ændret. Lukker du den, mens en ændring stadig er på vej til drevet, bliver vinduet stående med "Gemmer dine sidste ændringer …" og lukker af sig selv, når alt er gemt – før blev gemningen afbrudt efter 10 sekunder',
       'Optælling: scanneren giver status med det samme (fundet, dublet, ukendt …) – den venter ikke længere på det fælles drev, heller ikke når mange scanner på én gang',
       'Optælling: optællingsdokumentet bruger dagens SAP-tal – også for serienumre. Godkendes en optælling i dag og laves dokumentet senere, får terminalerne SAP\'s serienumre den dag, minus dem der manglede ved godkendelsen. Passer antallet ikke med SAP i dag + difference, vises en advarsel',
       'Optælling: admins kan nu selv "Hent dagens SAP-tal" og "Hent SAP igen" – det behøver ikke længere være den ansvarlige eller en manager',
@@ -22,6 +22,8 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Ændringer vises med det samme: ferie, projekter, to-dos, noter, mails og brugere opdateres på skærmen, så snart du trykker – gemningen sker i baggrunden. Fejler den, får du besked, og den gamle værdi vises igen',
       'Hubben starter uden at fryse, og "Hvad skete der, mens du var væk" vises med det samme',
       'Manager: oprettelse, rettelse og sletning af brugere fryser ikke længere hele Hubben',
+      'Ferie: giv fri dag, ferieansøgning, forældreorlov, ret og slet ferie lukker med det samme – ferien forsvinder/opdateres straks i Manager-oversigten, og mails og notifikationer sendes i baggrunden',
+      'Gemning på det fælles drev er mere sikker: en langsom gemning holder sin lås frisk, så en kollegas Hub ikke længere kan tage låsen midt i gemningen og overskrive ændringen',
       'Spil: et træk, en chatbesked eller en reaktion venter ikke længere på det forrige træk, og lobbyen åbner med det samme',
     ],
   },

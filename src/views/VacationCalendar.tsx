@@ -128,16 +128,14 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
     const vacation = (vacations || []).find(v => v.id === id)
     if (!vacation) return
 
-    // Fjern med det samme i billedet og kvitter; skrivning og mails i baggrunden.
-    const previousVacations = vacations || []
-    setVacations((current) => (current || []).filter(v => v.id !== id))
+    // removeFromKvArray shows the removal at once in every open view and saves it once. Also calling setVacations
+    // saved the same list a second time - on M: up to 80 s more.
     toast.success('Ferie anmodning fjernet')
 
     try {
       await removeFromKvArray('vacation-entries', [id])
     } catch (error) {
       console.error('Error removing vacation:', error)
-      setVacations(previousVacations)
       toast.error('Kunne ikke fjerne ferie anmodningen')
       return
     }

@@ -32,6 +32,23 @@ const ASYNC_WRITE_LOCK = { createParent: false, staleMs: 30000, attempts: 60, de
 // der ikke fandtes, saa "tildel opgave" fra widget'en kunne aldrig gemme.
 const SYNC_WRITE_LOCK = { createParent: false, staleMs: 30000 }
 
+// A write to M: is six round trips in a row (lock, read, tmp, rename, release). When one is slow, the log shows
+// which step took the time, so a slow shared drive can be told apart from a lock held by another client.
+const SLOW_WRITE_BREAKDOWN_MS = 5000
+function writeSteps(label) {
+  const startedAt = Date.now()
+  let last = startedAt
+  const parts = []
+  return {
+    mark(name) { const now = Date.now(); parts.push(`${name} ${now - last}`); last = now },
+    report() {
+      const total = Date.now() - startedAt
+      if (total >= SLOW_WRITE_BREAKDOWN_MS) console.warn(`KV: langsom skrivning ${total} ms ${label} (ms: ${parts.join(' | ')})`)
+    },
+  }
+}
+const noSteps = { mark() {}, report() {} }
+
 // Laesninger mod SMB er latens-bundne (~150-300 ms pr. rundtur uanset
 // filstoerrelse), saa parallelisme er den eneste maade at faa flere noegler
 // hurtigt: maalt paa M: tog forsidens 11 noegler 3,7 s serielt mod 1,5 s
@@ -352,9 +369,29 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
     throw lastError
   }
 
-  async function setUnlockedAsync(key, value) {
+  async function setUnlockedAsync(key, value, steps = noSteps) {
     const json = jsonOf(value)
-    await commitTmpAsync(key, await writeTmpAsync(key, json), value)
+    const tmp = await writeTmpAsync(key, json)
+    steps.mark('tmp')
+    await commitTmpAsync(key, tmp, value)
+    steps.mark('omdoeb')
+  }
+
+  // Runs a locked write and logs where the time went if it was slow (queue, lock, read, tmp, rename, release).
+  function timedLockedWrite(key, label, task) {
+    const steps = writeSteps(`${label} "${key}"`)
+    return serializeWrite(key, async () => {
+      steps.mark('koe')
+      try {
+        return await withFileLockAsync(lockPath(key), async () => {
+          steps.mark('laas')
+          return task(steps)
+        }, ASYNC_WRITE_LOCK)
+      } finally {
+        steps.mark('frigiv')
+        steps.report()
+      }
+    })
   }
 
   // In-proces serialisering pr. noegle: to samtidige async-skrivninger til
@@ -372,7 +409,7 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
   }
 
   function setAsync(key, value) {
-    return serializeWrite(key, () => withFileLockAsync(filePath(key) + '.lock', () => setUnlockedAsync(key, value), ASYNC_WRITE_LOCK))
+    return timedLockedWrite(key, 'set', steps => setUnlockedAsync(key, value, steps))
   }
 
   function deleteAsync(key) {
@@ -492,12 +529,13 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
 
   async function updateDetailedAsync(key, operation) {
     validateOperation(operation)
-    return serializeWrite(key, () => withFileLockAsync(lockPath(key), async () => {
+    return timedLockedWrite(key, `update ${operation.op}`, async steps => {
       const current = await getAsync(key, { skipCache: true })
+      steps.mark('laes')
       const outcome = computeUpdate(key, operation, current)
-      if (outcome.write && !sameValue(outcome.value, current)) await setUnlockedAsync(key, outcome.value)
+      if (outcome.write && !sameValue(outcome.value, current)) await setUnlockedAsync(key, outcome.value, steps)
       return { result: outcome.result, value: outcome.write ? outcome.value : await getAsync(key, { skipCache: true }) }
-    }, ASYNC_WRITE_LOCK))
+    })
   }
 
   // En uaendret vaerdi (sammenlignet med det der blev laest under laasen)
@@ -631,13 +669,14 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
   // det en hel rundtur (~200 ms) pr. skrivning i forhold til laes + compareAndSet,
   // og der kan ikke opstaa KV_CONFLICT-retries, fordi ingen anden kan skrive imens.
   async function mutateAsync(key, callback) {
-    return serializeWrite(key, () => withFileLockAsync(lockPath(key), async () => {
+    return timedLockedWrite(key, 'mutate', async steps => {
       const current = await getAsync(key, { skipCache: true })
+      steps.mark('laes')
       const next = callback(structuredClone(current))
       if (next && typeof next.then === 'function') throw new Error('Mutation callback must be synchronous')
-      if (next !== undefined && !sameValue(next, current)) await setUnlockedAsync(key, next)
+      if (next !== undefined && !sameValue(next, current)) await setUnlockedAsync(key, next, steps)
       return next
-    }, ASYNC_WRITE_LOCK))
+    })
   }
 
   // Trusted multi-record operations only. No capability is exposed to IPC.
@@ -963,4 +1002,4 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
   return { get, getAsync, peekCache, set, setAsync, delete: del, deleteAsync, keys, keysAsync, watch, setWatchVisibility, update, updateAsync, updateDetailed, updateDetailedAsync, mutate, mutateAsync, sweepStaleTempFilesAsync, statAsync, withLockedKeys, withLockedKeysAsync, invalidate: () => readCache.clear(), dumpAll, dumpAllAsync, dataDir, isConnected, scanDirectory, scanDirectoryAsync }
 }
 
-module.exports = { createStore, parseFileContents, keyToFilename, encryptPayload, decideWatchTick, whenWritesSettled }
+module.exports = { createStore, parseFileContents, keyToFilename, encryptPayload, decideWatchTick, whenWritesSettled, hasWritesInFlight: () => inFlightWrites.size > 0 }
