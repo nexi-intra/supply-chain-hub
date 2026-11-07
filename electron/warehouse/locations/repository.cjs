@@ -54,7 +54,7 @@ function createLocationRepository({ storeFor, now = Date.now, newId }) {
 
   /** Saves the draft under its own lock only, so autosave never touches the places; `fn` returning null deletes it, undefined writes nothing. */
   async function writeDraft(team, fn) {
-    return storeFor(team).withLockedKeys([LAYOUT_KEYS.draft], locked => {
+    return storeFor(team).withLockedKeysAsync([LAYOUT_KEYS.draft], locked => {
       const current = locked.get(LAYOUT_KEYS.draft) ?? null
       const next = fn(current)
       if (next === undefined) return current
@@ -79,7 +79,7 @@ function createLocationRepository({ storeFor, now = Date.now, newId }) {
     const at = now()
     const historyKey = monthKey(at)
     const layoutKeys = withLayout ? Object.values(LAYOUT_TX) : []
-    return store.withLockedKeys([...STATE_KEYS.map(name => KEYS[name]), ...layoutKeys, historyKey], locked => {
+    return store.withLockedKeysAsync([...STATE_KEYS.map(name => KEYS[name]), ...layoutKeys, historyKey], locked => {
       const before = withLayout ? { ...readLocked(locked), ...readLayoutLocked(locked) } : readLocked(locked)
       if (actionId && (before.meta.applied || []).includes(actionId)) return { duplicate: true }
       const tx = structuredClone(before)
@@ -109,7 +109,7 @@ function createLocationRepository({ storeFor, now = Date.now, newId }) {
     // By event id the event is looked up under the lock in the last UNDO_MONTHS months, so nothing is read before it.
     const start = new Date(undoneAt)
     const months = eventId ? Array.from({ length: UNDO_MONTHS }, (_, back) => monthKey(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() - back, 1))) : [monthKey(at)]
-    return store.withLockedKeys([...STATE_KEYS.map(name => KEYS[name]), ...months, currentKey], locked => {
+    return store.withLockedKeysAsync([...STATE_KEYS.map(name => KEYS[name]), ...months, currentKey], locked => {
       const before = readLocked(locked)
       if (actionId && (before.meta.applied || []).includes(actionId)) return { duplicate: true }
       const originKey = eventId ? months.find(key => (locked.get(key) || []).some(event => event.id === eventId)) : months[0]

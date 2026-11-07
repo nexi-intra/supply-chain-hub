@@ -9,7 +9,7 @@
 const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
-const { withFileLock, withFileLocks, withFileLockAsync } = require('./fileLock.cjs')
+const { withFileLock, withFileLocks, withFileLockAsync, withFileLocksAsync } = require('./fileLock.cjs')
 const { isImmutableBlobKey } = require('./offlineSync.cjs')
 
 const FILE_EXT = '.json'
@@ -314,7 +314,7 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
 
   // Asynkrone tvillinger til IPC-vejen: identisk semantik og samme laasefiler,
   // men skrivning/rename/retry-ventetid blokerer aldrig main-event-loopet.
-  async function setUnlockedAsync(key, value) {
+  function jsonOf(value) {
     let json
     try { json = JSON.stringify(value) } catch {
       const error = new Error('KV_INVALID_OPERATION: Værdien kan ikke gemmes som JSON')
@@ -326,13 +326,20 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
       error.code = 'KV_INVALID_OPERATION'
       throw error
     }
-    const target = filePath(key)
-    const tmp = `${target}.${process.pid}.${Date.now()}.${crypto.randomBytes(4).toString('hex')}.tmp`
+    return json
+  }
+
+  async function writeTmpAsync(key, json) {
+    const tmp = `${filePath(key)}.${process.pid}.${Date.now()}.${crypto.randomBytes(4).toString('hex')}.tmp`
     await fs.promises.writeFile(tmp, encryptPayload(json))
+    return tmp
+  }
+
+  async function commitTmpAsync(key, tmp, value) {
     let lastError
     for (let attempt = 1; attempt <= WRITE_ATTEMPTS; attempt++) {
       try {
-        await fs.promises.rename(tmp, target)
+        await fs.promises.rename(tmp, filePath(key))
         readCache.set(key, { value, at: Date.now() })
         return
       } catch (err) {
@@ -343,6 +350,11 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
     }
     try { await fs.promises.unlink(tmp) } catch {}
     throw lastError
+  }
+
+  async function setUnlockedAsync(key, value) {
+    const json = jsonOf(value)
+    await commitTmpAsync(key, await writeTmpAsync(key, json), value)
   }
 
   // In-proces serialisering pr. noegle: to samtidige async-skrivninger til
@@ -650,6 +662,63 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
     } finally { active = false }
   }
 
+  // Asynkron tvilling til withLockedKeys: samme laasefiler (virker sammen med 1.6.6),
+  // men main-traaden fryser aldrig. Maalt 07.11 paa M:: en Placeringer-handling
+  // fryste HELE appen i 32-42 s, fordi hver ny fil (laas, tmp) koster 3-4 s at
+  // oprette. Her oprettes laase og tmp-filer parallelt; callbacken er stadig
+  // synkron og koerer mod vaerdierne i hukommelsen. Kaster den, skrives intet.
+  // Noeglerne erstattes i den raekkefoelge de blev sat.
+  function withLockedKeysAsync(keys, callback) {
+    if (typeof callback !== 'function' || require('node:util').types.isAsyncFunction(callback)) return Promise.reject(new Error('KV_INVALID_OPERATION: Transaction must be synchronous'))
+    if (!Array.isArray(keys) || keys.some(key => typeof key !== 'string' || !key)) return Promise.reject(new Error('KV_INVALID_OPERATION: Invalid transaction keys'))
+    const ordered = [...new Set(keys)].sort((a, b) => lockPath(a).localeCompare(lockPath(b), 'en'))
+    const allowed = new Set(ordered)
+    const run = withFileLocksAsync(ordered.map(lockPath), async () => {
+      // Under laasene: ikke i koe bag andre laesninger, mens andre klienter venter paa laasene.
+      const values = await Promise.all(ordered.map(key => getAsync(key, { skipCache: true, unthrottled: true })))
+      const current = new Map(ordered.map((key, index) => [key, values[index]]))
+      const writes = new Map()
+      let active = true
+      const check = key => { if (!active || !allowed.has(key)) throw new Error('KV_INVALID_OPERATION: Invalid transaction capability') }
+      const transaction = {
+        get(key) { check(key); return structuredClone(current.get(key)) },
+        set(key, value) { check(key); const json = jsonOf(value); current.set(key, structuredClone(value)); writes.delete(key); writes.set(key, { value, json }) },
+        delete(key) { check(key); current.set(key, undefined); writes.delete(key); writes.set(key, { deleted: true }) },
+      }
+      let result
+      try {
+        result = callback(transaction)
+        if (result && typeof result.then === 'function') throw new Error('KV_INVALID_OPERATION: Transaction must be synchronous')
+      } finally { active = false }
+      const prepared = await Promise.allSettled([...writes].map(async ([key, op]) => ({ key, op, tmp: op.deleted ? null : await writeTmpAsync(key, op.json) })))
+      const failed = prepared.find(item => item.status === 'rejected')
+      if (failed) {
+        await Promise.all(prepared.filter(item => item.status === 'fulfilled' && item.value.tmp).map(item => fs.promises.unlink(item.value.tmp).catch(() => {})))
+        throw failed.reason
+      }
+      const pending = prepared.map(item => item.value)
+      try {
+        while (pending.length) {
+          const { key, op, tmp } = pending[0]
+          if (op.deleted) {
+            try { await fs.promises.unlink(filePath(key)) } catch (error) { if (error.code !== 'ENOENT') throw error }
+            readCache.delete(key)
+          } else {
+            await commitTmpAsync(key, tmp, op.value)
+          }
+          pending.shift()
+        }
+      } finally {
+        await Promise.all(pending.filter(item => item.tmp).map(item => fs.promises.unlink(item.tmp).catch(() => {})))
+      }
+      return result
+    }, ASYNC_WRITE_LOCK)
+    const tracked = run.catch(() => {})
+    inFlightWrites.add(tracked)
+    tracked.finally(() => inFlightWrites.delete(tracked))
+    return run
+  }
+
   /** Alle nøgler + værdier (til backup). */
   function dumpAll() {
     const result = {}
@@ -891,7 +960,7 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
     return connected
   }
 
-  return { get, getAsync, peekCache, set, setAsync, delete: del, deleteAsync, keys, keysAsync, watch, setWatchVisibility, update, updateAsync, updateDetailed, updateDetailedAsync, mutate, mutateAsync, sweepStaleTempFilesAsync, statAsync, withLockedKeys, invalidate: () => readCache.clear(), dumpAll, dumpAllAsync, dataDir, isConnected, scanDirectory, scanDirectoryAsync }
+  return { get, getAsync, peekCache, set, setAsync, delete: del, deleteAsync, keys, keysAsync, watch, setWatchVisibility, update, updateAsync, updateDetailed, updateDetailedAsync, mutate, mutateAsync, sweepStaleTempFilesAsync, statAsync, withLockedKeys, withLockedKeysAsync, invalidate: () => readCache.clear(), dumpAll, dumpAllAsync, dataDir, isConnected, scanDirectory, scanDirectoryAsync }
 }
 
 module.exports = { createStore, parseFileContents, keyToFilename, encryptPayload, decideWatchTick, whenWritesSettled }

@@ -332,8 +332,8 @@ test('the log stays fast for an admin with a big warehouse and a long history', 
 })
 
 test('an undo while M: is down fails as a storage error (so it is queued), never as "not found"', async () => {
-  const down = () => { throw Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' }) }
-  const storeFor = () => ({ getAsync: async () => undefined, withLockedKeys: down })
+  const down = async () => { throw Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' }) }
+  const storeFor = () => ({ getAsync: async () => undefined, withLockedKeysAsync: down })
   const repo = createLocationRepository({ storeFor, now: () => day(2026, 10, 20), newId: () => 'x' })
   const service = createLocationService({ repo, catalog: {}, fetcher: {}, isLocationAdmin: async () => true, now: () => day(2026, 10, 20), newId: () => 'x' })
   await assert.rejects(service.undo(ADA, { eventId: 'e1', actionId: 'u1' }), { code: 'ENOENT' })

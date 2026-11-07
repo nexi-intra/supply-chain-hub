@@ -29,6 +29,62 @@ test('asynchronous multi-key callbacks are rejected before running and failures 
   assert.ok(!fs.existsSync(path.join(directory, 'a.json.lock')))
 })
 
+test('withLockedKeysAsync: fresh data, every key locked, writes and deletes applied, capabilities expire', async t => {
+  const { directory, store } = temporaryStore(t), other = createStore(directory)
+  store.set('a', { old: true }); other.set('a', { fresh: true })
+  let escaped
+  const result = await store.withLockedKeysAsync(['b', 'a', 'a'], tx => {
+    escaped = tx
+    assert.deepEqual(tx.get('a'), { fresh: true })
+    assert.ok(fs.existsSync(path.join(directory, 'a.json.lock')))
+    assert.ok(fs.existsSync(path.join(directory, 'b.json.lock')))
+    assert.throws(() => tx.set('unlocked', 1), /Invalid transaction capability/)
+    tx.set('b', [1]); tx.delete('a')
+    assert.deepEqual(tx.get('b'), [1], 'a value set in the transaction is read back')
+    assert.equal(tx.get('a'), undefined)
+    return 'done'
+  })
+  assert.equal(result, 'done')
+  assert.equal(store.get('a', { skipCache: true }), undefined); assert.deepEqual(other.get('b', { skipCache: true }), [1])
+  assert.throws(() => escaped.get('b'), /Invalid transaction capability/)
+  assert.deepEqual(fs.readdirSync(directory).filter(name => name.endsWith('.lock') || name.endsWith('.tmp')), [])
+})
+
+test('withLockedKeysAsync: a failing or asynchronous transaction writes nothing and releases its locks', async t => {
+  const { directory, store } = temporaryStore(t)
+  store.set('a', 1)
+  await assert.rejects(store.withLockedKeysAsync(['a'], async tx => { tx.set('a', 'must not write') }), /synchronous/)
+  await assert.rejects(store.withLockedKeysAsync(['a', 'b'], tx => { tx.set('a', 2); tx.set('b', 2); throw new Error('synthetic failure') }), /synthetic failure/)
+  assert.equal(store.get('a', { skipCache: true }), 1)
+  assert.equal(store.get('b', { skipCache: true }), undefined)
+  assert.deepEqual(fs.readdirSync(directory).filter(name => name.endsWith('.lock') || name.endsWith('.tmp')), [])
+})
+
+test('withLockedKeysAsync keeps the event loop running: a write to M: takes seconds and must not freeze the app', async t => {
+  const { store } = temporaryStore(t)
+  let ticked = false
+  let sawTick = false
+  setImmediate(() => { ticked = true })
+  await store.withLockedKeysAsync(['a'], tx => { sawTick = ticked; tx.set('a', 1) })
+  assert.equal(sawTick, true)
+})
+
+test('withLockedKeysAsync does not hold its other locks while it waits for a busy one, and goes on when it is free', async t => {
+  const { directory, store } = temporaryStore(t)
+  const other = createStore(directory)
+  const busy = path.join(directory, 'b.json.lock')
+  fs.writeFileSync(busy, 'another-pc:owner')
+  const done = store.withLockedKeysAsync(['a', 'b'], tx => { tx.set('a', `${tx.get('a')}+A`); tx.set('b', 'B') })
+  // Holding a while waiting for b would block this until b is free (or the lock retries run out, ~7 s); it must get through now.
+  const startedAt = Date.now()
+  await other.withLockedKeysAsync(['a'], tx => { tx.set('a', 'other') })
+  assert.ok(Date.now() - startedAt < 3000, `the other client waited ${Date.now() - startedAt} ms for a`)
+  assert.ok(fs.existsSync(busy), 'b is still busy, so the first transaction is still waiting')
+  fs.unlinkSync(busy)
+  await done
+  assert.deepEqual([store.get('a', { skipCache: true }), store.get('b', { skipCache: true })], ['other+A', 'B'])
+})
+
 test('trusted migration mutation uses fresh data and releases the lock if backup fails', (t) => {
   const { directory, store } = temporaryStore(t)
   const other = createStore(directory)

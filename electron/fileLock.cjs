@@ -164,4 +164,24 @@ function withFileLocks(targets, mutate, options) {
     return mutate()
   } finally { for (const release of releases.reverse()) release() }
 }
-module.exports = { withFileLock, withFileLocks, withFileLockAsync }
+// Asynkron tvilling til withFileLocks. At oprette en fil paa M: koster 3-4 s
+// (maalt 07.11), saa laasene oprettes PARALLELT - alt eller intet: er bare en
+// optaget, slippes de andre, og hele saettet proeves igen efter jitter. Den holder
+// aldrig en laas mens den venter, saa den kan ikke daedlaase med klienter (1.6.6)
+// der tager de samme laasefiler en ad gangen i sorteret raekkefoelge.
+async function withFileLocksAsync(targets, mutate, { attempts = 50, delayMs = 100, ...options } = {}) {
+  const ordered = [...new Set(targets)].sort()
+  let releases
+  for (let round = 0; ; round++) {
+    const results = await Promise.allSettled(ordered.map(target => acquireFileLockAsync(target, { ...options, attempts: 1, delayMs })))
+    releases = results.filter(result => result.status === 'fulfilled').map(result => result.value)
+    const failed = results.find(result => result.status === 'rejected')
+    if (!failed) break
+    await Promise.all(releases.map(release => release()))
+    if (failed.reason?.code !== 'KV_LOCK_BUSY' || round + 1 >= attempts) throw failed.reason
+    const jitter = 0.6 + Math.random() * 0.8
+    await new Promise(resolve => setTimeout(resolve, Math.round(delayMs * jitter)))
+  }
+  try { return await mutate() } finally { await Promise.all(releases.map(release => release())) }
+}
+module.exports = { withFileLock, withFileLocks, withFileLockAsync, withFileLocksAsync }
