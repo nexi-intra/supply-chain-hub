@@ -38,6 +38,7 @@ nativeIpcMain.handle = (channel, listener) => nativeHandle(channel, async (...ar
 })
 const { createStore, encryptPayload, whenWritesSettled, hasWritesInFlight } = require('./store.cjs')
 const { guardCloseWhileSaving } = require('./closeWhileSaving.cjs')
+const { backupImmutableBlobs } = require('./imageBackup.cjs')
 // createStore() laver en synkron mkdirSync mod M: og starter med en tom laesecache.
 // Varme stier (auth ved hvert IPC-kald, hub-oversigter) genbruger derfor instansen pr. mappe.
 const reusableStores = new Map()
@@ -460,6 +461,8 @@ function startPendingSyncRetry() {
 //    helt døgns ændringer gå tabt hvis noget overskriver data midt på dagen
 //    (skete for TRR 2026-09-18 — kun morgen-backuppen fandtes, så alt der
 //    blev tastet ind resten af dagen kunne ikke genskabes fra en backup).
+// 3) Billed-blobs (uforanderlige) kopieres ÉN gang hver til Backup/billeder/
+//    (imageBackup.cjs); dagsfilen udelader de billeder, der har en kopi dér.
 // Exclusive create ('wx') sikrer at kun én af de delte klienter skriver en given fil.
 // En fuld snapshot fylder ~32 MB pr. team. Derfor: alle timefiler for I DAG
 // (hoejst en times tab), men kun ÉN fil pr. afsluttet dag. Med 14 dages
@@ -535,12 +538,23 @@ async function backupStore(targetStore) {
       // Maalt paa et rigtigt team: 523 af 652 noegler og 39,9 af 40,4 MB er
       // billed-blobs. De er uforanderlige - en ny upload faar et nyt fileId - saa
       // at kopiere dem hver time var ren spild og tog minutter over SMB.
-      // Timefilen daekker derfor kun de data der rent faktisk aendrer sig; den
-      // fulde kopi tages én gang i doegnet. Gendannelse overskriver kun de
+      // Timefilen daekker derfor kun de data der rent faktisk aendrer sig.
+      // Billederne kopieres ÉN gang hver til Backup/billeder/ (imageBackup.cjs),
+      // og dagsfilen udelader praecis dem der allerede har en kopi dér - saa et
+      // billede altid ligger i mindst én backup. (07.11 tog dagsfilen med alle
+      // billeder 401 s og optog drevet for alle.) Gendannelse overskriver kun de
       // noegler backuppen indeholder, saa billederne i storen roeres ikke.
       const fullName = missing.find(name => !/_\d{2}\.json$/.test(name))
       const dumpStartedAt = Date.now()
-      const fullPayload = fullName ? await snapshot() : null
+      let blobsWithCopy = new Set()
+      try {
+        const images = await backupImmutableBlobs({ dataDir: targetStore.dataDir, backupDir, isImmutableBlobKey, today, keepDays: AUTO_BACKUP_KEEP_DAYS })
+        blobsWithCopy = images.backedUp
+        if (images.copied || images.pruned) console.log(`TCD Hub: billed-backup i ${path.basename(targetStore.dataDir)}: ${images.copied} kopieret, ${images.pruned} fjernet, ${images.backedUp.size} sikret`)
+      } catch (err) {
+        console.warn('TCD Hub: billed-backup fejlede - dagsfilen tager alle billeder med:', err?.message || err)
+      }
+      const fullPayload = fullName ? await snapshot(key => !isImmutableBlobKey(key) || !blobsWithCopy.has(key)) : null
       if (fullName && await writeBackupFileOnce(backupDir, fullName, fullPayload)) console.log(`TCD Hub: fuld backup skrevet: ${fullName}`)
       for (const name of missing.filter(entry => entry !== fullName)) {
         // Er den fulde kopi lige taget, genbruges den frem for at laese alt igen.

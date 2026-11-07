@@ -24,6 +24,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Manager: oprettelse, rettelse og sletning af brugere fryser ikke længere hele Hubben',
       'Ferie: giv fri dag, ferieansøgning, forældreorlov, ret og slet ferie lukker med det samme – ferien forsvinder/opdateres straks i Manager-oversigten, og mails og notifikationer sendes i baggrunden',
       'Gemning på det fælles drev er mere sikker: en langsom gemning holder sin lås frisk, så en kollegas Hub ikke længere kan tage låsen midt i gemningen og overskrive ændringen',
+      'Den daglige backup belaster drevet langt mindre: billeder ændrer sig aldrig, så hvert billede sikkerhedskopieres nu én gang (i Backup\\billeder) i stedet for hver dag. Før optog den daglige backup drevet i op til 7 minutter',
       'Spil: et træk, en chatbesked eller en reaktion venter ikke længere på det forrige træk, og lobbyen åbner med det samme',
     ],
   },

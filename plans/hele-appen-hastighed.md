@@ -89,7 +89,7 @@ Målt i `main.log`: "giv fri dag" = 3 gemninger efter hinanden á 84 s; "slet fe
 - [x] Lås-hjerteslag: en async holder fornyer låsens mtime hvert 10. s (højst 10 min), og en lås med troværdig frisk mtime stjæles aldrig. Før kunne en 80 s-gemning miste låsen efter 30 s (set 05.11: "fjerner forladt laas (32s gammel)") → to skrivere i samme fil.
 - [x] Luk app under gemning: vinduet bliver stående med "Gemmer dine sidste ændringer …" og lukker selv, når alt er gemt (højst 3 min, "Luk alligevel"). Før blev gemningen afbrudt efter 10 s.
 - [x] Log: langsom skrivning (≥ 5 s) logges med tid pr. trin (kø | lås | læs | tmp | omdøb | frigiv), så næste langsomme gemning kan placeres præcist.
-- [ ] Daglig fuld backup uden uforanderlige billeder (brugeren har sagt ja) – billederne skal stadig sikres én gang hver, før de udelades.
+- [x] Daglig fuld backup uden uforanderlige billeder (brugeren sagde ja): hvert billede kopieres ÉN gang (rå, krypteret fil) til `Backup/billeder/` via tmp+rename, højst 3 min pr. kørsel; dagsfilen udelader KUN billeder med en kopi, så hvert billede altid er i mindst én backup. Kopier af slettede billeder fjernes efter 14 dage (`billeder-fjernet.index`). Nøgler læses direkte fra drevet (ikke offline-spejlet). `electron/imageBackup.cjs` + 6 tests.
 
 ## Ikke gjort (bevidst) / næste skridt
 
