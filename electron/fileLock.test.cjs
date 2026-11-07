@@ -295,3 +295,12 @@ test('one EPERM from a link (a lock just deleted by another client) does not giv
     assert.equal(fs.statSync(target).nlink, 2, 'the next lock is a link again')
   })
 })
+
+test('a prepared owner file that has disappeared does not fail the lock', async t => {
+  const target = fixture(t)
+  const dir = path.dirname(target)
+  await warmPool(t, dir)
+  for (const name of fs.readdirSync(dir).filter(entry => entry.endsWith('.lockowner'))) fs.unlinkSync(path.join(dir, name))
+  assert.equal(await withFileLockAsync(target, async () => 42, { attempts: 1 }), 42)
+  assert.ok(!fs.existsSync(target))
+})

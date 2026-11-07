@@ -39,6 +39,14 @@ nativeIpcMain.handle = (channel, listener) => nativeHandle(channel, async (...ar
 const { createStore, encryptPayload, whenWritesSettled, hasWritesInFlight } = require('./store.cjs')
 const { guardCloseWhileSaving } = require('./closeWhileSaving.cjs')
 const { backupImmutableBlobs } = require('./imageBackup.cjs')
+const { setPreparedFiles } = require('./fileLock.cjs')
+const { createPreparedFiles } = require('./preparedFiles.cjs')
+// Files made ready in the background for saves on the shared drive (preparedFiles.cjs): a save then writes into an
+// existing file and takes its lock as a hard link instead of creating two new files (measured 10.5 s -> 3.4 s on M:).
+// Only stores on the shared drive get them; local caches on this PC do not.
+const preparedFiles = createPreparedFiles()
+setPreparedFiles(preparedFiles)
+const createSharedStore = (directory, options = {}) => createStore(directory, { ...options, preparedFiles })
 // createStore() laver en synkron mkdirSync mod M: og starter med en tom laesecache.
 // Varme stier (auth ved hvert IPC-kald, hub-oversigter) genbruger derfor instansen pr. mappe.
 const reusableStores = new Map()
@@ -46,7 +54,7 @@ function storeFor(directory) {
   const key = path.resolve(directory)
   let instance = reusableStores.get(key)
   if (!instance) {
-    instance = createStore(directory)
+    instance = createSharedStore(directory)
     reusableStores.set(key, instance)
   }
   return instance
@@ -245,7 +253,7 @@ let stopWatcher = null
 // hoved-watcheren (startWatcher) naar 'users' aendres paa disken.
 let directUsersStore = { dir: null, store: null }
 const usersStore = () => {
-  if (directUsersStore.dir !== store.dataDir) directUsersStore = { dir: store.dataDir, store: createStore(store.dataDir, { externallyWatched: true }) }
+  if (directUsersStore.dir !== store.dataDir) directUsersStore = { dir: store.dataDir, store: createSharedStore(store.dataDir, { externallyWatched: true }) }
   return directUsersStore.store
 }
 // Platform-delt store (Fase 9.1): data der IKKE hører til noget enkelt team (fx madplanen —
@@ -399,11 +407,16 @@ function startSharedWatcher({ initialScan = 'sync' } = {}) {
   applyWatchVisibility()
 }
 
-/** Fjerner temp-filer som crashede klienter har efterladt i de delte mapper. Best effort og helt i baggrunden. */
+/** Fjerner temp-filer og forberedte filer som crashede klienter har efterladt i de delte mapper. Best effort og helt i baggrunden. */
 function sweepSharedTempFiles() {
   if (storageStartedDisconnected || !storageConnected || !platformRoot) return
-  for (const directory of [path.join(platformRoot, '_shared'), path.join(platformRoot, '_shared', 'multiplayer')]) {
-    createStore(directory).sweepStaleTempFilesAsync()
+  const teamDir = store?.dataDir
+  const directories = [path.join(platformRoot, '_shared'), path.join(platformRoot, '_shared', 'multiplayer'), registry.registryDir(platformRoot)]
+  if (teamDir) directories.push(teamDir, path.join(teamDir, 'lagerstyring'), path.join(teamDir, 'lagerstyring', 'placeringer'))
+  for (const directory of directories) {
+    // Only folders that exist (no warehouse folder is created for a team without it); checked without blocking main.
+    fs.promises.access(directory)
+      .then(() => storeFor(directory).sweepStaleTempFilesAsync())
       .then(removed => { if (removed.length) console.log(`TCD Hub: fjernede ${removed.length} forladte temp-filer i ${directory}`) })
       .catch(() => {})
   }
@@ -687,7 +700,7 @@ function switchDataDir(newDir) {
 
   fs.writeFileSync(userConfigPath(), JSON.stringify({ dataDir: newDir }, null, 2))
 
-  store = createResilientStore(createStore(newDir), createStore(localCacheDir(currentTeamFolder)), resilientOptions())
+  store = createResilientStore(createSharedStore(newDir), createStore(localCacheDir(currentTeamFolder)), resilientOptions())
   dataDirSource = 'user'
   // Netop verificeret tilgængelig ovenfor (mkdirSync+accessSync) — nulstil
   // eventuel "startede offline"-tilstand fra opstart.
@@ -719,7 +732,7 @@ function switchToTeamDir(folderName, newDir) {
   broadcast('assistant:context-changed')
 
   if (stopWatcher) stopWatcher()
-  store = createResilientStore(createStore(newDir), createStore(localCacheDir(folderName)), resilientOptions())
+  store = createResilientStore(createSharedStore(newDir), createStore(localCacheDir(folderName)), resilientOptions())
   currentTeamFolder = folderName
   authService?.invalidateAll()
   dataDirSource = 'team'
@@ -880,7 +893,7 @@ app.whenReady().then(() => {
   const resolved = resolveDataDir()
   platformRoot = resolved.dir
   accountService = createAccountService({ getRoot: () => platformRoot, registry, openStore: createStore, assertNoPendingSync: assertNoPendingAccountSync, contextTtlMs: 5000 })
-  store = createResilientStore(createStore(resolved.dir), createStore(localCacheDir()), resilientOptions())
+  store = createResilientStore(createSharedStore(resolved.dir), createStore(localCacheDir()), resilientOptions())
   dataDirSource = resolved.source
   storageStartedDisconnected = resolved.failedSources.length > 0
   storageFailedSources = resolved.failedSources
@@ -892,7 +905,7 @@ app.whenReady().then(() => {
   }
 
   // Platform-delt store (Fase 9.1) — oprettes én gang, uafhængig af hvilket team der er aktivt.
-  sharedStore = createResilientStore(createStore(path.join(platformRoot, '_shared')), createStore(localCacheDir('_shared')), resilientOptions())
+  sharedStore = createResilientStore(createSharedStore(path.join(platformRoot, '_shared')), createStore(localCacheDir('_shared')), resilientOptions())
 
   guestStore = createStore(path.join(app.getPath('userData'), 'guest-preferences'))
   authService = createAuthService({
@@ -927,7 +940,7 @@ app.whenReady().then(() => {
     getStore: () => {
       if (storageStartedDisconnected || !storageConnected) throw new Error('IMPROVEMENTS_UNAVAILABLE')
       const directory = path.join(platformRoot, '_shared')
-      if (!improvementsStore || improvementsStore.dataDir !== directory) improvementsStore = createStore(directory)
+      if (!improvementsStore || improvementsStore.dataDir !== directory) improvementsStore = createSharedStore(directory)
       return improvementsStore
     },
     getDirectory: improvementDirectory,
@@ -947,12 +960,12 @@ app.whenReady().then(() => {
   const multiplayer = createMultiplayerService({
     getIndexStore: () => {
       const directory = multiplayerRoot()
-      if (!multiplayerIndexStore || multiplayerIndexStore.dataDir !== directory) multiplayerIndexStore = createStore(directory)
+      if (!multiplayerIndexStore || multiplayerIndexStore.dataDir !== directory) multiplayerIndexStore = createSharedStore(directory)
       return multiplayerIndexStore
     },
     getGameStore: () => {
       const directory = path.join(multiplayerRoot(), 'multiplayer')
-      if (!multiplayerGameStore || multiplayerGameStore.dataDir !== directory) multiplayerGameStore = createStore(directory)
+      if (!multiplayerGameStore || multiplayerGameStore.dataDir !== directory) multiplayerGameStore = createSharedStore(directory)
       return multiplayerGameStore
     },
     getDirectory: improvementDirectory,
@@ -979,7 +992,7 @@ app.whenReady().then(() => {
     getStore: () => {
       if (storageStartedDisconnected || !storageConnected) throw new Error('HIGH_FIVES_UNAVAILABLE')
       const directory = path.join(platformRoot, '_shared')
-      if (!highFivesStore || highFivesStore.dataDir !== directory) highFivesStore = createStore(directory)
+      if (!highFivesStore || highFivesStore.dataDir !== directory) highFivesStore = createSharedStore(directory)
       return highFivesStore
     },
     getDirectory: improvementDirectory,
@@ -992,7 +1005,7 @@ app.whenReady().then(() => {
     getStore: () => {
       if (storageStartedDisconnected || !storageConnected) throw new Error('LINKS_UNAVAILABLE')
       const directory = path.join(platformRoot, '_shared')
-      if (!linksStore || linksStore.dataDir !== directory) linksStore = createStore(directory)
+      if (!linksStore || linksStore.dataDir !== directory) linksStore = createSharedStore(directory)
       return linksStore
     },
     getDirectory: improvementDirectory,
@@ -1007,10 +1020,11 @@ app.whenReady().then(() => {
   const warehouseUserStores = new Map()
   warehouse = registerWarehouse({
     ipcMain,
+    preparedFiles,
     currentActor: event => authService.currentAsync(event.sender.id),
     teamUsers: async team => {
       const directory = warehouseTeamDir(team)
-      if (!warehouseUserStores.has(directory)) warehouseUserStores.set(directory, createStore(directory))
+      if (!warehouseUserStores.has(directory)) warehouseUserStores.set(directory, createSharedStore(directory))
       return publicUsers(await warehouseUserStores.get(directory).getAsync('users')) || {}
     },
     teamDir: warehouseTeamDir,
@@ -1063,7 +1077,7 @@ app.whenReady().then(() => {
     const home = (await authService.currentAsync(event.sender.id)).home
     if (home.folderName === currentTeamFolder) return store
     const directory = registeredTeamDir(platformRoot, registry.listTeams(platformRoot), home.folderName).directory
-    if (!homeStores.has(directory)) homeStores.set(directory, awayFromHome(createStore(directory), createStore(localCacheDir(home.folderName))))
+    if (!homeStores.has(directory)) homeStores.set(directory, awayFromHome(createSharedStore(directory), createStore(localCacheDir(home.folderName))))
     return homeStores.get(directory)
   }
   const kvTarget = async (key, event) => ['app-language-guest', 'user-theme-guest'].includes(key) ? guestStore : SHARED_KV_KEYS.has(key) ? sharedStore : PERSONAL_KEY.test(key) && event ? personalStore(event) : store
@@ -1130,7 +1144,7 @@ app.whenReady().then(() => {
         if (Object.entries(users || {}).some(([field, user]) => [field, user?.email].some(value => String(value || '').trim().toLowerCase() === wanted))) return
       }
       const sharedDir = path.join(platformRoot, '_shared')
-      const shared = await eraseSharedUserData({ shared: createStore(sharedDir), games: createStore(path.join(sharedDir, 'multiplayer')) }, email, fullName)
+      const shared = await eraseSharedUserData({ shared: createSharedStore(sharedDir), games: createSharedStore(path.join(sharedDir, 'multiplayer')) }, email, fullName)
       await registry.forgetUserAsync(platformRoot, wanted)
       console.log(`TCD Hub: fælles data for slettet bruger anonymiseret (${shared.games} spil)`)
       multiplayerHooks.usersChanged?.()
@@ -1683,7 +1697,11 @@ app.on('before-quit', event => {
     warehouseDone,
     writesDone,
     Promise.resolve(multiplayerSettled?.()).catch(() => {}),
-  ]).then(([, writesSettled]) => writesSettled)
+  ]).then(async ([, writesSettled]) => {
+    // Files made ready for saves are removed last, when nothing writes any more.
+    await preparedFiles.closeAll().catch(() => {})
+    return writesSettled
+  })
   Promise.race([flushed, delay(QUIT_FLUSH_TIMEOUT_MS, false)])
     .then(settled => { if (!settled) diagnostics.write('warn', `lukning: gemninger ikke færdige efter ${QUIT_FLUSH_TIMEOUT_MS} ms - lukker alligevel`) })
     .catch(() => {})

@@ -68,7 +68,7 @@ function loadDeviceId(dir) {
  * @param {(teamId: string) => string} deps.teamDir the registered folder of a team in the platform root
  * @param {() => string} deps.platformRoot
  */
-function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platformRoot, userDataDir, electron, broadcast, isPackaged, configDirs = [], scriptsDir = __dirname, env = process.env }) {
+function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platformRoot, userDataDir, electron, broadcast, isPackaged, configDirs = [], scriptsDir = __dirname, env = process.env, preparedFiles = null }) {
   const { clipboard, dialog, shell, BrowserWindow } = electron
   const config = resolveWarehouseConfig({ env, configDirs })
   const localDir = path.join(userDataDir, 'warehouse')
@@ -90,7 +90,7 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   const openStore = dir => {
     if (!stores.has(dir)) {
       try {
-        stores.set(dir, createStore(dir))
+        stores.set(dir, createStore(dir, { preparedFiles }))
       } catch (error) {
         console.error('Lagerstyring: storage unavailable', dir, error.code)
         throw codeError('STORAGE_UNAVAILABLE')

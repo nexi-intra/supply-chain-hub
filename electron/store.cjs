@@ -11,6 +11,7 @@ const path = require('path')
 const crypto = require('crypto')
 const { withFileLock, withFileLocks, withFileLockAsync, withFileLocksAsync } = require('./fileLock.cjs')
 const { isImmutableBlobKey } = require('./offlineSync.cjs')
+const { PREPARED_FILE_PATTERN } = require('./preparedFiles.cjs')
 
 const FILE_EXT = '.json'
 const READ_ATTEMPTS = 5
@@ -355,9 +356,9 @@ function createStore(dataDir, { externallyWatched = false, preparedFiles = null 
         const handle = await fs.promises.open(prepared, 'r+')
         try { await handle.write(encryptPayload(json)) } finally { await handle.close() }
         return prepared
-      } catch (error) {
+      } catch {
+        // Gone (another client's sweep after 24 h) or failed: never reused, and this save is done the ordinary way.
         preparedFiles.discardTmp(prepared)
-        throw error
       }
     }
     const tmp = `${filePath(key)}.${process.pid}.${Date.now()}.${crypto.randomBytes(4).toString('hex')}.tmp`
@@ -461,8 +462,9 @@ function createStore(dataDir, { externallyWatched = false, preparedFiles = null 
     const removed = []
     const nowMs = Date.now()
     for (const name of await fs.promises.readdir(dataDir)) {
-      const match = /\.json\.\d+\.(\d+)\.[0-9a-f]{8}\.tmp$/.exec(name)
-      if (!match || nowMs - Number(match[1]) < maxAgeMs) continue
+      // Also files prepared for saves (preparedFiles.cjs) by a client that crashed or was killed.
+      const stampMs = Number(/\.json\.\d+\.(\d+)\.[0-9a-f]{8}\.tmp$/.exec(name)?.[1] ?? PREPARED_FILE_PATTERN.exec(name)?.[2] ?? NaN)
+      if (!Number.isFinite(stampMs) || nowMs - stampMs < maxAgeMs) continue
       const target = path.join(dataDir, name)
       try {
         if (nowMs - (await fs.promises.stat(target)).mtimeMs < maxAgeMs) continue

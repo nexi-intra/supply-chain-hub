@@ -834,7 +834,7 @@ test('a save with a prepared temp file creates no new file during the save', asy
   assert.deepEqual(await store.getAsync('k', { skipCache: true }), { a: 1 })
 })
 
-test('a failed write into a prepared file leaves the data file untouched and the file is not reused', async t => {
+test('a failed write into a prepared file is never reused, and the save is done the ordinary way', async t => {
   const { store, pool, directory } = await preparedStore(t)
   await store.setAsync('k', { v: 'old' })
   await pool.whenIdle()
@@ -849,13 +849,21 @@ test('a failed write into a prepared file leaves the data file untouched and the
     }
     return handle
   })
-  await assert.rejects(store.setAsync('k', { v: 'new' }), { code: 'EIO' })
+  await store.setAsync('k', { v: 'new' })
   t.mock.restoreAll()
   assert.ok(ready.includes(failed), 'the failing write was into a prepared file')
-  assert.deepEqual(await store.getAsync('k', { skipCache: true }), { v: 'old' })
+  assert.deepEqual(await store.getAsync('k', { skipCache: true }), { v: 'new' })
   await pool.whenIdle()
   assert.ok(!fs.existsSync(path.join(directory, failed)), 'the half-written prepared file is deleted')
   for (let file = pool.takeTmp(directory); file; file = pool.takeTmp(directory)) assert.notEqual(path.basename(file), failed)
+})
+
+// The app runs for days; another client's sweep may delete a prepared file that waited for over 24 h.
+test('a prepared file that has disappeared does not fail the save', async t => {
+  const { store, directory } = await preparedStore(t)
+  for (const name of fs.readdirSync(directory).filter(entry => entry.startsWith('~hub-prep-'))) fs.unlinkSync(path.join(directory, name))
+  await store.setAsync('k', { v: 1 })
+  assert.deepEqual(await store.getAsync('k', { skipCache: true }), { v: 1 })
 })
 
 test('prepared files never show up as keys, in a scan or in a dump', async t => {
@@ -866,4 +874,22 @@ test('prepared files never show up as keys, in a scan or in a dump', async t => 
   const scan = await store.scanDirectoryAsync(null)
   assert.deepEqual(Object.keys(Object.fromEntries(scan.snapshot)).map(name => name.replace(/\.json$/, '')), ['real'])
   assert.deepEqual(Object.keys(await store.dumpAllAsync()), ['real'])
+})
+
+test('sweep removes prepared files left behind for over 24 h, from any pid, and keeps recent ones', async t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-sweep-prepared-'))
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  const store = createStore(directory)
+  const day = 24 * 60 * 60 * 1000
+  const oldMs = Date.now() - 2 * day
+  const old = new Date(oldMs)
+  const put = (name, mtime) => { const file = path.join(directory, name); fs.writeFileSync(file, 'x'); if (mtime) fs.utimesSync(file, mtime, mtime); return name }
+  const oldPrep = put(`~hub-prep-999-${oldMs}-0123abcd.tmp`, old)
+  const oldOwner = put(`~hub-owner-999-${oldMs}-89abcdef.lockowner`, old)
+  const recentName = put(`~hub-prep-999-${Date.now()}-0123abce.tmp`, old)
+  const recentMtime = put(`~hub-owner-999-${oldMs}-0123abcf.lockowner`)
+  const removed = await store.sweepStaleTempFilesAsync()
+  assert.deepEqual(removed.sort(), [oldOwner, oldPrep].sort())
+  assert.ok(fs.existsSync(path.join(directory, recentName)), 'a recent name is kept even with an old mtime')
+  assert.ok(fs.existsSync(path.join(directory, recentMtime)), 'a fresh mtime (an owner file in use as a lock) is kept')
 })
