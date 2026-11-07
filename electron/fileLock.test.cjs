@@ -245,7 +245,9 @@ test('an abandoned link lock is reclaimed after staleMs like any lock', async t 
   await withFileLockAsync(target, async () => {
     const old = new Date(Date.now() - 61000)
     fs.utimesSync(target, old, old)
-    assert.equal(withFileLock(target, () => 42, { attempts: 1, staleMs: 60000 }), 42)
+    // A few attempts: right after the link is removed, Windows may report it "delete pending" (EPERM) for a moment
+    // while e.g. the virus scanner still has the just-touched owner file open; the app always retries.
+    assert.equal(withFileLock(target, () => 42, { attempts: 3, delayMs: 5, staleMs: 60000 }), 42)
   })
   assert.ok(!fs.existsSync(target))
 })

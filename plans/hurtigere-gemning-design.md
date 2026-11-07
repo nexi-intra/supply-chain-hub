@@ -25,6 +25,16 @@ men en gemning, der tager lang tid, betyder: kolleger ser ændringen sent, flere
 
 Appens trin-log bekræfter: de to filoprettelser (låsefilen og tmp-filen) er ~90 % af tiden (`KV: langsom skrivning … laas 2–17 s | tmp 10–20 s`).
 
+### Resultat efter implementering (07.11 aften, appens rigtige kode, 5 runder, drevet presset)
+
+| | I dag | Med forberedte filer |
+|---|---|---|
+| Gemning (`updateAsync`) | median 18.648 ms (7.580–24.953) | **median 2.477 ms (2.353–2.560)** |
+| Placeringer-transaktion, 6 nøgler | median 66.852 ms | **median 26.845 ms** |
+
+Uden forberedte filer blev hver gemning langsommere, efterhånden som drevet blev presset (filoprettelse 2 → 12 s); med dem var
+tiden stabil. Kontrol: alle data gemt korrekt, ingen låsefiler efterladt, midlertidig mappe slettet.
+
 ## Mål
 
 - En gemning på M: uden at oprette nye filer: ~3× hurtigere ved samme drevbelastning; mere når drevet er presset.

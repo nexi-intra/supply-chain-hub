@@ -31,6 +31,8 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Manager, Admin og Creator: brugere, roller, fødselsdage, ekstra managers, teams og flere ferieansøgninger på én gang vises straks. Tildeling af team og ekstra manager fryser ikke længere hele Hubben',
       'Guides, opslag, mails, noter, to-dos, vagtplan, hjemmearbejde, links og highscores vises straks; billeder i Word-import og guides uploades samtidig i stedet for ét ad gangen',
       'Spil: en chatbesked låser ikke længere brættet, mens den gemmes',
+      'Gemning på det fælles drev er op til 3 gange hurtigere: appen gør filerne klar i baggrunden, så der ikke skal oprettes nye filer på M:, mens du gemmer – det var det, der tog tiden. Virker sammen med 1.6.6',
+      'Appen gemmer færre ting af sig selv på drevet (versionsstatus, "husk mig"-login og "sidst set"), så drevet er mindre optaget for alle',
       'Spil: et træk, en chatbesked eller en reaktion venter ikke længere på det forrige træk, og lobbyen åbner med det samme',
     ],
   },

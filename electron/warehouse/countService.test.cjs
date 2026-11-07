@@ -555,6 +555,8 @@ test('serial number rules decide per material and stock type whether the long se
   assert.deepEqual(await anna.copySerials(ANNA, id, row), { serials: ['251427N1', 'N2'], long: true, total: 2, withoutLong: ['N2'], lookedUp: 2 })
   assert.deepEqual(ctx.fetcher.longCalls[0], { material: 'INT4300-4921-0', serials: ['N1', 'N2'] })
   await anna.flush(ANNA, id)
+  // The long serials are saved to the shared cache in the background (copying does not wait for M:).
+  assert.equal(await whenWritesSettled(5000), true)
   const again = await ctx.service('pc2').copySerials(BO, id, row)
   assert.deepEqual(again.serials, ['251427N1', 'N2'])
   assert.deepEqual(ctx.fetcher.longCalls[1].serials, ['N2'], 'the long N1 comes from the shared cache, also on another PC')
