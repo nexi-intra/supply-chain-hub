@@ -16,6 +16,8 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Optælling: scanneren giver status med det samme (fundet, dublet, ukendt …) – den venter ikke længere på det fælles drev, heller ikke når mange scanner på én gang',
       'Optælling: optællingsdokumentet bruger dagens SAP-tal – også for serienumre. Godkendes en optælling i dag og laves dokumentet senere, får terminalerne SAP\'s serienumre den dag, minus dem der manglede ved godkendelsen. Passer antallet ikke med SAP i dag + difference, vises en advarsel',
       'Optælling: admins kan nu selv "Hent dagens SAP-tal" og "Hent SAP igen" – det behøver ikke længere være den ansvarlige eller en manager',
+      'Optælling åbner langt hurtigere: en optælling vises nu på omkring et halvt sekund – før kunne den vente på, at det fælles drev gemte',
+      'Placeringer: Hubben fryser ikke længere, mens en handling (fx sæt palle på plads) gemmes på det fælles drev – du kan arbejde videre imens',
     ],
   },
   {
