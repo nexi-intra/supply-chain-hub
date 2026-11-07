@@ -1,3 +1,4 @@
+import { ActionChip } from '@/components/boardgame/ActionChip'
 import { useGameChangeWatch } from '@/hooks/useGameChangeWatch'
 import { acknowledgeMultiplayerNotifications } from '@/lib/multiplayerAcknowledge'
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
@@ -414,7 +415,7 @@ export const BackgammonGame = memo(function BackgammonGame({ gameId, myEmail, te
             </div>
             <div className="wp-banner__row">
               <RoomCalls />
-              <button type="button" className="bgr-chip" data-tone="primary" disabled={busy} onClick={() => void rematch()}>{l.finished.rematch}</button>
+              <ActionChip className="bgr-chip" data-tone="primary" disabled={busy} onAction={() => rematch()}>{l.finished.rematch}</ActionChip>
               <button type="button" className="bgr-chip" onClick={onBack}>{labels.backToLobby}</button>
             </div>
           </TapedNote>

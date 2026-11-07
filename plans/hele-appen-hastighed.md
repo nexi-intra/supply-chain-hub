@@ -29,7 +29,7 @@ Oprettet 2026-11-07. Fortsættelse af [langsom-optaelling-placeringer.md](./lang
 - [x] `kvArrays`-hjælperne (~55 steder) viser ændringen i alle åbne `useKV`-visninger med det samme (`kvPrediction` spejler `store.computeUpdate`); fejl → den gemte værdi vises igen. Tests i `useKV.test.ts`, `kvPrediction.test.ts`.
 - [x] `Button`: returnerer `onClick` en promise, viser knappen spinner og er spærret, til den er færdig. 112 knapper (45 filer) sender nu deres promise videre (`() => void x()` → `() => x()`, kun hvor `onClick` med sikkerhed er knappens egen).
 - [x] "Gemmer på det fælles drev …" nederst til venstre, mens en `window.kv`-gemning er på vej (efter 0,6 s; ikke offline).
-- [ ] Knapper hvor `onClick={() => void …}` står på en egen linje (flerlinjede `<Button>`-tags) – samme konvertering via TypeScript-AST.
+- [x] Knapper hvor `onClick={() => void …}` står på en egen linje eller sidst i en blok – samme konvertering via TypeScript-AST (5 steder; "Stop" i Hubert bevidst udeladt).
 
 ### 2.1 Opstart (alle brugere, hver gang)
 - [x] Madplan-migrationen tager den GLOBALE kontolås synkront ved hver opstart (`main.cjs` `runWrite(migrateSharedMealPlanIfNeeded)`) – opretter en låsefil på M: (3–10 s frossen hovedtråd) og blokerer andres login, selvom madplanen blev flyttet for længe siden. → tjek `meal-plan-weeks` asynkront først; kun hvis den mangler, køres den gamle vej.
@@ -38,32 +38,32 @@ Oprettet 2026-11-07. Fortsættelse af [langsom-optaelling-placeringer.md](./lang
 
 ### 2.2 Knapper der venter på en gemning uden at vise det (Hub-moduler)
 - [x] Projekter (deltag/forlad/færdig/slet/ret/opret, personlige to-dos), Notesbog (opret/ret/fastgør), Links (venter ikke på genindlæsning), Mail (send, ferie-godkend/afvis), Admin (indikator på slet bruger, venter ikke på genindlæsning), Creator (indikator på gem team). Ferie var allerede optimistisk (kun parallelle gemninger tilføjet).
-- [ ] Manager-panel, Guides, Login/signup.
+- [x] Manager-panel (gem bruger, slet ferie venter ikke på genindlæsning; ferien forsvinder straks). Guides: Word/PDF-upload læser ikke hele filen igen (se 2.6). Login/signup: den fundne kode er kun browser-vejen – desktop bruger `electronAuth` (ikke rørt).
 
 ### 2.3 Læsninger efter hinanden → parallelt
 - [x] Vagtplan (users + fødselsdage; users + user-settings), Ferie (users + fødselsdage), Notesbog (users + rolle), Admin (creator + users).
-- [ ] Signup (creator + users).
+- Signup (creator + users): kun browser-vejen, ikke rørt.
 
 ### 2.4 Polling
 - [x] Mail læser `users` hvert 5. s – også når vinduet er skjult. → læses ved ændring (`kv.subscribe`).
-- [ ] Placeringer poller hvert 15. s uden synligheds-tjek og uden spærre mod overlap.
+- [x] Placeringer poller hvert 15. s uden synligheds-tjek → M:-tjekket springes over, når vinduet er skjult (tjekker straks ved visning).
 
 ### 2.5 Lagerstyring – resten
-- [ ] Optælling: efter en handling genindlæses `open` og `state` efter hinanden → parallelt.
-- [ ] Placeringer: `ensureShelves` læser meta (forbi cachen) ved HVER oversigt → husk pr. session når migreret.
-- [ ] Placeringer: kort (materiale/plads/palle/reol) læser data → beskrivelser → historik efter hinanden → parallelt.
-- [ ] `rulesByTeam` læser holdenes regler efter hinanden → parallelt.
+- [x] Optælling: efter en handling genindlæses `open` og `state` efter hinanden → parallelt (første åbning forbliver efter hinanden: begge bygger optællingen op).
+- [x] Placeringer: `ensureShelves` læser meta (forbi cachen) ved HVER oversigt → husk pr. session når migreret (test).
+- [x] Placeringer: kort (materiale/plads/palle/reol) læser data → beskrivelser → historik efter hinanden → parallelt.
+- [x] `rulesByTeam` læser holdenes regler efter hinanden → parallelt.
 
 ### 2.6 Billeder/filer (Guides)
-- [ ] Upload: gemmer og læser bagefter det hele igen for at tjekke (`fileStorage.ts`) → én læsning færre pr. upload; gamle blob-stykker læses efter hinanden → parallelt.
+- [x] Upload: gemmer og læser bagefter det hele igen for at tjekke (`fileStorage.ts`) → kontrol-læsningen fjernet (kv.set lykkes kun når filen er på plads); gamle blob-stykker læses parallelt.
 
 ### 2.7 Hovedprocessen – synkrone kald på IPC/timer
-- [ ] `kv:update` (slet bruger) læser `users` synkront.
-- [ ] Sygefravær-oprydning: `registry.listTeams` synkront (hver time).
-- [ ] Backup: tre `existsSync` mod M: pr. kørsel.
+- [x] `kv:update` for `users` (opret/ret/slet bruger, rolle) GEMTE synkront (`store.mutate` → 20–40 s frossen app) → `updateUsersAsync` med samme regler og lås (test); "slet bruger" læser navnet asynkront.
+- Registret (`registry.listTeams` m.fl.) har allerede en cache, der svarer straks og opdaterer i baggrunden – ikke et problem.
+- [x] Backup: tre `existsSync` mod M: pr. kørsel → asynkront.
 
 ### 2.8 Spil (efter arbejdsmodulerne, grundige tests)
-- [ ] Træk/chat/reaktion/åbning af spil venter på forrige træks indeks-skrivning (`await settled()`); indeks-skrivninger samles ikke.
+- [x] Træk/chat/reaktion/åbning af spil og lobby ventede på forrige træks indeks-skrivning (`await settled()`, 20+ s) → venter ikke; egne udestående poster vises i lobbyen, og heal rører ikke spil, PC'en selv skriver (test). Samling af flere indeks-skrivninger til én: ikke gjort (lav gevinst, risiko).
 
 ## Afvist / ikke rettet (med begrundelse)
 - Watcherens løbende scanning "synkron" (F): forkert – den bruger `scanDirectoryAsync`. Kun første scan er synkron (2.1).

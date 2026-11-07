@@ -1,3 +1,4 @@
+import { ActionChip } from '@/components/boardgame/ActionChip'
 import { useGameChangeWatch } from '@/hooks/useGameChangeWatch'
 import { acknowledgeMultiplayerNotifications } from '@/lib/multiplayerAcknowledge'
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
@@ -488,8 +489,8 @@ export const WordPuzzleGame = memo(function WordPuzzleGame({ gameId, languageHin
           <strong>{l.approval.approverTitle(opponent.name)}</strong>
           <p>{l.approval.approverBody(opponent.name)}</p>
           <div className="wp-decision__actions">
-            <button type="button" className="bgr-chip" data-tone="good" disabled={busy} onClick={() => void decideWords(true)}>{l.approval.approve}</button>
-            <button type="button" className="bgr-chip" disabled={busy} onClick={() => void decideWords(false)}>{l.approval.reject}</button>
+            <ActionChip className="bgr-chip" data-tone="good" disabled={busy} onAction={() => decideWords(true)}>{l.approval.approve}</ActionChip>
+            <ActionChip className="bgr-chip" disabled={busy} onAction={() => decideWords(false)}>{l.approval.reject}</ActionChip>
           </div>
         </>
       ) : (
@@ -536,7 +537,7 @@ export const WordPuzzleGame = memo(function WordPuzzleGame({ gameId, languageHin
             </div>
             <div className="wp-banner__row">
               <RoomCalls />
-              <button type="button" className="bgr-chip" data-tone="primary" disabled={busy} onClick={() => void rematch()}>{l.finished.rematch}</button>
+              <ActionChip className="bgr-chip" data-tone="primary" disabled={busy} onAction={() => rematch()}>{l.finished.rematch}</ActionChip>
               <button type="button" className="bgr-chip" onClick={onBack}>{labels.backToLobby}</button>
             </div>
           </TapedNote>
@@ -565,9 +566,9 @@ export const WordPuzzleGame = memo(function WordPuzzleGame({ gameId, languageHin
               <p className="bgr-hint">{l.exchangeHint}</p>
               <div className="wp-actions__group">
                 <button type="button" className="bgr-chip" onClick={() => setSwap(null)}>{labels.cancel}</button>
-                <button type="button" className="bgr-chip" data-tone="primary" disabled={busy || swapCount === 0} onClick={() => void confirmSwap()}>
+                <ActionChip className="bgr-chip" data-tone="primary" disabled={busy || swapCount === 0} onAction={() => confirmSwap()}>
                   {l.exchangeConfirm(swapCount)}
-                </button>
+                </ActionChip>
               </div>
             </div>
           ) : (

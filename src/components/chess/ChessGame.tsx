@@ -1,3 +1,4 @@
+import { ActionChip } from '@/components/boardgame/ActionChip'
 import { useGameChangeWatch } from '@/hooks/useGameChangeWatch'
 import { acknowledgeMultiplayerNotifications } from '@/lib/multiplayerAcknowledge'
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
@@ -459,7 +460,7 @@ export const ChessGame = memo(function ChessGame({ gameId, myEmail, teamName, un
             </div>
             <div className="wp-banner__row">
               <RoomCalls />
-              <button type="button" className="bgr-chip" data-tone="primary" disabled={busy} onClick={() => void rematch()}>{l.finished.rematch}</button>
+              <ActionChip className="bgr-chip" data-tone="primary" disabled={busy} onAction={() => rematch()}>{l.finished.rematch}</ActionChip>
               <button type="button" className="bgr-chip" onClick={onBack}>{labels.backToLobby}</button>
             </div>
           </TapedNote>
@@ -475,12 +476,12 @@ export const ChessGame = memo(function ChessGame({ gameId, myEmail, teamName, un
               <p>{c.draw.incomingBody}</p>
             </div>
             <div className="wp-banner__row">
-              <button type="button" className="bgr-chip" data-tone="good" disabled={busy} onClick={() => void run(revision => ({ operationId: newOperationId(), type: 'respond-draw', gameId, expectedRevision: revision, accept: true }))}>
+              <ActionChip className="bgr-chip" data-tone="good" disabled={busy} onAction={() => run(revision => ({ operationId: newOperationId(), type: 'respond-draw', gameId, expectedRevision: revision, accept: true }))}>
                 {c.draw.accept}
-              </button>
-              <button type="button" className="bgr-chip" disabled={busy} onClick={() => void run(revision => ({ operationId: newOperationId(), type: 'respond-draw', gameId, expectedRevision: revision, accept: false }))}>
+              </ActionChip>
+              <ActionChip className="bgr-chip" disabled={busy} onAction={() => run(revision => ({ operationId: newOperationId(), type: 'respond-draw', gameId, expectedRevision: revision, accept: false }))}>
                 {c.draw.decline}
-              </button>
+              </ActionChip>
             </div>
           </TapedNote>
         </div>
