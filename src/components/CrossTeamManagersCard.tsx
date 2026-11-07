@@ -174,7 +174,7 @@ export function CrossTeamManagersCard({ teams }: { teams: RegisteredTeam[] }) {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditing(null)} disabled={saving}>{labels.cancel}</Button>
-            <Button onClick={() => void save()} disabled={saving || !editing?.email || (editing.isNew && editing.teamIds.length === 0)}>{labels.save}</Button>
+            <Button onClick={() => save()} disabled={saving || !editing?.email || (editing.isNew && editing.teamIds.length === 0)}>{labels.save}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

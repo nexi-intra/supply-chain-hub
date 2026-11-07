@@ -62,7 +62,6 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
   const [initialNavigation] = useState(() => peekNavigationParams())
   const [view, setView] = useState<'inbox' | 'sent' | 'compose' | 'vacation-requests' | 'folder'>(() =>
     initialNavigation?.tab === 'sent' ? 'sent' : initialNavigation?.tab === 'folder' && initialNavigation.itemId ? 'folder' : 'inbox')
-  const [refreshTrigger, setRefreshTrigger] = useState(0)
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(() => initialNavigation?.tab === 'folder' ? initialNavigation.itemId ?? null : null)
   const [selectedVacation, setSelectedVacation] = useState<VacationEntry | null>(null)
   const [showCalendarPreview, setShowCalendarPreview] = useState(false)
@@ -111,7 +110,9 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
     }
     
     loadUserAndData()
-  }, [refreshTrigger, setEmails, userEmail])
+    // Genlæses kun når 'users' faktisk ændres (før: hvert 5. s fra M:, også når vinduet var skjult).
+    return window.kv.subscribe(changedKeys => { if (changedKeys.includes('users')) void loadUserAndData() })
+  }, [setEmails, userEmail])
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -125,13 +126,6 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
     return () => window.removeEventListener('keydown', handleKeyDown, true)
   }, [onNavigateBack])
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setRefreshTrigger(prev => prev + 1)
-    }, 5000)
-
-    return () => clearInterval(interval)
-  }, [])
 
   const getInitials = (email: string) => {
     const name = email.split('@')[0]
@@ -280,12 +274,22 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
     }
 
     // Atomar append — to brugere der sender samtidig taber ikke længere hinandens mails.
-    await sendInternalMessage({ from: userEmail, to: composeData.to, subject: composeData.subject, message: composeData.message, threadId: composeThreadId })
-
-    toast.success(t.email.emailSent)
+    // Mailen vises straks under Sendt (kvArrays); gemningen tager op mod et halvt minut. Fejler den, åbnes udkastet igen.
+    const draft = { ...composeData }
+    const threadId = composeThreadId
     setComposeData({ to: '', subject: '', message: '' })
     setComposeThreadId(null)
     setView('sent')
+    try {
+      await sendInternalMessage({ from: userEmail, to: draft.to, subject: draft.subject, message: draft.message, threadId })
+      toast.success(t.email.emailSent)
+    } catch (error) {
+      console.error('Kunne ikke sende mailen:', error)
+      setComposeData(draft)
+      setComposeThreadId(threadId)
+      setView('compose')
+      toast.error(language === 'da' ? 'Mailen blev ikke sendt — prøv igen' : language === 'fi' ? 'Viestiä ei lähetetty — yritä uudelleen' : language === 'sv' ? 'Meddelandet skickades inte — försök igen' : 'The email was not sent — please try again')
+    }
   }
 
   const handleMarkAsRead = (emailId: string) => {
@@ -351,7 +355,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
         emailId: newEmail.id
       }
 
-      await appendToKvArray('email-notifications', [notification])
+      void appendToKvArray('email-notifications', [notification]).catch(error => console.error('Error sending vacation approval notification:', error))
     } catch (emailError) {
       console.error('Error sending vacation approval email:', emailError)
     }
@@ -395,7 +399,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
         emailId: newEmail.id
       }
 
-      await appendToKvArray('email-notifications', [notification])
+      void appendToKvArray('email-notifications', [notification]).catch(error => console.error('Error sending vacation rejection notification:', error))
     } catch (emailError) {
       console.error('Error sending vacation rejection email:', emailError)
     }

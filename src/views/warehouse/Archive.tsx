@@ -81,7 +81,7 @@ function PastStatusRow({ status, onOpen }: { status: CountStatus; onOpen: () => 
         </p>
       </div>
       <div className="flex gap-2">
-        {report && <Button variant="outline" size="sm" onClick={() => void openReport()}><FileXls size={16} /> {t('Åbn rapport', 'Open report')}</Button>}
+        {report && <Button variant="outline" size="sm" onClick={() => openReport()}><FileXls size={16} /> {t('Åbn rapport', 'Open report')}</Button>}
         <Button variant="ghost" size="sm" onClick={onOpen}>{t('Se detaljer', 'See details')} <ArrowRight size={14} /></Button>
       </div>
     </div>
@@ -145,7 +145,7 @@ export function ArchiveMaterials({ archive }: { archive: StatusArchive }) {
     const docNo = kind === 'mi03' ? line.doc?.docNo : line.doc?.materialDoc
     if (!docNo) return <span className="text-muted-foreground">–</span>
     return (
-      <Button variant="link" size="sm" className="h-auto p-0 font-mono" disabled={opening !== null} onClick={() => void show(line, kind)} title={t(`Vis ${docNo} i SAP (${kind === 'mi03' ? 'MI03' : 'MB03'})`, `Show ${docNo} in SAP (${kind === 'mi03' ? 'MI03' : 'MB03'})`)}>
+      <Button variant="link" size="sm" className="h-auto p-0 font-mono" disabled={opening !== null} onClick={() => show(line, kind)} title={t(`Vis ${docNo} i SAP (${kind === 'mi03' ? 'MI03' : 'MB03'})`, `Show ${docNo} in SAP (${kind === 'mi03' ? 'MI03' : 'MB03'})`)}>
         {opening === `${kind}:${docNo}` ? t('Åbner…', 'Opening…') : docNo}
       </Button>
     )

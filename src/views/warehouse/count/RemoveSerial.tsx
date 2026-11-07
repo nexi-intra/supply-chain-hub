@@ -34,7 +34,7 @@ export function RemoveSerialButton({ id, serial, refresh }: { id: string; serial
     await removeFoundSerial(id, serial, refresh)
     setBusy(false)
   }
-  return <Button size="icon" variant="ghost" className="size-7" loading={busy} onClick={() => void remove()} aria-label={t(`Fjern ${serial}`, `Remove ${serial}`)} title={t('Fjern fra fundne', 'Remove from found')}><Trash size={14} /></Button>
+  return <Button size="icon" variant="ghost" className="size-7" loading={busy} onClick={() => remove()} aria-label={t(`Fjern ${serial}`, `Remove ${serial}`)} title={t('Fjern fra fundne', 'Remove from found')}><Trash size={14} /></Button>
 }
 
 /** "Fjern serienummer": scan or type the serial that should not count after all. */
@@ -60,7 +60,7 @@ export function RemoveSerialDialog({ id, refresh, onClose }: { id: string; refre
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={busy}>{t('Luk', 'Close')}</Button>
-          <Button variant="destructive" onClick={() => void remove()} loading={busy} disabled={!serial.trim()}><Trash size={16} /> {t('Fjern', 'Remove')}</Button>
+          <Button variant="destructive" onClick={() => remove()} loading={busy} disabled={!serial.trim()}><Trash size={16} /> {t('Fjern', 'Remove')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

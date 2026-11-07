@@ -99,8 +99,8 @@ export function TakePallet({ material: initial, version, onDone }: { material?: 
                       <span className="ml-auto flex items-center gap-2">
                         <Input inputMode="numeric" value={shelfAmounts[shelf.location] || ''} placeholder={t('stk.', 'pcs')} className="h-9 w-20" aria-label={t('Antal at tage fra hylden', 'Quantity to take from the shelf')}
                           onChange={event => setShelfAmounts(value => ({ ...value, [shelf.location]: event.target.value.replace(/\D/g, '') }))} />
-                        <Button size="sm" variant="outline" disabled={!shelfAmounts[shelf.location] || busy !== null} loading={busy === shelf.location} onClick={() => void takeFromShelf(shelf, Number(shelfAmounts[shelf.location]))}>{t(`Tag ${shelfAmounts[shelf.location] || 'X'} stk.`, `Take ${shelfAmounts[shelf.location] || 'X'}`)}</Button>
-                        <Button size="sm" variant="ghost" disabled={busy !== null} loading={busy === `${shelf.location}:all`} onClick={() => void takeFromShelf(shelf, shelf.quantity, true)}>{t('Tag alt', 'Take all')}</Button>
+                        <Button size="sm" variant="outline" disabled={!shelfAmounts[shelf.location] || busy !== null} loading={busy === shelf.location} onClick={() => takeFromShelf(shelf, Number(shelfAmounts[shelf.location]))}>{t(`Tag ${shelfAmounts[shelf.location] || 'X'} stk.`, `Take ${shelfAmounts[shelf.location] || 'X'}`)}</Button>
+                        <Button size="sm" variant="ghost" disabled={busy !== null} loading={busy === `${shelf.location}:all`} onClick={() => takeFromShelf(shelf, shelf.quantity, true)}>{t('Tag alt', 'Take all')}</Button>
                       </span>
                     </div>
                   ))}
@@ -118,15 +118,15 @@ export function TakePallet({ material: initial, version, onDone }: { material?: 
                   <span className="ml-auto flex items-center gap-2">
                     <Input inputMode="numeric" value={amounts[pallet.id] || ''} placeholder={t('stk.', 'pcs')} className="h-9 w-20" aria-label={t('Antal at tage', 'Quantity to take')}
                       onChange={event => setAmounts(value => ({ ...value, [pallet.id]: event.target.value.replace(/\D/g, '') }))} />
-                    <Button size="sm" variant="outline" disabled={!amounts[pallet.id] || busy !== null} loading={busy === `${pallet.id}:part`} onClick={() => void take(pallet, Number(amounts[pallet.id]))}>{t(`Tag ${amounts[pallet.id] || 'X'} stk.`, `Take ${amounts[pallet.id] || 'X'}`)}</Button>
-                    <Button size="sm" disabled={busy !== null} loading={busy === pallet.id} onClick={() => void take(pallet)}><HandGrabbing size={16} /> {t('Tag hele pallen', 'Take the whole pallet')}</Button>
+                    <Button size="sm" variant="outline" disabled={!amounts[pallet.id] || busy !== null} loading={busy === `${pallet.id}:part`} onClick={() => take(pallet, Number(amounts[pallet.id]))}>{t(`Tag ${amounts[pallet.id] || 'X'} stk.`, `Take ${amounts[pallet.id] || 'X'}`)}</Button>
+                    <Button size="sm" disabled={busy !== null} loading={busy === pallet.id} onClick={() => take(pallet)}><HandGrabbing size={16} /> {t('Tag hele pallen', 'Take the whole pallet')}</Button>
                   </span>
                   {confirm?.pallet.id === pallet.id && (
                     <div className="flex w-full flex-wrap items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2">
                       <Warning size={16} className="text-amber-600" />
                       <span className="flex-1">{t(`Der står en ældre palle på ${card.reserve[0].location} (${formatAge(card.reserve[0].ageDays)}).`, `There is an older pallet on ${card.reserve[0].location} (${formatAge(card.reserve[0].ageDays)}).`)}</span>
                       <Button size="sm" variant="ghost" onClick={() => setConfirm(null)}>{t('Annullér', 'Cancel')}</Button>
-                      <Button size="sm" variant="outline" onClick={() => void take(confirm.pallet, confirm.quantity, true)}>{t('Tag alligevel', 'Take anyway')}</Button>
+                      <Button size="sm" variant="outline" onClick={() => take(confirm.pallet, confirm.quantity, true)}>{t('Tag alligevel', 'Take anyway')}</Button>
                     </div>
                   )}
                 </div>

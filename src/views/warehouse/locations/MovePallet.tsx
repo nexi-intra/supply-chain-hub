@@ -212,7 +212,7 @@ export function MovePallet({ pallet: initialPallet, version, onDone }: { pallet?
                 <Input autoFocus value={target} onChange={event => setTarget(event.target.value.toUpperCase())} onKeyDown={event => { if (event.key === 'Enter') void moveFromShelf() }}
                   placeholder="E9 H2" className="h-11 w-44 font-mono" aria-label={t('Ny hylde', 'New shelf')} />
                 <ArrowRight size={18} className="text-muted-foreground" />
-                <Button size="lg" onClick={() => void moveFromShelf()} disabled={shelfBlocked} loading={busy}><ArrowsLeftRight size={18} /> {t('Flyt', 'Move')}</Button>
+                <Button size="lg" onClick={() => moveFromShelf()} disabled={shelfBlocked} loading={busy}><ArrowsLeftRight size={18} /> {t('Flyt', 'Move')}</Button>
               </div>
             )}
             {shelfNote && <p className="flex items-center gap-1.5 text-sm text-destructive"><Warning size={14} /> {shelfNote}</p>}
@@ -231,7 +231,7 @@ export function MovePallet({ pallet: initialPallet, version, onDone }: { pallet?
               <Input autoFocus value={target} onChange={event => setTarget(event.target.value.toUpperCase())} onKeyDown={event => { if (event.key === 'Enter') void move() }}
                 placeholder={t('Scan eller skriv ny plads', 'Scan or type the new place')} className="h-11 w-56 font-mono" aria-label={t('Ny plads', 'New place')} />
               <ArrowRight size={18} className="text-muted-foreground" />
-              <Button size="lg" onClick={() => void move()} disabled={blocked} loading={busy}><ArrowsLeftRight size={18} /> {t('Flyt', 'Move')}</Button>
+              <Button size="lg" onClick={() => move()} disabled={blocked} loading={busy}><ArrowsLeftRight size={18} /> {t('Flyt', 'Move')}</Button>
             </div>
             {targetNote && <p className={cn('flex items-center gap-1.5 text-sm', blocked ? 'text-destructive' : 'text-amber-700 dark:text-amber-400')}><Warning size={14} /> {targetNote}</p>}
             {slots.length > 0 && (

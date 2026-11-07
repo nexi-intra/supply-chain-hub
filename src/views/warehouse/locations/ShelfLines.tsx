@@ -93,8 +93,8 @@ function ShelfLineDialog({ shelf, action, line, onClose, onDone }: { shelf: stri
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={busy}>{t('Annullér', 'Cancel')}</Button>
-          {action === 'take' && <Button variant="outline" onClick={() => void run(true)} disabled={busy}>{t('Tag alt', 'Take all')}</Button>}
-          <Button onClick={() => void run()} loading={busy} disabled={!valid}>
+          {action === 'take' && <Button variant="outline" onClick={() => run(true)} disabled={busy}>{t('Tag alt', 'Take all')}</Button>}
+          <Button onClick={() => run()} loading={busy} disabled={!valid}>
             {action === 'take' ? t(`Tag ${quantity || 'X'} stk.`, `Take ${quantity || 'X'}`) : action === 'move' ? t('Flyt', 'Move') : t('Gem', 'Save')}
           </Button>
         </DialogFooter>

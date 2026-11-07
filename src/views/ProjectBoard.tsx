@@ -584,7 +584,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                   {language === 'da' ? 'Annuller' : language === 'fi' ? 'Peruuta' : language === 'sv' ? 'Avbryt' : 'Cancel'}
                 </Button>
                 <Button
-                  onClick={() => void handleAddTodo()}
+                  onClick={() => handleAddTodo()}
                   loading={savingPersonalTodo}
                 >
                   {savingPersonalTodo ? language === 'da' ? 'Gemmer…' : language === 'fi' ? 'Tallennetaan…' : language === 'sv' ? 'Sparar…' : 'Saving…' : language === 'da' ? 'Opret' : language === 'fi' ? 'Luo' : language === 'sv' ? 'Skapa' : 'Create'}
@@ -635,7 +635,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                   {language === 'da' ? 'Annuller' : language === 'fi' ? 'Peruuta' : language === 'sv' ? 'Avbryt' : 'Cancel'}
                 </Button>
                 <Button
-                  onClick={() => void handleEditTodo()}
+                  onClick={() => handleEditTodo()}
                 >
                   {language === 'da' ? 'Gem' : language === 'fi' ? 'Tallenna' : language === 'sv' ? 'Spara' : 'Save'}
                 </Button>
@@ -1055,7 +1055,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
                   {language === 'da' ? 'Annuller' : language === 'fi' ? 'Peruuta' : language === 'sv' ? 'Avbryt' : 'Cancel'}
                 </Button>
                 <Button
-                  onClick={() => void handleEditProject()}
+                  onClick={() => handleEditProject()}
                 >
                   {language === 'da' ? 'Gem' : language === 'fi' ? 'Tallenna' : language === 'sv' ? 'Spara' : 'Save'}
                 </Button>

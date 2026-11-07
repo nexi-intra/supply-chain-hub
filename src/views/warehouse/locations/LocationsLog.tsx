@@ -146,7 +146,7 @@ export function LocationsLog({ query: initial, version, onOpen, onChanged }: { q
             )}
             <DialogFooter>
               <Button variant="ghost" onClick={() => setConfirm(null)} disabled={busy}>{t('Annullér', 'Cancel')}</Button>
-              <Button onClick={() => void undo(confirm)} loading={busy}><ArrowCounterClockwise size={16} /> {t('Fortryd', 'Undo')}</Button>
+              <Button onClick={() => undo(confirm)} loading={busy}><ArrowCounterClockwise size={16} /> {t('Fortryd', 'Undo')}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

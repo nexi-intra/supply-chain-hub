@@ -143,7 +143,7 @@ export function Admin({ user, version, onOpen, onChanged }: { user: WarehouseUse
           <>
             <span className="text-sm">{t(`${chosen.length} valgt`, `${chosen.length} selected`)}</span>
             <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>{t('Fravælg', 'Clear')}</Button>
-            <Button size="sm" variant="outline" onClick={() => void deactivateChosen()} disabled={busy} loading={busy && !dialog}><Prohibit size={14} /> {t('Deaktivér valgte', 'Deactivate selected')}</Button>
+            <Button size="sm" variant="outline" onClick={() => deactivateChosen()} disabled={busy} loading={busy && !dialog}><Prohibit size={14} /> {t('Deaktivér valgte', 'Deactivate selected')}</Button>
             <Button size="sm" variant="destructive" onClick={() => setDialog({ kind: 'delete' })} disabled={busy}><Trash size={14} /> {t('Slet valgte', 'Delete selected')}</Button>
           </>
         )}
@@ -179,7 +179,7 @@ export function Admin({ user, version, onOpen, onChanged }: { user: WarehouseUse
                 <td className="max-w-64 truncate px-3 py-1.5 font-mono text-xs">{location.fixedMaterials.join(', ')}</td>
                 <td className="px-3 py-1.5 text-right whitespace-nowrap">
                   <Button size="sm" variant="ghost" onClick={() => setDialog({ kind: 'edit', location })} aria-label={t(`Ret ${location.name}`, `Edit ${location.name}`)}><PencilSimple size={14} /></Button>
-                  <Button size="sm" variant="ghost" loading={togglingId === location.id} onClick={() => void setActive(location, !location.active)}>{location.active ? t('Deaktivér', 'Deactivate') : t('Aktivér', 'Activate')}</Button>
+                  <Button size="sm" variant="ghost" loading={togglingId === location.id} onClick={() => setActive(location, !location.active)}>{location.active ? t('Deaktivér', 'Deactivate') : t('Aktivér', 'Activate')}</Button>
                 </td>
               </tr>
             ))}
@@ -200,7 +200,7 @@ export function Admin({ user, version, onOpen, onChanged }: { user: WarehouseUse
             </DialogHeader>
             <DialogFooter>
               <Button variant="ghost" onClick={() => setDialog(null)} disabled={busy}>{t('Annullér', 'Cancel')}</Button>
-              <Button variant="destructive" onClick={() => void deleteChosen()} loading={busy}><Trash size={16} /> {t('Slet', 'Delete')}</Button>
+              <Button variant="destructive" onClick={() => deleteChosen()} loading={busy}><Trash size={16} /> {t('Slet', 'Delete')}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -310,7 +310,7 @@ function LocationDialog({ location, linked, team, onClose, onDone }: { location:
         <div className="space-y-1.5"><Label htmlFor="loc-note">{t('Note', 'Note')}</Label><Input id="loc-note" value={note} maxLength={500} onChange={event => setNote(event.target.value)} /></div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={busy}>{t('Annullér', 'Cancel')}</Button>
-          <Button onClick={() => void save()} loading={busy} disabled={!name.trim() || (needsMaterial && !materialsFrom(materials).length)}>{becomesPick ? t('Gem – pallen bliver pluk-palle', 'Save – the pallet becomes the pick pallet') : t('Gem', 'Save')}</Button>
+          <Button onClick={() => save()} loading={busy} disabled={!name.trim() || (needsMaterial && !materialsFrom(materials).length)}>{becomesPick ? t('Gem – pallen bliver pluk-palle', 'Save – the pallet becomes the pick pallet') : t('Gem', 'Save')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -377,7 +377,7 @@ function SeriesDialog({ onClose, onDone }: { onClose: () => void; onDone: () => 
         )}
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={busy}>{t('Annullér', 'Cancel')}</Button>
-          <Button onClick={() => void save()} loading={busy} disabled={!valid || total > SERIES_MAX}>{t('Opret', 'Create')}</Button>
+          <Button onClick={() => save()} loading={busy} disabled={!valid || total > SERIES_MAX}>{t('Opret', 'Create')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -430,7 +430,7 @@ function RackDialog({ onClose, onDone }: { onClose: () => void; onDone: (rack: s
         {count > 20 && <p className="text-sm text-destructive">{t('Højst 20 hylder.', 'At most 20 shelves.')}</p>}
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={busy}>{t('Annullér', 'Cancel')}</Button>
-          <Button onClick={() => void save()} loading={busy} disabled={!valid}>{t('Opret', 'Create')}</Button>
+          <Button onClick={() => save()} loading={busy} disabled={!valid}>{t('Opret', 'Create')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -463,7 +463,7 @@ function TagsDialog({ tags, onClose, onDone }: { tags: string[]; onClose: () => 
         <div className="flex flex-wrap gap-1">{text.split('\n').map(item => item.trim()).filter(Boolean).map(item => <Badge key={item} variant="outline">{item}</Badge>)}</div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={busy}>{t('Annullér', 'Cancel')}</Button>
-          <Button onClick={() => void save()} loading={busy}>{t('Gem', 'Save')}</Button>
+          <Button onClick={() => save()} loading={busy}>{t('Gem', 'Save')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

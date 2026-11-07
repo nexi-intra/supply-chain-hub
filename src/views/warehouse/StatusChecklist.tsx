@@ -40,7 +40,7 @@ export function StatusChecklistCard({ status, canManage, onChanged }: { status: 
           <CardTitle className="text-base">{t('Tjekliste før godkendelse', 'Checklist before approval')}</CardTitle>
           <CardDescription>{t('Alle optællinger skal være afsluttet, og alle materialer godkendt eller bogført i SAP.', 'All counts must be closed, and all materials approved or posted in SAP.')}</CardDescription>
         </div>
-        <Button variant="ghost" size="sm" onClick={() => void load()} loading={loading}><ArrowsClockwise size={16} /> {t('Opdatér', 'Refresh')}</Button>
+        <Button variant="ghost" size="sm" onClick={() => load()} loading={loading}><ArrowsClockwise size={16} /> {t('Opdatér', 'Refresh')}</Button>
       </CardHeader>
       <CardContent className="space-y-4">
         {!checklist ? <Skeleton className="h-24 rounded-lg" /> : (
@@ -108,7 +108,7 @@ function LockDialog({ status, onClose, onLocked }: { status: CountStatus; onClos
         </DialogHeader>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={locking}>{t('Annullér', 'Cancel')}</Button>
-          <Button onClick={() => void lock()} loading={locking}><LockSimple size={18} /> {t('Godkend og lås', 'Approve and lock')}</Button>
+          <Button onClick={() => lock()} loading={locking}><LockSimple size={18} /> {t('Godkend og lås', 'Approve and lock')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -145,7 +145,7 @@ export function DeleteStatusDialog({ status, onClose, onDeleted }: { status: Cou
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={deleting}>{t('Annullér', 'Cancel')}</Button>
-          <Button variant="destructive" onClick={() => void remove()} disabled={!matches} loading={deleting}><Trash size={18} /> {t('Slet status', 'Delete status')}</Button>
+          <Button variant="destructive" onClick={() => remove()} disabled={!matches} loading={deleting}><Trash size={18} /> {t('Slet status', 'Delete status')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -182,7 +182,7 @@ export function UnlockDialog({ status, onClose, onUnlocked }: { status: CountSta
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={unlocking}>{t('Annullér', 'Cancel')}</Button>
-          <Button variant="destructive" onClick={() => void unlock()} disabled={!valid} loading={unlocking}><LockSimpleOpen size={18} /> {t('Lås op', 'Unlock')}</Button>
+          <Button variant="destructive" onClick={() => unlock()} disabled={!valid} loading={unlocking}><LockSimpleOpen size={18} /> {t('Lås op', 'Unlock')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

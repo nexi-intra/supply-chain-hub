@@ -66,7 +66,11 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
 
   useEffect(() => {
     const loadUser = async () => {
-      const users = await window.kv.get<Record<string, { email: string; password: string; fullName: string; isManager: boolean }>>('users')
+      // Parallelt: hver læsning er en rundtur til M:.
+      const [users, birthdaysRaw] = await Promise.all([
+        window.kv.get<Record<string, { email: string; password: string; fullName: string; isManager: boolean }>>('users'),
+        window.kv.get<BirthdayEntry[]>('employee-birthdays'),
+      ])
       if (users) {
         setUsersData(users)
         if (users[userEmail]) {
@@ -80,8 +84,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
         setAllTeamMembers(teamList)
       }
 
-      const birthdaysData = (await window.kv.get<BirthdayEntry[]>('employee-birthdays')) || []
-      setBirthdays(birthdaysData)
+      setBirthdays(birthdaysRaw || [])
     }
     if (userEmail) {
       loadUser()
@@ -175,8 +178,8 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
         read: false
       }))
 
-      await appendToKvArray('emails', newEmails)
-      await appendToKvArray('email-notifications', newNotifications)
+      // Uafhængige nøgler: gemmes samtidig (hver gemning tager op mod et halvt minut på M:).
+      await Promise.all([appendToKvArray('emails', newEmails), appendToKvArray('email-notifications', newNotifications)])
     } catch (emailError) {
       console.error('Error sending vacation removal email:', emailError)
       toast.error('Kunne ikke sende email notifikation')
@@ -209,10 +212,6 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
         read: false
       }
 
-      // Atomart append i stedet for at laese og skrive hele arrayet: hurtigere,
-      // og to samtidige godkendelser taber ikke hinandens mail.
-      await appendToKvArray('emails', [newEmail])
-
       const notification = {
         id: Date.now().toString() + '-notif',
         to: vacation.userEmail,
@@ -223,7 +222,8 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
         read: false
       }
 
-      await appendToKvArray('email-notifications', [notification])
+      // Uafhængige nøgler: gemmes samtidig.
+      await Promise.all([appendToKvArray('emails', [newEmail]), appendToKvArray('email-notifications', [notification])])
     } catch (emailError) {
       console.error('Error sending vacation approval email:', emailError)
       toast.error('Kunne ikke sende email notifikation')
@@ -256,8 +256,6 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
         read: false
       }
 
-      await appendToKvArray('emails', [newEmail])
-
       const notification = {
         id: Date.now().toString() + '-notif-reject',
         to: vacation.userEmail,
@@ -268,7 +266,8 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
         read: false
       }
 
-      await appendToKvArray('email-notifications', [notification])
+      // Uafhængige nøgler: gemmes samtidig.
+      await Promise.all([appendToKvArray('emails', [newEmail]), appendToKvArray('email-notifications', [notification])])
     } catch (emailError) {
       console.error('Error sending vacation rejection email:', emailError)
       toast.error('Kunne ikke sende email notifikation')

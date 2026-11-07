@@ -145,7 +145,7 @@ function EditDialog({ pallet, tags, onClose, onDone }: { pallet: PalletView; tag
         <div className="space-y-1.5"><Label htmlFor="edit-note">{t('Note', 'Note')}</Label><Input id="edit-note" value={note} maxLength={500} onChange={event => setNote(event.target.value)} /></div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={busy}>{t('Annullér', 'Cancel')}</Button>
-          <Button onClick={() => void save()} loading={busy}>{t('Gem', 'Save')}</Button>
+          <Button onClick={() => save()} loading={busy}>{t('Gem', 'Save')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -178,7 +178,7 @@ function MoveDialog({ pallet, onClose, onDone }: { pallet: PalletView; onClose: 
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={busy}>{t('Annullér', 'Cancel')}</Button>
-          <Button onClick={() => void save()} disabled={!to.trim()} loading={busy}>{t('Flyt', 'Move')}</Button>
+          <Button onClick={() => save()} disabled={!to.trim()} loading={busy}>{t('Flyt', 'Move')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -203,7 +203,7 @@ function SlocDialog({ pallet, onClose, onDone }: { pallet: PalletView; onClose: 
         <Input autoFocus className="w-32 font-mono" maxLength={4} value={sloc} onChange={event => setSloc(event.target.value.toUpperCase())} aria-invalid={!valid} aria-label="Storage location" />
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={busy}>{t('Annullér', 'Cancel')}</Button>
-          <Button onClick={() => void save()} disabled={!valid || sloc === pallet.sloc} loading={busy}>{t('Skift', 'Change')}</Button>
+          <Button onClick={() => save()} disabled={!valid || sloc === pallet.sloc} loading={busy}>{t('Skift', 'Change')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

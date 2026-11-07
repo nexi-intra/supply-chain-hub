@@ -73,7 +73,7 @@ export function HubPicker({ hubs, preferred, onChoose, onLogout }: HubPickerProp
               </div>
               <h2 className="text-xl font-bold mt-3">{hub.name}</h2>
               <p className="text-sm text-muted-foreground mt-1 mb-5">{hub.abbreviation}</p>
-              <Button onClick={() => void choose(hub)} disabled={busy} variant={selected === hub.folderName ? 'default' : 'outline'} className="mt-auto">
+              <Button onClick={() => choose(hub)} disabled={busy} variant={selected === hub.folderName ? 'default' : 'outline'} className="mt-auto">
                 {labels.open}
               </Button>
             </Card>

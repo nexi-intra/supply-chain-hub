@@ -99,8 +99,8 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
 
   const loadUsers = async () => {
     setIsLoading(true)
-    const creator = await getCreatorEmail()
-    const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; role?: UserRole; isManager?: boolean }>>('users')
+    // Parallelt: hver læsning er en rundtur til M:.
+    const [creator, usersData] = await Promise.all([getCreatorEmail(), window.kv.get<Record<string, { email: string; password: string; fullName: string; role?: UserRole; isManager?: boolean }>>('users')])
     if (usersData) {
       const userList = Object.values(usersData)
         .filter((u) => !creator || u.email.toLowerCase() !== creator)
@@ -237,7 +237,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
       onLogout()
       return
     }
-    await loadUsers()
+    void loadUsers()
     setShowEmployeeDialog(false)
     toast.success(editingEmployee ? t.adminPanel.employees.updated : t.adminPanel.employees.created)
   }
@@ -252,7 +252,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
     const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; role: UserRole; isManager: boolean }>>('users')
     if (usersData && usersData[email]) {
       await deleteKvObjectField('users', email)
-      await loadUsers()
+      void loadUsers()
       toast.success(t.adminPanel.employees.deleted)
     }
   }
@@ -271,7 +271,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
         role: newRole,
         isManager: newRole === 'manager' || newRole === 'creator',
       })
-      await loadUsers()
+      void loadUsers()
       
       toast.success(`${t.adminPanel.users.roleChangedPrefix} ${getRoleDisplayName(newRole, language)}`)
     }
@@ -287,7 +287,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
     const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; role: UserRole; isManager: boolean }>>('users')
     if (usersData && usersData[email]) {
       await deleteKvObjectField('users', email)
-      await loadUsers()
+      void loadUsers()
       toast.success(t.adminPanel.users.deleted)
     }
   }
@@ -479,7 +479,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
                           </Select>
                           <AlertDialog>
                             <AlertDialogTrigger asChild>
-                              <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10">
+                              <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10" loading={busyAction === `delete-user:${user.email}`}>
                                 <Trash size={20} />
                               </Button>
                             </AlertDialogTrigger>
@@ -493,7 +493,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
                               <AlertDialogFooter>
                                 <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
                                 <AlertDialogAction
-                                  onClick={() => deleteUser(user.email)}
+                                  onClick={() => void runBusy(`delete-user:${user.email}`, () => deleteUser(user.email))}
                                   className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                                 >
                                   {t.adminPanel.users.deleteAction}
@@ -796,7 +796,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
                   />
                 </div>
               </div>
-              <Button onClick={() => void runBusy('add-role', handleAddRole)} loading={busyAction === 'add-role'} className="w-full gap-2">
+              <Button onClick={() => runBusy('add-role', handleAddRole)} loading={busyAction === 'add-role'} className="w-full gap-2">
                 <Plus size={20} />
                 {t.adminPanel.roleDialog.submit}
               </Button>
@@ -868,7 +868,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
                   </SelectContent>
                 </Select>
               </div>
-              <Button onClick={() => void runBusy('save-employee', handleSaveEmployee)} loading={busyAction === 'save-employee'} className="w-full gap-2">
+              <Button onClick={() => runBusy('save-employee', handleSaveEmployee)} loading={busyAction === 'save-employee'} className="w-full gap-2">
                 {editingEmployee ? (
                   <>
                     <PencilSimple size={20} />

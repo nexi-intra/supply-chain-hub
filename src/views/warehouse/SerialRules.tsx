@@ -75,7 +75,7 @@ export function SerialRules({ onBack }: { onBack: () => void }) {
                   <Label htmlFor="serial-rule-material">{t('Materiale', 'Material')}</Label>
                   <Input id="serial-rule-material" value={material} onChange={event => setMaterial(event.target.value.toUpperCase())} onKeyDown={event => { if (event.key === 'Enter') void add() }} placeholder="INT4300-7825-0" className="w-56 font-mono" />
                 </div>
-                <Button onClick={() => void add()} loading={saving === material.trim().toUpperCase()} disabled={!material.trim()}><Plus size={18} weight="bold" /> {t('Tilføj', 'Add')}</Button>
+                <Button onClick={() => add()} loading={saving === material.trim().toUpperCase()} disabled={!material.trim()}><Plus size={18} weight="bold" /> {t('Tilføj', 'Add')}</Button>
               </CardContent>
             </Card>
           )}

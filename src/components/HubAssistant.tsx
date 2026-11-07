@@ -372,7 +372,7 @@ export function HubAssistant({ token }: AssistantScope) {
               ) : (
                 <>
                   <p className="text-muted-foreground">{AI_LABELS[language].hint}</p>
-                  <Button size="sm" className="h-7 text-xs" onClick={() => void provisionModel()}>{AI_LABELS[language].activate}</Button>
+                  <Button size="sm" className="h-7 text-xs" onClick={() => provisionModel()}>{AI_LABELS[language].activate}</Button>
                   {provisionError && <p className="text-destructive">{provisionError}</p>}
                 </>
               )}
@@ -396,16 +396,16 @@ export function HubAssistant({ token }: AssistantScope) {
                   <p className="text-xs text-muted-foreground">{ACTION_TEXT[language].cancelled}</p>
                 ) : (
                   <div className="flex items-center gap-2">
-                    <Button type="button" size="sm" disabled={message.actionOutcome === 'confirmed'} onClick={() => void confirmAction(message.id, message.answer!.actionProposal!)}>{ACTION_TEXT[language].confirm}</Button>
+                    <Button type="button" size="sm" disabled={message.actionOutcome === 'confirmed'} onClick={() => confirmAction(message.id, message.answer!.actionProposal!)}>{ACTION_TEXT[language].confirm}</Button>
                     <Button type="button" size="sm" variant="outline" disabled={message.actionOutcome === 'confirmed'} onClick={() => cancelAction(message.id)}>{ACTION_TEXT[language].cancel}</Button>
                   </div>
                 )
               )}
-              {!!message.answer.personChoices?.length && <div className="flex flex-col items-start gap-2">{message.answer.personChoices.map(choice => <Button key={choice.id} type="button" variant="outline" size="sm" disabled={busy} onClick={() => void send(message.question, choice.id)}>{choice.label}</Button>)}</div>}
+              {!!message.answer.personChoices?.length && <div className="flex flex-col items-start gap-2">{message.answer.personChoices.map(choice => <Button key={choice.id} type="button" variant="outline" size="sm" disabled={busy} onClick={() => send(message.question, choice.id)}>{choice.label}</Button>)}</div>}
               {message.answer.navigation && (APP_VIEW_IDS as readonly string[]).includes(message.answer.navigation.view) && <Button type="button" size="sm" variant="outline" className="gap-1.5" onClick={() => { const target = message.answer!.navigation!; navigateTo(target.view as AppViewId, target.params); setMinimized(true) }}><ArrowSquareOut size={14} />{message.answer.navigation.label}</Button>}
-              {message.answer.nextPage !== undefined && <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void send(message.answer!.contextQuestion || message.question, undefined, message.answer!.nextPage)}>{MORE_LABEL[language]}</Button>}
+              {message.answer.nextPage !== undefined && <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => send(message.answer!.contextQuestion || message.question, undefined, message.answer!.nextPage)}>{MORE_LABEL[language]}</Button>}
               {message.answer.warning && <details className="text-xs text-amber-600"><summary className="cursor-pointer">{t.ai}</summary><p className="mt-1 whitespace-pre-wrap break-words">{message.answer.warning}</p></details>}
-              {message.answer.sources.some(source => linkSourceId(source)) && <div className="flex flex-wrap gap-2">{message.answer.sources.filter(source => linkSourceId(source)).map((source, sourceIndex) => <Button key={sourceIndex} type="button" size="sm" variant="outline" className="h-auto min-h-8 gap-1.5 whitespace-normal text-left text-xs" onClick={() => void openSource(source)}><ArrowSquareOut size={14} className="shrink-0" />{t.openLink}: {source.title.split(' · ').slice(2).join(' · ') || source.title}</Button>)}</div>}
+              {message.answer.sources.some(source => linkSourceId(source)) && <div className="flex flex-wrap gap-2">{message.answer.sources.filter(source => linkSourceId(source)).map((source, sourceIndex) => <Button key={sourceIndex} type="button" size="sm" variant="outline" className="h-auto min-h-8 gap-1.5 whitespace-normal text-left text-xs" onClick={() => openSource(source)}><ArrowSquareOut size={14} className="shrink-0" />{t.openLink}: {source.title.split(' · ').slice(2).join(' · ') || source.title}</Button>)}</div>}
               {!!message.answer.sources.length && <details className="border-t border-border/50 pt-2"><summary className="cursor-pointer text-xs text-muted-foreground">{t.sources} · {message.answer.sources.length}</summary><div className="mt-2 space-y-2">{message.answer.sources.map((source, sourceIndex) => source.kind === 'guide' || source.kind === 'module' ? <button key={sourceIndex} onClick={() => void openSource(source)} className="flex items-start gap-1.5 text-primary text-left text-xs hover:underline"><span>[{sourceIndex + 1}] {source.title}</span><ArrowSquareOut size={14} className="mt-0.5 shrink-0" /></button> : <p key={sourceIndex} className="text-xs">{source.title}</p>)}</div></details>}
               {!message.answer.actionProposal && (
                 message.feedback ? (

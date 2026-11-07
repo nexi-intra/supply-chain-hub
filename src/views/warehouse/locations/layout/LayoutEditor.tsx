@@ -435,7 +435,7 @@ export function LayoutEditor({ user, onDone }: { user: WarehouseUser; onDone: ()
         <input ref={fileInput} type="file" accept=".json,application/json" className="hidden" aria-label={t('Fil med tegning', 'File with a drawing')} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void onFile(file) }} />
         <Button size="sm" variant="outline" onClick={() => fileInput.current?.click()}><UploadSimple size={14} /> {t('Hent tegning fra fil', 'Load drawing from file')}</Button>
         <Button size="sm" variant="outline" onClick={saveAsFile}><DownloadSimple size={14} /> {t('Gem som fil', 'Save as file')}</Button>
-        <Button size="sm" variant="outline" loading={pendingAction === 'versions'} onClick={() => void showVersions()}><ClockCounterClockwise size={14} /> {t('Tidligere versioner', 'Earlier versions')}</Button>
+        <Button size="sm" variant="outline" loading={pendingAction === 'versions'} onClick={() => showVersions()}><ClockCounterClockwise size={14} /> {t('Tidligere versioner', 'Earlier versions')}</Button>
         <Button size="sm" variant="ghost" className="text-destructive" onClick={() => setDialog({ kind: 'discard' })}><X size={14} /> {t('Kassér kladde', 'Discard draft')}</Button>
         {duplicates.size > 0 && <span className="ml-auto inline-flex items-center gap-1 text-sm text-destructive"><Warning size={14} /> {t(`${duplicates.size} navne bruges to gange (rød kant)`, `${duplicates.size} names are used twice (red outline)`)}</span>}
       </div>
@@ -443,7 +443,7 @@ export function LayoutEditor({ user, onDone }: { user: WarehouseUser; onDone: ()
       {stale && (
         <div className="flex flex-wrap items-center gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm" data-testid="layout-stale">
           <span>{stale.replace(/\.?$/, '.')} {t('Dine seneste ændringer er ikke gemt.', 'Your latest changes are not saved.')}</span>
-          <Button size="sm" onClick={() => void load()}>{t('Hent den nye kladde', 'Fetch the new draft')}</Button>
+          <Button size="sm" onClick={() => load()}>{t('Hent den nye kladde', 'Fetch the new draft')}</Button>
         </div>
       )}
 
@@ -554,7 +554,7 @@ export function LayoutEditor({ user, onDone }: { user: WarehouseUser; onDone: ()
             </DialogHeader>
             <DialogFooter>
               <Button variant="ghost" onClick={() => setDialog(null)}>{t('Annullér', 'Cancel')}</Button>
-              <Button variant="destructive" loading={pendingAction === 'discard'} onClick={() => void discard()}><Trash size={16} /> {t('Kassér', 'Discard')}</Button>
+              <Button variant="destructive" loading={pendingAction === 'discard'} onClick={() => discard()}><Trash size={16} /> {t('Kassér', 'Discard')}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -584,7 +584,7 @@ export function LayoutEditor({ user, onDone }: { user: WarehouseUser; onDone: ()
             )}
             <DialogFooter>
               <Button variant="ghost" onClick={() => setDialog(null)}>{t('Annullér', 'Cancel')}</Button>
-              {dialog.chosen != null && <Button loading={pendingAction === 'open'} onClick={() => void openVersion(dialog.chosen!)}>{t('Åbn som kladde', 'Open as draft')}</Button>}
+              {dialog.chosen != null && <Button loading={pendingAction === 'open'} onClick={() => openVersion(dialog.chosen!)}>{t('Åbn som kladde', 'Open as draft')}</Button>}
             </DialogFooter>
           </DialogContent>
         </Dialog>

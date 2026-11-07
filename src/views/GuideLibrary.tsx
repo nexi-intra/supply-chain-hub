@@ -1159,7 +1159,7 @@ function GuideLibraryContent({ onNavigateBack, onLogout, userEmail }: Omit<Guide
                     </div>
                   </div>
                   <Button size="sm" onClick={() => handleResumeDraft(draft)} className="shrink-0">{t.guideEditor.draftResume}</Button>
-                  <Button size="sm" variant="ghost" loading={reviewBusyKey === `draft:${draft.guideId}`} onClick={() => void runReviewAction(`draft:${draft.guideId}`, () => handleDeleteDraft(draft))} className="shrink-0 text-destructive hover:text-destructive" aria-label={t.guideEditor.draftDiscard}>
+                  <Button size="sm" variant="ghost" loading={reviewBusyKey === `draft:${draft.guideId}`} onClick={() => runReviewAction(`draft:${draft.guideId}`, () => handleDeleteDraft(draft))} className="shrink-0 text-destructive hover:text-destructive" aria-label={t.guideEditor.draftDiscard}>
                     <Trash size={16} />
                   </Button>
                 </div>

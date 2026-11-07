@@ -83,7 +83,8 @@ export function LinkLibrary({ onNavigateBack, userEmail }: LinkLibraryProps) {
     try {
       await api.command({ ...command, operationId: crypto.randomUUID() } as LinkCommand)
       toast.success(success)
-      await load()
+      // Ikke ventet på: dialogen lukker straks; listen opdateres, når læsningen er hjemme.
+      void load()
       return true
     } catch (error) {
       toast.error(String(error).includes('LINKS_DUPLICATE') ? labels.toasts.duplicate : labels.toasts.failed)

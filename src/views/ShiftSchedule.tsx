@@ -173,13 +173,15 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
 
   useEffect(() => {
     const loadUserAndCheckAdmin = async () => {
-      const usersData = await window.kv.get<Record<string, { email: string; fullName: string; role?: string }>>('users')
+      // Parallelt: hver læsning er en rundtur til M:.
+      const [usersData, birthdaysData] = await Promise.all([
+        window.kv.get<Record<string, { email: string; fullName: string; role?: string }>>('users'),
+        window.kv.get<BirthdayEntry[]>('employee-birthdays'),
+      ])
       if (usersData && usersData[userEmail]?.role === 'creator') {
         setIsAdmin(true)
       }
-
-      const birthdaysData = await window.kv.get<BirthdayEntry[]>('employee-birthdays') || []
-      setBirthdays(birthdaysData)
+      setBirthdays(birthdaysData || [])
     }
     if (userEmail) {
       loadUserAndCheckAdmin()
@@ -191,8 +193,11 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
   }, [])
 
   const loadEmployees = async () => {
-    const usersData = await window.kv.get<Record<string, { email: string; fullName: string; role?: string; phone?: string }>>('users')
-    const userSettings = (await window.kv.get<Record<string, { phoneNumber?: string }>>('user-settings')) || {}
+    const [usersData, settingsRaw] = await Promise.all([
+      window.kv.get<Record<string, { email: string; fullName: string; role?: string; phone?: string }>>('users'),
+      window.kv.get<Record<string, { phoneNumber?: string }>>('user-settings'),
+    ])
+    const userSettings = settingsRaw || {}
     
     if (usersData && typeof usersData === 'object' && !Array.isArray(usersData)) {
       const userList: TeamEmployee[] = (await excludeCreator(Object.values(usersData))).map(user => {

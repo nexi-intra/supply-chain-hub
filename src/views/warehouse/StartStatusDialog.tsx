@@ -89,7 +89,7 @@ export function StartStatusDialog({ onClose, onStarted, onOpenSapCheck }: { onCl
         )}
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={starting}>{t('Annullér', 'Cancel')}</Button>
-          <Button onClick={() => void start()} disabled={!validYear} loading={starting}><Flag size={18} /> {t('Start status', 'Start status')}</Button>
+          <Button onClick={() => start()} disabled={!validYear} loading={starting}><Flag size={18} /> {t('Start status', 'Start status')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

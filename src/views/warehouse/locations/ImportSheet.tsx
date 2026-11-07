@@ -126,11 +126,11 @@ export function ImportSheet({ onDone }: { onDone: () => void }) {
             <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
               <span className="flex-1">{t(`Der findes allerede ${preview.existing} placeringer. Erstat alt sletter dem og importerer arket.`, `There are already ${preview.existing} locations. Replace all deletes them and imports the sheet.`)}</span>
               {confirmReplace
-                ? <Button variant="destructive" loading={applying} onClick={() => void apply(true)}>{t('Ja, erstat alt', 'Yes, replace all')}</Button>
+                ? <Button variant="destructive" loading={applying} onClick={() => apply(true)}>{t('Ja, erstat alt', 'Yes, replace all')}</Button>
                 : <Button variant="outline" onClick={() => setConfirmReplace(true)}>{t('Erstat alt', 'Replace all')}</Button>}
             </div>
           ) : (
-            <div className="flex justify-end"><Button size="lg" loading={applying} onClick={() => void apply(false)}>{t('Importér', 'Import')}</Button></div>
+            <div className="flex justify-end"><Button size="lg" loading={applying} onClick={() => apply(false)}>{t('Importér', 'Import')}</Button></div>
           )}
         </>
       )}

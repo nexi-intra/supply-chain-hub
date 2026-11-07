@@ -253,7 +253,7 @@ export function LobbyNotices<T extends MultiplayerGameEntry>({ lobby }: { lobby:
             <strong>{snapshot ? l.loadError : l.unavailableTitle}</strong>
             {loadError}
           </p>
-          {api && <Button size="sm" variant="outline" disabled={loading} onClick={() => void load()}>{labels.retry}</Button>}
+          {api && <Button size="sm" variant="outline" disabled={loading} onClick={() => load()}>{labels.retry}</Button>}
         </div>
       )}
       {!snapshot && loading && !loadError && <div className="wp-notice" role="status"><p>{labels.loading}</p></div>}
@@ -324,16 +324,16 @@ export function GameRow<T extends MultiplayerGameEntry>({ entry, group, lobby, a
       <div className="wp-game-row__actions">
         {group === 'invitation' && seat === 1 && (
           <>
-            <Button size="sm" disabled={busy} loading={pending === pendingKey('accept', entry.id)} onClick={() => void respond(entry, true)}>
+            <Button size="sm" disabled={busy} loading={pending === pendingKey('accept', entry.id)} onClick={() => respond(entry, true)}>
               {pending === pendingKey('accept', entry.id) ? l.working.accept : l.accept}
             </Button>
-            <Button size="sm" variant="outline" disabled={busy} loading={pending === pendingKey('decline', entry.id)} onClick={() => void respond(entry, false)}>
+            <Button size="sm" variant="outline" disabled={busy} loading={pending === pendingKey('decline', entry.id)} onClick={() => respond(entry, false)}>
               {pending === pendingKey('decline', entry.id) ? l.working.decline : l.decline}
             </Button>
           </>
         )}
         {group === 'invitation' && seat === 0 && (
-          <Button size="sm" variant="outline" disabled={busy} loading={pending === pendingKey('withdraw', entry.id)} onClick={() => void cancel(entry)}>
+          <Button size="sm" variant="outline" disabled={busy} loading={pending === pendingKey('withdraw', entry.id)} onClick={() => cancel(entry)}>
             {pending === pendingKey('withdraw', entry.id) ? l.working.withdraw : l.withdraw}
           </Button>
         )}
@@ -344,7 +344,7 @@ export function GameRow<T extends MultiplayerGameEntry>({ entry, group, lobby, a
             disabled={busy || !canRemind(entry, me, now)}
             loading={pending === pendingKey('remind', entry.id)}
             title={canRemind(entry, me, now) ? undefined : l.remindedRecently}
-            onClick={() => void remind(entry)}
+            onClick={() => remind(entry)}
           >
             {pending === pendingKey('remind', entry.id) ? l.working.remind : l.remind}
           </Button>

@@ -66,7 +66,7 @@ export function SapIndicator() {
           </dl>
         )}
         <p className="text-xs text-muted-foreground">{t('Optælling læser fra SAP. Optællingsdokumenter udfyldes i SAP, men du trykker altid selv F8, Gem eller Post.', 'Stock count reads from SAP. Count documents are filled in in SAP, but you always press F8, Save or Post yourself.')}</p>
-        <Button variant="outline" size="sm" className="w-full" loading={checking} onClick={() => void refresh(true)}>
+        <Button variant="outline" size="sm" className="w-full" loading={checking} onClick={() => refresh(true)}>
           <ArrowClockwise />
           {t('Tjek igen', 'Check again')}
         </Button>

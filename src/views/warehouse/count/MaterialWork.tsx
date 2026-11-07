@@ -44,7 +44,7 @@ export function RequestButton({ id, material, state, refresh }: { id: string; ma
       setBusy(false)
     }
   }
-  return <Button size="sm" variant="outline" loading={busy} onClick={() => void ask()} aria-label={t(`Anmod om at tælle med på ${material}`, `Ask to help count ${material}`)}><HandWaving size={16} /> {t('Anmod om at tælle med', 'Ask to help count')}</Button>
+  return <Button size="sm" variant="outline" loading={busy} onClick={() => ask()} aria-label={t(`Anmod om at tælle med på ${material}`, `Ask to help count ${material}`)}><HandWaving size={16} /> {t('Anmod om at tælle med', 'Ask to help count')}</Button>
 }
 
 export function SubmitDialog({ id, material, state, onClose, onSent }: { id: string; material: string; state: CountState; onClose: () => void; onSent: () => Promise<void> }) {
@@ -92,7 +92,7 @@ export function SubmitDialog({ id, material, state, onClose, onSent }: { id: str
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={sending}>{t('Annullér', 'Cancel')}</Button>
-          <Button onClick={() => void send()} loading={sending} variant={hasDiff ? 'destructive' : 'default'}><PaperPlaneTilt size={18} /> {hasDiff ? t('Send med difference', 'Send with difference') : t('Send til godkendelse', 'Send for approval')}</Button>
+          <Button onClick={() => send()} loading={sending} variant={hasDiff ? 'destructive' : 'default'}><PaperPlaneTilt size={18} /> {hasDiff ? t('Send med difference', 'Send with difference') : t('Send til godkendelse', 'Send for approval')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -133,8 +133,8 @@ export function MaterialsInProgress({ id, state, refresh, isOwner }: { id: strin
           <div key={`${lock.material}-${request.email}`} className="space-y-2 rounded-lg border border-primary/40 bg-primary/5 p-3">
             <p><strong>{request.name}</strong> {t('vil tælle med på', 'wants to help count')} <span className="font-mono">{lock.material}</span></p>
             <div className="flex gap-2">
-              <Button size="sm" loading={pending === `allow:${lock.material}:${request.email}`} onClick={() => void run(`allow:${lock.material}:${request.email}`, () => window.electronWarehouse!.counts.answerMaterialRequest({ id, material: lock.material, email: request.email, allow: true }), t(`${request.name} må nu tælle med`, `${request.name} may now help count`))}>{t('Tillad', 'Allow')}</Button>
-              <Button size="sm" variant="ghost" loading={pending === `deny:${lock.material}:${request.email}`} onClick={() => void run(`deny:${lock.material}:${request.email}`, () => window.electronWarehouse!.counts.answerMaterialRequest({ id, material: lock.material, email: request.email, allow: false }))}>{t('Afvis', 'Reject')}</Button>
+              <Button size="sm" loading={pending === `allow:${lock.material}:${request.email}`} onClick={() => run(`allow:${lock.material}:${request.email}`, () => window.electronWarehouse!.counts.answerMaterialRequest({ id, material: lock.material, email: request.email, allow: true }), t(`${request.name} må nu tælle med`, `${request.name} may now help count`))}>{t('Tillad', 'Allow')}</Button>
+              <Button size="sm" variant="ghost" loading={pending === `deny:${lock.material}:${request.email}`} onClick={() => run(`deny:${lock.material}:${request.email}`, () => window.electronWarehouse!.counts.answerMaterialRequest({ id, material: lock.material, email: request.email, allow: false }))}>{t('Afvis', 'Reject')}</Button>
             </div>
           </div>
         )))}
@@ -154,7 +154,7 @@ export function MaterialsInProgress({ id, state, refresh, isOwner }: { id: strin
                 {lock.helpers.length > 0 && lock.holder.email === email && <p className="text-xs text-muted-foreground">{t('Tæller med', 'Helping')}: {lock.helpers.map(helper => helper.name).join(', ')}</p>}
                 <div className="flex flex-wrap gap-1.5">
                   <Button size="sm" className="h-7 px-2 text-xs" onClick={() => setSubmitting(lock.material)} aria-label={t(`Send ${lock.material} til godkendelse`, `Send ${lock.material} for approval`)}><PaperPlaneTilt size={14} /> {t('Send til godkendelse', 'Send for approval')}</Button>
-                  <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" loading={pending === `release:${lock.material}`} onClick={() => void run(`release:${lock.material}`, () => window.electronWarehouse!.counts.releaseMaterial({ id, material: lock.material }), t(`${lock.material} er frigivet`, `${lock.material} is released`))} aria-label={t(`Frigiv ${lock.material}`, `Release ${lock.material}`)}>{t('Frigiv', 'Release')}</Button>
+                  <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" loading={pending === `release:${lock.material}`} onClick={() => run(`release:${lock.material}`, () => window.electronWarehouse!.counts.releaseMaterial({ id, material: lock.material }), t(`${lock.material} er frigivet`, `${lock.material} is released`))} aria-label={t(`Frigiv ${lock.material}`, `Release ${lock.material}`)}>{t('Frigiv', 'Release')}</Button>
                 </div>
               </div>
             )
@@ -171,7 +171,7 @@ export function MaterialsInProgress({ id, state, refresh, isOwner }: { id: strin
                 <span className="text-muted-foreground">{lock.holder.name}</span>
                 <span className="ml-auto flex gap-1">
                   <RequestButton id={id} material={lock.material} state={state} refresh={refresh} />
-                  {isOwner && <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" loading={pending === `release:${lock.material}`} onClick={() => void run(`release:${lock.material}`, () => window.electronWarehouse!.counts.releaseMaterial({ id, material: lock.material }), t(`${lock.material} er frigivet`, `${lock.material} is released`))}>{t('Frigiv', 'Release')}</Button>}
+                  {isOwner && <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" loading={pending === `release:${lock.material}`} onClick={() => run(`release:${lock.material}`, () => window.electronWarehouse!.counts.releaseMaterial({ id, material: lock.material }), t(`${lock.material} er frigivet`, `${lock.material} is released`))}>{t('Frigiv', 'Release')}</Button>}
                 </span>
               </div>
             ))}

@@ -29,11 +29,12 @@ export interface CreateNoteParams {
   identity?: { id: string; createdAt: string }
 }
 
-export async function createNote({ userEmail, userName, title, content, isPersonal, tags = [], identity }: CreateNoteParams): Promise<Note> {
+/** The note createNote saves – also used by the screen to show it at once while it is saved. */
+export function buildNote({ userEmail, userName, title, content, isPersonal, tags = [], identity }: CreateNoteParams): Note {
   if (!title.trim()) throw new Error('MISSING_TITLE')
   if (!content.trim()) throw new Error('MISSING_CONTENT')
   const creation = identity || { id: newId('note'), createdAt: new Date().toISOString() }
-  const note: Note = {
+  return {
     id: creation.id,
     title: title.trim(),
     content: content.trim(),
@@ -44,6 +45,10 @@ export async function createNote({ userEmail, userName, title, content, isPerson
     isPersonal,
     ...(tags.length > 0 ? { tags } : {}),
   }
+}
+
+export async function createNote(params: CreateNoteParams): Promise<Note> {
+  const note = buildNote(params)
   await appendToKvArray('notebook-notes', [note])
   return note
 }

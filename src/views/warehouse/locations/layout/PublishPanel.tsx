@@ -255,7 +255,7 @@ export function PublishPanel({ draft, team, dispatch, save, onPlan, onFindSlot, 
           {confirming
             ? <>
               <Button variant="ghost" disabled={publishing} onClick={() => setConfirming(false)}>{t('Tilbage', 'Back')}</Button>
-              <Button loading={publishing} onClick={() => void publish()}><PaperPlaneTilt size={16} /> {publishing ? t('Udgiver …', 'Publishing …') : t('Udgiv', 'Publish')}</Button>
+              <Button loading={publishing} onClick={() => publish()}><PaperPlaneTilt size={16} /> {publishing ? t('Udgiver …', 'Publishing …') : t('Udgiv', 'Publish')}</Button>
             </>
             : <>
               <Button variant="ghost" onClick={onClose}>{t('Luk', 'Close')}</Button>

@@ -241,7 +241,7 @@ export function NewCount({ user, onCancel, onCreated }: NewCountProps) {
               <Label htmlFor="count-name">{t('Navn', 'Name')}</Label>
               <Input id="count-name" value={name} maxLength={80} onChange={event => setName(event.target.value)} />
             </div>
-            <Button onClick={() => void create()} loading={creating} disabled={!name.trim()}>
+            <Button onClick={() => create()} loading={creating} disabled={!name.trim()}>
               <CheckCircle size={18} weight="bold" />
               {t('Opret optælling', 'Create count')}
             </Button>

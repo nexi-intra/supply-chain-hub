@@ -31,7 +31,7 @@ export function SapActionButton({ onAction, children, disabled, ...props }: SapA
   }
 
   const button = (
-    <Button {...props} disabled={disabled || !ready} loading={running} onClick={() => void handleClick()}>
+    <Button {...props} disabled={disabled || !ready} loading={running} onClick={() => handleClick()}>
       {children}
     </Button>
   )

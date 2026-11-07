@@ -55,10 +55,10 @@ export function MembersPanel({ id, state, refresh }: PanelProps) {
                 </div>
                 {member.role === 'owner' ? <Badge>{t('Ansvarlig', 'Responsible')}</Badge> : <Badge variant={member.status === 'rejected' ? 'destructive' : member.status === 'requested' ? 'outline' : 'secondary'}>{statusLabels()[member.status]}</Badge>}
                 {isOwner && member.role !== 'owner' && member.status !== 'approved' && (
-                  <Button size="sm" loading={pending === `approve:${member.email}`} onClick={() => void decide(member.email, true)}><Check size={16} /> {t('Godkend', 'Approve')}</Button>
+                  <Button size="sm" loading={pending === `approve:${member.email}`} onClick={() => decide(member.email, true)}><Check size={16} /> {t('Godkend', 'Approve')}</Button>
                 )}
                 {isOwner && member.role !== 'owner' && member.status !== 'rejected' && (
-                  <Button size="sm" variant="ghost" loading={pending === `reject:${member.email}`} onClick={() => void decide(member.email, false)}><X size={16} /> {member.status === 'approved' ? t('Fjern', 'Remove') : t('Afvis', 'Reject')}</Button>
+                  <Button size="sm" variant="ghost" loading={pending === `reject:${member.email}`} onClick={() => decide(member.email, false)}><X size={16} /> {member.status === 'approved' ? t('Fjern', 'Remove') : t('Afvis', 'Reject')}</Button>
                 )}
               </li>
             ))}
@@ -77,7 +77,7 @@ export function MembersPanel({ id, state, refresh }: PanelProps) {
                   <span className="font-mono font-semibold">{claim.area}</span>
                   <span className="flex-1">{claim.name}</span>
                   <span className="text-xs text-muted-foreground">{t('aktiv', 'active')} {formatTime(claim.lastActivity)}</span>
-                  {!state.statusLocked && (isOwner || claim.email === state.me.email) && <Button size="sm" variant="ghost" loading={pending === `release:${claim.area}`} onClick={() => void release(claim.area)}>{t('Frigiv', 'Release')}</Button>}
+                  {!state.statusLocked && (isOwner || claim.email === state.me.email) && <Button size="sm" variant="ghost" loading={pending === `release:${claim.area}`} onClick={() => release(claim.area)}>{t('Frigiv', 'Release')}</Button>}
                 </li>
               ))}
             </ul>

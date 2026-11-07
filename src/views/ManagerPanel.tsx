@@ -965,7 +965,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                       </div>
                       <div className="flex items-center gap-2">
                         <Button
-                          onClick={() => void runBusy(`approve-user:${user.email}`, () => handleApproveUser(user))}
+                          onClick={() => runBusy(`approve-user:${user.email}`, () => handleApproveUser(user))}
                           loading={busyAction === `approve-user:${user.email}`}
                           className="gap-2"
                         >
@@ -973,7 +973,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                           {t.managerPanel.permissions.approve}
                         </Button>
                         <Button
-                          onClick={() => void runBusy(`reject-user:${user.email}`, () => handleRejectUser(user))}
+                          onClick={() => runBusy(`reject-user:${user.email}`, () => handleRejectUser(user))}
                           loading={busyAction === `reject-user:${user.email}`}
                           variant="destructive"
                           className="gap-2"
@@ -1256,7 +1256,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                           size="sm"
                           disabled={isBulkProcessing}
                           loading={busyAction === 'bulk:approved'}
-                          onClick={() => void runBusy('bulk:approved', () => handleBulkVacationDecision('approved'))}
+                          onClick={() => runBusy('bulk:approved', () => handleBulkVacationDecision('approved'))}
                           className="gap-2"
                         >
                           <Check size={16} weight="bold" />
@@ -1267,7 +1267,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                           variant="destructive"
                           disabled={isBulkProcessing}
                           loading={busyAction === 'bulk:rejected'}
-                          onClick={() => void runBusy('bulk:rejected', () => handleBulkVacationDecision('rejected'))}
+                          onClick={() => runBusy('bulk:rejected', () => handleBulkVacationDecision('rejected'))}
                           className="gap-2"
                         >
                           <X size={16} weight="bold" />
@@ -1764,12 +1764,12 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                           variant="outline"
                           className="gap-1.5 text-destructive hover:bg-destructive/10"
                           loading={busyAction === `library-reject:${request.id}`}
-                          onClick={() => void runBusy(`library-reject:${request.id}`, () => handleReviewLibraryAccessRequest(kind, request, 'rejected'))}
+                          onClick={() => runBusy(`library-reject:${request.id}`, () => handleReviewLibraryAccessRequest(kind, request, 'rejected'))}
                         >
                           <X size={16} weight="bold" />
                           {t.managerPanel.guideAccessRequests.reject}
                         </Button>
-                        <Button size="sm" className="gap-1.5" loading={busyAction === `library-approve:${request.id}`} onClick={() => void runBusy(`library-approve:${request.id}`, () => handleReviewLibraryAccessRequest(kind, request, 'approved'))}>
+                        <Button size="sm" className="gap-1.5" loading={busyAction === `library-approve:${request.id}`} onClick={() => runBusy(`library-approve:${request.id}`, () => handleReviewLibraryAccessRequest(kind, request, 'approved'))}>
                           <Check size={16} weight="bold" />
                           {t.managerPanel.guideAccessRequests.approve}
                         </Button>
@@ -1842,7 +1842,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
             }}>
               {t.common.cancel}
             </Button>
-            <Button onClick={() => void runBusy('save-vacation', handleSaveVacationEdit)} loading={busyAction === 'save-vacation'} className="gap-2">
+            <Button onClick={() => runBusy('save-vacation', handleSaveVacationEdit)} loading={busyAction === 'save-vacation'} className="gap-2">
               <Check size={18} weight="bold" />
               {t.managerPanel.dialogs.editVacation.saveChanges}
             </Button>
@@ -1927,7 +1927,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
             }}>
               {t.common.cancel}
             </Button>
-            <Button onClick={() => void runBusy('save-user', handleSaveUserName)} loading={busyAction === 'save-user'}>
+            <Button onClick={() => runBusy('save-user', handleSaveUserName)} loading={busyAction === 'save-user'}>
               {t.managerPanel.dialogs.editUser.saveChanges}
             </Button>
           </DialogFooter>
@@ -2357,7 +2357,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
             }}>
               {t.common.cancel}
             </Button>
-            <Button onClick={() => void runBusy('save-birthday', handleSaveBirthday)} loading={busyAction === 'save-birthday'} className="gap-2">
+            <Button onClick={() => runBusy('save-birthday', handleSaveBirthday)} loading={busyAction === 'save-birthday'} className="gap-2">
               <Check size={18} weight="bold" />
               {t.managerPanel.dialogs.editBirthday.saveButton}
             </Button>

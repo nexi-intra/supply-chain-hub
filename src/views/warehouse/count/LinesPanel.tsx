@@ -264,7 +264,7 @@ function MaterialRow({ id, open, state, group, showType, canWrite, refresh, relo
           </NativeSelect>
           {choice === OTHER && <Input value={otherPlace} list="line-places" maxLength={60} onChange={event => setOtherPlace(event.target.value)} placeholder={t('Placering', 'Location')} className="h-9 w-40" aria-label={t(`Anden placering for ${group.material}`, `Other location for ${group.material}`)} />}
           <Input ref={qtyRef} value={qty} inputMode="numeric" onChange={event => setQty(event.target.value.replace(/[^\d]/g, ''))} onKeyDown={event => { if (event.key === 'Enter') void save() }} className="h-9 w-24 text-right tabular-nums" placeholder={t('Antal', 'Quantity')} aria-label={t(`Antal for ${group.material}`, `Quantity for ${group.material}`)} />
-          <Button size="sm" className="h-9" loading={saving} onClick={() => void save()} aria-label={t(`Gem antal for ${group.material}`, `Save quantity for ${group.material}`)}><FloppyDisk size={16} /> {t('Gem', 'Save')}</Button>
+          <Button size="sm" className="h-9" loading={saving} onClick={() => save()} aria-label={t(`Gem antal for ${group.material}`, `Save quantity for ${group.material}`)}><FloppyDisk size={16} /> {t('Gem', 'Save')}</Button>
           {group.lines.length > 0 && !isSubmitted(state, group.material) && <Button size="sm" variant="outline" className="h-9" onClick={() => setSubmitting(true)} aria-label={t(`Send ${group.material} til godkendelse`, `Send ${group.material} for approval`)}><PaperPlaneTilt size={16} /> {t('Send til godkendelse', 'Send for approval')}</Button>}
         </div>
       ) : <div />}
@@ -315,8 +315,8 @@ function OwnRow({ id, line, description, canWrite, refresh }: { id: string; line
       <td className="px-3 py-2 text-right">
         {canWrite && (
           <div className="flex justify-end gap-1">
-            <Button size="sm" variant="ghost" loading={busy === 'edit'} disabled={busy !== null} onClick={() => void edit()} aria-label={t('Ret antal', 'Edit quantity')}><PencilSimple size={16} /></Button>
-            <Button size="sm" variant="ghost" loading={busy === 'remove'} disabled={busy !== null} onClick={() => void remove()} aria-label={t('Slet linje', 'Delete line')}><Trash size={16} /></Button>
+            <Button size="sm" variant="ghost" loading={busy === 'edit'} disabled={busy !== null} onClick={() => edit()} aria-label={t('Ret antal', 'Edit quantity')}><PencilSimple size={16} /></Button>
+            <Button size="sm" variant="ghost" loading={busy === 'remove'} disabled={busy !== null} onClick={() => remove()} aria-label={t('Slet linje', 'Delete line')}><Trash size={16} /></Button>
           </div>
         )}
       </td>
@@ -406,7 +406,7 @@ function AddLine({ id, open, types, refresh, reloadOpen }: Pick<PanelProps, 'id'
             <Label htmlFor="line-comment">{t('Kommentar (valgfri)', 'Comment (optional)')}</Label>
             <Input id="line-comment" value={comment} maxLength={200} onChange={event => setComment(event.target.value)} />
           </div>
-          <Button onClick={() => void save()} loading={saving}><Plus size={18} weight="bold" /> {t('Gem linje', 'Save line')}</Button>
+          <Button onClick={() => save()} loading={saving}><Plus size={18} weight="bold" /> {t('Gem linje', 'Save line')}</Button>
         </div>
       </CardContent>
     </Card>

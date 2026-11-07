@@ -44,6 +44,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
 
   const [isCreateTeamOpen, setIsCreateTeamOpen] = useState(false)
   const [isCreatingTeam, setIsCreatingTeam] = useState(false)
+  const [isSavingTeam, setIsSavingTeam] = useState(false)
   const createTeamInProgress = useRef(false)
   const [newTeamName, setNewTeamName] = useState('')
   const [newTeamCode, setNewTeamCode] = useState('')
@@ -141,16 +142,19 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
       toast.error(t.creatorPanel.teams.invalidAbbreviation)
       return
     }
-    if (!editingTeamId || !window.electronRegistry) return
+    if (!editingTeamId || !window.electronRegistry || isSavingTeam) return
 
+    setIsSavingTeam(true)
     try {
       await window.electronRegistry.updateTeam(userEmail, editingTeamId, { name, abbreviation })
-      await loadTeams()
+      void loadTeams()
       setIsEditTeamOpen(false)
       toast.success(t.creatorPanel.teams.updatedToast)
     } catch (error) {
       console.error('Kunne ikke opdatere team:', error)
       toast.error(error instanceof Error ? error.message : String(error))
+    } finally {
+      setIsSavingTeam(false)
     }
   }
 
@@ -514,7 +518,7 @@ export function CreatorPanel({ onNavigateBack, onLogout, userEmail }: CreatorPan
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditTeamOpen(false)}>{t.common.cancel}</Button>
-            <Button onClick={handleUpdateTeam}>{t.common.save}</Button>
+            <Button onClick={handleUpdateTeam} loading={isSavingTeam}>{t.common.save}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

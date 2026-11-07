@@ -174,7 +174,7 @@ export function ScanPanel({ id, open, state, refresh }: PanelProps) {
                 <Button variant="outline" size="icon" aria-label={sound ? t('Slå lyd fra', 'Sound off') : t('Slå lyd til', 'Sound on')} onClick={() => { setSoundOn(!sound); setSound(!sound) }}>
                   {sound ? <SpeakerHigh size={18} /> : <SpeakerSlash size={18} />}
                 </Button>
-                <Button variant="outline" loading={undoing} onClick={() => void undo()}><ArrowCounterClockwise size={18} /> {t('Fortryd (Ctrl+Z)', 'Undo (Ctrl+Z)')}</Button>
+                <Button variant="outline" loading={undoing} onClick={() => undo()}><ArrowCounterClockwise size={18} /> {t('Fortryd (Ctrl+Z)', 'Undo (Ctrl+Z)')}</Button>
                 <Button variant="outline" onClick={() => setRemoving(true)}><Trash size={18} /> {t('Fjern serienummer', 'Remove serial number')}</Button>
               </div>
             </div>

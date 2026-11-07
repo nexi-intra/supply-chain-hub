@@ -73,7 +73,7 @@ export function MyWeekQuickAdd({ userEmail, date, dayName, labels, className }: 
           {preview ? <span className="font-medium tabular-nums text-foreground">{preview}</span> : labels.quickAdd.hint}
         </p>
         <div className="mt-2 flex justify-end">
-          <Button size="sm" onClick={() => void save()} loading={saving}>{labels.quickAdd.save}</Button>
+          <Button size="sm" onClick={() => save()} loading={saving}>{labels.quickAdd.save}</Button>
         </div>
       </PopoverContent>
     </Popover>

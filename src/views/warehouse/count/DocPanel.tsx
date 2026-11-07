@@ -306,5 +306,5 @@ function CopyQtyButton({ row }: { row: CountDocRow }) {
       toast.error(errorMessage(error))
     }
   }
-  return <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" aria-label={label} title={label} onClick={() => void copy()}><Copy size={14} /> {t('Antal', 'Quantity')}</Button>
+  return <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" aria-label={label} title={label} onClick={() => copy()}><Copy size={14} /> {t('Antal', 'Quantity')}</Button>
 }

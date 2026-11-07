@@ -72,7 +72,7 @@ export function RefetchDialog({ id, onClose, onApplied }: { id: string; onClose:
         )}
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={applying}>{t('Annullér', 'Cancel')}</Button>
-          <Button onClick={() => void apply()} disabled={!preview} loading={applying}>{t('Tag de nye tal i brug', 'Use the new figures')}</Button>
+          <Button onClick={() => apply()} disabled={!preview} loading={applying}>{t('Tag de nye tal i brug', 'Use the new figures')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -332,7 +332,7 @@ function MailCard({ view, reload }: { view: SapCheckOverview; reload: () => Prom
             <Label htmlFor="sap-mail-cc">{t('Cc (valgfri)', 'Cc (optional)')}</Label>
             <Input id="sap-mail-cc" value={cc} onChange={event => setCc(event.target.value)} placeholder={t('Flere adresser adskilles med ;', 'Separate several addresses with ;')} />
           </div>
-          <Button variant="outline" onClick={() => void save()} loading={saving} disabled={!dirty}><FloppyDisk size={16} /> {t('Gem indstillinger', 'Save settings')}</Button>
+          <Button variant="outline" onClick={() => save()} loading={saving} disabled={!dirty}><FloppyDisk size={16} /> {t('Gem indstillinger', 'Save settings')}</Button>
         </div>
         {view.settings.updatedBy && <p className="text-xs text-muted-foreground">{t(`Sidst ændret af ${view.settings.updatedBy.name} ${formatDateTime(view.settings.updatedAt)}.`, `Last changed by ${view.settings.updatedBy.name} ${formatDateTime(view.settings.updatedAt)}.`)}</p>}
         <div className="flex flex-wrap items-center gap-3">
@@ -347,7 +347,7 @@ function MailCard({ view, reload }: { view: SapCheckOverview; reload: () => Prom
               <button key={value} type="button" role="radio" aria-checked={mode === value} onClick={() => setMode(value)} className={cn('rounded-md px-3 py-1.5 text-sm font-medium transition', mode === value ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')}>{label}</button>
             ))}
           </div>
-          <Button onClick={() => void mail()} loading={mailing} disabled={count === 0}><EnvelopeSimple size={18} /> {t('Lav mail til SAP-teamet', 'Make mail to the SAP team')}</Button>
+          <Button onClick={() => mail()} loading={mailing} disabled={count === 0}><EnvelopeSimple size={18} /> {t('Lav mail til SAP-teamet', 'Make mail to the SAP team')}</Button>
           {!to.trim() && <span className="text-xs text-amber-700 dark:text-amber-300">{t('Ingen modtager – du kan skrive den i Outlook.', 'No recipient – you can type it in Outlook.')}</span>}
         </div>
       </CardContent>

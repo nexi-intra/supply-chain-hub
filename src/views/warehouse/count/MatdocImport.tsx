@@ -102,7 +102,7 @@ export function MatdocImport({ id, team, place, placeInput, refresh }: MatdocImp
               className="max-w-xs font-mono"
               placeholder="4900229137 2026 01"
             />
-            <Button variant="secondary" onClick={() => void runLookup()} loading={busy === 'lookup'} disabled={!document.trim() || !status?.ready}>
+            <Button variant="secondary" onClick={() => runLookup()} loading={busy === 'lookup'} disabled={!document.trim() || !status?.ready}>
               <MagnifyingGlass size={18} /> {t('Slå op i SAP', 'Look up in SAP')}
             </Button>
           </div>
@@ -134,7 +134,7 @@ export function MatdocImport({ id, team, place, placeInput, refresh }: MatdocImp
             )}
             {lookup.serials.length > 0 && <CheckSummary check={lookup.check} />}
             <div className="flex flex-wrap gap-2">
-              <Button onClick={() => void runImport()} loading={busy === 'import'} disabled={!lookup.check.toImport || !place.trim()}>
+              <Button onClick={() => runImport()} loading={busy === 'import'} disabled={!lookup.check.toImport || !place.trim()}>
                 <UploadSimple size={18} /> {t(`Importér ${formatNumber(lookup.check.toImport ?? 0)} på ${place.trim() || '…'}`, `Import ${formatNumber(lookup.check.toImport ?? 0)} in ${place.trim() || '…'}`)}
               </Button>
               <Button variant="ghost" onClick={() => { setLookup(null); documentRef.current?.focus() }}>{t('Annullér', 'Cancel')}</Button>

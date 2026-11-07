@@ -113,9 +113,9 @@ export function ImportPanel({ id, open, state, refresh }: PanelProps) {
             </div>
           )}
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={() => void pickFile()} loading={busy === 'file'}><FileArrowUp size={18} /> {t('Vælg fil …', 'Choose file …')}</Button>
-            <Button variant="secondary" onClick={() => void runCheck()} loading={busy === 'check'} disabled={!hasInput || !place.trim()}><MagnifyingGlass size={18} /> {t('Tjek først', 'Check first')}</Button>
-            <Button onClick={() => void runImport()} loading={busy === 'import'} disabled={!check || !check.toImport}><UploadSimple size={18} /> {t('Importér', 'Import')} {check?.toImport ? formatNumber(check.toImport) : ''}</Button>
+            <Button variant="outline" onClick={() => pickFile()} loading={busy === 'file'}><FileArrowUp size={18} /> {t('Vælg fil …', 'Choose file …')}</Button>
+            <Button variant="secondary" onClick={() => runCheck()} loading={busy === 'check'} disabled={!hasInput || !place.trim()}><MagnifyingGlass size={18} /> {t('Tjek først', 'Check first')}</Button>
+            <Button onClick={() => runImport()} loading={busy === 'import'} disabled={!check || !check.toImport}><UploadSimple size={18} /> {t('Importér', 'Import')} {check?.toImport ? formatNumber(check.toImport) : ''}</Button>
           </div>
           {check && <CheckSummary check={check} />}
         </CardContent>
@@ -130,7 +130,7 @@ export function ImportPanel({ id, open, state, refresh }: PanelProps) {
               {imports.map(event => (
                 <li key={event.id} className="flex items-center justify-between gap-3 py-2">
                   <span>{event.document ? <><span className="font-mono">{t('Matdok', 'Mat. doc.')} {event.document}</span> · </> : null}{formatNumber(event.serials?.length ?? 0)} {t('stk.', 'pcs')} · {event.place} · {formatDateTime(event.at)}</span>
-                  <Button size="sm" variant="ghost" loading={undoingId === event.id} onClick={() => void undoImport(event.id)}><ArrowCounterClockwise size={16} /> {t('Fortryd', 'Undo')}</Button>
+                  <Button size="sm" variant="ghost" loading={undoingId === event.id} onClick={() => undoImport(event.id)}><ArrowCounterClockwise size={16} /> {t('Fortryd', 'Undo')}</Button>
                 </li>
               ))}
             </ul>

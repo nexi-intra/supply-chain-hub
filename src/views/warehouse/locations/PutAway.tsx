@@ -173,7 +173,7 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
       ))}
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" onClick={() => setDrafts(list => [...list, { ...blank(), sloc: list[list.length - 1]?.sloc || 'D000', date: list[list.length - 1]?.date || today() }])}><Plus size={16} /> {t('Tilføj næste palle', 'Add next pallet')}</Button>
-        <Button className="ml-auto" onClick={() => void save()} loading={saving}><FloppyDisk size={16} /> {drafts.length > 1 ? t('Gem alle', 'Save all') : t('Gem', 'Save')}</Button>
+        <Button className="ml-auto" onClick={() => save()} loading={saving}><FloppyDisk size={16} /> {drafts.length > 1 ? t('Gem alle', 'Save all') : t('Gem', 'Save')}</Button>
       </div>
     </div>
   )

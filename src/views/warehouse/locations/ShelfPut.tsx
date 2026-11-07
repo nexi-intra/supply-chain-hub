@@ -123,7 +123,7 @@ export function ShelfPut({ shelf: initial, version, onDone }: { shelf?: string; 
             <Label htmlFor="shelf-document">{t('49/50-nummer (valgfrit)', '49/50 number (optional)')}</Label>
             <div className="flex gap-2">
               <Input id="shelf-document" value={document} onChange={event => setDocument(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') void lookup() }} placeholder={t('Scan eller skriv, fx 5000032337 2026 0001', 'Scan or type, e.g. 5000032337 2026 0001')} />
-              <Button variant="outline" onClick={() => void lookup()} loading={looking} disabled={!document.trim()}><Barcode size={16} /> {t('Hent fra SAP', 'Get from SAP')}</Button>
+              <Button variant="outline" onClick={() => lookup()} loading={looking} disabled={!document.trim()}><Barcode size={16} /> {t('Hent fra SAP', 'Get from SAP')}</Button>
             </div>
           </div>
 
@@ -158,7 +158,7 @@ export function ShelfPut({ shelf: initial, version, onDone }: { shelf?: string; 
           </div>
 
           <div className="flex justify-end">
-            <Button size="lg" onClick={() => void save()} disabled={!valid} loading={busy}><Stack size={18} /> {t('Gem', 'Save')}</Button>
+            <Button size="lg" onClick={() => save()} disabled={!valid} loading={busy}><Stack size={18} /> {t('Gem', 'Save')}</Button>
           </div>
         </CardContent>
       </Card>

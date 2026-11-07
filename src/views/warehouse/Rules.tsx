@@ -89,7 +89,7 @@ export function Rules({ onBack }: { onBack: () => void }) {
                             <Lightbulb size={14} />
                             {suggestion.suggested.map(kindLabel).join(' + ')}
                             <span className="text-muted-foreground">({kinds.map(kind => `${formatNumber(suggestion.quantities[kind] || 0)}`).join(' / ')})</span>
-                            {view.canEdit && JSON.stringify(suggestion.suggested) !== JSON.stringify(allowed) && <Button size="sm" variant="link" className="h-auto px-1" loading={saving === sloc} onClick={() => void save(sloc, suggestion.suggested)}>{t('Brug', 'Use')}</Button>}
+                            {view.canEdit && JSON.stringify(suggestion.suggested) !== JSON.stringify(allowed) && <Button size="sm" variant="link" className="h-auto px-1" loading={saving === sloc} onClick={() => save(sloc, suggestion.suggested)}>{t('Brug', 'Use')}</Button>}
                           </span>
                         ) : <span className="text-muted-foreground">–</span>}
                       </td>

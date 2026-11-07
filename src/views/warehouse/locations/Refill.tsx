@@ -158,7 +158,7 @@ export function Refill({ id, version, onDone }: { id?: string; version: number; 
                           <span className="font-mono font-semibold">{pallet.location}</span>
                           <span className="text-muted-foreground">{formatAge(pallet.ageDays)}</span>
                           <span>{pallet.quantity === null ? '' : t(`${formatNumber(pallet.quantity)} stk.`, `${formatNumber(pallet.quantity)} pcs`)}</span>
-                          <Button size="sm" className="ml-auto" variant={index === 0 ? 'default' : 'outline'} loading={busy && source === pallet.id} disabled={busy} onClick={() => void refill(pallet)}>
+                          <Button size="sm" className="ml-auto" variant={index === 0 ? 'default' : 'outline'} loading={busy && source === pallet.id} disabled={busy} onClick={() => refill(pallet)}>
                             <ArrowsClockwise size={16} /> {t(`Fyldt op fra ${pallet.location}`, `Refilled from ${pallet.location}`)}
                           </Button>
                         </div>

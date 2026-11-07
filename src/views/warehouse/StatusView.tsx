@@ -163,11 +163,11 @@ export function StatusView({ id, onBack, onOpenCount }: { id: string; onBack: ()
                 <li key={report.version} className="space-y-1.5 rounded-lg border px-4 py-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-medium">Version {report.version} · {formatDateTime(report.at)}</span>
-                    <Button variant="outline" size="sm" onClick={() => void openReport(report.file)}><FileXls size={16} /> {t('Åbn statusrapport', 'Open status report')}</Button>
+                    <Button variant="outline" size="sm" onClick={() => openReport(report.file)}><FileXls size={16} /> {t('Åbn statusrapport', 'Open status report')}</Button>
                   </div>
                   {report.counts && report.counts.length > 0 && (
                     <div className="flex flex-wrap gap-1">
-                      {report.counts.map(item => <Button key={item.countId} variant="ghost" size="sm" onClick={() => void openReport(item.file)}><FileXls size={14} /> {item.name}</Button>)}
+                      {report.counts.map(item => <Button key={item.countId} variant="ghost" size="sm" onClick={() => openReport(item.file)}><FileXls size={14} /> {item.name}</Button>)}
                     </div>
                   )}
                 </li>

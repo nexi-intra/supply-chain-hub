@@ -40,7 +40,7 @@ export function DeleteCountDialog({ id, name, onClose, onDeleted }: { id: string
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={deleting}>{t('Annullér', 'Cancel')}</Button>
-          <Button variant="destructive" onClick={() => void remove()} disabled={!matches} loading={deleting}><Trash size={18} /> {t('Slet optælling', 'Delete count')}</Button>
+          <Button variant="destructive" onClick={() => remove()} disabled={!matches} loading={deleting}><Trash size={18} /> {t('Slet optælling', 'Delete count')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -46,8 +46,8 @@ export function RackAdmin({ card, drawn, onOpen, onChanged }: { card: RackCard; 
 
   return (
     <span className="ml-auto flex flex-wrap gap-2">
-      {!drawn && <Button size="sm" variant="outline" onClick={() => void addShelf()} loading={busy === 'add'} disabled={busy !== null}><Plus size={14} /> {t('Tilføj hylde', 'Add shelf')}</Button>}
-      <Button size="sm" variant="outline" onClick={() => void removeTop()} loading={busy === 'remove'} disabled={busy !== null || !topEmpty || card.shelves.length < 2}
+      {!drawn && <Button size="sm" variant="outline" onClick={() => addShelf()} loading={busy === 'add'} disabled={busy !== null}><Plus size={14} /> {t('Tilføj hylde', 'Add shelf')}</Button>}
+      <Button size="sm" variant="outline" onClick={() => removeTop()} loading={busy === 'remove'} disabled={busy !== null || !topEmpty || card.shelves.length < 2}
         title={topEmpty ? undefined : t('Den øverste hylde er ikke tom', 'The top shelf is not empty')}><Minus size={14} /> {t('Fjern hylde', 'Remove shelf')}</Button>
       <Button size="sm" variant="ghost" className="text-destructive" onClick={() => setConfirm(true)} disabled={busy !== null}><Trash size={14} /> {t('Slet reol', 'Delete rack')}</Button>
       {confirm && (
@@ -59,7 +59,7 @@ export function RackAdmin({ card, drawn, onOpen, onChanged }: { card: RackCard; 
             </DialogHeader>
             <DialogFooter>
               <Button variant="ghost" onClick={() => setConfirm(false)} disabled={busy !== null}>{t('Annullér', 'Cancel')}</Button>
-              <Button variant="destructive" onClick={() => void deleteRack()} loading={busy === 'delete'}><Trash size={16} /> {t('Slet reol', 'Delete rack')}</Button>
+              <Button variant="destructive" onClick={() => deleteRack()} loading={busy === 'delete'}><Trash size={16} /> {t('Slet reol', 'Delete rack')}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

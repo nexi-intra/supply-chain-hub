@@ -226,14 +226,14 @@ export function CountView({ id, onBack }: { id: string; onBack: () => void }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {!me.status && meta.status === 'open' && !locked && (
-            <Button onClick={() => void run('join', () => window.electronWarehouse!.counts.requestJoin(id), t('Anmodningen er sendt til den ansvarlige', 'The request was sent to the person responsible'))} loading={busy === 'join'}>
+            <Button onClick={() => run('join', () => window.electronWarehouse!.counts.requestJoin(id), t('Anmodningen er sendt til den ansvarlige', 'The request was sent to the person responsible'))} loading={busy === 'join'}>
               <Plus size={18} weight="bold" /> {t('Anmod om at deltage', 'Ask to join')}
             </Button>
           )}
           {me.status === 'requested' && <Badge variant="outline" className="h-9 px-3">{t('Afventer godkendelse', 'Awaiting approval')}</Badge>}
           {me.status === 'rejected' && <Badge variant="destructive" className="h-9 px-3">{t('Anmodning afvist', 'Request rejected')}</Badge>}
           <Button variant="outline" onClick={() => setFullscreen(true)}><ArrowsOut size={18} /> {t('Fremdrift i fuld skærm', 'Progress in full screen')}</Button>
-          <Button variant="outline" onClick={() => void makeReport()} loading={busy === 'report'}><FileXls size={18} /> {t('Excel-rapport', 'Excel report')}</Button>
+          <Button variant="outline" onClick={() => makeReport()} loading={busy === 'report'}><FileXls size={18} /> {t('Excel-rapport', 'Excel report')}</Button>
           {me.canFetchSap && meta.status === 'open' && !locked && (
             <SapActionButton variant="outline" onAction={() => setRefetchOpen(true)}><ArrowsClockwise size={18} /> {t('Hent SAP igen', 'Fetch SAP again')}</SapActionButton>
           )}
@@ -243,7 +243,7 @@ export function CountView({ id, onBack }: { id: string; onBack: () => void }) {
             </Button>
           )}
           {me.isOwner && meta.status === 'closed' && !locked && (
-            <Button variant="secondary" loading={busy === 'reopen'} onClick={() => void run('reopen', () => window.electronWarehouse!.counts.reopen(id), t('Optællingen er genåbnet', 'The count is reopened'))}>
+            <Button variant="secondary" loading={busy === 'reopen'} onClick={() => run('reopen', () => window.electronWarehouse!.counts.reopen(id), t('Optællingen er genåbnet', 'The count is reopened'))}>
               <LockSimpleOpen size={18} /> {t('Genåbn', 'Reopen')}
             </Button>
           )}

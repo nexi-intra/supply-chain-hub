@@ -149,7 +149,7 @@ export function CopySerialsButton({ id, row, long, forDoc = false }: { id: strin
   if (long) {
     return <SapActionButton size="sm" variant="outline" className="h-7 px-2 text-xs" aria-label={label} title={label} onAction={copy}><Copy size={14} /> {t('Lange', 'Long')}</SapActionButton>
   }
-  return <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" aria-label={label} title={label} loading={copying} onClick={() => void copy()}><Copy size={14} /> {t('Kopiér', 'Copy')}</Button>
+  return <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" aria-label={label} title={label} loading={copying} onClick={() => copy()}><Copy size={14} /> {t('Kopiér', 'Copy')}</Button>
 }
 
 function FrozenBadge({ row }: { row: ResultRow }) {
