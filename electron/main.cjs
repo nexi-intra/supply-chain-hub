@@ -369,14 +369,31 @@ function migrateSharedMealPlanIfNeeded() {
   }
 }
 
-function startSharedWatcher() {
+/**
+ * Ved opstart: madplanen er flyttet til den delte store for laenge siden. Tjek det
+ * asynkront UDEN kontolaasen - runWrite tager den globale kontolaas synkront (en ny
+ * laasefil paa M: koster 3-10 s med frossen main-traad og blokerer andres login).
+ * Kun hvis madplanen mangler, koeres den gamle migrering.
+ */
+async function migrateSharedMealPlanOnStartup() {
+  try {
+    if ((await sharedStore.getAsync('meal-plan-weeks')) !== undefined) return
+    // runWrite() er synkron og kaster STRAKS (attempts:1) hvis kontolaasen er
+    // kortvarigt optaget. Proeves igen ved naeste opstart.
+    if (!accountService.pending()) accountService.runWrite(migrateSharedMealPlanIfNeeded)
+  } catch (err) {
+    console.error('TCD Hub: madplan-migreringstjek fejlede (proeves igen ved naeste opstart):', err)
+  }
+}
+
+function startSharedWatcher({ initialScan = 'sync' } = {}) {
   if (stopSharedWatcher) stopSharedWatcher()
   const debouncedBroadcast = createDebouncedBroadcast(100)
   stopSharedWatcher = sharedStore.watch(tracked('watcher:shared', (changedKeys) => {
     // A session revoked or renewed on another PC: re-read every window's auth snapshot in the background right away (soft).
     if (changedKeys.includes('active-sessions')) authService?.revalidateAll()
     debouncedBroadcast(changedKeys)
-  }), () => {})
+  }), () => {}, { initialScan })
   applyWatchVisibility()
 }
 
@@ -1576,17 +1593,13 @@ app.whenReady().then(() => {
   // Electron lov til at male vinduet, foer vi beslaglaegger main-traaden med
   // synkrone SMB-kald igen.
   setImmediate(() => {
-    startWatcher()
-    startSharedWatcher()
+    // Asynkron foerste scanning (som ved team-skift): de synkrone scanninger af
+    // teammappen (730 filer: 617 ms maalt 07.11) og _shared froes vinduet lige
+    // efter det var vist. isConnected() er optimistisk, til scanningen er faerdig.
+    startWatcher({ initialScan: 'async' })
+    startSharedWatcher({ initialScan: 'async' })
     sweepSharedTempFiles()
-    // runWrite() er synkron og kaster STRAKS (attempts:1) hvis kontolaasen er
-    // kortvarigt optaget. try/catch er kritisk: en kastet fejl her maa aldrig
-    // stoppe resten af opstarten. Proeves igen ved naeste opstart.
-    try {
-      if (!accountService.pending()) accountService.runWrite(migrateSharedMealPlanIfNeeded)
-    } catch (err) {
-      console.error('TCD Hub: madplan-migreringstjek fejlede (proeves igen ved naeste opstart):', err)
-    }
+    void migrateSharedMealPlanOnStartup()
     console.log(`TCD Hub: klar efter ${Date.now() - startedAt} ms`)
   })
 

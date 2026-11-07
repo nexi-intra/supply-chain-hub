@@ -19,6 +19,7 @@ import { useLanguage } from '@/contexts/LanguageContext'
 import { newId } from '@/lib/utils'
 import { updateKvArrayItem, removeFromKvArray } from '@/lib/kvArrays'
 import { createTeamTodo } from '@/lib/moduleWrites'
+import { saveInBackground } from '@/lib/saveInBackground'
 import { createPersonalTodo, personalTodoScheduleProblem, personalTodosKey, type PersonalTodo } from '@/lib/personalTodos'
 import { formatShiftTime, resolveShiftTime, toShiftTime } from '@/lib/shiftTimes'
 import { TimeRangeFields } from '@/components/TimeRangeFields'
@@ -190,6 +191,8 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
 
     createProjectInProgress.current = true
     setSavingProject(true)
+    // Lukker straks: listen viser den nye to-do med det samme (kvArrays). Fejler gemningen, åbnes dialogen igen med teksten.
+    setIsCreateDialogOpen(false)
     try {
       await createTeamTodo({ userEmail, userName: currentUserName, title: newTitle, description: newDescription, dueDate: newDueDate, startTime: newStart, endTime: newEnd, identity: creation })
       pendingProject.current = null
@@ -198,10 +201,10 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
       setNewDueDate('')
       setNewStart('')
       setNewEnd('')
-      setIsCreateDialogOpen(false)
       toast.success(language === 'da' ? 'To-do oprettet' : language === 'fi' ? 'To-do luotu' : language === 'sv' ? 'Uppgift skapad' : 'To-do created')
     } catch (error) {
       console.error('Kunne ikke oprette to-do:', error)
+      setIsCreateDialogOpen(true)
       toast.error(language === 'da' ? 'To-do blev ikke gemt — prøv igen' : language === 'fi' ? 'To-do ei tallentunut — yritä uudelleen' : language === 'sv' ? 'Uppgiften sparades inte — försök igen' : 'To-do was not saved — please try again')
     } finally {
       createProjectInProgress.current = false
@@ -209,9 +212,11 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
     }
   }
 
-  const handleJoinProject = async (projectId: string) => {
-    // Atomar pr.-projekt-opdatering — to samtidige tilmeldinger taber ikke hinanden.
-    await updateKvArrayItem<Project>('projects', projectId, (p) => {
+  const failedSave = () => tr('Ændringen blev ikke gemt — prøv igen', 'The change was not saved — please try again', 'Muutosta ei tallennettu — yritä uudelleen', 'Ändringen sparades inte — försök igen')
+
+  const handleJoinProject = (projectId: string) => {
+    // Atomar pr.-projekt-opdatering — to samtidige tilmeldinger taber ikke hinanden. Listen opdateres straks (kvArrays).
+    void saveInBackground(updateKvArrayItem<Project>('projects', projectId, (p) => {
       const teamMembers = p.teamMembers || []
       if (teamMembers.some((m) => m.email === userEmail)) return p
       return {
@@ -219,34 +224,30 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
         status: 'in-progress' as ProjectStatus,
         teamMembers: [...teamMembers, { email: userEmail, name: currentUserName, assignedAt: new Date().toISOString() }],
       }
-    })
-    toast.success(language === 'da' ? 'Du er nu med i projektet' : language === 'fi' ? 'Liityit projektiin.' : language === 'sv' ? 'Du är nu med i projektet' : 'You joined the project')
+    }), { success: tr('Du er nu med i projektet', 'You joined the project', 'Liityit projektiin.', 'Du är nu med i projektet'), failure: failedSave() })
   }
 
-  const handleLeaveProject = async (projectId: string) => {
-    await updateKvArrayItem<Project>('projects', projectId, (p) => {
+  const handleLeaveProject = (projectId: string) => {
+    void saveInBackground(updateKvArrayItem<Project>('projects', projectId, (p) => {
       const updatedMembers = (p.teamMembers || []).filter((m) => m.email !== userEmail)
       return {
         ...p,
         teamMembers: updatedMembers,
         status: updatedMembers.length === 0 ? ('open' as ProjectStatus) : p.status,
       }
-    })
-    toast.success(language === 'da' ? 'Du har forladt projektet' : language === 'fi' ? 'Lähdit projektista.' : language === 'sv' ? 'Du har lämnat projektet' : 'You left the project')
+    }), { success: tr('Du har forladt projektet', 'You left the project', 'Lähdit projektista.', 'Du har lämnat projektet'), failure: failedSave() })
   }
 
-  const handleRemoveProject = async (projectId: string) => {
-    await removeFromKvArray('projects', [projectId])
-    toast.success(language === 'da' ? 'Projekt slettet' : language === 'fi' ? 'Projekti poistettu' : language === 'sv' ? 'Projektet har tagits bort' : 'Project deleted')
+  const handleRemoveProject = (projectId: string) => {
+    void saveInBackground(removeFromKvArray('projects', [projectId]), { success: tr('Projekt slettet', 'Project deleted', 'Projekti poistettu', 'Projektet har tagits bort'), failure: failedSave() })
   }
 
-  const handleCompleteProject = async (projectId: string) => {
-    await updateKvArrayItem<Project>('projects', projectId, (p) => ({
+  const handleCompleteProject = (projectId: string) => {
+    void saveInBackground(updateKvArrayItem<Project>('projects', projectId, (p) => ({
       ...p,
       status: 'completed' as ProjectStatus,
       completedAt: new Date().toISOString(),
-    }))
-    toast.success(language === 'da' ? 'Projekt markeret som færdigt' : language === 'fi' ? 'Projekti merkitty valmiiksi' : language === 'sv' ? 'Projektet har markerats som klart' : 'Project marked as completed')
+    })), { success: tr('Projekt markeret som færdigt', 'Project marked as completed', 'Projekti merkitty valmiiksi', 'Projektet har markerats som klart'), failure: failedSave() })
   }
 
   const openEditProject = (project: Project) => {
@@ -270,16 +271,16 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
       toast.error(scheduleMessage(editProblem))
       return
     }
-    await updateKvArrayItem<Project>('projects', editingProject.id, (p) => ({
+    // Dialogen lukker straks; listen viser ændringen med det samme (kvArrays), gemningen melder sig selv.
+    setIsEditProjectOpen(false)
+    setEditingProject(null)
+    void saveInBackground(updateKvArrayItem<Project>('projects', editingProject.id, (p) => ({
       ...p,
       title: editProjectTitle.trim(),
       description: editProjectDescription.trim(),
       dueDate: editProjectDueDate.trim() || undefined,
       ...toShiftTime(editProjectStart, editProjectEnd),
-    }))
-    setIsEditProjectOpen(false)
-    setEditingProject(null)
-    toast.success(language === 'da' ? 'To-do opdateret' : language === 'fi' ? 'To-do päivitetty' : language === 'sv' ? 'Uppgift uppdaterad' : 'To-do updated')
+    })), { success: tr('To-do opdateret', 'To-do updated', 'To-do päivitetty', 'Uppgift uppdaterad'), failure: failedSave() })
   }
 
   const getFilteredProjects = () => {
@@ -331,6 +332,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
     setSavingPersonalTodo(true)
     const creation = pendingPersonalTodo.current || { id: newId('todo'), createdAt: new Date().toISOString() }
     pendingPersonalTodo.current = creation
+    setIsPersonalCreateOpen(false)
     try {
       await createPersonalTodo(userEmail, title, newTodoDescription, newTodoDueDate, creation, schedule)
       pendingPersonalTodo.current = null
@@ -340,28 +342,25 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
       setNewTodoKind('todo')
       setNewTodoStart('')
       setNewTodoEnd('')
-      setIsPersonalCreateOpen(false)
       toast.success(language === 'da' ? 'To-do oprettet' : language === 'fi' ? 'To-do luotu' : language === 'sv' ? 'Uppgift skapad' : 'To-do created')
-    } catch { toast.error(language === 'da' ? 'Kunne ikke tilføje to-do' : language === 'fi' ? 'Lisäys epäonnistui' : language === 'sv' ? 'Det gick inte att lägga till uppgiften' : 'Could not add to-do') }
+    } catch { setIsPersonalCreateOpen(true); toast.error(language === 'da' ? 'Kunne ikke tilføje to-do' : language === 'fi' ? 'Lisäys epäonnistui' : language === 'sv' ? 'Det gick inte att lägga till uppgiften' : 'Could not add to-do') }
     finally {
       createPersonalInProgress.current = false
       setSavingPersonalTodo(false)
     }
   }
   const todoStatus = (todo: PersonalTodo): ProjectStatus => todo.status ?? (todo.done ? 'completed' : 'open')
-  const handleStartTodo = async (id: string) => {
-    await updateKvArrayItem<PersonalTodo>(personalKey, id, (todo) => ({ ...todo, status: 'in-progress', done: false, completedAt: undefined }))
+  const handleStartTodo = (id: string) => {
+    void saveInBackground(updateKvArrayItem<PersonalTodo>(personalKey, id, (todo) => ({ ...todo, status: 'in-progress', done: false, completedAt: undefined })), { failure: failedSave() })
   }
-  const handleCompleteTodo = async (id: string) => {
-    await updateKvArrayItem<PersonalTodo>(personalKey, id, (todo) => ({ ...todo, status: 'completed', done: true, completedAt: new Date().toISOString() }))
-    toast.success(language === 'da' ? 'To-do markeret som færdig' : language === 'fi' ? 'To-do merkitty valmiiksi' : language === 'sv' ? 'Uppgift markerad som klar' : 'To-do marked as completed')
+  const handleCompleteTodo = (id: string) => {
+    void saveInBackground(updateKvArrayItem<PersonalTodo>(personalKey, id, (todo) => ({ ...todo, status: 'completed', done: true, completedAt: new Date().toISOString() })), { success: tr('To-do markeret som færdig', 'To-do marked as completed', 'To-do merkitty valmiiksi', 'Uppgift markerad som klar'), failure: failedSave() })
   }
-  const handleReopenTodo = async (id: string) => {
-    await updateKvArrayItem<PersonalTodo>(personalKey, id, (todo) => ({ ...todo, status: 'open', done: false, completedAt: undefined }))
+  const handleReopenTodo = (id: string) => {
+    void saveInBackground(updateKvArrayItem<PersonalTodo>(personalKey, id, (todo) => ({ ...todo, status: 'open', done: false, completedAt: undefined })), { failure: failedSave() })
   }
-  const handleDeleteTodo = async (id: string) => {
-    await removeFromKvArray<PersonalTodo>(personalKey, [id])
-    toast.success(language === 'da' ? 'To-do slettet' : language === 'fi' ? 'To-do poistettu' : language === 'sv' ? 'Uppgift borttagen' : 'To-do deleted')
+  const handleDeleteTodo = (id: string) => {
+    void saveInBackground(removeFromKvArray<PersonalTodo>(personalKey, [id]), { success: tr('To-do slettet', 'To-do deleted', 'To-do poistettu', 'Uppgift borttagen'), failure: failedSave() })
   }
   const openEditTodo = (todo: PersonalTodo) => {
     setEditingTodo(todo)
@@ -384,17 +383,16 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
       toast.error(scheduleMessage(editTodoProblem))
       return
     }
-    await updateKvArrayItem<PersonalTodo>(personalKey, editingTodo.id, (todo) => ({
+    setIsEditTodoOpen(false)
+    setEditingTodo(null)
+    void saveInBackground(updateKvArrayItem<PersonalTodo>(personalKey, editingTodo.id, (todo) => ({
       ...todo,
       title: editTodoTitle.trim(),
       description: editTodoDescription.trim(),
       dueDate: editTodoDueDate.trim() || undefined,
       kind: editTodoKind === 'event' ? 'event' : undefined,
       ...toShiftTime(editTodoStart, editTodoEnd),
-    }))
-    setIsEditTodoOpen(false)
-    setEditingTodo(null)
-    toast.success(language === 'da' ? 'To-do opdateret' : language === 'fi' ? 'To-do päivitetty' : language === 'sv' ? 'Uppgift uppdaterad' : 'To-do updated')
+    })), { success: tr('To-do opdateret', 'To-do updated', 'To-do päivitetty', 'Uppgift uppdaterad'), failure: failedSave() })
   }
   const renderPersonalTodoCard = (todo: PersonalTodo) => {
     const status = todoStatus(todo)

@@ -52,7 +52,14 @@ export function LoginDigest({ userEmail }: LoginDigestProps) {
 
       const result: DigestItem[] = []
 
-      const emails = (await window.kv.get<Email[]>('emails')) || []
+      // Parallelt: hver læsning er en rundtur til M:.
+      const [emailsRaw, vacationsRaw, notesRaw, announcementsRaw] = await Promise.all([
+        window.kv.get<Email[]>('emails'),
+        window.kv.get<VacationEntry[]>('vacation-entries'),
+        window.kv.get<NotebookNote[]>('notebook-notes'),
+        window.kv.get<Announcement[]>('announcements'),
+      ])
+      const emails = emailsRaw || []
       const newEmails = emails.filter(e => e.to === userEmail && e.timestamp > since)
       if (newEmails.length > 0) {
         result.push({
@@ -65,7 +72,7 @@ export function LoginDigest({ userEmail }: LoginDigestProps) {
         })
       }
 
-      const vacations = (await window.kv.get<VacationEntry[]>('vacation-entries')) || []
+      const vacations = vacationsRaw || []
       const decisions = vacations.filter(v =>
         v.userEmail === userEmail && v.type !== 'parental' && v.reviewedAt && new Date(v.reviewedAt).getTime() > since
       )
@@ -83,7 +90,7 @@ export function LoginDigest({ userEmail }: LoginDigestProps) {
         })
       }
 
-      const notes = (await window.kv.get<NotebookNote[]>('notebook-notes')) || []
+      const notes = notesRaw || []
       const newSharedNotes = notes.filter(n =>
         !n.isPersonal && n.creatorEmail !== userEmail && new Date(n.updatedAt).getTime() > since
       )
@@ -98,7 +105,7 @@ export function LoginDigest({ userEmail }: LoginDigestProps) {
         })
       }
 
-      const announcements = (await window.kv.get<Announcement[]>('announcements')) || []
+      const announcements = announcementsRaw || []
       const newAnnouncements = announcements.filter(a => a.createdAt > since)
       if (newAnnouncements.length > 0) {
         result.push({
@@ -111,8 +118,9 @@ export function LoginDigest({ userEmail }: LoginDigestProps) {
         })
       }
 
-      await window.kv.set(key, now)
+      // Vis først – at gemme tidsstemplet på M: tager op mod 30 s.
       if (!cancelled && result.length > 0) setItems(result)
+      await window.kv.set(key, now)
     }
 
     run().catch(error => console.error('Kunne ikke opbygge login-digest:', error))
