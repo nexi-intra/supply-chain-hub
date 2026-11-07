@@ -73,6 +73,14 @@ Oprettet 2026-11-07. Fortsættelse af [langsom-optaelling-placeringer.md](./lang
 
 ## Fase 3 – Verifikation
 
-- [ ] Alle tests (inkl. `electron/warehouse/locations`), typecheck
-- [ ] Målinger før/efter for de største rettelser
-- [ ] Nyt lokalt build i `release-local`
+- [x] Alle tests: node 1643/1644 (1 skipped) inkl. `electron/warehouse/locations` og spil (73/73), vitest 1538 (1 skipped), typecheck 0 fejl, app-guide-dækning grøn.
+- [x] Målinger: opstart "klar efter" 2.510–3.847 ms → 1.215 ms, og ingen `MAIN BLOCKED` ved opstart (før 2.847 ms). Optælling vist 3,4–5,0 s → 0,5 s; Placeringer-handling frøs appen 32–42 s → 15–23 ms (se `langsom-optaelling-placeringer.md`). Gemninger på M: tager stadig 12–20 s (serveren) – nu i baggrunden med "Gemmer …".
+- [x] Nyt lokalt build i `release-local` (07.11, startet og kontrolleret via `main.log`).
+- [x] Spil-knapper (omkamp, remis, ord-godkendelse, byt) viser spinner på den trykkede knap (`ActionChip`).
+
+## Ikke gjort (bevidst) / næste skridt
+
+- IT: undtag `...\ai Tools\Supply Chain Hub Storage\` fra on-access-scanning – hver ny fil koster 3–10 s. Den største enkeltgevinst for HELE appen.
+- Kontosystemet (omdøb/gendan konto, login-lås) bruger stadig synkrone låse – sjældne handlinger, høj risiko.
+- SAP-udtrækket fra lokal cache ved uændret `fetchedAt` (~1 s pr. åbning af optælling) og Placeringer-data genbrugt ved uændret `changedAt` – se `langsom-optaelling-placeringer.md` fase 3.
+- Samling af flere indeks-skrivninger i spil til én.
