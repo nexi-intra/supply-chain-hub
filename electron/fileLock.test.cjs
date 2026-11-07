@@ -185,6 +185,7 @@ async function warmPool(t, dir, options) {
   const pool = createPreparedFiles(options)
   setPreparedFiles(pool)
   t.after(async () => { setPreparedFiles(null); await pool.closeAll() })
+  pool.register(dir) // as a store saving to this folder does
   pool.want(dir, 2)
   await pool.whenIdle()
   return pool
@@ -305,4 +306,18 @@ test('a prepared owner file that has disappeared does not fail the lock', async 
   for (const name of fs.readdirSync(dir).filter(entry => entry.endsWith('.lockowner'))) fs.unlinkSync(path.join(dir, name))
   assert.equal(await withFileLockAsync(target, async () => 42, { attempts: 1 }), 42)
   assert.ok(!fs.existsSync(target))
+})
+
+test('a lock in a folder no store saves to with the pool is taken as today and prepares nothing there', async t => {
+  const target = fixture(t)
+  const dir = path.dirname(target)
+  const pool = createPreparedFiles()
+  setPreparedFiles(pool)
+  t.after(async () => { setPreparedFiles(null); await pool.closeAll() })
+  await withFileLockAsync(target, async () => {
+    assert.equal(fs.statSync(target).nlink, 1)
+  })
+  await withFileLocksAsync([target, path.join(dir, 'other.lock')], async () => {})
+  await pool.whenIdle()
+  assert.deepEqual(fs.readdirSync(dir).filter(name => name.startsWith('~hub-')), [], 'e.g. Backup or _registry: no files left there')
 })

@@ -411,7 +411,7 @@ function startSharedWatcher({ initialScan = 'sync' } = {}) {
 function sweepSharedTempFiles() {
   if (storageStartedDisconnected || !storageConnected || !platformRoot) return
   const teamDir = store?.dataDir
-  const directories = [path.join(platformRoot, '_shared'), path.join(platformRoot, '_shared', 'multiplayer'), registry.registryDir(platformRoot)]
+  const directories = [path.join(platformRoot, '_shared'), path.join(platformRoot, '_shared', 'multiplayer'), path.join(platformRoot, '_lagerstyring'), registry.registryDir(platformRoot)]
   if (teamDir) directories.push(teamDir, path.join(teamDir, 'lagerstyring'), path.join(teamDir, 'lagerstyring', 'placeringer'))
   for (const directory of directories) {
     // Only folders that exist (no warehouse folder is created for a team without it); checked without blocking main.

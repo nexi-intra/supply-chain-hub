@@ -152,7 +152,8 @@ async function acquireFileLockAsync(target, { attempts = 50, delayMs = 100, crea
   try {
     for (let attempt = 0; ; attempt++) {
       try {
-        if (!entry && pool?.linkSupported(dir)) entry = pool.takeOwner(dir)
+        // Only in folders a store saves to with the pool: a lock elsewhere (Backup, _registry) prepares nothing there.
+        if (!entry && pool?.knows(path.resolve(dir)) && pool.linkSupported(dir)) entry = pool.takeOwner(dir)
         if (entry) {
           let linkError = null
           try {
@@ -279,7 +280,7 @@ async function withFileLocksAsync(targets, mutate, { attempts = 50, delayMs = 10
     // Enough owner files ready for every lock of such a transaction in each folder (next time, if not now).
     const perFolder = new Map()
     for (const target of ordered) perFolder.set(path.dirname(target), (perFolder.get(path.dirname(target)) || 0) + 1)
-    for (const [dir, count] of perFolder) preparedFiles.want(dir, count)
+    for (const [dir, count] of perFolder) if (preparedFiles.knows(path.resolve(dir))) preparedFiles.want(dir, count)
   }
   let releases
   for (let round = 0; ; round++) {

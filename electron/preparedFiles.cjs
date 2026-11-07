@@ -15,11 +15,12 @@ function createPreparedFiles({ fsp = fs.promises, pid = process.pid, now = Date.
   let closed = false
 
   function folder(dir) {
-    let state = folders.get(dir)
+    const key = path.resolve(dir)
+    let state = folders.get(key)
     if (!state) {
       // `lent`: owner files out as a lock; `returning`: being given a new id. Both come back, so they count as stock.
       state = { target: poolSize, tmps: [], owners: [], lent: 0, returning: 0, linkUnsupported: false, refilling: null, again: false }
-      folders.set(dir, state)
+      folders.set(key, state)
     }
     return state
   }
@@ -146,6 +147,10 @@ function createPreparedFiles({ fsp = fs.promises, pid = process.pid, now = Date.
 
   const linkSupported = dir => !folder(dir).linkUnsupported
 
+  /** A folder a store saves to with this pool; only there are locks taken as links (see fileLock.cjs). */
+  function register(dir) { folder(dir) }
+  const knows = dir => folders.has(path.resolve(dir))
+
   async function whenIdle() {
     while (work.size > 0) await Promise.all([...work])
   }
@@ -161,7 +166,7 @@ function createPreparedFiles({ fsp = fs.promises, pid = process.pid, now = Date.
     await whenIdle()
   }
 
-  return { takeTmp, takeOwner, releaseOwner, discardTmp, want, markLinkUnsupported, linkSupported, whenIdle, closeAll }
+  return { register, knows, takeTmp, takeOwner, releaseOwner, discardTmp, want, markLinkUnsupported, linkSupported, whenIdle, closeAll }
 }
 
 module.exports = { createPreparedFiles, PREPARED_FILE_PATTERN }

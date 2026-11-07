@@ -71,6 +71,8 @@ tiden stabil. Kontrol: alle data gemt korrekt, ingen låsefiler efterladt, midle
   1.6.7) og ingen nøgleliste ser dem.
 - Ved gemning: tag en forberedt fil, åbn med `r+`, skriv det krypterede indhold, luk, og **omdøb den over** `<nøgle>.json`
   (som i dag – atomisk). Filen er dermed brugt; en ny forberedes i baggrunden.
+- Kun mapper, som en store med puljen gemmer i, får forberedte filer (store registrerer mappen). En lås i en anden mappe
+  (fx `Backup`, `_registry`) tages som i dag og efterlader intet dér. (Rettet efter den afsluttende gennemgang.)
 - Er lageret tomt (første gemning i en mappe, eller mange samtidige), bruges dagens metode (ny tmp-fil) – der ventes aldrig på
   en forberedelse. Første gemning i en mappe starter forberedelsen; mapper der aldrig skrives i, får ingen filer.
 - Lagerstørrelse: lille som standard (2); Placeringers mappe skal kunne dække én transaktion (op til ~9 filer). Bygger vælger.
