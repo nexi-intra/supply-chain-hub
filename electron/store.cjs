@@ -185,7 +185,8 @@ function wait(milliseconds) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds)
 }
 
-function createStore(dataDir, { externallyWatched = false } = {}) {
+// preparedFiles (preparedFiles.cjs, optional): ready-made temp files for saves on M:.
+function createStore(dataDir, { externallyWatched = false, preparedFiles = null } = {}) {
   fs.mkdirSync(dataDir, { recursive: true })
 
   // Local read cache. Invalideres af watch() pr. aendret noegle; TTL er sikkerhedsnet.
@@ -347,6 +348,18 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
   }
 
   async function writeTmpAsync(key, json) {
+    // A prepared (already created) empty file: writing into it costs ~0.5-1 s on M:, creating a new one 2-15 s.
+    const prepared = preparedFiles?.takeTmp(dataDir)
+    if (prepared) {
+      try {
+        const handle = await fs.promises.open(prepared, 'r+')
+        try { await handle.write(encryptPayload(json)) } finally { await handle.close() }
+        return prepared
+      } catch (error) {
+        preparedFiles.discardTmp(prepared)
+        throw error
+      }
+    }
     const tmp = `${filePath(key)}.${process.pid}.${Date.now()}.${crypto.randomBytes(4).toString('hex')}.tmp`
     await fs.promises.writeFile(tmp, encryptPayload(json))
     return tmp

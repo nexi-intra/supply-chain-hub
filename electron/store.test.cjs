@@ -807,3 +807,63 @@ test('statAsync reports a key file change marker without reading it, and undefin
   const second = await store.statAsync('game')
   assert.ok(second.mtimeMs !== first.mtimeMs || second.size !== first.size)
 })
+
+// ---------- A save writes into a prepared temp file instead of creating one (creating a file on M: costs 2-15 s) ----------
+const { createPreparedFiles: createPreparedFilesForStore, PREPARED_FILE_PATTERN } = require('./preparedFiles.cjs')
+async function preparedStore(t) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-store-prepared-'))
+  const pool = createPreparedFilesForStore()
+  t.after(async () => { await pool.closeAll(); fs.rmSync(directory, { recursive: true, force: true }) })
+  pool.want(directory, 2)
+  await pool.whenIdle()
+  return { directory, pool, store: createStore(directory, { preparedFiles: pool }) }
+}
+
+test('a save with a prepared temp file creates no new file during the save', async t => {
+  const { store } = await preparedStore(t)
+  const opened = []
+  const realOpen = fs.promises.open
+  t.mock.method(fs.promises, 'open', (file, flags, ...rest) => { opened.push([path.basename(String(file)), flags]); return realOpen(file, flags, ...rest) })
+  await store.setAsync('k', { a: 1 })
+  t.mock.restoreAll()
+  const tmpOpens = opened.filter(([name]) => name.endsWith('.tmp'))
+  // The save itself writes into a prepared file; the pool may make the next one ready in the background meanwhile.
+  assert.ok(tmpOpens.some(([name, flags]) => PREPARED_FILE_PATTERN.test(name) && flags === 'r+'), JSON.stringify(tmpOpens))
+  assert.ok(!tmpOpens.some(([name]) => /\.json\.\d+\.\d+\.[0-9a-f]{8}\.tmp$/.test(name)), 'no temp file is created the old way')
+  assert.ok(tmpOpens.filter(([, flags]) => flags !== 'r+').every(([name]) => name.startsWith('~hub-prep-')), JSON.stringify(tmpOpens))
+  assert.deepEqual(await store.getAsync('k', { skipCache: true }), { a: 1 })
+})
+
+test('a failed write into a prepared file leaves the data file untouched and the file is not reused', async t => {
+  const { store, pool, directory } = await preparedStore(t)
+  await store.setAsync('k', { v: 'old' })
+  await pool.whenIdle()
+  const ready = fs.readdirSync(directory).filter(name => name.startsWith('~hub-prep-'))
+  const realOpen = fs.promises.open
+  let failed = null
+  t.mock.method(fs.promises, 'open', async (file, flags, ...rest) => {
+    const handle = await realOpen(file, flags, ...rest)
+    if (flags === 'r+' && !failed && String(file).endsWith('.tmp')) {
+      failed = path.basename(String(file))
+      handle.write = async () => { throw Object.assign(new Error('disk trouble'), { code: 'EIO' }) }
+    }
+    return handle
+  })
+  await assert.rejects(store.setAsync('k', { v: 'new' }), { code: 'EIO' })
+  t.mock.restoreAll()
+  assert.ok(ready.includes(failed), 'the failing write was into a prepared file')
+  assert.deepEqual(await store.getAsync('k', { skipCache: true }), { v: 'old' })
+  await pool.whenIdle()
+  assert.ok(!fs.existsSync(path.join(directory, failed)), 'the half-written prepared file is deleted')
+  for (let file = pool.takeTmp(directory); file; file = pool.takeTmp(directory)) assert.notEqual(path.basename(file), failed)
+})
+
+test('prepared files never show up as keys, in a scan or in a dump', async t => {
+  const { store, directory } = await preparedStore(t)
+  await store.setAsync('real', 1)
+  assert.ok(fs.readdirSync(directory).some(name => PREPARED_FILE_PATTERN.test(name)), 'prepared files are there')
+  assert.deepEqual(await store.keysAsync(), ['real'])
+  const scan = await store.scanDirectoryAsync(null)
+  assert.deepEqual(Object.keys(Object.fromEntries(scan.snapshot)).map(name => name.replace(/\.json$/, '')), ['real'])
+  assert.deepEqual(Object.keys(await store.dumpAllAsync()), ['real'])
+})
