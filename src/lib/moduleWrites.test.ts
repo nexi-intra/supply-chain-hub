@@ -11,6 +11,7 @@ function fixture(initial: Record<string, unknown> = {}, failKey?: string) {
     const list = (store.get(key) as Array<{ id: string }> | undefined) || []
     if (operation.op === 'append') store.set(key, [...list, ...(operation.items || [])])
     if (operation.op === 'remove') store.set(key, list.filter(item => !(operation.ids || []).includes(item.id)))
+    if (operation.op === 'upsert') store.set(key, [...list.map(item => operation.items?.find(next => next.id === item.id) || item), ...(operation.items || []).filter(next => !list.some(item => item.id === next.id))])
     return store.get(key) || []
   })
   vi.stubGlobal('window', { kv: { get: vi.fn(async (key: string) => store.get(key)), update } })
@@ -18,16 +19,30 @@ function fixture(initial: Record<string, unknown> = {}, failKey?: string) {
 }
 
 describe('setHomeOfficeDay', () => {
-  it('replaces only the user’s own exception for that date', async () => {
-    const { store } = fixture({ 'home-office-exceptions': [
+  it('replaces only the user’s own exception for that date, in one write (a write to M: takes 20 s)', async () => {
+    const { store, update } = fixture({ 'home-office-exceptions': [
       { id: 'a', userEmail: 'me@test', date: '2026-10-07', isHomeOffice: false },
       { id: 'b', userEmail: 'bo@test', date: '2026-10-07', isHomeOffice: true },
       { id: 'c', userEmail: 'me@test', date: '2026-10-08', isHomeOffice: true },
     ] })
     const entry = await setHomeOfficeDay('me@test', '2026-10-07')
     const saved = store.get('home-office-exceptions') as Array<{ id: string; userEmail: string; date: string; isHomeOffice: boolean }>
-    expect(saved.map(item => item.id)).toEqual(['b', 'c', entry.id])
+    expect(saved.filter(item => item.userEmail === 'me@test' && item.date === '2026-10-07')).toEqual([entry])
+    expect(saved.map(item => item.id).sort()).toEqual([entry.id, 'b', 'c'].sort())
     expect(entry).toMatchObject({ userEmail: 'me@test', date: '2026-10-07', isHomeOffice: true })
+    expect(update).toHaveBeenCalledTimes(1)
+  })
+
+  it('a new day is one write, and several old exceptions for the day are all replaced', async () => {
+    const { store, update } = fixture({ 'home-office-exceptions': [
+      { id: 'a', userEmail: 'me@test', date: '2026-10-07', isHomeOffice: false },
+      { id: 'a2', userEmail: 'me@test', date: '2026-10-07', isHomeOffice: false },
+    ] })
+    const entry = await setHomeOfficeDay('me@test', '2026-10-07')
+    expect(store.get('home-office-exceptions')).toEqual([entry])
+    update.mockClear()
+    await setHomeOfficeDay('me@test', '2026-10-09')
+    expect(update).toHaveBeenCalledTimes(1)
   })
 
   it('rejects anything but an ISO day', async () => {

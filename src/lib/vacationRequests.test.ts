@@ -46,4 +46,20 @@ describe('submitVacationRequest', () => {
     expect(emails.some(email => email.to === 'manager1@test' && email.type === 'vacation-request')).toBe(true)
     expect(emails.some(email => email.to === 'a@test' && email.type === 'vacation-confirmation')).toBe(true)
   })
+
+  it('tells the caller once the request is saved, then sends all mails in one write and all notifications in one (a write to M: takes 20 s)', async () => {
+    const f = fixture({
+      manager1: { email: 'manager1@test', password: '', fullName: 'Manager One', isManager: true },
+      manager2: { email: 'manager2@test', password: '', fullName: 'Manager Two', isManager: true },
+      staff: { email: 'a@test', password: '', fullName: 'Staff', isManager: false },
+    })
+    const order: string[] = []
+    const update = (window as unknown as { kv: { update: ReturnType<typeof vi.fn> } }).kv.update
+    const original = update.getMockImplementation() as (key: string, operation: { op: string; items?: unknown[] }) => Promise<unknown>
+    update.mockImplementation(async (key: string, operation: { op: string; items?: unknown[] }) => { order.push(key); return original(key, operation) })
+    await submitVacationRequest({ userEmail: 'a@test', startDate: '2026-10-05', endDate: '2026-10-10', onSaved: () => order.push('saved') })
+    expect(order).toEqual(['vacation-entries', 'saved', 'emails', 'email-notifications'])
+    expect(f.store.get('emails')).toHaveLength(3)
+    expect(f.store.get('email-notifications')).toHaveLength(3)
+  })
 })

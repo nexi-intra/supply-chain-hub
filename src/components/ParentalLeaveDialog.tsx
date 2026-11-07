@@ -98,8 +98,8 @@ export function ParentalLeaveDialog({ open, onOpenChange, managerEmail, onSucces
           timestamp: Date.now(),
           read: false,
         }
-        await appendToKvArray('emails', [message])
-        await appendToKvArray('email-notifications', [{
+        // Uafhængige nøgler: gemmes samtidig (hver gemning tager op mod et halvt minut på M:).
+        await Promise.all([appendToKvArray('emails', [message]), appendToKvArray('email-notifications', [{
           id: newId('notif'),
           type: 'email' as const,
           message: t.parentalLeave.notification,
@@ -107,7 +107,7 @@ export function ParentalLeaveDialog({ open, onOpenChange, managerEmail, onSucces
           read: false,
           from: managerEmail,
           emailId: message.id,
-        }])
+        }])])
       } catch (notificationError) {
         console.error('Error sending parental leave notification:', notificationError)
       }

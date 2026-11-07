@@ -1,6 +1,6 @@
 // Shared write paths used by both the module screens and Hubert's actions (HubAssistant.tsx),
 // so a confirmed Hubert proposal writes exactly what the manual form would.
-import { appendToKvArray, removeFromKvArray } from './kvArrays'
+import { appendToKvArray, removeFromKvArray, upsertInKvArray } from './kvArrays'
 import { newId } from './utils'
 import { personalTodoScheduleProblem } from './personalTodos'
 import { toShiftTime } from './shiftTimes'
@@ -13,7 +13,14 @@ export async function setHomeOfficeDay(userEmail: string, date: string, isHomeOf
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('INVALID_DATE')
   const current = (await window.kv.get<HomeOfficeException[]>('home-office-exceptions')) || []
   const stale = current.filter(item => item.userEmail === userEmail && item.date === date).map(item => item.id)
-  if (stale.length) await removeFromKvArray<HomeOfficeException>('home-office-exceptions', stale)
+  // The usual case (none or one old exception for the day) is one write: the old one is replaced in place. A write to
+  // M: takes 20 s, and this was a remove and an append one after another.
+  if (stale.length <= 1) {
+    const entry: HomeOfficeException = { id: stale[0] || newId('homeoffice'), userEmail, date, isHomeOffice }
+    await (stale.length ? upsertInKvArray('home-office-exceptions', [entry]) : appendToKvArray('home-office-exceptions', [entry]))
+    return entry
+  }
+  await removeFromKvArray<HomeOfficeException>('home-office-exceptions', stale)
   const entry: HomeOfficeException = { id: newId('homeoffice'), userEmail, date, isHomeOffice }
   await appendToKvArray('home-office-exceptions', [entry])
   return entry

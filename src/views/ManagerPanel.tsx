@@ -576,8 +576,8 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
         timestamp: Date.now(),
         read: false,
       }
-      await appendToKvArray('emails', [newEmail])
-      await appendToKvArray('email-notifications', [{
+      // Uafhængige nøgler: gemmes samtidig (hver gemning tager op mod et halvt minut på M:).
+      await Promise.all([appendToKvArray('emails', [newEmail]), appendToKvArray('email-notifications', [{
         id: newId('notif'),
         type: 'email' as const,
         message: approved ? t.managerPanel.vacationRequests.approvalEmailNotification : t.managerPanel.vacationRequests.rejectionEmailNotification,
@@ -585,7 +585,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
         read: false,
         from: userEmail,
         emailId: newEmail.id,
-      }])
+      }])])
     } catch (emailError) {
       console.error('Kunne ikke sende feriebeslutnings-mail:', emailError)
     }
@@ -709,21 +709,27 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
       return
     }
 
-    const editedEntry = await updateKvArrayItem<VacationEntry>('vacation-entries', editingVacation.id, (v) => ({
+    const edit = (v: VacationEntry): VacationEntry => ({
       ...v,
       startDate: format(editVacationStartDate, 'yyyy-MM-dd'),
       endDate: format(editVacationEndDate, 'yyyy-MM-dd'),
       notes: editVacationNotes.trim() || undefined,
       type: editVacationType === 'parental' ? 'parental' : undefined,
-    }))
+    })
+    // Vises straks og dialogen lukker; fejler gemningen, læses listen igen.
+    const previousEntries = vacationEntries
+    setVacationEntries(current => current.map(entry => entry.id === editingVacation.id ? edit(entry) : entry))
+    setIsEditVacationDialogOpen(false)
+    const editedEntry = await updateKvArrayItem<VacationEntry>('vacation-entries', editingVacation.id, edit)
+      .catch(error => { console.error('Kunne ikke gemme ferien:', error); return undefined })
     if (!editedEntry) {
-      toast.error(t.managerPanel.vacationRequests.notFoundError)
+      toast.error(editedEntry === null ? t.managerPanel.vacationRequests.notFoundError : (language === 'da' ? 'Ændringen blev ikke gemt — prøv igen' : language === 'fi' ? 'Muutosta ei tallennettu — yritä uudelleen' : language === 'sv' ? 'Ändringen sparades inte — försök igen' : 'The change was not saved — please try again'))
+      setVacationEntries(previousEntries)
       void loadVacationEntries()
-      setIsEditVacationDialogOpen(false)
       return
     }
     setVacationEntries(current => current.map(entry => entry.id === editedEntry.id ? editedEntry : entry))
-    setIsEditVacationDialogOpen(false)
+    toast.success(t.managerPanel.vacationOverview.updatedToast)
 
     // Barsel sender ingen ferie-mails.
     const involvesParental = editingVacation.type === 'parental' || editVacationType === 'parental'
@@ -747,8 +753,6 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
         read: false
       }
 
-      await appendToKvArray('emails', [newEmail])
-
       const notification = {
         id: newId('notif'),
         type: 'email' as const,
@@ -759,7 +763,9 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
         emailId: newEmail.id
       }
 
-      await appendToKvArray('email-notifications', [notification])
+      // I baggrunden og samtidig: uafhængige nøgler.
+      void Promise.all([appendToKvArray('emails', [newEmail]), appendToKvArray('email-notifications', [notification])])
+        .catch(emailError => console.error('Error sending vacation edit email:', emailError))
     } catch (emailError) {
       console.error('Error sending vacation edit email:', emailError)
     }
@@ -768,7 +774,6 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
     setEditVacationStartDate(undefined)
     setEditVacationEndDate(undefined)
     setEditVacationNotes('')
-    toast.success(t.managerPanel.vacationOverview.updatedToast)
   }
 
   const deleteVacation = async (id: string) => {
@@ -811,8 +816,6 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
         read: false
       }
 
-      await appendToKvArray('emails', [newEmail])
-
       const notification = {
         id: newId('notif'),
         type: 'email' as const,
@@ -823,7 +826,9 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
         emailId: newEmail.id
       }
 
-      await appendToKvArray('email-notifications', [notification])
+      // I baggrunden og samtidig, så knappen ikke venter på mailen.
+      void Promise.all([appendToKvArray('emails', [newEmail]), appendToKvArray('email-notifications', [notification])])
+        .catch(emailError => console.error('Error sending vacation deletion email:', emailError))
     } catch (emailError) {
       console.error('Error sending vacation deletion email:', emailError)
     }

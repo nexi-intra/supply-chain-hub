@@ -114,18 +114,21 @@ export function OnboardingWizard({ open, onOpenChange, onCompleted }: WizardProp
         status: 'approved',
       })
 
+      // After the account: the birthday and the welcome mail are independent keys, saved at the same time (a write to M:
+      // takes 20+ s; they were one after another).
+      const followUps: Promise<unknown>[] = []
       if (birthDate) {
         const [year, month, day] = birthDate.split('-')
-        await upsertInKvArray('employee-birthdays', [{
+        followUps.push(upsertInKvArray('employee-birthdays', [{
           id: normalizedEmail,
           email: normalizedEmail,
           fullName: fullName.trim(),
           birthday: `${month}-${day}`,
           birthYear: parseInt(year),
-        }])
+        }]))
       }
 
-      await appendToKvArray('emails', [{
+      followUps.push(appendToKvArray('emails', [{
         id: newId('email'),
         from: 'system@nexigroup.com',
         to: normalizedEmail,
@@ -141,7 +144,8 @@ export function OnboardingWizard({ open, onOpenChange, onCompleted }: WizardProp
         ].join('\n'),
         timestamp: Date.now(),
         read: false,
-      }])
+      }]))
+      await Promise.all(followUps)
 
       toast.success(`${fullName.trim()} ${t.onboardingWizard.createdSuffix}`)
       onOpenChange(false)
@@ -331,21 +335,20 @@ export function OffboardingWizard({ open, onOpenChange, onCompleted, currentUser
       if (emailLower !== selectedEmployee.email) {
         await deleteKvObjectField('users', emailLower)
       }
-      if (preview.shiftAssignmentIds.length > 0) {
-        await removeFromKvArray('shift-assignments', preview.shiftAssignmentIds)
-      }
-      if (preview.hasBirthday) {
-        await removeFromKvArray('employee-birthdays', [emailLower, selectedEmployee.email])
-      }
-      // Afventende ferieanmodninger fjernes (giver ikke mening uden bruger);
-      // godkendt/afvist historik bevares som dokumentation.
-      const vacations = await window.kv.get<VacationEntry[]>('vacation-entries') || []
-      const pendingIds = vacations
-        .filter(v => v.userEmail.toLowerCase() === emailLower && v.status === 'pending')
-        .map(v => v.id)
-      if (pendingIds.length > 0) {
-        await removeFromKvArray('vacation-entries', pendingIds)
-      }
+      // When the account is gone: shifts, birthday and pending vacations are independent keys, removed at the same time.
+      await Promise.all([
+        preview.shiftAssignmentIds.length > 0 ? removeFromKvArray('shift-assignments', preview.shiftAssignmentIds) : null,
+        preview.hasBirthday ? removeFromKvArray('employee-birthdays', [emailLower, selectedEmployee.email]) : null,
+        (async () => {
+          // Afventende ferieanmodninger fjernes (giver ikke mening uden bruger);
+          // godkendt/afvist historik bevares som dokumentation.
+          const vacations = await window.kv.get<VacationEntry[]>('vacation-entries') || []
+          const pendingIds = vacations
+            .filter(v => v.userEmail.toLowerCase() === emailLower && v.status === 'pending')
+            .map(v => v.id)
+          if (pendingIds.length > 0) await removeFromKvArray('vacation-entries', pendingIds)
+        })(),
+      ])
 
       toast.success(`${selectedEmployee.fullName} ${t.onboardingWizard.offboardedSuffix}`)
       onOpenChange(false)

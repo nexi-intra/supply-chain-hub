@@ -54,18 +54,24 @@ export function VacationRequestDialog({ userEmail }: VacationRequestDialogProps)
     }
 
     setIsSubmitting(true)
+    // Closes at once; "sent" as soon as the request itself is saved (the mails to the managers follow). A failed save
+    // reopens the dialog with the dates.
+    setOpen(false)
 
     try {
-      await submitVacationRequest({ userEmail, startDate, endDate, notes })
-
-      toast.success(t.vacationRequestDialog.requestSent)
-      setStartDate('')
-      setEndDate('')
-      setNotes('')
-      setOpen(false)
+      await submitVacationRequest({
+        userEmail, startDate, endDate, notes,
+        onSaved: () => {
+          toast.success(t.vacationRequestDialog.requestSent)
+          setStartDate('')
+          setEndDate('')
+          setNotes('')
+        },
+      })
     } catch (error) {
       console.error('Error creating vacation request:', error)
       toast.error('Kunne ikke oprette ferieansøgning')
+      setOpen(true)
     } finally {
       setIsSubmitting(false)
     }

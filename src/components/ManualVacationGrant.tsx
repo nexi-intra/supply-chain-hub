@@ -83,6 +83,9 @@ export function ManualVacationGrant({ open, onOpenChange, managerEmail, onSucces
     }
 
     setIsSubmitting(true)
+    // The dialog closes at once ("Gemmer …" shows while it is saved; a write to M: takes 20+ s). The choices stay in
+    // the form until it is saved, so a failed save reopens the dialog with them.
+    onOpenChange(false)
 
     try {
       const newVacation: VacationEntry = {
@@ -102,35 +105,28 @@ export function ManualVacationGrant({ open, onOpenChange, managerEmail, onSucces
 
       await appendToKvArray('vacation-entries', [newVacation])
 
-      try {
-        const emailContent = manualVacationGrantEmail(managerEmail, start, end, grantType === 'single', notes.trim() || undefined)
-
-        const newEmail = {
-          id: newId('email'),
-          from: managerEmail,
-          to: selectedUser,
-          subject: emailContent.subject,
-          message: emailContent.body,
-          timestamp: Date.now(),
-          read: false
-        }
-
-        await appendToKvArray('emails', [newEmail])
-
-        const notification = {
-          id: newId('notif'),
-          type: 'email' as const,
-          message: grantType === 'single' ? t.manualVacationGrant.gotDayOffNotification : t.manualVacationGrant.gotVacationNotification,
-          timestamp: Date.now(),
-          read: false,
-          from: managerEmail,
-          emailId: newEmail.id
-        }
-
-        await appendToKvArray('email-notifications', [notification])
-      } catch (emailError) {
-        console.error('Error sending vacation grant email:', emailError)
+      const emailContent = manualVacationGrantEmail(managerEmail, start, end, grantType === 'single', notes.trim() || undefined)
+      const newEmail = {
+        id: newId('email'),
+        from: managerEmail,
+        to: selectedUser,
+        subject: emailContent.subject,
+        message: emailContent.body,
+        timestamp: Date.now(),
+        read: false
       }
+      const notification = {
+        id: newId('notif'),
+        type: 'email' as const,
+        message: grantType === 'single' ? t.manualVacationGrant.gotDayOffNotification : t.manualVacationGrant.gotVacationNotification,
+        timestamp: Date.now(),
+        read: false,
+        from: managerEmail,
+        emailId: newEmail.id
+      }
+      // The mail and its notification are independent keys: saved at the same time, in the background.
+      void Promise.all([appendToKvArray('emails', [newEmail]), appendToKvArray('email-notifications', [notification])])
+        .catch(emailError => console.error('Error sending vacation grant email:', emailError))
 
       toast.success(grantType === 'single' ? t.manualVacationGrant.dayOffGranted : t.manualVacationGrant.vacationGranted)
       setSelectedUser('')
@@ -138,11 +134,11 @@ export function ManualVacationGrant({ open, onOpenChange, managerEmail, onSucces
       setStartDate('')
       setEndDate('')
       setNotes('')
-      onOpenChange(false)
       onSuccess()
     } catch (error) {
       console.error('Error granting vacation:', error)
       toast.error(t.manualVacationGrant.grantFailed)
+      onOpenChange(true)
     } finally {
       setIsSubmitting(false)
     }
