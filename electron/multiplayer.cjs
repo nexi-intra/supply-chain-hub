@@ -532,7 +532,15 @@ function createMultiplayerService({
    * process wait for pending writes, so they never see their own index lagging.
    */
   const pendingIndexWrites = new Set()
-  function deferIndexWrite(store, mutate) {
+  // This PC's index writes still on their way, per game, with the entry the newest of them will write. Reads show
+  // that entry and heal() leaves these games alone (a write to M: takes 20+ s: waiting for it froze moves, chat and
+  // the lobby, and healing it meanwhile was a second write of the same entry).
+  const pendingIndexGames = new Map()
+  function deferIndexWrite(store, mutate, gameId, projected) {
+    const own = pendingIndexGames.get(gameId) || { count: 0, entry: null }
+    own.count++
+    own.entry = projected
+    pendingIndexGames.set(gameId, own)
     const run = (async () => {
       for (let attempt = 0; ; attempt++) {
         try {
@@ -547,7 +555,18 @@ function createMultiplayerService({
       }
     })()
     pendingIndexWrites.add(run)
-    run.finally(() => pendingIndexWrites.delete(run))
+    run.finally(() => {
+      pendingIndexWrites.delete(run)
+      if (--own.count === 0 && pendingIndexGames.get(gameId) === own) pendingIndexGames.delete(gameId)
+    })
+  }
+  /** The index entries as this PC will have written them: its pending entries replace older stored ones. */
+  function withOwnPending(games) {
+    if (!pendingIndexGames.size) return games
+    return games.map(entry => {
+      const own = pendingIndexGames.get(entry.id)?.entry
+      return own && own.gameRevision > entry.gameRevision ? own : entry
+    })
   }
   async function settled() {
     while (pendingIndexWrites.size) await Promise.allSettled([...pendingIndexWrites])
@@ -835,6 +854,7 @@ function createMultiplayerService({
   /** Rewrites an index entry that fell behind its game file (crash between the two writes). Best effort. */
   async function heal(store, game, entry) {
     if (entry.gameRevision >= game.revision) return entry
+    if (pendingIndexGames.has(game.id)) return entryFromGame(game, entry)
     try {
       return await updateIndex(store, index => {
         const current = index.games.find(item => item.id === game.id) || entry
@@ -852,7 +872,6 @@ function createMultiplayerService({
   }
 
   async function gameCommand(ctx, command) {
-    await settled()
     const indexStore = await getIndexStore()
     const gameStore = await getGameStore()
     // The game file does not depend on the index, so the first two round trips to the share overlap.
@@ -899,7 +918,7 @@ function createMultiplayerService({
       }
       if (deferIndexWrites) {
         const projected = entryFromGame(next, entry)
-        deferIndexWrite(indexStore, writeIndex)
+        deferIndexWrite(indexStore, writeIndex, game.id, projected)
         return { entry: structuredClone(projected), game: projectGame(next, projected, me) }
       }
       const updated = await updateIndex(indexStore, writeIndex)
@@ -914,7 +933,6 @@ function createMultiplayerService({
    * marker so the opponent's watcher sees the change.
    */
   async function hubertCommand(ctx, command) {
-    await settled()
     const indexStore = await getIndexStore()
     const first = findPlayerEntry(await readIndexFrom(indexStore), command.gameId, ctx.actor.email)
     const { me } = first
@@ -969,7 +987,6 @@ function createMultiplayerService({
    * spaced REACTION_COOLDOWN_MS apart and only the last REACTION_LIMIT are kept.
    */
   async function reactCommand(ctx, command) {
-    await settled()
     const indexStore = await getIndexStore()
     const first = findPlayerEntry(await readIndexFrom(indexStore), command.gameId, ctx.actor.email)
     const { me } = first
@@ -1200,8 +1217,8 @@ function createMultiplayerService({
 
   async function snapshot(actor) {
     const ctx = await context(actor)
-    await settled()
-    const index = await readIndexShared(await getIndexStore())
+    const stored = await readIndexShared(await getIndexStore())
+    const index = { ...stored, games: withOwnPending(stored.games) }
     const me = ctx.actor.email
     const results = tallyResults(index)
     const known = new Map(index.games.flatMap(entry => entry.players.map(player => [player.email, player])))
@@ -1232,7 +1249,6 @@ function createMultiplayerService({
   async function game(actor, gameId) {
     const ctx = await context(actor)
     const id = identifier(gameId, 'gameId')
-    await settled()
     const indexStore = await getIndexStore()
     const { entry, me } = findPlayerEntry(await readIndexShared(indexStore), id, ctx.actor.email)
     if (['declined', 'cancelled'].includes(entry.status)) fail('MULTIPLAYER_NOT_FOUND', 'The game has not started')
@@ -1254,6 +1270,7 @@ function createMultiplayerService({
     if (healTimers.has(gameId)) return
     const timer = setTimeout(async () => {
       healTimers.delete(gameId)
+      if (pendingIndexGames.has(gameId)) { scheduleHeal(store, gameId); return }
       try {
         const [found, index] = await Promise.all([readGameFrom(await getGameStore(), gameId), readIndexFrom(store)])
         const entry = index.games.find(item => item.id === gameId)

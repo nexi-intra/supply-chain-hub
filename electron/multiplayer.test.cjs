@@ -999,10 +999,11 @@ test('deferIndexWrites answers a move once the game file is saved; the index ent
   assert.equal((await f.game(id)).revision, 2, 'the game file is saved before the answer')
   assert.equal((await f.entry(id)).gameRevision, 1, 'the index write is still waiting')
 
-  // Reads in the same process wait for the pending write instead of seeing (and healing) a lagging index.
-  const snapshot = service.snapshot(anna)
+  // Reads in the same process do not wait for the pending write (20+ s on M:): they show the entry it will write.
+  const snapshot = await service.snapshot(anna)
+  assert.equal(snapshot.games[0].turn, bo.email)
+  assert.equal(snapshot.games[0].gameRevision, 2)
   release()
-  assert.equal((await snapshot).games[0].turn, bo.email)
   await service.settled()
   assert.equal((await f.entry(id)).gameRevision, 2)
   assert.equal((await f.notes(bo.email, 'turn')).length, turnsBefore + 1, 'the opponent still gets the bell item')
@@ -1705,4 +1706,33 @@ test('gameStamp is a cheap change marker of the game file, for the players only'
   await assert.rejects(f.service.gameStamp(anna, '../escape'), code('MULTIPLAYER_INVALID'))
   const invited = (await f.service.command(anna, request('challenge', { opponentEmail: cara.email, language: 'da' }))).entry.id
   assert.equal(await f.service.gameStamp(cara, invited), null, 'no game file before the invitation is accepted')
+})
+
+test('a second command on the same game does not wait for the first move index write, and nothing heals the index meanwhile', async t => {
+  const f = await fixture(t)
+  const id = await f.start()
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  let indexWrites = 0
+  const gated = {
+    getAsync: (...args) => f.indexStore.getAsync(...args),
+    updateAsync: async (...args) => { indexWrites++; await gate; return f.indexStore.updateAsync(...args) },
+    mutateAsync: async (...args) => { indexWrites++; await gate; return f.indexStore.mutateAsync(...args) },
+  }
+  const { createMultiplayerService } = require('./multiplayer.cjs')
+  const service = createMultiplayerService({ ...f.settings, getIndexStore: () => gated, deferIndexWrites: true, healGraceMs: 20 })
+  await service.command(anna, request('pass', { gameId: id, expectedRevision: 1 }))
+  const timeout = new Promise(resolve => setTimeout(() => resolve('waited'), 1000))
+  const chat = await Promise.race([service.command(anna, request('chat', { gameId: id, text: 'hej' })), timeout])
+  assert.notEqual(chat, 'waited', 'the chat message did not wait for the move index write')
+  assert.equal(chat.game.revision, 3)
+  const opened = await Promise.race([service.game(anna, id), timeout])
+  assert.notEqual(opened, 'waited', 'opening the game did not wait either')
+  assert.equal(opened.revision, 3)
+  await new Promise(resolve => setTimeout(resolve, 150))
+  assert.equal(indexWrites, 2, 'one index write per command, no heal of an index this PC is still writing')
+  release()
+  await service.settled()
+  const entry = await f.entry(id)
+  assert.equal(entry.gameRevision, 3)
 })
