@@ -224,13 +224,23 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
     return role === 'admin' ? { ...user, countAdmin: true } : user
   }
   const channels = []
+  // SAP channels wait for SAP (and the user's F8) by design; everything else should answer within a few seconds.
+  const SLOW_CALL_MS = 2000
+  const waitsForSap = channel => /^(sap|pidocs|sap-check):|^counts:(preview|matdoc-lookup|refetch-preview|refetch-apply|doc-fetch)$|^locations:(preview-import|lookup-document)$/.test(channel)
   const handle = (channel, fn) => {
     channels.push(channel)
     ipcMain.handle(`warehouse:${channel}`, async (event, payload) => {
+      const startedAt = Date.now()
+      let userMs = 0
       try {
-        return await fn(await serviceUser(event), payload && typeof payload === 'object' ? payload : {}, event)
+        const user = await serviceUser(event)
+        userMs = Date.now() - startedAt
+        return await fn(user, payload && typeof payload === 'object' ? payload : {}, event)
       } catch (error) {
         throw toIpcError(error)
+      } finally {
+        const elapsedMs = Date.now() - startedAt
+        if (elapsedMs >= SLOW_CALL_MS && !waitsForSap(channel)) console.warn(`Lagerstyring: LANGSOM ${channel} ${elapsedMs} ms (heraf bruger ${userMs} ms)`)
       }
     })
   }

@@ -4,7 +4,7 @@ const crypto = require('node:crypto')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { createStore } = require('../store.cjs')
+const { createStore, whenWritesSettled } = require('../store.cjs')
 const { createCountRepository } = require('./countRepository.cjs')
 const { createCountService } = require('./countService.cjs')
 
@@ -465,6 +465,7 @@ test('the status overview sums the progress and value differences of its counts'
   await anna.scan(ANNA, id, { serial: 'N1', place: 'A1.1' })
   ctx.tick(2000)
   const state = await anna.getState(ANNA, id)
+  assert.equal(await whenWritesSettled(5000), true, 'the summary is saved in the background')
   const { active } = await anna.statusOverview(ANNA)
   assert.equal(active.counts[0].summary.valueDiff, -1500, 'one terminal (1000) and 100 labels (5 each) missing')
   assert.deepEqual(active.progress, { counts: 1, closed: 0, reached: state.progress.overall.reached, total: state.progress.overall.total, percent: state.progress.overall.percent, valueDiff: -1500 })
@@ -1047,4 +1048,45 @@ test('changing a material lock on this client is seen by the next scan', async (
   assert.deepEqual([scanned.outcome, scanned.saved, scanned.materialWarning], ['found', true, { kind: 'locked', byName: 'Anna' }])
   await pc.svc.releaseMaterial(ANNA, id, { material: 'INT4300-4921-0' })
   assert.equal((await pc.svc.scan(BO, id, { serial: 'N2', place: 'A1.1' })).materialWarning, null)
+})
+
+test('opening a count does not wait for the summary to be saved on the drive (a write to M: can take 30 s)', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const { id } = await newCount(ctx, anna)
+  const store = ctx.storeFor('TCD')
+  const setAsync = store.setAsync
+  let summaryWrites = 0
+  store.setAsync = (key, value) => {
+    if (key.endsWith('-summary')) { summaryWrites++; return new Promise(() => {}) }
+    return setAsync(key, value)
+  }
+  const fresh = ctx.service('pc2')
+  const answer = await Promise.race([fresh.getState(ANNA, id).then(() => 'answered'), new Promise(resolve => setTimeout(() => resolve('waited for the write'), 1000))])
+  assert.equal(answer, 'answered')
+  assert.equal(summaryWrites, 1, 'the summary is still saved, in the background')
+})
+
+test('opening a count reads its files from the drive in parallel, not one after another', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const { id } = await newCount(ctx, anna)
+  const store = ctx.storeFor('TCD')
+  const getAsync = store.getAsync
+  let inFlight = 0
+  let most = 0
+  store.getAsync = async (...args) => {
+    inFlight++
+    most = Math.max(most, inFlight)
+    try {
+      await new Promise(resolve => setTimeout(resolve, 20))
+      return await getAsync(...args)
+    } finally {
+      inFlight--
+    }
+  }
+  const fresh = ctx.service('pc2')
+  await fresh.openCount(ANNA, id)
+  await fresh.getState(ANNA, id)
+  assert.ok(most >= 4, `at most ${most} reads ran at once`)
 })

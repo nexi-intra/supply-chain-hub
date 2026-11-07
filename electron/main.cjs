@@ -4,6 +4,12 @@
 // Data is stored as JSON files in a shared data directory (see resolveDataDir)
 // so multiple machines can point at the same folder on a network share and
 // stay in sync. A polling watcher broadcasts external changes to all windows.
+
+// All file I/O (also on M:) shares libuv's thread pool – 4 threads by default. When M: is slow, a few hanging
+// calls held every thread and even small reads waited (measured 07.11: 959 ms -> 197 ms with 16). Must be set
+// before anything uses the pool.
+if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = '16'
+
 const { app, BrowserWindow, shell, ipcMain: nativeIpcMain, dialog, nativeImage, Notification, clipboard, crashReporter } = require('electron')
 const { pathToFileURL } = require('node:url')
 const path = require('path')

@@ -286,12 +286,17 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const key = `${team}:${id}:${lower(user.email)}`
     let state = opened.get(key)
     if (!state) {
-      if (await repo.isDeleted(team, id).catch(() => false)) throw deletedError()
-      const meta = await fromDriveOrCache(team, id, 'meta', () => repo.getMeta(team, id))
-      const snapshot = await fromDriveOrCache(team, id, 'expected', () => repo.getSnapshot(team, id))
+      // Every read is a round trip to M: (150–300 ms, more when it is busy), so they run in parallel.
+      const [deleted, ...parts] = await Promise.allSettled([
+        repo.isDeleted(team, id).catch(() => false),
+        fromDriveOrCache(team, id, 'meta', () => repo.getMeta(team, id)),
+        fromDriveOrCache(team, id, 'expected', () => repo.getSnapshot(team, id)),
+        fromDriveOrCache(team, id, 'placements', () => repo.getPlacements(team, id)).catch(() => []),
+        fromDriveOrCache(team, id, 'members', () => repo.getMembers(team, id).then(value => (Object.keys(value).length ? value : undefined))).catch(() => ({})),
+      ])
+      if (deleted.value) throw deletedError()
+      const [meta, snapshot, placements, members] = parts.map(part => { if (part.status === 'rejected') throw part.reason; return part.value })
       const index = indexSnapshot(snapshot)
-      const placements = await fromDriveOrCache(team, id, 'placements', () => repo.getPlacements(team, id)).catch(() => [])
-      const members = await fromDriveOrCache(team, id, 'members', () => repo.getMembers(team, id).then(value => (Object.keys(value).length ? value : undefined))).catch(() => ({}))
       const journal = createJournal({ countId: id, team, user: me(user), deviceId, localDir: journalsDir, remote: storeFor(team), now, ...journalOptions })
       await journal.load()
       state = { team, id, meta, snapshot, index, placements, members, countLists: buildCountLists({ snapshot, index, placements }), journal, chunkCache: new Map(), remoteEvents: [], aggregate: null, aggregateKey: '', found: new Map(), refreshedAt: 0, claimTouched: new Map(), othersAt: 0, othersKey: '[]' }
@@ -304,17 +309,14 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   async function refresh(state, force = false) {
     if (!force && now() - state.refreshedAt < REFRESH_MIN_MS) return state
     state.refreshedAt = now()
-    await throwIfDeleted(state)
-    try {
-      state.remoteEvents = await readAllJournals({ remote: storeFor(state.team), countId: state.id, cache: state.chunkCache })
-    } catch (error) {
-      console.error('CountPoint: journals unavailable', error.code || error.message)
-    }
-    try {
-      const meta = await repo.getMeta(state.team, state.id)
-      if (localCache && JSON.stringify(meta) !== JSON.stringify(state.meta)) localCache.save(state.team, state.id, 'meta', meta).catch(() => {})
-      state.meta = meta
-    } catch {}
+    const journals = readAllJournals({ remote: storeFor(state.team), countId: state.id, cache: state.chunkCache })
+      .then(events => { state.remoteEvents = events })
+      .catch(error => console.error('CountPoint: journals unavailable', error.code || error.message))
+    const meta = repo.getMeta(state.team, state.id).then(value => {
+      if (localCache && JSON.stringify(value) !== JSON.stringify(state.meta)) localCache.save(state.team, state.id, 'meta', value).catch(() => {})
+      state.meta = value
+    }).catch(() => {})
+    await Promise.all([throwIfDeleted(state), journals, meta])
     await refreshOthers(state)
     const events = mergedEvents(state)
     const key = `${events.length}:${events.at(-1)?.id || ''}:${state.snapshot.fetchedAt}`
@@ -350,8 +352,9 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   }
 
   async function access(user, state) {
-    adoptMembers(state, await repo.getMembers(state.team, state.id).catch(() => null))
-    return rightsOf(user, state, await statusLocked(state.team, state.meta.statusId))
+    const [members, locked] = await Promise.all([repo.getMembers(state.team, state.id).catch(() => null), statusLocked(state.team, state.meta.statusId)])
+    adoptMembers(state, members)
+    return rightsOf(user, state, locked)
   }
 
   // A count always has its owner as member, so an empty answer means the drive is unreachable:
@@ -397,8 +400,11 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
 
   async function openCount(user, id) {
     const state = await load(user, id)
-    const rights = await access(user, state)
-    const own = await repo.getOwnPlacements(state.team).catch(() => [])
+    const [rights, own, serialRules] = await Promise.all([
+      access(user, state),
+      repo.getOwnPlacements(state.team).catch(() => []),
+      state.team === 'TCD' ? repo.getSerialRules(state.team).catch(() => ({})) : {},
+    ])
     const areas = [...new Set([...state.countLists.map(line => line.area), ...own.map(item => item.area)].filter(Boolean))].sort((a, b) => a.localeCompare(b, 'da', { numeric: true }))
     return {
       meta: state.meta,
@@ -409,7 +415,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       materials: materialsFor(state),
       areas,
       places: placesFor(state, own),
-      serialRules: state.team === 'TCD' ? await repo.getSerialRules(state.team).catch(() => ({})) : {},
+      serialRules,
     }
   }
 
@@ -447,13 +453,16 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
 
   async function getState(user, id) {
     const state = await refresh(await load(user, id))
-    const rights = await access(user, state)
-    const claims = await repo.getClaims(state.team, state.id).catch(() => ({}))
-    const approvals = await repo.getApprovals(state.team, state.id).catch(() => ({}))
-    const locks = await materialLocks(state)
+    const [rights, claims, approvals, locks] = await Promise.all([
+      access(user, state),
+      repo.getClaims(state.team, state.id).catch(() => ({})),
+      repo.getApprovals(state.team, state.id).catch(() => ({})),
+      materialLocks(state),
+    ])
     const aggregate = applyApprovals(state.aggregate, approvals)
     const progress = computeProgress({ snapshot: state.snapshot, aggregate, countLists: state.countLists, events: state.events || [], approvals, now: now() })
-    await saveSummary(state, progress, aggregate)
+    // Not awaited: a write to M: can take 30 s, and the count must not wait for it.
+    saveSummary(state, progress, aggregate)
     return {
       meta: state.meta,
       statusLocked: rights.locked,
