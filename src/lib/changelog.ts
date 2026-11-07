@@ -14,6 +14,8 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Hubben belaster M: langt mindre: den tjekker kun, om en mappe er ændret, i stedet for at kigge på alle filer hvert andet sekund, og tjekker sjældnere, når vinduet er minimeret. Kollegers ændringer vises stadig inden for få sekunder',
       'Hubben gemmer kun, når noget faktisk er ændret, og når du lukker den, venter den op til 10 sekunder på gemninger, der stadig er i gang',
       'Optælling: scanneren giver status med det samme (fundet, dublet, ukendt …) – den venter ikke længere på det fælles drev, heller ikke når mange scanner på én gang',
+      'Optælling: optællingsdokumentet bruger dagens SAP-tal – også for serienumre. Godkendes en optælling i dag og laves dokumentet senere, får terminalerne SAP\'s serienumre den dag, minus dem der manglede ved godkendelsen. Passer antallet ikke med SAP i dag + difference, vises en advarsel',
+      'Optælling: admins kan nu selv "Hent dagens SAP-tal" og "Hent SAP igen" – det behøver ikke længere være den ansvarlige eller en manager',
     ],
   },
   {
