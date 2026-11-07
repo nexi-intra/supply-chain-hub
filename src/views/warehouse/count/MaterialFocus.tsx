@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { MagnifyingGlass, X } from '@phosphor-icons/react'
+import { CircleNotch, MagnifyingGlass, X } from '@phosphor-icons/react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -41,12 +41,14 @@ interface MaterialFocusProps {
   state: CountState
   material: string
   onMaterialChange: (material: string) => void
+  /** The chosen material is being taken for the user (a write to M:, can take many seconds). */
+  taking?: boolean
   reloadKey: string
   lastSerial: string | null
   refresh: () => Promise<void>
 }
 
-export function MaterialFocus({ id, state, material, onMaterialChange, reloadKey, lastSerial, refresh }: MaterialFocusProps) {
+export function MaterialFocus({ id, state, material, onMaterialChange, taking = false, reloadKey, lastSerial, refresh }: MaterialFocusProps) {
   const options = useMemo(() => focusOptions(state), [state])
   const [list, setList] = useState<ListKind>('missing')
   const [query, setQuery] = useState('')
@@ -93,6 +95,11 @@ export function MaterialFocus({ id, state, material, onMaterialChange, reloadKey
           </NativeSelect>
           {material && <Button variant="ghost" size="icon" onClick={() => onMaterialChange('')} aria-label={t('Fjern materiale', 'Clear material')}><X size={18} /></Button>}
         </div>
+        {taking && (
+          <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
+            <CircleNotch size={16} className="animate-spin" /> {t(`Tager ${material} for dig – det fælles drev er langsomt, men du kan godt scanne imens …`, `Taking ${material} for you – the shared drive is slow, but you can scan meanwhile …`)}
+          </p>
+        )}
         {state.materialLocks.some(lock => !mayCount(lock, state.me.email) && options.some(option => option.material === lock.material)) && (
           <p className="text-xs text-muted-foreground">{t('Materialer, som andre tæller, kan ikke vælges. Anmod om at tælle med under "Materialer i gang".', 'Materials that others are counting cannot be chosen. Ask to help under "Materials in progress".')}</p>
         )}

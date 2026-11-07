@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils'
 import type { ScanResult } from '@/types/warehouse'
 import type { PanelProps } from './CountView'
 import { MaterialFocus } from './MaterialFocus'
-import { isApproved, MaterialsInProgress } from './MaterialWork'
+import { isApproved, lockOf, mayCount, MaterialsInProgress } from './MaterialWork'
 import { RemoveSerialDialog } from './RemoveSerial'
 import { t } from '@/lib/warehouse/text'
 
@@ -42,6 +42,7 @@ export function ScanPanel({ id, open, state, refresh }: PanelProps) {
   const [removing, setRemoving] = useState(false)
   const [undoing, setUndoing] = useState(false)
   const [claimingArea, setClaimingArea] = useState<string | null>(null)
+  const [taking, setTaking] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const queue = useRef<string[]>([])
   const working = useRef(false)
@@ -54,16 +55,22 @@ export function ScanPanel({ id, open, state, refresh }: PanelProps) {
   useEffect(() => { inputRef.current?.focus() }, [])
 
   const chooseMaterial = async (value: string) => {
-    if (value) {
+    const previous = focusMaterial
+    // Shown at once: taking the material is a write to M: and can take many seconds.
+    setFocusMaterial(value)
+    inputRef.current?.focus()
+    const lock = value ? lockOf(state, value) : null
+    if (value && !(lock && mayCount(lock, state.me.email))) {
+      setTaking(value)
       try {
         await window.electronWarehouse!.counts.lockMaterial({ id, material: value })
       } catch (error) {
         toast.error(errorMessage(error))
-        return
+        setFocusMaterial(current => (current === value ? previous : current))
+      } finally {
+        setTaking(current => (current === value ? null : current))
       }
     }
-    setFocusMaterial(value)
-    inputRef.current?.focus()
     void refresh()
   }
 
@@ -223,6 +230,7 @@ export function ScanPanel({ id, open, state, refresh }: PanelProps) {
           state={state}
           material={focusMaterial}
           onMaterialChange={value => void chooseMaterial(value)}
+          taking={taking === focusMaterial && Boolean(taking)}
           reloadKey={`${session.length}-${state.serials.found}-${state.serials.extra}`}
           lastSerial={last?.result.serial ?? null}
           refresh={refresh}

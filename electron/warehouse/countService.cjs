@@ -894,9 +894,13 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
 
   /** Takes the material for the user, or lets them in when they already hold it or were allowed. */
   async function takeMaterial(user, state, code) {
-    const approvals = await repo.getApprovals(state.team, state.id).catch(() => ({}))
-    if (isApprovedStatus(approvals[code])) throw codeError('MATERIAL_APPROVED', `${code} er godkendt og tælles ikke længere`)
     const email = lower(user.email)
+    // Read first: a write to M: takes seconds, and most choices change nothing (already yours, or someone else's).
+    const [approvals, locks] = await Promise.all([repo.getApprovals(state.team, state.id).catch(() => ({})), materialLocks(state)])
+    if (isApprovedStatus(approvals[code])) throw codeError('MATERIAL_APPROVED', `${code} er godkendt og tælles ikke længere`)
+    const known = locks[code]
+    if (known && mayCount(known, email)) return lockView(code, known)
+    if (known) throw codeError('MATERIAL_LOCKED', `${known.name} tæller ${code} – anmod om at tælle med`)
     return repo.changeMaterialLocks(state.team, state.id, all => {
       const lock = all[code]
       if (lock && !mayCount(lock, email)) throw codeError('MATERIAL_LOCKED', `${lock.name} tæller ${code} – anmod om at tælle med`)

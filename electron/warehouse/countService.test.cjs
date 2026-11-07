@@ -1090,3 +1090,23 @@ test('opening a count reads its files from the drive in parallel, not one after 
   await fresh.getState(ANNA, id)
   assert.ok(most >= 4, `at most ${most} reads ran at once`)
 })
+test('choosing a material you already count, or one someone else counts, answers without writing to the drive', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const bo = ctx.service('pc2')
+  const { id } = await newCount(ctx, anna)
+  await bo.requestJoin(BO, id)
+  await anna.decideMember(ANNA, id, { email: BO.email, approve: true })
+  const store = ctx.storeFor('TCD')
+  const updateAsync = store.updateAsync
+  let lockWrites = 0
+  store.updateAsync = (key, operation) => {
+    if (key.endsWith('-materiallaase')) lockWrites++
+    return updateAsync(key, operation)
+  }
+  assert.equal((await anna.lockMaterial(ANNA, id, { material: 'INT4300-4921-0' })).holder.name, 'Anna')
+  assert.equal(lockWrites, 1, 'taking a free material is saved')
+  assert.equal((await anna.lockMaterial(ANNA, id, { material: 'INT4300-4921-0' })).holder.name, 'Anna')
+  await assert.rejects(bo.lockMaterial(BO, id, { material: 'INT4300-4921-0' }), { code: 'MATERIAL_LOCKED' })
+  assert.equal(lockWrites, 1, 'a write to M: takes seconds; nothing to change means nothing to write')
+})
