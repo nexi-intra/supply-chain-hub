@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { NisseSpot } from '@/components/christmas/NisseSpot'
 import { motion } from 'framer-motion'
 import { ArrowLeft, Plus, MagnifyingGlass, PencilSimple, Trash, X, Lock, LockOpen, Eye, PushPin, Tag, Notebook } from '@phosphor-icons/react'
 import { Card } from '@/components/ui/card'
@@ -512,6 +513,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
                 {t.notebook.title}
               </h1>
             </div>
+            <NisseSpot spot="notebook" />
           </div>
         </div>
       </div>

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { NisseSpot } from '@/components/christmas/NisseSpot'
 import { SignOut, User, UserGear, Gear, Crown, ArrowsLeftRight } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import {
@@ -182,7 +183,7 @@ export function UserProfile({ userEmail, displayName, onLogout, onAdminClick, sh
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56">
-          <DropdownMenuLabel>{t.profile.menuMyAccount}</DropdownMenuLabel>
+          <DropdownMenuLabel className="flex items-center justify-between">{t.profile.menuMyAccount}<NisseSpot spot="profile-menu" /></DropdownMenuLabel>
           <DropdownMenuSeparator />
           <DropdownMenuItem className="text-muted-foreground text-sm">
             {userEmail}

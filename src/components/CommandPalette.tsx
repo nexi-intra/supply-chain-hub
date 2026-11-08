@@ -1,4 +1,5 @@
 import { useDeferredValue, useEffect, useMemo, useState } from 'react'
+import { NisseSpot } from '@/components/christmas/NisseSpot'
 import {
   House, Books, Brain, CalendarBlank, ClipboardText, ShieldCheck, ShieldCheck as ManagerIcon,
   Users, Envelope, ForkKnife, GameController, Kanban, NotePencil, Crown, Buildings, Lightbulb, UserCircle, Lock, CheckSquare, LinkSimple,
@@ -181,6 +182,7 @@ export function CommandPalette({ userEmail }: CommandPaletteProps) {
         onValueChange={setInputValue}
         placeholder={searchLabels.placeholder}
       />
+      <div className="flex justify-end px-3 pt-1 empty:hidden"><NisseSpot spot="command-palette" /></div>
       <CommandList>
         {!loadingContent && !showTeams && rows.length === 0 && (
           <CommandEmpty>{language === 'da' ? 'Intet fundet' : language === 'fi' ? 'Mitään ei löytynyt' : language === 'sv' ? 'Inget hittades' : 'Nothing found'}</CommandEmpty>

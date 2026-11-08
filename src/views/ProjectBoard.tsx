@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { NisseSpot } from '@/components/christmas/NisseSpot'
 import { motion } from 'framer-motion'
 import { ArrowLeft, Plus, User, CheckCircle, Circle, Clock, FolderOpen, MagnifyingGlass, Funnel, Trash, X, UserPlus, PencilSimple, CalendarBlank } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
@@ -931,6 +932,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
               <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground flex items-center gap-2.5">
                 <FolderOpen size={26} weight="duotone" className="text-primary" />
                 To Do
+                <NisseSpot spot="todo" className="ml-1" />
               </h1>
             </div>
             <div className="w-[140px]"></div>

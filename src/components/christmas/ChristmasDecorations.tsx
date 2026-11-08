@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { FLAG_OPTIONS, flagString, garland, snowRidgePath, stringOrnaments, type ChristmasMode } from '@/lib/christmas'
 import { HangingOrnament } from './HangingOrnament'
+import { NisseSpot } from './NisseSpot'
 import { useChristmas } from '@/contexts/ChristmasContext'
 
 function useWindowWidth() {
@@ -211,11 +212,20 @@ export function ChristmasDecorations({ mode }: { mode: ChristmasMode }) {
       <SnowRidge />
       {full && <Snowdrift />}
       {full && <Snowfall />}
+      {/* Nisse hiding places in the decorations (front page only). The nisse button alone takes clicks. */}
+      {full && <NisseSpot spot="front-drift" className="absolute bottom-[14px] left-[22%]" />}
     </div>
   )
 }
 
 export function ChristmasLayer() {
   const christmas = useChristmas()
-  return christmas.active ? <ChristmasDecorations mode={christmas.mode} /> : null
+  if (!christmas.active) return null
+  return (
+    <>
+      <ChristmasDecorations mode={christmas.mode} />
+      {/* On the light string, but above the front page's top bar (z-20), whose empty width would otherwise catch the click. */}
+      {christmas.mode === 'full' && <NisseSpot spot="front-garland" className="fixed top-[34px] left-[46%] z-[25]" />}
+    </>
+  )
 }

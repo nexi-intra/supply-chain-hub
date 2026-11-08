@@ -1,4 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useRef, type ReactElement } from 'react'
+import { NisseSpot } from '@/components/christmas/NisseSpot'
 import { motion } from 'framer-motion'
 import { ArrowLeft, Plus, Trash, UserCircle, Tag, Calendar as CalendarIcon, PencilSimple, ChatText, Phone, FirstAidKit, Airplane, Gift, ArrowsClockwise, CaretDown, CaretUp, Funnel, Warning } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
@@ -845,8 +846,9 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
         </div>
       </div>
       <div className="w-full px-4 sm:px-6 pt-28 pb-12 sm:pb-20 relative z-10">
-        <header className="mb-6 border-b pb-4">
+        <header className="mb-6 border-b pb-4 relative">
           <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground"><AutoText text="Vagtplan" /></h1>
+          <NisseSpot spot="shifts" className="absolute -bottom-[11px] left-[45%]" />
         </header>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
@@ -1408,6 +1410,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                 <div className="flex items-center gap-2">
                   <Tag size={28} className="text-accent" weight="duotone" />
                   <h2 className="text-2xl font-bold"><AutoText text="Opgaver / Roller" /></h2>
+                  <NisseSpot spot="shifts-tasks" />
                 </div>
                 <div className="flex items-center gap-3">
                   <Badge variant="outline" className="text-sm">

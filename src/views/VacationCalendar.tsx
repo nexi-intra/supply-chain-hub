@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { NisseSpot } from '@/components/christmas/NisseSpot'
 import { motion } from 'framer-motion'
 import { ArrowLeft, Trash, User, Check, X, ClockCounterClockwise, CalendarDot, House } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
@@ -516,6 +517,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
           <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground">
             {language === 'da' ? 'Kalender' : language === 'fi' ? 'Kalenteri' : language === 'sv' ? 'Semesterkalender' : 'Calendar'}
           </h1>
+          <NisseSpot spot="calendar" className="ml-auto order-last" />
           {isManager && (
             <Badge variant="secondary" className="text-xs">
               Manager
@@ -818,7 +820,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
                 )}
               </TabsContent>
               <TabsContent value="approved" className="mt-4">
-                <h3 className="text-xl font-bold mb-4"><AutoText text="Godkendte Ferier" /></h3>
+                <h3 className="text-xl font-bold mb-4"><AutoText text="Godkendte Ferier" /><NisseSpot spot="calendar-approved" className="ml-3 align-middle" /></h3>
                 {myApprovedVacations.length === 0 ? (
                   <p className="text-muted-foreground text-center py-8">
                     <AutoText text="Du har ingen godkendte ferier" />

@@ -910,6 +910,7 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.3 }}
+            className="relative"
           >
             <Button
               onClick={() => setShowSickLeaveDialog(true)}
@@ -919,6 +920,7 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
               <FirstAidKit size={24} weight="duotone" />
               {t.shifts.sickLeave}
             </Button>
+            <NisseSpot spot="front-sick" className="absolute -bottom-3 -left-2" />
           </motion.div>
           <motion.div
             initial={{ opacity: 0, x: 20 }}
@@ -1015,7 +1017,10 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
           <div className="flex items-baseline gap-3">
             <img src={nexiLogo} alt="Nexi" className="h-5 w-auto translate-y-[2px] dark:hidden" />
             <img src={nexiLogoWhite} alt="Nexi" className="h-5 w-auto translate-y-[2px] hidden dark:block" />
-            <HubMark size={24} decorative className="self-center" />
+            <span className="relative inline-flex self-center">
+              <HubMark size={24} decorative />
+              <NisseSpot spot="front-logo" className="absolute -bottom-2.5 -right-3" />
+            </span>
             <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground">{teamName}</h1>
             {activeHub && !activeHub.home && <Badge variant="outline" className="self-center">{hubLabels.managerHere}</Badge>}
           </div>
@@ -1035,6 +1040,7 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
             {nisse.state.status === 'found' && (
               <span className="block font-medium text-foreground/80">🎅 {nisseLabels(language).foundLine(nisse.state.finder.name, danishTime(nisse.state.finder.at))}</span>
             )}
+            <NisseSpot spot="front-greeting" className="ml-2 align-middle" />
           </p>
         )}
 
@@ -1042,6 +1048,7 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
             af siden er papir og streger, saa det her er det, blikket lander paa. */}
         <div className="relative mb-8">
         {christmas.active && <SnowCap seed={99} />}
+        <NisseSpot spot="front-board" className="absolute -bottom-3 right-[30%]" />
         <div className={cn('overflow-hidden rounded-lg bg-primary text-primary-foreground', christmas.active && 'xmas-banner')}>
           <div className="flex flex-wrap items-end justify-between gap-6 px-6 py-6 sm:px-8 sm:py-7">
             <div>
@@ -1087,7 +1094,8 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
           transition={{ delay: 0.4, duration: 0.6 }}
           className="mb-10"
         >
-          <div className="flex justify-end mb-4">
+          <div className="flex justify-end items-end gap-2 mb-4">
+            <NisseSpot spot="front-customize" className="mb-0.5" />
             <Button variant="outline" onClick={() => setShowDashboardEditor(true)} className="gap-2">
               <Gear size={18} weight="duotone" />
               {t.hub.dashboard.customize}
@@ -1545,6 +1553,7 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
                 >
                   {/* Something hangs on about two in five cards, never where a badge sits in the corner. */}
                   {christmas.active && <SnowCap seed={index + 1} ornament={hasBadge ? null : cardOrnament(index * 13 + 5)} />}
+                  {module.id === 'calendar' && <NisseSpot spot="front-tile" className="absolute bottom-2 right-3" />}
                   <Card
                     snow={false}
                     className="module-tile relative overflow-hidden py-0 transition-colors duration-200 group h-full flex flex-col cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
@@ -1625,6 +1634,10 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
             )
           })}
         </motion.div>
+        {/* Only seen by scrolling all the way down. */}
+        <div className="mt-16 flex justify-end pr-6">
+          <NisseSpot spot="front-bottom" />
+        </div>
       </div>
 
       {appVersion && (

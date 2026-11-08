@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { NisseSpot } from '@/components/christmas/NisseSpot'
 import { ArrowLeft, ArrowsClockwise, CheckCircle, EnvelopeSimple, Funnel, Lightning, MagnifyingGlass, Plus, X, XCircle } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -266,6 +267,7 @@ export function Improvements({ onNavigateBack, userEmail }: ImprovementsProps) {
     <main className="mx-auto w-full min-w-0 max-w-[1600px] space-y-4 p-3 text-foreground sm:p-6" lang={language}>
       <header className="flex min-w-0 flex-wrap items-center gap-2 border-b pb-3">
         <IconAction label={backLabel} disabled={busy} onClick={onNavigateBack}><ArrowLeft size={20} /></IconAction>
+        <NisseSpot spot="improvements" />
         <h1 className="min-w-0 flex-1 break-words text-xl font-semibold leading-snug">{labels.title}</h1>
         {api && <IconAction label={labels.refresh} disabled={loading || busy} onClick={() => reload.current()}><ArrowsClockwise size={19} className={loading ? 'animate-spin' : ''} /></IconAction>}
         {snapshot && <Button disabled={blocked || busy} onClick={() => setCreateOpen(true)} className="max-w-full whitespace-normal text-left"><Plus size={18} />{labels.newSuggestion}</Button>}

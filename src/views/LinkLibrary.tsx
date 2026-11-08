@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { NisseSpot } from '@/components/christmas/NisseSpot'
 import { ArrowLeft, ArrowSquareOut, CheckCircle, DotsThreeVertical, Flag, LinkSimple, MagnifyingGlass, PencilSimple, Plus, ShieldWarning, Star, Trash, X, XCircle } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -156,6 +157,7 @@ export function LinkLibrary({ onNavigateBack, userEmail }: LinkLibraryProps) {
             <LinkSimple size={26} weight="duotone" className="text-primary" />
             {labels.title}
           </h1>
+          <NisseSpot spot="links" />
         </div>
       </div>
 

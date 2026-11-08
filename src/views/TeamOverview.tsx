@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { NisseSpot } from '@/components/christmas/NisseSpot'
 import { motion } from 'framer-motion'
 import { ArrowLeft, UserCircle, EnvelopeSimple, Crown, ShieldCheck, Phone, Buildings } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
@@ -221,10 +222,11 @@ export function TeamOverview({ onNavigateBack, onLogout }: TeamOverviewProps) {
       </div>
       
       <div className="container mx-auto px-4 sm:px-6 pt-28 pb-12 sm:pb-20 max-w-7xl relative z-10">
-        <header className="mb-6 border-b pb-4">
+        <header className="mb-6 border-b pb-4 relative">
           <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground">
             {t.teamOverview.title}
           </h1>
+          <NisseSpot spot="team" className="absolute right-1 top-1" />
           <Input
             type="search"
             value={searchQuery}
