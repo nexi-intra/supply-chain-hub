@@ -95,6 +95,16 @@ describe('the advent calendar doors', () => {
     expect(doorMessage(1, 'sv')).toBe(doorMessage(1, 'en'))
     expect(doorMessage(25, 'da')).toBe('')
   })
+
+  it('behind the doors are short facts about (Danish) Christmas – never a hint about the nisse', () => {
+    const all = Array.from({ length: 24 }, (_, i) => [doorMessage(i + 1, 'da'), doorMessage(i + 1, 'en')]).flat()
+    expect(new Set(all).size).toBe(48)
+    expect(doorMessage(1, 'da').startsWith('Velkommen til december!')).toBe(false)
+    for (const fact of all) {
+      expect(fact.length, fact).toBeLessThanOrEqual(220)
+      expect(fact, fact).not.toMatch(/nisseleg|elf hunt|gemmer sig|hiding|madplan|vagtplan|notesbog|link library|knowledge base|forbedring|\bappen\b|\bthe app\b/i)
+    }
+  })
 })
 
 describe('christmasLabels', () => {
