@@ -11,6 +11,7 @@ import type { PersonalTodo } from './personalTodos'
 import { todoDueStatus } from './todoDueDates'
 import type { BirthdayEntry, Email, VacationEntry } from './types'
 import type { LinksSnapshot } from './links'
+import { danishTime, type NisseFind } from './nisse'
 import type { Project } from '@/views/ProjectBoard'
 
 export interface NotebookNotification {
@@ -25,7 +26,7 @@ export interface NotebookNotification {
 }
 
 export type HubNotificationKind =
-  | 'email' | 'note' | 'improvement' | 'multiplayer' | 'high-five' | 'vacation' | 'guide' | 'guide-review' | 'birthday' | 'todo' | 'link'
+  | 'email' | 'note' | 'improvement' | 'multiplayer' | 'high-five' | 'vacation' | 'guide' | 'guide-review' | 'birthday' | 'todo' | 'link' | 'nisse'
 
 /** How a module learns that its notification was read, when the module keeps its own read state. */
 export type HubNotificationAck =
@@ -80,6 +81,8 @@ export interface HubNotificationInput {
   highFives: readonly HighFiveReceived[]
   /** Link Library: what waits for this manager, and the user's own links a manager has decided on. */
   links?: LinksSnapshot | null
+  /** Nisse finds this season (the creator only). */
+  nisseFinds?: readonly NisseFind[]
 }
 
 /** Local text per language; sv is always present wherever fi is. */
@@ -159,6 +162,19 @@ export function buildHubNotificationItems(input: HubNotificationInput): HubNotif
       timestamp: Date.parse(highFive.at) || now,
       target: HIGH_FIVE_TARGET,
       ack: { source: 'high-five', notificationId: highFive.id },
+    })
+  }
+
+  // Nisselegen: only the creator receives finds (main returns them to him alone) – he hands out the chocolate.
+  for (const find of input.nisseFinds || []) {
+    result.push({
+      id: `nisse-${find.teamId}-${find.date}`,
+      kind: 'nisse',
+      iconColor: 'text-red-600',
+      title: pick(language, { da: `🎅 ${find.name} fandt nissen`, en: `🎅 ${find.name} found the elf`, fi: `🎅 ${find.name} löysi tontun`, sv: `🎅 ${find.name} hittade tomten` }),
+      subtitle: `${find.teamName} · ${pick(language, { da: 'kl.', en: 'at', fi: 'klo', sv: 'kl.' })} ${danishTime(find.at)}`,
+      timestamp: Date.parse(find.at) || now,
+      target: { view: 'hub' },
     })
   }
 

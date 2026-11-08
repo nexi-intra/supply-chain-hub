@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Bell, Envelope, Umbrella, Books, Gift, NotePencil, CalendarBlank, Lightbulb, PuzzlePiece, HandsClapping, LinkSimple, X } from '@phosphor-icons/react'
+import { Bell, Envelope, Umbrella, Books, Gift, NotePencil, CalendarBlank, Lightbulb, PuzzlePiece, HandsClapping, LinkSimple, Confetti, X } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -21,6 +21,7 @@ const ICONS: Record<HubNotificationKind, typeof Bell> = {
   birthday: Gift,
   todo: CalendarBlank,
   link: LinkSimple,
+  nisse: Confetti,
 }
 
 /** Samlet klokke-ikon på Hub: viser alle "kræver din opmærksomhed"-kilder på tværs af moduler (samme liste som Windows-notifikationerne). */

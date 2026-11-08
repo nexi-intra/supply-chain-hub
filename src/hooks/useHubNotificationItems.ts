@@ -14,6 +14,7 @@ import type { Guide, GuideReviewRequest } from '@/lib/guideTypes'
 import type { ImprovementCase } from '@/lib/improvements'
 import type { BirthdayEntry, Email, VacationEntry } from '@/lib/types'
 import { subscribeLinksPrediction, type LibraryLink, type LinksSnapshot } from '@/lib/links'
+import type { NisseFind } from '@/lib/nisse'
 import type { Project } from '@/views/ProjectBoard'
 
 /** Data this hook already holds in memory; the Ctrl+K palette searches it without extra reads. */
@@ -94,6 +95,18 @@ export function useHubNotificationItems(userEmail: string): HubNotificationsValu
   const multiplayer = useMultiplayerNotifications(userEmail)
   const highFives = useHighFives(userEmail)
   const [links, setLinks] = useState<LinksSnapshot | null>(null)
+  const [nisseFinds, setNisseFinds] = useState<NisseFind[]>([])
+
+  // Nisse finds reach the creator only (main returns [] to everyone else and reads nothing outside the season).
+  useEffect(() => {
+    const api = typeof window === 'undefined' ? undefined : window.electronNisse
+    if (!api || !userEmail) return
+    let active = true
+    const load = () => { api.finds().then(value => { if (active) setNisseFinds(value) }, () => {}) }
+    load()
+    const stop = api.onChanged(load)
+    return () => { active = false; stop() }
+  }, [userEmail])
 
   useEffect(() => {
     const api = typeof window === 'undefined' ? undefined : window.electronLinks
@@ -130,7 +143,8 @@ export function useHubNotificationItems(userEmail: string): HubNotificationsValu
     multiplayerGames: multiplayer.games,
     highFives: highFives.unread,
     links,
-  }), [userEmail, language, now, isAdminOrManager, isGuideReviewer, emails, notebookNotifications, birthdays, vacations, guides, guideReviewRequests, seenVacationRequestIds, personalTodos, projects, improvements.items, multiplayer.notifications, multiplayer.games, highFives.unread, links])
+    nisseFinds,
+  }), [userEmail, language, now, isAdminOrManager, isGuideReviewer, emails, notebookNotifications, birthdays, vacations, guides, guideReviewRequests, seenVacationRequestIds, personalTodos, projects, improvements.items, multiplayer.notifications, multiplayer.games, highFives.unread, links, nisseFinds])
 
   const items = useMemo(() => {
     const dismissed = new Set(dismissedIds || [])

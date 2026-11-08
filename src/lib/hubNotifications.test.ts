@@ -56,6 +56,17 @@ describe('dismissed notifications', () => {
 })
 
 describe('buildHubNotificationItems', () => {
+  it('tells the creator who found the nisse, in which hub and when (Danish time)', () => {
+    const find = { teamId: 'tcd', teamName: 'Terminal Configuration & Dispatch', date: '2026-12-16', email: 'lasse@example.test', name: 'Lasse Hansen', at: '2026-12-16T09:42:00.000Z' }
+    const items = buildHubNotificationItems(base({ language: 'da', nisseFinds: [find] }))
+    expect(items).toHaveLength(1)
+    expect(items[0]).toEqual({
+      id: 'nisse-tcd-2026-12-16', kind: 'nisse', iconColor: 'text-red-600', title: '🎅 Lasse Hansen fandt nissen',
+      subtitle: 'Terminal Configuration & Dispatch · kl. 10:42', timestamp: Date.parse(find.at), target: { view: 'hub' },
+    })
+    expect(buildHubNotificationItems(base({ language: 'en', nisseFinds: [find] }))[0].title).toBe('🎅 Lasse Hansen found the elf')
+    expect(buildHubNotificationItems(base())).toHaveLength(0)
+  })
   it('adds a bell item per unread high-five: sender and emoji in the title, the message as subtitle, the Hub as target, and an ack for the service', () => {
     const highFive = { id: 'h1', senderName: 'Anna Andersen', senderTeamCode: 'SC', emoji: '🙌', message: 'Thanks for the help!', at: '2026-10-07T09:30:00.000Z', readAt: null }
     const items = buildHubNotificationItems(base({ highFives: [highFive] }))
