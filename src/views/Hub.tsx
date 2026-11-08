@@ -33,6 +33,10 @@ import { useChristmas } from '@/contexts/ChristmasContext'
 import { SnowCap } from '@/components/christmas/SnowCap'
 import { AdventDoor } from '@/components/christmas/AdventDoor'
 import { cardOrnament, christmasLabels, seasonLine } from '@/lib/christmas'
+import { useNisse } from '@/components/christmas/NisseContext'
+import { NisseSpot } from '@/components/christmas/NisseSpot'
+import { nisseLabels } from '@/lib/nisseLabels'
+import { danishTime } from '@/lib/nisse'
 import { format, isSameDay, parseISO } from 'date-fns'
 import { da, enUS } from 'date-fns/locale'
 import type { ShiftRole, ShiftAssignment, ShiftPatternRule, SickLeaveEntry, VacationEntry, WeekMenu, Email, HomeOfficePattern, HomeOfficeException } from '@/lib/types'
@@ -123,6 +127,7 @@ const NOT_LOADED_RECORD: Record<string, never> = {}
 export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
   const { t, language } = useLanguage()
   const christmas = useChristmas()
+  const nisse = useNisse()
   const { hubs } = useMyHubs()
   const activeHub = hubs.find(hub => hub.active)
   const waitingElsewhere = hubs.filter(hub => !hub.active).reduce((sum, hub) => sum + hub.pending, 0)
@@ -1027,6 +1032,9 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
           <p className="-mt-3 mb-6 text-sm text-muted-foreground">
             {christmasLabels(language).greeting(new Date().getHours())}
             {currentUserName && !currentUserName.includes('@') ? `, ${currentUserName.split(' ')[0]}` : ''} – {seasonLine(christmas.season, language)}
+            {nisse.state.status === 'found' && (
+              <span className="block font-medium text-foreground/80">🎅 {nisseLabels(language).foundLine(nisse.state.finder.name, danishTime(nisse.state.finder.at))}</span>
+            )}
           </p>
         )}
 

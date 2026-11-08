@@ -3,6 +3,7 @@ import { dismissStartupIntro } from './lib/startupIntro'
 import { HubLoader, hubLoaderLabel } from './components/HubMark'
 import { ChristmasProvider } from './contexts/ChristmasContext'
 import { ChristmasLayer } from './components/christmas/ChristmasDecorations'
+import { NisseProvider } from './components/christmas/NisseContext'
 import { christmasMode } from './lib/christmas'
 import { Hub } from '@/views/Hub'
 import { Auth } from '@/views/Auth'
@@ -553,6 +554,7 @@ function App() {
         {/* Outside the remounted tree, so a message sent during a hub switch is not lost. */}
         <Toaster position="top-center" richColors />
         <HubNotificationsProvider key={hubNonce} userEmail={userSession.email}>
+        <NisseProvider>
         <HubSwitchController onSwitch={switchHub} onOpenPicker={openHubPicker} />
         <AnimatedBackground />
         <ChristmasLayer />
@@ -585,6 +587,7 @@ function App() {
           {currentView === 'links' && <LinkLibrary onNavigateBack={handleNavigateBack} userEmail={userSession.email} />}
           {currentView === 'warehouse' && <Warehouse onNavigateBack={handleNavigateBack} />}
         </Suspense>
+        </NisseProvider>
         </HubNotificationsProvider>
         </ChristmasProvider>
       </LanguageProvider>
