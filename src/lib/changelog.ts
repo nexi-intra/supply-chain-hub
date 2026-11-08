@@ -10,6 +10,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     version: '1.6.7',
     items: [
+      'Nyt logo og en intro, når appen starter – ingen hvid skærm mere',
       'Hurtigere på det fælles drev (M:): Hubben fryser ikke længere, mens den venter på drevet – login, log ud og gemning kører i baggrunden, så du kan arbejde videre',
       'Hubben belaster M: langt mindre: den tjekker kun, om en mappe er ændret, i stedet for at kigge på alle filer hvert andet sekund, og tjekker sjældnere, når vinduet er minimeret. Kollegers ændringer vises stadig inden for få sekunder',
       'Hubben gemmer kun, når noget faktisk er ændret. Lukker du den, mens en ændring stadig er på vej til drevet, bliver vinduet stående med "Gemmer dine sidste ændringer …" og lukker af sig selv, når alt er gemt – før blev gemningen afbrudt efter 10 sekunder',
