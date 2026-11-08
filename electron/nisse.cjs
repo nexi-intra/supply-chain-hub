@@ -82,6 +82,9 @@ function spotFor(date, teamIndex) {
 // ---- The judge ---------------------------------------------------------------------------------------------------
 
 const RETRIES = 12
+// Who hands out the chocolate: besides the creator account, Jacob's everyday account (Jacob, 08.11.2026). Organisers get
+// every find in the bell and may use the hidden preview; they still play by the same rules as everyone else.
+const ORGANIZERS = Object.freeze(['jacob.remmer@nexigroup.com'])
 
 function fail(code, message) {
   const error = new Error(`${code}: ${message}`)
@@ -110,7 +113,7 @@ function createNisseService({ getStore, getDirectory, listTeams, now = Date.now,
     throw new TypeError('Invalid nisse service dependencies')
   }
 
-  const isCreator = actor => actor?.homeRole === 'creator'
+  const isOrganizer = actor => actor?.homeRole === 'creator' || ORGANIZERS.includes(String(actor?.email || '').trim().toLowerCase())
 
   async function teamIndexOf(actor) {
     const teamId = actor?.activeTeam?.teamId
@@ -124,7 +127,7 @@ function createNisseService({ getStore, getDirectory, listTeams, now = Date.now,
   }
 
   async function today(actor, preview) {
-    const usePreview = isCreator(actor) && isDate(preview)
+    const usePreview = isOrganizer(actor) && isDate(preview)
     const date = usePreview ? preview : danishParts(now()).date
     // Outside the nisse days nothing is read: no trace on the shared drive before December.
     if (!nisseDays(Number(date.slice(0, 4))).includes(date)) return { status: 'off' }
@@ -147,7 +150,7 @@ function createNisseService({ getStore, getDirectory, listTeams, now = Date.now,
     if (!input || typeof input !== 'object' || !isDate(input.date) || typeof input.spot !== 'string') fail('NISSE_INVALID', 'Invalid claim')
     const index = await teamIndexOf(actor)
     if (index < 0) fail('NISSE_NO_HUB', 'No active hub')
-    if (isCreator(actor) && isDate(input.preview)) {
+    if (isOrganizer(actor) && isDate(input.preview)) {
       if (input.spot !== spotFor(input.preview, index)) fail('NISSE_WRONG_SPOT', 'The nisse is not there')
       return { result: 'preview' }
     }
@@ -183,9 +186,9 @@ function createNisseService({ getStore, getDirectory, listTeams, now = Date.now,
     }
   }
 
-  /** Every find this season, for the creator only (he hands out the chocolate). */
+  /** Every find this season, for the organisers only (they hand out the chocolate). */
   async function finds(actor) {
-    if (!isCreator(actor)) return []
+    if (!isOrganizer(actor)) return []
     const { month, year, day } = danishParts(now())
     const season = month === 12 ? year : month === 1 && day <= 1 ? year - 1 : null
     if (season === null) return []

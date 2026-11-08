@@ -165,7 +165,7 @@ export function buildHubNotificationItems(input: HubNotificationInput): HubNotif
     })
   }
 
-  // Nisselegen: only the creator receives finds (main returns them to him alone) – he hands out the chocolate.
+  // Nisselegen: only the organisers receive finds (main returns them to them alone) – they hand out the chocolate.
   for (const find of input.nisseFinds || []) {
     result.push({
       id: `nisse-${find.teamId}-${find.date}`,
