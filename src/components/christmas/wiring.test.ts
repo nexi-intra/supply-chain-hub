@@ -45,6 +45,13 @@ describe('the Christmas theme is wired in', () => {
     expect(read('views', 'Hub.tsx')).toMatch(/className="[^"]*empty:hidden[^"]*">\s*<NisseSpot spot="front-bottom"/)
   })
 
+  it('the top buttons move down below the lights, flags and hanging decorations while the theme is on', () => {
+    expect(read('views', 'Hub.tsx')).toContain("christmas.active ? 'top-20' : 'top-6'")
+    expect(read('views', 'Hub.tsx')).toContain("christmas.active ? 'pt-40 sm:pt-44' : 'pt-28 sm:pt-32'")
+    expect(read('components', 'HubPicker.tsx')).toContain("christmas.active ? 'top-20' : 'top-6'")
+    expect(read('components', 'christmas', 'ChristmasDecorations.tsx')).toContain('Math.min(item.thread, FRONT_THREAD_MAX)')
+  })
+
   it('stays a surprise: nothing in the changelog users read in "What is new"', () => {
     expect(read('lib', 'changelog.ts')).not.toMatch(/\bjul|christmas|snow|nisse|advent/i)
   })

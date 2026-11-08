@@ -151,13 +151,17 @@ function FlagString() {
 }
 
 // Decorations tied to the light string on threads, like on a real string of lights over a window.
+// Front pages: short threads, so nothing hangs lower than ~70 px, where the top buttons start.
 // Work screens: a few small, still ones in the middle third only, where headers have no buttons or titles.
+const FRONT_THREAD_MAX = 18
 function StringOrnaments({ compact = false }: { compact?: boolean }) {
   const width = useWindowWidth()
   const options = compact ? GARLAND_COMPACT : GARLAND
   const items = useMemo(() => {
     const all = stringOrnaments(width, options)
-    return compact ? all.filter(item => item.x > width / 3 && item.x < (width * 2) / 3).map(item => ({ ...item, thread: 4 + (item.thread % 8) })) : all
+    return compact
+      ? all.filter(item => item.x > width / 3 && item.x < (width * 2) / 3).map(item => ({ ...item, thread: 4 + (item.thread % 8) }))
+      : all.map(item => ({ ...item, thread: Math.min(item.thread, FRONT_THREAD_MAX) }))
   }, [width, options, compact])
   return (
     <>

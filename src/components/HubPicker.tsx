@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { LanguageToggle } from '@/components/LanguageToggle'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { useLanguage } from '@/contexts/LanguageContext'
+import { useChristmas } from '@/contexts/ChristmasContext'
 import { getHubAccessLabels } from '@/lib/hubAccessLabels'
 import type { MyHub } from '@/lib/electronRegistryBridge'
 import { cn } from '@/lib/utils'
@@ -22,6 +23,7 @@ interface HubPickerProps {
 
 export function HubPicker({ hubs, preferred, onChoose, onLogout }: HubPickerProps) {
   const { language, t } = useLanguage()
+  const christmas = useChristmas()
   const labels = getHubAccessLabels(language)
   const initial = hubs.find(hub => hub.folderName === preferred) ?? hubs.find(hub => hub.active) ?? hubs[0]
   const [selected, setSelected] = useState(initial?.folderName)
@@ -44,14 +46,14 @@ export function HubPicker({ hubs, preferred, onChoose, onLogout }: HubPickerProp
 
   return (
     <div className="min-h-screen relative overflow-hidden">
-      <div className="absolute top-6 right-6 z-20 flex items-center gap-3">
+      <div className={cn('absolute right-6 z-20 flex items-center gap-3', christmas.active ? 'top-20' : 'top-6')}>
         <ThemeToggle />
         <LanguageToggle />
         <Button variant="outline" onClick={onLogout} className="gap-2">
           <SignOut size={18} /> {t.profile.menuLogout}
         </Button>
       </div>
-      <div className="container mx-auto px-4 pt-32 pb-16 max-w-5xl relative z-10">
+      <div className={cn('container mx-auto px-4 pb-16 max-w-5xl relative z-10', christmas.active ? 'pt-44' : 'pt-32')}>
         <div className="text-center mb-10">
           <HubMark size={56} className="mx-auto mb-4" />
           <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-foreground pb-2">{labels.pickerTitle}</h1>
