@@ -4,6 +4,7 @@ import { HubLoader, hubLoaderLabel } from './components/HubMark'
 import { ChristmasProvider } from './contexts/ChristmasContext'
 import { ChristmasLayer } from './components/christmas/ChristmasDecorations'
 import { NisseProvider } from './components/christmas/NisseContext'
+import { NisseGreeting } from './components/christmas/NisseGreeting'
 import { christmasMode } from './lib/christmas'
 import { Hub } from '@/views/Hub'
 import { Auth } from '@/views/Auth'
@@ -555,6 +556,7 @@ function App() {
         <Toaster position="top-center" richColors />
         <HubNotificationsProvider key={hubNonce} userEmail={userSession.email}>
         <NisseProvider>
+        <NisseGreeting view={currentView} hubName={hubChoice.hubs.find(hub => hub.active)?.name || 'Supply Chain Hub'} userEmail={userSession.email} />
         <HubSwitchController onSwitch={switchHub} onOpenPicker={openHubPicker} />
         <AnimatedBackground />
         <ChristmasLayer />
