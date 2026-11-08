@@ -957,7 +957,7 @@ export interface LayoutItem {
 /** `outside`: the list places decided to stay outside the published drawing; they start the next draft's decisions. */
 export interface WarehouseLayout { version: number; hall: { w: number; h: number }; notes: string; items: LayoutItem[]; publishedAt?: number; publishedBy?: PersonRef; outside?: string[] }
 /** `rev` goes up with every saved change; a save or publish on another revision is refused (LAYOUT_STALE). */
-export interface LayoutDraft extends WarehouseLayout { basedOn: number; rev?: number; editedBy: PersonRef; editedAt: number; decisions: { outside: string[]; remove: string[] } }
+export interface LayoutDraft extends WarehouseLayout { basedOn: number; rev?: number; editedBy: PersonRef; editedAt: number; free?: { rev: number }; decisions: { outside: string[]; remove: string[] } }
 export type PublishBlockCode = 'NAME_TWICE' | 'NAME_TAKEN' | 'NOT_EMPTY' | 'TYPE_REFUSED' | 'SPECIAL_UNKNOWN'
 /** What a publish does to the places; `version` is the published one now (0 = none), `linked` the place ids on the drawing after it. */
 export interface PublishPlan {

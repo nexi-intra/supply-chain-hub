@@ -102,7 +102,10 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId }) 
     return meta
   }
 
-  /** All changed fields in one locked write of the meta file, and the index entry in parallel with it. */
+  /**
+   * All changed fields in one locked write of the meta file, and the index entry in parallel with it. The entry only
+   * takes the changed fields, merged under the index's lock: another PC changing other fields meanwhile is kept.
+   */
   async function updateMeta(team, id, changes) {
     const fields = Object.entries(changes)
     if (fields.some(([field]) => ['id', 'team', 'owner', 'createdAt'].includes(field))) throw codeError('COUNT_INVALID')
@@ -111,12 +114,21 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId }) 
     const metaKey = key(id, 'meta')
     const current = await target.getAsync(metaKey, { skipCache: true })
     if (!current) throw codeError('COUNT_NOT_FOUND')
+    const listed = Object.keys(indexEntry({})).filter(field => field in changes)
     const [meta] = await Promise.all([
       target.mutateAsync(metaKey, stored => {
         if (!stored) throw codeError('COUNT_NOT_FOUND')
         return { ...stored, ...changes }
       }),
-      target.updateAsync(INDEX_KEY, { op: 'setField', field: id, value: indexEntry({ ...current, ...changes }) }),
+      listed.length ? target.mutateAsync(INDEX_KEY, index => {
+        const next = index && typeof index === 'object' ? index : {}
+        const entry = next[id]
+        if (entry?.deleted) return next
+        const merged = entry ? { ...entry } : indexEntry(current)
+        for (const field of listed) merged[field] = indexEntry(changes)[field]
+        next[id] = merged
+        return next
+      }) : null,
     ])
     return meta
   }

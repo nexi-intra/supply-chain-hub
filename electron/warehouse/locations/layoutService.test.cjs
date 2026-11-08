@@ -234,6 +234,25 @@ test('only the admin who edits the draft can publish it; another admin takes ove
   assert.equal((await publishNow(layouts, ADA)).version, 1)
 })
 
+test('after a publish or a discard the fresh draft is free: the next admin edits it without being told someone else is', async () => {
+  const { layouts } = setup()
+  const { draft: started } = await layouts.startDraft(ADA)
+  await layouts.saveDraft(ADA, { draft: { ...started, items: [rackWith([P('s1', 'A1.1')])] } })
+  assert.equal((await publishNow(layouts, ADA)).version, 1)
+  const { draft: afterPublish } = await layouts.draft(MONA)
+  assert.equal(afterPublish.editedBy.email, 'ada@x.test', 'still names who published, for 1.6.6')
+  const saved = await layouts.saveDraft(MONA, { draft: { ...afterPublish, notes: 'Monas' } })
+  assert.equal((await layouts.draft(MONA)).draft.editedBy.email, 'mona@x.test', 'Mona edits it now, without a takeover')
+  assert.equal('free' in (await layouts.draft(MONA)).draft, false, 'once edited it is owned again')
+  assert.equal(saved.rev, afterPublish.rev + 1)
+  await assert.rejects(layouts.saveDraft(ADA, { draft: (await layouts.draft(ADA)).draft }), { code: 'LAYOUT_DRAFT_BUSY' })
+
+  await layouts.discardDraft(MONA)
+  const { draft: afterDiscard } = await layouts.draft(ADA)
+  await layouts.saveDraft(ADA, { draft: { ...afterDiscard, notes: 'Adas' } })
+  assert.equal((await layouts.draft(ADA)).draft.editedBy.email, 'ada@x.test')
+})
+
 test('only the admin who edits the draft can discard it; another admin takes over first', async () => {
   const { layouts } = setup()
   const { draft } = await layouts.startDraft(MONA)

@@ -79,6 +79,21 @@ test('a count needs a name of reasonable length', async () => {
   await assert.rejects(repo.createCount('TCD', { name: 'x'.repeat(81), snapshot: SNAPSHOT, owner: OWNER }), { code: 'COUNT_INVALID' })
 })
 
+test('two PCs changing different fields of the same count at once both reach the count list', async () => {
+  const { repo, dataDir } = setup()
+  const { id } = await repo.createCount('TCD', { name: 'Test', snapshot: SNAPSHOT, owner: OWNER })
+  const other = createCountRepository({ storeFor: () => createStore(path.join(dataDir, 'TCD')), now: () => 2000 })
+  await Promise.all([
+    repo.updateMeta('TCD', id, { status: 'closed', closedAt: 5000, closedBy: OWNER }),
+    other.updateMeta('TCD', id, { fetchedAt: 7777 }),
+  ])
+  // Read from disk (the other repo opens a fresh store each time); on a real PC the watcher refreshes the cache.
+  const meta = await other.getMeta('TCD', id)
+  assert.deepEqual([meta.status, meta.fetchedAt], ['closed', 7777])
+  const [entry] = await other.listCounts('TCD')
+  assert.deepEqual([entry.status, entry.fetchedAt], ['closed', 7777], 'the list agrees with the count')
+})
+
 test('meta fields, members, claims and approvals are updated field by field', async () => {
   const { repo } = setup()
   const { id } = await repo.createCount('TCD', { name: 'Test', snapshot: SNAPSHOT, owner: OWNER })

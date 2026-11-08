@@ -8,7 +8,7 @@ import { NativeSelect } from '@/components/warehouse/ui'
 import { isAnyDialogOpen } from '@/lib/modalStack'
 import { cn } from '@/lib/utils'
 import { errorCode, errorDetail, errorMessage } from '@/lib/warehouse/errors'
-import { editorReducer, initEditor, type EditorAction, type EditorState } from '@/lib/warehouse/layout/editor'
+import { editingOf, editorReducer, initEditor, type EditorAction, type EditorState } from '@/lib/warehouse/layout/editor'
 import { fromSpike } from '@/lib/warehouse/layout/fromSpike'
 import { cellsOf, clampToHall } from '@/lib/warehouse/layout/geometry'
 import { duplicateNames, isPlaceSlot } from '@/lib/warehouse/layout/slots'
@@ -102,7 +102,7 @@ export function LayoutEditor({ user, onDone }: { user: WarehouseUser; onDone: ()
     staleRef.current = false
     setStale(null)
     setSavedAt(draft.editedAt)
-    setEditing({ name: draft.editedBy.name, since: draft.editedAt })
+    setEditing(editingOf(draft))
     setShapeId(null)
   }, [])
 

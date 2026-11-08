@@ -48,6 +48,12 @@ export function initEditor(draft: LayoutDraft, { newId = () => crypto.randomUUID
   return { draft, selected: null, undo: [], clipboard: null, dirty: false, newId }
 }
 
+/** Who the stored draft is being edited by; null for the free draft a publish or discard leaves behind. */
+export function editingOf(draft: LayoutDraft): { name: string; since: number } | null {
+  if (draft.free && draft.free.rev === (draft.rev ?? 0)) return null
+  return { name: draft.editedBy.name, since: draft.editedAt }
+}
+
 function commit(state: EditorState, draft: LayoutDraft, selected = state.selected): EditorState {
   return { ...state, draft, selected, undo: [...state.undo, JSON.stringify(state.draft)].slice(-UNDO_MAX), dirty: true }
 }

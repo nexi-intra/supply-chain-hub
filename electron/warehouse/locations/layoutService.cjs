@@ -12,6 +12,10 @@ const noDraft = () => codeError('LAYOUT_NO_DRAFT', 'Der er ingen kladde til tegn
 const emptyLayout = () => ({ version: 0, hall: { w: 59, h: 68 }, notes: '', items: [] })
 // A draft stored before revisions existed counts as revision 0.
 const revOf = draft => draft?.rev ?? 0
+// The draft written by a publish or a discard belongs to no one yet: free while nobody has saved it since (a 1.6.6
+// takeover raises the revision and so ends it). editedBy stays, because 1.6.6 needs it.
+const released = draft => ({ ...draft, free: { rev: revOf(draft) } })
+const isFree = draft => draft?.free?.rev === revOf(draft)
 /** The draft's content as JSON with sorted keys: what an autosave compares, without revision and editor. */
 const contentOf = draft => {
   const { rev, editedBy, editedAt, ...content } = draft
@@ -31,7 +35,7 @@ function createLayoutService({ repo, locations, now = Date.now }) {
 
   /** LAYOUT_DRAFT_BUSY when another admin stands as the draft's editor and the caller does not take over. */
   function checkEditor(current, editor, takeOver) {
-    if (current?.editedBy && current.editedBy.email !== editor.email && takeOver !== true) {
+    if (current?.editedBy && current.editedBy.email !== editor.email && takeOver !== true && !isFree(current)) {
       throw codeError('LAYOUT_DRAFT_BUSY', `${current.editedBy.name} redigerer tegningen`)
     }
   }
@@ -63,7 +67,11 @@ function createLayoutService({ repo, locations, now = Date.now }) {
     const editedBy = by(user)
     const editedAt = now()
     if (raw == null && takeOver === true) {
-      const taken = await repo.writeDraft(team, current => (current ? { ...current, rev: revOf(current) + 1, editedBy, editedAt } : undefined))
+      const taken = await repo.writeDraft(team, current => {
+        if (!current) return undefined
+        const { free: _free, ...rest } = current
+        return { ...rest, rev: revOf(current) + 1, editedBy, editedAt }
+      })
       if (!taken) throw noDraft()
       return { editedAt, rev: taken.rev, draft: taken }
     }
@@ -94,7 +102,7 @@ function createLayoutService({ repo, locations, now = Date.now }) {
     const [, { layout: published }] = await Promise.all([locations.requireAdmin(user), repo.readLayout(team)])
     const editor = by(user)
     // A revision above the discarded draft's, so a PC still holding that one cannot save it back.
-    const draft = await repo.writeDraft(team, current => { checkEditor(current, editor, false); return draftFrom(published ?? emptyLayout(), published?.version ?? 0, user, revOf(current) + 1) })
+    const draft = await repo.writeDraft(team, current => { checkEditor(current, editor, false); return released(draftFrom(published ?? emptyLayout(), published?.version ?? 0, user, revOf(current) + 1)) })
     return { ok: true, draft }
   }
 
@@ -130,7 +138,7 @@ function createLayoutService({ repo, locations, now = Date.now }) {
       const outside = decisions.outside.filter(name => stillOutside.has(locationKey(name)))
       tx.layout = { ...drawing, outside, version, publishedAt, publishedBy }
       // The next draft starts from the new drawing in the same write, so the editor shows it without another save.
-      tx.draft = draftFrom(tx.layout, version, user)
+      tx.draft = released(draftFrom(tx.layout, version, user))
       tx.meta.layout = { version, linked }
       const { create, rename, change, remove } = plan.counts
       tx.event({

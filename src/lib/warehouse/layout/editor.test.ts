@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { LayoutDraft, LayoutItem } from '@/types/warehouse'
-import { editorReducer, initEditor, type EditorState } from './editor'
+import { editingOf, editorReducer, initEditor, type EditorState } from './editor'
 import { duplicateNames, proposeNames, regenerateSlots, slotLabel } from './slots'
 
 let next = 0
@@ -193,5 +193,14 @@ describe('layout editor', () => {
     let s = start
     for (let i = 0; i < 205; i++) s = editorReducer(s, { type: 'move', id: itemId, x: i % 2, y: 0 })
     expect(s.undo.length).toBe(200)
+  })
+})
+
+describe('who edits the drawing', () => {
+  it('names the editor, but a fresh draft after a publish or discard is free and names no one', () => {
+    const owned = { ...draftWith([]), rev: 3, editedAt: 5 }
+    expect(editingOf(owned)).toEqual({ name: 'A', since: 5 })
+    expect(editingOf({ ...owned, free: { rev: 3 } })).toBeNull()
+    expect(editingOf({ ...owned, free: { rev: 2 } })).toEqual({ name: 'A', since: 5 })
   })
 })
