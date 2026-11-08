@@ -190,33 +190,35 @@
 }
 
 .dark {
-  --background: oklch(0.17 0.035 274);
+  /* Moerkt tema bor i Kaede-H-logoets midnat (tone 259): alle neutrale flader
+     og streger bruger den tone. Nexi-indigo er stadig farven for handlinger. */
+  --background: oklch(0.17 0.035 259);
   --foreground: oklch(0.95 0.008 260);
   
-  --card: oklch(0.21 0.04 274);
+  --card: oklch(0.21 0.04 259);
   --card-foreground: oklch(0.95 0.008 260);
   
-  --popover: oklch(0.21 0.04 274);
+  --popover: oklch(0.21 0.04 259);
   --popover-foreground: oklch(0.95 0.008 260);
   
   --primary: oklch(0.68 0.16 268);
-  --primary-foreground: oklch(0.12 0.03 274);
+  --primary-foreground: oklch(0.12 0.03 259);
   
-  --secondary: oklch(0.305 0.05 272);
+  --secondary: oklch(0.305 0.05 259);
   --secondary-foreground: oklch(0.92 0.01 260);
   
-  --muted: oklch(0.25 0.04 272);
+  --muted: oklch(0.25 0.04 259);
   --muted-foreground: oklch(0.68 0.03 262);
   
   --accent: oklch(0.675 0.145 265);
-  --accent-foreground: oklch(0.15 0.03 274);
+  --accent-foreground: oklch(0.15 0.03 259);
   
   /* Hvid tekst paa fuld roed gav 3,9:1 i moerk tilstand; moerk tekst giver over 6. */
   --destructive: oklch(0.65 0.18 25);
-  --destructive-foreground: oklch(0.14 0.03 274);
+  --destructive-foreground: oklch(0.14 0.03 259);
   
-  --border: oklch(0.31 0.035 272);
-  --input: oklch(0.36 0.04 272);
+  --border: oklch(0.31 0.035 259);
+  --input: oklch(0.36 0.04 259);
   --ring: oklch(0.68 0.16 268);
 
   /* Samme signaler som i lys tilstand, loeftet saa de baerer paa moerk flade. */
@@ -233,21 +235,21 @@
   --chart-4: oklch(0.775 0.135 72);
   --chart-5: oklch(0.745 0.135 155);
   
-  --sidebar: oklch(0.19 0.035 274);
+  --sidebar: oklch(0.19 0.035 259);
   --sidebar-foreground: oklch(0.95 0.008 260);
   --sidebar-primary: oklch(0.62 0.16 268);
-  --sidebar-primary-foreground: oklch(0.12 0.03 274);
-  --sidebar-accent: oklch(0.27 0.05 272);
+  --sidebar-primary-foreground: oklch(0.12 0.03 259);
+  --sidebar-accent: oklch(0.27 0.05 259);
   --sidebar-accent-foreground: oklch(0.92 0.01 260);
-  --sidebar-border: oklch(0.32 0.04 272);
+  --sidebar-border: oklch(0.32 0.04 259);
   --sidebar-ring: oklch(0.62 0.16 268);
   
-  --shadow-color: oklch(0.05 0.02 274);
+  --shadow-color: oklch(0.05 0.02 259);
   --shadow-opacity: 0.4;
 }
 
 .dark body {
-  background: oklch(0.155 0.032 274);
+  background: oklch(0.155 0.032 259);
 }
 
 @theme {

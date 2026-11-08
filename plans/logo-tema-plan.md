@@ -16,18 +16,18 @@ Det nye logo (Kæde-H: tre guldled, der danner et H på midnatsblå flise) ses i
 - **Mørkt tema:** neutrale flader flyttes fra tone 272–274 til logoets midnat (tone 259) med samme lyshed og mætning, så kontrasten er uændret. Primær/accent/signal røres ikke.
 
 ## Fase 1 – Mærket som komponent
-- [ ] `src/components/HubMark.tsx`: inline-SVG af Kæde-H med unikke gradient-id'er (`useId`), `size`, `className`, `decorative` (aria-hidden) ellers `role="img"` + `aria-label="Supply Chain Hub"`. Test i `HubMark.test.tsx`.
-- [ ] `HubLoader` i samme fil: flisen med venstre/højre led der glider ind og tværbjælken der folder ud i løkke, `role="status"`, skjult tekst, vises efter 150 ms. CSS i `main.css` (kun transform/opacity; reduced motion stopper den).
+- [x] `src/components/HubMark.tsx`: inline-SVG af Kæde-H med unikke gradient-id'er (`useId`), `size`, `className`, `decorative` (aria-hidden) ellers `role="img"` + `aria-label="Supply Chain Hub"`. Test i `HubMark.test.tsx`.
+- [x] `HubLoader` i samme fil: flisen med venstre/højre led der glider ind og tværbjælken der folder ud i løkke, `role="status"`, skjult tekst, vises efter 150 ms. CSS i `main.css` (kun transform/opacity; reduced motion stopper den).
 
 ## Fase 2 – Mærket hvor appen præsenterer sig
-- [ ] Login (`Auth.tsx`): Kæde-H + "Supply Chain Hub" som én lockup under Nexi-logoet.
-- [ ] Forsiden (`Hub.tsx`): lille Kæde-H mellem Nexi-logoet og teamnavnet.
-- [ ] Hub-vælgeren (`HubPicker.tsx`): Kæde-H i stedet for det generiske personikon.
-- [ ] "Nyheder i Supply Chain Hub" (`WhatsNewDialog.tsx`): Kæde-H i stedet for gnisten.
-- [ ] Modulindlæsning (`App.tsx` `ViewLoadingFallback`, `GameCorner.tsx`): `HubLoader`.
+- [x] Login (`Auth.tsx`): Kæde-H + "Supply Chain Hub" som én lockup under Nexi-logoet.
+- [x] Forsiden (`Hub.tsx`): lille Kæde-H mellem Nexi-logoet og teamnavnet.
+- [x] Hub-vælgeren (`HubPicker.tsx`): Kæde-H i stedet for det generiske personikon.
+- [x] "Nyheder i Supply Chain Hub" (`WhatsNewDialog.tsx`): Kæde-H i stedet for gnisten.
+- [x] Modulindlæsning (`App.tsx` `ViewLoadingFallback`, `GameCorner.tsx`): `HubLoader`.
 
 ## Fase 3 – Mørkt tema i logoets midnat
-- [ ] `main.css` `.dark`: neutrale tokens (background, card, popover, secondary, muted, border, input, sidebar, body) til tone 259. Test der låser at neutralerne følger logoet, og at primær er uændret.
+- [x] `main.css` `.dark`: neutrale tokens (background, card, popover, secondary, muted, border, input, sidebar, body) til tone 259. Test der låser at neutralerne følger logoet, og at primær er uændret.
 
 ## Fase 4 – Levering
 - [ ] Ændringslog-linje, fuld verifikation (tsc, vitest, node-suite), visuelt tjek i browser (lyst + mørkt) og i bygget app, code review, byg `release-local-2`.
