@@ -1046,7 +1046,7 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
             </div>
 
             {christmas.active && christmas.season?.month === 12 && christmas.season.day <= 24 && (
-              <AdventDoor day={christmas.season.day} language={language} />
+              <AdventDoor key={christmas.season.day} day={christmas.season.day} language={language} />
             )}
 
             <div className="flex items-end gap-7 sm:gap-9">
@@ -1619,7 +1619,7 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
       </div>
 
       {appVersion && (
-        <div className="fixed bottom-3 left-3 z-10 text-[11px] font-medium text-muted-foreground select-none pointer-events-none">
+        <div className={cn('fixed bottom-3 left-3 z-20 text-[11px] font-medium text-muted-foreground select-none pointer-events-none', christmas.active && 'rounded bg-background/85 px-1.5 py-0.5')}>
           v{appVersion}
         </div>
       )}

@@ -29,4 +29,10 @@ describe('the Christmas theme is wired in', () => {
   it('stays a surprise: nothing in the changelog users read in "What is new"', () => {
     expect(read('lib', 'changelog.ts')).not.toMatch(/\bjul|christmas|snow|nisse|advent/i)
   })
+
+  it('stays a surprise on the shared drive too: the default is never written, only a real opt-out', () => {
+    const context = read('contexts', 'ChristmasContext.tsx')
+    expect(context).toMatch(/useKV<boolean>\([^)]*\{ initializeIfMissing: false \}\)/)
+    expect(context).not.toContain('user-christmas-guest')
+  })
 })

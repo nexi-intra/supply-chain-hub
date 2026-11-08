@@ -1,7 +1,7 @@
 const PUBLIC_CHANNELS = new Set(['auth:login', 'auth:signup', 'auth:resume', 'auth:current', 'auth:logout', 'auth:renew', 'auth:profile', 'registry:list-teams', 'registry:get-creator-email', 'registry:lookup-team', 'kv:connection-status', 'updates:status', 'updates:check', 'updates:history', 'app:set-spellcheck-language'])
 const CREATOR_CHANNELS = new Set(['registry:set-creator-email', 'registry:create-team', 'registry:list-team-administration', 'registry:update-team', 'registry:list-user-options', 'registry:list-manager-access', 'registry:set-manager-access', 'kv:choose-data-dir', 'updates:select-zip', 'updates:publish', 'backup:export'])
 const GUEST_KEYS = new Set(['app-language-guest', 'user-theme-guest'])
-const PERSONAL_KEY = /^(?:app-language-|user-theme-|hub-dashboard-|todos-personal-|hub-notifications-dismissed-|link-favorites-)/
+const PERSONAL_KEY = /^(?:app-language-|user-theme-|user-christmas-|hub-dashboard-|todos-personal-|hub-notifications-dismissed-|link-favorites-)/
 // Personal data (not just preferences): even reading it is limited to the owner.
 const OWNER_READ_KEY = /^(?:todos-personal-|hub-notifications-dismissed-)/
 const WRITES = new Set(['kv:set', 'kv:update', 'kv:delete'])

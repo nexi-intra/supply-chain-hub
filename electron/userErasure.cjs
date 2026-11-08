@@ -17,7 +17,7 @@ const LISTS = {
   'email-notifications': (item, email) => same(item?.to, email),
 }
 const OBJECTS = ['home-office-patterns', 'user-settings']
-const PERSONAL_PREFIXES = ['todos-personal-', 'app-language-', 'user-theme-', 'hub-dashboard-', 'announcements-dismissed-', 'seen-vacation-requests-', 'hub-notifications-dismissed-', 'improvement-seen-', 'hubert-briefing-', 'confetti-shown-', 'link-favorites-']
+const PERSONAL_PREFIXES = ['todos-personal-', 'app-language-', 'user-theme-', 'user-christmas-', 'hub-dashboard-', 'announcements-dismissed-', 'seen-vacation-requests-', 'hub-notifications-dismissed-', 'improvement-seen-', 'hubert-briefing-', 'confetti-shown-', 'link-favorites-']
 
 /** `store` needs getAsync/updateAsync/deleteAsync/keysAsync (raw or offline-resilient store). */
 async function eraseUserData(store, rawEmail) {

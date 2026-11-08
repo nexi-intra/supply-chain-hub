@@ -4,7 +4,7 @@ const ID_FIELDS = new Set(['userId', 'employeeId', 'ownerId', 'authorId', 'creat
 const EMAIL_LISTS = new Set(['userEmails', 'recipients', 'cc', 'bcc', 'mentionedUsers', 'allowedUsers', 'sharedWith', 'teamMembers'])
 const EMAIL_ROOT_LISTS = new Set(['guide-admin-emails'])
 const KEYED_ROOTS = new Set(['home-office-patterns', 'user-settings', 'client-versions', 'force-update-requests', 'guide-review-notice-log'])
-const PERSONAL_PREFIXES = ['app-language-', 'user-theme-', 'hub-dashboard-', 'announcements-dismissed-', 'seen-vacation-requests-', 'hub-notifications-dismissed-', 'link-favorites-']
+const PERSONAL_PREFIXES = ['app-language-', 'user-theme-', 'user-christmas-', 'hub-dashboard-', 'announcements-dismissed-', 'seen-vacation-requests-', 'hub-notifications-dismissed-', 'link-favorites-']
 // Extra identity fields that only hold emails inside one specific shared record.
 const KEY_EMAIL_FIELDS = { 'improvement-cases': ['invitedBy'], 'multiplayer-index': ['actorEmail', 'turn', 'winner', 'opponentEmail'], 'high-fives': ['senderEmail', 'actorEmail'], 'link-library': ['by', 'resolvedBy', 'actorEmail'] }
 function conflict() { const error = new Error('ACCOUNT_MIGRATION_CONFLICT'); error.code = 'ACCOUNT_MIGRATION_CONFLICT'; throw error }

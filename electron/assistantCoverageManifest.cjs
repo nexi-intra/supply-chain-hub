@@ -77,6 +77,7 @@ const COMPONENT_MAP = {
   'components/HomeOfficeDialog.tsx': 'calendar:home-office',
   'components/HubAssistant.tsx': 'topic:assistant',
   'components/HubertIcon.tsx': INTERNAL,
+  'components/HubMark.tsx': INTERNAL, // the app logo and the module loader
   'components/HighFiveDialog.tsx': 'hub:send-high-five',
   'components/HighFivesCard.tsx': 'hub:send-high-five',
   'components/ImprovementCaseDialog.tsx': 'improvements:answer-invitation',
@@ -109,6 +110,7 @@ const COMPONENT_FOLDERS = {
   backgammon: 'multiplayer:backgammon-move',
   boardgame: 'multiplayer:send-emoji',
   chess: 'multiplayer:chess-move',
+  christmas: INTERNAL, // seasonal decoration; on purpose not in the app guide before it appears
   multiplayer: 'multiplayer',
   ui: INTERNAL,
   warehouse: 'warehouse',
