@@ -107,8 +107,10 @@ tjekker hvert sted i en tom hub og bytter et sted ud, hvis det ikke altid findes
 ### Det ser folk
 - **Vinderen:** dialog "Du fandt dagens nisse! 🍫 Jacob kommer med en chokolade."
 - **Næste der klikker (samtidigt):** "Nissen er allerede fundet i dag af Lasse kl. 10:42."
-- **Alle andre i hubben:** nissen forsvinder; på forsiden en lille linje under julehilsenen "Dagens nisse blev fundet af
-  Lasse kl. 10:42" (mit valg).
+- **Alle andre i hubben (Jacob, 08.11):** pop-up "Nissen er fundet af Lasse kl. 10:42 – du kan stoppe med at lede", så man
+  ikke leder videre. Vises som en besked i toppen (ikke en dialog), alle steder undtagen i spil, én gang pr. dag pr. pc –
+  også hvis man åbner appen efter fundet. Kun for dem der er med (juletema tændt). Vinderen selv får dialogen i stedet.
+  Nissen forsvinder, og forsiden viser linjen "Dagens nisse blev fundet af Lasse kl. 10:42" (mit valg).
 - **Jacob:** ny slags notifikation i klokken ("🎅 Lasse fandt nissen i Terminal Configuration & Dispatch kl. 10:42")
   + Windows-notifikation via den eksisterende bro. Han får dem fra alle hubs. Andre får dem ikke.
 

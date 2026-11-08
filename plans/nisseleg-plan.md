@@ -178,6 +178,20 @@
 - [ ] **Step 4: Run** – Expected: PASS.
 - [ ] **Step 5: Commit** `git commit -m "Nisseleg: julehilsen kl. 10"`
 
+### Task 6b: Pop-up når nissen er fundet
+
+**Files:**
+- Modify: `src/lib/nisseGreeting.ts` (tilføj `shouldAnnounceFound`), `src/components/christmas/NisseGreeting.tsx` (vis besked med `toast` fra `sonner`, varighed 12 s)
+- Test: `src/lib/nisseGreeting.test.ts`
+
+**Interfaces:**
+- Produces: `shouldAnnounceFound({ state, view, active, announcedDate, userEmail }) → boolean` – sand når `active`, `state.status === 'found'`, `view !== 'games'`, `announcedDate !== state.date` og `state.finder.email !== userEmail` (vinderen fik dialogen). Huskes i `localStorage['tcd-hub:nisse-found-announced']`. `NisseToday.found.finder` har derfor også `email`.
+- Tekst `nisseLabels(language).foundToast(name, time)` = `'🎅 Nissen er fundet af {name} kl. {time} – du kan stoppe med at lede.'` (da; en/fi/sv tilsvarende).
+- [ ] **Step 1: Write the failing tests**: sand på forsiden og i `warehouse`; falsk i `games`; falsk når `active=false`; falsk når allerede annonceret i dag; falsk for vinderen selv.
+- [ ] **Step 2: Run** `npx.cmd vitest run src/lib/nisseGreeting.test.ts` – Expected: FAIL.
+- [ ] **Step 3: Implement**.
+- [ ] **Step 4: Run** – Expected: PASS.
+- [ ] **Step 5: Commit** `git commit -m "Nisseleg: pop-up naar nissen er fundet"`
 ### Task 7: Besked til Jacob
 
 **Files:**
