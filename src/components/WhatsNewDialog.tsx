@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Sparkle } from '@phosphor-icons/react'
+import { HubMark } from '@/components/HubMark'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -38,8 +38,8 @@ export function WhatsNewDialog() {
     <Dialog open onOpenChange={(open) => { if (!open) setEntries(null) }}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Sparkle size={22} weight="fill" className="text-accent" />
+          <DialogTitle className="flex items-center gap-2.5">
+            <HubMark size={28} decorative />
             {language === 'da' ? 'Nyheder i Supply Chain Hub' : language === 'fi' ? "Mitä uutta Supply Chain Hubissa?" : language === 'sv' ? 'Nyheter i Supply Chain Hub' : "What's new in Supply Chain Hub"}
           </DialogTitle>
           <DialogDescription>

@@ -28,6 +28,7 @@ import { useCachedState } from '@/hooks/useCachedState'
 import { useLanguage } from '@/contexts/LanguageContext'
 import nexiLogo from '@/assets/images/nexi-logo.svg'
 import nexiLogoWhite from '@/assets/images/nexi-logo-white.svg'
+import { HubMark } from '@/components/HubMark'
 import { format, isSameDay, parseISO } from 'date-fns'
 import { da, enUS } from 'date-fns/locale'
 import type { ShiftRole, ShiftAssignment, ShiftPatternRule, SickLeaveEntry, VacationEntry, WeekMenu, Email, HomeOfficePattern, HomeOfficeException } from '@/lib/types'
@@ -1004,6 +1005,7 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
           <div className="flex items-baseline gap-3">
             <img src={nexiLogo} alt="Nexi" className="h-5 w-auto translate-y-[2px] dark:hidden" />
             <img src={nexiLogoWhite} alt="Nexi" className="h-5 w-auto translate-y-[2px] hidden dark:block" />
+            <HubMark size={24} decorative className="self-center" />
             <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground">{teamName}</h1>
             {activeHub && !activeHub.home && <Badge variant="outline" className="self-center">{hubLabels.managerHere}</Badge>}
           </div>

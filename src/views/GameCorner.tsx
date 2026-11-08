@@ -4,6 +4,7 @@ import { GameController, ArrowLeft } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { SectionTile, ArcadeArt, ModernArt, MultiplayerArt } from '@/components/arcade/SectionTile'
 import { useLanguage } from '@/contexts/LanguageContext'
+import { HubLoader, hubLoaderLabel } from '@/components/HubMark'
 import { NAVIGATE_EVENT, consumeNavigationParams, peekNavigationParams } from '@/lib/appNavigation'
 import { getMultiplayerLabels } from '@/lib/multiplayerLabels'
 import { isAnyModalOpen } from '@/lib/modalStack'
@@ -70,7 +71,7 @@ export function GameCorner({ onNavigateBack, userEmail }: GameCornerProps) {
   }
   if (view === 'multiplayer') {
     return (
-      <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><div className="h-10 w-10 rounded-full border-4 border-primary/20 border-t-primary animate-spin" /></div>}>
+      <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><HubLoader label={hubLoaderLabel(language)} /></div>}>
         <MultiplayerHub
           onNavigateBack={() => { setView('hub'); setStartInGame(false); setInitialGameId(null); setOpenGameId(null) }}
           userEmail={userEmail}

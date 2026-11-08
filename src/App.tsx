@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react'
 import { dismissStartupIntro } from './lib/startupIntro'
+import { HubLoader, hubLoaderLabel } from './components/HubMark'
 import { Hub } from '@/views/Hub'
 import { Auth } from '@/views/Auth'
-import { LanguageProvider } from '@/contexts/LanguageContext'
+import { LanguageProvider, useLanguage } from '@/contexts/LanguageContext'
 import { ThemeProvider } from '@/contexts/ThemeContext'
 import { AnimatedBackground } from '@/components/AnimatedBackground'
 import { BirthdayCelebration } from '@/components/BirthdayCelebration'
@@ -49,9 +50,10 @@ const Warehouse = lazy(() => import('@/views/warehouse/Warehouse').then(m => ({ 
 
 /** Vises kortvarigt mens et views kode hentes ved første besøg. */
 function ViewLoadingFallback() {
+  const { language } = useLanguage()
   return (
     <div className="min-h-screen flex items-center justify-center">
-      <div className="h-10 w-10 rounded-full border-4 border-primary/20 border-t-primary animate-spin" />
+      <HubLoader label={hubLoaderLabel(language)} />
     </div>
   )
 }

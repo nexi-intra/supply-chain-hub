@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { Buildings, Crown, SignOut, UsersThree } from '@phosphor-icons/react'
+import { Buildings, Crown, SignOut } from '@phosphor-icons/react'
+import { HubMark } from '@/components/HubMark'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -52,7 +53,7 @@ export function HubPicker({ hubs, preferred, onChoose, onLogout }: HubPickerProp
       </div>
       <div className="container mx-auto px-4 pt-32 pb-16 max-w-5xl relative z-10">
         <div className="text-center mb-10">
-          <UsersThree size={54} weight="duotone" className="text-primary mx-auto mb-4" />
+          <HubMark size={56} className="mx-auto mb-4" />
           <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-foreground pb-2">{labels.pickerTitle}</h1>
           <p className="text-muted-foreground max-w-xl mx-auto">{labels.pickerSubtitle}</p>
         </div>
