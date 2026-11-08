@@ -79,4 +79,119 @@ function spotFor(date, teamIndex) {
   return BANDS[band][(order[index - bandStart] + teamIndex) % 8]
 }
 
-module.exports = { SPOTS, danishParts, nisseDays, spotFor, startsAt }
+// ---- The judge ---------------------------------------------------------------------------------------------------
+
+const RETRIES = 3
+
+function fail(code, message) {
+  const error = new Error(`${code}: ${message}`)
+  error.code = code
+  throw error
+}
+
+const isDate = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
+const findsKey = year => `nisse-finds-${year}`
+
+function readFinds(value) {
+  if (value === undefined || value === null) return { finds: [] }
+  if (typeof value !== 'object' || !Array.isArray(value.finds)) fail('NISSE_INVALID_DATA', 'Invalid shared nisse finds')
+  return { finds: value.finds.filter(find => find && typeof find === 'object' && typeof find.teamId === 'string' && isDate(find.date)) }
+}
+
+const publicFinder = find => ({ name: find.name, email: find.email, at: find.at })
+
+/**
+ * Decides who found today's nisse first. Finds live in the shared store under `nisse-finds-<year>`; the first find of a
+ * hub on a day wins, settled with compareAndSet. 10:00 is checked against the shared drive's clock (`driveNow`).
+ */
+function createNisseService({ getStore, getDirectory, listTeams, now = Date.now, driveNow, onChanged } = {}) {
+  if (typeof getStore !== 'function' || typeof getDirectory !== 'function' || typeof listTeams !== 'function' ||
+    typeof now !== 'function' || typeof driveNow !== 'function' || (onChanged !== undefined && typeof onChanged !== 'function')) {
+    throw new TypeError('Invalid nisse service dependencies')
+  }
+
+  const isCreator = actor => actor?.homeRole === 'creator'
+
+  async function teamIndexOf(actor) {
+    const teamId = actor?.activeTeam?.teamId
+    if (typeof teamId !== 'string') return -1
+    const teams = [...(await listTeams())].sort((a, b) => (a.teamId < b.teamId ? -1 : a.teamId > b.teamId ? 1 : 0))
+    return teams.findIndex(team => team.teamId === teamId)
+  }
+
+  async function readYear(year) {
+    return readFinds(await (await getStore()).getAsync(findsKey(year), { skipCache: true }))
+  }
+
+  async function today(actor, preview) {
+    const usePreview = isCreator(actor) && isDate(preview)
+    const date = usePreview ? preview : danishParts(now()).date
+    // Outside the nisse days nothing is read: no trace on the shared drive before December.
+    if (!nisseDays(Number(date.slice(0, 4))).includes(date)) return { status: 'off' }
+    const index = await teamIndexOf(actor)
+    if (index < 0) return { status: 'off' }
+    if (!usePreview && now() < startsAt(date)) return { status: 'waiting', date, startsAt: startsAt(date) }
+    const found = (await readYear(date.slice(0, 4))).finds.find(find => find.teamId === actor.activeTeam.teamId && find.date === date)
+    return found ? { status: 'found', date, finder: publicFinder(found) } : { status: 'hiding', date, spot: spotFor(date, index) }
+  }
+
+  async function nameOf(email) {
+    try {
+      const person = (await getDirectory())?.people?.find(item => String(item.email).toLowerCase() === email)
+      if (person?.fullName) return String(person.fullName)
+    } catch { /* the name is a courtesy; the find still counts */ }
+    return email
+  }
+
+  async function claim(actor, input) {
+    if (!input || typeof input !== 'object' || !isDate(input.date) || typeof input.spot !== 'string') fail('NISSE_INVALID', 'Invalid claim')
+    const index = await teamIndexOf(actor)
+    if (index < 0) fail('NISSE_NO_HUB', 'No active hub')
+    if (isCreator(actor) && isDate(input.preview)) {
+      if (input.spot !== spotFor(input.preview, index)) fail('NISSE_WRONG_SPOT', 'The nisse is not there')
+      return { result: 'preview' }
+    }
+    const driveMs = await driveNow()
+    const { date } = danishParts(driveMs)
+    if (input.date !== date || !nisseDays(Number(date.slice(0, 4))).includes(date)) fail('NISSE_NOT_TODAY', 'Not today\'s nisse')
+    if (input.spot !== spotFor(date, index)) fail('NISSE_WRONG_SPOT', 'The nisse is not there')
+    if (driveMs < startsAt(date)) fail('NISSE_TOO_EARLY', 'The nisse hunt starts at 10:00')
+
+    const email = String(actor.email).trim().toLowerCase()
+    const teamId = actor.activeTeam.teamId
+    const store = await getStore()
+    const key = findsKey(date.slice(0, 4))
+    let name = null
+    for (let attempt = 0; ; attempt++) {
+      const actual = await store.getAsync(key, { skipCache: true })
+      const data = readFinds(actual)
+      const existing = data.finds.find(find => find.teamId === teamId && find.date === date)
+      if (existing) return { result: 'taken', finder: publicFinder(existing) }
+      name ??= await nameOf(email)
+      const at = new Date(driveMs).toISOString()
+      const next = { finds: [...data.finds, { teamId, teamName: String(actor.activeTeam.name || teamId), date, email, name, at }] }
+      try {
+        await store.updateAsync(key, { op: 'compareAndSet', expected: actual, value: next })
+      } catch (error) {
+        if (error?.code === 'KV_CONFLICT' && attempt < RETRIES - 1) continue
+        if (error?.code === 'KV_CONFLICT') fail('NISSE_CONFLICT', 'The finds changed while saving')
+        throw error
+      }
+      onChanged?.()
+      return { result: 'won', at }
+    }
+  }
+
+  /** Every find this season, for the creator only (he hands out the chocolate). */
+  async function finds(actor) {
+    if (!isCreator(actor)) return []
+    const { month, year, day } = danishParts(now())
+    const season = month === 12 ? year : month === 1 && day <= 1 ? year - 1 : null
+    if (season === null) return []
+    return (await readYear(season)).finds.slice().sort((a, b) => (a.at < b.at ? -1 : 1))
+  }
+
+  return { today, claim, finds }
+}
+
+module.exports = { SPOTS, createNisseService, danishParts, nisseDays, spotFor, startsAt }
