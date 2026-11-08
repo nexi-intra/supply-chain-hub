@@ -76,7 +76,7 @@
   - `listTeams() → { teamId, name }[]`; `teamIndex` = position efter sortering på `teamId`.
   - `driveNow() → Promise<number>` (M:'s tid; implementeres i Task 3).
   - Lager-nøgle `nisse-finds-<år>`, værdi `{ finds: Array<{ teamId, teamName, date, email, name, at /*ISO*/ }> }`.
-  - `today(actor, preview?: string)` → `{ status: 'off' } | { status: 'waiting', date, startsAt } | { status: 'hiding', date, spot } | { status: 'found', date, finder: { name, at } }`. `preview` ('YYYY-MM-DD') bruges kun når `actor.homeRole === 'creator'`, og giver altid 'hiding' (eller 'found' hvis rigtigt fundet).
+  - `today(actor, preview?: string)` → `{ status: 'off' } | { status: 'waiting', date, startsAt } | { status: 'hiding', date, spot } | { status: 'found', date, finder: { name, email, at } }`. `preview` ('YYYY-MM-DD') bruges kun når `actor.homeRole === 'creator'`, og giver altid 'hiding' (eller 'found' hvis rigtigt fundet).
   - `claim(actor, { date, spot, preview? })` → `{ result: 'won', at } | { result: 'taken', finder: { name, at } } | { result: 'preview' }`; fejlkoder `NISSE_NOT_TODAY`, `NISSE_TOO_EARLY`, `NISSE_WRONG_SPOT`, `NISSE_NO_HUB`, `NISSE_CONFLICT`.
   - `finds(actor)` → årets fund (alle hubs) hvis `actor.homeRole === 'creator'`, ellers `[]`.
 
