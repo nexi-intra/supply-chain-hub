@@ -5,6 +5,7 @@ import { localKv } from './lib/localKvStore'
 import { createElectronKv } from './lib/electronKvBridge'
 import { withErrorToast } from './lib/kvErrorToast'
 import { applyRenderMode } from './lib/renderMode'
+import { markAppStarted } from './lib/startupIntro'
 
 import App from './App.tsx'
 import { ErrorFallback } from './ErrorFallback.tsx'
@@ -45,6 +46,7 @@ async function bootstrap() {
       </MotionConfig>
     </ErrorBoundary>
   )
+  markAppStarted()
 }
 
 bootstrap()

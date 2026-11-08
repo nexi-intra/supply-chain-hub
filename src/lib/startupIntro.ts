@@ -1,3 +1,7 @@
+export function markAppStarted(doc: Pick<Document, 'getElementById'> = document): void {
+  doc.getElementById('startup-intro')?.setAttribute('data-app-started', '')
+}
+
 export function dismissStartupIntro(
   doc: Pick<Document, 'getElementById'> = document,
   { fadeMs = 400 }: { fadeMs?: number } = {},

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { dismissStartupIntro } from './startupIntro'
+import { dismissStartupIntro, markAppStarted } from './startupIntro'
 
 const root = join(__dirname, '..', '..')
 const html = readFileSync(join(root, 'index.html'), 'utf8')
@@ -82,10 +82,26 @@ describe('dismissStartupIntro', () => {
   })
 })
 
+describe('markAppStarted', () => {
+  it('marks the intro so the fail-safe leaves it to the app', () => {
+    const attributes = new Map<string, string>()
+    const element = { setAttribute: (name: string, value: string) => attributes.set(name, value) }
+    markAppStarted({ getElementById: () => element } as unknown as Pick<Document, 'getElementById'>)
+    expect(attributes.has('data-app-started')).toBe(true)
+    expect(() => markAppStarted({ getElementById: () => null })).not.toThrow()
+  })
+})
+
 describe('the intro wiring', () => {
   it('the app, the error screen and a 30 s fail-safe all dismiss the intro', () => {
     expect(readFileSync(join(root, 'src', 'App.tsx'), 'utf8')).toContain('dismissStartupIntro()')
     expect(readFileSync(join(root, 'src', 'ErrorFallback.tsx'), 'utf8')).toContain('dismissStartupIntro()')
     expect(html).toMatch(/setTimeout\([\s\S]*is-leaving[\s\S]*30000\)/)
+  })
+
+  it('the fail-safe only fires when the app code never started', () => {
+    expect(readFileSync(join(root, 'src', 'main.tsx'), 'utf8')).toContain('markAppStarted()')
+    const failSafe = html.slice(html.indexOf('setTimeout('), html.indexOf('30000)'))
+    expect(failSafe).toMatch(/hasAttribute\('data-app-started'\)\) return/)
   })
 })

@@ -127,7 +127,8 @@
     <script>
       setTimeout(function () {
         var intro = document.getElementById('startup-intro')
-        if (!intro) return
+        // Once the app code runs, it removes the intro itself – even if the shared drive makes startup slow.
+        if (!intro || intro.hasAttribute('data-app-started')) return
         intro.classList.add('is-leaving')
         setTimeout(function () { intro.remove() }, 600)
       }, 30000)
