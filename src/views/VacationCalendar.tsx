@@ -513,11 +513,11 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
       </div>
 
       <div className="container mx-auto px-4 sm:px-6 lg:px-8 pt-28 pb-12 sm:pb-20 max-w-7xl relative z-10">
-        <header className="mb-6 flex flex-wrap items-center gap-3 border-b pb-4">
+        <header className="relative mb-6 flex flex-wrap items-center gap-3 border-b pb-4">
           <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground">
             {language === 'da' ? 'Kalender' : language === 'fi' ? 'Kalenteri' : language === 'sv' ? 'Semesterkalender' : 'Calendar'}
           </h1>
-          <NisseSpot spot="calendar" className="ml-auto order-last" />
+          <NisseSpot spot="calendar" pose="peek" className="absolute -bottom-[3px] right-[12%]" />
           {isManager && (
             <Badge variant="secondary" className="text-xs">
               Manager
@@ -820,7 +820,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
                 )}
               </TabsContent>
               <TabsContent value="approved" className="mt-4">
-                <h3 className="text-xl font-bold mb-4"><AutoText text="Godkendte Ferier" /><NisseSpot spot="calendar-approved" className="ml-3 align-middle" /></h3>
+                <h3 className="text-xl font-bold mb-4"><AutoText text="Godkendte Ferier" /><NisseSpot spot="calendar-approved" pose="stand" className="ml-3 align-middle" /></h3>
                 {myApprovedVacations.length === 0 ? (
                   <p className="text-muted-foreground text-center py-8">
                     <AutoText text="Du har ingen godkendte ferier" />

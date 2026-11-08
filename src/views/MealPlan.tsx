@@ -199,7 +199,7 @@ export function MealPlan({ onNavigateBack }: MealPlanProps) {
             <ForkKnife size={26} weight="duotone" className="text-primary" />
             {t.mealPlan.title}
           </h1>
-          <NisseSpot spot="meals" className="absolute right-[18%] -bottom-[11px]" />
+          <NisseSpot spot="meals" pose="hang" className="absolute right-[18%] top-full -mt-[3px]" />
           <p className="text-sm text-muted-foreground mt-1">
             {t.mealPlan.subtitle}
           </p>

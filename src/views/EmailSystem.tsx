@@ -671,7 +671,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
               <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground">
                 {t.email.title}
               </h1>
-              <p className="text-muted-foreground mt-2">{t.email.sendAndReceive}<NisseSpot spot="email" className="ml-2 align-middle" /></p>
+              <p className="text-muted-foreground mt-2">{t.email.sendAndReceive}<NisseSpot spot="email" pose="stand" className="ml-2 align-middle" /></p>
             </div>
           </div>
         </motion.div>

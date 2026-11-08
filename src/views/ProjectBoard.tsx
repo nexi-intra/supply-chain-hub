@@ -932,7 +932,7 @@ export function ProjectBoard({ onNavigateBack, userEmail }: ProjectBoardProps) {
               <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground flex items-center gap-2.5">
                 <FolderOpen size={26} weight="duotone" className="text-primary" />
                 To Do
-                <NisseSpot spot="todo" className="ml-1" />
+                <NisseSpot spot="todo" pose="stand" className="ml-1" />
               </h1>
             </div>
             <div className="w-[140px]"></div>

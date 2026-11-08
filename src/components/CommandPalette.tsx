@@ -182,7 +182,7 @@ export function CommandPalette({ userEmail }: CommandPaletteProps) {
         onValueChange={setInputValue}
         placeholder={searchLabels.placeholder}
       />
-      <div className="flex justify-end px-3 pt-1 empty:hidden"><NisseSpot spot="command-palette" /></div>
+      <div className="relative empty:hidden"><NisseSpot spot="command-palette" pose="hang" className="absolute -top-[3px] right-6" /></div>
       <CommandList>
         {!loadingContent && !showTeams && rows.length === 0 && (
           <CommandEmpty>{language === 'da' ? 'Intet fundet' : language === 'fi' ? 'Mitään ei löytynyt' : language === 'sv' ? 'Inget hittades' : 'Nothing found'}</CommandEmpty>

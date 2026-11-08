@@ -96,12 +96,14 @@ describe('the advent calendar doors', () => {
     expect(doorMessage(25, 'da')).toBe('')
   })
 
-  it('behind the doors are short facts about (Danish) Christmas – never a hint about the nisse', () => {
+  it('behind the doors are short facts about (Danish) Christmas, written like a person would, never a hint about the nisse', () => {
     const all = Array.from({ length: 24 }, (_, i) => [doorMessage(i + 1, 'da'), doorMessage(i + 1, 'en')]).flat()
     expect(new Set(all).size).toBe(48)
     expect(doorMessage(1, 'da').startsWith('Velkommen til december!')).toBe(false)
     for (const fact of all) {
-      expect(fact.length, fact).toBeLessThanOrEqual(220)
+      expect(fact.length, fact).toBeGreaterThanOrEqual(150)
+      expect(fact.length, fact).toBeLessThanOrEqual(340)
+      expect(fact, fact).not.toMatch(/[–—]| - /)
       expect(fact, fact).not.toMatch(/nisseleg|elf hunt|gemmer sig|hiding|madplan|vagtplan|notesbog|link library|knowledge base|forbedring|\bappen\b|\bthe app\b/i)
     }
   })
@@ -132,7 +134,7 @@ describe('opened doors are remembered on this PC for this year', () => {
 describe('seasonLine', () => {
   it('counts down in Advent and greets from Christmas Eve on', () => {
     expect(seasonLine(christmasDay(at('2026-12-16'))!, 'da')).toBe('8 dage til juleaften')
-    expect(seasonLine(christmasDay(at('2026-12-24'))!, 'da')).toBe('Glædelig jul – det er juleaften!')
+    expect(seasonLine(christmasDay(at('2026-12-24'))!, 'da')).toBe('Glædelig jul, det er juleaften!')
     expect(seasonLine(christmasDay(at('2026-12-26'))!, 'da')).toBe('Glædelig jul')
     expect(seasonLine(christmasDay(at('2027-01-01'))!, 'da')).toBe('Godt nytår')
   })

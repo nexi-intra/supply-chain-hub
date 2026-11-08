@@ -157,7 +157,7 @@ export function LinkLibrary({ onNavigateBack, userEmail }: LinkLibraryProps) {
             <LinkSimple size={26} weight="duotone" className="text-primary" />
             {labels.title}
           </h1>
-          <NisseSpot spot="links" />
+          <NisseSpot spot="links" pose="stand" />
         </div>
       </div>
 

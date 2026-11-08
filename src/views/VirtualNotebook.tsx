@@ -513,7 +513,7 @@ export function VirtualNotebook({ onNavigateBack, userEmail }: VirtualNotebookPr
                 {t.notebook.title}
               </h1>
             </div>
-            <NisseSpot spot="notebook" />
+            <NisseSpot spot="notebook" pose="stand" />
           </div>
         </div>
       </div>

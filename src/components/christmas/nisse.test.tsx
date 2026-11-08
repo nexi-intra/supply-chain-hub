@@ -17,16 +17,22 @@ const hiding: NisseToday = { status: 'hiding', date: '2026-12-16', spot: 'meals'
 
 describe('NisseSpot', () => {
   it('shows a small nisse button exactly where today\'s nisse hides', () => {
-    const html = render(hiding, true, <NisseSpot spot="meals" />)
+    const html = render(hiding, true, <NisseSpot spot="meals" pose="stand" />)
     expect(html).toMatch(/<button[^>]*type="button"/)
     expect(html).toContain('aria-label="Nisse"')
   })
 
+  it('comes in three kinds: peeking over an edge, hanging from one (kravlenisse) and the old farm nisse standing', () => {
+    expect(render(hiding, true, <NisseSpot spot="meals" pose="peek" />)).toContain('xmas-nisse-peek')
+    expect(render(hiding, true, <NisseSpot spot="meals" pose="hang" />)).toContain('xmas-nisse-hang')
+    expect(render(hiding, true, <NisseSpot spot="meals" pose="stand" />)).toContain('xmas-nisse-stand')
+  })
+
   it('shows nothing anywhere else, before 10, after it is found or without the Christmas theme', () => {
-    expect(render(hiding, true, <NisseSpot spot="email" />)).toBe('')
-    expect(render({ status: 'waiting', date: '2026-12-16', startsAt: 0 }, true, <NisseSpot spot="meals" />)).toBe('')
-    expect(render({ status: 'found', date: '2026-12-16', finder: { name: 'Lasse', email: 'l@x.dk', at: '2026-12-16T09:42:00.000Z' } }, true, <NisseSpot spot="meals" />)).toBe('')
-    expect(render(hiding, false, <NisseSpot spot="meals" />)).toBe('')
+    expect(render(hiding, true, <NisseSpot spot="email" pose="stand" />)).toBe('')
+    expect(render({ status: 'waiting', date: '2026-12-16', startsAt: 0 }, true, <NisseSpot spot="meals" pose="stand" />)).toBe('')
+    expect(render({ status: 'found', date: '2026-12-16', finder: { name: 'Lasse', email: 'l@x.dk', at: '2026-12-16T09:42:00.000Z' } }, true, <NisseSpot spot="meals" pose="stand" />)).toBe('')
+    expect(render(hiding, false, <NisseSpot spot="meals" pose="stand" />)).toBe('')
   })
 })
 
@@ -53,6 +59,14 @@ describe('nisseLabels', () => {
       const labels = nisseLabels(language)
       const texts = [...keys.map(key => labels[key]), labels.taken('A', '10:00'), labels.foundLine('A', '10:00'), labels.foundToast('A', '10:00'), labels.greetingBody('Hub')]
       for (const text of texts) expect(text).not.toMatch(places)
+    }
+  })
+
+  it('reads like a person wrote it: no dashes in what people see', () => {
+    for (const language of ['da', 'en', 'fi', 'sv']) {
+      const labels = nisseLabels(language)
+      const texts = [...keys.map(key => labels[key]), labels.taken('A', '10:00'), labels.foundLine('A', '10:00'), labels.foundToast('A', '10:00'), labels.greetingBody('Hub')]
+      for (const text of texts) expect(text, text).not.toMatch(/[–—]/)
     }
   })
 })

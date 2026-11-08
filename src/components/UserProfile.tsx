@@ -183,7 +183,7 @@ export function UserProfile({ userEmail, displayName, onLogout, onAdminClick, sh
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56">
-          <DropdownMenuLabel className="flex items-center justify-between">{t.profile.menuMyAccount}<NisseSpot spot="profile-menu" /></DropdownMenuLabel>
+          <DropdownMenuLabel className="flex items-center justify-between">{t.profile.menuMyAccount}<NisseSpot spot="profile-menu" pose="stand" /></DropdownMenuLabel>
           <DropdownMenuSeparator />
           <DropdownMenuItem className="text-muted-foreground text-sm">
             {userEmail}

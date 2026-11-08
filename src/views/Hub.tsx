@@ -921,7 +921,7 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
               <FirstAidKit size={24} weight="duotone" />
               {t.shifts.sickLeave}
             </Button>
-            <NisseSpot spot="front-sick" className="absolute -bottom-3 -left-2" />
+            <NisseSpot spot="front-sick" pose="hang" className="absolute top-full -mt-[3px] left-4" />
           </motion.div>
           <motion.div
             initial={{ opacity: 0, x: 20 }}
@@ -1020,7 +1020,7 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
             <img src={nexiLogoWhite} alt="Nexi" className="h-5 w-auto translate-y-[2px] hidden dark:block" />
             <span className="relative inline-flex self-center">
               <HubMark size={24} decorative />
-              <NisseSpot spot="front-logo" className="absolute -bottom-2.5 -right-3" />
+              <NisseSpot spot="front-logo" pose="hang" className="absolute top-[21px] left-[4px]" />
             </span>
             <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground">{teamName}</h1>
             {activeHub && !activeHub.home && <Badge variant="outline" className="self-center">{hubLabels.managerHere}</Badge>}
@@ -1037,11 +1037,11 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
         {christmas.active && christmas.season && (
           <p className="-mt-3 mb-6 text-sm text-muted-foreground">
             {christmasLabels(language).greeting(new Date().getHours())}
-            {currentUserName && !currentUserName.includes('@') ? `, ${currentUserName.split(' ')[0]}` : ''} – {seasonLine(christmas.season, language)}
+            {currentUserName && !currentUserName.includes('@') ? `, ${currentUserName.split(' ')[0]}` : ''}. {seasonLine(christmas.season, language)}
             {nisse.state.status === 'found' && (
               <span className="block font-medium text-foreground/80">🎅 {nisseLabels(language).foundLine(nisse.state.finder.name, danishTime(nisse.state.finder.at))}</span>
             )}
-            <NisseSpot spot="front-greeting" className="ml-2 align-middle" />
+            <NisseSpot spot="front-greeting" pose="stand" className="ml-2 align-middle" />
           </p>
         )}
 
@@ -1049,7 +1049,7 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
             af siden er papir og streger, saa det her er det, blikket lander paa. */}
         <div className="relative mb-8">
         {christmas.active && <SnowCap seed={99} />}
-        <NisseSpot spot="front-board" className="absolute -bottom-3 right-[30%]" />
+        <NisseSpot spot="front-board" pose="peek" className="absolute -top-[16px] right-[30%]" />
         <div className={cn('overflow-hidden rounded-lg bg-primary text-primary-foreground', christmas.active && 'xmas-banner')}>
           <div className="flex flex-wrap items-end justify-between gap-6 px-6 py-6 sm:px-8 sm:py-7">
             <div>
@@ -1096,11 +1096,13 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
           className="mb-10"
         >
           <div className="flex justify-end items-end gap-2 mb-4">
-            <NisseSpot spot="front-customize" className="mb-0.5" />
-            <Button variant="outline" onClick={() => setShowDashboardEditor(true)} className="gap-2">
-              <Gear size={18} weight="duotone" />
-              {t.hub.dashboard.customize}
-            </Button>
+            <div className="relative">
+              <Button variant="outline" onClick={() => setShowDashboardEditor(true)} className="gap-2">
+                <Gear size={18} weight="duotone" />
+                {t.hub.dashboard.customize}
+              </Button>
+              <NisseSpot spot="front-customize" pose="peek" className="absolute -top-[16px] right-4" />
+            </div>
           </div>
           {dashboardWidget('myWeek').visible && <MyWeekCard userEmail={userEmail} size={dashboardWidget('myWeek').size} className={dashboardSizeClass('myWeek')} />}
 
@@ -1554,7 +1556,7 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
                 >
                   {/* Something hangs on about two in five cards, never where a badge sits in the corner. */}
                   {christmas.active && <SnowCap seed={index + 1} ornament={hasBadge ? null : cardOrnament(index * 13 + 5)} />}
-                  {module.id === 'calendar' && <NisseSpot spot="front-tile" className="absolute bottom-2 right-3" />}
+                  {module.id === 'calendar' && <NisseSpot spot="front-tile" pose="peek" className="absolute -top-[16px] right-8" />}
                   <Card
                     snow={false}
                     className="module-tile relative overflow-hidden py-0 transition-colors duration-200 group h-full flex flex-col cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
@@ -1637,7 +1639,7 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
         </motion.div>
         {/* Only seen by scrolling all the way down. */}
         <div className="mt-16 flex justify-end pr-6 empty:hidden">
-          <NisseSpot spot="front-bottom" />
+          <NisseSpot spot="front-bottom" pose="stand" />
         </div>
       </div>
 

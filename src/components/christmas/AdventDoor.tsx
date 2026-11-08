@@ -30,7 +30,7 @@ export function AdventDoor({ day, language }: { day: number; language: string })
         </span>
       </button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-3">
               <span className="xmas-hatch is-open" aria-hidden="true">{day}</span>

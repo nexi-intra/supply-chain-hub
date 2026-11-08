@@ -226,7 +226,7 @@ export function TeamOverview({ onNavigateBack, onLogout }: TeamOverviewProps) {
           <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground">
             {t.teamOverview.title}
           </h1>
-          <NisseSpot spot="team" className="absolute right-1 top-1" />
+          <NisseSpot spot="team" pose="peek" className="absolute -bottom-[3px] right-[8%]" />
           <Input
             type="search"
             value={searchQuery}

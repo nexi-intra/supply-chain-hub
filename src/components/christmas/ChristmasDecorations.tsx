@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { FLAG_OPTIONS, flagString, garland, snowRidgePath, stringOrnaments, type ChristmasMode } from '@/lib/christmas'
+import { FLAG_OPTIONS, flagString, garland, snowRidgePath, stringOrnaments, wireY, type ChristmasMode } from '@/lib/christmas'
 import { HangingOrnament } from './HangingOrnament'
 import { NisseSpot } from './NisseSpot'
 import { useChristmas } from '@/contexts/ChristmasContext'
@@ -217,9 +217,16 @@ export function ChristmasDecorations({ mode }: { mode: ChristmasMode }) {
       {full && <Snowdrift />}
       {full && <Snowfall />}
       {/* Nisse hiding places in the decorations (front page only). The nisse button alone takes clicks. */}
-      {full && <NisseSpot spot="front-drift" className="absolute bottom-[14px] left-[22%]" />}
+      {full && <NisseSpot spot="front-drift" pose="stand" className="absolute bottom-[14px] left-[22%]" />}
     </div>
   )
+}
+
+/** The kravlenisse hangs by his mittens from the wire itself, between two bulbs, a bit left of the middle. */
+function GarlandNisse() {
+  const width = useWindowWidth()
+  const x = Math.floor((width * 0.46) / GARLAND.period) * GARLAND.period + GARLAND.period * 0.4
+  return <NisseSpot spot="front-garland" pose="hang" className="fixed z-[25]" style={{ left: x - 7, top: wireY(x, GARLAND) - 2 }} />
 }
 
 export function ChristmasLayer() {
@@ -229,7 +236,7 @@ export function ChristmasLayer() {
     <>
       <ChristmasDecorations mode={christmas.mode} />
       {/* On the light string, but above the front page's top bar (z-20), whose empty width would otherwise catch the click. */}
-      {christmas.mode === 'full' && <NisseSpot spot="front-garland" className="fixed top-[34px] left-[46%] z-[25]" />}
+      {christmas.mode === 'full' && <GarlandNisse />}
     </>
   )
 }

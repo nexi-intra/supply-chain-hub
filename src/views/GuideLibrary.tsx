@@ -1082,7 +1082,7 @@ function GuideLibraryContent({ onNavigateBack, onLogout, userEmail }: Omit<Guide
                 <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground">
                   {t.guideLibrary.title}
                 </h1>
-                {kind === 'knowledge' ? <NisseSpot spot="knowledge" /> : <NisseSpot spot="guides" className="order-last" />}
+                {kind === 'knowledge' ? <NisseSpot spot="knowledge" pose="stand" /> : <NisseSpot spot="guides" pose="stand" className="order-last" />}
                 <span className="text-sm text-muted-foreground">
                   {guides?.length || 0} {(guides?.length || 0) === 1 ? t.guideLibrary.guideSingular : t.guideLibrary.guidePlural}
                 </span>
