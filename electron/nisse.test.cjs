@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { SPOTS, createNisseService, danishParts, nisseDays, spotFor, startsAt } = require('./nisse.cjs')
+const { SPOTS, createDriveClock, createNisseService, danishParts, nisseDays, spotFor, startsAt } = require('./nisse.cjs')
 
 test('the nisse hides on weekdays from 1 to 24 December', () => {
   const days = nisseDays(2026)
@@ -173,4 +173,38 @@ test('the creator may play, sees every find and has a preview that never counts'
   await december.service.claim(actor('ole@example.test', TEAMS[0]), { date: '2026-12-01', spot: spotB('2026-12-01') })
   assert.deepEqual((await december.service.finds(actor('jacob@example.test', TEAMS[1], 'creator'))).map(find => find.name), ['Jacob Remmer', 'Ole Dam'])
   assert.deepEqual(await december.service.finds(actor('lasse@example.test')), [])
+})
+test('a burst of finds from other hubs at 10:00 never costs the rightful first finder the win', async () => {
+  const { state, service } = harness()
+  const date = '2026-12-01'
+  let others = 0
+  // Five other hubs write between this claim's read and its write, one after another.
+  const otherHubWrites = async () => {
+    state.value = { finds: [...(state.value?.finds || []), { teamId: `other-${others}`, teamName: 'x', date, email: 'o@x.dk', name: 'O', at: new Date(state.drive).toISOString() }] }
+    if (++others < 5) state.beforeWrite = otherHubWrites
+  }
+  state.beforeWrite = otherHubWrites
+  const result = await service.claim(actor('lasse@example.test'), { date, spot: spotA(date) })
+  assert.equal(result.result, 'won')
+  assert.equal(state.value.finds.filter(find => find.teamId === 'a-team').length, 1)
+})
+
+test('the drive clock never blocks: it opens the file in place and only creates it when missing', async () => {
+  const calls = []
+  const handle = { write: async () => {}, close: async () => {} }
+  const fsp = {
+    open: async (file, flags) => {
+      calls.push(flags)
+      if (flags === 'r+' && calls.length === 1) throw Object.assign(new Error('missing'), { code: 'ENOENT' })
+      return handle
+    },
+    stat: async () => ({ mtimeMs: 1234 }),
+  }
+  const clock = createDriveClock({ fsp, file: () => 'M:/_shared/.nisse-clock', fallback: () => 1 })
+  assert.equal(await clock(), 1234)
+  assert.deepEqual(calls, ['r+', 'w'])
+  assert.equal(await clock(), 1234)
+  assert.deepEqual(calls, ['r+', 'w', 'r+'])
+  const broken = createDriveClock({ fsp: { open: async () => { throw new Error('offline') } }, file: () => 'x', fallback: () => 7 })
+  assert.equal(await broken(), 7)
 })

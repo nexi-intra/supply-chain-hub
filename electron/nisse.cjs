@@ -81,7 +81,7 @@ function spotFor(date, teamIndex) {
 
 // ---- The judge ---------------------------------------------------------------------------------------------------
 
-const RETRIES = 3
+const RETRIES = 12
 
 function fail(code, message) {
   const error = new Error(`${code}: ${message}`)
@@ -161,13 +161,14 @@ function createNisseService({ getStore, getDirectory, listTeams, now = Date.now,
     const teamId = actor.activeTeam.teamId
     const store = await getStore()
     const key = findsKey(date.slice(0, 4))
-    let name = null
+    // Read the name before the loop: the window between read and write must stay short at 10:00, when several hubs
+    // write the same key. A conflict always means someone else wrote, so keep trying until this hub's find exists.
+    const name = await nameOf(email)
     for (let attempt = 0; ; attempt++) {
       const actual = await store.getAsync(key, { skipCache: true })
       const data = readFinds(actual)
       const existing = data.finds.find(find => find.teamId === teamId && find.date === date)
       if (existing) return { result: 'taken', finder: publicFinder(existing) }
-      name ??= await nameOf(email)
       const at = new Date(driveMs).toISOString()
       const next = { finds: [...data.finds, { teamId, teamName: String(actor.activeTeam.name || teamId), date, email, name, at }] }
       try {
@@ -194,4 +195,28 @@ function createNisseService({ getStore, getDirectory, listTeams, now = Date.now,
   return { today, claim, finds }
 }
 
-module.exports = { SPOTS, createNisseService, danishParts, nisseDays, spotFor, startsAt }
+/**
+ * M:'s clock, not the PC's: rewriting one byte in place (cheap on M:) stamps the file with the drive's time. Only
+ * asynchronous calls – a hanging drive must never freeze the app. Any failure falls back to this PC's clock.
+ */
+function createDriveClock({ fsp, file, fallback = Date.now }) {
+  return async function driveNow() {
+    try {
+      const path = file()
+      let handle
+      try {
+        handle = await fsp.open(path, 'r+')
+      } catch (error) {
+        if (error?.code !== 'ENOENT') throw error
+        handle = await fsp.open(path, 'w')
+      }
+      try { await handle.write('n', 0) } finally { await handle.close() }
+      return (await fsp.stat(path)).mtimeMs
+    } catch (error) {
+      console.warn('TCD Hub: nisse could not read the shared drive clock, using this PC', error?.message || error)
+      return fallback()
+    }
+  }
+}
+
+module.exports = { SPOTS, createDriveClock, createNisseService, danishParts, nisseDays, spotFor, startsAt }

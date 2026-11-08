@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { shouldAnnounceFound, shouldGreet } from './nisseGreeting'
+import { sameNisseState, shouldAnnounceFound, shouldGreet } from './nisseGreeting'
 import type { NisseToday } from './nisse'
 
 const hiding: NisseToday = { status: 'hiding', date: '2026-12-16', spot: 'meals' }
@@ -37,5 +37,14 @@ describe('shouldAnnounceFound – everyone learns the nisse was found', () => {
     expect(shouldAnnounceFound({ ...base, announcedDate: '2026-12-16' })).toBe(false)
     expect(shouldAnnounceFound({ ...base, userEmail: 'LASSE@x.dk' })).toBe(false)
     expect(shouldAnnounceFound({ ...base, state: hiding })).toBe(false)
+  })
+})
+
+describe('sameNisseState – the front page is not redrawn when nothing changed', () => {
+  it('treats equal answers from main as the same', () => {
+    expect(sameNisseState({ status: 'off' }, { status: 'off' })).toBe(true)
+    expect(sameNisseState(hiding, { ...hiding })).toBe(true)
+    expect(sameNisseState(hiding, found)).toBe(false)
+    expect(sameNisseState(found, { ...found, finder: { ...found.finder, name: 'Mia' } })).toBe(false)
   })
 })

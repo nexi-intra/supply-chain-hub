@@ -556,7 +556,7 @@ function App() {
         <Toaster position="top-center" richColors />
         <HubNotificationsProvider key={hubNonce} userEmail={userSession.email}>
         <NisseProvider>
-        <NisseGreeting view={currentView} hubName={hubChoice.hubs.find(hub => hub.active)?.name || 'Supply Chain Hub'} userEmail={userSession.email} />
+        <NisseGreeting view={currentView} userEmail={userSession.email} />
         <HubSwitchController onSwitch={switchHub} onOpenPicker={openHubPicker} />
         <AnimatedBackground />
         <ChristmasLayer />

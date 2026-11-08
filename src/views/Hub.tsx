@@ -1635,7 +1635,7 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
           })}
         </motion.div>
         {/* Only seen by scrolling all the way down. */}
-        <div className="mt-16 flex justify-end pr-6">
+        <div className="mt-16 flex justify-end pr-6 empty:hidden">
           <NisseSpot spot="front-bottom" />
         </div>
       </div>

@@ -5,6 +5,7 @@ import { useLanguage } from '@/contexts/LanguageContext'
 import { CHRISTMAS_PREVIEW_KEY } from '@/lib/christmas'
 import { danishTime, type NisseClaimResult, type NisseToday } from '@/lib/nisse'
 import { nisseLabels } from '@/lib/nisseLabels'
+import { sameNisseState } from '@/lib/nisseGreeting'
 
 interface NisseContextValue {
   state: NisseToday
@@ -34,7 +35,7 @@ export function NisseProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(() => {
     const api = typeof window === 'undefined' ? undefined : window.electronNisse
     if (!api) return
-    api.today(preview()).then(setState, () => {})
+    api.today(preview()).then(next => setState(current => (sameNisseState(current, next) ? current : next)), () => {})
   }, [])
 
   useEffect(() => {

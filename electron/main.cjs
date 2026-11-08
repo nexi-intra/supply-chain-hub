@@ -67,7 +67,7 @@ const { createLinksService } = require('./links.cjs')
 const { createImprovementsDirectory } = require('./improvementsDirectory.cjs')
 const { createMultiplayerService } = require('./multiplayer.cjs')
 const { createHighFivesService } = require('./highFives.cjs')
-const { createNisseService } = require('./nisse.cjs')
+const { createDriveClock, createNisseService } = require('./nisse.cjs')
 const { applySpellcheckLanguage } = require('./spellcheck.cjs')
 const { createDesktopNotifier, createDesktopNotificationHandlers } = require('./desktopNotifications.cjs')
 const { createWordChecker } = require('./games/wordPuzzle/wordChecker.cjs')
@@ -1056,18 +1056,7 @@ app.whenReady().then(() => {
     },
     getDirectory: improvementDirectory,
     listTeams: () => registry.listTeams(platformRoot),
-    // M:'s clock, not the PC's: rewriting a byte in place (cheap on M:) stamps the file with the server's time.
-    driveNow: async () => {
-      const file = path.join(nisseDir(), '.nisse-clock')
-      try {
-        const handle = await fsp.open(file, fs.existsSync(file) ? 'r+' : 'w')
-        try { await handle.write('n', 0) } finally { await handle.close() }
-        return (await fsp.stat(file)).mtimeMs
-      } catch (error) {
-        console.warn('TCD Hub: nisse could not read the shared drive clock, using this PC', error)
-        return Date.now()
-      }
-    },
+    driveNow: createDriveClock({ fsp, file: () => path.join(nisseDir(), '.nisse-clock') }),
     onChanged: () => broadcast('nisse:changed'),
   })
   ipcMain.handle('nisse:today', async (event, preview) => nisse.today(await authService.currentAsync(event.sender.id), preview))

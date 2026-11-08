@@ -36,6 +36,15 @@ describe('the Christmas theme is wired in', () => {
     expect(read('views', 'Hub.tsx')).toMatch(/<Card\s+snow=\{false\}\s+className="module-tile/)
   })
 
+  it('the nisse greeting names the hub the person is in now, read live – not the list from login', () => {
+    expect(read('components', 'christmas', 'NisseGreeting.tsx')).toContain('useMyHubs()')
+    expect(read('App.tsx')).not.toContain('hubName=')
+  })
+
+  it('an empty hiding place adds no space to the page', () => {
+    expect(read('views', 'Hub.tsx')).toMatch(/className="[^"]*empty:hidden[^"]*">\s*<NisseSpot spot="front-bottom"/)
+  })
+
   it('stays a surprise: nothing in the changelog users read in "What is new"', () => {
     expect(read('lib', 'changelog.ts')).not.toMatch(/\bjul|christmas|snow|nisse|advent/i)
   })

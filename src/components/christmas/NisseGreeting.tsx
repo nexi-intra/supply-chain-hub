@@ -4,6 +4,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Button } from '@/components/ui/button'
 import { useChristmas } from '@/contexts/ChristmasContext'
 import { useLanguage } from '@/contexts/LanguageContext'
+import { useMyHubs } from '@/hooks/useMyHubs'
 import { danishTime } from '@/lib/nisse'
 import { FOUND_ANNOUNCED_KEY, GREETING_SHOWN_KEY, shouldAnnounceFound, shouldGreet } from '@/lib/nisseGreeting'
 import { nisseLabels } from '@/lib/nisseLabels'
@@ -17,10 +18,13 @@ function remember(key: string, value: string) {
 }
 
 /** The daily greeting at 10 and the "found" message for everyone in the hub. */
-export function NisseGreeting({ view, hubName, userEmail }: { view: string; hubName: string; userEmail: string }) {
+export function NisseGreeting({ view, userEmail }: { view: string; userEmail: string }) {
   const christmas = useChristmas()
   const { state } = useNisse()
   const { language } = useLanguage()
+  // Read live: the hub list from login still marks the home hub active after a switch.
+  const { hubs } = useMyHubs()
+  const hubName = hubs.find(hub => hub.active)?.name || 'Supply Chain Hub'
   const labels = nisseLabels(language)
   const [open, setOpen] = useState(false)
 

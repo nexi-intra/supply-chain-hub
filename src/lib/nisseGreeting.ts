@@ -19,3 +19,8 @@ export function shouldAnnounceFound({ state, view, active, announcedDate, userEm
   if (announcedDate === state.date) return false
   return state.finder.email.trim().toLowerCase() !== userEmail.trim().toLowerCase()
 }
+
+/** Main answers with a fresh object every time; keeping the old one when nothing changed spares a redraw of the Hub. */
+export function sameNisseState(a: NisseToday, b: NisseToday): boolean {
+  return JSON.stringify(a) === JSON.stringify(b)
+}
