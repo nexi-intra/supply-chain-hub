@@ -1,6 +1,6 @@
 # Nisselegen Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Hver hverdag i december gemmer en nisse sig et nyt sted i hver hub fra kl. 10 dansk tid; den første der klikker vinder en chokolade, og Jacob (skaberen) får besked.
 
@@ -49,7 +49,7 @@
   - `spotFor(date: string, teamIndex: number) → string | null` – null hvis datoen ikke er en nissedag.
   - `startsAt(date: string) → number` – epoch ms for kl. 10:00 dansk tid den dag.
 
-- [ ] **Step 1: Write the failing tests** (`node:test`)
+- [x] **Step 1: Write the failing tests** (`node:test`)
   - `nisseDays(2026)` har længde 18, starter `'2026-12-01'`, slutter `'2026-12-24'`, indeholder ikke `'2026-12-05'`/`'2026-12-06'`.
   - `danishParts(Date.parse('2026-12-01T09:00:00Z')).hour === 10` (vintertid UTC+1) og `danishParts(Date.parse('2026-07-01T08:00:00Z')).hour === 10` (sommertid).
   - `startsAt('2026-12-01') === Date.parse('2026-12-01T09:00:00Z')`.
@@ -57,10 +57,10 @@
   - For hver dag: `spotFor(dag, k)` er forskellig for k = 0..7.
   - `spotFor('2026-12-05', 0) === null`, `spotFor('2026-11-30', 0) === null`.
   - Rækkefølgen er ikke den samme to år i træk: `nisseDays(2026).map(d => spotFor(d,0))` ≠ tilsvarende for 2027.
-- [ ] **Step 2: Run** `node --test electron/nisse.test.cjs` – Expected: FAIL (modulet findes ikke).
-- [ ] **Step 3: Implement.** Bånd: `band = Math.floor(i * 3 / n)`, `j = i - første dag i båndet`; `perm` = fast blanding af 0..7 pr. (år, bånd) med en seedet PRNG (fx mulberry32 som i `src/lib/christmas.ts`); sted = `SPOTS[band][(perm[j] + teamIndex) % 8]`.
-- [ ] **Step 4: Run** – Expected: PASS.
-- [ ] **Step 5: Commit** `git commit -m "Nisseleg: tidsplan og steder"`
+- [x] **Step 2: Run** `node --test electron/nisse.test.cjs` – Expected: FAIL (modulet findes ikke).
+- [x] **Step 3: Implement.** Bånd: `band = Math.floor(i * 3 / n)`, `j = i - første dag i båndet`; `perm` = fast blanding af 0..7 pr. (år, bånd) med en seedet PRNG (fx mulberry32 som i `src/lib/christmas.ts`); sted = `SPOTS[band][(perm[j] + teamIndex) % 8]`.
+- [x] **Step 4: Run** – Expected: PASS.
+- [x] **Step 5: Commit** `git commit -m "Nisseleg: tidsplan og steder"`
 
 ### Task 2: Dommeren (tjenesten i main)
 
@@ -80,7 +80,7 @@
   - `claim(actor, { date, spot, preview? })` → `{ result: 'won', at } | { result: 'taken', finder: { name, at } } | { result: 'preview' }`; fejlkoder `NISSE_NOT_TODAY`, `NISSE_TOO_EARLY`, `NISSE_WRONG_SPOT`, `NISSE_NO_HUB`, `NISSE_CONFLICT`.
   - `finds(actor)` → årets fund (alle hubs) hvis `actor.homeRole === 'creator'`, ellers `[]`.
 
-- [ ] **Step 1: Write the failing tests** (falsk lager med `getAsync`/`updateAsync` der kaster `{ code: 'KV_CONFLICT' }` ved forkert `expected`; falsk `now`/`driveNow`):
+- [x] **Step 1: Write the failing tests** (falsk lager med `getAsync`/`updateAsync` der kaster `{ code: 'KV_CONFLICT' }` ved forkert `expected`; falsk `now`/`driveNow`):
   - `today` 30.11 → `{ status: 'off' }` **og** `getStore` er aldrig kaldt (intet på M: i november).
   - `today` 1.12 kl. 09:59 dansk → `waiting` med `startsAt`; kl. 10:00 → `hiding` med `spot === spotFor(date, k)`; lørdag → `off`.
   - `claim` med rigtigt sted kl. 10:01 (driveNow) → `won`; lageret har ét fund med navn fra directory.
@@ -92,10 +92,10 @@
   - Skaber med `preview: '2026-12-16'` i november → `today` = `hiding`; `claim` → `{ result: 'preview' }`, intet skrevet. Ikke-skaber med `preview` → preview ignoreres (`off`).
   - `finds` for skaber → alle fund; for andre → `[]`.
   - `onChanged` kaldes efter `won`.
-- [ ] **Step 2: Run** `node --test electron/nisse.test.cjs` – Expected: FAIL.
-- [ ] **Step 3: Implement** efter `highFives.cjs`-mønstret (compareAndSet-løkke med 3 forsøg, directory med TTL). Dato i `claim` tjekkes mod `danishParts(await driveNow()).date`.
-- [ ] **Step 4: Run** – Expected: PASS.
-- [ ] **Step 5: Commit** `git commit -m "Nisseleg: dommeren"`
+- [x] **Step 2: Run** `node --test electron/nisse.test.cjs` – Expected: FAIL.
+- [x] **Step 3: Implement** efter `highFives.cjs`-mønstret (compareAndSet-løkke med 3 forsøg, directory med TTL). Dato i `claim` tjekkes mod `danishParts(await driveNow()).date`.
+- [x] **Step 4: Run** – Expected: PASS.
+- [x] **Step 5: Commit** `git commit -m "Nisseleg: dommeren"`
 
 ### Task 3: Kobling i main og preload
 
@@ -110,11 +110,11 @@
 - `driveNow` i main: skriv 1 byte med `r+` i `_shared/.nisse-clock` (opret én gang hvis den mangler), `fs.promises.stat` → `mtimeMs`; ved fejl brug `Date.now()` og log.
 - Handlere bruger `authService.currentAsync(event.sender.id)` (ikke `sharedActor` – vi skal bruge `activeTeam` og `homeRole`). Lager: `createSharedStore(path.join(platformRoot, '_shared'))` som high-fives, med samme "utilgængelig"-tjek (`NISSE_UNAVAILABLE`).
 
-- [ ] **Step 1: Write the failing test**: `main.cjs` indeholder `ipcMain.handle('nisse:today'`, `'nisse:claim'`, `'nisse:finds'`, `startsWith('nisse-finds-')` og `'ipc:nisse:'`; `preload.cjs` eksponerer `electronNisse` med `nisse:changed`.
-- [ ] **Step 2: Run** `node --test electron/nisseWiring.test.cjs` – Expected: FAIL.
-- [ ] **Step 3: Implement** koblingen.
-- [ ] **Step 4: Run** testen + `npx.cmd tsc --noEmit -p .` – Expected: PASS, 0 fejl.
-- [ ] **Step 5: Commit** `git commit -m "Nisseleg: kobling i main og preload"`
+- [x] **Step 1: Write the failing test**: `main.cjs` indeholder `ipcMain.handle('nisse:today'`, `'nisse:claim'`, `'nisse:finds'`, `startsWith('nisse-finds-')` og `'ipc:nisse:'`; `preload.cjs` eksponerer `electronNisse` med `nisse:changed`.
+- [x] **Step 2: Run** `node --test electron/nisseWiring.test.cjs` – Expected: FAIL.
+- [x] **Step 3: Implement** koblingen.
+- [x] **Step 4: Run** testen + `npx.cmd tsc --noEmit -p .` – Expected: PASS, 0 fejl.
+- [x] **Step 5: Commit** `git commit -m "Nisseleg: kobling i main og preload"`
 
 ### Task 4: Nissen i appen (tilstand, knap, resultat)
 
@@ -130,15 +130,15 @@
   - `useNisse() → { state: NisseToday, claim(spot) }`.
   - `<NisseSpot spot={id} className?>` – renderer kun når `christmas.active && christmas.mode !== 'off' && state.status === 'hiding' && state.spot === spot`. En `<button type="button" aria-label={labels.nisse}>` med en 22 px stille nisse (tegnet SVG, samme stil som juletemaets nisse); `className` bruges til at placere den (absolut) på stedet.
   - `nisseLabels(language)` med `nisse, searching, wonTitle ('Du fandt dagens nisse! 🍫'), wonBody ('Din chokolade er på vej.'), taken(name, time) ('Nissen er allerede fundet i dag af {name} kl. {time}.'), preview ('Forhåndsvisning – dette fund tæller ikke.'), failed ('Nissen kunne ikke registreres lige nu. Prøv igen.'), foundLine(name, time) ('Dagens nisse blev fundet af {name} kl. {time}'), greetingTitle, greetingBody(hub), greetingOn ('Slå juletema til og vær med'), greetingGo ('God jagt!')` i da/en/fi/sv. Tider vises `HH:MM` dansk tid.
-- [ ] **Step 1: Write the failing tests** (`renderToStaticMarkup` med `ChristmasContext.Provider` + en test-provider for nisse-tilstanden):
+- [x] **Step 1: Write the failing tests** (`renderToStaticMarkup` med `ChristmasContext.Provider` + en test-provider for nisse-tilstanden):
   - `NisseSpot spot="meals"` viser en knap med `aria-label="Nisse"` når tilstanden er `hiding/meals` og juletemaet aktivt.
   - Viser intet ved `spot="email"`, ved `found`, ved `waiting`, eller når `active=false`.
   - `nisseLabels('da').taken('Lasse', '10:42')` === `'Nissen er allerede fundet i dag af Lasse kl. 10:42.'`; alle fire sprog har alle nøgler.
   - Ingen label nævner et sted (ingen stikord): ingen af teksterne indeholder ord fra `SPOTS`-navnene (Madplan, Kalender, …).
-- [ ] **Step 2: Run** `npx.cmd vitest run src/components/christmas/nisse.test.tsx` – Expected: FAIL.
-- [ ] **Step 3: Implement**; klik → "Leder…" → dialog med resultatet; fejl → `failed`, nissen bliver.
-- [ ] **Step 4: Run** testen + tsc – Expected: PASS.
-- [ ] **Step 5: Commit** `git commit -m "Nisseleg: nissen og resultatet"`
+- [x] **Step 2: Run** `npx.cmd vitest run src/components/christmas/nisse.test.tsx` – Expected: FAIL.
+- [x] **Step 3: Implement**; klik → "Leder…" → dialog med resultatet; fejl → `failed`, nissen bliver.
+- [x] **Step 4: Run** testen + tsc – Expected: PASS.
+- [x] **Step 5: Commit** `git commit -m "Nisseleg: nissen og resultatet"`
 
 ### Task 5: De 24 gemmesteder
 
@@ -156,11 +156,11 @@
 - Consumes: `NisseSpot` (Task 4), `SPOTS` (Task 1 – testen læser listen fra `electron/nisse.cjs` via `createRequire`).
 - Regler for placering: nissen kigger frem bag noget (halvt skjult af en kant/sne/ikon), dækker aldrig tekst eller en knap man skal bruge, og findes også i en tom hub uden data. Bytte et sted ud kræver ændring af `SPOTS` og testen.
 
-- [ ] **Step 1: Write the failing test**: for hvert af de 24 id'er findes præcis én forekomst af `spot="<id>"` i `src/**/*.tsx`; ingen ukendte id'er.
-- [ ] **Step 2: Run** `npx.cmd vitest run src/components/christmas/nisseSpots.test.ts` – Expected: FAIL.
-- [ ] **Step 3: Implement** placeringerne.
-- [ ] **Step 4: Run** testen + tsc – Expected: PASS. **Visuelt tjek** i dev-serveren med forhåndsvisning (testbruger i browserens egen lagring, som i juletemaet): gå alle 24 steder igennem ved midlertidigt at tvinge `state.spot` i NisseProvider; skærmbillede af hvert, i lyst og mørkt tema og en tom hub. Ret steder, der er for lette/svære eller dækker noget.
-- [ ] **Step 5: Commit** `git commit -m "Nisseleg: de 24 gemmesteder"`
+- [x] **Step 1: Write the failing test**: for hvert af de 24 id'er findes præcis én forekomst af `spot="<id>"` i `src/**/*.tsx`; ingen ukendte id'er.
+- [x] **Step 2: Run** `npx.cmd vitest run src/components/christmas/nisseSpots.test.ts` – Expected: FAIL.
+- [x] **Step 3: Implement** placeringerne.
+- [x] **Step 4: Run** testen + tsc – Expected: PASS. **Visuelt tjek** i dev-serveren med forhåndsvisning (testbruger i browserens egen lagring, som i juletemaet): gå alle 24 steder igennem ved midlertidigt at tvinge `state.spot` i NisseProvider; skærmbillede af hvert, i lyst og mørkt tema og en tom hub. Ret steder, der er for lette/svære eller dækker noget.
+- [x] **Step 5: Commit** `git commit -m "Nisseleg: de 24 gemmesteder"`
 
 ### Task 6: Julehilsenen kl. 10
 
@@ -172,11 +172,11 @@
 **Interfaces:**
 - Produces: `shouldGreet({ state, view, seasonOn, shownDate }: { state: NisseToday; view: string; seasonOn: boolean; shownDate: string | null }) → boolean` – sand når `seasonOn`, `state.status` er `hiding` eller `found`, `view === 'hub'` og `shownDate !== state.date`. Vist dato huskes i `localStorage['tcd-hub:nisse-greeting']`.
 - Dialog: `greetingTitle` + `greetingBody(hubName)`; knap `greetingOn` (kalder `setEnabled(true)`) når `!christmas.enabled`, ellers `greetingGo`. Vises også når juletemaet er slået fra (bruger `christmas.season`, ikke `active`).
-- [ ] **Step 1: Write the failing tests**: sand på forsiden kl. 10:01 første gang; falsk i `games`, `warehouse`, `calendar`; falsk når `waiting`/`off`; falsk når `shownDate` = i dag; sand igen næste nissedag.
-- [ ] **Step 2: Run** `npx.cmd vitest run src/lib/nisseGreeting.test.ts` – Expected: FAIL.
-- [ ] **Step 3: Implement**.
-- [ ] **Step 4: Run** – Expected: PASS.
-- [ ] **Step 5: Commit** `git commit -m "Nisseleg: julehilsen kl. 10"`
+- [x] **Step 1: Write the failing tests**: sand på forsiden kl. 10:01 første gang; falsk i `games`, `warehouse`, `calendar`; falsk når `waiting`/`off`; falsk når `shownDate` = i dag; sand igen næste nissedag.
+- [x] **Step 2: Run** `npx.cmd vitest run src/lib/nisseGreeting.test.ts` – Expected: FAIL.
+- [x] **Step 3: Implement**.
+- [x] **Step 4: Run** – Expected: PASS.
+- [x] **Step 5: Commit** `git commit -m "Nisseleg: julehilsen kl. 10"`
 
 ### Task 6b: Pop-up når nissen er fundet
 
@@ -187,11 +187,11 @@
 **Interfaces:**
 - Produces: `shouldAnnounceFound({ state, view, active, announcedDate, userEmail }) → boolean` – sand når `active`, `state.status === 'found'`, `view !== 'games'`, `announcedDate !== state.date` og `state.finder.email !== userEmail` (vinderen fik dialogen). Huskes i `localStorage['tcd-hub:nisse-found-announced']`. `NisseToday.found.finder` har derfor også `email`.
 - Tekst `nisseLabels(language).foundToast(name, time)` = `'🎅 Nissen er fundet af {name} kl. {time} – du kan stoppe med at lede.'` (da; en/fi/sv tilsvarende).
-- [ ] **Step 1: Write the failing tests**: sand på forsiden og i `warehouse`; falsk i `games`; falsk når `active=false`; falsk når allerede annonceret i dag; falsk for vinderen selv.
-- [ ] **Step 2: Run** `npx.cmd vitest run src/lib/nisseGreeting.test.ts` – Expected: FAIL.
-- [ ] **Step 3: Implement**.
-- [ ] **Step 4: Run** – Expected: PASS.
-- [ ] **Step 5: Commit** `git commit -m "Nisseleg: pop-up naar nissen er fundet"`
+- [x] **Step 1: Write the failing tests**: sand på forsiden og i `warehouse`; falsk i `games`; falsk når `active=false`; falsk når allerede annonceret i dag; falsk for vinderen selv.
+- [x] **Step 2: Run** `npx.cmd vitest run src/lib/nisseGreeting.test.ts` – Expected: FAIL.
+- [x] **Step 3: Implement**.
+- [x] **Step 4: Run** – Expected: PASS.
+- [x] **Step 5: Commit** `git commit -m "Nisseleg: pop-up naar nissen er fundet"`
 ### Task 7: Besked til Jacob
 
 **Files:**
@@ -201,11 +201,11 @@
 **Interfaces:**
 - Consumes: `NisseFind` (Task 3), `finds()` returnerer kun data til skaberen.
 - Item: `id: 'nisse-<teamId>-<date>'`, `title: '🎅 {name} fandt nissen'`, `subtitle: '{teamName} · kl. {HH:MM}'` (da; tilsvarende en/fi/sv), `timestamp: Date.parse(at)`, `target: { view: 'hub' }`. Windows-notifikationen kommer via den eksisterende bro (samme id).
-- [ ] **Step 1: Write the failing test**: `buildHubNotificationItems(base({ language: 'da', nisseFinds: [find] }))` giver ét item med ovenstående id/titel/undertitel; uden `nisseFinds` ingen nisse-items.
-- [ ] **Step 2: Run** `npx.cmd vitest run src/lib/hubNotifications.test.ts` – Expected: FAIL.
-- [ ] **Step 3: Implement**.
-- [ ] **Step 4: Run** – Expected: PASS.
-- [ ] **Step 5: Commit** `git commit -m "Nisseleg: besked til skaberen"`
+- [x] **Step 1: Write the failing test**: `buildHubNotificationItems(base({ language: 'da', nisseFinds: [find] }))` giver ét item med ovenstående id/titel/undertitel; uden `nisseFinds` ingen nisse-items.
+- [x] **Step 2: Run** `npx.cmd vitest run src/lib/hubNotifications.test.ts` – Expected: FAIL.
+- [x] **Step 3: Implement**.
+- [x] **Step 4: Run** – Expected: PASS.
+- [x] **Step 5: Commit** `git commit -m "Nisseleg: besked til skaberen"`
 
 ### Task 8: Lågen viser fakta om jul
 
@@ -215,17 +215,17 @@
 **Interfaces:**
 - Uændret: `doorMessage(day, language)`.
 - Indhold: 24 korte fakta (≤ 220 tegn), mest dansk jul – fx nisser og risengrød, risalamande og mandelgaven, flettede julehjerter (H.C. Andersen), Lucia 13.12, julemærket (1904, Einar Holbøll), kravlenisser, flagranke, dans om juletræet, pebernødder, gløgg, julefrokost, klippe-klistre, julekalender i tv, nissehuen, juleaften d. 24. Hver fakta tjekkes mod en pålidelig kilde (fx Nationalmuseet, lex.dk) før den skrives; kilden noteres i en kommentar ved listen.
-- [ ] **Step 1: Write the failing test**: 24 forskellige fakta på dansk og engelsk; ingen indeholder "nisseleg"/"gemmer"/et modulnavn (ingen stikord); hver ≤ 220 tegn; dag 1 ≠ den gamle tekst "Velkommen til december!…".
-- [ ] **Step 2: Run** `npx.cmd vitest run src/lib/christmas.test.ts` – Expected: FAIL.
-- [ ] **Step 3: Implement** (efter kildetjek).
-- [ ] **Step 4: Run** – Expected: PASS.
-- [ ] **Step 5: Commit** `git commit -m "Saesonpynt: fakta i lagen"`
+- [x] **Step 1: Write the failing test**: 24 forskellige fakta på dansk og engelsk; ingen indeholder "nisseleg"/"gemmer"/et modulnavn (ingen stikord); hver ≤ 220 tegn; dag 1 ≠ den gamle tekst "Velkommen til december!…".
+- [x] **Step 2: Run** `npx.cmd vitest run src/lib/christmas.test.ts` – Expected: FAIL.
+- [x] **Step 3: Implement** (efter kildetjek).
+- [x] **Step 4: Run** – Expected: PASS.
+- [x] **Step 5: Commit** `git commit -m "Saesonpynt: fakta i lagen"`
 
 ### Task 9: Levering
 
-- [ ] **Step 1:** Fuld verifikation: `npx.cmd tsc --noEmit -p .`, `npx.cmd vitest run`, `node --test --test-concurrency=4 electron/*.test.cjs electron/warehouse/*.test.cjs electron/warehouse/core/*.test.cjs electron/warehouse/locations/*.test.cjs` – Expected: 0 fejl.
-- [ ] **Step 2:** Tjek hemmeligholdelse: `src/lib/changelog.ts` uændret; ingen `nisse-finds-`-fil oprettes ved start i november (kør den byggede app med rigtige data, tjek `_shared` før/efter).
-- [ ] **Step 3:** Code review af hele grenen (subagent), ret Critical/Important med TDD.
-- [ ] **Step 4:** Byg `release-local-2` (`--config.electronDist=node_modules/electron/dist`), start appen med forhåndsvisning, find en nisse, og bekræft dialog, "fundet af"-linje og klokke-besked.
+- [x] **Step 1:** Fuld verifikation: `npx.cmd tsc --noEmit -p .`, `npx.cmd vitest run`, `node --test --test-concurrency=4 electron/*.test.cjs electron/warehouse/*.test.cjs electron/warehouse/core/*.test.cjs electron/warehouse/locations/*.test.cjs` – Expected: 0 fejl.
+- [x] **Step 2:** Tjek hemmeligholdelse: `src/lib/changelog.ts` uændret; ingen `nisse-finds-`-fil oprettes ved start i november (kør den byggede app med rigtige data, tjek `_shared` før/efter).
+- [x] **Step 3:** Code review af hele grenen (subagent), ret Critical/Important med TDD.
+- [x] **Step 4:** Byg `release-local-2` (`--config.electronDist=node_modules/electron/dist`), start appen med forhåndsvisning, find en nisse, og bekræft dialog, "fundet af"-linje og klokke-besked.
 
 Start med Task 1.
