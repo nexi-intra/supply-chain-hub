@@ -75,6 +75,15 @@ describe('snowCapPath', () => {
     expect(snowCapPath(1)).toBe(a)
     expect(snowCapPath(2)).not.toBe(a)
   })
+
+  it('keeps icicles thin on a wide board instead of stretching them', () => {
+    const wide = snowCapPath(4, 1200)
+    const tips = [...wide.matchAll(/L(-?[\d.]+) (3\d(?:\.\d)?) L(-?[\d.]+) 28/g)].map(match => +match[3] - +match[1])
+    expect(tips.length).toBeGreaterThanOrEqual(6)
+    for (const width of tips) expect(Math.abs(width)).toBeLessThanOrEqual(8)
+    const xs = [...wide.matchAll(/ (-?[\d.]+) [\d.]+(?= |$)/g)].map(match => +match[1])
+    expect(Math.max(...xs)).toBeLessThanOrEqual(1200)
+  })
 })
 
 describe('the advent calendar doors', () => {

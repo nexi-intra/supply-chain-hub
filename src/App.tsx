@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react'
 import { dismissStartupIntro } from './lib/startupIntro'
 import { HubLoader, hubLoaderLabel } from './components/HubMark'
+import { ChristmasProvider } from './contexts/ChristmasContext'
+import { ChristmasLayer } from './components/christmas/ChristmasDecorations'
+import { christmasMode } from './lib/christmas'
 import { Hub } from '@/views/Hub'
 import { Auth } from '@/views/Auth'
 import { LanguageProvider, useLanguage } from '@/contexts/LanguageContext'
@@ -510,11 +513,14 @@ function App() {
     return (
       <ThemeProvider>
         <LanguageProvider>
+          <ChristmasProvider mode="full">
           <Toaster position="top-center" richColors />
           <AnimatedBackground />
+          <ChristmasLayer />
           <UpdateNotification />
           <StorageConnectionBanner />
           <Auth onAuthenticated={handleAuthenticated} />
+          </ChristmasProvider>
         </LanguageProvider>
       </ThemeProvider>
     )
@@ -528,10 +534,13 @@ function App() {
     return (
       <ThemeProvider userId={userSession.userId}>
         <LanguageProvider userId={userSession.userId}>
+          <ChristmasProvider userId={userSession.userId} mode="full">
           <Toaster position="top-center" richColors />
           <AnimatedBackground />
+          <ChristmasLayer />
           <StorageConnectionBanner />
           <HubPicker hubs={hubChoice.hubs} preferred={rememberedHub(userSession.userId)} onChoose={hub => switchHub(hub.folderName)} onLogout={handleLogout} />
+          </ChristmasProvider>
         </LanguageProvider>
       </ThemeProvider>
     )
@@ -540,11 +549,13 @@ function App() {
   return (
     <ThemeProvider userId={userSession.userId}>
       <LanguageProvider userId={userSession.userId}>
+        <ChristmasProvider userId={userSession.userId} mode={christmasMode(currentView)}>
         {/* Outside the remounted tree, so a message sent during a hub switch is not lost. */}
         <Toaster position="top-center" richColors />
         <HubNotificationsProvider key={hubNonce} userEmail={userSession.email}>
         <HubSwitchController onSwitch={switchHub} onOpenPicker={openHubPicker} />
         <AnimatedBackground />
+        <ChristmasLayer />
         <UpdateNotification suppressed={suppressUpdatePopup} />
         <StorageConnectionBanner />
         <GuideImportStatus onOpenGuideLibrary={(kind) => handleNavigate(kind)} />
@@ -575,6 +586,7 @@ function App() {
           {currentView === 'warehouse' && <Warehouse onNavigateBack={handleNavigateBack} />}
         </Suspense>
         </HubNotificationsProvider>
+        </ChristmasProvider>
       </LanguageProvider>
     </ThemeProvider>
   )

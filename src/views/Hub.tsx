@@ -29,6 +29,10 @@ import { useLanguage } from '@/contexts/LanguageContext'
 import nexiLogo from '@/assets/images/nexi-logo.svg'
 import nexiLogoWhite from '@/assets/images/nexi-logo-white.svg'
 import { HubMark } from '@/components/HubMark'
+import { useChristmas } from '@/contexts/ChristmasContext'
+import { SnowCap } from '@/components/christmas/SnowCap'
+import { AdventDoor } from '@/components/christmas/AdventDoor'
+import { christmasLabels, seasonLine } from '@/lib/christmas'
 import { format, isSameDay, parseISO } from 'date-fns'
 import { da, enUS } from 'date-fns/locale'
 import type { ShiftRole, ShiftAssignment, ShiftPatternRule, SickLeaveEntry, VacationEntry, WeekMenu, Email, HomeOfficePattern, HomeOfficeException } from '@/lib/types'
@@ -118,6 +122,7 @@ const NOT_LOADED_RECORD: Record<string, never> = {}
 
 export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
   const { t, language } = useLanguage()
+  const christmas = useChristmas()
   const { hubs } = useMyHubs()
   const activeHub = hubs.find(hub => hub.active)
   const waitingElsewhere = hubs.filter(hub => !hub.active).reduce((sum, hub) => sum + hub.pending, 0)
@@ -1018,9 +1023,18 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
           )}
         </header>
 
+        {christmas.active && christmas.season && (
+          <p className="-mt-3 mb-6 text-sm text-muted-foreground">
+            {christmasLabels(language).greeting(new Date().getHours())}
+            {currentUserName && !currentUserName.includes('@') ? `, ${currentUserName.split(' ')[0]}` : ''} – {seasonLine(christmas.season, language)}
+          </p>
+        )}
+
         {/* Dagens tavle. Her - og kun her - faar maerkefarven lov at fylde. Resten
             af siden er papir og streger, saa det her er det, blikket lander paa. */}
-        <div className="mb-8 overflow-hidden rounded-lg bg-primary text-primary-foreground">
+        <div className="relative mb-8">
+        {christmas.active && <SnowCap seed={99} />}
+        <div className={cn('overflow-hidden rounded-lg bg-primary text-primary-foreground', christmas.active && 'xmas-banner')}>
           <div className="flex flex-wrap items-end justify-between gap-6 px-6 py-6 sm:px-8 sm:py-7">
             <div>
               <p className="text-sm font-medium text-primary-foreground/90 first-letter:uppercase">
@@ -1030,6 +1044,10 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
                 {new Date().toLocaleDateString(dateLocale, { day: 'numeric', month: 'long' })}
               </p>
             </div>
+
+            {christmas.active && christmas.season?.month === 12 && christmas.season.day <= 24 && (
+              <AdventDoor day={christmas.season.day} language={language} />
+            )}
 
             <div className="flex items-end gap-7 sm:gap-9">
               <div>
@@ -1050,6 +1068,7 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
               )}
             </div>
           </div>
+        </div>
         </div>
 
         <AnnouncementsBoard userEmail={userEmail} userName={currentUserName} canPost={isAdminOrManager} />
@@ -1493,12 +1512,14 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
         </motion.div>
 
         <motion.div 
-          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 auto-rows-fr gap-4"
+          className={cn('grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 auto-rows-fr gap-4', christmas.active && 'gap-y-8 pt-3')}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.5, duration: 0.6 }}
         >
           {modules.filter(module => module.available).map((module, index) => {
+            const hasBadge = (module.id === 'email' && unreadInboxCount > 0) || (module.id === 'manager' && pendingVacationRequests > 0)
+              || (module.id === 'guides' && pendingGuideReviews > 0) || (module.id === 'knowledge' && pendingKnowledgeReviews > 0)
             return (
               <motion.div
                 key={module.id}
@@ -1508,12 +1529,14 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
                 transition={{ delay: 0.5 + index * 0.05, duration: 0.4 }}
               >
                 <motion.div
-                  className="h-full"
+                  className="xmas-tile relative h-full"
                   initial={cardAnimation.initial}
                   whileHover={cardAnimation.hover}
                   whileTap={cardAnimation.tap}
                   transition={cardAnimation.transition}
                 >
+                  {/* Baubles hang on every third card, never where a badge sits in the corner. */}
+                  {christmas.active && <SnowCap seed={index + 1} bauble={index % 3 === 1 && !hasBadge} />}
                   <Card
                     className="module-tile relative overflow-hidden py-0 transition-colors duration-200 group h-full flex flex-col cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                     style={{ ['--module-color' as string]: module.color }}

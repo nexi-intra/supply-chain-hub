@@ -79,11 +79,12 @@ function random(seed: number) {
   }
 }
 
-/** A puffy cap of snow in a 400×40 box: rounded ends over the card corners, soft mounds and a few icicles. */
-export function snowCapPath(seed: number): string {
+/** A puffy cap of snow, `width`×40, drawn at real size: rounded ends over the corners, soft mounds and icicles. */
+export function snowCapPath(seed: number, width = 400): string {
   const rnd = random(seed)
-  const mounds = 4 + Math.floor(rnd() * 3)
-  const step = 372 / mounds
+  const right = width - 4
+  const mounds = Math.max(4, Math.round(width / (75 + rnd() * 30)))
+  const step = (width - 28) / mounds
   let d = 'M4 28 C0 21 4 13 14 12'
   for (let i = 0; i < mounds; i++) {
     const x0 = 14 + i * step
@@ -91,10 +92,12 @@ export function snowCapPath(seed: number): string {
     const peak = 2 + rnd() * 7
     d += ` C${(x0 + step * 0.25).toFixed(1)} ${peak.toFixed(1)} ${(x1 - step * 0.25).toFixed(1)} ${peak.toFixed(1)} ${x1.toFixed(1)} ${(10 + rnd() * 4).toFixed(1)}`
   }
-  d += ' C396 13 400 21 396 28'
+  d += ` C${right} 13 ${width} 21 ${right} 28`
   // Icicles only on the left two thirds: badges sit in the top-right corner of a card.
-  const icicles = [40 + rnd() * 50, 130 + rnd() * 60, 230 + rnd() * 30].sort((a, b) => b - a)
-  let x = 396
+  const count = Math.max(3, Math.round(width / 170))
+  const span = width * 0.66 - 30
+  const icicles = Array.from({ length: count }, (_, i) => 30 + (span * (i + 0.2 + rnd() * 0.6)) / count).sort((a, b) => b - a)
+  let x = right
   for (const tip of icicles) {
     const length = 34 + rnd() * 5
     d += ` C${(x - 12).toFixed(1)} 29 ${(tip + 16).toFixed(1)} 27 ${(tip + 4).toFixed(1)} 28 L${tip.toFixed(1)} ${length.toFixed(1)} L${(tip - 4).toFixed(1)} 28`

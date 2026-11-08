@@ -22,7 +22,7 @@ Den der ikke vil have det, skal kunne slå det fra.
   "Glædelig jul"; 25.–30. december "Glædelig jul"; 31. december–1. januar "Godt nytår".
 - **Til/fra:** et punkt "Juletema" i Lys/Mørk-menuen – vises kun i perioden. Valget gemmes pr. bruger som lys/mørk.
 - **Spil Hjørnet:** helt uden pynt (også menuen), så grænsen er enkel og sikker.
-- **Rolig pynt** = sne langs vinduets øverste kant med istapper + en lyskæde, der lyser uden at blinke.
+- **Rolig pynt** = sne langs vinduets øverste kant med istapper + en kort lyskæde, der lyser uden at blinke. Den holder sig inden for de øverste ~22 px og ligger derfor over arbejdsskærmenes faste topbjælker (ellers kan den ikke ses), men under dialoger og menuer.
 - **Lågen:** én lille hilsen/julefakta pr. dag 1.–24. december (dansk og engelsk; finsk/svensk får engelsk). Hvilke låger
   man har åbnet, huskes på pc'en (ikke på M:).
 - **Lyst tema:** sneen får en blød blågrå kant, så den kan ses på lys baggrund.
@@ -32,20 +32,20 @@ Den der ikke vil have det, skal kunne slå det fra.
 - Lagene er `pointer-events: none` og ligger under dialoger, så intet kan blokere et klik.
 
 ## Fase 1 – Kerne (ren logik, testet)
-- [ ] `src/lib/christmas.ts`: sæson (`christmasDay(date)`), tilstand pr. skærm (`christmasMode(view)`), lyskædens
+- [x] `src/lib/christmas.ts`: sæson (`christmasDay(date)`), tilstand pr. skærm (`christmasMode(view)`), lyskædens
   geometri (pærer sidder præcist på ledningen), snehættens form, lågernes tekster, labels i 4 sprog.
-- [ ] `src/contexts/ChristmasContext.tsx`: sæson (genberegnes løbende, så den tænder ved midnat), brugerens valg,
+- [x] `src/contexts/ChristmasContext.tsx`: sæson (genberegnes løbende, så den tænder ved midnat), brugerens valg,
   `data-christmas` på `<html>`.
 
 ## Fase 2 – Fuld pakke
-- [ ] `src/components/christmas/`: snefald (canvas, pause når vinduet er skjult), lyskæde, grangrene, snedrive + nisse,
+- [x] `src/components/christmas/`: snefald (canvas, pause når vinduet er skjult), lyskæde, grangrene, snedrive + nisse,
   sne langs toppen.
-- [ ] Forsiden: sne på modulkort + istapper + kugler + drys ved hover; julekalender og låge i dagens tavle; julehilsen.
-- [ ] Nissehue på Kæde-H; login og hub-vælger får laget.
+- [x] Forsiden: sne på modulkort + istapper + kugler + drys ved hover; julekalender og låge i dagens tavle; julehilsen.
+- [x] Nissehue på Kæde-H; login og hub-vælger får laget.
 
 ## Fase 3 – Rolig pynt og til/fra
-- [ ] App vælger fuld/rolig/ingen efter skærm; "Juletema" i Lys/Mørk-menuen i perioden.
-- [ ] Lyst tema, software-tegning og reduceret bevægelse.
+- [x] App vælger fuld/rolig/ingen efter skærm; "Juletema" i Lys/Mørk-menuen i perioden.
+- [x] Lyst tema, software-tegning og reduceret bevægelse.
 
 ## Fase 4 – Levering
 - [ ] Fuld verifikation, visuelt tjek (lyst/mørkt, forside, arbejdsskærm, spil uden pynt), code review, byg.
