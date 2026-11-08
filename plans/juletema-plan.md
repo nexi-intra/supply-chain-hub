@@ -48,7 +48,7 @@ Den der ikke vil have det, skal kunne slå det fra.
 - [x] Lyst tema, software-tegning og reduceret bevægelse.
 
 ## Fase 4 – Levering
-- [ ] Fuld verifikation, visuelt tjek (lyst/mørkt, forside, arbejdsskærm, spil uden pynt), code review, byg.
-- [ ] **Ingen** linje i ændringsloggen.
+- [x] Fuld verifikation, visuelt tjek (lyst/mørkt, forside, arbejdsskærm, spil uden pynt), code review, byg.
+- [x] **Ingen** linje i ændringsloggen.
 
 Start med fase 1.
