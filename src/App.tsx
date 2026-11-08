@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react'
+import { dismissStartupIntro } from './lib/startupIntro'
 import { Hub } from '@/views/Hub'
 import { Auth } from '@/views/Auth'
 import { LanguageProvider } from '@/contexts/LanguageContext'
@@ -488,6 +489,11 @@ function App() {
     window.addEventListener(NAVIGATE_EVENT, handleDeepLink)
     return () => window.removeEventListener(NAVIGATE_EVENT, handleDeepLink)
   }, [userSession])
+
+  const firstScreenReady = !isCheckingAuth && (!userSession || hubChoice?.token === userSession.token)
+  useEffect(() => {
+    if (firstScreenReady) dismissStartupIntro()
+  }, [firstScreenReady])
 
   // Bemærk: der er IKKE en global Escape-lytter her længere. Hver view ejer nu
   // sin egen Escape-håndtering (luk egen dialog → naviger tilbage), så vi

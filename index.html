@@ -124,6 +124,14 @@
             <div class="si-name">Supply Chain Hub</div>
         </div>
     </div>
+    <script>
+      setTimeout(function () {
+        var intro = document.getElementById('startup-intro')
+        if (!intro) return
+        intro.classList.add('is-leaving')
+        setTimeout(function () { intro.remove() }, 600)
+      }, 30000)
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
 </body>
