@@ -10,15 +10,32 @@ function seedFrom(id: string) {
 }
 
 const SPOTS = [0.5, 0.42, 0.58, 0.34, 0.66, 0.26, 0.74]
+const BUSY = 'button, input, select, textarea, a, svg, img, [role=switch], [role=button]'
+
+/** Text, buttons and fields in the top `depth` px of the card. Branches that start lower are skipped unmeasured,
+ *  so a card holding hundreds of rows only costs a handful of measurements. */
+function busyNearTop(card: HTMLElement, limit: number) {
+  const found: DOMRect[] = []
+  const visit = (element: Element) => {
+    for (const child of element.children) {
+      if (child.classList.contains('xmas-cap')) continue
+      const rect = child.getBoundingClientRect()
+      if (rect.top >= limit) continue
+      if (child.matches(BUSY) || (child.childElementCount === 0 && child.textContent?.trim())) {
+        if (rect.width > 0) found.push(rect)
+        continue
+      }
+      visit(child)
+    }
+  }
+  visit(card)
+  return found
+}
 
 /** Where along the card (0–1) a decoration can hang without covering text, buttons or fields – or null. */
 function freeSpot(card: HTMLElement, depth: number, start: number): number | null {
   const box = card.getBoundingClientRect()
-  const busy = [...card.querySelectorAll<HTMLElement>('button, input, select, textarea, a, svg, img, [role=switch], [role=button]')]
-    .concat([...card.querySelectorAll<HTMLElement>('*')].filter(element => element.childElementCount === 0 && element.textContent?.trim()))
-    .filter(element => !element.closest('.xmas-cap'))
-    .map(element => element.getBoundingClientRect())
-    .filter(rect => rect.width > 0 && rect.top < box.top + depth)
+  const busy = busyNearTop(card, box.top + depth)
   const order = [...SPOTS.slice(start), ...SPOTS.slice(0, start)]
   for (const spot of order) {
     const x = box.left + box.width * spot
@@ -72,8 +89,9 @@ export function SnowCap({ seed: givenSeed, ornament: givenOrnament, auto = false
     const resize = new ResizeObserver(update)
     resize.observe(box)
     if (card) resize.observe(card)
-    // Text often arrives after the card (data from the shared drive): look again when it does.
-    const content = card ? new MutationObserver(update) : null
+    // Text often arrives after the card (data from the shared drive): look again when it does – only cards that
+    // actually carry a decoration, so long lists of cards (Locations, Counts) don't all watch their content.
+    const content = card && auto && hasOrnament ? new MutationObserver(update) : null
     if (card) content?.observe(card, { childList: true, subtree: true, characterData: true })
     return () => { cancelAnimationFrame(frame); resize.disconnect(); content?.disconnect() }
   }, [auto, calm, hasOrnament, seed])
@@ -82,7 +100,7 @@ export function SnowCap({ seed: givenSeed, ornament: givenOrnament, auto = false
   const path = useMemo(() => snowCapPath(seed, width), [seed, width])
   const fill = `xmas-cap-${id.replace(/[^a-zA-Z0-9_-]/g, '')}`
   return (
-    <div ref={boxRef} aria-hidden="true" className={`xmas-cap pointer-events-none absolute -left-1.5 -right-1.5 z-20 h-9 ${inset ? '-top-1' : '-top-[15px]'}`}>
+    <div ref={boxRef} aria-hidden="true" className={`xmas-cap pointer-events-none absolute -left-1.5 -right-1.5 z-20 h-9 !border-0 ${inset ? '-top-1' : '-top-[15px]'}`}>
       <svg viewBox={`0 0 ${width} 40`} preserveAspectRatio="none" className="h-full w-full overflow-visible">
         <defs>
           <linearGradient id={fill} x1="0" y1="0" x2="0" y2="1">

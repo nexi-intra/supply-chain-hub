@@ -366,8 +366,9 @@ html[data-christmas="calm"] .xmas-hanging { animation: none; }
 html[data-render-mode="software"] :is(.xmas-glow, .xmas-bulb, .xmas-hanging, .xmas-sprinkle i) { animation: none !important; }
 
 /* Kasser, der ikke er <Card>, faar en tynd sneribbe malet inden for den oeverste kant: den kan ikke klippes
-   af overflow, flytter intet og ligger i kassens luft over indholdet. */
-html[data-christmas] :is(div, section, article).bg-card.border:not([data-slot="card"]) {
+   af overflow, flytter intet og ligger i kassens luft over indholdet. Ikke paa kasser der ruller (kortet over
+   lageret, tegningen): der ville ribben staa stille, mens indholdet ruller under den. */
+html[data-christmas] :is(div, section, article).bg-card.border:not([data-slot="card"]):not([class*="overflow-"]) {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='14' viewBox='0 0 160 14'%3E%3Cpath d='M0 0H160V6C150 9 140 7 132 8L129 13L126 8C110 9 96 6 80 8C66 10 56 6 44 8L41 12L38 8C24 9 12 6 0 7Z' fill='%23f7fbff' stroke='%23b6c8e0' stroke-width='.8'/%3E%3C/svg%3E");
   background-repeat: repeat-x;
   background-position: top left;

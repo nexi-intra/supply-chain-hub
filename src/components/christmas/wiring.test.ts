@@ -28,7 +28,7 @@ describe('the Christmas theme is wired in', () => {
 
   it('boxes that are not cards still get a thin band of snow inside their top edge, in every module', () => {
     const css = read('main.css')
-    expect(css).toMatch(/html\[data-christmas\] :is\(div, section, article\)\.bg-card\.border:not\(\[data-slot="card"\]\)\s*\{[^}]*background-image:\s*url\("data:image\/svg\+xml/)
+    expect(css).toMatch(/html\[data-christmas\] :is\(div, section, article\)\.bg-card\.border:not\(\[data-slot="card"\]\):not\(\[class\*="overflow-"\]\)\s*\{[^}]*background-image:\s*url\("data:image\/svg\+xml/)
   })
 
   it('every card in the app gets snow, the front page tiles bring their own', () => {
