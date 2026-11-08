@@ -67,6 +67,7 @@ const { createLinksService } = require('./links.cjs')
 const { createImprovementsDirectory } = require('./improvementsDirectory.cjs')
 const { createMultiplayerService } = require('./multiplayer.cjs')
 const { createHighFivesService } = require('./highFives.cjs')
+const { createNisseService } = require('./nisse.cjs')
 const { applySpellcheckLanguage } = require('./spellcheck.cjs')
 const { createDesktopNotifier, createDesktopNotificationHandlers } = require('./desktopNotifications.cjs')
 const { createWordChecker } = require('./games/wordPuzzle/wordChecker.cjs')
@@ -321,6 +322,7 @@ function createDebouncedBroadcast(delayMs = 100) {
         if (pendingKeys.has('improvement-cases')) broadcast('improvements:changed')
         if (pendingKeys.has('high-fives')) broadcast('highFives:changed')
         if (pendingKeys.has('link-library')) broadcast('links:changed')
+        if ([...pendingKeys].some(key => key.startsWith('nisse-finds-'))) broadcast('nisse:changed')
         if (pendingKeys.has('multiplayer-index')) multiplayerHooks.indexChangedOnDisk()
         pendingKeys.clear()
       }
@@ -1040,6 +1042,37 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('highFives:snapshot', async event => highFives.snapshot((await sharedActor(event))))
   ipcMain.handle('highFives:command', async (event, input) => highFives.command((await sharedActor(event)), input))
+  // Nisselegen: the judge needs the active hub (not the home role), so it uses the full actor.
+  let nisseStore = null
+  const nisseDir = () => {
+    if (storageStartedDisconnected || !storageConnected) throw Object.assign(new Error('NISSE_UNAVAILABLE'), { code: 'NISSE_UNAVAILABLE' })
+    return path.join(platformRoot, '_shared')
+  }
+  const nisse = createNisseService({
+    getStore: () => {
+      const directory = nisseDir()
+      if (!nisseStore || nisseStore.dataDir !== directory) nisseStore = createSharedStore(directory)
+      return nisseStore
+    },
+    getDirectory: improvementDirectory,
+    listTeams: () => registry.listTeams(platformRoot),
+    // M:'s clock, not the PC's: rewriting a byte in place (cheap on M:) stamps the file with the server's time.
+    driveNow: async () => {
+      const file = path.join(nisseDir(), '.nisse-clock')
+      try {
+        const handle = await fsp.open(file, fs.existsSync(file) ? 'r+' : 'w')
+        try { await handle.write('n', 0) } finally { await handle.close() }
+        return (await fsp.stat(file)).mtimeMs
+      } catch (error) {
+        console.warn('TCD Hub: nisse could not read the shared drive clock, using this PC', error)
+        return Date.now()
+      }
+    },
+    onChanged: () => broadcast('nisse:changed'),
+  })
+  ipcMain.handle('nisse:today', async (event, preview) => nisse.today(await authService.currentAsync(event.sender.id), preview))
+  ipcMain.handle('nisse:claim', async (event, input) => nisse.claim(await authService.currentAsync(event.sender.id), input))
+  ipcMain.handle('nisse:finds', async event => nisse.finds(await authService.currentAsync(event.sender.id)))
   ipcMain.handle('multiplayer:warm-words', async (event, language) => {
     await authService.currentAsync(event.sender.id)
     await wordChecker.warm(language)
@@ -1680,7 +1713,7 @@ const CLOSE_WHILE_SAVING_MAX_MS = 3 * 60 * 1000
 let uiLanguage = 'da'
 // IPC-kanaler der kan skrive brugerdata. En skrivning der stadig er i auth-tjek
 // har endnu ikke registreret sig i whenWritesSettled, så den skal ventes ud først.
-const QUIT_WRITE_CHANNEL_PREFIXES = ['ipc:kv:', 'ipc:multiplayer:', 'ipc:improvements:', 'ipc:highFives:', 'ipc:links:', 'ipc:warehouse:', 'ipc:registry:', 'ipc:auth:', 'ipc:assistant:record']
+const QUIT_WRITE_CHANNEL_PREFIXES = ['ipc:kv:', 'ipc:multiplayer:', 'ipc:improvements:', 'ipc:highFives:', 'ipc:links:', 'ipc:nisse:', 'ipc:warehouse:', 'ipc:registry:', 'ipc:auth:', 'ipc:assistant:record']
 const isQuitWriteChannel = label => QUIT_WRITE_CHANNEL_PREFIXES.some(prefix => label.startsWith(prefix))
 let quitFlushed = false
 app.on('before-quit', event => {

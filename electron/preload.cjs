@@ -228,6 +228,16 @@ contextBridge.exposeInMainWorld('electronHighFives', {
     return () => ipcRenderer.removeListener('highFives:changed', listener)
   },
 })
+contextBridge.exposeInMainWorld('electronNisse', {
+  today: preview => ipcRenderer.invoke('nisse:today', preview),
+  claim: input => ipcRenderer.invoke('nisse:claim', input),
+  finds: () => ipcRenderer.invoke('nisse:finds'),
+  onChanged: callback => {
+    const listener = () => callback()
+    ipcRenderer.on('nisse:changed', listener)
+    return () => ipcRenderer.removeListener('nisse:changed', listener)
+  },
+})
 contextBridge.exposeInMainWorld('electronLinks', {
   snapshot: () => ipcRenderer.invoke('links:snapshot'),
   command: command => ipcRenderer.invoke('links:command', command),
