@@ -89,7 +89,7 @@ function harness({ now = danish('2026-12-01', '10:01'), drive } = {}) {
     getDirectory: () => ({ people: PEOPLE, teams: TEAMS }),
     listTeams: () => TEAMS,
     now: () => state.now,
-    driveNow: async () => state.drive,
+    driveNow: async () => { state.driveCalls = (state.driveCalls || 0) + 1; return state.drive },
     onChanged: () => { state.changed++ },
   })
   return { state, service }
@@ -102,6 +102,14 @@ test('nothing is read or written in November – the surprise does not leak', as
   const { state, service } = harness({ now: danish('2026-11-30', '12:00') })
   assert.deepEqual(await service.today(actor('lasse@example.test')), { status: 'off' })
   assert.deepEqual(await service.finds(actor('jacob@example.test', TEAMS[1], 'creator')), [])
+  assert.equal(state.storeCalls, 0)
+})
+
+test('a click in November leaves no trace either: the drive clock file on M: is not touched', async () => {
+  const { state, service } = harness({ now: danish('2026-11-30', '12:00') })
+  await assert.rejects(service.claim(actor('lasse@example.test'), { date: '2026-11-30', spot: 'front-logo' }), { code: 'NISSE_NOT_TODAY' })
+  await assert.rejects(service.claim(actor('lasse@example.test'), { date: '2026-12-01', spot: spotA('2026-12-01') }), { code: 'NISSE_NOT_TODAY' })
+  assert.equal(state.driveCalls || 0, 0)
   assert.equal(state.storeCalls, 0)
 })
 

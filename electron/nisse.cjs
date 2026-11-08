@@ -154,6 +154,10 @@ function createNisseService({ getStore, getDirectory, listTeams, now = Date.now,
       if (input.spot !== spotFor(input.preview, index)) fail('NISSE_WRONG_SPOT', 'The nisse is not there')
       return { result: 'preview' }
     }
+    // Checked on this PC before M: is touched: outside the nisse days a click must not even create the clock file.
+    if (!nisseDays(Number(input.date.slice(0, 4))).includes(input.date) || danishParts(now()).date.slice(0, 7) !== input.date.slice(0, 7)) {
+      fail('NISSE_NOT_TODAY', 'Not today\'s nisse')
+    }
     const driveMs = await driveNow()
     const { date } = danishParts(driveMs)
     if (input.date !== date || !nisseDays(Number(date.slice(0, 4))).includes(date)) fail('NISSE_NOT_TODAY', 'Not today\'s nisse')

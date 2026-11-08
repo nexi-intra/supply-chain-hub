@@ -1,4 +1,4 @@
-# Logs
+﻿# Logs
 logs
 *.log
 npm-debug.log*
@@ -43,3 +43,4 @@ build/*
 # Portable build-artefakter kopieret til mappe-roden
 *.exe
 *.zip
+release-local*/
