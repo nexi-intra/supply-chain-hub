@@ -30,6 +30,6 @@ Det nye logo (Kæde-H: tre guldled, der danner et H på midnatsblå flise) ses i
 - [x] `main.css` `.dark`: neutrale tokens (background, card, popover, secondary, muted, border, input, sidebar, body) til tone 259. Test der låser at neutralerne følger logoet, og at primær er uændret.
 
 ## Fase 4 – Levering
-- [ ] Ændringslog-linje, fuld verifikation (tsc, vitest, node-suite), visuelt tjek i browser (lyst + mørkt) og i bygget app, code review, byg `release-local-2`.
+- [x] Ændringslog-linje, fuld verifikation (tsc, vitest, node-suite), visuelt tjek i browser (lyst + mørkt) og i bygget app, code review, byg `release-local-2`.
 
 Start med fase 1.
