@@ -771,6 +771,8 @@ function createWindow() {
     minWidth: 900,
     minHeight: 600,
     autoHideMenuBar: true,
+    // Midnight blue from the very first frame, before the startup intro in index.html is painted (no white flash).
+    backgroundColor: '#0B1422',
     icon: path.join(__dirname, '..', 'build', 'icon.ico'),
     // Avoid a blank white window while the app bundle loads.
     show: false,
