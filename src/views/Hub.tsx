@@ -32,7 +32,7 @@ import { HubMark } from '@/components/HubMark'
 import { useChristmas } from '@/contexts/ChristmasContext'
 import { SnowCap } from '@/components/christmas/SnowCap'
 import { AdventDoor } from '@/components/christmas/AdventDoor'
-import { christmasLabels, seasonLine } from '@/lib/christmas'
+import { cardOrnament, christmasLabels, seasonLine } from '@/lib/christmas'
 import { format, isSameDay, parseISO } from 'date-fns'
 import { da, enUS } from 'date-fns/locale'
 import type { ShiftRole, ShiftAssignment, ShiftPatternRule, SickLeaveEntry, VacationEntry, WeekMenu, Email, HomeOfficePattern, HomeOfficeException } from '@/lib/types'
@@ -1535,9 +1535,10 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
                   whileTap={cardAnimation.tap}
                   transition={cardAnimation.transition}
                 >
-                  {/* Baubles hang on every third card, never where a badge sits in the corner. */}
-                  {christmas.active && <SnowCap seed={index + 1} bauble={index % 3 === 1 && !hasBadge} />}
+                  {/* Something hangs on about two in five cards, never where a badge sits in the corner. */}
+                  {christmas.active && <SnowCap seed={index + 1} ornament={hasBadge ? null : cardOrnament(index * 13 + 5)} />}
                   <Card
+                    snow={false}
                     className="module-tile relative overflow-hidden py-0 transition-colors duration-200 group h-full flex flex-col cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                     style={{ ['--module-color' as string]: module.color }}
                     onClick={() => handleModuleClick(module.id)}

@@ -13,7 +13,7 @@ interface ChristmasContextType {
 }
 
 const INACTIVE: ChristmasContextType = { season: null, enabled: false, setEnabled: () => {}, active: false, mode: 'off' }
-const ChristmasContext = createContext<ChristmasContextType>(INACTIVE)
+export const ChristmasContext = createContext<ChristmasContextType>(INACTIVE)
 const GUEST_SETTING_KEY = 'tcd-hub:christmas-guest'
 
 function currentSeason(): ChristmasDay | null {

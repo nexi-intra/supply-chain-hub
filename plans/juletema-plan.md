@@ -52,3 +52,10 @@ Den der ikke vil have det, skal kunne slå det fra.
 - [x] **Ingen** linje i ændringsloggen.
 
 Start med fase 1.
+
+## Runde 2 (Jacobs feedback efter første forhåndsvisning)
+- [x] Grangrenene fjernet – kun lyskæde i toppen.
+- [x] Sne på alle kort i hele appen (også dashboard-widgets og modulernes kort) via `<Card>`; kasser der ikke er kort (fx vagtplanens tabel) får en tynd sneribbe inden for kanten.
+- [x] Klassisk dansk hængende pynt: kugler i 7 farver, flettede julehjerter, papirstjerner, kræmmerhuse, kogler, trommer, nisser og halmstjerner. Hænger på ~2 ud af 5 kort, finder selv en ledig plads (ikke over tekst/knapper) og hænger på tråde fra lyskæden.
+- [x] Dannebrogs-flagranke under lyskæden på forsiden.
+- [x] Arbejdsskærme: sne på alle kort, små stille pyntestykker midt under lyskæden. Stadig intet snefald (Jacobs valg) og intet i spillene.

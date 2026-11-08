@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { christmasDate, christmasDay, christmasLabels, christmasMode, doorMessage, applyChristmasAttribute, garland, openedDoors, snowRidgePath, rememberOpenedDoor, seasonLine, snowCapPath, wireY } from './christmas'
+import { christmasDate, christmasDay, christmasLabels, christmasMode, doorMessage, applyChristmasAttribute, cardOrnament, flagString, ORNAMENT_KINDS, stringOrnaments, garland, openedDoors, snowRidgePath, rememberOpenedDoor, seasonLine, snowCapPath, wireY } from './christmas'
 
 const at = (iso: string) => new Date(`${iso}T12:00:00`)
 
@@ -151,5 +151,34 @@ describe('applyChristmasAttribute', () => {
     applyChristmasAttribute(root, 'calm')
     applyChristmasAttribute(root, null)
     expect(root.dataset.christmas).toBeUndefined()
+  })
+})
+describe('classic Danish hanging decorations', () => {
+  it('hangs a mix of baubles, woven hearts, stars, paper cones, pine cones, drums, nisser and straw stars on some cards', () => {
+    expect(ORNAMENT_KINDS).toEqual(['bauble', 'heart', 'star', 'cone', 'pinecone', 'drum', 'nisse', 'straw'])
+    const ornaments = Array.from({ length: 300 }, (_, seed) => cardOrnament(seed))
+    const hung = ornaments.filter(Boolean)
+    expect(hung.length).toBeGreaterThan(80)
+    expect(hung.length).toBeLessThan(180)
+    expect(new Set(hung.map(ornament => ornament!.kind)).size).toBe(ORNAMENT_KINDS.length)
+    expect(new Set(hung.filter(ornament => ornament!.kind === 'bauble').map(ornament => ornament!.color)).size).toBeGreaterThanOrEqual(5)
+    expect(cardOrnament(7)).toEqual(cardOrnament(7))
+  })
+
+  it('the Dannebrog string has every flag fastened to its own wire', () => {
+    const flags = flagString(1400)
+    expect(flags.flags.length).toBeGreaterThan(30)
+    for (const flag of flags.flags) expect(flag.y).toBeCloseTo(wireY(flag.x, flags.options), 6)
+  })
+
+  it('decorations hang from the light string on threads tied to the wire', () => {
+    const options = { period: 150, top: 7, sag: 12, perPeriod: 5 }
+    const hanging = stringOrnaments(1400, options)
+    expect(hanging.length).toBeGreaterThanOrEqual(4)
+    for (const item of hanging) {
+      expect(item.y).toBeCloseTo(wireY(item.x, options), 6)
+      expect(item.thread).toBeGreaterThanOrEqual(14)
+      expect(item.thread).toBeLessThanOrEqual(60)
+    }
   })
 })

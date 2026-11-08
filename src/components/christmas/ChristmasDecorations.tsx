@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { garland, snowRidgePath, type ChristmasMode } from '@/lib/christmas'
+import { FLAG_OPTIONS, flagString, garland, snowRidgePath, stringOrnaments, type ChristmasMode } from '@/lib/christmas'
+import { HangingOrnament } from './HangingOrnament'
 import { useChristmas } from '@/contexts/ChristmasContext'
 
 function useWindowWidth() {
@@ -130,66 +131,41 @@ function SnowRidge() {
   )
 }
 
-// A fir twig drawn from its own geometry: needles grow out of the twig along its curve, snow rests on top.
-function twigPoint(t: number) {
-  const x = (1 - t) * (1 - t) * 0 + 2 * (1 - t) * t * 120 + t * t * 232
-  const y = (1 - t) * (1 - t) * 14 + 2 * (1 - t) * t * 16 + t * t * 66
-  const dx = 2 * (1 - t) * 120 + 2 * t * (232 - 120)
-  const dy = 2 * (1 - t) * (16 - 14) + 2 * t * (66 - 16)
-  return { x, y, angle: Math.atan2(dy, dx) }
-}
-
-/** Snow resting on the twig: a soft, lumpy pad that follows the curve on its upper side and thins out at the tip. */
-function snowOnTwig(from: number, to: number) {
-  const top: string[] = []
-  const bottom: string[] = []
-  const steps = 18
-  for (let i = 0; i <= steps; i++) {
-    const t = from + ((to - from) * i) / steps
-    const p = twigPoint(t)
-    const up = { x: Math.sin(p.angle), y: -Math.cos(p.angle) }
-    const fade = Math.sin((Math.PI * i) / steps)
-    const thickness = (3 + 6 * fade) * (1 + 0.25 * Math.sin(i * 1.9))
-    top.push(`${(p.x + up.x * (thickness + 2)).toFixed(1)} ${(p.y + up.y * (thickness + 2)).toFixed(1)}`)
-    bottom.unshift(`${(p.x - up.x * 1.5).toFixed(1)} ${(p.y - up.y * 1.5).toFixed(1)}`)
-  }
-  return `M${top.join(' L')} L${bottom.join(' L')} Z`
-}
-
-function needles(from: number, to: number, count: number, length: number) {
-  const lines: string[] = []
-  for (let i = 0; i <= count; i++) {
-    const t = from + ((to - from) * i) / count
-    const p = twigPoint(t)
-    for (const side of [-1, 1]) {
-      for (const lean of [0.55, 0.95]) {
-        const angle = p.angle + side * lean
-        const l = length * (1 - t * 0.35) * (lean > 0.7 ? 0.85 : 1)
-        lines.push(`M${p.x.toFixed(1)} ${p.y.toFixed(1)}l${(Math.cos(angle) * l).toFixed(1)} ${(Math.sin(angle) * l).toFixed(1)}`)
-      }
-    }
-  }
-  return lines.join('')
-}
-
-function FirBranch({ side }: { side: 'left' | 'right' }) {
-  const drawing = useMemo(() => {
-    const baublePoint = twigPoint(0.58)
-    return { dark: needles(0.02, 0.97, 46, 15), light: needles(0.04, 0.95, 30, 12), snow: snowOnTwig(0.03, 0.62), baublePoint, cone: twigPoint(0.82) }
-  }, [])
+// The Dannebrog string ("flagranke"), a classic on Danish Christmas trees, hung in swags below the lights.
+function FlagString() {
+  const width = useWindowWidth()
+  const string = useMemo(() => flagString(width + FLAG_OPTIONS.period), [width])
   return (
-    <svg className={`xmas-branch absolute top-[10px] ${side === 'left' ? '-left-3' : '-right-3 -scale-x-100'}`} width={250} height={130} viewBox="0 0 250 130">
-      <path d="M0 14 Q120 16 232 66" fill="none" stroke="#4a3221" strokeWidth={4} strokeLinecap="round" />
-      <path d={drawing.dark} stroke="#1b5234" strokeWidth={2.4} strokeLinecap="round" />
-      <path d={drawing.light} stroke="#2f7d4f" strokeWidth={2} strokeLinecap="round" />
-      <ellipse cx={drawing.cone.x + 4} cy={drawing.cone.y + 11} rx={6} ry={10} fill="#7a4b2a" />
-      <path d={`M${drawing.cone.x - 1} ${drawing.cone.y + 6}h10M${drawing.cone.x - 1} ${drawing.cone.y + 11}h10M${drawing.cone.x} ${drawing.cone.y + 16}h8`} stroke="#5a351c" strokeWidth={1.4} />
-      <path d={drawing.snow} fill="#f7fbff" stroke="#c4d4ea" strokeWidth={0.7} strokeLinejoin="round" />
-      <line x1={drawing.baublePoint.x} y1={drawing.baublePoint.y} x2={drawing.baublePoint.x} y2={drawing.baublePoint.y + 26} stroke="#cdb57a" strokeWidth={1} />
-      <rect x={drawing.baublePoint.x - 3.5} y={drawing.baublePoint.y + 24} width={7} height={5} rx={1.2} fill="#e3b54f" />
-      <circle cx={drawing.baublePoint.x} cy={drawing.baublePoint.y + 41} r={13} fill="#c8352d" />
-      <ellipse cx={drawing.baublePoint.x - 4} cy={drawing.baublePoint.y + 36} rx={3.4} ry={4.6} fill="#ffffff" opacity={0.5} />
+    <svg className="xmas-flags absolute left-0 top-0" width={width} height={60} viewBox={`0 0 ${width} 60`}>
+      <path d={string.path} fill="none" stroke="#8b7a5c" strokeWidth={1} />
+      {string.flags.map((flag, index) => (
+        <g key={index} transform={`translate(${flag.x.toFixed(1)} ${flag.y.toFixed(1)}) rotate(${flag.angle.toFixed(1)})`}>
+          <rect x={-6} y={0} width={12} height={9} fill="#c8102e" />
+          <rect x={-2.6} y={0} width={1.8} height={9} fill="#ffffff" />
+          <rect x={-6} y={3.6} width={12} height={1.8} fill="#ffffff" />
+        </g>
+      ))}
     </svg>
+  )
+}
+
+// Decorations tied to the light string on threads, like on a real string of lights over a window.
+// Work screens: a few small, still ones in the middle third only, where headers have no buttons or titles.
+function StringOrnaments({ compact = false }: { compact?: boolean }) {
+  const width = useWindowWidth()
+  const options = compact ? GARLAND_COMPACT : GARLAND
+  const items = useMemo(() => {
+    const all = stringOrnaments(width, options)
+    return compact ? all.filter(item => item.x > width / 3 && item.x < (width * 2) / 3).map(item => ({ ...item, thread: 4 + (item.thread % 8) })) : all
+  }, [width, options, compact])
+  return (
+    <>
+      {items.map((item, index) => (
+        <span key={index} className={`xmas-string-ornament${compact ? ' is-small' : ''} xmas-hanging absolute`} style={{ left: item.x - 14, top: item.y, animationDelay: `-${(index * 0.9) % 4}s` }}>
+          <HangingOrnament kind={item.kind} color={item.color} thread={item.thread} />
+        </span>
+      ))}
+    </>
   )
 }
 
@@ -229,10 +205,10 @@ export function ChristmasDecorations({ mode }: { mode: ChristmasMode }) {
   // calm only uses the top ~22 px, so it may sit above work screens' sticky headers (z-30/40) to be seen at all.
   return (
     <div aria-hidden="true" className="pointer-events-none fixed inset-0 overflow-hidden" style={{ zIndex: full ? 15 : 45 }}>
+      {full && <FlagString />}
       <Garland twinkle={full} compact={!full} />
+      {full ? <StringOrnaments /> : <StringOrnaments compact />}
       <SnowRidge />
-      {full && <FirBranch side="left" />}
-      {full && <FirBranch side="right" />}
       {full && <Snowdrift />}
       {full && <Snowfall />}
     </div>

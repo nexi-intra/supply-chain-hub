@@ -338,7 +338,10 @@ html[data-christmas] .hub-mark-hat { display: inline; }
 @keyframes xmas-glow { 0%, 100% { opacity: 0.4; } 50% { opacity: 0.1; } }
 @keyframes xmas-bulb { 0%, 100% { opacity: 1; } 50% { opacity: 0.68; } }
 
-.xmas-bauble { position: absolute; top: 21px; transform-origin: 11px 0; animation: xmas-sway 4.2s ease-in-out infinite; }
+.xmas-hanging { position: absolute; top: 21px; transform-origin: 14px 0; animation: xmas-sway 4.2s ease-in-out infinite; }
+.xmas-hanging.is-small svg { transform: scale(0.72); transform-origin: 14px 0; }
+/* Work screens: decorations hang still. */
+html[data-christmas="calm"] .xmas-hanging { animation: none; }
 @keyframes xmas-sway { 0%, 100% { transform: rotate(0deg); } 25% { transform: rotate(5deg); } 75% { transform: rotate(-5deg); } }
 
 .xmas-sprinkle i { position: absolute; top: 24px; width: 3px; height: 3px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 0.6px rgb(96 122 160 / 0.55); opacity: 0; }
@@ -360,7 +363,16 @@ html[data-christmas] .hub-mark-hat { display: inline; }
 .xmas-hatch.is-open { background: #f3e2c4; color: #8e2a24; }
 .xmas-hatch.is-open::after { display: none; }
 
-html[data-render-mode="software"] :is(.xmas-glow, .xmas-bulb, .xmas-bauble, .xmas-sprinkle i) { animation: none !important; }
+html[data-render-mode="software"] :is(.xmas-glow, .xmas-bulb, .xmas-hanging, .xmas-sprinkle i) { animation: none !important; }
+
+/* Kasser, der ikke er <Card>, faar en tynd sneribbe malet inden for den oeverste kant: den kan ikke klippes
+   af overflow, flytter intet og ligger i kassens luft over indholdet. */
+html[data-christmas] :is(div, section, article).bg-card.border:not([data-slot="card"]) {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='14' viewBox='0 0 160 14'%3E%3Cpath d='M0 0H160V6C150 9 140 7 132 8L129 13L126 8C110 9 96 6 80 8C66 10 56 6 44 8L41 12L38 8C24 9 12 6 0 7Z' fill='%23f7fbff' stroke='%23b6c8e0' stroke-width='.8'/%3E%3C/svg%3E");
+  background-repeat: repeat-x;
+  background-position: top left;
+  background-size: 160px 14px;
+}
 html[data-render-mode="software"] .xmas-nisse { animation: none; transform: translateY(30px); }
 
 .word-content {

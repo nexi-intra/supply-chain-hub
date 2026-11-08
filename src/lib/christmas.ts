@@ -130,6 +130,55 @@ export function applyChristmasAttribute(root: { dataset: DOMStringMap }, mode: C
   else delete root.dataset.christmas
 }
 
+// ---- Hanging decorations (classic Danish) ------------------------------------------------------------------
+
+export const ORNAMENT_KINDS = ['bauble', 'heart', 'star', 'cone', 'pinecone', 'drum', 'nisse', 'straw'] as const
+export type OrnamentKind = typeof ORNAMENT_KINDS[number]
+export interface Ornament { kind: OrnamentKind; color: string }
+
+const BAUBLE_COLORS = ['#c8352d', '#1f6b43', '#d9a63c', '#2d5fa8', '#b9c3cf', '#7a3fa0', '#d4557a']
+const STAR_COLORS = ['#e3b54f', '#f4efe2', '#c8352d']
+
+function ornamentAt(rnd: () => number): Ornament {
+  // Baubles are the most common, like on a real tree; the paper and straw classics are mixed in between.
+  const roll = rnd()
+  const kind: OrnamentKind = roll < 0.34 ? 'bauble' : ORNAMENT_KINDS[1 + Math.floor(rnd() * (ORNAMENT_KINDS.length - 1))]
+  const palette = kind === 'bauble' ? BAUBLE_COLORS : kind === 'star' ? STAR_COLORS : ['#c8352d']
+  return { kind, color: palette[Math.floor(rnd() * palette.length)] }
+}
+
+/** About two in five cards get something hanging from their snow. */
+export function cardOrnament(seed: number): Ornament | null {
+  const rnd = random(seed + 101)
+  return rnd() < 0.42 ? ornamentAt(rnd) : null
+}
+
+export const FLAG_OPTIONS = { period: 190, top: 20, sag: 22, perPeriod: 7 }
+
+/** A Dannebrog string ("flagranke") hung below the lights: every flag sits on the wire, tilted with it. */
+export function flagString(width: number, options = FLAG_OPTIONS) {
+  const { path, bulbs } = garland(width, options)
+  const flags = bulbs.map(({ x, y }) => {
+    const u = (((x % options.period) + options.period) % options.period) / options.period
+    const slope = (4 * options.sag * (1 - 2 * u)) / options.period
+    return { x, y, angle: (Math.atan(slope) * 180) / Math.PI }
+  })
+  return { path, flags, options }
+}
+
+export interface StringOrnament extends Ornament { x: number; y: number; thread: number }
+
+/** Decorations tied to the light string: one at the low point of every second span, on threads of varying length. */
+export function stringOrnaments(width: number, options: Required<GarlandOptions>): StringOrnament[] {
+  const rnd = random(31)
+  const items: StringOrnament[] = []
+  for (let span = 0; span * options.period < width; span++) {
+    if (span % 2 === 1) continue
+    const x = span * options.period + options.period * (rnd() < 0.5 ? 0.4 : 0.6)
+    items.push({ x, y: wireY(x, options), thread: 14 + Math.round(rnd() * 26), ...ornamentAt(rnd) })
+  }
+  return items
+}
 // ---- Advent calendar -----------------------------------------------------------------------------------------
 
 const DOORS_DA = [
