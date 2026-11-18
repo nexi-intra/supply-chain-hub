@@ -1165,6 +1165,50 @@ export interface WarehouseBridge {
     mail(request: { id: string; mode: 'new' | 'all'; language: MailLanguage; scope: SapCheckScope; to?: string; cc?: string }): Promise<{ file: string; count: number; to: string }>
   }
   locations: LocationsBridge
+  timeclock: TimeclockBridge
+}
+
+/** A task as the clock knows it (from the shift schedule's tasks). */
+export interface TimeclockTask { taskId: string; taskName: string; taskColor: string }
+
+/** The user's own running clock. `now` is the main process's clock when it answered. */
+export interface TimeclockRunning extends TimeclockTask {
+  startedAt: number
+  paused: boolean
+  pausedMs: number
+  workedMs: number
+  now: number
+}
+
+/** A saved registration (managers only). Filed under the day it started. */
+export interface TimeclockEntry extends TimeclockTask {
+  id: string
+  email: string
+  name: string
+  date: string
+  startedAt: number
+  endedAt: number
+  pauses: { from: number; to: number }[]
+  pausedMs: number
+  workedMs: number
+  savedAt: number
+  endCorrected?: boolean
+  editedBy?: Person
+  editedAt?: number
+}
+
+export interface TimeclockBridge {
+  status(): Promise<{ running: TimeclockRunning | null; isManager: boolean }>
+  /** `switchTask`: saves the running clock and starts this task in one go. */
+  start(request: TimeclockTask & { switchTask?: boolean }): Promise<TimeclockRunning & { saved?: { taskName: string; workedMs: number } }>
+  pause(): Promise<TimeclockRunning>
+  resume(): Promise<TimeclockRunning>
+  /** Fails with TIMECLOCK_LONG_RUN after 10 hours without `endAt` (when the work really stopped). */
+  stop(request?: { endAt?: number }): Promise<{ taskName: string; workedMs: number; pausedMs: number }>
+  cancel(): Promise<{ ok: true }>
+  entries(request: { from: string; to: string }): Promise<{ entries: TimeclockEntry[]; running: (TimeclockRunning & { email: string; name: string })[] }>
+  updateEntry(request: { email: string; id: string; startedAt?: number; endedAt?: number } & Partial<TimeclockTask>): Promise<TimeclockEntry>
+  deleteEntry(request: { email: string; id: string }): Promise<{ ok: true }>
 }
 
 declare global {

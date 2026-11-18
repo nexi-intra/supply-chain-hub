@@ -1,12 +1,12 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
-import { Barcode, ClipboardText, MapPin, Package } from '@phosphor-icons/react'
+import { Barcode, ClipboardText, Clock, IdentificationCard, MapPin, Package } from '@phosphor-icons/react'
 import { SectionTile } from '@/components/arcade/SectionTile'
 import { t } from '@/lib/warehouse/text'
 import { withoutDeleted } from './pendingDeletes'
 import type { WarehouseUser } from '@/types/warehouse'
 
-export type WarehouseTool = 'counts' | 'locations'
+export type WarehouseTool = 'timeclock' | 'counts' | 'locations'
 
 interface ToolTile {
   id: WarehouseTool
@@ -34,8 +34,23 @@ function CountsArt() {
   )
 }
 
-/** Lagerstyring's tools, Placeringer first. A new tool (e.g. goods receipt) gets a tile here and its own view in Warehouse.tsx. */
+function TimeclockArt() {
+  return (
+    <span className="section-art-warehouse">
+      <Clock className="section-warehouse-main" size={60} weight="duotone" />
+      <IdentificationCard className="section-warehouse-side" size={46} weight="duotone" />
+    </span>
+  )
+}
+
+/** The tools of Arbejdsværktøjer, Stempelkort first (used every day by everyone). A new tool gets a tile here and its own view in Warehouse.tsx. */
 const tools = (): ToolTile[] => [
+  {
+    id: 'timeclock',
+    title: t('Stempelkort', 'Time card'),
+    description: t('Stempl ind og ud på dine opgaver: start, pause og stop. Kun managere ser de gemte tider.', 'Clock in and out on your tasks: start, break and stop. Only managers see the saved times.'),
+    art: <TimeclockArt />,
+  },
   {
     id: 'locations',
     title: t('Placeringer', 'Locations'),
@@ -50,7 +65,7 @@ const tools = (): ToolTile[] => [
   },
 ]
 
-/** The Lagerstyring hub: one large tile per tool, like the sections of the Game Corner. */
+/** The Arbejdsværktøjer hub: one large tile per tool, like the sections of the Game Corner. */
 export function WarehouseHome({ user, onOpen }: { user: WarehouseUser; onOpen: (tool: WarehouseTool) => void }) {
   // A short live line on the Optælling tile; the page works without it if the drive cannot be read.
   const [activeStatus, setActiveStatus] = useState<string | null>(null)
@@ -64,7 +79,7 @@ export function WarehouseHome({ user, onOpen }: { user: WarehouseUser; onOpen: (
 
   return (
     <div className="container mx-auto max-w-7xl space-y-6 px-4 py-8 sm:px-6">
-      <p className="text-sm text-muted-foreground">{t(`Lagerværktøjer for team ${user.team}. Vælg et værktøj.`, `Warehouse tools for team ${user.team}. Choose a tool.`)}</p>
+      <p className="text-sm text-muted-foreground">{t(`Arbejdsværktøjer for team ${user.team}. Vælg et værktøj.`, `Work tools for team ${user.team}. Choose a tool.`)}</p>
       <div className="grid auto-rows-fr grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 md:gap-6">
         {tools().map((tool, index) => (
           <motion.div key={tool.id} className="h-full" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.05, duration: 0.4 }}>

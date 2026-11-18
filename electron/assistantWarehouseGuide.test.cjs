@@ -1,9 +1,9 @@
-// Hubert's how-to answers for Lagerstyring > Optælling (TCD/TRR), in all four languages.
+// Hubert's how-to answers for Arbejdsværktøjer > Optælling (TCD/TRR), in all four languages.
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const { ask, DANISH_GUIDE } = require('./assistantTrainingBank.cjs')
 
-const MODULE = { da: 'Lagerstyring', en: 'Warehouse Management', fi: 'Varastonhallinta', sv: 'Lagerstyrning' }
+const MODULE = { da: 'Arbejdsværktøjer', en: 'Work Tools', fi: 'Työkalut', sv: 'Arbetsverktyg' }
 const starts = (language, title) => new RegExp(`^${MODULE[language]} - ${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`)
 
 const QUESTIONS = [
@@ -55,7 +55,7 @@ test('the guide answers how-to questions about Placeringer in four languages', (
 })
 
 test('the guide tells a manager how to make a colleague Placerings admin, in four languages', () => {
-  const QUESTIONS = { da: ['hvordan gør jeg en kollega til placerings admin?', 'Udnævn admin, status manager eller Placerings admin', /"Lagerstyringsroller"/], en: ['how do I make a colleague location admin?', 'Appoint an admin, a status manager or a Placerings admin', /"Warehouse roles"/], fi: ['miten teen kollegasta sijaintien admin?', 'Nimeä admin, status manager tai Placerings admin', /"Varastonhallinnan roolit"/], sv: ['hur gör jag en kollega till placeringsadmin?', 'Utse en admin, en status manager eller en Placerings admin', /"Lagerstyrningsroller"/] }
+  const QUESTIONS = { da: ['hvordan gør jeg en kollega til placerings admin?', 'Udnævn admin, status manager eller Placerings admin', /"Roller i Arbejdsværktøjer"/], en: ['how do I make a colleague location admin?', 'Appoint an admin, a status manager or a Placerings admin', /"Work tools roles"/], fi: ['miten teen kollegasta sijaintien admin?', 'Nimeä admin, status manager tai Placerings admin', /"Työkalujen roolit"/], sv: ['hur gör jag en kollega till placeringsadmin?', 'Utse en admin, en status manager eller en Placerings admin', /"Roller i Arbetsverktyg"/] }
   for (const [language, [question, title, card]] of Object.entries(QUESTIONS)) {
     const answer = ask({ q: question, lang: language }, { role: 'manager' })
     assert.equal(answer.mode, 'app-guide', `${language}: ${question} -> ${answer.text.slice(0, 80)}`)
@@ -78,4 +78,27 @@ test('the guide answers how to put on a shelf, create a rack and delete location
     if (language !== 'da') assert.doesNotMatch(answer.text, DANISH_GUIDE, language)
   }
   assert.match(ask({ q: 'hvordan tager jeg en palle fra lageret?', lang: 'da' }).text, /klik "Tag"\./, 'the take button is now called "Tag"')
+})
+
+test('the guide explains Stempelkort to everyone and the registered times to managers, in four languages', () => {
+  const CLOCK = [
+    ['hvordan stempler jeg ind på en opgave?', 'da', 'Stempl ind og ud på en opgave'], ['how do I clock in on a task?', 'en', 'Clock in and out on a task'],
+    ['miten leimaan sisään tehtävälle?', 'fi', 'Leimaa sisään ja ulos tehtävälle'], ['hur stämplar jag in på en uppgift?', 'sv', 'Stämpla in och ut på en uppgift'],
+  ]
+  for (const [question, language, title] of CLOCK) {
+    const answer = ask({ q: question, lang: language })
+    assert.equal(answer.mode, 'app-guide', `${language}: ${question} -> ${answer.text.slice(0, 80)}`)
+    assert.match(answer.text, starts(language, title), `${language}: ${question} -> ${answer.text.slice(0, 80)}`)
+    if (language !== 'da') assert.doesNotMatch(answer.text, DANISH_GUIDE, language)
+  }
+  const TIMES = [
+    ['hvor kan jeg se registrerede tider pr. opgave?', 'da', 'Se registrerede tider og statistik'], ['where do I see the registered times per task?', 'en', 'See registered times and statistics'],
+    ['mistä näen kirjatut ajat tehtävittäin?', 'fi', 'Katso kirjatut ajat ja tilastot'], ['var ser jag registrerade tider per uppgift?', 'sv', 'Se registrerade tider och statistik'],
+  ]
+  for (const [question, language, title] of TIMES) {
+    const answer = ask({ q: question, lang: language }, { role: 'manager' })
+    assert.equal(answer.mode, 'app-guide', `${language}: ${question} -> ${answer.text.slice(0, 80)}`)
+    assert.match(answer.text, starts(language, title), `${language}: ${question} -> ${answer.text.slice(0, 80)}`)
+  }
+  assert.doesNotMatch(ask({ q: 'hvor kan jeg se registrerede tider pr. opgave?', lang: 'da' }, { role: 'user' }).text, /^Arbejdsværktøjer - Se registrerede tider/, 'an employee is not handed the managers\' overview')
 })

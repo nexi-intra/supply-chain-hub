@@ -19,6 +19,7 @@ const { createCountRepository } = require('./countRepository.cjs')
 const { createCountService } = require('./countService.cjs')
 const { createRoles } = require('./roles.cjs')
 const { createSapCheckService } = require('./sapCheckService.cjs')
+const { createTimeclockService } = require('./timeclockService.cjs')
 const { createOutlookDrafter, createFakeDrafter } = require('./outlookDraft.cjs')
 const { createLocalCache } = require('./localCache.cjs')
 const { findNewestPlacementSheet, readPlacementSheet } = require('./core/placements.cjs')
@@ -194,6 +195,8 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   })
   // Tegningen shares the places' store: a publish writes the drawing and the places in one transaction.
   const layouts = createLayoutService({ repo: locationRepo, locations })
+  // Stempelkort: one store per hub in <team>/lagerstyring/stempelkort; times are only read back by managers.
+  const timeclock = createTimeclockService({ storeFor: team => openStore(path.join(dataDirOf(team), 'stempelkort')) })
   const fakeOutlookDir = !isPackaged && env.TCD_HUB_OUTLOOK_FAKE_DIR ? path.resolve(env.TCD_HUB_OUTLOOK_FAKE_DIR) : null
   const sapChecks = createSapCheckService({
     sharedStore,
@@ -346,6 +349,17 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   handle('sap-check:run', (user, p) => sapChecks.run(user, { scope: p.scope }))
   handle('sap-check:settings', (user, p) => sapChecks.setSettings(user, { to: p.to, cc: p.cc, language: p.language }))
   handle('sap-check:mail', (user, p) => sapChecks.createMail(user, { id: p.id, mode: p.mode, language: p.language, scope: p.scope, to: typeof p.to === 'string' ? p.to : undefined, cc: typeof p.cc === 'string' ? p.cc : undefined }))
+
+  // Stempelkort: own clock for everyone; registrations, corrections and statistics for managers only.
+  handle('timeclock:status', user => timeclock.status(user))
+  handle('timeclock:start', (user, p) => timeclock.start(user, { taskId: p.taskId, taskName: p.taskName, taskColor: p.taskColor, switchTask: p.switchTask === true }))
+  handle('timeclock:pause', user => timeclock.pause(user))
+  handle('timeclock:resume', user => timeclock.resume(user))
+  handle('timeclock:stop', (user, p) => timeclock.stop(user, { endAt: typeof p.endAt === 'number' ? p.endAt : undefined }))
+  handle('timeclock:cancel', user => timeclock.cancel(user))
+  handle('timeclock:entries', (user, p) => timeclock.entries(user, { from: p.from, to: p.to }))
+  handle('timeclock:update-entry', (user, p) => timeclock.updateEntry(user, { email: p.email, id: p.id, startedAt: p.startedAt, endedAt: p.endedAt, ...(p.taskId !== undefined ? { taskId: p.taskId, taskName: p.taskName, taskColor: p.taskColor } : {}) }))
+  handle('timeclock:delete-entry', (user, p) => timeclock.deleteEntry(user, { email: p.email, id: p.id }))
 
   // Placeringer: reads, then the changes; every change tells the open windows of that hub.
   const LOCATION_READS = { overview: 'overview', 'lookup-document': 'lookupDocument', suggest: 'suggest', search: 'search', 'material-card': 'materialCard', 'location-card': 'locationCard', 'pallet-card': 'palletCard', list: 'list', stamp: 'stamp', log: 'log', 'rack-card': 'rackCard', 'map-contents': 'mapContents' }

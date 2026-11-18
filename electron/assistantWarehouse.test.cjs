@@ -1,4 +1,4 @@
-// Hubert's live answers about Optælling (Lagerstyring): read only, own team only, TCD and TRR only.
+// Hubert's live answers about Optælling (Arbejdsværktøjer): read only, own team only, TCD and TRR only.
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const { createWarehouseAssistant, warehouseIntent } = require('./assistantWarehouse.cjs')

@@ -1,4 +1,4 @@
-// Hubert's live answers about Placeringer (Lagerstyring) for TCD and TRR: where a material stands (FIFO), what to refill
+// Hubert's live answers about Placeringer (Arbejdsværktøjer) for TCD and TRR: where a material stands (FIFO), what to refill
 // a pick place with, free places, what stands on a place, a shelf or a rack, where a 49/50 number is and what the log says happened. Runs in the
 // main process next to the warehouse services and reads through them as the signed-in Hub person, so the module's own
 // rules apply: own team only, other hubs are refused. Read only: write requests get "I only read" and a button to
@@ -82,7 +82,7 @@ const LOCALES = { da: 'da-DK', en: 'en-GB', fi: 'fi-FI', sv: 'sv-SE' }
 const TEXT = {
   da: {
     name: 'Placeringer', open: 'Åbn Placeringer', openItem: name => `Åbn ${name}`, refillButton: name => `Fyld ${name} op`, putAway: 'Sæt palle på plads',
-    only: 'Placeringer (Lagerstyring) findes kun i TCD- og TRR-hubben. Åbn TCD- eller TRR-hubben.',
+    only: 'Placeringer (Arbejdsværktøjer) findes kun i TCD- og TRR-hubben. Åbn TCD- eller TRR-hubben.',
     readOnly: 'Jeg kan kun læse i Placeringer. Sæt på plads, tag, flyt og fyld op gør du selv i Placeringer.',
     unavailable: 'Placeringer kan ikke læses lige nu. Prøv igen om lidt.',
     age: days => (days <= 0 ? 'i dag' : days === 1 ? '1 dag' : `${days} dage`), pcs: qty => `${qty} stk.`,
@@ -102,7 +102,7 @@ const TEXT = {
   },
   en: {
     name: 'Locations', open: 'Open Locations', openItem: name => `Open ${name}`, refillButton: name => `Refill ${name}`, putAway: 'Put a pallet away',
-    only: 'Locations (Warehouse Management) is only in the TCD and TRR hubs. Open the TCD or TRR hub.',
+    only: 'Locations (Work Tools) is only in the TCD and TRR hubs. Open the TCD or TRR hub.',
     readOnly: 'I can only read in Locations. You put away, take, move and refill in Locations yourself.',
     unavailable: 'Locations cannot be read right now. Try again in a moment.',
     age: days => (days <= 0 ? 'today' : days === 1 ? '1 day' : `${days} days`), pcs: qty => `${qty} pcs`,
@@ -122,7 +122,7 @@ const TEXT = {
   },
   fi: {
     name: 'Sijainnit', open: 'Avaa Locations', openItem: name => `Avaa ${name}`, refillButton: name => `Täytä ${name}`, putAway: 'Laita lava paikalleen',
-    only: 'Sijainnit (Varastonhallinta) ovat vain TCD- ja TRR-hubissa. Avaa TCD- tai TRR-hub.',
+    only: 'Sijainnit (Työkalut) ovat vain TCD- ja TRR-hubissa. Avaa TCD- tai TRR-hub.',
     readOnly: 'Voin vain lukea sijainteja. Lavan paikalleen laitto, otto, siirto ja täyttö tehdään itse näkymässä Locations.',
     unavailable: 'Sijainteja ei voi lukea juuri nyt. Yritä hetken päästä uudelleen.',
     age: days => (days <= 0 ? 'tänään' : days === 1 ? '1 päivä' : `${days} päivää`), pcs: qty => `${qty} kpl`,
@@ -142,7 +142,7 @@ const TEXT = {
   },
   sv: {
     name: 'Placeringar', open: 'Öppna Locations', openItem: name => `Öppna ${name}`, refillButton: name => `Fyll på ${name}`, putAway: 'Sätt en pall på plats',
-    only: 'Placeringar (Lagerstyrning) finns bara i TCD- och TRR-hubben. Öppna TCD- eller TRR-hubben.',
+    only: 'Placeringar (Arbetsverktyg) finns bara i TCD- och TRR-hubben. Öppna TCD- eller TRR-hubben.',
     readOnly: 'Jag kan bara läsa i placeringarna. Du sätter på plats, tar, flyttar och fyller på själv i Locations.',
     unavailable: 'Placeringarna kan inte läsas just nu. Försök igen om en stund.',
     age: days => (days <= 0 ? 'i dag' : days === 1 ? '1 dag' : `${days} dagar`), pcs: qty => `${qty} st.`,

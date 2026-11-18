@@ -37,6 +37,7 @@ import type { ShiftRole, ShiftAssignment, ShiftPatternRule, SickLeaveEntry, Vaca
 import { resolveShiftDayComment, setShiftDayNote, updateShiftDayAssignments, type ShiftDayNotes } from '@/lib/shiftDayComments'
 import { formatShiftTime, resolveShiftTime, shiftTimeError, toShiftTime } from '@/lib/shiftTimes'
 import { TimeRangeFields } from '@/components/TimeRangeFields'
+import { ShiftRoleDialog } from '@/components/ShiftRoleDialog'
 
 interface ShiftScheduleProps {
   onNavigateBack: () => void
@@ -127,37 +128,11 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
   const [editingComment, setEditingComment] = useState<{ employeeId: string; date: string } | null>(null)
   const [commentText, setCommentText] = useState('')
   
-  const [newRoleName, setNewRoleName] = useState('')
-  const [newRoleColor, setNewRoleColor] = useState('#8b5cf6')
-  const [onlyWhenAssigned, setOnlyWhenAssigned] = useState(false)
-  const [roleStart, setRoleStart] = useState('')
-  const [roleEnd, setRoleEnd] = useState('')
-
-  const rolePlaceholder = useAutoTranslate('F.eks. Supervisor, Tekniker, Support', 'da')
   const selectEmployeePlaceholder = useAutoTranslate('Vælg medarbejder', 'da')
   const selectRolePlaceholder = useAutoTranslate('Vælg rolle', 'da')
   const selectTaskPlaceholder = useAutoTranslate('Vælg opgave', 'da')
   const selectWeekPlaceholder = useAutoTranslate('Vælg uge', 'da')
   const commentPlaceholder = useAutoTranslate('F.eks. Går kl. 14:00 til tandlæge', 'da')
-
-  const colorPresets = [
-    { name: 'Lilla', value: '#a855f7' },
-    { name: 'Blå', value: '#3b82f6' },
-    { name: 'Cyan', value: '#06b6d4' },
-    { name: 'Grøn', value: '#10b981' },
-    { name: 'Gul', value: '#eab308' },
-    { name: 'Orange', value: '#f97316' },
-    { name: 'Rød', value: '#ef4444' },
-    { name: 'Pink', value: '#ec4899' },
-    { name: 'Indigo', value: '#6366f1' },
-    { name: 'Teal', value: '#14b8a6' },
-    { name: 'Lime', value: '#84cc16' },
-    { name: 'Rose', value: '#f43f5e' },
-    { name: 'Emerald', value: '#059669' },
-    { name: 'Sky', value: '#0ea5e9' },
-    { name: 'Violet', value: '#8b5cf6' },
-    { name: 'Amber', value: '#f59e0b' },
-  ]
   
   const [selectedEmployee, setSelectedEmployee] = useState('')
   const [selectedRole, setSelectedRole] = useState('')
@@ -292,62 +267,12 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
     return isWeekend(date) || isDanishHoliday(dateString)
   }
 
-  const handleAddRole = () => {
-    if (!newRoleName.trim()) {
-      toast.error('Indtast et rolle navn')
-      return
-    }
-    const timeError = shiftTimeError(roleStart, roleEnd)
-    if (timeError) {
-      toast.error(timeError)
-      return
-    }
-
-    const newRole: ShiftRole = {
-      id: Date.now().toString(),
-      name: newRoleName.trim(),
-      color: newRoleColor,
-      onlyWhenAssigned,
-      ...toShiftTime(roleStart, roleEnd),
-    }
-
-    setRoles((current) => [...(current || []), newRole])
-    setNewRoleName('')
-    setNewRoleColor('#8b5cf6')
-    setOnlyWhenAssigned(false)
-    setRoleStart('')
-    setRoleEnd('')
-    setShowRoleDialog(false)
-    toast.success('Rolle tilføjet')
-  }
-
-  const handleUpdateRole = () => {
-    if (!editingRole) return
-    if (!newRoleName.trim()) {
-      toast.error('Indtast et rolle navn')
-      return
-    }
-    const timeError = shiftTimeError(roleStart, roleEnd)
-    if (timeError) {
-      toast.error(timeError)
-      return
-    }
-
-    setRoles((current) => 
-      (current || []).map(r => 
-        r.id === editingRole.id 
-          ? { ...r, name: newRoleName.trim(), color: newRoleColor, onlyWhenAssigned, ...toShiftTime(roleStart, roleEnd) }
-          : r
-      )
-    )
-    setNewRoleName('')
-    setNewRoleColor('#8b5cf6')
-    setOnlyWhenAssigned(false)
-    setRoleStart('')
-    setRoleEnd('')
+  // Created and edited in the shared ShiftRoleDialog (also used by Stempelkort), so a task is made the same way everywhere.
+  const handleSaveRole = (role: ShiftRole) => {
+    const exists = (roles || []).some(r => r.id === role.id)
+    setRoles((current) => exists ? (current || []).map(r => r.id === role.id ? role : r) : [...(current || []), role])
     setEditingRole(null)
-    setShowRoleDialog(false)
-    toast.success('Rolle opdateret')
+    toast.success(exists ? 'Rolle opdateret' : 'Rolle tilføjet')
   }
 
   const handleDeleteRole = (roleId: string) => {
@@ -434,21 +359,11 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
 
   const openEditRoleDialog = (role: ShiftRole) => {
     setEditingRole(role)
-    setNewRoleName(role.name)
-    setNewRoleColor(role.color)
-    setOnlyWhenAssigned(role.onlyWhenAssigned === true)
-    setRoleStart(role.startTime || '')
-    setRoleEnd(role.endTime || '')
     setShowRoleDialog(true)
   }
 
   const openAddRoleDialog = () => {
     setEditingRole(null)
-    setNewRoleName('')
-    setNewRoleColor('#8b5cf6')
-    setOnlyWhenAssigned(false)
-    setRoleStart('')
-    setRoleEnd('')
     setShowRoleDialog(true)
   }
 
@@ -1526,74 +1441,15 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
           </TabsContent>
         </Tabs>
       </div>
-      <Dialog open={showRoleDialog} onOpenChange={(open) => {
-        setShowRoleDialog(open)
-        if (!open) {
-          setEditingRole(null)
-          setNewRoleName('')
-          setNewRoleColor('#8b5cf6')
-          setOnlyWhenAssigned(false)
-          setRoleStart('')
-          setRoleEnd('')
-        }
-      }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle><AutoText text={editingRole ? 'Rediger Rolle' : 'Tilføj Ny Rolle'} /></DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 pt-4">
-            <div>
-              <Label htmlFor="role-name"><AutoText text="Rolle Navn" /></Label>
-              <Input
-                id="role-name"
-                value={newRoleName}
-                onChange={(e) => setNewRoleName(e.target.value)}
-                placeholder={rolePlaceholder}
-              />
-            </div>
-            <div>
-              <Label><AutoText text="Vælg Farve" /></Label>
-              <div className="grid grid-cols-4 gap-3 mt-3">
-                {colorPresets.map((color) => (
-                  <button
-                    key={color.value}
-                    type="button"
-                    onClick={() => setNewRoleColor(color.value)}
-                    className={cn(
-                      "relative flex flex-col items-center gap-2 p-3 rounded-md border-2 transition-colors",
-                      newRoleColor === color.value
-                        ? "border-foreground"
-                        : "border-border hover:border-muted-foreground"
-                    )}
-                  >
-                    <div
-                      className="w-10 h-10 rounded-full"
-                      style={{ backgroundColor: color.value }}
-                    />
-                    <span className="text-xs font-medium">{color.name}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <Checkbox id="role-only-when-assigned" checked={onlyWhenAssigned} onCheckedChange={(checked) => setOnlyWhenAssigned(checked === true)} />
-              <Label htmlFor="role-only-when-assigned"><AutoText text="Vis kun i Hub, når nogen er sat på opgaven" /></Label>
-            </div>
-            <TimeRangeFields
-              id="role-time"
-              label={<AutoText text="Standardtid (valgfri)" />}
-              start={roleStart}
-              end={roleEnd}
-              onStart={setRoleStart}
-              onEnd={setRoleEnd}
-              hint={<AutoText text="Bruges på alle vagter med denne rolle, medmindre vagten har sin egen tid." />}
-            />
-            <Button onClick={editingRole ? handleUpdateRole : handleAddRole} className="w-full">
-              <AutoText text={editingRole ? 'Gem Ændringer' : 'Opret Rolle'} />
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ShiftRoleDialog
+        open={showRoleDialog}
+        onOpenChange={(open) => {
+          setShowRoleDialog(open)
+          if (!open) setEditingRole(null)
+        }}
+        role={editingRole}
+        onSave={handleSaveRole}
+      />
       <Dialog open={showAssignmentDialog} onOpenChange={(open) => {
         setShowAssignmentDialog(open)
         if (!open) {

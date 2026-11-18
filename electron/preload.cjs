@@ -156,6 +156,18 @@ contextBridge.exposeInMainWorld('electronWarehouse', {
     setSettings: request => warehouse('sap-check:settings', request),
     mail: request => warehouse('sap-check:mail', request),
   },
+  // Stempelkort: the own clock; registrations and statistics answer managers only.
+  timeclock: {
+    status: () => warehouse('timeclock:status'),
+    start: request => warehouse('timeclock:start', request),
+    pause: () => warehouse('timeclock:pause'),
+    resume: () => warehouse('timeclock:resume'),
+    stop: request => warehouse('timeclock:stop', request),
+    cancel: () => warehouse('timeclock:cancel'),
+    entries: request => warehouse('timeclock:entries', request),
+    updateEntry: request => warehouse('timeclock:update-entry', request),
+    deleteEntry: request => warehouse('timeclock:delete-entry', request),
+  },
   // Placeringer: where pallets stand, pick places and FIFO, per hub.
   locations: {
     overview: request => warehouse('locations:overview', request),

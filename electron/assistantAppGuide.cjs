@@ -896,7 +896,7 @@ const APP_GUIDE = [
 const { MORE_MODULES, MORE_TASKS } = require('./assistantAppGuideMore.cjs')
 for (const [id, tasks] of Object.entries(MORE_TASKS)) APP_GUIDE.find(module => module.id === id).tasks.push(...tasks)
 APP_GUIDE.splice(APP_GUIDE.findIndex(module => module.id === 'documents'), 0, ...MORE_MODULES)
-// Warehouse Management (Optælling), TCD and TRR only.
+// Work Tools (Optælling), TCD and TRR only.
 const { WAREHOUSE_MODULE } = require('./assistantAppGuideWarehouse.cjs')
 APP_GUIDE.splice(APP_GUIDE.findIndex(module => module.id === 'documents'), 0, WAREHOUSE_MODULE)
 

@@ -5,10 +5,11 @@ export interface WarehouseLabels {
   hubDescription: string
 }
 
-const da: WarehouseLabels = { title: 'Lagerstyring', hubDescription: 'Lagerværktøjer for TCD og TRR' }
-const en: WarehouseLabels = { title: 'Warehouse Management', hubDescription: 'Warehouse tools for TCD and TRR' }
-const fi: WarehouseLabels = { title: 'Varastonhallinta', hubDescription: 'Varastotyökalut TCD:lle ja TRR:lle' }
-const sv: WarehouseLabels = { title: 'Lagerstyrning', hubDescription: 'Lagerverktyg för TCD och TRR' }
+// The module was Lagerstyring; with Stempelkort it holds more than warehouse tools, so it is Arbejdsværktøjer.
+const da: WarehouseLabels = { title: 'Arbejdsværktøjer', hubDescription: 'Stempelkort, placeringer og optælling for TCD og TRR' }
+const en: WarehouseLabels = { title: 'Work Tools', hubDescription: 'Time card, locations and stock count for TCD and TRR' }
+const fi: WarehouseLabels = { title: 'Työkalut', hubDescription: 'Leimauskortti, sijainnit ja inventointi TCD:lle ja TRR:lle' }
+const sv: WarehouseLabels = { title: 'Arbetsverktyg', hubDescription: 'Stämpelkort, placeringar och inventering för TCD och TRR' }
 
 export const WAREHOUSE_LABELS: Record<Language, WarehouseLabels> = { da, en, fi, sv }
 export const getWarehouseLabels = (language: Language): WarehouseLabels => WAREHOUSE_LABELS[language] ?? en

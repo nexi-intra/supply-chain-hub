@@ -26,6 +26,7 @@ import { SerialRules } from './SerialRules'
 import { StatusView } from './StatusView'
 import { WarehouseHome, type WarehouseTool } from './WarehouseHome'
 import { Locations } from './locations/Locations'
+import { Timeclock } from './timeclock/Timeclock'
 
 export type View = { kind: 'list' } | { kind: 'new' } | { kind: 'count'; id: string; tab?: CountTab } | { kind: 'status'; id: string; from?: 'archive' } | { kind: 'archive' } | { kind: 'rules' } | { kind: 'serial-rules' } | { kind: 'sap-check' }
 
@@ -34,13 +35,14 @@ const TOP_LEVEL = new Set<View['kind']>(['list', 'archive', 'rules', 'serial-rul
 type Tool = 'home' | WarehouseTool
 
 /**
- * Without params Lagerstyring opens on its own hub page. Deep links (Hubert, notifications) go straight into Optælling:
+ * Without params Arbejdsværktøjer opens on its own hub page. Deep links (Hubert, notifications) go straight into Optælling:
  * tab = counts|archive|rules|serial-rules|sap-check, itemId = count id or "status:<id>". A count from a notification
- * opens on its tab: tab = count-members|count-approval (or count).
+ * opens on its tab: tab = count-members|count-approval (or count). tab = timeclock opens Stempelkort.
  */
 function initialState(): { tool: Tool; view: View; locations: LocationsTarget } {
   const params = consumeNavigationParams()
   if (!params?.tab && !params?.itemId) return { tool: 'home', view: { kind: 'list' }, locations: { kind: 'home' } }
+  if (params.tab === 'timeclock') return { tool: 'timeclock', view: { kind: 'list' }, locations: { kind: 'home' } }
   // tab = locations: Placeringer, itemId = material:X | location:Y | pallet:Z | refill | …
   if (params.tab === 'locations') return { tool: 'locations', view: { kind: 'list' }, locations: targetFromItem(params.itemId) }
   return { tool: 'counts', view: countsView(params.tab, params.itemId || ''), locations: { kind: 'home' } }
@@ -55,7 +57,7 @@ function countsView(tab: string | undefined, item: string): View {
   return { kind: 'list' }
 }
 
-/** Warehouse Management (Lagerstyring) for TCD and TRR: a hub of warehouse tools. Today it holds one tool: Optælling (stock counting). */
+/** Arbejdsværktøjer for TCD and TRR (the module was Lagerstyring): Stempelkort, Placeringer and Optælling. */
 export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
   const [user, setUser] = useState<WarehouseUser | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
@@ -66,19 +68,20 @@ export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
   // Keeps t() in step with the Hub language; the whole module re-renders below this component when it changes.
   const language = useWarehouseLanguage()
   const { language: hubLanguage } = useLanguage()
+  const usesSap = Boolean(user) && (tool === 'counts' || tool === 'locations')
 
   useEffect(() => {
     const bridge = window.electronWarehouse
-    if (!bridge) { setFailed(t('Lagerstyring kræver Supply Chain Hub-programmet.', 'Warehouse Management needs the Supply Chain Hub program.')); return }
+    if (!bridge) { setFailed(t('Arbejdsværktøjer kræver Supply Chain Hub-programmet.', 'Work Tools needs the Supply Chain Hub program.')); return }
     bridge.me().then(setUser).catch(error => setFailed(errorMessage(error)))
   }, [])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented || isAnyModalOpen()) return
-      // Escape goes one level up: from a tool to the Lagerstyring page, from there to the front page.
+      // Escape goes one level up: from a tool to the Arbejdsværktøjer page, from there to the front page.
       if (tool === 'home') onNavigateBack()
-      else if (TOP_LEVEL.has(view.kind)) toHome()
+      else if (tool === 'timeclock' || TOP_LEVEL.has(view.kind)) toHome()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -97,9 +100,10 @@ export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
             {getWarehouseLabels(hubLanguage as Language).title}
             {tool === 'counts' && <><span className="text-muted-foreground">·</span><span className="text-muted-foreground">{t('Optælling', 'Stock count')}</span></>}
             {tool === 'locations' && <><span className="text-muted-foreground">·</span><span className="text-muted-foreground">{t('Placeringer', 'Locations')}</span></>}
+            {tool === 'timeclock' && <><span className="text-muted-foreground">·</span><span className="text-muted-foreground">{t('Stempelkort', 'Time card')}</span></>}
           </h1>
           {user && <Badge variant="secondary" className="font-mono">{user.team}</Badge>}
-          {user && tool !== 'home' && <div className="ml-auto"><SapIndicator /></div>}
+          {user && usesSap && <div className="ml-auto"><SapIndicator /></div>}
         </div>
       </div>
       {failed && (
@@ -110,6 +114,7 @@ export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
       {!failed && !user && <div className="container mx-auto px-4 py-8 sm:px-6"><Skeleton className="h-64 rounded-xl" /></div>}
       {user && tool === 'home' && <WarehouseHome key={language} user={user} onOpen={setTool} />}
       {user && tool === 'locations' && <Locations key={language} user={user} initial={start.locations} />}
+      {user && tool === 'timeclock' && <Timeclock key={language} user={user} />}
       {user && tool === 'counts' && (
         <>
           <WarehouseContent key={language} user={user} view={view} onNavigate={setView} />
@@ -118,8 +123,8 @@ export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
       )}
     </div>
   )
-  // SAP is polled only inside a tool for a TCD/TRR person; the Lagerstyring page and other hubs never reach SAP.
-  return user && tool !== 'home' ? <SapStatusProvider>{page}</SapStatusProvider> : page
+  // SAP is polled only inside Placeringer and Optælling for a TCD/TRR person; the tools page, Stempelkort and other hubs never reach SAP.
+  return usesSap ? <SapStatusProvider>{page}</SapStatusProvider> : page
 }
 
 function WarehouseContent({ user, view, onNavigate }: { user: WarehouseUser; view: View; onNavigate: (view: View) => void }) {

@@ -23,7 +23,7 @@ export function errorDetail(error: unknown): string | null {
 }
 
 const MESSAGES: Record<string, string> = {
-  WAREHOUSE_TEAM_NOT_ALLOWED: 'Lagerstyring er kun for TCD og TRR. Åbn TCD- eller TRR-hubben.',
+  WAREHOUSE_TEAM_NOT_ALLOWED: 'Arbejdsværktøjer er kun for TCD og TRR. Åbn TCD- eller TRR-hubben.',
   AUTH_REQUIRED: 'Du skal logge ind igen.',
   AUTH_CONTEXT_CHANGED: 'Du skiftede hub undervejs. Visningen er genindlæst – tjek resultatet.',
   TEAM_NOT_ALLOWED: 'Du har ikke adgang til det team.',
@@ -133,6 +133,14 @@ const MESSAGES: Record<string, string> = {
   LAYOUT_BLOCKED: 'Tegningen kan ikke udgives – ret det, der stopper udgivelsen, først.',
   LAYOUT_OWNS_PLACES: 'Pladser oprettes nu på tegningen.',
   LOCATION_ON_DRAWING: 'Ret navn, type og kapacitet på tegningen.',
+  // Stempelkort
+  TIMECLOCK_INVALID: 'Ugyldig opgave eller tid.',
+  TIMECLOCK_RUNNING: 'Uret kører allerede. Stop det eller skift opgave.',
+  TIMECLOCK_NOT_RUNNING: 'Der kører ikke noget ur.',
+  TIMECLOCK_PAUSED: 'Uret holder allerede pause.',
+  TIMECLOCK_NOT_PAUSED: 'Uret holder ikke pause.',
+  TIMECLOCK_LONG_RUN: 'Uret har kørt i over 10 timer. Vælg hvornår du stoppede.',
+  TIMECLOCK_NOT_FOUND: 'Registreringen findes ikke (længere).',
   UNEXPECTED_ERROR: 'Der skete en uventet fejl. Prøv igen.',
 }
 
@@ -144,7 +152,7 @@ export function errorMessage(error: unknown, fallback?: string): string {
 
 // The backend's detail text is Danish; in English the code's own text is shown instead.
 const MESSAGES_EN: Record<string, string> = {
-  WAREHOUSE_TEAM_NOT_ALLOWED: 'Warehouse Management is only for TCD and TRR. Open the TCD or TRR hub.',
+  WAREHOUSE_TEAM_NOT_ALLOWED: 'Work Tools is only for TCD and TRR. Open the TCD or TRR hub.',
   AUTH_REQUIRED: 'Please log in again.',
   AUTH_CONTEXT_CHANGED: 'You switched hub meanwhile. The view has been reloaded – check the result.',
   TEAM_NOT_ALLOWED: 'You do not have access to that team.',
@@ -270,6 +278,14 @@ const MESSAGES_EN: Record<string, string> = {
   LAYOUT_BLOCKED: 'The drawing cannot be published – fix what stops the publish first.',
   LAYOUT_OWNS_PLACES: 'Locations are now created on the drawing.',
   LOCATION_ON_DRAWING: 'Change name, type and capacity on the drawing.',
+  // Time card
+  TIMECLOCK_INVALID: 'Invalid task or time.',
+  TIMECLOCK_RUNNING: 'The clock is already running. Stop it or switch task.',
+  TIMECLOCK_NOT_RUNNING: 'No clock is running.',
+  TIMECLOCK_PAUSED: 'The clock is already on a break.',
+  TIMECLOCK_NOT_PAUSED: 'The clock is not on a break.',
+  TIMECLOCK_LONG_RUN: 'The clock has run for more than 10 hours. Choose when you stopped.',
+  TIMECLOCK_NOT_FOUND: 'The registration does not exist (any more).',
   UNEXPECTED_ERROR: 'Something unexpected went wrong. Try again.',
 }
 

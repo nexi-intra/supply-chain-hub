@@ -1,4 +1,4 @@
-// App-guide for Warehouse Management (Lagerstyring) and its tool Optælling (stock counting), TCD and TRR only.
+// App-guide for Arbejdsværktøjer (was Lagerstyring) and its tools Stempelkort, Placeringer and Optælling, TCD and TRR only.
 // Danish base text and keywords (all languages' keywords, folded: æ->ae, ø->oe, å->aa); en/fi/sv texts are in assistantAppGuideWarehouseI18n.cjs.
 // The English UI labels quoted in en/fi/sv are the ones Optælling shows in English (fi/sv users get the English UI).
 const MANAGER = 'manager'
@@ -6,12 +6,41 @@ const MANAGER = 'manager'
 const WAREHOUSE_MODULE = {
   id: 'warehouse',
   view: 'warehouse',
-  title: 'Lagerstyring',
+  title: 'Arbejdsværktøjer',
   inOverview: false,
-  summary: 'Lagerstyring findes kun i TCD- og TRR-hubben. Lagerstyring er en lille hub med lagerværktøjer: Placeringer (hvor pallerne står, sæt på plads, tag den ældste først og fyld pluk-pladser op) og Optælling: kvartalets statusoptælling af terminaler og tilbehør i plant D301 med scanning af serienumre, godkendelse, SAP-optællingsdokumenter, endelige rapporter og et arkiv over afholdte statusser.',
-  where: 'Åbn feltet "Lagerstyring" på forsiden (kun i TCD- og TRR-hubben) og vælg "Placeringer" eller "Optælling".',
-  keywords: ['lagerstyring', 'lagerstyringen', 'placeringer', 'placeringerne', 'placeringsark', 'sijainnit', 'sijoitustaulukko', 'placeringar', 'warehouse management', 'optaelling', 'optaellingen', 'optaellinger', 'statusoptaelling', 'lageroptaelling', 'stock count', 'stock counts', 'stocktake', 'stock taking', 'inventory count', 'varastonhallinta', 'inventointi', 'inventoinnin', 'varaston laskenta', 'lagerstyrning', 'inventering', 'inventeringen', 'lagerinventering', 'reol', 'reoler', 'reolen', 'hylde', 'hylder', 'rack', 'racks', 'shelf', 'shelves', 'hylly', 'hyllyt', 'hyllykkoe', 'hylla', 'hyllor'],
+  summary: 'Arbejdsværktøjer findes kun i TCD- og TRR-hubben (hed før Lagerstyring). Det er en lille hub med værktøjer: Stempelkort (stempl ind og ud på dine opgaver med start, pause og stop; kun managere ser tiderne), Placeringer (hvor pallerne står, sæt på plads, tag den ældste først og fyld pluk-pladser op) og Optælling: kvartalets statusoptælling af terminaler og tilbehør i plant D301 med scanning af serienumre, godkendelse, SAP-optællingsdokumenter, endelige rapporter og et arkiv over afholdte statusser.',
+  where: 'Åbn feltet "Arbejdsværktøjer" på forsiden (kun i TCD- og TRR-hubben) og vælg "Stempelkort", "Placeringer" eller "Optælling".',
+  keywords: ['arbejdsvaerktoejer', 'arbejdsvaerktoej', 'work tools', 'tyokalut', 'tyoekalut', 'arbetsverktyg', 'stempelkort', 'stemple ind', 'stempl ind', 'time card', 'timecard', 'leimauskortti', 'staempelkort', 'lagerstyring', 'lagerstyringen', 'placeringer', 'placeringerne', 'placeringsark', 'sijainnit', 'sijoitustaulukko', 'placeringar', 'warehouse management', 'optaelling', 'optaellingen', 'optaellinger', 'statusoptaelling', 'lageroptaelling', 'stock count', 'stock counts', 'stocktake', 'stock taking', 'inventory count', 'varastonhallinta', 'inventointi', 'inventoinnin', 'varaston laskenta', 'lagerstyrning', 'inventering', 'inventeringen', 'lagerinventering', 'reol', 'reoler', 'reolen', 'hylde', 'hylder', 'rack', 'racks', 'shelf', 'shelves', 'hylly', 'hyllyt', 'hyllykkoe', 'hylla', 'hyllor'],
   tasks: [
+    {
+      id: 'timeclock',
+      title: 'Stempl ind og ud på en opgave',
+      preferred: true,
+      direct: true,
+      keywords: ['stempelkort', 'stemple ind', 'stempl ind', 'stemple ud', 'stempl ud', 'stempler ind', 'registrere tid', 'registrer tid', 'tidsregistrering', 'tid paa opgave', 'start ur', 'starte uret', 'stop uret', 'holde pause', 'glemte at stoppe', 'skift opgave', 'time card', 'clock in on', 'clock out of', 'clock myself in', 'how do i clock in', 'how do i clock out', 'register time', 'track time', 'time tracking', 'start the timer', 'stop the timer', 'take a break', 'leimauskortti', 'leimaa sisaeaen', 'leimaan sisaeaen', 'leimaan', 'leimaa ulos', 'leimaan ulos', 'leimata', 'kirjaa aika', 'ajanseuranta', 'staempelkort', 'staempla in', 'staempla ut', 'staemplar in', 'staemplar ut', 'staemplar', 'registrera tid', 'tidrapportering'],
+      steps: [
+        'Åbn "Arbejdsværktøjer" på forsiden og vælg "Stempelkort".',
+        'Din opgave i dag fra vagtplanen er valgt på forhånd. Vælg en anden opgave på listen, eller klik "Ny opgave" for at oprette en (den kommer også i vagtplanen).',
+        'Klik "Start". Uret tæller, og du kan klikke "Pause" og "Fortsæt" så tit du vil. Pauser tæller ikke med.',
+        'Klik "Stop", når opgaven er færdig. Skal du videre til en anden opgave, vælg den og klik "Skift opgave": den første gemmes og den nye starter i ét tryk.',
+      ],
+      notes: 'Uret er gemt på M:, så det kører videre, hvis du lukker appen, og kan stoppes fra en anden PC. Har det kørt over 10 timer, spørger appen ved Stop, hvornår du reelt stoppede. Gemte tider kan kun ses af managere. "Annullér ur" smider et ur væk, der er startet ved en fejl.',
+    },
+    {
+      id: 'timeclock-overview',
+      title: 'Se registrerede tider og statistik',
+      requires: MANAGER,
+      direct: true,
+      userTask: 'timeclock',
+      keywords: ['registrerede tider', 'se registrerede tider', 'registrerede tider pr opgave', 'tider pr opgave', 'tider pr person', 'tider paa opgaver', 'tid paa opgaverne', 'hvor meget tid', 'tid pr opgave', 'tid pr person', 'statistik over tid', 'stempelkort statistik', 'ret en registrering', 'slet en registrering', 'hvem er i gang', 'registered times', 'registered times per task', 'time per task', 'time statistics', 'how much time', 'edit a registration', 'who is on the clock', 'kirjatut ajat', 'kirjatut ajat tehtaevittaein', 'aikatilastot', 'paljonko aikaa', 'registrerade tider', 'registrerade tider per uppgift', 'tidsstatistik', 'hur mycket tid'],
+      steps: [
+        'Åbn "Arbejdsværktøjer" > "Stempelkort" og vælg fanen "Oversigt og statistik" (kun managere).',
+        'Vælg periode (i dag, denne uge, denne måned, sidste måned eller selv valgt) og eventuelt en person eller en opgave.',
+        'Se samlet tid, antal registreringer, tid pr. opgave, pr. person og pr. dag, og hvem der er i gang lige nu.',
+        'Ret eller slet en registrering i listen nederst. Rettelsen gemmes med dit navn.',
+      ],
+      notes: 'Kun managere (ikke status managere) ser tiderne. Medarbejderne ser ikke hinandens eller deres egne gemte tider.',
+    },
     {
       id: 'start-status',
       title: 'Start en status',
@@ -20,7 +49,7 @@ const WAREHOUSE_MODULE = {
       userTask: 'create-count',
       keywords: ['start en status', 'starte en status', 'starter en status', 'start ny status', 'ny status', 'nyt kvartal', 'start a status', 'start a new status', 'new status', 'start the quarterly count', 'aloita uusi status', 'aloitan uuden statuksen', 'uusi status', 'starta en status', 'startar en ny status', 'ny status foer kvartalet'],
       steps: [
-        'Åbn "Lagerstyring" på forsiden og vælg "Optælling".',
+        'Åbn "Arbejdsværktøjer" på forsiden og vælg "Optælling".',
         'Klik "Start ny status", vælg år og kvartal, og klik "Start status". Før start kan du køre "Tjek SAP-fejl", så fejl i SAP rettes inden optællingen.',
         'Nu kan alle i teamet oprette optællinger i statussen. Der kan kun være én igangværende status ad gangen.',
       ],
@@ -31,7 +60,7 @@ const WAREHOUSE_MODULE = {
       title: 'Opret en optælling',
       keywords: ['opret en optaelling', 'oprette en optaelling', 'opretter en optaelling', 'ny optaelling', 'lav en optaelling', 'starte en optaelling', 'create a count', 'create a stock count', 'new count', 'start a count', 'luo inventointi', 'luon inventoinnin', 'uusi inventointi', 'aloita inventointi', 'skapa en inventering', 'skapar en inventering', 'skapar jag en inventering', 'skapar jag en ny inventering', 'skapa', 'skapar', 'ny inventering', 'starta en inventering'],
       steps: [
-        'Åbn "Lagerstyring" > "Optælling" og klik "Ny optælling" (det kræver en igangværende status, og at SAP er åbent).',
+        'Åbn "Arbejdsværktøjer" > "Optælling" og klik "Ny optælling" (det kræver en igangværende status, og at SAP er åbent).',
         'Vælg storage locations, Unblocked eller Blocked, og om det er terminaler eller tilbehør. Blocked tælles kun i D000.',
         'Klik "Hent fra SAP". Programmet henter lagerbeholdning og serienumre for hele D301 (ca. et minut) og viser, hvad der skal tælles.',
         'Giv optællingen et navn og klik "Opret optælling". Du bliver ansvarlig, og kolleger kan anmode om at deltage.',
@@ -106,7 +135,7 @@ const WAREHOUSE_MODULE = {
       title: 'Lange serienumre til SAP-dokumenter',
       keywords: ['lange serienumre', 'langt serienummer', 'lange numre', 'serienummerregler', 'serienummerregel', 'zms_long_serno', 'kopier lange serienumre', 'kopiere lange serienumre', 'long serial numbers', 'long serial number', 'serial number rules', 'copy long serial numbers', 'pitkaet sarjanumerot', 'pitkaen sarjanumeron', 'pitkaet numerot', 'kopioin pitkaet', 'laanga serienummer', 'laanga serienumret', 'kopierar laanga'],
       steps: [
-        'Kun TCD: åbn "Lagerstyring" > "Optælling" og vælg fanen "Serienummerregler". En manager tilføjer de nye terminaler (INT…-0), hvor SAP-dokumentet skal have det lange serienummer (ZMS_LONG_SERNO).',
+        'Kun TCD: åbn "Arbejdsværktøjer" > "Optælling" og vælg fanen "Serienummerregler". En manager tilføjer de nye terminaler (INT…-0), hvor SAP-dokumentet skal have det lange serienummer (ZMS_LONG_SERNO).',
         'I optællingen: vælg fanen "Oversigt" eller "Til optællingsdokument" og klik "Lange" ved materialet. De lange numre slås op i SAP og kopieres, klar til at sætte ind i SAP.',
         'Materialer uden regel kopieres med de korte numre via "Kopiér".',
       ],
@@ -130,7 +159,7 @@ const WAREHOUSE_MODULE = {
       title: 'Arkiv og difference i procent',
       keywords: ['arkivet i optaelling', 'optaellingsarkiv', 'afholdte statusser', 'tidligere statusser', 'difference i procent', 'procent difference', 'vis i sap', 'stock count archive', 'held statuses', 'previous statuses', 'percent difference', 'difference in percent', 'show in sap', 'inventointiarkisto', 'aiemmat statukset', 'erotus prosentteina', 'inventeringsarkiv', 'tidigare statusar', 'differens i procent'],
       steps: [
-        'Åbn "Lagerstyring" > "Optælling" og vælg fanen "Arkiv". Her står alle godkendte og låste statusser med rapporter.',
+        'Åbn "Arbejdsværktøjer" > "Optælling" og vælg fanen "Arkiv". Her står alle godkendte og låste statusser med rapporter.',
         'Klik "Se detaljer". Difference vises i procent af SAP-beholdningen, både i stk. og DKK. Over og under tæller begge som difference.',
         'Materialetabellen viser SAP, talt, difference, godkendelse og dokumenter. Klik et dokumentnummer for at se det i SAP (MI03 eller materialedokumentet, kun visning).',
       ],
@@ -141,7 +170,7 @@ const WAREHOUSE_MODULE = {
       title: 'Tjek SAP-fejl før en status',
       keywords: ['tjek sap-fejl', 'tjek sap fejl', 'sap-fejl', 'sap fejl', 'fejl i sap', 'antal stemmer ikke med serienumre', 'serienummer flere steder', 'check sap errors', 'sap errors', 'errors in sap', 'tarkista sap-virheet', 'sap-virheet', 'kontrollera sap-fel', 'sap-fel', 'fel i sap'],
       steps: [
-        'Åbn "Lagerstyring" > "Optælling" og vælg fanen "Tjek SAP-fejl". Vælg TCD, TRR eller hele D301, og klik "Tjek SAP nu".',
+        'Åbn "Arbejdsværktøjer" > "Optælling" og vælg fanen "Tjek SAP-fejl". Vælg TCD, TRR eller hele D301, og klik "Tjek SAP nu".',
         'Listen viser fx lager, hvor antal ikke passer med serienumrene, serienumre flere steder og lager uden serienumre. Resultatet sammenlignes med SAP-rapporten ZMS_STOCK_SER_CHK2.',
         'Klik "Lav mail til SAP-teamet" for at sende fejlene til den, der skal rette dem. Mailen åbnes i Outlook, og du sender den selv.',
       ],
@@ -154,8 +183,8 @@ const WAREHOUSE_MODULE = {
       userTask: 'sap-documents',
       keywords: ['udnaevn en admin', 'udnaevne en admin', 'status manager', 'admin i optaelling', 'optaellingsroller', 'hvem maa laegge antal paa', 'appoint an admin', 'appoint a status manager', 'stock count roles', 'who can enter quantities', 'nimeae admin', 'nimitaen adminin', 'inventoinnin roolit', 'utse en admin', 'utser en admin', 'inventeringsroller', 'placerings admin', 'placeringsadmin', 'lagerstyringsroller', 'location admin', 'warehouse roles', 'sijaintien admin', 'varastonhallinnan roolit', 'lagerstyrningsroller'],
       steps: [
-        'Åbn "Manager Panel" og vælg fanen "Rettigheder". Kortet "Lagerstyringsroller" vises kun i TCD- og TRR-hubben.',
-        'Under "Optælling": vælg "Admin" ved en kollega, der må lægge antal og serienumre på SAP-dokumenter, eller "Status manager" ved en, der skal have samme rettigheder som en manager i Optælling.',
+        'Åbn "Manager Panel" og vælg fanen "Rettigheder". Kortet "Roller i Arbejdsværktøjer" vises kun i TCD- og TRR-hubben.',
+        'Under "Optælling": vælg "Admin" ved en kollega, der skal være med i alle optællinger uden at anmode, godkende deltagere og lægge antal og serienumre på SAP-dokumenter, eller "Status manager" ved en, der skal have samme rettigheder som en manager i Optælling.',
         'Under "Placeringer": vælg "Placerings admin" ved en kollega, der må vedligeholde placeringer og fortryde handlinger i loggen.',
       ],
       notes: 'Kun managere kan ændre rollerne, og managere har altid alle rettigheder. Den, der opretter et SAP-dokument, kan aldrig selv lægge antal på det. En status manager er ikke Placerings admin af den grund.',
@@ -165,7 +194,7 @@ const WAREHOUSE_MODULE = {
       title: 'Sæt en palle på plads',
       keywords: ['saet en palle paa plads', 'saetter jeg en palle paa plads', 'saette en palle paa plads', 'palle paa plads', 'placere en palle', 'placerer en palle', 'ny palle paa lageret', 'varemodtaget palle', 'put a pallet away', 'put away a pallet', 'put the pallet away', 'place a pallet', 'store a pallet', 'laita lava paikalleen', 'laitan lavan paikalleen', 'lavan paikalleen', 'sijoita lava', 'saett en pall paa plats', 'saetter jag en pall paa plats', 'pall paa plats', 'placera en pall'],
       steps: [
-        'Åbn "Lagerstyring" på forsiden, vælg "Placeringer" og klik "Sæt palle på plads".',
+        'Åbn "Arbejdsværktøjer" på forsiden, vælg "Placeringer" og klik "Sæt palle på plads".',
         'Scan eller skriv 49/50-nummeret og klik "Hent fra SAP". Materiale, antal og serienumre udfyldes fra SAP. Uden SAP skriver du materiale og antal selv.',
         'Vælg en af de foreslåede pladser (fast plads, nær samme materiale eller ledig), eller skriv pladsen.',
         'Klik "Tilføj næste palle" for flere paller, og "Gem alle" til sidst.',
@@ -177,7 +206,7 @@ const WAREHOUSE_MODULE = {
       title: 'Tag en palle (FIFO)',
       keywords: ['tag en palle', 'tager jeg en palle', 'tage en palle', 'hente en palle', 'henter jeg en palle', 'aeldste palle', 'fifo', 'take a pallet', 'take the oldest pallet', 'oldest pallet', 'otan lavan', 'ota lava', 'vanhin lava', 'ta en pall', 'tar jag en pall', 'aeldsta pallen'],
       steps: [
-        'Åbn "Lagerstyring" > "Placeringer" og klik "Tag".',
+        'Åbn "Arbejdsværktøjer" > "Placeringer" og klik "Tag".',
         'Søg eller scan materialet. Pallerne står med den ældste først, så I kører FIFO.',
         'Klik "Tag hele pallen", eller skriv et antal og klik "Tag X stk.". Vælger du en yngre palle, får du vist den ældre og kan klikke "Tag alligevel".',
         'Står materialet på hylder, står de under "På hylder": skriv et antal og klik "Tag X stk.", eller klik "Tag alt".',
@@ -188,7 +217,7 @@ const WAREHOUSE_MODULE = {
       title: 'Fyld en pluk-plads op',
       keywords: ['fyld en pluk-plads op', 'fylder jeg en pluk-plads op', 'fylde pluk-pladsen op', 'pluk-plads', 'plukplads', 'pluk plads', 'loebet toer', 'kassen er tom', 'refill a pick place', 'refill the pick place', 'pick place', 'run empty', 'taeytaen keraeilypaikan', 'taeytae keraeilypaikka', 'keraeilypaikka', 'fyller jag paa en plockplats', 'fyll paa en plockplats', 'plockplats'],
       steps: [
-        'Når en kasse ved arbejdsstationen er tom: åbn "Lagerstyring" > "Placeringer" og klik "Fyld pluk-plads op".',
+        'Når en kasse ved arbejdsstationen er tom: åbn "Arbejdsværktøjer" > "Placeringer" og klik "Fyld pluk-plads op".',
         'Vælg pluk-pladsen (og materialet, hvis pladsen har flere). Forslaget er den ældste reservepalle med samme materiale (FIFO).',
         'Hent kassen og klik "Fyldt op fra …". Skriv et antal, hvis du kun tog en del af pallen.',
       ],
@@ -199,7 +228,7 @@ const WAREHOUSE_MODULE = {
       title: 'Find et materiale',
       keywords: ['find et materiale', 'finder jeg et materiale', 'hvor en palle staar', 'hvor staar pallen', 'materialekort', 'placeringskort', 'pallekort', 'opslagsvaerk', 'find a material', 'find out where a pallet is', 'where a pallet is', 'material card', 'etsi materiaali', 'etsin materiaalin', 'missae lava on', 'hitta ett material', 'hittar jag ett material', 'var en pall staar'],
       steps: [
-        'Åbn "Lagerstyring" > "Placeringer" og skriv i søgefeltet: materialenummer, beskrivelse, placering, 49/50-nummer eller serienummer. Med en scanner åbnes et enkelt træf med det samme.',
+        'Åbn "Arbejdsværktøjer" > "Placeringer" og skriv i søgefeltet: materialenummer, beskrivelse, placering, 49/50-nummer eller serienummer. Med en scanner åbnes et enkelt træf med det samme.',
         'Materialekortet viser arbejdsstation, pluk-plads, reservepaller med den ældste først og det samlede antal. Placeringskortet viser, hvad der står på pladsen.',
         'På pallekortet kan du klikke "Ret", "Flyt" eller "Skift storage location". Alt kommer i historikken.',
       ],
@@ -210,7 +239,7 @@ const WAREHOUSE_MODULE = {
       title: 'Opret placeringer',
       keywords: ['opret placeringer', 'opretter jeg placeringer', 'oprette placeringer', 'nye placeringer', 'ny placering', 'opret en placering', 'opret serie', 'deaktiver en placering', 'maerkater', 'create locations', 'create a location', 'new locations', 'create a series', 'luo sijainnit', 'luon uusia sijainteja', 'uusi sijainti', 'skapa placeringar', 'skapar jag nya placeringar', 'nya placeringar'],
       steps: [
-        'Åbn "Lagerstyring" > "Placeringer" og klik "Administrér placeringer" (managere og Placerings admins).',
+        'Åbn "Arbejdsværktøjer" > "Placeringer" og klik "Administrér placeringer" (managere og Placerings admins).',
         'Klik "Opret placering" for én plads: navn, type, formål (reserve, pluk-plads, arbejdsstation eller reserveret) og eventuelle faste materialer. Typen styrer pladsen: en palleplads tager 1 palle, et gulv ingen grænse, og en hylde holder materiale og antal. En pluk-plads skal have sine materialer.',
         'Klik "Opret serie" for mange pladser på én gang, fx forbogstav C, gange 1–20 og pladser 1–6 giver C1.1 … C20.6.',
         'Ret, deaktivér eller sæt mærkater (fx "Sluse oppe") fra listen. Alt kan rettes bagefter.',
@@ -222,7 +251,7 @@ const WAREHOUSE_MODULE = {
       title: 'Importér placeringsarket',
       keywords: ['importer placeringsarket', 'importerer jeg placeringsarket', 'importere placeringsarket', 'placeringsarket', 'placeringsark', 'import the placement sheet', 'placement sheet', 'tuo sijoitustaulukko', 'tuon sijoitustaulukon', 'sijoitustaulukko', 'importera placeringsarket', 'importerar jag placeringsarket', 'importerar placeringsark'],
       steps: [
-        'Kun TCD: åbn "Lagerstyring" > "Placeringer" > "Administrér placeringer" og klik "Importér placeringsarket". SAP skal være åbent.',
+        'Kun TCD: åbn "Arbejdsværktøjer" > "Placeringer" > "Administrér placeringer" og klik "Importér placeringsarket". SAP skal være åbent.',
         'Klik "Læs arket og tjek i SAP". Hubben læser det nyeste placeringsark på M: (kun læsning) og henter alle materialebeskrivelser fra SAP.',
         'Gennemse forhåndsvisningen: antal placeringer og paller og advarsler, fx materialer der ikke findes i SAP. Klik "Importér".',
       ],
@@ -233,7 +262,7 @@ const WAREHOUSE_MODULE = {
       title: 'Læg på hylde',
       keywords: ['laeg paa hylde', 'laeg paa en hylde', 'laegger jeg noget paa en hylde', 'laegge paa en hylde', 'hyldelager', 'put on a shelf', 'put goods on a shelf', 'put on shelf', 'shelf stock', 'laita hyllylle', 'laitan tavaraa hyllylle', 'hyllylle', 'laegg paa hylla', 'laegger jag naagot paa en hylla', 'paa en hylla'],
       steps: [
-        'Åbn "Lagerstyring" > "Placeringer" og klik "Læg på hylde".',
+        'Åbn "Arbejdsværktøjer" > "Placeringer" og klik "Læg på hylde".',
         'Scan eller skriv hylden, fx "E9 H5" (reol E9, hylde 5).',
         'Vælg materialet (forslag med beskrivelse mens du skriver) og skriv antallet – eller scan 49/50-nummeret og klik "Hent fra SAP". Står materialet der i forvejen, lægges antallet til. Klik "Gem".',
       ],
@@ -244,7 +273,7 @@ const WAREHOUSE_MODULE = {
       title: 'Opret reol',
       keywords: ['opret reol', 'opret en reol', 'opretter jeg en reol', 'oprette en reol', 'ny reol', 'reol med hylder', 'tilfoej hylde', 'create a rack', 'new rack', 'add a shelf', 'luo hyllykkoe', 'luon hyllykoen', 'uusi hyllykkoe', 'skapa en reol', 'skapar jag en reol', 'ny reol', 'laegg till hylla', 'en reol', 'reol', 'a rack', 'hyllykkoe', 'hyllykoen'],
       steps: [
-        'Åbn "Lagerstyring" > "Placeringer" > "Administrér placeringer" og klik "Opret reol" (managere og Placerings admins).',
+        'Åbn "Arbejdsværktøjer" > "Placeringer" > "Administrér placeringer" og klik "Opret reol" (managere og Placerings admins).',
         'Skriv navnet (fx E9), antal hylder (1–20), området og formålet (lager eller pluk), og klik "Opret". Hylderne hedder E9 H1, E9 H2 …',
         'På reolkortet tilføjer du en hylde med "Tilføj hylde" og fjerner den øverste tomme med "Fjern hylde".',
       ],
@@ -254,7 +283,7 @@ const WAREHOUSE_MODULE = {
       title: 'Slet placeringer',
       keywords: ['slet placeringer', 'slet en placering', 'sletter jeg placeringer', 'sletter jeg en placering', 'slette placeringer', 'slet reol', 'delete locations', 'delete a location', 'remove locations', 'delete a rack', 'poista sijainteja', 'poistan sijainteja', 'poista sijainti', 'ta bort placeringar', 'tar jag bort placeringar', 'radera placeringar'],
       steps: [
-        'Åbn "Lagerstyring" > "Placeringer" > "Administrér placeringer" (managere og Placerings admins).',
+        'Åbn "Arbejdsværktøjer" > "Placeringer" > "Administrér placeringer" (managere og Placerings admins).',
         'Én placering: åbn den og klik "Slet". En reol: åbn reolkortet og klik "Slet reol".',
         'Mange: filtrér (fx område og "Kun tomme"), klik "Vælg alle i søgningen" eller vælg rækkerne, og klik "Slet valgte".',
       ],

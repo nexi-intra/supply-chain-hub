@@ -1,4 +1,4 @@
-// Hubert's live answers about Placeringer (Lagerstyring): read only, own team only, TCD and TRR only.
+// Hubert's live answers about Placeringer (Arbejdsværktøjer): read only, own team only, TCD and TRR only.
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const { createLocationsAssistant, locationsIntent } = require('./assistantLocations.cjs')

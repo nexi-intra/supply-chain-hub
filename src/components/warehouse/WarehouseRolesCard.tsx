@@ -35,8 +35,8 @@ const locationOf = (role: RolesView['users'][number]['locationRole']): LocationC
 
 const LABELS: Record<Language, Labels> = {
   da: {
-    title: 'Lagerstyringsroller',
-    intro: 'Roller i Lagerstyring for dette team. Managere har altid alle rettigheder. I Optælling er en admin med i alle optællinger uden at anmode, godkender deltagere, må lægge antal og serienumre på SAP-dokumenter og lave mailen til SAP-teamet, og en status manager har de samme rettigheder som en manager. I Placeringer må en Placerings admin vedligeholde placeringer og fortryde handlinger i loggen.',
+    title: 'Roller i Arbejdsværktøjer',
+    intro: 'Roller i Arbejdsværktøjer for dette team. Managere har altid alle rettigheder, og kun managere ser tiderne i Stempelkort. I Optælling er en admin med i alle optællinger uden at anmode, godkender deltagere, må lægge antal og serienumre på SAP-dokumenter og lave mailen til SAP-teamet, og en status manager har de samme rettigheder som en manager. I Placeringer må en Placerings admin vedligeholde placeringer og fortryde handlinger i loggen.',
     automatic: 'Automatisk via managerrolle',
     roles: { user: 'Bruger', admin: 'Admin', 'status-manager': 'Status manager' },
     roleHelp: { user: 'Tæller og scanner', admin: 'Med i alle optællinger, godkender deltagere', 'status-manager': 'Som manager i Optælling' },
@@ -51,8 +51,8 @@ const LABELS: Record<Language, Labels> = {
     locationAria: name => `Placeringsrolle for ${name}`,
   },
   en: {
-    title: 'Warehouse roles',
-    intro: 'Roles in Warehouse Management for this team. Managers always have every right. In Stock count an admin takes part in every count without asking, approves participants, may enter quantities and serial numbers on SAP documents and create the mail to the SAP team, and a status manager has the same rights as a manager. In Locations a Placerings admin may maintain locations and undo actions in the log.',
+    title: 'Work tools roles',
+    intro: 'Roles in Work Tools for this team. Managers always have every right, and only managers see the times in Time card. In Stock count an admin takes part in every count without asking, approves participants, may enter quantities and serial numbers on SAP documents and create the mail to the SAP team, and a status manager has the same rights as a manager. In Locations a Placerings admin may maintain locations and undo actions in the log.',
     automatic: 'Automatic through manager role',
     roles: { user: 'User', admin: 'Admin', 'status-manager': 'Status manager' },
     roleHelp: { user: 'Counts and scans', admin: 'In every count, approves participants', 'status-manager': 'Like a manager in Stock count' },
@@ -67,8 +67,8 @@ const LABELS: Record<Language, Labels> = {
     locationAria: name => `Locations role for ${name}`,
   },
   fi: {
-    title: 'Varastonhallinnan roolit',
-    intro: 'Tämän tiimin roolit Varastonhallinnassa. Managereilla on aina kaikki oikeudet. Inventoinnissa admin on mukana kaikissa inventoinneissa pyytämättä, hyväksyy osallistujat, saa syöttää määrät ja sarjanumerot SAP-asiakirjoihin ja tehdä viestin SAP-tiimille, ja status managerilla on samat oikeudet kuin managerilla. Sijainneissa Placerings admin saa ylläpitää sijainteja ja perua toimintoja lokissa.',
+    title: 'Työkalujen roolit',
+    intro: 'Tämän tiimin roolit Työkaluissa. Managereilla on aina kaikki oikeudet, ja vain managerit näkevät Leimauskortin ajat. Inventoinnissa admin on mukana kaikissa inventoinneissa pyytämättä, hyväksyy osallistujat, saa syöttää määrät ja sarjanumerot SAP-asiakirjoihin ja tehdä viestin SAP-tiimille, ja status managerilla on samat oikeudet kuin managerilla. Sijainneissa Placerings admin saa ylläpitää sijainteja ja perua toimintoja lokissa.',
     automatic: 'Automaattinen esihenkilöroolin kautta',
     roles: { user: 'Käyttäjä', admin: 'Admin', 'status-manager': 'Status manager' },
     roleHelp: { user: 'Laskee ja skannaa', admin: 'Mukana kaikissa inventoinneissa, hyväksyy osallistujat', 'status-manager': 'Kuten manager Inventoinnissa' },
@@ -83,8 +83,8 @@ const LABELS: Record<Language, Labels> = {
     locationAria: name => `Sijaintirooli: ${name}`,
   },
   sv: {
-    title: 'Lagerstyrningsroller',
-    intro: 'Roller i Lagerstyrning för det här teamet. Managers har alltid alla rättigheter. I Inventering är en admin med i alla inventeringar utan att ansöka, godkänner deltagare, får lägga in antal och serienummer på SAP-dokument och skapa mejlet till SAP-teamet, och en status manager har samma rättigheter som en manager. I Placeringar får en Placerings admin underhålla placeringar och ångra åtgärder i loggen.',
+    title: 'Roller i Arbetsverktyg',
+    intro: 'Roller i Arbetsverktyg för det här teamet. Managers har alltid alla rättigheter, och bara managers ser tiderna i Stämpelkort. I Inventering är en admin med i alla inventeringar utan att ansöka, godkänner deltagare, får lägga in antal och serienummer på SAP-dokument och skapa mejlet till SAP-teamet, och en status manager har samma rättigheter som en manager. I Placeringar får en Placerings admin underhålla placeringar och ångra åtgärder i loggen.',
     automatic: 'Automatiskt via chefsroll',
     roles: { user: 'Användare', admin: 'Admin', 'status-manager': 'Status manager' },
     roleHelp: { user: 'Räknar och skannar', admin: 'Med i alla inventeringar, godkänner deltagare', 'status-manager': 'Som en manager i Inventering' },

@@ -1,4 +1,4 @@
-// Hubert's live answers about Optælling (Lagerstyring) for TCD and TRR: the status in progress, the counts, materials with a
+// Hubert's live answers about Optælling (Arbejdsværktøjer) for TCD and TRR: the status in progress, the counts, materials with a
 // difference, SAP documents waiting, who counts what and the last locked status. Runs in the main process next to the
 // warehouse services and reads through them as the signed-in Hub person, so the module's own rules apply: own team only,
 // other hubs are refused. Read only: write requests get "I only read" and a button to Optælling; how-to questions,
@@ -46,7 +46,7 @@ const LOCALES = { da: 'da-DK', en: 'en-GB', fi: 'fi-FI', sv: 'sv-SE' }
 const TEXT = {
   da: {
     name: 'Optælling', archiveName: 'Arkiv',
-    only: 'Optælling (Lagerstyring) findes kun i TCD- og TRR-hubben. Åbn TCD- eller TRR-hubben for at se optællingerne.',
+    only: 'Optælling (Arbejdsværktøjer) findes kun i TCD- og TRR-hubben. Åbn TCD- eller TRR-hubben for at se optællingerne.',
     readOnly: 'Jeg kan kun læse i Optælling. Opret, ret, godkend, lås og bogfør gør du selv i Optælling.',
     unavailable: 'Optællingens data kan ikke læses lige nu. Prøv igen om lidt.',
     open: 'Åbn Optælling', openItem: name => `Åbn "${name}"`, openArchive: 'Åbn Arkiv', here: 'Her kan du åbne Optælling.',
@@ -69,7 +69,7 @@ const TEXT = {
   },
   en: {
     name: 'Stock count', archiveName: 'Archive',
-    only: 'Stock count (Warehouse Management) is only in the TCD and TRR hubs. Open the TCD or TRR hub to see the counts.',
+    only: 'Stock count (Work Tools) is only in the TCD and TRR hubs. Open the TCD or TRR hub to see the counts.',
     readOnly: 'I can only read in Stock count. You create, edit, approve, lock and post in Stock count yourself.',
     unavailable: 'The stock count data cannot be read right now. Try again in a moment.',
     open: 'Open Stock count', openItem: name => `Open "${name}"`, openArchive: 'Open Archive', here: 'You can open Stock count here.',
@@ -92,7 +92,7 @@ const TEXT = {
   },
   fi: {
     name: 'Inventointi', archiveName: 'Arkisto',
-    only: 'Inventointi (Varastonhallinta) on vain TCD- ja TRR-hubissa. Avaa TCD- tai TRR-hub nähdäksesi inventoinnit.',
+    only: 'Inventointi (Työkalut) on vain TCD- ja TRR-hubissa. Avaa TCD- tai TRR-hub nähdäksesi inventoinnit.',
     readOnly: 'Voin vain lukea inventointia. Luot, muokkaat, hyväksyt, lukitset ja kirjaat itse inventoinnissa.',
     unavailable: 'Inventoinnin tietoja ei voi lukea juuri nyt. Yritä hetken päästä uudelleen.',
     open: 'Avaa inventointi', openItem: name => `Avaa "${name}"`, openArchive: 'Avaa arkisto', here: 'Voit avata inventoinnin tästä.',
@@ -115,7 +115,7 @@ const TEXT = {
   },
   sv: {
     name: 'Inventering', archiveName: 'Arkiv',
-    only: 'Inventering (Lagerstyrning) finns bara i TCD- och TRR-hubben. Öppna TCD- eller TRR-hubben för att se inventeringarna.',
+    only: 'Inventering (Arbetsverktyg) finns bara i TCD- och TRR-hubben. Öppna TCD- eller TRR-hubben för att se inventeringarna.',
     readOnly: 'Jag kan bara läsa i inventeringen. Du skapar, ändrar, godkänner, låser och bokför själv i inventeringen.',
     unavailable: 'Inventeringens data kan inte läsas just nu. Försök igen om en stund.',
     open: 'Öppna inventeringen', openItem: name => `Öppna "${name}"`, openArchive: 'Öppna arkivet', here: 'Här kan du öppna inventeringen.',

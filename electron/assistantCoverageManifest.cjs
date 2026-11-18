@@ -92,6 +92,7 @@ const COMPONENT_MAP = {
   'components/ParentalLeaveDialog.tsx': 'manager:register-parental',
   'components/PauseOverlay.tsx': INTERNAL,
   'components/SickLeaveDialog.tsx': 'calendar:sick-leave',
+  'components/ShiftRoleDialog.tsx': 'shifts:roles', // the task dialog of Vagtplan, also used by Stempelkort
   'components/SingleDayOffDialog.tsx': 'calendar:single-day-off',
   'components/StorageConnectionBanner.tsx': 'topic:storage',
   'components/TimeRangeFields.tsx': INTERNAL,

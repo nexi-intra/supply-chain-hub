@@ -14,6 +14,8 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Optælling: managere og optællingsadmins er med i alle optællinger fra start uden at anmode, og de kan godkende og afvise dem, der anmoder om at være med. Før kunne kun den ansvarlige det',
       'Optælling sender nu notifikationer til klokken i hubben og som Windows-notifikation: når nogen anmoder om at være med, når et materiale sendes til godkendelse, og når din anmodning eller dit materiale er besvaret. Et klik åbner optællingen på den rigtige fane',
       'Spilhjørnet ligger nu altid nederst i venstre hjørne af forsiden, uanset hvor mange moduler du ser, og hvor bredt vinduet er',
+      'Nyt værktøj i TCD og TRR: Stempelkort. Stempl ind og ud på dine opgaver med start, pause og stop. Din opgave fra vagtplanen er valgt på forhånd, og en ny opgave oprettes på samme måde som i vagtplanen og kommer også dér. Kun managere kan se de gemte tider, og de har en oversigt med statistik pr. opgave, person og dag',
+      'Lagerstyring hedder nu Arbejdsværktøjer og samler Stempelkort, Placeringer og Optælling',
     ],
   },
   {
