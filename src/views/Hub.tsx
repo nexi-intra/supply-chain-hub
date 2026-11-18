@@ -48,6 +48,7 @@ import { getHomeOfficeUsersForDate } from '@/lib/homeOffice'
 import { getImprovementsLabels } from '@/lib/improvementsLabels'
 import { getLinksLabels } from '@/lib/linksLabels'
 import { getWarehouseLabels, isWarehouseTeam } from '@/lib/warehouseLabels'
+import { moduleGridColumns, withModuleInCorner } from '@/lib/hubModuleOrder'
 import { appendToKvArray, removeFromKvArray, setKvObjectField, upsertInKvArray } from '@/lib/kvArrays'
 import { expandShiftPatterns } from '@/lib/shiftPatterns'
 import { buildHubTasks, filterHubTasks } from '@/lib/hubTasks'
@@ -134,6 +135,13 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
   const hubLabels = getHubAccessLabels(language)
   const [isAdminOrManager, setIsAdminOrManager] = useState(false)
   const [isCreator, setIsCreator] = useState(false)
+  // Game Corner sits in the bottom-left corner of the module grid; where that is depends on the number of columns.
+  const [gridColumns, setGridColumns] = useState(() => (typeof window === 'undefined' ? 4 : moduleGridColumns(window.innerWidth)))
+  useEffect(() => {
+    const onResize = () => setGridColumns(moduleGridColumns(window.innerWidth))
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
   // Creator-kontoen er en platform-konto og skal ikke vises i team-oversigter.
   const [creatorEmail, setCreatorEmail] = useState<string | null>(null)
   const [currentUserName, setCurrentUserName] = useState(userEmail)
@@ -761,7 +769,6 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
       gradient: '',
       available: true,
     },
-    // After Game Corner, so Game Corner keeps the bottom-left corner of the employees' grid.
     {
       id: 'links',
       title: getLinksLabels(language).title,
@@ -771,7 +778,6 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
       gradient: '',
       available: true,
     },
-    // Placed after Game Corner so the Knowledge Base tile does not push Game Corner out of its corner.
     {
       id: 'improvements',
       title: getImprovementsLabels(language).title,
@@ -1536,7 +1542,7 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
           animate={{ opacity: 1 }}
           transition={{ delay: 0.5, duration: 0.6 }}
         >
-          {modules.filter(module => module.available).map((module, index) => {
+          {withModuleInCorner(modules.filter(module => module.available), 'games', gridColumns).map((module, index) => {
             const hasBadge = (module.id === 'email' && unreadInboxCount > 0) || (module.id === 'manager' && pendingVacationRequests > 0)
               || (module.id === 'guides' && pendingGuideReviews > 0) || (module.id === 'knowledge' && pendingKnowledgeReviews > 0)
             return (

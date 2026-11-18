@@ -13,6 +13,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Optælling: tallene er nu ens på alle PC\'er. Når nogen henter SAP igen, får alle, der har optællingen åben, de nye SAP-tal med det samme. Før blev de gamle tal stående, indtil appen blev genstartet',
       'Optælling: managere og optællingsadmins er med i alle optællinger fra start uden at anmode, og de kan godkende og afvise dem, der anmoder om at være med. Før kunne kun den ansvarlige det',
       'Optælling sender nu notifikationer til klokken i hubben og som Windows-notifikation: når nogen anmoder om at være med, når et materiale sendes til godkendelse, og når din anmodning eller dit materiale er besvaret. Et klik åbner optællingen på den rigtige fane',
+      'Spilhjørnet ligger nu altid nederst i venstre hjørne af forsiden, uanset hvor mange moduler du ser, og hvor bredt vinduet er',
     ],
   },
   {
