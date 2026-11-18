@@ -45,11 +45,11 @@ export interface PanelProps {
   person: Person
 }
 
-export function CountView({ id, user, onBack }: { id: string; user: WarehouseUser; onBack: () => void }) {
+export function CountView({ id, user, initialTab, onBack }: { id: string; user: WarehouseUser; initialTab?: CountTab; onBack: () => void }) {
   const [open, setOpen] = useState<OpenCount | null>(null)
   const [state, setState] = useState<CountState | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
-  const [tab, setTab] = useState<CountTab>('scan')
+  const [tab, setTab] = useState<CountTab>(initialTab ?? 'scan')
   const [fullscreen, setFullscreen] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [refetchOpen, setRefetchOpen] = useState(false)
@@ -127,13 +127,21 @@ export function CountView({ id, user, onBack }: { id: string; user: WarehouseUse
     setTab(current => (current === 'scan' && !open.me.canWrite ? 'overview' : current))
   }, [open])
 
+  // "Hent SAP igen" on another PC: the materials and count lists of the screen come from the SAP figures too.
+  const reloadingOpen = useRef(false)
+  useEffect(() => {
+    if (!open || !state || reloadingOpen.current || state.snapshotFetchedAt === undefined || state.snapshotFetchedAt === open.snapshotFetchedAt) return
+    reloadingOpen.current = true
+    void reloadOpen().finally(() => { reloadingOpen.current = false })
+  }, [open, state, reloadOpen])
+
   // Notifications across PCs: the owner hears about new join requests, the requester about the answer.
   const seenRequests = useRef<Set<string> | null>(null)
   const lastStatus = useRef<string | null | undefined>(undefined)
   useEffect(() => {
     if (!state) return
     const requested = state.members.filter(member => member.status === 'requested')
-    if (seenRequests.current && state.me.isOwner) {
+    if (seenRequests.current && state.me.canDecideMembers) {
       for (const member of requested) {
         if (!seenRequests.current.has(member.email)) toast.info(t(`${member.name} anmoder om at deltage`, `${member.name} asks to join`), { action: { label: t('Se', 'View'), onClick: () => setTab('members') }, duration: 8000 })
       }
@@ -192,7 +200,7 @@ export function CountView({ id, user, onBack }: { id: string; user: WarehouseUse
     toast.success(success)
     void optimistic(patch, write).then(saved => { if (saved) void reloadOpen() })
   }
-  const requestJoin = () => change(withMember({ email: person.email, name: person.name, role: 'participant', status: 'requested', requestedAt: Date.now() }), () => window.electronWarehouse!.counts.requestJoin(id), t('Anmodningen er sendt til den ansvarlige', 'The request was sent to the person responsible'))
+  const requestJoin = () => change(withMember({ email: person.email, name: person.name, role: 'participant', status: 'requested', requestedAt: Date.now() }), () => window.electronWarehouse!.counts.requestJoin(id), t('Anmodningen er sendt. Den ansvarlige, en admin eller en manager godkender den', 'The request was sent. The person responsible, an admin or a manager approves it'))
   const closeCount = () => {
     setTab(current => (current === 'scan' || current === 'import' ? 'overview' : current))
     change(withMeta({ status: 'closed' }, { canWrite: false }), () => window.electronWarehouse!.counts.close(id), t('Optællingen er afsluttet', 'The count is closed'))
@@ -303,7 +311,7 @@ export function CountView({ id, user, onBack }: { id: string; user: WarehouseUse
           { value: 'overview', label: t('Oversigt', 'Overview') },
           { value: 'progress', label: t('Fremdrift', 'Progress'), badge: <Badge variant="secondary" className="tabular-nums">{state.progress.overall.percent} %</Badge> },
           { value: 'moves', label: t('Skal flyttes', 'Must be moved'), badge: state.movesTotal ? <Badge variant="outline" className="tabular-nums">{state.movesTotal}</Badge> : undefined },
-          { value: 'members', label: t('Deltagere', 'Participants'), badge: me.isOwner && requests ? <Badge className="tabular-nums">{requests}</Badge> : undefined },
+          { value: 'members', label: t('Deltagere', 'Participants'), badge: me.canDecideMembers && requests ? <Badge className="tabular-nums">{requests}</Badge> : undefined },
           { value: 'approval', label: t('Godkendelse', 'Approval'), hidden: !me.isManager && !Object.keys(state.approvals).length, badge: submittedCount ? <Badge className="tabular-nums">{submittedCount}</Badge> : undefined },
           { value: 'doc', label: t('Til optællingsdokument', 'To count document'), hidden: !me.isManager && !me.isOwner && !Object.keys(state.approvals).length },
         ]}

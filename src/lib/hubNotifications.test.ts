@@ -197,6 +197,31 @@ describe('buildHubNotificationItems', () => {
     }
     expect(items.find(item => item.id === 'link-report-r1')?.iconColor).toBe('text-destructive')
   })
+
+  it('turns count notifications into items that open the count on the right tab', () => {
+    const count = { countId: 'c1', countName: 'D000 terminaler' }
+    const items = buildHubNotificationItems(base({
+      language: 'da',
+      countNotifications: [
+        { ...count, type: 'join-request', email: 'bo@example.test', name: 'Bo', at: NOW - 3000 },
+        { ...count, type: 'submitted', material: 'R162-0717', name: 'Bo', diff: -2, at: NOW - 2000 },
+        { ...count, type: 'join-decided', approved: false, name: 'Mona', at: NOW - 1000 },
+        { ...count, type: 'returned', material: 'R162-0717', name: 'Mona', comment: 'Tæl igen', at: NOW },
+      ],
+    }))
+    expect(items.map(item => [item.id, item.subtitle, item.target.params?.tab])).toEqual([
+      [`count-returned-c1-R162-0717-${NOW}`, 'Mona har sendt R162-0717 tilbage: Tæl igen', 'count-approval'],
+      [`count-joined-c1-${NOW - 1000}`, 'Mona har afvist din anmodning om at deltage', 'count'],
+      [`count-submitted-c1-R162-0717-${NOW - 2000}`, 'Bo har sendt R162-0717 til godkendelse (difference -2)', 'count-approval'],
+      [`count-join-c1-bo@example.test-${NOW - 3000}`, 'Bo anmoder om at deltage', 'count-members'],
+    ])
+    for (const item of items) {
+      expect(item.kind).toBe('count')
+      expect(item.title).toBe('Optælling · D000 terminaler')
+      expect(item.target).toMatchObject({ view: 'warehouse', params: { itemId: 'c1' } })
+      expect(item.id).toMatch(/^[\w:.@-]+$/)
+    }
+  })
 })
 
 describe('diffNotifications', () => {

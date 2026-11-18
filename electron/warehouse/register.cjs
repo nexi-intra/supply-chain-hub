@@ -246,6 +246,12 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   }
 
   handle('me', user => ({ email: user.email, fullName: user.fullName, role: user.role, team: user.team, storageLocations: [...TEAMS[user.team].storageLocations] }))
+  // What waits for someone in a count changed through this PC: the Hub's bell reads its count notifications again at once.
+  const noticing = fn => async (user, p, event) => {
+    const result = await fn(user, p, event)
+    emit('counts:changed', { team: user.team })
+    return result
+  }
   // The window has no clipboard permission; text copies go through here, plain text only and size-limited.
   handle('clipboard:write', async (user, p) => {
     if (typeof p.text !== 'string' || p.text.length > 2_000_000) throw codeError('CLIPBOARD_INVALID')
@@ -281,22 +287,23 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
     if (result.canceled || !result.filePaths[0]) return null
     return readSerialFile(result.filePaths[0])
   })
-  handle('counts:request-join', (user, p) => counts.requestJoin(user, p.id))
-  handle('counts:decide-member', (user, p) => counts.decideMember(user, p.id, { email: p.email, approve: p.approve === true }))
+  handle('counts:request-join', noticing((user, p) => counts.requestJoin(user, p.id)))
+  handle('counts:decide-member', noticing((user, p) => counts.decideMember(user, p.id, { email: p.email, approve: p.approve === true })))
+  handle('counts:notifications', user => counts.notifications(user))
   handle('counts:claim', (user, p) => counts.claimArea(user, p.id, { area: p.area }))
   handle('counts:release', (user, p) => counts.releaseArea(user, p.id, { area: p.area }))
-  handle('counts:close', (user, p) => counts.closeCount(user, p.id))
-  handle('counts:reopen', (user, p) => counts.reopenCount(user, p.id))
-  handle('counts:delete', (user, p) => counts.deleteCount(user, p.id))
+  handle('counts:close', noticing((user, p) => counts.closeCount(user, p.id)))
+  handle('counts:reopen', noticing((user, p) => counts.reopenCount(user, p.id)))
+  handle('counts:delete', noticing((user, p) => counts.deleteCount(user, p.id)))
   handle('counts:refetch-preview', (user, p) => counts.previewRefetch(user, p.id))
   handle('counts:refetch-apply', (user, p) => counts.applyRefetch(user, p.id, { token: p.token }))
-  handle('counts:approval', (user, p) => counts.setApproval(user, p.id, { material: p.material, status: p.status, comment: p.comment }))
-  handle('counts:approve-clean', (user, p) => counts.approveAllWithoutDifference(user, p.id))
+  handle('counts:approval', noticing((user, p) => counts.setApproval(user, p.id, { material: p.material, status: p.status, comment: p.comment })))
+  handle('counts:approve-clean', noticing((user, p) => counts.approveAllWithoutDifference(user, p.id)))
   handle('counts:material-lock', (user, p) => counts.lockMaterial(user, p.id, { material: p.material }))
   handle('counts:material-request', (user, p) => counts.requestMaterial(user, p.id, { material: p.material }))
   handle('counts:material-answer', (user, p) => counts.answerMaterialRequest(user, p.id, { material: p.material, email: p.email, allow: p.allow === true }))
   handle('counts:material-release', (user, p) => counts.releaseMaterial(user, p.id, { material: p.material }))
-  handle('counts:material-submit', (user, p) => counts.submitMaterial(user, p.id, { material: p.material, comment: p.comment, acceptDiff: p.acceptDiff === true }))
+  handle('counts:material-submit', noticing((user, p) => counts.submitMaterial(user, p.id, { material: p.material, comment: p.comment, acceptDiff: p.acceptDiff === true })))
   handle('counts:flush', (user, p) => counts.flush(user, p.id))
   handle('counts:report', async (user, p) => {
     const file = await writeReport({ ...(await counts.reportData(user, p.id)), language: p.language === 'en' ? 'en' : 'da' }, reportsDir(user.team))

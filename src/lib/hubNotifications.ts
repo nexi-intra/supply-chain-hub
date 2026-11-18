@@ -13,6 +13,7 @@ import type { BirthdayEntry, Email, VacationEntry } from './types'
 import type { LinksSnapshot } from './links'
 import { danishTime, type NisseFind } from './nisse'
 import type { Project } from '@/views/ProjectBoard'
+import type { CountNotice } from '@/types/warehouse'
 
 export interface NotebookNotification {
   id: string
@@ -26,7 +27,7 @@ export interface NotebookNotification {
 }
 
 export type HubNotificationKind =
-  | 'email' | 'note' | 'improvement' | 'multiplayer' | 'high-five' | 'vacation' | 'guide' | 'guide-review' | 'birthday' | 'todo' | 'link' | 'nisse'
+  | 'email' | 'note' | 'improvement' | 'multiplayer' | 'high-five' | 'vacation' | 'guide' | 'guide-review' | 'birthday' | 'todo' | 'link' | 'nisse' | 'count'
 
 /** How a module learns that its notification was read, when the module keeps its own read state. */
 export type HubNotificationAck =
@@ -83,6 +84,8 @@ export interface HubNotificationInput {
   links?: LinksSnapshot | null
   /** Nisse finds this season (the creator only). */
   nisseFinds?: readonly NisseFind[]
+  /** Optælling: join requests, materials sent for approval and the answers, for this user (Lagerstyring hubs only). */
+  countNotifications?: readonly CountNotice[]
 }
 
 /** Local text per language; sv is always present wherever fi is. */
@@ -176,6 +179,42 @@ export function buildHubNotificationItems(input: HubNotificationInput): HubNotif
       timestamp: Date.parse(find.at) || now,
       target: { view: 'hub' },
     })
+  }
+
+  // Optælling: what waits for this user in the team's open counts; a click opens the count on the tab where it is handled.
+  for (const notice of input.countNotifications || []) {
+    const name = notice.name || pick(language, { da: 'En kollega', en: 'A colleague', fi: 'Kollega', sv: 'En kollega' })
+    const title = `${pick(language, { da: 'Optælling', en: 'Stock count', fi: 'Inventointi', sv: 'Inventering' })} · ${notice.countName}`
+    const target = (tab: string): NavigationTarget => ({ view: 'warehouse', params: { tab, itemId: notice.countId } })
+    if (notice.type === 'join-request') {
+      result.push({
+        id: `count-join-${notice.countId}-${notice.email}-${notice.at}`, kind: 'count', iconColor: 'text-amber-600', title,
+        subtitle: pick(language, { da: `${name} anmoder om at deltage`, en: `${name} asks to join`, fi: `${name} pyytää päästä mukaan`, sv: `${name} ber om att få delta` }),
+        timestamp: notice.at || now, target: target('count-members'),
+      })
+    } else if (notice.type === 'submitted') {
+      const diff = notice.diff ? ` (${pick(language, { da: 'difference', en: 'difference', fi: 'erotus', sv: 'differens' })} ${notice.diff > 0 ? '+' : ''}${notice.diff})` : ''
+      result.push({
+        id: `count-submitted-${notice.countId}-${notice.material}-${notice.at}`, kind: 'count', iconColor: 'text-amber-600', title,
+        subtitle: pick(language, { da: `${name} har sendt ${notice.material} til godkendelse${diff}`, en: `${name} sent ${notice.material} for approval${diff}`, fi: `${name} lähetti ${notice.material} hyväksyttäväksi${diff}`, sv: `${name} har skickat ${notice.material} för godkännande${diff}` }),
+        timestamp: notice.at || now, target: target('count-approval'),
+      })
+    } else if (notice.type === 'join-decided') {
+      result.push({
+        id: `count-joined-${notice.countId}-${notice.at}`, kind: 'count', iconColor: notice.approved ? 'text-ok' : 'text-destructive', title,
+        subtitle: notice.approved
+          ? pick(language, { da: `${name} har godkendt dig som deltager`, en: `${name} approved you as a participant`, fi: `${name} hyväksyi sinut osallistujaksi`, sv: `${name} har godkänt dig som deltagare` })
+          : pick(language, { da: `${name} har afvist din anmodning om at deltage`, en: `${name} rejected your request to join`, fi: `${name} hylkäsi pyyntösi päästä mukaan`, sv: `${name} har avvisat din begäran om att delta` }),
+        timestamp: notice.at || now, target: target('count'),
+      })
+    } else {
+      const comment = notice.comment ? `: ${notice.comment}` : ''
+      result.push({
+        id: `count-returned-${notice.countId}-${notice.material}-${notice.at}`, kind: 'count', iconColor: 'text-destructive', title,
+        subtitle: pick(language, { da: `${name} har sendt ${notice.material} tilbage${comment}`, en: `${name} sent ${notice.material} back${comment}`, fi: `${name} palautti ${notice.material}${comment}`, sv: `${name} har skickat tillbaka ${notice.material}${comment}` }),
+        timestamp: notice.at || now, target: target('count-approval'),
+      })
+    }
   }
 
   if (input.isAdminOrManager) {

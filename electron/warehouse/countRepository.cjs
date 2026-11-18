@@ -296,7 +296,8 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId }) 
     removeCountFiles,
     getMeta,
     updateMeta,
-    getSnapshot: (team, id) => store(team).getAsync(key(id, 'expected')),
+    /** `fresh`: past the read cache (another PC may just have fetched SAP again). */
+    getSnapshot: (team, id, { fresh = false } = {}) => store(team).getAsync(key(id, 'expected'), fresh ? { skipCache: true } : undefined),
     getPreviousSnapshot: (team, id) => store(team).getAsync(key(id, 'expected-prev')),
     replaceSnapshot,
     getPlacements: (team, id) => store(team).getAsync(key(id, 'placements')).then(value => value || []),

@@ -21,6 +21,11 @@ const IMPORT_TEXT_MAX = 2_000_000
 const QTY_MAX = 10000000
 const REFRESH_MIN_MS = 1500
 const OTHERS_REFRESH_MS = 10000
+// A refetch on another PC writes the meta and the snapshot in parallel: a snapshot not there yet is read again this often.
+const SNAPSHOT_RETRY_MS = 30000
+// The Hub asks for count notifications every minute; answers are shown to the one who asked for 14 days.
+const NOTICE_CACHE_MS = 15000
+const NOTICE_MAX_AGE_MS = 14 * 24 * 3600 * 1000
 const LIST_LIMIT = 500
 // Scanning svarer fra en cachet kontekst (rettigheder, låse, claims …): højst ~5 s gammel, samme princip som den
 // offline journal. En ældre kontekst opfriskes i baggrunden; scanningen venter højst SCAN_CONTEXT_WAIT_MS på den.
@@ -46,6 +51,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   const archives = new Map()
 
   const isManager = user => user.role === 'manager' || user.role === 'creator'
+  /** Takes part in every count and decides on join requests: a manager or an Optælling admin. */
+  const takesPartByRole = user => isManager(user) || user.countAdmin === true
   /** Who may fetch SAP for the count (again, or the stock of the day): the owner, a manager or an Optælling admin. */
   const canFetchDoc = (user, rights) => rights.isOwner || rights.isManager || user.countAdmin === true
   const me = user => ({ email: lower(user.email), name: user.fullName || user.email })
@@ -70,14 +77,16 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const team = teamOf(user)
     const counts = await repo.listCounts(team)
     const email = lower(user.email)
+    const byRole = takesPartByRole(user)
     return Promise.all(counts.map(async entry => {
       const cacheKey = `${team}:${entry.id}:${email}`
-      if (entry.status === 'closed' && closedDetails.has(cacheKey)) return { ...entry, ...closedDetails.get(cacheKey) }
+      const mayDecide = { canDecideMembers: byRole || lower(entry.owner?.email) === email }
+      if (entry.status === 'closed' && closedDetails.has(cacheKey)) return { ...entry, ...closedDetails.get(cacheKey), ...mayDecide }
       const [summary, members] = await Promise.all([repo.getSummary(team, entry.id).catch(() => null), repo.getMembers(team, entry.id).catch(() => ({}))])
-      const details = { summary: summary || null, members: Object.values(members).filter(member => member.status === 'approved').length, requests: Object.values(members).filter(member => member.status === 'requested').length, myStatus: members[email]?.status || null }
+      const details = { summary: summary || null, members: Object.values(members).filter(member => member.status === 'approved').length, requests: Object.values(members).filter(member => member.status === 'requested').length, myStatus: byRole ? 'approved' : members[email]?.status || null }
       if (entry.status === 'closed') closedDetails.set(cacheKey, details)
       else closedDetails.delete(cacheKey)
-      return { ...entry, ...details }
+      return { ...entry, ...details, ...mayDecide }
     }))
   }
 
@@ -333,6 +342,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       state.meta = value
     }).catch(() => {})
     await Promise.all([throwIfDeleted(state), journals, meta])
+    await adoptNewSnapshot(state)
     await refreshOthers(state)
     const events = mergedEvents(state)
     const key = `${events.length}:${events.at(-1)?.id || ''}:${state.snapshot.fetchedAt}`
@@ -343,6 +353,39 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       state.events = events
     }
     return state
+  }
+
+  /**
+   * "Hent SAP igen" on another PC: the meta names a newer SAP fetch than the snapshot this PC holds, so every PC with the
+   * count open would otherwise keep the old SAP figures until a restart. A snapshot not written yet is tried again later.
+   */
+  async function adoptNewSnapshot(state) {
+    if (!state.meta.fetchedAt || state.meta.fetchedAt === state.snapshot.fetchedAt) return
+    if (now() - (state.snapshotTriedAt || 0) < SNAPSHOT_RETRY_MS) return
+    state.snapshotTriedAt = now()
+    const before = state.snapshot
+    let snapshot
+    try {
+      snapshot = await repo.getSnapshot(state.team, state.id, { fresh: true })
+    } catch (error) {
+      console.error('CountPoint: new SAP snapshot unavailable', error.code || error.message)
+      return
+    }
+    // Changed meanwhile (this PC's own "Hent SAP igen"): what was read may be older, so it is never put back over it.
+    if (state.snapshot !== before || !snapshot || snapshot.fetchedAt === before.fetchedAt) return
+    installSnapshot(state, snapshot)
+    state.snapshotTriedAt = 0
+    if (localCache) localCache.save(state.team, state.id, 'expected', snapshot).catch(() => {})
+  }
+
+  function installSnapshot(state, snapshot) {
+    state.snapshot = snapshot
+    state.index = indexSnapshot(snapshot)
+    state.countLists = buildCountLists({ snapshot, index: state.index, placements: state.placements })
+    state.aggregateKey = ''
+    // The new index has no list of the status's other counts yet: read it again.
+    state.othersAt = 0
+    state.othersKey = ''
   }
 
   /** The other counts of the status, so a scan that belongs to one of them says where it is counted. */
@@ -387,7 +430,16 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const email = lower(user.email)
     const member = members[email]
     const isOwner = lower(state.meta.owner.email) === email
-    return { members, member, isOwner, locked, canWrite: !locked && state.meta.status === 'open' && member?.status === 'approved', isManager: isManager(user) }
+    // Managers (also status managers) and Optælling admins take part in every count without asking; nothing is written,
+    // so a new admin has access at once and loses it again with the role.
+    const byRole = takesPartByRole(user)
+    const approved = byRole || member?.status === 'approved'
+    return { members, member, isOwner, locked, byRole, canDecideMembers: isOwner || byRole, status: approved ? 'approved' : member?.status || null, canWrite: !locked && state.meta.status === 'open' && approved, isManager: isManager(user) }
+  }
+
+  /** What the screen needs to know about the user's rights in a count. */
+  function meOf(user, rights) {
+    return { email: lower(user.email), isOwner: rights.isOwner, isManager: rights.isManager, canFetchSap: canFetchDoc(user, rights), status: rights.status, canWrite: rights.canWrite, byRole: rights.byRole, canDecideMembers: rights.canDecideMembers }
   }
 
   async function statusLocked(team, statusId) {
@@ -425,8 +477,9 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     return {
       meta: state.meta,
       statusLocked: rights.locked,
+      snapshotFetchedAt: state.snapshot.fetchedAt,
       summary: summarizeSnapshot(state.snapshot),
-      me: { email: lower(user.email), isOwner: rights.isOwner, isManager: rights.isManager, canFetchSap: canFetchDoc(user, rights), status: rights.member?.status || null, canWrite: rights.canWrite },
+      me: meOf(user, rights),
       countLists: state.countLists,
       materials: materialsFor(state),
       areas,
@@ -482,7 +535,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     return {
       meta: state.meta,
       statusLocked: rights.locked,
-      me: { email: lower(user.email), isOwner: rights.isOwner, isManager: rights.isManager, canFetchSap: canFetchDoc(user, rights), status: rights.member?.status || null, canWrite: rights.canWrite },
+      snapshotFetchedAt: state.snapshot.fetchedAt,
+      me: meOf(user, rights),
       progress,
       rows: aggregate.rows,
       totals: aggregate.totals,
@@ -854,6 +908,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const rights = await access(user, state)
     if (rights.locked) throw lockedError()
     if (rights.member?.status === 'approved') return rights.member
+    if (rights.byRole) return { email: lower(user.email), name: user.fullName || user.email, role: 'participant', status: 'approved', byRole: true }
     const value = { email: lower(user.email), name: user.fullName || user.email, role: 'participant', status: 'requested', requestedAt: now() }
     await repo.setMember(state.team, state.id, value.email, value)
     return value
@@ -863,7 +918,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const state = await load(user, id)
     const rights = await access(user, state)
     if (rights.locked) throw lockedError()
-    if (!rights.isOwner) throw codeError('COUNT_OWNER_ONLY', 'Kun den ansvarlige kan godkende deltagere')
+    if (!rights.canDecideMembers) throw codeError('COUNT_OWNER_ONLY', 'Kun den ansvarlige, en admin eller en manager kan godkende deltagere')
     const target = rights.members[lower(email)]
     if (!target || target.role === 'owner') throw codeError('MEMBER_NOT_FOUND')
     const value = { ...target, status: approve ? 'approved' : 'rejected', decidedBy: me(user), decidedAt: now() }
@@ -1001,6 +1056,41 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     return value
   }
 
+  // ---------- Notifications for the Hub's bell (and Windows) ----------
+  /**
+   * What waits for the user in the team's open counts, worked out from the counts' own files, so an answer given on one
+   * PC removes it everywhere and nothing extra is written. A short cache keeps several windows to one round of reads.
+   */
+  const noticeCache = new Map()
+  async function notifications(user) {
+    const team = teamOf(user)
+    const email = lower(user.email)
+    const cacheKey = `${team}:${email}:${takesPartByRole(user)}:${isManager(user)}`
+    const hit = noticeCache.get(cacheKey)
+    if (hit && now() - hit.at < NOTICE_CACHE_MS) return hit.value
+    const open = (await repo.listCounts(team)).filter(entry => entry.status === 'open')
+    const read = await Promise.all(open.map(entry => Promise.all([repo.getMembers(team, entry.id).catch(() => ({})), repo.getApprovals(team, entry.id).catch(() => ({}))])))
+    const recent = at => typeof at === 'number' && now() - at < NOTICE_MAX_AGE_MS
+    const value = []
+    open.forEach((entry, index) => {
+      const [members, approvals] = read[index]
+      const count = { countId: entry.id, countName: entry.name }
+      const decides = takesPartByRole(user) || lower(entry.owner?.email) === email
+      for (const member of Object.values(members)) {
+        if (!member || member.role === 'owner') continue
+        const who = lower(member.email)
+        if (member.status === 'requested' && decides && who !== email) value.push({ type: 'join-request', ...count, email: who, name: member.name || who, at: member.requestedAt || 0 })
+        if (who === email && ['approved', 'rejected'].includes(member.status) && recent(member.decidedAt) && lower(member.decidedBy?.email) !== email) value.push({ type: 'join-decided', ...count, approved: member.status === 'approved', name: member.decidedBy?.name || '', at: member.decidedAt })
+      }
+      for (const [material, approval] of Object.entries(approvals)) {
+        if (approval?.status === 'submitted' && isManager(user) && lower(approval.by?.email) !== email) value.push({ type: 'submitted', ...count, material, name: approval.by?.name || '', at: approval.at || 0, diff: typeof approval.diff === 'number' ? approval.diff : null })
+        if (approval?.status === 'returned' && lower(approval.submittedBy?.email) === email && lower(approval.by?.email) !== email && recent(approval.at)) value.push({ type: 'returned', ...count, material, name: approval.by?.name || '', comment: approval.comment || '', at: approval.at })
+      }
+    })
+    noticeCache.set(cacheKey, { at: now(), value })
+    return value
+  }
+
   // ---------- Close, reopen, re-fetch ----------
   /** This PC's scans must be on M: before others rely on them (approval, closing). */
   async function requireSynced(state) {
@@ -1072,10 +1162,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     ])
     state.meta = meta
     pending.delete(token)
-    state.snapshot = entry.snapshot
-    state.index = indexSnapshot(entry.snapshot)
-    state.countLists = buildCountLists({ snapshot: state.snapshot, index: state.index, placements: state.placements })
-    state.aggregateKey = ''
+    installSnapshot(state, entry.snapshot)
+    if (localCache) localCache.save(state.team, state.id, 'expected', entry.snapshot).catch(() => {})
     await refresh(state, true)
     return state.meta
   }
@@ -1101,6 +1189,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const value = status === 'reset' ? { status: 'open', by, at: now() }
       : status === 'posted' ? { ...current, status: 'posted', postedBy: by, postedAt: now() }
       : status === 'approved' ? { status, comment: clean(comment, 300), by, at: now(), frozen: freezeRows(state.aggregate.rows, code, state.aggregate.serials.missing) }
+      // Who sent it to approval is told that it came back (the Hub's notifications).
+      : status === 'returned' ? { status, comment: clean(comment, 300), by, at: now(), submittedBy: current?.status === 'submitted' ? current.by : current?.submittedBy || null }
       : { status, comment: clean(comment, 300), by, at: now() }
     // Approval and material locks are different files: an approved material's lock is released in the same round.
     await Promise.all([
@@ -1263,7 +1353,13 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   async function reportData(user, id) {
     const state = await refresh(await load(user, id), true)
     await state.journal.flush()
-    const [members, approvals] = await Promise.all([repo.getMembers(state.team, state.id), repo.getApprovals(state.team, state.id)])
+    const [stored, approvals] = await Promise.all([repo.getMembers(state.team, state.id), repo.getApprovals(state.team, state.id)])
+    // Managers and Optælling admins count without being in the members file: whoever registered something took part.
+    const members = { ...stored }
+    for (const event of state.events || []) {
+      const email = lower(event.by)
+      if (email && members[email]?.status !== 'approved') members[email] = { email, name: event.byName || email, role: 'participant', status: 'approved', byRole: true }
+    }
     const aggregate = applyApprovals(state.aggregate, approvals)
     return { meta: state.meta, snapshot: state.snapshot, aggregate, members, approvals, progress: computeProgress({ snapshot: state.snapshot, aggregate, countLists: state.countLists, events: state.events || [], approvals, now: now() }) }
   }
@@ -1355,6 +1451,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       return await fn(user, ...args)
     } finally {
       dropScanContext(user?.team, scope === 'count' ? args[0] : null)
+      noticeCache.clear()
     }
   }
 
@@ -1365,7 +1462,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     requestJoin: changes(requestJoin), decideMember: changes(decideMember), claimArea: changes(claimArea), releaseArea: changes(releaseArea),
     closeCount: changes(closeCount), reopenCount: changes(reopenCount), deleteCount: changes(deleteCount), previewRefetch, applyRefetch,
     setApproval: changes(setApproval), approveAllWithoutDifference: changes(approveAllWithoutDifference), markPosted: changes(markPosted),
-    getRules, setRule, serialRules, setSerialRule, copySerials, countDoc, fetchDocStock, savePlacement: changes(savePlacement, 'team'), reportData, readCount, flush, closeAll,
+    getRules, setRule, serialRules, setSerialRule, copySerials, countDoc, fetchDocStock, savePlacement: changes(savePlacement, 'team'), reportData, readCount, flush, closeAll, notifications,
   }
 }
 

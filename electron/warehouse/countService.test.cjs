@@ -81,6 +81,39 @@ test('preview fetches SAP once and shows groups; create stores the count for the
   assert.equal(opened.me.isOwner, true)
 })
 
+test('an Optælling admin and a manager take part in every count from the start and decide on join requests', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const bo = ctx.service('pc2')
+  const mona = ctx.service('pc3')
+  const ADA = { email: 'ada@example.test', fullName: 'Ada', role: 'user', team: 'TCD', countAdmin: true }
+  const ada = ctx.service('pc4')
+  const { id } = await newCount(ctx, anna)
+
+  const adaOpen = await ada.openCount(ADA, id)
+  assert.deepEqual([adaOpen.me.canWrite, adaOpen.me.status, adaOpen.me.byRole, adaOpen.me.canDecideMembers], [true, 'approved', true, true])
+  assert.equal((await ada.scan(ADA, id, { serial: 'N1', place: 'A1.1' })).saved, true, 'an admin scans without asking to join')
+  assert.equal((await mona.scan(MONA, id, { serial: 'N2', place: 'A1.1' })).saved, true, 'so does a manager')
+  assert.deepEqual(await ada.requestJoin(ADA, id), { email: 'ada@example.test', name: 'Ada', role: 'participant', status: 'approved', byRole: true }, 'nothing to ask for')
+  assert.equal((await ctx.repo.getMembers('TCD', id))['ada@example.test'], undefined, 'role access is not written to the members file')
+
+  const boOpen = await bo.openCount(BO, id)
+  assert.deepEqual([boOpen.me.canWrite, boOpen.me.byRole, boOpen.me.canDecideMembers], [false, false, false])
+  assert.equal((await anna.openCount(ANNA, id)).me.canDecideMembers, true, 'the owner still decides')
+  await bo.requestJoin(BO, id)
+  assert.equal((await ada.decideMember(ADA, id, { email: BO.email, approve: false })).status, 'rejected')
+  assert.equal((await mona.decideMember(MONA, id, { email: BO.email, approve: true })).decidedBy.name, 'Mona')
+  assert.equal((await bo.scan(BO, id, { serial: 'U1', place: 'A1.1' })).saved, true)
+  await assert.rejects(bo.decideMember(BO, id, { email: ADA.email, approve: true }), { code: 'COUNT_OWNER_ONLY' })
+
+  const list = await bo.listCounts(ADA)
+  assert.deepEqual([list[0].canDecideMembers, (await bo.listCounts(BO))[0].canDecideMembers], [true, false])
+  await Promise.all([ada.flush(ADA, id), mona.flush(MONA, id), bo.flush(BO, id)])
+  ctx.tick(2000)
+  const report = await anna.reportData(ANNA, id)
+  assert.deepEqual(Object.values(report.members).filter(member => member.status === 'approved').map(member => member.name).sort(), ['Ada', 'Anna', 'Bo', 'Mona'], 'the report names everyone who counted')
+})
+
 test('only approved members can scan; the owner approves join requests', async () => {
   const ctx = setup()
   const anna = ctx.service('pc1')
@@ -823,6 +856,130 @@ test('the owner can fetch SAP again, see the differences and apply them', async 
   const byAdmin = await ada.previewRefetch(ADA, id)
   await assert.rejects(anna.applyRefetch(ANNA, id, { token: byAdmin.token }), { code: 'PREVIEW_EXPIRED' }, 'only the one who fetched applies it')
   assert.equal((await ada.applyRefetch(ADA, id, { token: byAdmin.token })).snapshotVersion, 3, 'an Optælling admin may fetch SAP again')
+})
+
+test('after "Hent SAP igen" on one PC, another PC with the count open shows the new SAP figures without a restart', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const mona = ctx.service('pc3')
+  const { id } = await newCount(ctx, anna)
+  const sapQty = state => state.rows.find(row => row.material === 'INT4300-4921-0').sapQty
+  const before = await mona.getState(MONA, id)
+  assert.deepEqual([before.serials.expected, sapQty(before)], [3, 2])
+
+  ctx.sap.mb52 = [stock('INT4300-4921-0', 'D000', 3, 0, 3000), stock('R162-0717', 'D000', 100, 0, 500)]
+  ctx.sap.serials = [serial('N1', 'INT4300-4921-0', 'D000'), serial('N2', 'INT4300-4921-0', 'D000'), serial('N9', 'INT4300-4921-0', 'D000')]
+  ctx.tick(1000)
+  const preview = await anna.previewRefetch(ANNA, id)
+  const meta = await anna.applyRefetch(ANNA, id, { token: preview.token })
+
+  ctx.tick(5000)
+  const after = await mona.getState(MONA, id)
+  assert.equal(after.meta.fetchedAt, meta.fetchedAt)
+  assert.deepEqual([after.serials.expected, sapQty(after)], [3, 3], 'the same SAP figures as on the PC that fetched')
+  assert.equal(after.rows.some(row => row.material === 'INT4300-4921-0-R'), false, 'a material gone from SAP is gone here too')
+  const opened = await mona.openCount(MONA, id)
+  assert.equal(opened.materials.find(item => item.material === 'INT4300-4921-0').unrestricted, 3, 'the materials of the screen follow too')
+  assert.deepEqual((await mona.materialSerials(MONA, id, { material: 'INT4300-4921-0' })).missing.map(item => item.serial).sort(), ['N1', 'N2', 'N9'])
+})
+
+test('a half-written refetch (new meta, old snapshot) is picked up once the snapshot is there', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const mona = ctx.service('pc3')
+  const { id } = await newCount(ctx, anna)
+  await mona.getState(MONA, id)
+  const snapshot = await ctx.repo.getSnapshot('TCD', id)
+  await ctx.repo.updateMeta('TCD', id, { fetchedAt: snapshot.fetchedAt + 1000, snapshotVersion: 2 })
+  ctx.tick(5000)
+  assert.equal((await mona.getState(MONA, id)).serials.expected, 3, 'the old snapshot is kept while the new one is not there yet')
+  ctx.tick(5000)
+  await mona.getState(MONA, id)
+  await ctx.repo.replaceSnapshot('TCD', id, { ...snapshot, fetchedAt: snapshot.fetchedAt + 1000, stock: snapshot.stock.map(line => (snapshot.materials[line.m].material === 'INT4300-4921-0' ? { ...line, unrestricted: 1 } : line)) })
+  ctx.tick(31_000)
+  const state = await mona.getState(MONA, id)
+  assert.equal(state.rows.find(row => row.material === 'INT4300-4921-0').sapQty, 1)
+})
+
+test('notifications for the Hub: join requests to those who decide, submissions to managers, the answers to the one who asked', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const bo = ctx.service('pc2')
+  const mona = ctx.service('pc3')
+  const ADA = { email: 'ada@example.test', fullName: 'Ada', role: 'user', team: 'TCD', countAdmin: true }
+  const CARL = { email: 'carl@example.test', fullName: 'Carl', role: 'user', team: 'TCD' }
+  const ada = ctx.service('pc4')
+  const { id } = await newCount(ctx, anna)
+  const types = async (svc, user) => (await svc.notifications(user)).map(item => item.type).sort()
+
+  await bo.requestJoin(BO, id)
+  const [request] = await anna.notifications(ANNA)
+  assert.deepEqual(request, { type: 'join-request', countId: id, countName: 'Status D000', email: 'bo@example.test', name: 'Bo', at: ctx.clock.now })
+  assert.deepEqual([await types(ada, ADA), await types(mona, MONA)], [['join-request'], ['join-request']], 'admins and managers decide too')
+  assert.deepEqual([await types(bo, BO), await types(ctx.service('pc5'), CARL), await types(ctx.service('pc6'), TRINE)], [[], [], []])
+
+  ctx.tick(20_000)
+  await mona.decideMember(MONA, id, { email: BO.email, approve: true })
+  ctx.tick(20_000)
+  assert.deepEqual([await types(anna, ANNA), await types(ada, ADA)], [[], []], 'answered by one: gone for everyone')
+  const [decided] = await bo.notifications(BO)
+  assert.deepEqual([decided.type, decided.approved, decided.name, decided.countId], ['join-decided', true, 'Mona', id])
+
+  await bo.saveLine(BO, id, { place: 'A1.1', material: 'R162-0717', qty: 100 })
+  await bo.submitMaterial(BO, id, { material: 'R162-0717' })
+  ctx.tick(20_000)
+  const submitted = (await mona.notifications(MONA)).find(item => item.type === 'submitted')
+  assert.deepEqual([submitted.material, submitted.name, submitted.diff], ['R162-0717', 'Bo', 0])
+  assert.deepEqual([await types(ada, ADA), await types(anna, ANNA)], [[], []], 'only managers approve materials')
+
+  await mona.setApproval(MONA, id, { material: 'R162-0717', status: 'returned', comment: 'Tæl reol 3 igen' })
+  ctx.tick(20_000)
+  assert.deepEqual(await types(mona, MONA), [])
+  const returned = (await bo.notifications(BO)).find(item => item.type === 'returned')
+  assert.deepEqual([returned.material, returned.name, returned.comment], ['R162-0717', 'Mona', 'Tæl reol 3 igen'])
+
+  ctx.tick(15 * 24 * 3600 * 1000)
+  assert.deepEqual(await types(bo, BO), [], 'answers are shown for 14 days')
+  await bo.requestJoin(CARL, id)
+  await anna.closeCount(ANNA, id)
+  ctx.tick(20_000)
+  assert.deepEqual(await types(anna, ANNA), [], 'a closed count asks nothing')
+})
+
+test('a slow read of the snapshot never puts the old SAP figures back over this PC\'s own "Hent SAP igen"', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const { id } = await newCount(ctx, anna)
+  const real = createCountRepository({ storeFor: ctx.storeFor, now: () => ctx.clock.now })
+  let gate = null
+  let reached = null
+  const repo = {
+    ...real,
+    getSnapshot: async (team, countId, options) => {
+      const value = await real.getSnapshot(team, countId, options)
+      if (options?.fresh && gate) { reached(); await gate }
+      return value
+    },
+  }
+  const mona = createCountService({ repo, storeFor: ctx.storeFor, fetcher: ctx.fetcher, journalsDir: path.join(ctx.root, 'local-slow'), deviceId: 'slow', now: () => ctx.clock.now, journalOptions: { autoFlush: false } })
+  await mona.getState(MONA, id)
+  ctx.sap.mb52 = [stock('INT4300-4921-0', 'D000', 3, 0, 3000), stock('R162-0717', 'D000', 100, 0, 500)]
+  ctx.tick(1000)
+  const preview = await mona.previewRefetch(MONA, id)
+  // The meta (a small file) is on M: before the snapshot: the next poll starts reading the snapshot, which is still the old one.
+  await ctx.repo.updateMeta('TCD', id, { fetchedAt: ctx.clock.now, snapshotVersion: 2 })
+  let release
+  gate = new Promise(resolve => { release = resolve })
+  const atRead = new Promise(resolve => { reached = resolve })
+  ctx.tick(5000)
+  const polling = mona.getState(MONA, id)
+  await atRead
+  gate = null
+  await mona.applyRefetch(MONA, id, { token: preview.token })
+  release()
+  await polling
+  // At once (before the next refresh): an approval made now freezes the rows of this state.
+  assert.equal((await mona.getState(MONA, id)).rows.find(row => row.material === 'INT4300-4921-0').sapQty, 3)
 })
 
 test('readCount (for Hubert) shows figures, differences, material locks and area claims without writing anything to the drive', async () => {

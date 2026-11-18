@@ -17,7 +17,7 @@ import { targetFromItem, type LocationsTarget } from '@/lib/warehouse/locations'
 import type { Language } from '@/lib/translations'
 import type { AppRole, WarehouseUser } from '@/types/warehouse'
 import { Archive } from './Archive'
-import { CountView } from './count/CountView'
+import { CountView, type CountTab } from './count/CountView'
 import { Counts } from './Counts'
 import { NewCount } from './NewCount'
 import { Rules } from './Rules'
@@ -27,7 +27,7 @@ import { StatusView } from './StatusView'
 import { WarehouseHome, type WarehouseTool } from './WarehouseHome'
 import { Locations } from './locations/Locations'
 
-export type View = { kind: 'list' } | { kind: 'new' } | { kind: 'count'; id: string } | { kind: 'status'; id: string; from?: 'archive' } | { kind: 'archive' } | { kind: 'rules' } | { kind: 'serial-rules' } | { kind: 'sap-check' }
+export type View = { kind: 'list' } | { kind: 'new' } | { kind: 'count'; id: string; tab?: CountTab } | { kind: 'status'; id: string; from?: 'archive' } | { kind: 'archive' } | { kind: 'rules' } | { kind: 'serial-rules' } | { kind: 'sap-check' }
 
 const TOP_LEVEL = new Set<View['kind']>(['list', 'archive', 'rules', 'serial-rules', 'sap-check'])
 
@@ -35,7 +35,8 @@ type Tool = 'home' | WarehouseTool
 
 /**
  * Without params Lagerstyring opens on its own hub page. Deep links (Hubert, notifications) go straight into Optælling:
- * tab = counts|archive|rules|serial-rules|sap-check, itemId = count id or "status:<id>".
+ * tab = counts|archive|rules|serial-rules|sap-check, itemId = count id or "status:<id>". A count from a notification
+ * opens on its tab: tab = count-members|count-approval (or count).
  */
 function initialState(): { tool: Tool; view: View; locations: LocationsTarget } {
   const params = consumeNavigationParams()
@@ -45,9 +46,11 @@ function initialState(): { tool: Tool; view: View; locations: LocationsTarget } 
   return { tool: 'counts', view: countsView(params.tab, params.itemId || ''), locations: { kind: 'home' } }
 }
 
+const COUNT_TABS: Record<string, CountTab> = { 'count-members': 'members', 'count-approval': 'approval' }
+
 function countsView(tab: string | undefined, item: string): View {
   if (item.startsWith('status:')) return { kind: 'status', id: item.slice(7), from: tab === 'archive' ? 'archive' : undefined }
-  if (item) return { kind: 'count', id: item }
+  if (item) return tab && COUNT_TABS[tab] ? { kind: 'count', id: item, tab: COUNT_TABS[tab] } : { kind: 'count', id: item }
   if (tab === 'archive' || tab === 'rules' || tab === 'serial-rules' || tab === 'sap-check') return { kind: tab }
   return { kind: 'list' }
 }
@@ -156,7 +159,7 @@ function WarehouseContent({ user, view, onNavigate }: { user: WarehouseUser; vie
       {view.kind === 'status' && <StatusView key={view.id} id={view.id} onBack={() => onNavigate(view.from === 'archive' ? { kind: 'archive' } : { kind: 'list' })} onOpenCount={id => onNavigate({ kind: 'count', id })} />}
       {view.kind === 'archive' && <Archive user={user} onOpenStatus={id => onNavigate({ kind: 'status', id, from: 'archive' })} />}
       {view.kind === 'new' && <NewCount user={user} onCancel={toList} onCreated={id => onNavigate({ kind: 'count', id })} />}
-      {view.kind === 'count' && <CountView key={view.id} id={view.id} user={user} onBack={toList} />}
+      {view.kind === 'count' && <CountView key={view.id} id={view.id} user={user} initialTab={view.tab} onBack={toList} />}
       {view.kind === 'rules' && <Rules user={user} onBack={toList} />}
       {view.kind === 'serial-rules' && <SerialRules user={user} onBack={toList} />}
       {view.kind === 'sap-check' && <SapCheck user={user} onBack={toList} />}

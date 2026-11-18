@@ -24,8 +24,9 @@ Oprettet: 2026-11-18. Ingen build, release eller push.
 
 ## Fase 2 - nye tiltag
 
-- [ ] Aftal de nye tiltag til 1.6.8 og lav en plan pr. tiltag i `plans/`.
-- [ ] Registrer brugerrettede ændringer i `src/lib/changelog.ts` under en ny 1.6.8-post, kun for ting der faktisk er lavet.
+- [x] Optælling: admin-adgang, ens tal på alle klienter og notifikationer i hubben. Se `plans/optaelling-admin-sync-notifikationer-plan.md`.
+- [ ] Optælling: værdi ud fra indkøbsværdi (parkeret, mangler et eksempel på et materiale med forkert værdi). Se samme plan, fase 5.
+- [x] Registrer brugerrettede ændringer i `src/lib/changelog.ts` under en ny 1.6.8-post, kun for ting der faktisk er lavet.
 
 ## Fase 3 - senere, kun efter godkendelse
 

@@ -2,6 +2,7 @@ import { acknowledgeMultiplayerNotifications } from '@/lib/multiplayerAcknowledg
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useKV } from '@/hooks/useKV'
 import { useImprovementNotificationState } from '@/hooks/useImprovementNotifications'
+import { useCountNotifications } from '@/hooks/useCountNotifications'
 import { useHighFives } from '@/hooks/useHighFives'
 import { useMultiplayerNotifications, type MultiplayerNotificationState } from '@/hooks/useMultiplayerNotifications'
 import { useLanguage } from '@/contexts/LanguageContext'
@@ -94,6 +95,7 @@ export function useHubNotificationItems(userEmail: string): HubNotificationsValu
   const improvements = useImprovementNotificationState(userEmail)
   const multiplayer = useMultiplayerNotifications(userEmail)
   const highFives = useHighFives(userEmail)
+  const counts = useCountNotifications(userEmail)
   const [links, setLinks] = useState<LinksSnapshot | null>(null)
   const [nisseFinds, setNisseFinds] = useState<NisseFind[]>([])
 
@@ -144,7 +146,8 @@ export function useHubNotificationItems(userEmail: string): HubNotificationsValu
     highFives: highFives.unread,
     links,
     nisseFinds,
-  }), [userEmail, language, now, isAdminOrManager, isGuideReviewer, emails, notebookNotifications, birthdays, vacations, guides, guideReviewRequests, seenVacationRequestIds, personalTodos, projects, improvements.items, multiplayer.notifications, multiplayer.games, highFives.unread, links, nisseFinds])
+    countNotifications: counts.items,
+  }), [userEmail, language, now, isAdminOrManager, isGuideReviewer, emails, notebookNotifications, birthdays, vacations, guides, guideReviewRequests, seenVacationRequestIds, personalTodos, projects, improvements.items, multiplayer.notifications, multiplayer.games, highFives.unread, links, nisseFinds, counts.items])
 
   const items = useMemo(() => {
     const dismissed = new Set(dismissedIds || [])
@@ -160,7 +163,7 @@ export function useHubNotificationItems(userEmail: string): HubNotificationsValu
     acknowledgeInModules(allItemsRef.current.filter(item => wanted.has(item.id)))
   }, [setDismissedIds])
 
-  const settled = improvements.loaded && multiplayer.loaded && highFives.loaded
+  const settled = improvements.loaded && multiplayer.loaded && highFives.loaded && counts.loaded
   const searchData = useMemo<HubSearchData>(() => ({ emails, projects, personalTodos, guides, improvements: improvements.cases, links: links?.links ?? [] }), [emails, projects, personalTodos, guides, improvements.cases, links])
   return useMemo(() => ({ items, settled, multiplayer, dismiss, searchData }), [items, settled, multiplayer, dismiss, searchData])
 }

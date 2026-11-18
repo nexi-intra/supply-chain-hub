@@ -99,6 +99,8 @@ contextBridge.exposeInMainWorld('electronWarehouse', {
     importFile: title => warehouse('counts:import-file', { title }),
     requestJoin: id => warehouse('counts:request-join', { id }),
     decideMember: request => warehouse('counts:decide-member', request),
+    notifications: () => warehouse('counts:notifications'),
+    onChanged: warehouseEvents('counts:changed'),
     claim: request => warehouse('counts:claim', request),
     release: request => warehouse('counts:release', request),
     close: id => warehouse('counts:close', { id }),

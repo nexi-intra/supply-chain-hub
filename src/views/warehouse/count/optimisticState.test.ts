@@ -14,7 +14,7 @@ const lock = (holder: typeof ANNA, extra: Partial<MaterialLock> = {}): MaterialL
 
 function state(changes: Partial<CountState> = {}): CountState {
   return {
-    meta: { status: 'open' }, statusLocked: false, me: { email: ANNA.email, isOwner: false, isManager: true, canFetchSap: false, status: 'approved', canWrite: true },
+    meta: { status: 'open' }, statusLocked: false, me: { email: ANNA.email, isOwner: false, isManager: true, canFetchSap: false, status: 'approved', canWrite: true, byRole: true, canDecideMembers: true },
     rows: [row('R1', 10, 4)], lines: [line('l1', 4)], members: [], claims: [], materialLocks: [], approvals: {},
     ...changes,
   } as unknown as CountState

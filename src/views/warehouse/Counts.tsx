@@ -129,22 +129,22 @@ export function Counts({ user, onNew, onOpen, onOpenStatus, onOpenSapCheck }: Co
         </Card>
       )}
 
-      {open.length > 0 && <CountGrid title={t('Åbne', 'Open')} counts={open} me={user.email} onOpen={onOpen} />}
-      {closed.length > 0 && <CountGrid title={t('Afsluttede', 'Closed')} counts={closed} me={user.email} onOpen={onOpen} />}
+      {open.length > 0 && <CountGrid title={t('Åbne', 'Open')} counts={open} onOpen={onOpen} />}
+      {closed.length > 0 && <CountGrid title={t('Afsluttede', 'Closed')} counts={closed} onOpen={onOpen} />}
 
-      {unassigned.length > 0 && <CountGrid title={t('Ældre optællinger (uden status)', 'Older counts (without status)')} counts={unassigned} me={user.email} onOpen={onOpen} />}
+      {unassigned.length > 0 && <CountGrid title={t('Ældre optællinger (uden status)', 'Older counts (without status)')} counts={unassigned} onOpen={onOpen} />}
 
       {starting && <StartStatusDialog onClose={() => setStarting(false)} onStarted={() => { setStarting(false); void load() }} onOpenSapCheck={() => { setStarting(false); onOpenSapCheck() }} />}
     </div>
   )
 }
 
-function CountGrid({ title, counts, me, onOpen }: { title: string; counts: CountListEntry[]; me: string; onOpen: (id: string) => void }) {
+function CountGrid({ title, counts, onOpen }: { title: string; counts: CountListEntry[]; onOpen: (id: string) => void }) {
   return (
     <section className="space-y-3">
       <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">{title}</h2>
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {counts.map(entry => <CountCard key={entry.id} entry={entry} isOwner={entry.owner.email === me.toLowerCase()} onOpen={() => onOpen(entry.id)} />)}
+        {counts.map(entry => <CountCard key={entry.id} entry={entry} onOpen={() => onOpen(entry.id)} />)}
       </div>
     </section>
   )
@@ -177,7 +177,7 @@ function Figure({ label, value, tone }: { label: string; value: string; tone?: '
   )
 }
 
-function CountCard({ entry, isOwner, onOpen }: { entry: CountListEntry; isOwner: boolean; onOpen: () => void }) {
+function CountCard({ entry, onOpen }: { entry: CountListEntry; onOpen: () => void }) {
   const percent = entry.summary?.percent ?? 0
   return (
     <button
@@ -204,7 +204,7 @@ function CountCard({ entry, isOwner, onOpen }: { entry: CountListEntry; isOwner:
         <span className="inline-flex items-center gap-1"><UsersThree size={14} /> {entry.members}</span>
         <span>SAP: {formatDateTime(entry.fetchedAt)}</span>
         {entry.myStatus === 'requested' && <Badge variant="outline">{t('Afventer godkendelse', 'Awaiting approval')}</Badge>}
-        {isOwner && entry.requests > 0 && <Badge>{t(`${entry.requests} anmoder om at deltage`, `${entry.requests} asking to join`)}</Badge>}
+        {entry.canDecideMembers && entry.requests > 0 && <Badge>{t(`${entry.requests} anmoder om at deltage`, `${entry.requests} asking to join`)}</Badge>}
       </div>
     </button>
   )

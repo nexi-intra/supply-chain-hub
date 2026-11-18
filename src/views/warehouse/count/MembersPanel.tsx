@@ -12,6 +12,7 @@ const statusLabels = () => ({ requested: t('Anmodet', 'Requested'), approved: t(
 
 export function MembersPanel({ id, state, optimistic, person }: PanelProps) {
   const isOwner = state.me.isOwner && !state.statusLocked
+  const canDecide = state.me.canDecideMembers && !state.statusLocked
   // Shown at once; the write to M: (15–90 s) runs in the background and is taken back if it fails.
   const decide = (email: string, approve: boolean) => {
     const member = state.members.find(item => item.email === email)
@@ -37,16 +38,17 @@ export function MembersPanel({ id, state, optimistic, person }: PanelProps) {
                   <p className="text-xs text-muted-foreground">{member.email}{member.requestedAt ? ` · ${formatDateTime(member.requestedAt)}` : ''}</p>
                 </div>
                 {member.role === 'owner' ? <Badge>{t('Ansvarlig', 'Responsible')}</Badge> : <Badge variant={member.status === 'rejected' ? 'destructive' : member.status === 'requested' ? 'outline' : 'secondary'}>{statusLabels()[member.status]}</Badge>}
-                {isOwner && member.role !== 'owner' && member.status !== 'approved' && (
+                {canDecide && member.role !== 'owner' && member.status !== 'approved' && (
                   <Button size="sm" onClick={() => decide(member.email, true)}><Check size={16} /> {t('Godkend', 'Approve')}</Button>
                 )}
-                {isOwner && member.role !== 'owner' && member.status !== 'rejected' && (
+                {canDecide && member.role !== 'owner' && member.status !== 'rejected' && (
                   <Button size="sm" variant="ghost" onClick={() => decide(member.email, false)}><X size={16} /> {member.status === 'approved' ? t('Fjern', 'Remove') : t('Afvis', 'Reject')}</Button>
                 )}
               </li>
             ))}
           </ul>
-          {!isOwner && !state.statusLocked && <p className="mt-3 text-xs text-muted-foreground">{t(`Anmodninger om at deltage godkendes af den ansvarlige (${state.meta.owner.name}).`, `Requests to join are approved by the person responsible (${state.meta.owner.name}).`)}</p>}
+          {!canDecide && !state.statusLocked && <p className="mt-3 text-xs text-muted-foreground">{t(`Anmodninger om at deltage godkendes af den ansvarlige (${state.meta.owner.name}), en admin eller en manager.`, `Requests to join are approved by the person responsible (${state.meta.owner.name}), an admin or a manager.`)}</p>}
+          <p className="mt-3 text-xs text-muted-foreground">{t('Managere og optællingsadmins er med i alle optællinger uden at anmode.', 'Managers and stock count admins take part in every count without asking.')}</p>
         </CardContent>
       </Card>
       <Card>

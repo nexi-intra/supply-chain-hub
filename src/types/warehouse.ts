@@ -309,6 +309,8 @@ export interface CountListEntry {
   members: number
   requests: number
   myStatus: MemberStatus | null
+  /** The owner, a manager or an Optælling admin: may approve or reject join requests. */
+  canDecideMembers: boolean
 }
 
 export type MemberStatus = 'requested' | 'approved' | 'rejected'
@@ -323,6 +325,14 @@ export interface Member {
   decidedBy?: Person
 }
 
+/** Something in an open count that waits for the user; shown in the Hub's bell and as a Windows notification. */
+export type CountNotice = { countId: string; countName: string; at: number } & (
+  | { type: 'join-request'; email: string; name: string }
+  | { type: 'join-decided'; approved: boolean; name: string }
+  | { type: 'submitted'; material: string; name: string; diff: number | null }
+  | { type: 'returned'; material: string; name: string; comment: string }
+)
+
 export interface MyAccess {
   email: string
   isOwner: boolean
@@ -331,6 +341,10 @@ export interface MyAccess {
   canFetchSap: boolean
   status: MemberStatus | null
   canWrite: boolean
+  /** A manager or an Optælling admin: takes part in every count without asking (`status` is then 'approved'). */
+  byRole: boolean
+  /** The owner, a manager or an Optælling admin: approves and rejects join requests. */
+  canDecideMembers: boolean
 }
 
 export interface CountListLine {
@@ -362,6 +376,8 @@ export interface Place {
 export interface OpenCount {
   meta: CountMeta
   statusLocked: boolean
+  /** `fetchedAt` of the SAP snapshot behind `materials` and `countLists`; differs from the state's after "Hent SAP igen" elsewhere. */
+  snapshotFetchedAt?: number
   summary: SnapshotSummary
   me: MyAccess
   countLists: CountListLine[]
@@ -589,6 +605,8 @@ export interface JournalEvent {
 export interface CountState {
   meta: CountMeta
   statusLocked: boolean
+  /** `fetchedAt` of the SAP snapshot the figures are built from. */
+  snapshotFetchedAt?: number
   me: MyAccess
   progress: Progress
   rows: ResultRow[]
@@ -1085,6 +1103,10 @@ export interface WarehouseBridge {
     importFile(title?: string): Promise<{ fileName: string; serials: string[] } | null>
     requestJoin(id: string): Promise<Member>
     decideMember(request: { id: string; email: string; approve: boolean }): Promise<Member>
+    /** What waits for the user in the team's open counts (the Hub's bell). */
+    notifications(): Promise<CountNotice[]>
+    /** A count changed through this PC in a way that can change someone's notifications. */
+    onChanged(listener: (payload: { team: TeamId }) => void): () => void
     claim(request: { id: string; area: string }): Promise<Claim>
     release(request: { id: string; area: string }): Promise<{ ok: true }>
     close(id: string): Promise<CountMeta>
