@@ -3,12 +3,15 @@
 // opgraderer lazy ved load og er idempotent.
 
 import { newId } from './utils'
+import type { GuideRichContent } from './guideRichText'
+import type { Language } from './translations'
 
 export { newId }
 
 export interface GuideStep {
   id: string
   text: string
+  richContent?: GuideRichContent
   /** fileStorage-id'er (uden kv://-præfiks) */
   imageIds: string[]
 }
@@ -16,6 +19,7 @@ export interface GuideStep {
 export interface GuideSection {
   id: string
   heading: string
+  headingRichContent?: GuideRichContent
   steps: GuideStep[]
 }
 
@@ -27,7 +31,7 @@ export interface Guide {
   category: string
   tags: string[]
   /** Guidens primære sprog — bruges af oversættelse og chatbot. */
-  language?: 'da' | 'en' | 'fi'
+  language?: Language
   /** v1-brødtekst; bevares efter migrering som reserve/ekstra noter */
   content: string
   sections?: GuideSection[]
@@ -55,6 +59,9 @@ export interface Guide {
   fileSize?: number
   preserveWordLayout?: boolean
   previewPdfUrl?: string
+  /** Original PDF the article was imported from (Knowledge Base); viewable as-is. */
+  originalPdfUrl?: string
+  originalPdfName?: string
   /**
    * Tværgående deling (Fase 3, plans/guide-library-cross-team-links-format.md): ALLE deltagende
    * teams' koder (folderName), INKL. det oprettende team — undefined/tomt = normal lokal guide
@@ -72,7 +79,7 @@ export interface GuideVersionSnapshot {
   tags: string[]
   sections: GuideSection[]
   coverImageId?: string
-  language?: 'da' | 'en' | 'fi'
+  language?: Language
   content?: string
   reviewIntervalMonths?: number | null
   responsibleEmail?: string
@@ -81,6 +88,8 @@ export interface GuideVersionSnapshot {
   fileSize?: number
   preserveWordLayout?: boolean
   previewPdfUrl?: string
+  originalPdfUrl?: string
+  originalPdfName?: string
   sharedWithTeamCodes?: string[]
 }
 
@@ -104,12 +113,14 @@ export interface GuideDraft {
   title: string
   category: string
   tags: string
-  language: 'da' | 'en' | 'fi' | 'auto'
+  language: Language | 'auto'
   sections: GuideSection[]
   preserveWordLayout?: boolean
   wordFileUrl?: string
   wordFileName?: string
   wordFileSize?: number
+  originalPdfUrl?: string
+  originalPdfName?: string
   coverImageId?: string
   reviewInterval: number | null
   /** yyyy-MM-dd, eller undefined = brug det automatisk foreslaaede naeste-tjek. */
@@ -170,6 +181,20 @@ export const REVIEW_INTERVAL_CHOICES: Array<{ value: number | null; label: strin
   { value: 6, label: '6 måneder' },
   { value: 12, label: '1 år' },
 ]
+
+const REVIEW_INTERVAL_TEXT: Record<string, { none: string; month: string; months: string; year: string }> = {
+  da: { none: 'Intet interval', month: 'måned', months: 'måneder', year: '1 år' },
+  en: { none: 'No interval', month: 'month', months: 'months', year: '1 year' },
+  fi: { none: 'Ei väliä', month: 'kuukausi', months: 'kuukautta', year: '1 vuosi' },
+  sv: { none: 'Inget intervall', month: 'månad', months: 'månader', year: '1 år' },
+}
+
+export function reviewIntervalLabel(months: number | null | undefined, language: string): string {
+  const text = REVIEW_INTERVAL_TEXT[language] ?? REVIEW_INTERVAL_TEXT.da
+  if (!months) return text.none
+  if (months === 12) return text.year
+  return `${months} ${months === 1 ? text.month : text.months}`
+}
 
 export function addMonths(timestamp: number, months: number): number {
   const date = new Date(timestamp)

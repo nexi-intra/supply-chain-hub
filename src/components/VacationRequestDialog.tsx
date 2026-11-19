@@ -21,7 +21,6 @@ export function VacationRequestDialog({ userEmail }: VacationRequestDialogProps)
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
   const [notes, setNotes] = useState('')
-  const [isSubmitting, setIsSubmitting] = useState(false)
   const { t } = useLanguage()
 
   const hasUnsavedChanges = useMemo(() => {
@@ -52,21 +51,24 @@ export function VacationRequestDialog({ userEmail }: VacationRequestDialogProps)
       return
     }
 
-    setIsSubmitting(true)
+    // Sent at once: the dialog closes and the form is cleared; the request and the mails to the managers are saved in
+    // the background (a write to M: takes 20-90 s). A failed save reopens the dialog with the dates.
+    const form = { startDate, endDate, notes }
+    toast.success(t.vacationRequestDialog.requestSent)
+    setStartDate('')
+    setEndDate('')
+    setNotes('')
+    setOpen(false)
 
     try {
-      await submitVacationRequest({ userEmail, startDate, endDate, notes })
-
-      toast.success(t.vacationRequestDialog.requestSent)
-      setStartDate('')
-      setEndDate('')
-      setNotes('')
-      setOpen(false)
+      await submitVacationRequest({ userEmail, ...form })
     } catch (error) {
       console.error('Error creating vacation request:', error)
       toast.error('Kunne ikke oprette ferieansøgning')
-    } finally {
-      setIsSubmitting(false)
+      setStartDate(form.startDate)
+      setEndDate(form.endDate)
+      setNotes(form.notes)
+      setOpen(true)
     }
   }
 
@@ -118,17 +120,16 @@ export function VacationRequestDialog({ userEmail }: VacationRequestDialogProps)
               type="button"
               variant="outline"
               onClick={() => setOpen(false)}
-              disabled={isSubmitting}
             >
               {t.vacationRequestDialog.cancel}
             </Button>
             <Button
               type="submit"
-              disabled={isSubmitting || !startDate || !endDate}
+              disabled={!startDate || !endDate}
               className="gap-2"
             >
               <PaperPlaneTilt size={18} weight="bold" />
-              {isSubmitting ? t.vacationRequestDialog.submitting : t.vacationRequestDialog.submit}
+              {t.vacationRequestDialog.submit}
             </Button>
           </div>
         </form>

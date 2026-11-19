@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, type ReactElement } from 'react'
+import { NisseSpot } from '@/components/christmas/NisseSpot'
 import { motion, AnimatePresence } from 'framer-motion'
 import { vacationApprovedEmail, vacationRejectedEmail } from '@/lib/emailTemplates'
 import { 
@@ -38,9 +39,11 @@ import { UserProfile } from '@/components/UserProfile'
 import { toast } from 'sonner'
 import { AutoText } from '@/components/AutoText'
 import { cn, newId } from '@/lib/utils'
-import { appendToKvArray } from '@/lib/kvArrays'
+import { appendToKvArray, removeFromKvArray, updateKvArrayItem, upsertInKvArray } from '@/lib/kvArrays'
+import { saveInBackground } from '@/lib/saveInBackground'
+import { sendInternalMessage } from '@/lib/moduleWrites'
 import { isAnyModalOpen } from '@/lib/modalStack'
-import { consumeNavigationParams, navigateTo, type AppViewId } from '@/lib/appNavigation'
+import { consumeNavigationParams, navigateTo, peekNavigationParams, type AppViewId } from '@/lib/appNavigation'
 import { useLanguage } from '@/contexts/LanguageContext'
 import type { Email, EmailFolder, VacationEntry, VacationStatus } from '@/lib/types'
 
@@ -52,19 +55,21 @@ interface EmailSystemProps {
 
 export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail }: EmailSystemProps) {
   const { t, language } = useLanguage()
-  const [emails, setEmails] = useKV<Email[]>('emails', [])
+  const [emails] = useKV<Email[]>('emails', [])
   const [folders, setFolders] = useKV<EmailFolder[]>('email-folders', [])
-  const [vacations, setVacations] = useKV<VacationEntry[]>('vacation-entries', [])
+  const [vacations] = useKV<VacationEntry[]>('vacation-entries', [])
   const [users, setUsers] = useState<Array<{ email: string; name: string }>>([])
   const [isManager, setIsManager] = useState(false)
   const userEmail = propUserEmail
-  const [view, setView] = useState<'inbox' | 'sent' | 'compose' | 'vacation-requests' | 'folder'>('inbox')
-  const [refreshTrigger, setRefreshTrigger] = useState(0)
-  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null)
+  const [initialNavigation] = useState(() => peekNavigationParams())
+  const [view, setView] = useState<'inbox' | 'sent' | 'compose' | 'vacation-requests' | 'folder'>(() =>
+    initialNavigation?.tab === 'sent' ? 'sent' : initialNavigation?.tab === 'folder' && initialNavigation.itemId ? 'folder' : 'inbox')
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(() => initialNavigation?.tab === 'folder' ? initialNavigation.itemId ?? null : null)
   const [selectedVacation, setSelectedVacation] = useState<VacationEntry | null>(null)
   const [showCalendarPreview, setShowCalendarPreview] = useState(false)
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null)
-  const [searchQuery, setSearchQuery] = useState(() => consumeNavigationParams()?.search ?? '')
+  const [searchQuery, setSearchQuery] = useState(() => peekNavigationParams()?.search ?? '')
+  useEffect(() => { consumeNavigationParams() }, [])
   const [dateFilter, setDateFilter] = useState<string>('all')
   const [senderFilter, setSenderFilter] = useState<string>('all')
   const [showFilters, setShowFilters] = useState(false)
@@ -107,7 +112,9 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
     }
     
     loadUserAndData()
-  }, [refreshTrigger, setEmails, userEmail])
+    // Genlæses kun når 'users' faktisk ændres (før: hvert 5. s fra M:, også når vinduet var skjult).
+    return window.kv.subscribe(changedKeys => { if (changedKeys.includes('users')) void loadUserAndData() })
+  }, [userEmail])
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -121,13 +128,6 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
     return () => window.removeEventListener('keydown', handleKeyDown, true)
   }, [onNavigateBack])
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setRefreshTrigger(prev => prev + 1)
-    }, 5000)
-
-    return () => clearInterval(interval)
-  }, [])
 
   const getInitials = (email: string) => {
     const name = email.split('@')[0]
@@ -146,12 +146,12 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
     const diffHours = Math.floor(diffMs / 3600000)
     const diffDays = Math.floor(diffMs / 86400000)
 
-    if (diffMins < 1) return language === 'da' ? 'Lige nu' : language === 'fi' ? 'Juuri nyt' : 'Just now'
-    if (diffMins < 60) return language === 'da' ? `${diffMins} min siden` : language === 'fi' ? `${diffMins} min sitten` : `${diffMins} min ago`
-    if (diffHours < 24) return language === 'da' ? `${diffHours} time${diffHours > 1 ? 'r' : ''} siden` : language === 'fi' ? `${diffHours} tuntia sitten` : `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`
-    if (diffDays < 7) return language === 'da' ? `${diffDays} dag${diffDays > 1 ? 'e' : ''} siden` : language === 'fi' ? `${diffDays} päivää sitten` : `${diffDays} day${diffDays > 1 ? 's' : ''} ago`
+    if (diffMins < 1) return language === 'da' ? 'Lige nu' : language === 'fi' ? 'Juuri nyt' : language === 'sv' ? 'Just nu' : 'Just now'
+    if (diffMins < 60) return language === 'da' ? `${diffMins} min siden` : language === 'fi' ? `${diffMins} min sitten` : language === 'sv' ? `${diffMins} min sedan` : `${diffMins} min ago`
+    if (diffHours < 24) return language === 'da' ? `${diffHours} time${diffHours > 1 ? 'r' : ''} siden` : language === 'fi' ? `${diffHours} tuntia sitten` : language === 'sv' ? `${diffHours} timm${diffHours > 1 ? 'ar' : 'e'} sedan` : `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`
+    if (diffDays < 7) return language === 'da' ? `${diffDays} dag${diffDays > 1 ? 'e' : ''} siden` : language === 'fi' ? `${diffDays} päivää sitten` : language === 'sv' ? `${diffDays} dag${diffDays > 1 ? 'ar' : ''} sedan` : `${diffDays} day${diffDays > 1 ? 's' : ''} ago`
     
-    return date.toLocaleDateString(language === 'da' ? 'da-DK' : language === 'fi' ? 'fi-FI' : 'en-US', { day: 'numeric', month: 'short', year: 'numeric' })
+    return date.toLocaleDateString(language === 'da' ? 'da-DK' : language === 'fi' ? 'fi-FI' : language === 'sv' ? 'sv-SE' : 'en-US', { day: 'numeric', month: 'short', year: 'numeric' })
   }
 
   const filterByDate = (email: Email) => {
@@ -263,7 +263,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
     return Array.from(newestPerThread.values()).sort((a, b) => b.timestamp - a.timestamp)
   }
 
-  const handleSendEmail = async () => {
+  const handleSendEmail = () => {
     if (!composeData.to || !composeData.subject || !composeData.message) {
       toast.error(t.email.fillAllFields)
       return
@@ -275,48 +275,39 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
       return
     }
 
-    const newEmail: Email = {
-      id: newId('email'),
-      from: userEmail,
-      to: composeData.to,
-      subject: composeData.subject,
-      message: composeData.message,
-      timestamp: Date.now(),
-      read: false,
-      ...(composeThreadId ? { threadId: composeThreadId } : {})
-    }
-
     // Atomar append — to brugere der sender samtidig taber ikke længere hinandens mails.
-    await appendToKvArray('emails', [newEmail])
-
-    const notification = {
-      id: newId('notif'),
-      type: 'email' as const,
-      message: `Ny email fra ${userEmail}: ${composeData.subject}`,
-      timestamp: Date.now(),
-      read: false,
-      from: userEmail,
-      emailId: newEmail.id
-    }
-
-    await appendToKvArray('email-notifications', [notification])
-
-    toast.success(t.email.emailSent)
+    // Mailen vises straks under Sendt (kvArrays); gemningen tager op mod et halvt minut. Fejler den, åbnes udkastet igen.
+    const draft = { ...composeData }
+    const threadId = composeThreadId
     setComposeData({ to: '', subject: '', message: '' })
     setComposeThreadId(null)
     setView('sent')
+    toast.success(t.email.emailSent)
+    void sendInternalMessage({ from: userEmail, to: draft.to, subject: draft.subject, message: draft.message, threadId }).catch(error => {
+      console.error('Kunne ikke sende mailen:', error)
+      setComposeData(draft)
+      setComposeThreadId(threadId)
+      setView('compose')
+      toast.error(language === 'da' ? 'Mailen blev ikke sendt — prøv igen' : language === 'fi' ? 'Viestiä ei lähetetty — yritä uudelleen' : language === 'sv' ? 'Meddelandet skickades inte — försök igen' : 'The email was not sent — please try again')
+    })
+  }
+
+  // 'emails' is also shown by the hub badges and the notification bell. The kvArrays helpers show a change in all of
+  // them at once and save only the changed mails; a failed save is rolled back everywhere.
+  const saveEmailChange = (write: Promise<unknown>) => void saveInBackground(write, {
+    failure: language === 'da' ? 'Ændringen blev ikke gemt — prøv igen' : language === 'fi' ? 'Muutosta ei tallennettu — yritä uudelleen' : language === 'sv' ? 'Ändringen sparades inte — försök igen' : 'The change was not saved — please try again',
+  })
+  const patchEmails = (matches: (email: Email) => boolean, patch: Partial<Email>) => {
+    const changed = (emails || []).filter(matches).map(email => ({ ...email, ...patch }))
+    if (changed.length > 0) saveEmailChange(upsertInKvArray<Email>('emails', changed))
   }
 
   const handleMarkAsRead = (emailId: string) => {
-    setEmails(currentEmails =>
-      (currentEmails || []).map(email =>
-        email.id === emailId ? { ...email, read: true } : email
-      )
-    )
+    patchEmails(email => email.id === emailId && !email.read, { read: true })
   }
 
   const handleDeleteEmail = (emailId: string) => {
-    setEmails(currentEmails => (currentEmails || []).filter(email => email.id !== emailId))
+    saveEmailChange(removeFromKvArray<Email>('emails', [emailId]))
     setSelectedEmail(null)
     toast.success(t.email.emailDeleted)
   }
@@ -327,22 +318,26 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
     const unreadInThread = getConversation(email).filter(e => !e.read && e.to === userEmail)
     if (unreadInThread.length > 0) {
       const ids = new Set(unreadInThread.map(e => e.id))
-      setEmails(currentEmails =>
-        (currentEmails || []).map(e => (ids.has(e.id) ? { ...e, read: true } : e))
-      )
+      patchEmails(e => ids.has(e.id), { read: true })
     }
   }
 
   const pendingVacationRequests = (vacations || []).filter(v => v.status === 'pending')
 
-  const handleApproveVacation = async (vacation: VacationEntry) => {
-    setVacations((current) =>
-      (current || []).map((v) =>
-        v.id === vacation.id
-          ? { ...v, status: 'approved' as VacationStatus, reviewedBy: userEmail, reviewedAt: new Date().toISOString() }
-          : v
-      )
-    )
+  // Under the file lock and shown at once in every open view of 'vacation-entries' (calendar, hub, notification bell).
+  const decideVacation = (vacation: VacationEntry, status: VacationStatus) => {
+    void updateKvArrayItem<VacationEntry>('vacation-entries', vacation.id, current => ({
+      ...current, status, reviewedBy: userEmail, reviewedAt: new Date().toISOString(),
+    })).then(updated => {
+      if (!updated) toast.error(language === 'da' ? 'Ferieanmodningen findes ikke længere' : language === 'fi' ? 'Lomapyyntöä ei enää ole' : language === 'sv' ? 'Semesteransökan finns inte längre' : 'The vacation request no longer exists')
+    }, error => {
+      console.error('Kunne ikke gemme feriebeslutningen:', error)
+      toast.error(language === 'da' ? 'Ændringen blev ikke gemt — prøv igen' : language === 'fi' ? 'Muutosta ei tallennettu — yritä uudelleen' : language === 'sv' ? 'Ändringen sparades inte — försök igen' : 'The change was not saved — please try again')
+    })
+  }
+
+  const handleApproveVacation = (vacation: VacationEntry) => {
+    decideVacation(vacation, 'approved')
     toast.success(t.email.vacationApproved)
 
     try {
@@ -358,7 +353,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
         read: false
       }
 
-      setEmails(currentEmails => [...(currentEmails || []), newEmail])
+      saveEmailChange(appendToKvArray('emails', [newEmail]))
 
       const notification = {
         id: Date.now().toString(),
@@ -370,7 +365,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
         emailId: newEmail.id
       }
 
-      await appendToKvArray('email-notifications', [notification])
+      void appendToKvArray('email-notifications', [notification]).catch(error => console.error('Error sending vacation approval notification:', error))
     } catch (emailError) {
       console.error('Error sending vacation approval email:', emailError)
     }
@@ -379,14 +374,8 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
     setShowCalendarPreview(false)
   }
 
-  const handleRejectVacation = async (vacation: VacationEntry) => {
-    setVacations((current) =>
-      (current || []).map((v) =>
-        v.id === vacation.id
-          ? { ...v, status: 'rejected' as VacationStatus, reviewedBy: userEmail, reviewedAt: new Date().toISOString() }
-          : v
-      )
-    )
+  const handleRejectVacation = (vacation: VacationEntry) => {
+    decideVacation(vacation, 'rejected')
     toast.error(t.email.vacationRejected)
 
     try {
@@ -402,7 +391,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
         read: false
       }
 
-      setEmails(currentEmails => [...(currentEmails || []), newEmail])
+      saveEmailChange(appendToKvArray('emails', [newEmail]))
 
       const notification = {
         id: Date.now().toString(),
@@ -414,7 +403,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
         emailId: newEmail.id
       }
 
-      await appendToKvArray('email-notifications', [notification])
+      void appendToKvArray('email-notifications', [notification]).catch(error => console.error('Error sending vacation rejection notification:', error))
     } catch (emailError) {
       console.error('Error sending vacation rejection email:', emailError)
     }
@@ -466,13 +455,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
   }
 
   const handleDeleteFolder = (folderId: string) => {
-    setEmails(current =>
-      (current || []).map(email =>
-        email.folderId === folderId
-          ? { ...email, folderId: undefined }
-          : email
-      )
-    )
+    patchEmails(email => email.folderId === folderId, { folderId: undefined })
 
     setFolders(current => (current || []).filter(folder => folder.id !== folderId))
     
@@ -487,13 +470,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
   const handleMoveToFolder = (folderId: string | null) => {
     if (!emailToMove) return
 
-    setEmails(current =>
-      (current || []).map(email =>
-        email.id === emailToMove.id
-          ? { ...email, folderId: folderId || undefined }
-          : email
-      )
-    )
+    patchEmails(email => email.id === emailToMove.id, { folderId: folderId || undefined })
 
     if (folderId) {
       const folder = userFolders.find(f => f.id === folderId)
@@ -536,13 +513,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
     
     if (!draggedEmail) return
 
-    setEmails(current =>
-      (current || []).map(email =>
-        email.id === draggedEmail.id
-          ? { ...email, folderId: folderId || undefined }
-          : email
-      )
-    )
+    patchEmails(email => email.id === draggedEmail.id, { folderId: folderId || undefined })
 
     if (folderId) {
       const folder = userFolders.find(f => f.id === folderId)
@@ -556,7 +527,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
   }
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString(language === 'da' ? 'da-DK' : language === 'fi' ? 'fi-FI' : 'en-US', {
+    return new Date(dateString).toLocaleDateString(language === 'da' ? 'da-DK' : language === 'fi' ? 'fi-FI' : language === 'sv' ? 'sv-SE' : 'en-US', {
       day: 'numeric',
       month: 'long',
       year: 'numeric'
@@ -590,13 +561,15 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
 
     const daysInMonth = getDaysInMonth(monthToShow, yearToShow)
     const firstDay = getFirstDayOfMonth(monthToShow, yearToShow)
-    const monthName = new Date(yearToShow, monthToShow).toLocaleDateString(language === 'da' ? 'da-DK' : language === 'fi' ? 'fi-FI' : 'en-US', { month: 'long', year: 'numeric' })
+    const monthName = new Date(yearToShow, monthToShow).toLocaleDateString(language === 'da' ? 'da-DK' : language === 'fi' ? 'fi-FI' : language === 'sv' ? 'sv-SE' : 'en-US', { month: 'long', year: 'numeric' })
 
     const weekdays = language === 'da'
       ? ['Søn', 'Man', 'Tir', 'Ons', 'Tor', 'Fre', 'Lør']
       : language === 'fi'
         ? ['Su', 'Ma', 'Ti', 'Ke', 'To', 'Pe', 'La']
-        : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+        : language === 'sv'
+          ? ['Sön', 'Mån', 'Tis', 'Ons', 'Tor', 'Fre', 'Lör']
+          : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
     const days: ReactElement[] = []
 
     for (let i = 0; i < firstDay; i++) {
@@ -698,7 +671,7 @@ export function EmailSystem({ onNavigateBack, onLogout, userEmail: propUserEmail
               <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground">
                 {t.email.title}
               </h1>
-              <p className="text-muted-foreground mt-2">{t.email.sendAndReceive}</p>
+              <p className="text-muted-foreground mt-2">{t.email.sendAndReceive}<NisseSpot spot="email" pose="stand" className="ml-2 align-middle" /></p>
             </div>
           </div>
         </motion.div>

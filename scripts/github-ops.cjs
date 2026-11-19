@@ -55,6 +55,22 @@ async function createPullRequest(token, { branch, title, body }) {
   })
 }
 
+async function pullRequestStatus(token, number) {
+  const pr = await api(token, `/pulls/${number}`)
+  const [statuses, checks] = await Promise.all([
+    api(token, `/commits/${pr.head.sha}/status`),
+    api(token, `/commits/${pr.head.sha}/check-runs?per_page=100`),
+  ])
+  return {
+    number: pr.number, state: pr.state, merged: pr.merged, base: pr.base.ref,
+    head: pr.head.ref, headSha: pr.head.sha, baseSha: pr.base.sha,
+    mergeable: pr.mergeable, mergeableState: pr.mergeable_state,
+    statuses: statuses.statuses.map(item => ({ context: item.context, state: item.state })),
+    checks: checks.check_runs.map(item => ({ name: item.name, status: item.status, conclusion: item.conclusion })),
+    url: pr.html_url,
+  }
+}
+
 async function createRelease(token, { tag, commit, name, notes, assetPath }) {
   let release = null
   try {
@@ -126,6 +142,24 @@ async function main() {
       console.log(JSON.stringify({ number: pr.number, title: pr.title, url: pr.html_url }))
       return
     }
+    if (command === 'pr-status') {
+      console.log(JSON.stringify(await pullRequestStatus(token, args[0])))
+      return
+    }
+    if (command === 'merge-pr') {
+      const [number, expectedHead] = args
+      const status = await pullRequestStatus(token, number)
+      if (status.state !== 'open' || status.base !== 'main' || !/^release\/\d+\.\d+\.\d+$/.test(status.head) || status.headSha !== expectedHead || status.mergeable !== true || status.mergeableState !== 'clean') throw new Error(`PR is not safely mergeable: ${JSON.stringify(status)}`)
+      if (status.statuses.some(item => item.state !== 'success') || status.checks.some(item => item.status !== 'completed' || !['success', 'skipped', 'neutral'].includes(item.conclusion))) throw new Error(`PR checks are not passing: ${JSON.stringify(status)}`)
+      const merged = await api(token, `/pulls/${number}/merge`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sha: expectedHead, merge_method: 'merge', commit_title: `Merge PR #${number}: Supply Chain Hub ${status.head.slice('release/'.length)}` }),
+      })
+      if (!merged.merged) throw new Error('GitHub did not merge the release PR')
+      console.log(JSON.stringify({ merged: true, sha: merged.sha, url: status.url }))
+      return
+    }
     if (command === 'release') {
       const [tag, commit, name, notesFile, assetPath] = args
       const notes = fs.readFileSync(notesFile, 'utf8')
@@ -133,7 +167,12 @@ async function main() {
       console.log(JSON.stringify({ tag: release.tag_name, url: release.html_url, asset: asset ? asset.name : null }))
       return
     }
-    throw new Error('Usage: github-ops.cjs pr <branch> <title> <bodyFile> | update-pr <number> <title> <bodyFile> | release <tag> <commit> <name> <notesFile> [assetPath]')
+    if (command === 'release-status') {
+      const release = await api(token, `/releases/tags/${args[0]}`)
+      console.log(JSON.stringify({ tag: release.tag_name, target: release.target_commitish, url: release.html_url, assets: release.assets.map(asset => ({ name: asset.name, size: asset.size, digest: asset.digest, download: asset.browser_download_url })) }))
+      return
+    }
+    throw new Error('Usage: github-ops.cjs pr <branch> <title> <bodyFile> | pr-status <number> | merge-pr <number> <expectedHead> | update-pr <number> <title> <bodyFile> | release <tag> <commit> <name> <notesFile> [assetPath] | release-status <tag>')
   } finally {
     token = null
   }

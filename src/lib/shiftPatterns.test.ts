@@ -54,6 +54,12 @@ describe('expandShiftPatterns', () => {
     expect(expandShiftPatterns([pattern()], [], '2026-09-21', email => email === 'oliver@test')).toHaveLength(0)
   })
 
+  it('carries the pattern time onto each shift', () => {
+    const [shift] = expandShiftPatterns([pattern({ startTime: '09:00', endTime: '11:30' })], [], '2026-09-21')
+    expect(shift).toMatchObject({ startTime: '09:00', endTime: '11:30' })
+    expect(expandShiftPatterns([pattern()], [], '2026-09-21')[0].startTime).toBeUndefined()
+  })
+
   it('handles missing input without throwing', () => {
     expect(expandShiftPatterns(undefined, undefined, '2026-09-21')).toEqual([])
   })

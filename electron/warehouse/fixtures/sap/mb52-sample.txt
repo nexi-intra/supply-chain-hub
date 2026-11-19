@@ -1,0 +1,18 @@
+﻿
+		Material	Material Description	Plnt	Loca	      Unrestricted	           Blocked	Value Unrestricted	Value BlockedStock
+
+		INT4300-4921-0	SmartPOS N950 PCI PTS 6.x P2PE	D301	D000	            1.985	                0	     2.240.469,51	             0,00
+		INT4300-4921-0	SmartPOS N950 PCI PTS 6.x P2PE	D301	D006	               11	                0	        12.415,70	             0,00
+		INT4300-4921-0-R	SmartPOS N950 PCI PTS 6.x Used P2PE	D301	D001	              941	                0	             0,00	             0,00
+		INT4300-4921-0-R	SmartPOS N950 PCI PTS 6.x Used P2PE	D301	D002	                0	              315	             0,00	             0,00
+		INT4300-4921-0-R	SmartPOS N950 PCI PTS 6.x Used P2PE	D301	D003	              474	               83	             0,00	             0,00
+		INT4300-4921-0-R	SmartPOS N950 PCI PTS 6.x Used P2PE	D301	D004	               89	                0	             0,00	             0,00
+		R092-0039	iUN Commissioning Card	D301	D000	               22	                0	        13.586,98	             0,00
+		R133-0032	Move3500 12V DC car charger	D301	D000	              417	                0	        21.071,01	             0,00
+		R162-0717	Universal RJ45 - RJ45 Cat5e cable 2m	D301	D000	            2.458	                0	        10.636,20	             0,00
+		R092-0036	Simcard Telenor	D301	D000	            3.724	              813	             0,00	             0,00
+		R092-0036	Simcard Telenor	D301	D003	                0	              629	             0,00	             0,00
+		331-0194	LABEL 102X192MM ROLL WITH 350 PCS – THER	D301	D000	               72	                0	         3.591,36	             0,00
+		INT4100-7820-0-R	LANE3000 PCI PTS 5.x used	D301	D100	               69	                0	             0,00	             0,00
+
+	*							    39.850.554,90	       299.743,32

@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowLeft, UserGear, Check, Crown, ShieldCheck, User as UserIcon, Trash, FirstAidKit, Plus, Tag, UserCircle, PencilSimple } from '@phosphor-icons/react'
+import { ArrowLeft, UserGear, Check, Crown, ShieldCheck, User as UserIcon, Trash, Plus, Tag, UserCircle, PencilSimple } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -8,6 +8,7 @@ import { UserProfile } from '@/components/UserProfile'
 import { toast } from 'sonner'
 import { appendToKvArray, removeFromKvArray, setKvObjectField, deleteKvObjectField, replaceKvObjectField } from '@/lib/kvArrays'
 import { isAnyModalOpen } from '@/lib/modalStack'
+import { useOptimisticList } from '@/hooks/useOptimisticList'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -15,17 +16,21 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { format } from 'date-fns'
-import { da, enUS, fi } from 'date-fns/locale'
+import { da, enUS, fi, sv } from 'date-fns/locale'
 import { UserRole, hasManagerAccess, getCreatorEmail, getRoleDisplayName, getRoleDescription } from '@/lib/userRoles'
 import { hashPassword } from '@/lib/passwords'
 import { useLanguage } from '@/contexts/LanguageContext'
-import type { SickLeaveEntry, ShiftRole } from '@/lib/types'
+import type { ShiftRole } from '@/lib/types'
 
 interface User {
   email: string
   fullName: string
   role: UserRole
 }
+
+const ROLE_ORDER: Record<UserRole, number> = { creator: 0, manager: 1, user: 2 }
+const userKey = (user: User) => user.email.toLowerCase()
+const roleKey = (role: ShiftRole) => role.id
 
 interface AdminPanelProps {
   onNavigateBack: () => void
@@ -35,15 +40,29 @@ interface AdminPanelProps {
 
 export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEmail }: AdminPanelProps) {
   const { t, language } = useLanguage()
-  const dateLocale = language === 'en' ? enUS : language === 'fi' ? fi : da
-  const [users, setUsers] = useState<User[]>([])
-  const [sickLeaveEntries, setSickLeaveEntries] = useState<SickLeaveEntry[]>([])
+  const dateLocale = language === 'en' ? enUS : language === 'fi' ? fi : language === 'sv' ? sv : da
+  // A write to M: takes 20-90 s, so changes show at once in these lists (and stay shown while they are saved).
+  const [userItems, userList] = useOptimisticList<User>(userKey)
+  const users = useMemo(() => [...userItems].sort((a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role]), [userItems])
   const [isLoading, setIsLoading] = useState(true)
   const [hasAccess, setHasAccess] = useState(false)
   const [userEmail, setUserEmail] = useState<string>('')
   const [creatorEmail, setCreatorEmail] = useState<string | null>(null)
-
-  const [shiftRoles, setShiftRoles] = useState<ShiftRole[]>([])
+  // Which save/delete is running, so that button shows a spinner and can't be pressed twice.
+  const [busyAction, setBusyAction] = useState<string | null>(null)
+  const runBusy = async (key: string, action: () => Promise<void>) => {
+    if (busyAction) return
+    setBusyAction(key)
+    try {
+      await action()
+    } catch (error) {
+      console.error('Admin action failed:', error)
+      toast.error(t.profile.errors.generic)
+    } finally {
+      setBusyAction(null)
+    }
+  }
+  const [shiftRoles, roleList] = useOptimisticList<ShiftRole>(roleKey)
   const [showRoleDialog, setShowRoleDialog] = useState(false)
   const [newRoleName, setNewRoleName] = useState('')
   const [newRoleColor, setNewRoleColor] = useState('#8b5cf6')
@@ -61,13 +80,12 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
     const loadUserAndCheckAdmin = async () => {
       if (!currentUserEmail) return
       setUserEmail(currentUserEmail)
-      setCreatorEmail(await getCreatorEmail())
-
-      const access = await hasManagerAccess(currentUserEmail)
+      // Parallelt: hver læsning er en rundtur til M:.
+      const [creator, access] = await Promise.all([getCreatorEmail(), hasManagerAccess(currentUserEmail)])
+      setCreatorEmail(creator)
       setHasAccess(access)
       if (access) {
         loadUsers()
-        loadSickLeaveEntries()
         loadShiftRoles()
       }
     }
@@ -88,48 +106,50 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
 
   const loadUsers = async () => {
     setIsLoading(true)
-    const creator = await getCreatorEmail()
-    const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; role?: UserRole; isManager?: boolean }>>('users')
-    if (usersData) {
-      const userList = Object.values(usersData)
-        .filter((u) => !creator || u.email.toLowerCase() !== creator)
-        .map(u => {
-        let role: UserRole = 'user'
-        if (creator && u.email.toLowerCase() === creator) {
-          role = 'creator'
-        } else if (u.role) {
-          role = u.role
-        } else if (u.isManager) {
-          role = 'manager'
-        }
-        
-        return {
-          email: u.email,
-          fullName: u.fullName,
-          role
-        }
-      }).sort((a, b) => {
-        const roleOrder = { creator: 0, manager: 1, user: 2 }
-        return roleOrder[a.role] - roleOrder[b.role]
-      })
-      setUsers(userList)
-    }
-    setIsLoading(false)
-  }
+    try {
+      // Parallelt: hver læsning er en rundtur til M:.
+      const [creator, usersData] = await Promise.all([getCreatorEmail(), window.kv.get<Record<string, { email: string; password: string; fullName: string; role?: UserRole; isManager?: boolean }>>('users')])
+      if (usersData) {
+        userList.show(Object.values(usersData)
+          .filter((u) => !creator || u.email.toLowerCase() !== creator)
+          .map(u => {
+          let role: UserRole = 'user'
+          if (creator && u.email.toLowerCase() === creator) {
+            role = 'creator'
+          } else if (u.role) {
+            role = u.role
+          } else if (u.isManager) {
+            role = 'manager'
+          }
 
-  const loadSickLeaveEntries = async () => {
-    const entries = await window.kv.get<SickLeaveEntry[]>('sick-leave-entries') || []
-    setSickLeaveEntries(entries.sort((a, b) => 
-      new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()
-    ))
+          return {
+            email: u.email,
+            fullName: u.fullName,
+            role
+          }
+        }))
+      }
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   const loadShiftRoles = async () => {
-    const roles = await window.kv.get<ShiftRole[]>('shift-roles') || []
-    setShiftRoles(roles)
+    roleList.show(await window.kv.get<ShiftRole[]>('shift-roles') || [])
   }
 
-  const handleAddRole = async () => {
+  const isCreator = (email: string) => !!creatorEmail && email.toLowerCase() === creatorEmail
+
+  /** The account shows the change at once; it is saved in the background and a failed save undoes it. */
+  const changeUser = (user: User, next: User | null, write: Promise<boolean>) =>
+    userList.change([[userKey(user), next]], write.catch(error => {
+      console.error('Kunne ikke gemme brugeren:', error)
+      toast.error(t.profile.errors.generic)
+      return false
+    }))
+
+  // Shown and closed at once; a write to M: takes 20-90 s. A failed save takes the role away again.
+  const handleAddRole = () => {
     if (!newRoleName.trim()) {
       toast.error(t.adminPanel.roles.nameRequired)
       return
@@ -141,23 +161,22 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
       color: newRoleColor
     }
 
-    const updatedRoles = await appendToKvArray<ShiftRole>('shift-roles', [newRole])
-    setShiftRoles(updatedRoles)
     setNewRoleName('')
     setNewRoleColor('#8b5cf6')
     setShowRoleDialog(false)
     toast.success(t.adminPanel.roles.added)
+    void roleList.change([[newRole.id, newRole]], appendToKvArray<ShiftRole>('shift-roles', [newRole]))
+      .then(saved => { if (!saved) toast.error(t.profile.errors.generic) })
   }
 
-  const handleDeleteRole = async (roleId: string) => {
-    const updatedRoles = await removeFromKvArray<ShiftRole>('shift-roles', [roleId])
-    setShiftRoles(updatedRoles)
-
-    const assignments = await window.kv.get<{ id: string; roleId: string }[]>('shift-assignments') || []
-    const assignmentIdsToRemove = assignments.filter(a => a.roleId === roleId).map(a => a.id)
-    await removeFromKvArray('shift-assignments', assignmentIdsToRemove)
-
+  const handleDeleteRole = (roleId: string) => {
     toast.success(t.adminPanel.roles.deleted)
+    // The role and its shift assignments are independent keys: removed at the same time.
+    const assignmentsRemoved = window.kv.get<{ id: string; roleId: string }[]>('shift-assignments').then(assignments =>
+      removeFromKvArray('shift-assignments', (assignments || []).filter(a => a.roleId === roleId).map(a => a.id)))
+    void roleList.change([[roleId, null]], removeFromKvArray<ShiftRole>('shift-roles', [roleId]))
+      .then(saved => { if (!saved) toast.error(t.profile.errors.generic) })
+    assignmentsRemoved.catch(error => console.error('Kunne ikke fjerne rollens vagter:', error))
   }
 
   const openEmployeeDialog = (employee?: User) => {
@@ -192,101 +211,130 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
       return
     }
 
-    const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; role: UserRole; isManager: boolean }>>('users') || {}
     const normalizedEmail = employeeForm.email.trim().toLowerCase()
-    const existingEmail = Object.keys(usersData).find(email => email.trim().toLowerCase() === normalizedEmail && email !== editingEmployee?.email)
-
-    if (!editingEmployee && existingEmail) {
+    const emailChanged = !!editingEmployee && editingEmployee.email !== normalizedEmail
+    // Checked at once against the accounts on screen; the save checks again against the stored ones.
+    if ((!editingEmployee || emailChanged) && (userList.items.some(u => userKey(u) === normalizedEmail && u.email !== editingEmployee?.email) || isCreator(normalizedEmail))) {
       toast.error(t.adminPanel.employees.emailExists)
       return
     }
 
-    if (editingEmployee && existingEmail) {
+    const form = { ...employeeForm }
+    const trimmedPassword = form.password.trim()
+    const shown: User = { email: normalizedEmail, fullName: form.fullName, role: form.role }
+
+    if (!editingEmployee || !emailChanged) {
+      // A new account, or name/password/role of an existing one: shown and closed at once, saved in the background.
+      const editing = editingEmployee
+      setShowEmployeeDialog(false)
+      toast.success(editing ? t.adminPanel.employees.updated : t.adminPanel.employees.created)
+      void changeUser(editing || shown, shown, (async () => {
+        const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; role: UserRole; isManager: boolean }>>('users') || {}
+        const existingEmail = Object.keys(usersData).find(email => email.trim().toLowerCase() === normalizedEmail && email !== editing?.email)
+        if (existingEmail) {
+          toast.error(t.adminPanel.employees.emailExists)
+          return false
+        }
+        // Ny bruger kræver en frisk tildeling i det centrale register — ellers kan personen slet ikke logge ind
+        // (registret ved ikke hvilket team den oprettede email hører til).
+        const assigned = !editing && window.electronRegistry ? (async () => {
+          const currentTeam = await window.electronRegistry!.getCurrentTeam()
+          if (currentTeam) await window.electronRegistry!.assignUser(normalizedEmail, currentTeam.teamId)
+        })() : undefined
+        const [password] = await Promise.all([trimmedPassword ? hashPassword(trimmedPassword) : usersData[editing?.email || form.email]?.password || '', assigned])
+        const updatedEmployee = {
+          ...usersData[editing?.email || form.email],
+          email: normalizedEmail,
+          password,
+          fullName: form.fullName,
+          role: form.role,
+          isManager: form.role === 'manager' || form.role === 'creator'
+        }
+        if (editing) {
+          await window.kv.updateField('users', { op: 'renameField', field: editing.email, newField: normalizedEmail, expected: usersData[editing.email], value: updatedEmployee })
+        } else {
+          await setKvObjectField('users', normalizedEmail, updatedEmployee)
+        }
+        return true
+      })())
+      return
+    }
+
+    // A new e-mail moves the account and everything that refers to it; the backend may refuse, so this waits (spinner).
+    const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; role: UserRole; isManager: boolean }>>('users') || {}
+    if (Object.keys(usersData).some(email => email.trim().toLowerCase() === normalizedEmail && email !== editingEmployee.email)) {
       toast.error(t.adminPanel.employees.emailExists)
       return
     }
 
-    // Ny bruger ELLER en ændret email kræver en frisk tildeling i det centrale
-    // register — ellers kan personen slet ikke logge ind (registret ved ikke
-    // hvilket team den nye/oprettede email hører til).
-    if ((!editingEmployee || (!window.electronAuth && editingEmployee.email !== normalizedEmail)) && window.electronRegistry) {
+    // En ændret email kræver en frisk tildeling i det centrale register — ellers kan personen slet ikke logge ind.
+    if (!window.electronAuth && window.electronRegistry) {
       const currentTeam = await window.electronRegistry.getCurrentTeam()
       if (currentTeam) await window.electronRegistry.assignUser(normalizedEmail, currentTeam.teamId)
     }
 
-    const trimmedPassword = employeeForm.password.trim()
     const updatedEmployee = {
-      ...usersData[editingEmployee?.email || employeeForm.email],
+      ...usersData[editingEmployee.email],
       email: normalizedEmail,
-      password: trimmedPassword ? await hashPassword(trimmedPassword) : usersData[editingEmployee?.email || employeeForm.email]?.password || '',
-      fullName: employeeForm.fullName,
-      role: employeeForm.role,
-      isManager: employeeForm.role === 'manager' || employeeForm.role === 'creator'
+      password: trimmedPassword ? await hashPassword(trimmedPassword) : usersData[editingEmployee.email]?.password || '',
+      fullName: form.fullName,
+      role: form.role,
+      isManager: form.role === 'manager' || form.role === 'creator'
     }
-    if (editingEmployee) {
-      await window.kv.updateField('users', { op: 'renameField', field: editingEmployee.email, newField: normalizedEmail, expected: usersData[editingEmployee.email], value: updatedEmployee })
-    } else {
-      await setKvObjectField('users', normalizedEmail, updatedEmployee)
-    }
+    await window.kv.updateField('users', { op: 'renameField', field: editingEmployee.email, newField: normalizedEmail, expected: usersData[editingEmployee.email], value: updatedEmployee })
 
-    if (window.electronAuth && editingEmployee && normalizedEmail !== editingEmployee.email.toLowerCase() && editingEmployee.email.toLowerCase() === userEmail.toLowerCase()) {
+    if (window.electronAuth && editingEmployee.email.toLowerCase() === userEmail.toLowerCase()) {
       onLogout()
       return
     }
-    await loadUsers()
+    // The list shows the new e-mail at once and is read again without the dialog waiting for it.
+    void userList.change([[userKey(editingEmployee), null], [normalizedEmail, shown]], Promise.resolve(true))
+    void loadUsers()
     setShowEmployeeDialog(false)
-    toast.success(editingEmployee ? t.adminPanel.employees.updated : t.adminPanel.employees.created)
+    toast.success(t.adminPanel.employees.updated)
   }
 
-  const handleDeleteEmployee = async (email: string) => {
-    const creator = await getCreatorEmail()
-    if (creator && email.toLowerCase() === creator) {
+  /** The person leaves the list at once; the account is deleted on the shared drive in the background. */
+  const removeUser = (email: string, deletedMessage: string) => {
+    if (isCreator(email)) {
       toast.error(t.adminPanel.users.cannotDeleteAdmin)
       return
     }
+    const user = userList.items.find(u => u.email === email)
+    if (!user) return
 
-    const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; role: UserRole; isManager: boolean }>>('users')
-    if (usersData && usersData[email]) {
-      await deleteKvObjectField('users', email)
-      await loadUsers()
-      toast.success(t.adminPanel.employees.deleted)
-    }
+    toast.success(deletedMessage)
+    void changeUser(user, null, (async () => {
+      const usersData = await window.kv.get<Record<string, unknown>>('users')
+      if (usersData && usersData[email]) await deleteKvObjectField('users', email)
+      return true
+    })())
   }
 
-  const changeUserRole = async (email: string, newRole: UserRole) => {
-    const creator = await getCreatorEmail()
-    if (creator && email.toLowerCase() === creator) {
+  const handleDeleteEmployee = (email: string) => removeUser(email, t.adminPanel.employees.deleted)
+
+  const changeUserRole = (email: string, newRole: UserRole) => {
+    if (isCreator(email)) {
       toast.error('Kan ikke ændre Creator-brugerens rettigheder')
       return
     }
+    const user = userList.items.find(u => u.email === email)
+    if (!user) return
 
-    const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; role: UserRole; isManager: boolean }>>('users')
-    if (usersData && usersData[email]) {
+    toast.success(`${t.adminPanel.users.roleChangedPrefix} ${getRoleDisplayName(newRole, language)}`)
+    void changeUser(user, { ...user, role: newRole }, (async () => {
+      const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; role: UserRole; isManager: boolean }>>('users')
+      if (!usersData || !usersData[email]) throw new Error('USER_NOT_FOUND')
       await replaceKvObjectField('users', email, usersData[email], {
         ...usersData[email],
         role: newRole,
         isManager: newRole === 'manager' || newRole === 'creator',
       })
-      await loadUsers()
-      
-      toast.success(`${t.adminPanel.users.roleChangedPrefix} ${getRoleDisplayName(newRole, language)}`)
-    }
+      return true
+    })())
   }
 
-  const deleteUser = async (email: string) => {
-    const creator = await getCreatorEmail()
-    if (creator && email.toLowerCase() === creator) {
-      toast.error(t.adminPanel.users.cannotDeleteAdmin)
-      return
-    }
-
-    const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; role: UserRole; isManager: boolean }>>('users')
-    if (usersData && usersData[email]) {
-      await deleteKvObjectField('users', email)
-      await loadUsers()
-      toast.success(t.adminPanel.users.deleted)
-    }
-  }
+  const deleteUser = (email: string) => removeUser(email, t.adminPanel.users.deleted)
 
   const getRoleBadge = (role: UserRole) => {
     switch (role) {
@@ -387,7 +435,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
         </motion.div>
 
         <Tabs defaultValue="users" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-3 max-w-2xl">
+          <TabsList className="grid w-full grid-cols-2 max-w-2xl">
             <TabsTrigger value="users" className="gap-2">
               <UserGear size={18} />
               {t.adminPanel.tabs.users}
@@ -395,10 +443,6 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
             <TabsTrigger value="shift-management" className="gap-2">
               <UserIcon size={18} />
               {t.adminPanel.tabs.shiftManagement}
-            </TabsTrigger>
-            <TabsTrigger value="sick-leave" className="gap-2">
-              <FirstAidKit size={18} />
-              {t.adminPanel.tabs.sickLeave}
             </TabsTrigger>
           </TabsList>
 
@@ -538,68 +582,6 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
               </div>
             </div>
           </Card>
-          </TabsContent>
-
-          <TabsContent value="sick-leave" className="space-y-6">
-            <Card className="p-6">
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-2">
-                  <FirstAidKit size={28} className="text-destructive" weight="duotone" />
-                  <h2 className="text-2xl font-bold">{t.adminPanel.tabs.sickLeave}</h2>
-                </div>
-                <Badge variant="outline" className="text-sm">
-                  {sickLeaveEntries.length} {sickLeaveEntries.length === 1 ? t.adminPanel.sickLeave.entrySingular : t.adminPanel.sickLeave.entryPlural}
-                </Badge>
-              </div>
-
-              <div className="mb-4 p-4 bg-muted/50 rounded-lg border">
-                <p className="text-sm text-muted-foreground">
-                  {t.adminPanel.sickLeave.description}
-                </p>
-              </div>
-
-              {sickLeaveEntries.length === 0 ? (
-                <p className="text-muted-foreground text-center py-12">{t.adminPanel.sickLeave.none}</p>
-              ) : (
-                <div className="space-y-3">
-                  {sickLeaveEntries.map((entry) => (
-                    <motion.div
-                      key={entry.id}
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="flex items-center justify-between p-5 rounded-md border bg-card hover:border-primary/40 transition-colors"
-                    >
-                      <div className="flex items-center gap-4 flex-1">
-                        <div className="w-12 h-12 rounded-md bg-primary flex items-center justify-center text-primary-foreground font-bold text-lg">
-                          {entry.userName.charAt(0).toUpperCase()}
-                        </div>
-                        <div className="flex-1">
-                          <div className="font-bold text-lg mb-1">{entry.userName}</div>
-                          <div className="text-sm text-muted-foreground">{entry.userEmail}</div>
-                          <div className="flex flex-col gap-1 mt-2 text-sm">
-                            <span className="font-medium">
-                              {format(new Date(entry.startDate), 'd. MMM', { locale: dateLocale })} - {format(new Date(entry.endDate || entry.startDate), 'd. MMM yyyy', { locale: dateLocale })}
-                            </span>
-                            <span className="text-xs text-muted-foreground">
-                              {t.adminPanel.sickLeave.submittedPrefix}: {format(new Date(entry.submittedAt), 'd. MMM yyyy HH:mm', { locale: dateLocale })}
-                            </span>
-                            {entry.reason && (
-                              <span className="text-muted-foreground mt-1">{t.adminPanel.sickLeave.notesPrefix}: {entry.reason}</span>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <Badge className="bg-green-500 text-white">
-                            <Check size={14} className="mr-1" />
-                            {t.adminPanel.sickLeave.registered}
-                          </Badge>
-                        </div>
-                      </div>
-                    </motion.div>
-                  ))}
-                </div>
-              )}
-            </Card>
           </TabsContent>
 
           <TabsContent value="shift-management" className="space-y-6">
@@ -791,7 +773,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
                           <Button 
                             variant="ghost" 
                             size="icon" 
-                            className="text-destructive hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-opacity"
+                            className="text-destructive hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 aria-busy:opacity-100 transition-opacity"
                           >
                             <Trash size={20} />
                           </Button>
@@ -927,7 +909,7 @@ export function AdminPanel({ onNavigateBack, onLogout, userEmail: currentUserEma
                   </SelectContent>
                 </Select>
               </div>
-              <Button onClick={handleSaveEmployee} className="w-full gap-2">
+              <Button onClick={() => runBusy('save-employee', handleSaveEmployee)} loading={busyAction === 'save-employee'} className="w-full gap-2">
                 {editingEmployee ? (
                   <>
                     <PencilSimple size={20} />

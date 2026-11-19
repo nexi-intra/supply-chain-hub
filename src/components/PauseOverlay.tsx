@@ -8,13 +8,15 @@ import { useLanguage } from '@/contexts/LanguageContext'
  */
 export function PauseOverlay({ onResume }: { onResume: () => void }) {
   const { language } = useLanguage()
-  const title = language === 'da' ? 'Pause' : language === 'fi' ? 'Tauko' : 'Paused'
+  const title = language === 'da' ? 'Pause' : language === 'fi' ? 'Tauko' : language === 'sv' ? 'Pausad' : 'Paused'
   const hint = language === 'da'
     ? 'Spillet blev sat på pause, fordi vinduet mistede fokus'
     : language === 'fi'
       ? 'Peli pysäytettiin, koska ikkuna menetti kohdistuksen'
-      : 'The game was paused because the window lost focus'
-  const resume = language === 'da' ? 'Fortsæt' : language === 'fi' ? 'Jatka' : 'Resume'
+      : language === 'sv'
+        ? 'Spelet pausades eftersom fönstret förlorade fokus'
+        : 'The game was paused because the window lost focus'
+  const resume = language === 'da' ? 'Fortsæt' : language === 'fi' ? 'Jatka' : language === 'sv' ? 'Fortsätt' : 'Resume'
 
   return (
     <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-slate-950/80 backdrop-blur-sm rounded-lg">
@@ -27,7 +29,7 @@ export function PauseOverlay({ onResume }: { onResume: () => void }) {
         {resume}
       </Button>
       <p className="text-xs text-white/50">
-        {language === 'da' ? 'Tryk på mellemrum eller P' : language === 'fi' ? 'Paina välilyöntiä tai P' : 'Press space or P'}
+        {language === 'da' ? 'Tryk på mellemrum eller P' : language === 'fi' ? 'Paina välilyöntiä tai P' : language === 'sv' ? 'Tryck på mellanslag eller P' : 'Press space or P'}
       </p>
     </div>
   )

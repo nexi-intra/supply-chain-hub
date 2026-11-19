@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   normalizeFlatLeaderboard,
   normalizeNestedLeaderboard,
+  withLocalScore,
   type LeaderboardEntry,
   type NestedLeaderboard,
 } from '@/lib/leaderboards'
@@ -18,37 +19,42 @@ import {
  *
  * Denne hook læser kun. Skrivning sker udelukkende gennem `submitHighscore`,
  * hvorefter `refresh()` henter den friske liste. Dermed er der én skrivevej og
- * ingen falske fejl.
+ * ingen falske fejl. `showScore` viser en netop spillet score på listen med det
+ * samme (kun på skærmen), mens den gemmes – det tager op mod 90 s på det delte drev.
  */
-export function useLeaderboard(key: string): { leaderboard: LeaderboardEntry[]; refresh: () => void } {
+export function useLeaderboard(key: string): { leaderboard: LeaderboardEntry[]; refresh: () => void; showScore: (entry: ShownScore) => void } {
   const [raw, setRaw] = useState<unknown>(undefined)
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([])
   const load = useReloader(key, setRaw)
+  const showScore = useCallback((entry: ShownScore) => setRaw((current: unknown) => withLocalScore(current, entry)), [])
 
   useEffect(() => {
     setLeaderboard(normalizeFlatLeaderboard(raw))
   }, [raw])
 
-  return { leaderboard, refresh: load }
+  return { leaderboard, refresh: load, showScore }
 }
+
+type ShownScore = Omit<LeaderboardEntry, 'id'> & { id?: string }
 
 /** Samme som `useLeaderboard`, men for de spil der har en liste pr. sværhedsgrad. */
 export function useNestedLeaderboard<D extends string>(
   key: string,
   categories: readonly D[],
-): { leaderboard: NestedLeaderboard<D>; refresh: () => void } {
+): { leaderboard: NestedLeaderboard<D>; refresh: () => void; showScore: (entry: ShownScore, category: D) => void } {
   const [raw, setRaw] = useState<unknown>(undefined)
   const categoriesRef = useRef(categories)
   const [leaderboard, setLeaderboard] = useState<NestedLeaderboard<D>>(() =>
     normalizeNestedLeaderboard(undefined, categories),
   )
   const load = useReloader(key, setRaw)
+  const showScore = useCallback((entry: ShownScore, category: D) => setRaw((current: unknown) => withLocalScore(current, entry, category)), [])
 
   useEffect(() => {
     setLeaderboard(normalizeNestedLeaderboard(raw, categoriesRef.current))
   }, [raw])
 
-  return { leaderboard, refresh: load }
+  return { leaderboard, refresh: load, showScore }
 }
 
 /** Fælles læsning: hent ved mount, lyt efter andres ændringer, og genlæs på kommando. */

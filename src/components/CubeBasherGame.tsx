@@ -57,7 +57,7 @@ export function CubeBasherGame({ onNavigateBack }: CubeBasherGameProps) {
           uafhængigt af denne attribut, så det er trygt at undlade den her. */}
       <iframe
         ref={iframeRef}
-        src="./games/cube-basher/index.html"
+        src={`./games/cube-basher/index.html?lang=${language}`}
         title="Cube Basher"
         className="w-full h-full border-0"
         onLoad={() => iframeRef.current?.focus()}
@@ -72,7 +72,7 @@ export function CubeBasherGame({ onNavigateBack }: CubeBasherGameProps) {
           className="bg-background gap-2 font-semibold"
         >
           <ArrowLeft size={16} weight="bold" />
-          {language === 'da' ? 'Tilbage' : language === 'fi' ? 'Takaisin' : 'Back'}
+          {language === 'da' ? 'Tilbage' : language === 'fi' ? 'Takaisin' : language === 'sv' ? 'Tillbaka' : 'Back'}
         </Button>
       </div>
     </div>

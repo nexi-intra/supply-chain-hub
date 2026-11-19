@@ -10,6 +10,129 @@
 </head>
 
 <body>
+    <!-- Startup intro: shown from the very first frame, before the app's code has loaded (no white screen).
+         Things the hub gathers fly into the logo in a loop until the app shows its first screen; then it fades out
+         (src/lib/startupIntro.ts). Pure HTML/CSS/SVG, nothing fetched. -->
+    <style id="startup-intro-style">
+        #startup-intro { position: fixed; inset: 0; z-index: 2147483647; pointer-events: none; overflow: hidden; opacity: 1;
+            background: radial-gradient(70% 70% at 50% 46%, #1a2a45 0%, #0F1A2E 45%, #0B1422 100%); transition: opacity .4s ease; }
+        #startup-intro.is-leaving { opacity: 0; }
+        #startup-intro .si-center { position: absolute; left: 50%; top: 46%; width: 0; height: 0; }
+        #startup-intro .si-logo { position: absolute; left: -66px; top: -66px; width: 132px; height: 132px; filter: drop-shadow(0 18px 38px rgba(0, 0, 0, .55)); }
+        #startup-intro .si-glow { position: absolute; left: -110px; top: -110px; width: 220px; height: 220px; border-radius: 50%;
+            background: radial-gradient(circle, rgba(230, 176, 79, .22) 0%, rgba(230, 176, 79, 0) 65%); animation: si-breathe 2.8s ease-in-out infinite; }
+        #startup-intro .si-pulse { position: absolute; left: -62px; top: -62px; width: 124px; height: 124px; border-radius: 32px; border: 2px solid #E6B04F; opacity: 0;
+            animation: si-pulse 1.12s ease-out infinite; animation-delay: 1.3s; }
+        #startup-intro .si-name { position: absolute; left: -200px; width: 400px; top: 90px; text-align: center; color: #F7E7C4;
+            font: 600 22px/1.2 'Segoe UI Semibold', 'Segoe UI', Arial, sans-serif; letter-spacing: -.01em; opacity: 0; animation: si-name .7s ease-out .55s forwards; }
+        #startup-intro .si-l, #startup-intro .si-r { animation: si-side .5s cubic-bezier(.2, .8, .2, 1) both; }
+        #startup-intro .si-l { --from: -16px; } #startup-intro .si-r { --from: 16px; }
+        #startup-intro .si-bar { transform-origin: 64px 64px; animation: si-bar .45s cubic-bezier(.2, .8, .2, 1) .22s both; }
+        #startup-intro .si-item { position: absolute; left: 0; top: 0; opacity: 0; will-change: transform, opacity;
+            animation: si-fly 5.6s cubic-bezier(.45, 0, .55, 1) infinite backwards; }
+        #startup-intro .si-item svg { display: block; transform: translate(-50%, -50%); filter: drop-shadow(0 8px 14px rgba(0, 0, 0, .45)); }
+        @keyframes si-fly {
+            0% { transform: translate(var(--sx), var(--sy)) rotate(var(--r)) scale(1); opacity: 0; }
+            12% { opacity: 1; }
+            55% { transform: translate(calc(var(--sx) * .42 + var(--cx)), calc(var(--sy) * .42 + var(--cy))) rotate(calc(var(--r) * .4)) scale(.92); opacity: 1; }
+            84% { transform: translate(0, 0) rotate(0deg) scale(.18); opacity: 0; }
+            100% { transform: translate(0, 0) scale(.18); opacity: 0; }
+        }
+        @keyframes si-side { from { transform: translateX(var(--from)); opacity: 0; } to { transform: none; opacity: 1; } }
+        @keyframes si-bar { from { transform: scaleX(.2); opacity: 0; } to { transform: none; opacity: 1; } }
+        @keyframes si-name { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+        @keyframes si-pulse { 0% { transform: scale(1); opacity: .55; } 100% { transform: scale(1.7); opacity: 0; } }
+        @keyframes si-breathe { 0%, 100% { transform: scale(.92); opacity: .75; } 50% { transform: scale(1.06); opacity: 1; } }
+        @media (prefers-reduced-motion: reduce) {
+            #startup-intro .si-item { animation: none; display: none; }
+            #startup-intro .si-pulse, #startup-intro .si-glow { animation: none; display: none; }
+            #startup-intro .si-l, #startup-intro .si-r, #startup-intro .si-bar, #startup-intro .si-name { animation: none; opacity: 1; }
+        }
+    </style>
+    <div id="startup-intro" aria-hidden="true">
+        <div class="si-center">
+            <div class="si-glow"></div>
+
+            <!-- Lane/3600: countertop, small screen, 15 keys -->
+            <div class="si-item" data-item="lane3600" style="--sx:-56vw;--sy:-34vh;--cx:-60px;--cy:40px;--r:-38deg;animation-delay:0s">
+                <svg width="50" height="94" viewBox="0 0 66 124"><rect x="1" y="1" width="64" height="122" rx="12" fill="#22324f" stroke="#3b4a70"/><rect x="9" y="10" width="48" height="36" rx="4" fill="#132744"/><rect x="13" y="14" width="40" height="28" rx="2" fill="#5b8bd0" opacity=".55"/><g fill="#16233b"><rect x="10" y="54" width="13" height="9" rx="2"/><rect x="26.5" y="54" width="13" height="9" rx="2"/><rect x="43" y="54" width="13" height="9" rx="2"/><rect x="10" y="66" width="13" height="9" rx="2"/><rect x="26.5" y="66" width="13" height="9" rx="2"/><rect x="43" y="66" width="13" height="9" rx="2"/><rect x="10" y="78" width="13" height="9" rx="2"/><rect x="26.5" y="78" width="13" height="9" rx="2"/><rect x="43" y="78" width="13" height="9" rx="2"/><rect x="10" y="90" width="13" height="9" rx="2"/><rect x="26.5" y="90" width="13" height="9" rx="2"/><rect x="43" y="90" width="13" height="9" rx="2"/></g><rect x="10" y="103" width="13" height="10" rx="2" fill="#dc2626"/><rect x="26.5" y="103" width="13" height="10" rx="2" fill="#eab308"/><rect x="43" y="103" width="13" height="10" rx="2" fill="#16a34a"/></svg>
+            </div>
+            <!-- Move/3500: handheld with printer head -->
+            <div class="si-item" data-item="move3500" style="--sx:58vw;--sy:-36vh;--cx:50px;--cy:50px;--r:34deg;animation-delay:-.56s">
+                <svg width="46" height="104" viewBox="0 0 60 136"><path d="M8 18 Q8 4 22 4 H38 Q52 4 52 18 Z" fill="#22324f" stroke="#3b4a70"/><rect x="14" y="9" width="32" height="3" rx="1.5" fill="#0b1224"/><rect x="1" y="16" width="58" height="118" rx="12" fill="#22324f" stroke="#3b4a70"/><rect x="8" y="24" width="44" height="34" rx="4" fill="#132744"/><rect x="11" y="27" width="38" height="28" rx="2" fill="#7aa2d6" opacity=".5"/><g fill="#16233b"><rect x="8" y="65" width="12" height="9" rx="2"/><rect x="24" y="65" width="12" height="9" rx="2"/><rect x="40" y="65" width="12" height="9" rx="2"/><rect x="8" y="77" width="12" height="9" rx="2"/><rect x="24" y="77" width="12" height="9" rx="2"/><rect x="40" y="77" width="12" height="9" rx="2"/><rect x="8" y="89" width="12" height="9" rx="2"/><rect x="24" y="89" width="12" height="9" rx="2"/><rect x="40" y="89" width="12" height="9" rx="2"/><rect x="8" y="101" width="12" height="9" rx="2"/><rect x="24" y="101" width="12" height="9" rx="2"/><rect x="40" y="101" width="12" height="9" rx="2"/></g><rect x="8" y="114" width="12" height="10" rx="2" fill="#dc2626"/><rect x="24" y="114" width="12" height="10" rx="2" fill="#eab308"/><rect x="40" y="114" width="12" height="10" rx="2" fill="#16a34a"/></svg>
+            </div>
+            <!-- N950: Android smart POS, big touchscreen, printer on top -->
+            <div class="si-item" data-item="n950" style="--sx:-60vw;--sy:30vh;--cx:-40px;--cy:-60px;--r:-24deg;animation-delay:-1.12s">
+                <svg width="48" height="98" viewBox="0 0 62 128"><rect x="6" y="1" width="50" height="16" rx="7" fill="#22324f" stroke="#3b4a70"/><rect x="12" y="6" width="38" height="3" rx="1.5" fill="#0b1224"/><rect x="1" y="12" width="60" height="115" rx="12" fill="#22324f" stroke="#3b4a70"/><rect x="6" y="18" width="50" height="94" rx="6" fill="#132744"/><rect x="10" y="24" width="42" height="14" rx="3" fill="#E6B04F" opacity=".55"/><g fill="#7aa2d6" opacity=".45"><rect x="10" y="44" width="19" height="16" rx="3"/><rect x="33" y="44" width="19" height="16" rx="3"/><rect x="10" y="64" width="19" height="16" rx="3"/><rect x="33" y="64" width="19" height="16" rx="3"/></g><rect x="10" y="88" width="42" height="14" rx="7" fill="#16a34a" opacity=".85"/><rect x="25" y="117" width="12" height="4" rx="2" fill="#0b1224"/></svg>
+            </div>
+            <!-- X70: integrated POS, big screen on a stand + customer display -->
+            <div class="si-item" data-item="x70" style="--sx:60vw;--sy:34vh;--cx:40px;--cy:-50px;--r:28deg;animation-delay:-1.68s">
+                <svg width="118" height="79" viewBox="0 0 156 104"><rect x="1" y="1" width="104" height="66" rx="6" fill="#22324f" stroke="#3b4a70"/><rect x="6" y="6" width="94" height="56" rx="3" fill="#132744"/><g fill="#7aa2d6" opacity=".45"><rect x="10" y="10" width="54" height="8" rx="2"/><rect x="10" y="22" width="26" height="16" rx="2"/><rect x="40" y="22" width="26" height="16" rx="2"/><rect x="10" y="42" width="26" height="16" rx="2"/><rect x="40" y="42" width="26" height="16" rx="2"/></g><rect x="70" y="22" width="26" height="36" rx="2" fill="#E6B04F" opacity=".5"/><path d="M44 67 L40 92 H66 L62 67 Z" fill="#1c2a45"/><rect x="26" y="92" width="56" height="10" rx="4" fill="#22324f" stroke="#3b4a70"/><rect x="112" y="40" width="42" height="52" rx="5" fill="#22324f" stroke="#3b4a70"/><rect x="116" y="44" width="34" height="38" rx="2" fill="#132744"/><rect x="120" y="50" width="26" height="10" rx="2" fill="#E6B04F" opacity=".6"/><rect x="125" y="86" width="16" height="3" rx="1.5" fill="#0b1224"/><path d="M120 92 L116 102 H150 L146 92 Z" fill="#1c2a45"/></svg>
+            </div>
+            <!-- P70: tablet with payment module -->
+            <div class="si-item" data-item="p70" style="--sx:4vw;--sy:-58vh;--cx:70px;--cy:0px;--r:6deg;animation-delay:-2.24s">
+                <svg width="82" height="55" viewBox="0 0 104 70"><rect x="1" y="1" width="102" height="62" rx="8" fill="#22324f" stroke="#3b4a70"/><rect x="7" y="7" width="76" height="50" rx="3" fill="#132744"/><g fill="#7aa2d6" opacity=".45"><rect x="11" y="11" width="40" height="8" rx="2"/><rect x="11" y="23" width="32" height="30" rx="2"/><rect x="47" y="23" width="32" height="14" rx="2"/></g><rect x="47" y="41" width="32" height="12" rx="6" fill="#16a34a" opacity=".85"/><rect x="86" y="10" width="13" height="44" rx="4" fill="#16233b"/><rect x="91" y="16" width="3" height="32" rx="1.5" fill="#0b1224"/><rect x="30" y="63" width="44" height="6" rx="3" fill="#1c2a45"/></svg>
+            </div>
+            <!-- Document -->
+            <div class="si-item" data-item="document" style="--sx:-62vw;--sy:-4vh;--cx:-20px;--cy:-70px;--r:-14deg;animation-delay:.56s">
+                <svg width="46" height="58" viewBox="0 0 46 58"><path d="M4 2 H30 L44 16 V54 Q44 56 42 56 H4 Q2 56 2 54 V4 Q2 2 4 2 Z" fill="#EEF2F7"/><path d="M30 2 V16 H44" fill="#C9D3E2"/><g fill="#9AA8BD"><rect x="9" y="24" width="28" height="3" rx="1.5"/><rect x="9" y="31" width="28" height="3" rx="1.5"/><rect x="9" y="38" width="20" height="3" rx="1.5"/></g><rect x="9" y="45" width="14" height="4" rx="2" fill="#E6B04F"/></svg>
+            </div>
+            <!-- Calendar -->
+            <div class="si-item" data-item="calendar" style="--sx:62vw;--sy:2vh;--cx:20px;--cy:70px;--r:16deg;animation-delay:1.12s">
+                <svg width="56" height="56" viewBox="0 0 56 56"><rect x="2" y="6" width="52" height="48" rx="8" fill="#EEF2F7"/><path d="M2 14 Q2 6 10 6 H46 Q54 6 54 14 V20 H2 Z" fill="#C98A22"/><rect x="14" y="1" width="5" height="11" rx="2.5" fill="#22324f"/><rect x="37" y="1" width="5" height="11" rx="2.5" fill="#22324f"/><g fill="#B6C2D3"><rect x="9" y="26" width="8" height="7" rx="2"/><rect x="21" y="26" width="8" height="7" rx="2"/><rect x="33" y="26" width="8" height="7" rx="2"/><rect x="9" y="38" width="8" height="7" rx="2"/><rect x="33" y="38" width="8" height="7" rx="2"/></g><rect x="21" y="38" width="8" height="7" rx="2" fill="#E6B04F"/></svg>
+            </div>
+            <!-- Mail -->
+            <div class="si-item" data-item="mail" style="--sx:-30vw;--sy:-60vh;--cx:-60px;--cy:30px;--r:-20deg;animation-delay:1.68s">
+                <svg width="62" height="44" viewBox="0 0 62 44"><rect x="1" y="1" width="60" height="42" rx="6" fill="#EEF2F7"/><path d="M3 5 L31 25 L59 5" fill="none" stroke="#9AA8BD" stroke-width="3" stroke-linejoin="round"/><circle cx="52" cy="10" r="6" fill="#E6B04F"/></svg>
+            </div>
+            <!-- Guide -->
+            <div class="si-item" data-item="guide" style="--sx:30vw;--sy:60vh;--cx:60px;--cy:-30px;--r:18deg;animation-delay:2.24s">
+                <svg width="64" height="46" viewBox="0 0 64 46"><path d="M32 8 Q18 1 3 4 V42 Q18 39 32 46 Z" fill="#EEF2F7"/><path d="M32 8 Q46 1 61 4 V42 Q46 39 32 46 Z" fill="#DCE3EE"/><g stroke="#9AA8BD" stroke-width="2.5" stroke-linecap="round"><line x1="9" y1="13" x2="26" y2="15"/><line x1="9" y1="20" x2="26" y2="22"/><line x1="38" y1="15" x2="55" y2="13"/><line x1="38" y1="22" x2="55" y2="20"/></g><rect x="9" y="27" width="17" height="9" rx="2" fill="#E6B04F" opacity=".8"/></svg>
+            </div>
+            <!-- Parcel -->
+            <div class="si-item" data-item="parcel" style="--sx:-8vw;--sy:62vh;--cx:-70px;--cy:0px;--r:-10deg;animation-delay:2.8s">
+                <svg width="60" height="58" viewBox="0 0 60 58"><path d="M30 2 L57 14 L30 26 L3 14 Z" fill="#D9A55A"/><path d="M3 14 L30 26 V56 L3 44 Z" fill="#B9853E"/><path d="M57 14 L30 26 V56 L57 44 Z" fill="#A4742F"/><path d="M16 8 L43 20 V30 L36 33 V23 L9 11 Z" fill="#EAD2A4" opacity=".85"/></svg>
+            </div>
+
+            <div class="si-pulse"></div>
+            <svg class="si-logo" viewBox="0 0 128 128">
+                <defs>
+                    <linearGradient id="siTile" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1D2E47"/><stop offset="1" stop-color="#0A1220"/></linearGradient>
+                    <linearGradient id="siGold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F8DC9C"/><stop offset=".55" stop-color="#E6B04F"/><stop offset="1" stop-color="#C98A22"/></linearGradient>
+                    <clipPath id="siOverLeft"><rect x="38" y="66" width="16" height="16"/></clipPath>
+                    <clipPath id="siOverRight"><rect x="74" y="46" width="16" height="16"/></clipPath>
+                </defs>
+                <rect x="2" y="2" width="124" height="124" rx="30" fill="url(#siTile)"/>
+                <rect x="2.5" y="2.5" width="123" height="123" rx="29.5" fill="none" stroke="#F6D28B" stroke-opacity=".16"/>
+                <g fill="none" stroke-width="7">
+                    <rect class="si-l" x="27" y="25" width="19" height="78" rx="9.5" stroke="url(#siGold)"/>
+                    <rect class="si-r" x="82" y="25" width="19" height="78" rx="9.5" stroke="url(#siGold)"/>
+                    <g class="si-bar">
+                        <rect x="35" y="54" width="58" height="20" rx="10" stroke="#111c2e" stroke-width="13"/>
+                        <rect x="35" y="54" width="58" height="20" rx="10" stroke="url(#siGold)"/>
+                    </g>
+                    <g class="si-l" clip-path="url(#siOverLeft)">
+                        <rect x="27" y="25" width="19" height="78" rx="9.5" stroke="#111c2e" stroke-width="13"/>
+                        <rect x="27" y="25" width="19" height="78" rx="9.5" stroke="url(#siGold)"/>
+                    </g>
+                    <g class="si-r" clip-path="url(#siOverRight)">
+                        <rect x="82" y="25" width="19" height="78" rx="9.5" stroke="#111c2e" stroke-width="13"/>
+                        <rect x="82" y="25" width="19" height="78" rx="9.5" stroke="url(#siGold)"/>
+                    </g>
+                </g>
+            </svg>
+            <div class="si-name">Supply Chain Hub</div>
+        </div>
+    </div>
+    <script>
+      setTimeout(function () {
+        var intro = document.getElementById('startup-intro')
+        // Once the app code runs, it removes the intro itself – even if the shared drive makes startup slow.
+        if (!intro || intro.hasAttribute('data-app-started')) return
+        intro.classList.add('is-leaving')
+        setTimeout(function () { intro.remove() }, 600)
+      }, 30000)
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
 </body>

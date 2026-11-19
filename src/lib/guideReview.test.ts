@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Guide, GuideReviewRequest } from './guideTypes'
-import { canReviewGuideRequest, hasGuideReviewConflict, isGuideReviewAlreadyApplied, isOpenGuideReview } from './guideReview'
+import { canReviewGuideRequest, guideApproveLabel, hasGuideReviewConflict, isGuideReviewAlreadyApplied, isOpenGuideReview } from './guideReview'
 
 const guide = (version = '1.00'): Guide => ({
   id: 'guide-1', title: 'Test', category: 'General', tags: [], content: '',
@@ -14,6 +14,14 @@ const request = (patch: Partial<GuideReviewRequest> = {}): GuideReviewRequest =>
 })
 
 describe('guide review rules', () => {
+  it('says "Godkend og slet" for deletions and "Godkend og udgiv" otherwise', () => {
+    expect(guideApproveLabel('delete', 'da')).toBe('Godkend og slet')
+    expect(guideApproveLabel('delete', 'en')).toBe('Approve and delete')
+    expect(guideApproveLabel('delete', 'fi')).toBe('Hyväksy ja poista')
+    for (const action of ['create', 'update', 'restore'] as const) expect(guideApproveLabel(action, 'da')).toBe('Godkend og udgiv')
+    expect(guideApproveLabel('update', 'en')).toBe('Approve and publish')
+    expect(guideApproveLabel('update', 'fi')).toBe('Hyväksy ja julkaise')
+  })
   it('allows a manager to review their own submission', () => {
     expect(canReviewGuideRequest(request(), 'author@nexigroup.com', true)).toBe(true)
   })

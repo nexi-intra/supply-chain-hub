@@ -3,7 +3,9 @@ import {
   normalizeFlatLeaderboard,
   normalizeNestedLeaderboard,
   recordGamePlay,
+  removeLeaderboardEntries,
   submitHighscore,
+  withLocalScore,
 } from '@/lib/leaderboards'
 import { getCreatorEmail } from '@/lib/userRoles'
 
@@ -12,6 +14,22 @@ const DIFFICULTIES = ['easy', 'medium', 'hard', 'expert'] as const
 function entry(email: string, score: number, extra: Record<string, unknown> = {}) {
   return { id: email, email, score, timestamp: 1000, ...extra }
 }
+
+describe('withLocalScore (slutskærmen viser scoren mens den gemmes)', () => {
+  it('viser en ny rekord med det samme i den rigtige sværhedsgrad', () => {
+    const stored = { easy: [entry('a@x', 50)], hard: [entry('b@x', 10)] }
+    const shown = normalizeNestedLeaderboard(withLocalScore(stored, { email: 'b@x', score: 70, timestamp: 2000 }, 'hard'), DIFFICULTIES)
+    expect(shown.hard).toEqual([entry('b@x', 70, { timestamp: 2000 })])
+    expect(shown.easy).toEqual([entry('a@x', 50)])
+  })
+
+  it('en lavere score ændrer ikke spillerens rekord, og en tom liste får scoren', () => {
+    const stored = { easy: [entry('a@x', 50)] }
+    expect(normalizeNestedLeaderboard(withLocalScore(stored, { email: 'a@x', score: 20, timestamp: 2000 }, 'easy'), DIFFICULTIES).easy).toEqual([entry('a@x', 50)])
+    expect(normalizeNestedLeaderboard(withLocalScore(undefined, { email: 'a@x', score: 20, timestamp: 2000 }, 'easy'), DIFFICULTIES).easy).toEqual([entry('a@x', 20, { timestamp: 2000 })])
+    expect(normalizeFlatLeaderboard(withLocalScore([entry('a@x', 5)], { email: 'a@x', score: 9, timestamp: 2000 }))).toEqual([entry('a@x', 9, { timestamp: 2000 })])
+  })
+})
 
 describe('normalizeNestedLeaderboard', () => {
   it('altid giver alle sværhedsgrader, også når nøglen slet ikke findes', () => {
@@ -209,6 +227,74 @@ describe('submitHighscore', () => {
     const result = await submitHighscore('board', { email: 'a@x', score: 12, timestamp: 1 }, { path: ['hard'], categories: DIFFICULTIES })
     expect(result.saved).toBe(true)
     expect((stored.board as any).hard).toHaveLength(1)
+  })
+})
+
+describe('removeLeaderboardEntries', () => {
+  let stored: Record<string, unknown>
+  let operations: any[]
+
+  beforeEach(() => {
+    stored = {}
+    operations = []
+    ;(globalThis as any).window = {
+      kv: {
+        get: vi.fn(async (key: string) => stored[key]),
+        compareAndSet: vi.fn(async (key: string, expected: unknown, value: unknown) => {
+          operations.push({ key, expected, value })
+          if (JSON.stringify(stored[key]) !== JSON.stringify(expected)) throw new Error('KV_CONFLICT: Data blev ændret')
+          stored[key] = value
+          return value
+        }),
+      },
+    }
+  })
+
+  afterEach(() => {
+    delete (globalThis as any).window
+  })
+
+  // Gamle rækker blev gemt uden id (eller med et andet id end e-mailen), så en
+  // sletning pr. id ramte dem aldrig.
+  it('sletter en række ud fra e-mail, også når den mangler id', async () => {
+    stored.board = { hard: [{ email: 'a@x', score: 5 }, entry('b@x', 9)], easy: [entry('a@x', 3)] }
+    await removeLeaderboardEntries('board', { emails: ['a@x'], category: 'hard' })
+    expect(stored.board).toEqual({ hard: [entry('b@x', 9)], easy: [entry('a@x', 3)] })
+    expect(operations).toHaveLength(1)
+  })
+
+  it('kan tømme alle sværhedsgrader på én gang og bevarer andre felter', async () => {
+    stored.board = { hard: [entry('a@x', 5)], easy: [entry('b@x', 3)], note: 'behold' }
+    await removeLeaderboardEntries('board', { all: true })
+    expect(stored.board).toEqual({ hard: [], easy: [], note: 'behold' })
+  })
+
+  it('virker på en flad liste', async () => {
+    stored.tetris = [entry('a@x', 5), entry('b@x', 9)]
+    await removeLeaderboardEntries('tetris', { emails: ['b@x'] })
+    expect(stored.tetris).toEqual([entry('a@x', 5)])
+  })
+
+  it('skriver ikke når der intet er at slette', async () => {
+    stored.board = { hard: [entry('a@x', 5)] }
+    await removeLeaderboardEntries('board', { emails: ['z@x'], category: 'hard' })
+    expect(operations).toHaveLength(0)
+  })
+
+  it('prøver igen med friske data hvis en anden nåede at skrive først', async () => {
+    stored.board = { hard: [entry('a@x', 5)] }
+    const kv = (globalThis as any).window.kv
+    const realCompareAndSet = kv.compareAndSet
+    let first = true
+    kv.compareAndSet = vi.fn(async (key: string, expected: unknown, value: unknown) => {
+      if (first) {
+        first = false
+        stored.board = { hard: [entry('a@x', 5), entry('c@x', 7)] }
+      }
+      return realCompareAndSet(key, expected, value)
+    })
+    await removeLeaderboardEntries('board', { emails: ['a@x'], category: 'hard' })
+    expect(stored.board).toEqual({ hard: [entry('c@x', 7)] })
   })
 })
 

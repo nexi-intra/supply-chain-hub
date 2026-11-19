@@ -12,7 +12,7 @@ const zlib = require('node:zlib')
 
 const RECORDS_URL = 'https://firefox.settings.services.mozilla.com/v1/buckets/main/collections/translations-models-v2/records'
 const ATTACHMENTS_URL = 'https://firefox-settings-attachments.cdn.mozilla.net/'
-const DEFAULT_PAIRS = ['daen', 'enda', 'enfi', 'fien']
+const DEFAULT_PAIRS = ['daen', 'enda', 'enfi', 'fien', 'ensv', 'sven']
 
 function parseArguments(argv) {
   let dataDir = null

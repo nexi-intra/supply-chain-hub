@@ -16,7 +16,7 @@ test('the general prompt refuses to speak for the company', () => {
 })
 
 test('the general prompt answers in the language of the question', () => {
-  for (const [code, name] of [['da', 'Danish'], ['en', 'English'], ['fi', 'Finnish']]) {
+  for (const [code, name] of [['da', 'Danish'], ['en', 'English'], ['fi', 'Finnish'], ['sv', 'Swedish']]) {
     assert.match(buildGeneralSystemPrompt(code), new RegExp(`answer in ${name}`))
   }
   assert.match(buildGeneralSystemPrompt('xx'), /answer in Danish/)
@@ -31,7 +31,7 @@ test('general mode has not loosened the grounded prompt', () => {
 })
 
 test('persona answers in the requested language and keeps the safety rules', () => {
-  for (const [code, name] of [['da', 'Danish'], ['en', 'English'], ['fi', 'Finnish']]) {
+  for (const [code, name] of [['da', 'Danish'], ['en', 'English'], ['fi', 'Finnish'], ['sv', 'Swedish']]) {
     const prompt = buildHubertSystemPrompt(code)
     assert.match(prompt, new RegExp(`answer in ${name}`))
     assert.match(prompt, /elite workplace AI assistant/)

@@ -62,32 +62,38 @@ beforeEach(() => {
   vi.clearAllMocks()
 })
 
+const flush = () => new Promise(resolve => setTimeout(resolve, 0))
+
 describe('announcement save while the shared storage is slow', () => {
-  it('accepts only one click until the pending save completes', async () => {
-    let resolve!: (value: unknown[]) => void
-    vi.mocked(appendToKvArray).mockReturnValueOnce(new Promise<unknown[]>(done => { resolve = done }) as never)
+  it('closes the dialog and confirms at once while the write runs in the background, and saves only once on double click', async () => {
+    vi.mocked(appendToKvArray).mockReturnValue(new Promise<unknown[]>(() => {}) as never)
     const save = enterAnnouncement()
-    const first = save()
-    const second = save()
+    expect(save()).toBeUndefined()
+    save()
     expect(appendToKvArray).toHaveBeenCalledTimes(1)
-    expect(render()).toContain('aria-busy="true"')
-    resolve([])
-    await Promise.all([first, second])
     expect(toast.success).toHaveBeenCalledOnce()
+    expect(harness.state[0]).toBe(false)
+    expect(harness.state[1]).toBe('')
     expect(harness.state[2]).toBe('')
+    expect(render()).not.toContain('aria-busy="true"')
   })
 
-  it('retains the draft and retries with the same identity after an uncertain failure', async () => {
+  it('brings the text back and retries with the same identity after a failed write', async () => {
     vi.mocked(appendToKvArray).mockRejectedValueOnce(new Error('connection lost')).mockResolvedValueOnce([] as never)
     const save = enterAnnouncement()
-    await save()
+    save()
+    expect(toast.success).toHaveBeenCalledOnce()
+    await flush()
     expect(toast.error).toHaveBeenCalledOnce()
-    expect(harness.state[2]).toBe('Status')
+    expect(harness.state[0]).toBe(true)
+    expect(harness.state[1]).toBe('Status')
+    expect(harness.state[2]).toBe('Team update')
     render()
-    await harness.buttons[harness.buttons.length - 1].onClick!()
+    harness.buttons[harness.buttons.length - 1].onClick!()
+    await flush()
     const first = vi.mocked(appendToKvArray).mock.calls[0][1]
     const retried = vi.mocked(appendToKvArray).mock.calls[1][1]
     expect(retried).toEqual(first)
-    expect(toast.success).toHaveBeenCalledOnce()
+    expect(toast.error).toHaveBeenCalledOnce()
   })
 })

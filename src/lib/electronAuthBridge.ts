@@ -8,7 +8,10 @@ export interface NativeSession {
   createdAt: number
   role: 'creator' | 'manager' | 'user'
   home: RegisteredTeam
-  viewId: string | null
+  /** The open hub; null when access to it was just removed. */
+  activeTeam: RegisteredTeam | null
+  /** Home team plus the teams where the creator made this person manager. */
+  teams: RegisteredTeam[]
 }
 export interface ElectronAuthApi {
   login(request: { email: string; password: string; rememberMe: boolean }): Promise<NativeSession>
@@ -17,6 +20,5 @@ export interface ElectronAuthApi {
   current(): Promise<NativeSession>
   renew(): Promise<NativeSession>
   logout(): Promise<void>
-  selectView(viewId: string | null): Promise<NativeSession>
   profile(request: { phone: string; currentPassword?: string; newPassword?: string }): Promise<{ passwordChanged: boolean }>
 }

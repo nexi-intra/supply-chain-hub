@@ -12,6 +12,7 @@
 // der lå i data.
 
 import { setKvObjectField, upsertInKvArray, upsertInNestedKvArray } from '@/lib/kvArrays'
+import { trackPendingWrite } from '@/lib/pendingWrites'
 import { getCreatorEmail } from '@/lib/userRoles'
 
 export interface LeaderboardEntry {
@@ -105,6 +106,18 @@ export function normalizeNestedLeaderboard<D extends string>(data: unknown, cate
   return result
 }
 
+/**
+ * The stored leaderboard with a just-played score added, so the game-over screen shows it at once – saving it takes
+ * up to 90 s on the shared drive. The normalization keeps each player's best, so a lower score changes nothing.
+ */
+export function withLocalScore(stored: unknown, entry: Omit<LeaderboardEntry, 'id'> & { id?: string }, category?: string): unknown {
+  const candidate: LeaderboardEntry = { ...entry, id: entry.id || entry.email }
+  if (!category) return Array.isArray(stored) ? [...stored, candidate] : [...normalizeFlatLeaderboard(stored), candidate]
+  if (stored !== undefined && stored !== null && !isRecord(stored)) return stored
+  const board = isRecord(stored) && Array.isArray(stored[category]) ? stored[category] as unknown[] : []
+  return { ...(isRecord(stored) ? stored : {}), [category]: [...board, candidate] }
+}
+
 export interface HighscoreResult {
   /** True hvis scoren blev gemt; false hvis den ikke slog spillerens egen rekord. */
   saved: boolean
@@ -150,7 +163,8 @@ export async function submitHighscore(
     if (existing && existing.score >= candidate.score) return { saved: false, best: existing.score }
 
     try {
-      if (options.path) await upsertInNestedKvArray<LeaderboardEntry>(key, options.path, [candidate])
+      // The nested upsert does not go through the kvArrays prediction, so it is counted as a background write here.
+      if (options.path) await trackPendingWrite(upsertInNestedKvArray<LeaderboardEntry>(key, options.path, [candidate]))
       else await upsertInKvArray<LeaderboardEntry>(key, [candidate])
       return { saved: true, best: candidate.score }
     } catch (error) {
@@ -171,6 +185,51 @@ async function isCreatorAccount(email: string): Promise<boolean> {
   }
 }
 
+const REMOVE_ATTEMPTS = 4
+
+/**
+ * Fjerner highscores ud fra e-mail i stedet for id, så også gamle rækker uden
+ * (eller med et andet) id kan slettes. Skriver med compare-and-set mod den
+ * friske værdi og prøver forfra ved konflikt, så samtidige scorer ikke tabes.
+ */
+export async function removeLeaderboardEntries(
+  key: string,
+  target: { emails: string[]; category?: string } | { all: true },
+): Promise<void> {
+  const emails = 'all' in target ? null : new Set(target.emails)
+  const category = 'all' in target ? undefined : target.category
+  const keep = (list: unknown[]) => (emails ? list.filter((item) => !(isRecord(item) && typeof item.email === 'string' && emails.has(item.email))) : [])
+
+  for (let attempt = 0; attempt < REMOVE_ATTEMPTS; attempt++) {
+    const current = await window.kv.get<unknown>(key)
+    let next: unknown
+    let changed = false
+    if (Array.isArray(current)) {
+      const filtered = keep(current)
+      changed = filtered.length !== current.length
+      next = filtered
+    } else if (isRecord(current)) {
+      const copy: Record<string, unknown> = { ...current }
+      for (const [field, value] of Object.entries(current)) {
+        if (!Array.isArray(value) || (category && field !== category)) continue
+        const filtered = keep(value)
+        if (filtered.length !== value.length) {
+          copy[field] = filtered
+          changed = true
+        }
+      }
+      next = copy
+    }
+    if (!changed) return
+    try {
+      await window.kv.compareAndSet(key, current, next)
+      return
+    } catch (error) {
+      if (!String(error).includes('KV_CONFLICT') || attempt === REMOVE_ATTEMPTS - 1) throw error
+    }
+  }
+}
+
 /**
  * Besked til spilleren når en score IKKE kunne gemmes. Før stod fejlen kun i
  * loggen, så spilleren troede rekorden var registreret.
@@ -178,6 +237,7 @@ async function isCreatorAccount(email: string): Promise<boolean> {
 export function scoreSaveFailedMessage(language: string): string {
   if (language === 'da') return 'Din score kunne ikke gemmes. Tjek forbindelsen til det delte drev.'
   if (language === 'fi') return 'Tulostasi ei voitu tallentaa. Tarkista yhteys jaettuun asemaan.'
+  if (language === 'sv') return 'Ditt resultat kunde inte sparas. Kontrollera anslutningen till den delade enheten.'
   return 'Your score could not be saved. Check the connection to the shared drive.'
 }
 

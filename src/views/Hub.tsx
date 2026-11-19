@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
 import { useState, useEffect, useMemo } from 'react'
-import { Books, Users, Calendar, Gear, ChatCircle, FileText, FirstAidKit, Envelope, ClipboardText, ShieldCheck, ForkKnife, CheckCircle, User, GameController, Warning, UserPlus, ChatText, Notebook, X, PencilSimple, Buildings, House, UsersThree, ListChecks } from '@phosphor-icons/react'
+import { Books, Brain, Users, Calendar, Gear, ChatCircle, FileText, FirstAidKit, Envelope, ClipboardText, ShieldCheck, ForkKnife, CheckCircle, User, GameController, Warning, UserPlus, ChatText, Notebook, X, PencilSimple, Buildings, House, UsersThree, ListChecks, Lightbulb, LinkSimple, Warehouse } from '@phosphor-icons/react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -8,6 +8,8 @@ import { UserProfile } from '@/components/UserProfile'
 import { SickLeaveDialog } from '@/components/SickLeaveDialog'
 import { GuideReviewAlert } from '@/components/GuideReviewAlert'
 import { NotificationCenter } from '@/components/NotificationCenter'
+import { HighFivesCard } from '@/components/HighFivesCard'
+import { MyWeekCard } from '@/components/MyWeekCard'
 import { AnnouncementsBoard } from '@/components/AnnouncementsBoard'
 import { EmailNotifications } from '@/components/EmailNotifications'
 import { LanguageToggle } from '@/components/LanguageToggle'
@@ -26,18 +28,35 @@ import { useCachedState } from '@/hooks/useCachedState'
 import { useLanguage } from '@/contexts/LanguageContext'
 import nexiLogo from '@/assets/images/nexi-logo.svg'
 import nexiLogoWhite from '@/assets/images/nexi-logo-white.svg'
+import { HubMark } from '@/components/HubMark'
+import { useChristmas } from '@/contexts/ChristmasContext'
+import { SnowCap } from '@/components/christmas/SnowCap'
+import { AdventDoor } from '@/components/christmas/AdventDoor'
+import { cardOrnament, christmasLabels, seasonLine } from '@/lib/christmas'
+import { useNisse } from '@/components/christmas/NisseContext'
+import { NisseSpot } from '@/components/christmas/NisseSpot'
+import { nisseLabels } from '@/lib/nisseLabels'
+import { danishTime } from '@/lib/nisse'
 import { format, isSameDay, parseISO } from 'date-fns'
 import { da, enUS } from 'date-fns/locale'
 import type { ShiftRole, ShiftAssignment, ShiftPatternRule, SickLeaveEntry, VacationEntry, WeekMenu, Email, HomeOfficePattern, HomeOfficeException } from '@/lib/types'
 import { getEmployeeColorByEmail, EMPLOYEE_COLOR_OVERRIDES_KEY, type EmployeeColorOverrides } from '@/lib/employeeColors'
 import type { Guide, GuideReviewRequest } from '@/lib/guideTypes'
+import { LIBRARY_KEYS } from '@/lib/libraryConfig'
 import type { RegisteredTeam } from '@/lib/electronRegistryBridge'
 import { getHomeOfficeUsersForDate } from '@/lib/homeOffice'
-import { personalTodosKey, type PersonalTodo } from '@/lib/personalTodos'
-import type { Project } from '@/views/ProjectBoard'
-import { appendToKvArray, removeFromKvArray, upsertInKvArray } from '@/lib/kvArrays'
+import { getImprovementsLabels } from '@/lib/improvementsLabels'
+import { getLinksLabels } from '@/lib/linksLabels'
+import { getWarehouseLabels, isWarehouseTeam } from '@/lib/warehouseLabels'
+import { appendToKvArray, removeFromKvArray, setKvObjectField, upsertInKvArray } from '@/lib/kvArrays'
 import { expandShiftPatterns } from '@/lib/shiftPatterns'
-import { buildHubTasks } from '@/lib/hubTasks'
+import { buildHubTasks, filterHubTasks } from '@/lib/hubTasks'
+import { resolveShiftDayComment, shiftDayNoteKey, type ShiftDayNotes } from '@/lib/shiftDayComments'
+import { absentPeopleOn, type AbsenceKind } from '@/lib/absence'
+import { parseLocalDate, toIsoDateString } from '@/lib/dateUtils'
+import { useMyHubs } from '@/hooks/useMyHubs'
+import { getHubAccessLabels } from '@/lib/hubAccessLabels'
+import { requestHubSwitch } from '@/lib/hubSwitch'
 
 interface HubModule {
   id: string
@@ -53,48 +72,35 @@ interface HubProps {
   onNavigate: (moduleId: string) => void
   onLogout: () => void
   userEmail: string
-  onChooseAccessView?: () => void
 }
 
-type DashboardWidgetId = 'teamTasks' | 'teamStatus' | 'offToday' | 'todaysMeal' | 'sickToday' | 'supplyOff' | 'supplyHomeOffice' | 'supplySick'
+type DashboardWidgetId = 'myWeek' | 'teamTasks' | 'teamStatus' | 'highFives' | 'offToday' | 'todaysMeal' | 'sickToday' | 'supplyOff' | 'supplyHomeOffice' | 'supplySick'
 type DashboardWidgetSize = 'compact' | 'standard' | 'large'
-type DashboardPreferences = Record<DashboardWidgetId, { visible: boolean; size: DashboardWidgetSize }>
+type DashboardWidgetPreference = { visible: boolean; size: DashboardWidgetSize }
+type DashboardPreferences = Record<DashboardWidgetId, DashboardWidgetPreference> & {
+  teamTasks: DashboardWidgetPreference & { onlyAssigned?: boolean }
+}
 
 // Bruger-centreret status-række til "Team status"-widgeten (omvendt af team-opgaver).
 type TeamStatusRow = {
   email: string
   name: string
-  status: 'working' | 'vacation' | 'sick' | 'available'
+  status: 'working' | 'vacation' | 'parental' | 'sick' | 'available'
+  backDate?: string
   tasks: Array<{ roleId: string; taskName: string; taskColor: string; comment?: string }>
 }
 
 const DEFAULT_DASHBOARD_PREFERENCES: DashboardPreferences = {
-  teamTasks: { visible: true, size: 'standard' },
+  myWeek: { visible: true, size: 'standard' },
+  teamTasks: { visible: true, size: 'standard', onlyAssigned: false },
   teamStatus: { visible: true, size: 'standard' },
+  highFives: { visible: true, size: 'standard' },
   offToday: { visible: true, size: 'standard' },
   todaysMeal: { visible: true, size: 'standard' },
   sickToday: { visible: true, size: 'standard' },
   supplyOff: { visible: true, size: 'standard' },
   supplyHomeOffice: { visible: true, size: 'standard' },
   supplySick: { visible: true, size: 'standard' },
-}
-
-/** Alle godkendte ferier der dækker `date`, som navne (dedupliceret). Bruges til tværgående Fase 9-kort. */
-function computeOffToday(
-  users: Record<string, { fullName: string }> | null | undefined,
-  vacations: VacationEntry[] | null | undefined,
-  date: Date
-): string[] {
-  const names: string[] = []
-  for (const v of vacations || []) {
-    if (v.status !== 'approved') continue
-    const start = parseISO(v.startDate)
-    const end = parseISO(v.endDate)
-    if (!(isSameDay(start, date) || isSameDay(end, date) || (start < date && end > date))) continue
-    const name = users?.[v.userEmail]?.fullName || v.userEmail
-    if (!names.includes(name)) names.push(name)
-  }
-  return names
 }
 
 /** Alle godkendte sygemeldinger for `date`, som navne (dedupliceret). Bruges til tværgående Fase 9-kort. */
@@ -113,8 +119,19 @@ function computeSickToday(
 }
 
 
-export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: HubProps) {
+// The overview's useKV sources start as these until their first read is back (a remembered value from earlier in the
+// session is a different object), so the widgets keep showing the remembered day instead of an empty one.
+const NOT_LOADED_LIST: never[] = []
+const NOT_LOADED_RECORD: Record<string, never> = {}
+
+export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
   const { t, language } = useLanguage()
+  const christmas = useChristmas()
+  const nisse = useNisse()
+  const { hubs } = useMyHubs()
+  const activeHub = hubs.find(hub => hub.active)
+  const waitingElsewhere = hubs.filter(hub => !hub.active).reduce((sum, hub) => sum + hub.pending, 0)
+  const hubLabels = getHubAccessLabels(language)
   const [isAdminOrManager, setIsAdminOrManager] = useState(false)
   const [isCreator, setIsCreator] = useState(false)
   // Creator-kontoen er en platform-konto og skal ikke vises i team-oversigter.
@@ -124,30 +141,33 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
   const [showEmailNotifications, setShowEmailNotifications] = useState(false)
   const [showDashboardEditor, setShowDashboardEditor] = useState(false)
   // useKV abonnerer automatisk på ændringer — ingen manuel subscribe-boilerplate nødvendig.
-  // Hentes ÉN gang her og sendes ned som props til NotificationCenter/GuideReviewAlert,
-  // så vi undgår flere uafhængige KV-lyttere for de samme nøgler på den mest besøgte skærm.
+  // Hentes her til badges og GuideReviewAlert; selve klokken læser sine egne kilder via HubNotificationsProvider (App.tsx).
   const [emails] = useKV<Email[]>('emails', [])
-  const [vacationsForBadge] = useKV<VacationEntry[]>('vacation-entries', [])
-  const [sickLeaveForBadge] = useKV<SickLeaveEntry[]>('sick-leave-entries', [])
+  const [vacationsForBadge] = useKV<VacationEntry[]>('vacation-entries', NOT_LOADED_LIST)
+  const [sickLeaveForBadge] = useKV<SickLeaveEntry[]>('sick-leave-entries', NOT_LOADED_LIST)
   const [guidesForAlerts] = useKV<Guide[]>('guides', [])
   const [guideReviewRequests] = useKV<GuideReviewRequest[]>('guide-review-requests', [], { initializeIfMissing: false })
+  const [knowledgeReviewRequests] = useKV<GuideReviewRequest[]>(LIBRARY_KEYS.knowledge.reviewRequests, [], { initializeIfMissing: false })
   const [guideAdminEmails] = useKV<string[]>('guide-admin-emails', [], { initializeIfMissing: false })
   // Ferieanmodninger manageren allerede har set inde i Manager Panel — bruges til
   // at fjerne Hub-advarslen/notifikationen uden at røre selve godkendelses-status.
   const [seenVacationRequestIds] = useKV<string[]>(`seen-vacation-requests-${userEmail}`, [])
-  // Til forfaldsdato-notifikationer i NotificationCenter (samme begrundelse: én
-  // fælles KV-lytter her i stedet for at ProjectBoard og Hub abonnerer separat).
-  const [projectsForAlerts] = useKV<Project[]>('projects', [])
-  const [personalTodosForAlerts] = useKV<PersonalTodo[]>(personalTodosKey(userEmail), [])
   const [dashboardPreferences, setDashboardPreferences] = useKV<DashboardPreferences>(`hub-dashboard-${userEmail}`, DEFAULT_DASHBOARD_PREFERENCES)
   // Til "Team status"-widgeten: faste brugere + manager-farveoverstyringer.
-  const [usersForStatus] = useKV<Record<string, { fullName: string }>>('users', {})
+  const [usersForStatus] = useKV<Record<string, { fullName: string }>>('users', NOT_LOADED_RECORD)
   const [colorOverrides] = useKV<EmployeeColorOverrides>(EMPLOYEE_COLOR_OVERRIDES_KEY, {})
-  // Kommentarer til brugere UDEN dagens opgave gemmes her (noeglet paa dato|email),
-  // da de ikke har en vagtplan-tildeling at haenge kommentaren paa.
-  const [teamStatusNotes, setTeamStatusNotes] = useKV<Record<string, string>>('team-status-notes', {})
+  // Én faelles dagsnote pr. medarbejder (dato|email), uanset antal opgaver.
+  // Ældre kommentarer paa tildelinger læses stadig som fallback.
+  const [teamStatusNotes] = useKV<ShiftDayNotes>('team-status-notes', NOT_LOADED_RECORD)
+  // The rest of today's overview. Read through useKV like the keys above, so a change made anywhere in the app (the
+  // schedule, a sick-leave registration, a vacation decision) shows here at once, also while it is being saved.
+  const [shiftAssignments] = useKV<ShiftAssignment[]>('shift-assignments', NOT_LOADED_LIST)
+  const [shiftRoles] = useKV<ShiftRole[]>('shift-roles', NOT_LOADED_LIST)
+  const [shiftPatterns] = useKV<ShiftPatternRule[]>('shift-patterns', NOT_LOADED_LIST)
+  const [weekMenus] = useKV<WeekMenu[]>('meal-plan-weeks', NOT_LOADED_LIST, { initializeIfMissing: false })
 
   const dashboardWidget = (id: DashboardWidgetId) => dashboardPreferences?.[id] || DEFAULT_DASHBOARD_PREFERENCES[id]
+  const onlyAssignedTeamTasks = dashboardPreferences?.teamTasks?.onlyAssigned === true
   const dashboardSizeClass = (id: DashboardWidgetId) => {
     const size = dashboardWidget(id).size
     if (size === 'compact') return 'min-h-[110px]'
@@ -175,9 +195,12 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
   }, [isAdminOrManager, vacationsForBadge, sickLeaveForBadge, seenVacationRequestIds])
   const isGuideReviewer = isAdminOrManager || (guideAdminEmails || []).some((email) => email.trim().toLowerCase() === userEmail.trim().toLowerCase())
   const pendingGuideReviews = isGuideReviewer ? (guideReviewRequests || []).filter((request) => request.status === 'pending').length : 0
+  const pendingKnowledgeReviews = isGuideReviewer ? (knowledgeReviewRequests || []).filter((request) => request.status === 'pending').length : 0
   
-  const [teamTasks, setTeamTasks] = useCachedState<Array<{ taskName: string; taskColor: string; people: Array<{ name: string; comment?: string }>; roleId: string }>>(`hub:teamTasks:${userEmail}`, [])
-  const [peopleOff, setPeopleOff] = useCachedState<Array<{ name: string; type: 'vacation' | 'single' }>>(`hub:peopleOff:${userEmail}`, [])
+  const [teamTasks, setTeamTasks] = useCachedState<Array<{ taskName: string; taskColor: string; people: Array<{ name: string; email?: string; comment?: string }>; roleId: string }>>(`hub:teamTasks:${userEmail}`, [])
+  const visibleTeamTasks = useMemo(() => filterHubTasks(teamTasks || [], onlyAssignedTeamTasks), [teamTasks, onlyAssignedTeamTasks])
+  // Gamle cache-poster mangler kind/backDate.
+  const [peopleOff, setPeopleOff] = useCachedState<Array<{ name: string; kind?: AbsenceKind; backDate?: string }>>(`hub:peopleOff:${userEmail}`, [])
   const [peopleSick, setPeopleSick] = useCachedState<string[]>(`hub:peopleSick:${userEmail}`, [])
   const [todaysMeal, setTodaysMeal] = useCachedState<string>(`hub:todaysMeal:${userEmail}`, '')
 
@@ -185,13 +208,15 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
   // kommentar fra vagtplanen, eller ferie/syg. Afledt af allerede indlæst state.
   const teamStatusRows = useMemo<TeamStatusRow[]>(() => {
     const sickSet = new Set(peopleSick || [])
-    const offSet = new Set((peopleOff || []).map((p) => p.name))
-    const tasksByName = new Map<string, Array<{ roleId: string; taskName: string; taskColor: string; comment?: string }>>()
+    const offByName = new Map((peopleOff || []).map((p) => [p.name, p]))
+    const tasksByEmail = new Map<string, Array<{ roleId: string; taskName: string; taskColor: string; comment?: string }>>()
     for (const task of teamTasks || []) {
       for (const person of task.people) {
-        const list = tasksByName.get(person.name) || []
+        const email = person.email || Object.entries(usersForStatus || {}).find(([, user]) => user?.fullName === person.name)?.[0]
+        if (!email) continue
+        const list = tasksByEmail.get(email) || []
         list.push({ roleId: task.roleId, taskName: task.taskName, taskColor: task.taskColor, comment: person.comment })
-        tasksByName.set(person.name, list)
+        tasksByEmail.set(email, list)
       }
     }
     return Object.entries(usersForStatus || {})
@@ -200,13 +225,24 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       .sort((a, b) => a.name.localeCompare(b.name))
       .map(({ email, name }): TeamStatusRow => {
         if (sickSet.has(name)) return { email, name, status: 'sick', tasks: [] }
-        if (offSet.has(name)) return { email, name, status: 'vacation', tasks: [] }
-        const tasks = tasksByName.get(name) || []
+        const off = offByName.get(name)
+        if (off) return { email, name, status: off.kind === 'parental' ? 'parental' : 'vacation', backDate: off.backDate, tasks: [] }
+        const tasks = tasksByEmail.get(email) || []
         return { email, name, status: tasks.length ? 'working' : 'available', tasks }
       })
   }, [usersForStatus, peopleSick, peopleOff, teamTasks, creatorEmail])
 
-  const dateLocale = language === 'da' ? 'da-DK' : language === 'fi' ? 'fi-FI' : 'en-GB'
+  const dateLocale = language === 'da' ? 'da-DK' : language === 'fi' ? 'fi-FI' : language === 'sv' ? 'sv-SE' : 'en-GB'
+
+  // "Tilbage man. 13. okt." / "Tilbage i morgen"; tom streng for gamle cache-poster uden dato.
+  const backLabel = (backDate?: string) => {
+    if (!backDate) return ''
+    const tomorrow = new Date()
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    if (backDate === toIsoDateString(tomorrow)) return t.parentalLeave.backTomorrow
+    return t.parentalLeave.back.replace('{date}', parseLocalDate(backDate).toLocaleDateString(dateLocale, { weekday: 'short', day: 'numeric', month: 'short' }))
+  }
+  const parentalSuffix = language === 'da' ? 'barsel' : language === 'fi' ? 'perhevapaalla' : language === 'sv' ? 'föräldraledig' : 'parental leave'
 
   // Tallene i dagens tavle. Afledt af det, der allerede er hentet - ingen ekstra opslag.
   const headcountWorking = useMemo(
@@ -214,13 +250,13 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
     [teamStatusRows],
   )
   const awayToday = useMemo(
-    () => teamStatusRows.filter((row) => row.status === 'sick' || row.status === 'vacation').map((row) => row.name.split(' ')[0]),
+    () => teamStatusRows.filter((row) => row.status === 'sick' || row.status === 'vacation' || row.status === 'parental').map((row) => row.name.split(' ')[0]),
     [teamStatusRows],
   )
 
   // Tværgående Fase 9-kort: fri/syge/hjemmearbejde i ANDRE teams. Kun vist når der findes >1 team.
   const [hasOtherTeams, setHasOtherTeams] = useCachedState(`hub:hasOtherTeams:${userEmail}`, false)
-  const [otherTeamsOff, setOtherTeamsOff] = useCachedState<Array<{ name: string; teamCode: string }>>(`hub:otherTeamsOff:${userEmail}`, [])
+  const [otherTeamsOff, setOtherTeamsOff] = useCachedState<Array<{ name: string; teamCode: string; kind?: AbsenceKind; backDate?: string }>>(`hub:otherTeamsOff:${userEmail}`, [])
   const [otherTeamsSick, setOtherTeamsSick] = useCachedState<Array<{ name: string; teamCode: string }>>(`hub:otherTeamsSick:${userEmail}`, [])
   const [otherTeamsHomeOffice, setOtherTeamsHomeOffice] = useCachedState<Array<{ name: string; teamCode: string }>>(`hub:otherTeamsHomeOffice:${userEmail}`, [])
   const [crossTeamOverviewError, setCrossTeamOverviewError] = useState(false)
@@ -229,6 +265,8 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
   const [selectedTaskForAssign, setSelectedTaskForAssign] = useState<{ roleId: string; roleName: string } | null>(null)
   const [selectedEmployeeForAssign, setSelectedEmployeeForAssign] = useState<string>('')
   const [allEmployees, setAllEmployees] = useState<Array<{ email: string; name: string }>>([])
+  // Optaget mens tildelingens forudgående opslag kører over netværket.
+  const [assigning, setAssigning] = useState(false)
   // Widget: tildel en opgave (rolle) direkte til en bruger fra Team status-kortet.
   const [showWidgetAssignDialog, setShowWidgetAssignDialog] = useState(false)
   const [widgetAssignUser, setWidgetAssignUser] = useState<{ email: string; name: string } | null>(null)
@@ -239,11 +277,12 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
   const [newComment, setNewComment] = useState('')
   const [appVersion, setAppVersion] = useState<string>('')
   const [teamName, setTeamName] = useState<string>('Supply Chain Hub')
+  const [teamId, setTeamId] = useState<string | null>(null)
 
   useEffect(() => {
     const loadTeamName = async () => {
       const team = await window.electronRegistry?.getCurrentTeam()
-      if (team) setTeamName(team.name)
+      if (team) { setTeamName(team.name); setTeamId(team.teamId) }
     }
     loadTeamName()
   }, [])
@@ -267,7 +306,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
         if (others.length === 0) { setCrossTeamOverviewError(false); return }
 
         const today = new Date()
-        const off: Array<{ name: string; teamCode: string }> = []
+        const off: Array<{ name: string; teamCode: string; kind: AbsenceKind; backDate: string }> = []
         const sick: Array<{ name: string; teamCode: string }> = []
         const homeOffice: Array<{ name: string; teamCode: string }> = []
 
@@ -282,7 +321,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
           const [teamUsers, teamVacations, teamSickLeave, teamPatterns, teamExceptions] = teamResults[index] as [Record<string, { fullName: string }>, VacationEntry[], SickLeaveEntry[], Record<string, HomeOfficePattern>, HomeOfficeException[]]
           const isOtherTeam = team.teamId !== currentTeam?.teamId
           if (isOtherTeam) {
-            for (const name of computeOffToday(teamUsers, teamVacations, today)) off.push({ name, teamCode: team.abbreviation || team.teamId })
+            for (const person of absentPeopleOn(teamVacations, teamUsers, toIsoDateString(today))) off.push({ name: person.name, teamCode: team.abbreviation || team.teamId, kind: person.kind, backDate: person.backDate })
             for (const name of computeSickToday(teamUsers, teamSickLeave, today)) sick.push({ name, teamCode: team.abbreviation || team.teamId })
           }
           const homeOfficeEmails = getHomeOfficeUsersForDate(Object.keys(teamUsers || {}), today, teamPatterns, teamExceptions)
@@ -302,7 +341,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
     }
 
     loadCrossTeamOverview()
-    const interval = setInterval(loadCrossTeamOverview, 5 * 60 * 1000)
+    const interval = setInterval(() => { if (document.visibilityState === 'visible') loadCrossTeamOverview() }, 5 * 60 * 1000)
     return () => { cancelled = true; clearInterval(interval) }
   }, [])
 
@@ -341,120 +380,99 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
     loadName()
   }, [userEmail])
 
+  // "I dag" rolls over at midnight; checked every 5 minutes while the window is visible.
+  const [overviewDay, setOverviewDay] = useState(() => format(new Date(), 'yyyy-MM-dd'))
   useEffect(() => {
-    const loadOverviewData = async () => {
-      const today = format(new Date(), 'yyyy-MM-dd')
-      const currentDate = new Date()
-      
-      const [assignments = [], roles = [], sickLeave = [], vacations = [], usersData = {}, weekMenus = [], shiftPatterns = []] = await Promise.all([
-        window.kv.get<ShiftAssignment[]>('shift-assignments'),
-        window.kv.get<ShiftRole[]>('shift-roles'),
-        window.kv.get<SickLeaveEntry[]>('sick-leave-entries'),
-        window.kv.get<VacationEntry[]>('vacation-entries'),
-        window.kv.get<Record<string, { fullName: string }>>('users'),
-        window.kv.get<WeekMenu[]>('meal-plan-weeks'),
-        window.kv.get<ShiftPatternRule[]>('shift-patterns'),
-      ])
-      
-      const isSickToday = (userEmail: string) => {
-        return sickLeave.some(s => 
-          s.userEmail === userEmail && 
-          s.status === 'approved' && 
-          isSameDay(parseISO(s.startDate), currentDate)
-        )
-      }
-      
-      const isOnVacationToday = (userEmail: string) => {
-        return vacations.some(v => {
-          if (v.userEmail !== userEmail || v.status !== 'approved') return false
-          const start = parseISO(v.startDate)
-          const end = parseISO(v.endDate)
-          return (isSameDay(start, currentDate) || isSameDay(end, currentDate) || (start < currentDate && end > currentDate))
-        })
-      }
-      
-      // Gentagne vagter gemmes ikke som raekker - de skal udfoldes her, ellers
-      // mangler personen bag et moenster i widgeten (opgaven vises, personen ikke).
-      const todaysAssignments = [
-        ...assignments.filter(a => a.date === today),
-        ...expandShiftPatterns(shiftPatterns, assignments, today, email => isSickToday(email) || isOnVacationToday(email)),
-      ]
-      
-      const assignedPeople = todaysAssignments.flatMap(assignment => {
-        const userEmail = Object.keys(usersData).find(email => usersData[email]?.fullName === assignment.employeeName)
-        if (!userEmail || isSickToday(userEmail) || isOnVacationToday(userEmail)) return []
-        return [{ roleId: assignment.roleId, name: assignment.employeeName, comment: assignment.comment }]
+    const interval = setInterval(() => { if (document.visibilityState === 'visible') setOverviewDay(format(new Date(), 'yyyy-MM-dd')) }, 5 * 60 * 1000)
+    return () => clearInterval(interval)
+  }, [])
+
+  const overviewLoaded = [shiftAssignments, shiftRoles, shiftPatterns, sickLeaveForBadge, vacationsForBadge].every(source => source !== NOT_LOADED_LIST)
+    && usersForStatus !== NOT_LOADED_RECORD && teamStatusNotes !== NOT_LOADED_RECORD
+  useEffect(() => {
+    if (!overviewLoaded) return
+    const today = overviewDay
+    const currentDate = new Date()
+    const assignments = shiftAssignments || []
+    const roles = shiftRoles || []
+    const sickLeave = sickLeaveForBadge || []
+    const vacations = vacationsForBadge || []
+    const usersData = usersForStatus || {}
+    const dayNotes = teamStatusNotes || {}
+
+    const isSickToday = (userEmail: string) => {
+      return sickLeave.some(s => 
+        s.userEmail === userEmail && 
+        s.status === 'approved' && 
+        isSameDay(parseISO(s.startDate), currentDate)
+      )
+    }
+    
+    const isOnVacationToday = (userEmail: string) => {
+      return vacations.some(v => {
+        if (v.userEmail !== userEmail || v.status !== 'approved') return false
+        const start = parseISO(v.startDate)
+        const end = parseISO(v.endDate)
+        return (isSameDay(start, currentDate) || isSameDay(end, currentDate) || (start < currentDate && end > currentDate))
       })
-      setTeamTasks(buildHubTasks(roles, assignedPeople))
+    }
+    
+    // Gentagne vagter gemmes ikke som raekker - de skal udfoldes her, ellers
+    // mangler personen bag et moenster i widgeten (opgaven vises, personen ikke).
+    const todaysAssignments = [
+      ...assignments.filter(a => a.date === today),
+      ...expandShiftPatterns(shiftPatterns || [], assignments, today, email => isSickToday(email) || isOnVacationToday(email)),
+    ]
+    
+    const assignedPeople = todaysAssignments.flatMap(assignment => {
+      const userEmail = usersData[assignment.employeeId] ? assignment.employeeId : Object.keys(usersData).find(email => usersData[email]?.fullName === assignment.employeeName)
+      if (!userEmail || isSickToday(userEmail) || isOnVacationToday(userEmail)) return []
+      return [{ roleId: assignment.roleId, name: assignment.employeeName, email: userEmail, comment: resolveShiftDayComment(dayNotes, today, userEmail, todaysAssignments) }]
+    })
+    setTeamTasks(buildHubTasks(roles, assignedPeople))
+    
+    const users = Object.entries(usersData).map(([email, data]) => ({
+      email,
+      name: data.fullName
+    }))
+    setAllEmployees(users)
+    
+    const todaySick = sickLeave
+      .filter(s => s.status === 'approved' && isSameDay(parseISO(s.startDate), currentDate))
+      .map(s => s.userName)
+    setPeopleSick(todaySick)
+    
+    const todayOff = absentPeopleOn(vacations, usersData, today).map(({ name, kind, backDate }) => ({ name, kind, backDate }))
+    
+    setPeopleOff(todayOff)
+    
+    const getWeekNumber = (date: Date): number => {
+      const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
+      const dayNum = d.getUTCDay() || 7
+      d.setUTCDate(d.getUTCDate() + 4 - dayNum)
+      const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
+      return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7)
+    }
+    
+    const currentWeek = getWeekNumber(currentDate)
+    const currentYear = currentDate.getFullYear()
+    const currentWeekMenu = (weekMenus || []).find(w => w.weekNumber === currentWeek && w.year === currentYear)
+    
+    if (currentWeekMenu) {
+      const dayOfWeek = currentDate.getDay()
+      const dayKeys: Array<keyof typeof currentWeekMenu.meals> = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
       
-      const users = Object.entries(usersData).map(([email, data]) => ({
-        email,
-        name: data.fullName
-      }))
-      setAllEmployees(users)
-      
-      const todaySick = sickLeave
-        .filter(s => s.status === 'approved' && isSameDay(parseISO(s.startDate), new Date()))
-        .map(s => s.userName)
-      setPeopleSick(todaySick)
-      
-      const todayOff: Array<{ name: string; type: 'vacation' | 'single' }> = []
-      
-      vacations.forEach(v => {
-        if (v.status === 'approved') {
-          const start = parseISO(v.startDate)
-          const end = parseISO(v.endDate)
-          const now = new Date()
-          
-          if (isSameDay(start, now) || isSameDay(end, now) || (start < now && end > now)) {
-            const userName = usersData[v.userEmail]?.fullName || v.userEmail
-            todayOff.push({ name: userName, type: 'vacation' })
-          }
-        }
-      })
-      
-      setPeopleOff(todayOff)
-      
-      const getWeekNumber = (date: Date): number => {
-        const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
-        const dayNum = d.getUTCDay() || 7
-        d.setUTCDate(d.getUTCDate() + 4 - dayNum)
-        const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
-        return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7)
-      }
-      
-      const currentWeek = getWeekNumber(currentDate)
-      const currentYear = currentDate.getFullYear()
-      const currentWeekMenu = weekMenus.find(w => w.weekNumber === currentWeek && w.year === currentYear)
-      
-      if (currentWeekMenu) {
-        const dayOfWeek = currentDate.getDay()
-        const dayKeys: Array<keyof typeof currentWeekMenu.meals> = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
-        
-        if (dayOfWeek >= 1 && dayOfWeek <= 5) {
-          const dayKey = dayKeys[dayOfWeek - 1]
-          setTodaysMeal(currentWeekMenu.meals[dayKey] || '')
-        } else {
-          setTodaysMeal('')
-        }
+      if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+        const dayKey = dayKeys[dayOfWeek - 1]
+        setTodaysMeal(currentWeekMenu.meals[dayKey] || '')
       } else {
         setTodaysMeal('')
       }
+    } else if (weekMenus !== NOT_LOADED_LIST) {
+      setTodaysMeal('')
     }
-    
-    loadOverviewData()
-
-    const overviewKeys = ['shift-assignments', 'shift-roles', 'sick-leave-entries', 'vacation-entries', 'users', 'meal-plan-weeks']
-    const unsubscribe = window.kv.subscribe((changedKeys) => {
-      if (changedKeys.some((key) => overviewKeys.includes(key))) loadOverviewData()
-    })
-    // Langsomt fallback-interval så "i dag" ruller korrekt over ved midnat.
-    const interval = setInterval(loadOverviewData, 5 * 60 * 1000)
-    return () => {
-      unsubscribe()
-      clearInterval(interval)
-    }
-  }, [userEmail])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overviewLoaded, overviewDay, shiftAssignments, shiftRoles, shiftPatterns, sickLeaveForBadge, vacationsForBadge, usersForStatus, teamStatusNotes, weekMenus])
 
   const handleModuleClick = (moduleId: string) => {
     if (moduleId === 'manager' && !isAdminOrManager) {
@@ -463,29 +481,47 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
     onNavigate(moduleId)
   }
 
-  const handleQuickAssign = async (taskOverride?: { roleId: string; roleName: string }, employeeEmailOverride?: string) => {
+  /** Resolves once the assignment is shown (true) or refused (false); the write itself continues in the background. */
+  const handleQuickAssign = async (taskOverride?: { roleId: string; roleName: string }, employeeEmailOverride?: string): Promise<boolean> => {
+    if (assigning) return false
     const task = taskOverride || selectedTaskForAssign
     const employeeEmailSel = employeeEmailOverride || selectedEmployeeForAssign
     if (!task || !employeeEmailSel) {
-      toast.error(language === 'da' ? 'Vælg en medarbejder' : language === 'fi' ? 'Valitse työntekijä' : 'Select an employee')
-      return
+      toast.error(language === 'da' ? 'Vælg en medarbejder' : language === 'fi' ? 'Valitse työntekijä' : language === 'sv' ? 'Välj en medarbetare' : 'Select an employee')
+      return false
     }
 
     const today = format(new Date(), 'yyyy-MM-dd')
-    const assignments = (await window.kv.get<ShiftAssignment[]>('shift-assignments')) || []
-    const usersData = (await window.kv.get<Record<string, { fullName: string }>>('users')) || {}
+    // The live copies (with changes still being saved) answer at once; only before they are loaded is the drive read.
+    let assignments: ShiftAssignment[] = shiftAssignments
+    let sickLeave: SickLeaveEntry[] = sickLeaveForBadge
+    let vacations: VacationEntry[] = vacationsForBadge
+    if (!overviewLoaded) {
+      setAssigning(true)
+      try {
+        // Read in parallel: on the shared drive each read costs a round trip.
+        ;[assignments, sickLeave, vacations] = await Promise.all([
+          window.kv.get<ShiftAssignment[]>('shift-assignments').then(value => value || []),
+          window.kv.get<SickLeaveEntry[]>('sick-leave-entries').then(value => value || []),
+          window.kv.get<VacationEntry[]>('vacation-entries').then(value => value || []),
+        ])
+      } catch (error) {
+        console.error('Kunne ikke tildele opgaven:', error)
+        toast.error(language === 'da' ? 'Tildelingen blev ikke gemt — prøv igen' : language === 'fi' ? 'Osoitusta ei tallennettu — yritä uudelleen' : language === 'sv' ? 'Tilldelningen sparades inte — försök igen' : 'The assignment was not saved — please try again')
+        return false
+      } finally {
+        setAssigning(false)
+      }
+    }
     
     const selectedEmployee = allEmployees.find(e => e.email === employeeEmailSel)
     if (!selectedEmployee) {
-      toast.error(language === 'da' ? 'Medarbejder ikke fundet' : language === 'fi' ? 'Työntekijää ei löytynyt' : 'Employee not found')
-      return
+      toast.error(language === 'da' ? 'Medarbejder ikke fundet' : language === 'fi' ? 'Työntekijää ei löytynyt' : language === 'sv' ? 'Medarbetaren hittades inte' : 'Employee not found')
+      return false
     }
 
     const employeeName = selectedEmployee.name
     const employeeEmail = selectedEmployee.email
-
-    const sickLeave = (await window.kv.get<SickLeaveEntry[]>('sick-leave-entries')) || []
-    const vacations = (await window.kv.get<VacationEntry[]>('vacation-entries')) || []
     
     const isSickToday = sickLeave.some(s => 
       s.userEmail === employeeEmail && 
@@ -502,13 +538,13 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
     })
 
     if (isSickToday) {
-      toast.error(language === 'da' ? `${employeeName} er syg i dag` : language === 'fi' ? `${employeeName} on sairas tänään` : `${employeeName} is sick today`)
-      return
+      toast.error(language === 'da' ? `${employeeName} er syg i dag` : language === 'fi' ? `${employeeName} on sairas tänään` : language === 'sv' ? `${employeeName} är sjuk idag` : `${employeeName} is sick today`)
+            return false
     }
 
     if (isOnVacationToday) {
-      toast.error(language === 'da' ? `${employeeName} har fri i dag` : language === 'fi' ? `${employeeName} on vapaa tänään` : `${employeeName} is off today`)
-      return
+      toast.error(language === 'da' ? `${employeeName} har fri i dag` : language === 'fi' ? `${employeeName} on vapaa tänään` : language === 'sv' ? `${employeeName} är ledig idag` : `${employeeName} is off today`)
+            return false
     }
 
     const alreadyAssigned = assignments.some(
@@ -516,8 +552,8 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
     )
 
     if (alreadyAssigned) {
-      toast.error(language === 'da' ? `${employeeName} har allerede denne opgave` : language === 'fi' ? `${employeeName}:llä on jo tämä tehtävä` : `${employeeName} already has this task`)
-      return
+      toast.error(language === 'da' ? `${employeeName} har allerede denne opgave` : language === 'fi' ? `${employeeName}:llä on jo tämä tehtävä` : language === 'sv' ? `${employeeName} har redan den här uppgiften` : `${employeeName} already has this task`)
+            return false
     }
 
     const newAssignment: ShiftAssignment = {
@@ -533,68 +569,62 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
     // gik lang tid foer noget skete. Genindlaesningen er unoedvendig: abonnementet
     // paa 'shift-assignments' (se effekten ovenfor) henter selv det friske billede.
     setTeamTasks(prev => prev.map(entry => entry.roleId === task.roleId
-      ? { ...entry, people: [...entry.people, { name: employeeName }] }
+      ? { ...entry, people: [...entry.people, { name: employeeName, email: employeeEmail }] }
       : entry))
-    toast.success(language === 'da' ? `${employeeName} tildelt ${task.roleName}` : language === 'fi' ? `${employeeName} ${task.roleName}:lle osoitettu` : `${employeeName} assigned to ${task.roleName}`)
+    toast.success(language === 'da' ? `${employeeName} tildelt ${task.roleName}` : language === 'fi' ? `${employeeName} ${task.roleName}:lle osoitettu` : language === 'sv' ? `${employeeName} tilldelad ${task.roleName}` : `${employeeName} assigned to ${task.roleName}`)
     setShowQuickAssignDialog(false)
     setSelectedTaskForAssign(null)
     setSelectedEmployeeForAssign('')
 
-    try {
-      await appendToKvArray<ShiftAssignment>('shift-assignments', [newAssignment])
-    } catch (error) {
+    void appendToKvArray<ShiftAssignment>('shift-assignments', [newAssignment]).catch(error => {
       console.error('Kunne ikke tildele opgaven:', error)
       setTeamTasks(prev => prev.map(entry => entry.roleId === task.roleId
         ? { ...entry, people: entry.people.filter(person => person.name !== employeeName) }
         : entry))
-      toast.error(language === 'da' ? 'Tildelingen blev ikke gemt — prøv igen' : language === 'fi' ? 'Osoitusta ei tallennettu — yritä uudelleen' : 'The assignment was not saved — please try again')
-    }
+      toast.error(language === 'da' ? 'Tildelingen blev ikke gemt — prøv igen' : language === 'fi' ? 'Osoitusta ei tallennettu — yritä uudelleen' : language === 'sv' ? 'Tilldelningen sparades inte — försök igen' : 'The assignment was not saved — please try again')
+    })
+    return true
   }
 
-  const handleAddOrUpdateComment = async () => {
+  const handleAddOrUpdateComment = () => {
     if (!selectedUserForComment) return
 
     const today = format(new Date(), 'yyyy-MM-dd')
 
-    // Bruger uden opgave: kommentaren hoerer ikke til en vagtplan-tildeling,
-    // saa den gemmes i det daglige bruger-note-lager i stedet.
-    if (!selectedUserForComment.roleId && selectedUserForComment.email) {
-      const noteKey = `${today}|${selectedUserForComment.email}`
-      const text = newComment.trim()
-      setTeamStatusNotes((current) => {
-        const next = { ...(current || {}) }
-        if (text) next[noteKey] = text
-        else delete next[noteKey]
-        return next
-      })
-      toast.success(language === 'da' ? 'Kommentar opdateret' : language === 'fi' ? 'Kommentti päivitetty' : 'Comment updated')
-      setShowCommentDialog(false)
-      setSelectedUserForComment(null)
-      setNewComment('')
+    const person = selectedUserForComment
+    const email = person.email || allEmployees.find(employee => employee.name === person.name)?.email
+      || Object.entries(usersForStatus || {}).find(([, user]) => user?.fullName === person.name)?.[0]
+    if (!email) {
+      toast.error(language === 'da' ? 'Medarbejderen blev ikke fundet' : language === 'fi' ? 'Työntekijää ei löytynyt' : language === 'sv' ? 'Medarbetaren hittades inte' : 'Employee not found')
       return
     }
-
-    const commentText = newComment || undefined
-    const person = selectedUserForComment
+    const commentText = newComment.trim() || undefined
+    const previousComment = person.currentComment
     // Vis kommentaren straks og luk dialogen; resten sker i baggrunden.
-    setTeamTasks(prev => prev.map(entry => entry.roleId === person.roleId
-      ? { ...entry, people: entry.people.map(p => p.name === person.name ? { ...p, comment: commentText } : p) }
-      : entry))
-    toast.success(language === 'da' ? 'Kommentar opdateret' : language === 'fi' ? 'Kommentti päivitetty' : 'Comment updated')
+    const showComment = (comment: string | undefined) => setTeamTasks(prev => prev.map(entry => ({
+      ...entry,
+      people: entry.people.map(p => (p.email === email || (!p.email && p.name === person.name)) ? { ...p, comment } : p),
+    })))
+    showComment(commentText)
+    const saveDayNote = setKvObjectField('team-status-notes', shiftDayNoteKey(today, email), commentText || '')
+    toast.success(language === 'da' ? 'Kommentar opdateret' : language === 'fi' ? 'Kommentti päivitetty' : language === 'sv' ? 'Kommentaren uppdaterad' : 'Comment updated')
     setShowCommentDialog(false)
     setSelectedUserForComment(null)
     setNewComment('')
 
-    try {
-      const assignments = (await window.kv.get<ShiftAssignment[]>('shift-assignments')) || []
-      const matching = assignments.filter(a => a.date === today && a.employeeName === person.name && a.roleId === person.roleId)
+    // The day note and the older comment on today's assignments are different keys: saved at the same time.
+    const saveAssignmentComments = (async () => {
+      const assignments = overviewLoaded ? shiftAssignments : ((await window.kv.get<ShiftAssignment[]>('shift-assignments')) || [])
+      const matching = assignments.filter(a => a.date === today && a.employeeId === email)
       if (matching.length > 0) {
         await upsertInKvArray<ShiftAssignment>('shift-assignments', matching.map(a => ({ ...a, comment: commentText })))
       }
-    } catch (error) {
+    })()
+    void Promise.all([saveDayNote, saveAssignmentComments]).catch(error => {
       console.error('Kunne ikke gemme kommentaren:', error)
-      toast.error(language === 'da' ? 'Kommentaren blev ikke gemt — prøv igen' : language === 'fi' ? 'Kommenttia ei tallennettu — yritä uudelleen' : 'The comment was not saved — please try again')
-    }
+      showComment(previousComment)
+      toast.error(language === 'da' ? 'Kommentaren blev ikke gemt — prøv igen' : language === 'fi' ? 'Kommenttia ei tallennettu — yritä uudelleen' : language === 'sv' ? 'Kommentaren sparades inte — försök igen' : 'The comment was not saved — please try again')
+    })
   }
 
   // Tildeler den valgte rolle til den valgte bruger fra Team status-widgeten.
@@ -602,6 +632,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
     if (!widgetAssignUser || !widgetAssignRoleId) return
     const role = (teamTasks || []).find((tk) => tk.roleId === widgetAssignRoleId)
     if (!role) return
+    // Waits only for the quick check (sick/off/already assigned); the assignment is saved in the background.
     await handleQuickAssign({ roleId: role.roleId, roleName: role.taskName }, widgetAssignUser.email)
     setShowWidgetAssignDialog(false)
     setWidgetAssignUser(null)
@@ -616,10 +647,10 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
     setTeamTasks(prev => prev.map(entry => entry.roleId === roleId
       ? { ...entry, people: entry.people.filter(person => person.name !== employeeName) }
       : entry))
-    toast.success(language === 'da' ? `${employeeName} fjernet fra opgaven` : language === 'fi' ? `${employeeName} poistettu tehtävästä` : `${employeeName} removed from task`)
+    toast.success(language === 'da' ? `${employeeName} fjernet fra opgaven` : language === 'fi' ? `${employeeName} poistettu tehtävästä` : language === 'sv' ? `${employeeName} borttagen från uppgiften` : `${employeeName} removed from task`)
 
     try {
-      const assignments = (await window.kv.get<ShiftAssignment[]>('shift-assignments')) || []
+      const assignments = overviewLoaded ? shiftAssignments : ((await window.kv.get<ShiftAssignment[]>('shift-assignments')) || [])
       const matchingIds = assignments.filter(
         a => a.date === today && a.employeeName === employeeName && a.roleId === roleId
       ).map(a => a.id)
@@ -627,7 +658,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
     } catch (error) {
       console.error('Kunne ikke fjerne tildelingen:', error)
       setTeamTasks(previous)
-      toast.error(language === 'da' ? 'Ændringen blev ikke gemt — prøv igen' : language === 'fi' ? 'Muutosta ei tallennettu — yritä uudelleen' : 'The change was not saved — please try again')
+      toast.error(language === 'da' ? 'Ændringen blev ikke gemt — prøv igen' : language === 'fi' ? 'Muutosta ei tallennettu — yritä uudelleen' : language === 'sv' ? 'Ändringen sparades inte — försök igen' : 'The change was not saved — please try again')
     }
   }
 
@@ -695,6 +726,15 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       available: true,
     },
     {
+      id: 'knowledge',
+      title: t.hub.modules.knowledge,
+      description: t.hub.descriptions.knowledge,
+      icon: <Brain size={48} weight="duotone" />,
+      color: 'oklch(0.50 0.13 320)',
+      gradient: '',
+      available: true,
+    },
+    {
       id: 'documents',
       title: t.hub.modules.documents,
       description: t.hub.descriptions.documents,
@@ -713,11 +753,31 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       available: true,
     },
     {
-      id: 'notebook',
-      title: t.hub.modules.notebook,
-      description: t.hub.descriptions.notebook,
-      icon: <Notebook size={48} weight="duotone" />,
-      color: 'oklch(0.51 0.115 218)',
+      id: 'games',
+      title: t.hub.modules.games,
+      description: t.hub.descriptions.games,
+      icon: <GameController size={48} weight="duotone" />,
+      color: 'oklch(0.53 0.165 350)',
+      gradient: '',
+      available: true,
+    },
+    // After Game Corner, so Game Corner keeps the bottom-left corner of the employees' grid.
+    {
+      id: 'links',
+      title: getLinksLabels(language).title,
+      description: getLinksLabels(language).hubDescription,
+      icon: <LinkSimple size={48} weight="duotone" />,
+      color: 'oklch(0.50 0.12 230)',
+      gradient: '',
+      available: true,
+    },
+    // Placed after Game Corner so the Knowledge Base tile does not push Game Corner out of its corner.
+    {
+      id: 'improvements',
+      title: getImprovementsLabels(language).title,
+      description: language === 'da' ? 'Forbedringsforslag p\u00e5 tv\u00e6rs af Supply Chain' : language === 'fi' ? 'Supply Chainin yhteiset parannusehdotukset' : language === 'sv' ? 'Gemensamma förbättringsförslag för Supply Chain' : 'Shared Supply Chain improvement suggestions',
+      icon: <Lightbulb size={48} weight="duotone" />,
+      color: 'oklch(0.49 0.125 155)',
       gradient: '',
       available: true,
     },
@@ -731,13 +791,23 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
       available: false,
     },
     {
-      id: 'games',
-      title: t.hub.modules.games,
-      description: t.hub.descriptions.games,
-      icon: <GameController size={48} weight="duotone" />,
-      color: 'oklch(0.53 0.165 350)',
+      id: 'notebook',
+      title: t.hub.modules.notebook,
+      description: t.hub.descriptions.notebook,
+      icon: <Notebook size={48} weight="duotone" />,
+      color: 'oklch(0.51 0.115 218)',
       gradient: '',
       available: true,
+    },
+    // TCD and TRR only: stock counting (Optælling) and, later, more warehouse tools.
+    {
+      id: 'warehouse',
+      title: getWarehouseLabels(language).title,
+      description: getWarehouseLabels(language).hubDescription,
+      icon: <Warehouse size={48} weight="duotone" />,
+      color: 'oklch(0.50 0.12 95)',
+      gradient: '',
+      available: isWarehouseTeam(teamId),
     },
     {
       id: 'manager',
@@ -751,8 +821,10 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
   ]
 
   const dashboardOptions: Array<{ id: DashboardWidgetId; label: string }> = [
+    { id: 'myWeek', label: language === 'da' ? 'Min uge' : language === 'fi' ? 'Oma viikkoni' : language === 'sv' ? 'Min vecka' : 'My week' },
     { id: 'teamTasks', label: t.hub.dashboard.widgets.teamTasks },
-    { id: 'teamStatus', label: language === 'da' ? 'Team status i dag' : language === 'fi' ? 'Tiimin tilanne tänään' : 'Team status today' },
+    { id: 'teamStatus', label: language === 'da' ? 'Team status i dag' : language === 'fi' ? 'Tiimin tilanne tänään' : language === 'sv' ? 'Teamstatus idag' : 'Team status today' },
+    { id: 'highFives', label: language === 'da' ? 'High-fives' : language === 'fi' ? 'High five -kiitokset' : language === 'sv' ? 'High fives' : 'High-fives' },
     { id: 'offToday', label: t.hub.dashboard.widgets.offToday },
     { id: 'todaysMeal', label: t.hub.dashboard.widgets.todaysMeal },
     { id: 'sickToday', label: t.hub.dashboard.widgets.sickToday },
@@ -796,14 +868,9 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
 
   return (
     <div className="min-h-screen relative overflow-hidden">
-      <div className="absolute top-6 right-6 left-6 z-20">
+      {/* In the Christmas season the lights, flags and hanging decorations fill the top ~70 px: the buttons sit below them. */}
+      <div className={cn('absolute right-6 left-6 z-20', christmas.active ? 'top-20' : 'top-6')}>
         <div className="hidden sm:flex flex-row items-center justify-end gap-4 pb-12">
-          {onChooseAccessView && (
-            <Button onClick={onChooseAccessView} size="lg" variant="outline" className="gap-2 bg-background/80">
-              <UsersThree size={20} weight="duotone" />
-              {language === 'da' ? 'Skift visning' : language === 'fi' ? 'Muuta näkymää' : 'Change view'}
-            </Button>
-          )}
           <motion.div
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
@@ -844,6 +911,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.3 }}
+            className="relative"
           >
             <Button
               onClick={() => setShowSickLeaveDialog(true)}
@@ -853,25 +921,14 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
               <FirstAidKit size={24} weight="duotone" />
               {t.shifts.sickLeave}
             </Button>
+            <NisseSpot spot="front-sick" pose="hang" className="absolute top-full -mt-[3px] left-4" />
           </motion.div>
           <motion.div
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.35 }}
           >
-            <NotificationCenter
-              userEmail={userEmail}
-              isAdminOrManager={isAdminOrManager}
-              emails={emails}
-              vacations={vacationsForBadge}
-              sickLeave={sickLeaveForBadge}
-              guides={guidesForAlerts}
-              guideReviewRequests={guideReviewRequests}
-              isGuideReviewer={isGuideReviewer}
-              seenVacationRequestIds={seenVacationRequestIds}
-              personalTodos={personalTodosForAlerts}
-              projects={projectsForAlerts}
-            />
+            <NotificationCenter />
           </motion.div>
           <motion.div
             initial={{ opacity: 0, x: 20 }}
@@ -880,6 +937,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
           >
             <UserProfile 
               userEmail={userEmail} 
+              displayName={currentUserName}
               onLogout={onLogout}
               showAdmin={isAdminOrManager}
               onAdminClick={() => onNavigate('admin')}
@@ -891,11 +949,6 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
 
         <div className="flex sm:hidden items-center justify-between gap-2 pb-12">
           <div className="flex items-center gap-2">
-            {onChooseAccessView && (
-              <Button onClick={onChooseAccessView} size="lg" variant="outline" aria-label={language === 'da' ? 'Skift visning' : language === 'fi' ? 'Muuta näkymää' : 'Change view'}>
-                <UsersThree size={20} weight="duotone" />
-              </Button>
-            )}
             <motion.div
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
@@ -960,18 +1013,44 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
         onOpenChange={setShowEmailNotifications}
         userEmail={userEmail}
       />
-      <div className="container mx-auto px-4 sm:px-6 pt-28 sm:pt-32 pb-12 sm:pb-20 max-w-7xl relative z-10">
+      <div className={cn('container mx-auto px-4 sm:px-6 pb-12 sm:pb-20 max-w-7xl relative z-10', christmas.active ? 'pt-40 sm:pt-44' : 'pt-28 sm:pt-32')}>
         <header className="mb-6 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
           <div className="flex items-baseline gap-3">
             <img src={nexiLogo} alt="Nexi" className="h-5 w-auto translate-y-[2px] dark:hidden" />
             <img src={nexiLogoWhite} alt="Nexi" className="h-5 w-auto translate-y-[2px] hidden dark:block" />
+            <span className="relative inline-flex self-center">
+              <HubMark size={24} decorative />
+              <NisseSpot spot="front-logo" pose="hang" className="absolute top-[21px] left-[4px]" />
+            </span>
             <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground">{teamName}</h1>
+            {activeHub && !activeHub.home && <Badge variant="outline" className="self-center">{hubLabels.managerHere}</Badge>}
           </div>
+          {hubs.length > 1 && (
+            <Button variant="outline" size="sm" onClick={() => requestHubSwitch()} className="gap-2 self-center">
+              <Buildings size={16} />
+              {hubLabels.switchHub}
+              {waitingElsewhere > 0 && <Badge className="bg-[oklch(0.55_0.16_25)] text-white px-1.5 py-0 text-xs">{waitingElsewhere}</Badge>}
+            </Button>
+          )}
         </header>
+
+        {christmas.active && christmas.season && (
+          <p className="-mt-3 mb-6 text-sm text-muted-foreground">
+            {christmasLabels(language).greeting(new Date().getHours())}
+            {currentUserName && !currentUserName.includes('@') ? `, ${currentUserName.split(' ')[0]}` : ''}. {seasonLine(christmas.season, language)}
+            {nisse.state.status === 'found' && (
+              <span className="block font-medium text-foreground/80">🎅 {nisseLabels(language).foundLine(nisse.state.finder.name, danishTime(nisse.state.finder.at))}</span>
+            )}
+            <NisseSpot spot="front-greeting" pose="stand" className="ml-2 align-middle" />
+          </p>
+        )}
 
         {/* Dagens tavle. Her - og kun her - faar maerkefarven lov at fylde. Resten
             af siden er papir og streger, saa det her er det, blikket lander paa. */}
-        <div className="mb-8 overflow-hidden rounded-lg bg-primary text-primary-foreground">
+        <div className="relative mb-8">
+        {christmas.active && <SnowCap seed={99} />}
+        <NisseSpot spot="front-board" pose="peek" className="absolute -top-[16px] right-[30%]" />
+        <div className={cn('overflow-hidden rounded-lg bg-primary text-primary-foreground', christmas.active && 'xmas-banner')}>
           <div className="flex flex-wrap items-end justify-between gap-6 px-6 py-6 sm:px-8 sm:py-7">
             <div>
               <p className="text-sm font-medium text-primary-foreground/90 first-letter:uppercase">
@@ -982,26 +1061,30 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
               </p>
             </div>
 
+            {christmas.active && christmas.season?.month === 12 && christmas.season.day <= 24 && (
+              <AdventDoor key={christmas.season.day} day={christmas.season.day} language={language} />
+            )}
+
             <div className="flex items-end gap-7 sm:gap-9">
               <div>
                 <p className="text-4xl sm:text-5xl font-light leading-none">{headcountWorking}</p>
                 <p className="mt-1.5 text-xs font-medium text-primary-foreground/90">
-                  {language === 'da' ? 'på arbejde' : language === 'fi' ? 'töissä' : 'at work'}
+                  {language === 'da' ? 'på arbejde' : language === 'fi' ? 'töissä' : language === 'sv' ? 'på jobbet' : 'at work'}
                 </p>
               </div>
               {awayToday.length > 0 && (
-                <div className="max-w-xs">
+                <div className="max-w-md">
                   <p className="text-xs font-medium text-primary-foreground/90">
-                    {language === 'da' ? 'Fraværende' : language === 'fi' ? 'Poissa' : 'Away'}
+                    {language === 'da' ? 'Fraværende' : language === 'fi' ? 'Poissa' : language === 'sv' ? 'Frånvarande' : 'Away'}
                   </p>
                   <p className="mt-1 text-sm leading-snug text-primary-foreground/90">
-                    {awayToday.slice(0, 4).join(', ')}
-                    {awayToday.length > 4 && ` +${awayToday.length - 4}`}
+                    {awayToday.join(', ')}
                   </p>
                 </div>
               )}
             </div>
           </div>
+        </div>
         </div>
 
         <AnnouncementsBoard userEmail={userEmail} userName={currentUserName} canPost={isAdminOrManager} />
@@ -1012,25 +1095,46 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
           transition={{ delay: 0.4, duration: 0.6 }}
           className="mb-10"
         >
-          <div className="flex justify-end mb-4">
-            <Button variant="outline" onClick={() => setShowDashboardEditor(true)} className="gap-2">
-              <Gear size={18} weight="duotone" />
-              {t.hub.dashboard.customize}
-            </Button>
+          <div className="flex justify-end items-end gap-2 mb-4">
+            <div className="relative">
+              <Button variant="outline" onClick={() => setShowDashboardEditor(true)} className="gap-2">
+                <Gear size={18} weight="duotone" />
+                {t.hub.dashboard.customize}
+              </Button>
+              <NisseSpot spot="front-customize" pose="peek" className="absolute -top-[16px] right-4" />
+            </div>
           </div>
+          {dashboardWidget('myWeek').visible && <MyWeekCard userEmail={userEmail} size={dashboardWidget('myWeek').size} className={dashboardSizeClass('myWeek')} />}
+
           {dashboardWidget('teamTasks').visible && <Card className={cn("p-5 md:p-7 bg-card hover:border-primary/40 transition-colors mb-4 md:mb-6", dashboardSizeClass('teamTasks'))}>
-            <div className="flex items-center gap-3 md:gap-4 mb-5 md:mb-7">
+            <div className="flex flex-wrap items-center gap-3 md:gap-4 mb-5 md:mb-7">
               <div className="p-2 md:p-2.5 rounded-md bg-secondary text-primary">
                 <Users size={24} weight="duotone" className="md:hidden" />
                 <Users size={28} weight="duotone" className="hidden md:block" />
               </div>
               <h3 className="text-base md:text-lg font-semibold text-foreground">{t.hub.overview.teamTasks || 'Team opgaver i dag'}</h3>
+              <div className="ml-auto flex items-center gap-2">
+                <Label htmlFor="team-tasks-only-assigned" className="text-xs md:text-sm text-muted-foreground cursor-pointer">
+                  {language === 'da' ? 'Kun opgaver med tildelte' : language === 'fi' ? 'Vain tehtävät, joihin on nimetty henkilö' : language === 'sv' ? 'Endast uppgifter med tilldelade' : 'Only assigned tasks'}
+                </Label>
+                <Switch
+                  id="team-tasks-only-assigned"
+                  checked={onlyAssignedTeamTasks}
+                  onCheckedChange={checked => updateDashboardWidget('teamTasks', { onlyAssigned: checked })}
+                />
+              </div>
             </div>
-            {teamTasks.length === 0 ? (
-              <p className="text-muted-foreground text-sm md:text-base text-center py-2">{t.hub.overview.noTasks}</p>
+            {visibleTeamTasks.length === 0 ? (
+              <p className="text-muted-foreground text-sm md:text-base text-center py-2">
+                {onlyAssignedTeamTasks && teamTasks.length > 0
+                  ? language === 'da' ? 'Ingen opgaver med tildelte personer i dag. Slå filteret fra for at se alle opgaver.'
+                    : language === 'fi' ? 'Tänään ei ole tehtäviä, joihin on nimetty henkilö. Poista suodatin nähdäksesi kaikki tehtävät.'
+                    : language === 'sv' ? 'Inga uppgifter har tilldelade personer idag. Stäng av filtret för att se alla uppgifter.' : 'No tasks have anyone assigned today. Turn off the filter to see all tasks.'
+                  : t.hub.overview.noTasks}
+              </p>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 md:gap-4">
-                {teamTasks.map((task, idx) => (
+                {visibleTeamTasks.map((task, idx) => (
                   <motion.div
                     key={idx}
                     initial={{ opacity: 0, y: 20 }}
@@ -1054,7 +1158,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                       <div className="flex flex-col gap-1.5">
                         <div className="flex items-center gap-2 text-attention py-1">
                           <Warning size={16} weight="fill" />
-                          <span className="text-xs md:text-sm font-semibold">{language === 'da' ? 'Ingen tildelt' : language === 'fi' ? 'Ketään ei ole määrätty.' : 'No one assigned'}</span>
+                          <span className="text-xs md:text-sm font-semibold">{language === 'da' ? 'Ingen tildelt' : language === 'fi' ? 'Ketään ei ole määrätty.' : language === 'sv' ? 'Ingen tilldelad' : 'No one assigned'}</span>
                         </div>
                         <Button
                           size="sm"
@@ -1066,7 +1170,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                           }}
                         >
                           <UserPlus size={14} weight="duotone" className="mr-1" />
-                          {language === 'da' ? 'Tildel' : language === 'fi' ? 'Valitse' : 'Assign'}
+                          {language === 'da' ? 'Tildel' : language === 'fi' ? 'Valitse' : language === 'sv' ? 'Tilldela' : 'Assign'}
                         </Button>
                       </div>
                     ) : (
@@ -1093,11 +1197,11 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                                 className="h-6 w-6 p-0 flex-shrink-0 hover:bg-primary/20 hover:text-primary"
                                 onClick={(e) => {
                                   e.stopPropagation()
-                                  setSelectedUserForComment({ name: person.name, roleId: task.roleId, currentComment: person.comment })
+                                  setSelectedUserForComment({ name: person.name, roleId: task.roleId, currentComment: person.comment, email: person.email })
                                   setNewComment(person.comment || '')
                                   setShowCommentDialog(true)
                                 }}
-                                title={language === 'da' ? 'Tilføj kommentar' : language === 'fi' ? 'Lisää kommentti' : 'Add comment'}
+                                title={language === 'da' ? 'Tilføj kommentar' : language === 'fi' ? 'Lisää kommentti' : language === 'sv' ? 'Lägg till kommentar' : 'Add comment'}
                               >
                                 <PencilSimple size={14} weight="bold" />
                               </Button>
@@ -1133,7 +1237,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                           }}
                         >
                           <UserPlus size={14} weight="duotone" className="mr-1" />
-                          {language === 'da' ? 'Tilføj' : language === 'fi' ? 'Lisää' : 'Add'}
+                          {language === 'da' ? 'Tilføj' : language === 'fi' ? 'Lisää' : language === 'sv' ? 'Lägg till' : 'Add'}
                         </Button>
                       </div>
                     )}
@@ -1150,18 +1254,18 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                 <UsersThree size={28} weight="duotone" className="hidden md:block" />
               </div>
               <h3 className="text-base md:text-lg font-semibold text-foreground">
-                {language === 'da' ? 'Team status i dag' : language === 'fi' ? 'Tiimin tilanne tänään' : 'Team status today'}
+                {language === 'da' ? 'Team status i dag' : language === 'fi' ? 'Tiimin tilanne tänään' : language === 'sv' ? 'Teamstatus idag' : 'Team status today'}
               </h3>
             </div>
             {teamStatusRows.length === 0 ? (
               <p className="text-muted-foreground text-sm md:text-base text-center py-2">
-                {language === 'da' ? 'Ingen brugere fundet' : language === 'fi' ? 'Ei käyttäjiä' : 'No users found'}
+                {language === 'da' ? 'Ingen brugere fundet' : language === 'fi' ? 'Ei käyttäjiä' : language === 'sv' ? 'Inga användare hittades' : 'No users found'}
               </p>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
                 {teamStatusRows.map((row) => {
                   const color = getEmployeeColorByEmail(row.email, colorOverrides)
-                  const comments = row.tasks.filter((tk) => tk.comment && tk.comment.trim())
+                  const comment = row.tasks.find((tk) => tk.comment?.trim())?.comment
                   const todayStr = format(new Date(), 'yyyy-MM-dd')
                   const userNote = row.status === 'available' ? (teamStatusNotes?.[`${todayStr}|${row.email}`] || '') : ''
                   return (
@@ -1184,10 +1288,10 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                             size="sm"
                             variant="ghost"
                             className="h-6 w-6 p-0 flex-shrink-0 hover:bg-primary/20 hover:text-primary"
-                            title={language === 'da' ? 'Tilføj/rediger kommentar' : language === 'fi' ? 'Lisää/muokkaa kommenttia' : 'Add/edit comment'}
+                            title={language === 'da' ? 'Tilføj/rediger kommentar' : language === 'fi' ? 'Lisää/muokkaa kommenttia' : language === 'sv' ? 'Lägg till/redigera kommentar' : 'Add/edit comment'}
                             onClick={() => {
                               const tk = row.tasks[0]
-                              setSelectedUserForComment({ name: row.name, roleId: tk.roleId, currentComment: tk.comment })
+                              setSelectedUserForComment({ name: row.name, roleId: tk.roleId, currentComment: tk.comment, email: row.email })
                               setNewComment(tk.comment || '')
                               setShowCommentDialog(true)
                             }}
@@ -1198,25 +1302,31 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                         {row.status === 'vacation' && (
                           <Badge className="bg-[oklch(0.52_0.11_255)] text-white text-[10px] gap-1">
                             <Calendar size={12} weight="fill" />
-                            {language === 'da' ? 'Ferie' : language === 'fi' ? 'Loma' : 'Vacation'}
+                            {language === 'da' ? 'Ferie' : language === 'fi' ? 'Loma' : language === 'sv' ? 'Semester' : 'Vacation'}
+                          </Badge>
+                        )}
+                        {row.status === 'parental' && (
+                          <Badge className="bg-[oklch(0.5_0.13_300)] text-white text-[10px] gap-1">
+                            <Calendar size={12} weight="fill" />
+                            {t.parentalLeave.badge}
                           </Badge>
                         )}
                         {row.status === 'sick' && (
                           <Badge className="bg-[oklch(0.55_0.16_25)] text-white text-[10px] gap-1">
                             <FirstAidKit size={12} weight="fill" />
-                            {language === 'da' ? 'Syg' : language === 'fi' ? 'Sairas' : 'Sick'}
+                            {language === 'da' ? 'Syg' : language === 'fi' ? 'Sairas' : language === 'sv' ? 'Sjuk' : 'Sick'}
                           </Badge>
                         )}
                         {row.status === 'available' && (
                           <>
                             <Badge variant="secondary" className="text-[10px]">
-                              {language === 'da' ? 'Ingen opgave' : language === 'fi' ? 'Ei tehtävää' : 'No task'}
+                              {language === 'da' ? 'Ingen opgave' : language === 'fi' ? 'Ei tehtävää' : language === 'sv' ? 'Ingen uppgift' : 'No task'}
                             </Badge>
                             <Button
                               size="sm"
                               variant="ghost"
                               className="h-6 w-6 p-0 flex-shrink-0 hover:bg-primary/20 hover:text-primary"
-                              title={language === 'da' ? 'Tilføj/rediger kommentar' : language === 'fi' ? 'Lisää/muokkaa kommenttia' : 'Add/edit comment'}
+                              title={language === 'da' ? 'Tilføj/rediger kommentar' : language === 'fi' ? 'Lisää/muokkaa kommenttia' : language === 'sv' ? 'Lägg till/redigera kommentar' : 'Add/edit comment'}
                               onClick={() => {
                                 setSelectedUserForComment({ name: row.name, roleId: '', currentComment: userNote, email: row.email })
                                 setNewComment(userNote)
@@ -1228,6 +1338,9 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                           </>
                         )}
                       </div>
+                      {(row.status === 'vacation' || row.status === 'parental') && backLabel(row.backDate) && (
+                        <p className="text-xs text-muted-foreground">{backLabel(row.backDate)}</p>
+                      )}
                       {row.status === 'working' && row.tasks.length > 0 && (
                         <div className="flex flex-wrap gap-1">
                           {row.tasks.map((tk, i) => (
@@ -1237,12 +1350,12 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                           ))}
                         </div>
                       )}
-                      {comments.map((tk, i) => (
-                        <div key={`comment-${i}`} className="flex items-start gap-1.5 px-2 py-1 rounded bg-muted text-xs text-muted-foreground italic">
+                      {comment && (
+                        <div className="flex items-start gap-1.5 px-2 py-1 rounded bg-muted text-xs text-muted-foreground italic">
                           <ChatText size={13} weight="fill" className="text-primary flex-shrink-0 mt-0.5" />
-                          <span className="break-words">{tk.comment}</span>
+                          <span className="break-words">{comment}</span>
                         </div>
-                      ))}
+                      )}
                       {userNote && (
                         <div className="flex items-start gap-1.5 px-2 py-1 rounded bg-muted text-xs text-muted-foreground italic">
                           <ChatText size={13} weight="fill" className="text-primary flex-shrink-0 mt-0.5" />
@@ -1261,7 +1374,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                           }}
                         >
                           <UserPlus size={14} weight="duotone" className="mr-1" />
-                          {language === 'da' ? 'Tilføj opgave' : language === 'fi' ? 'Lisää tehtävä' : 'Add task'}
+                          {language === 'da' ? 'Tilføj opgave' : language === 'fi' ? 'Lisää tehtävä' : language === 'sv' ? 'Lägg till uppgift' : 'Add task'}
                         </Button>
                       )}
                     </motion.div>
@@ -1270,6 +1383,8 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
               </div>
             )}
           </Card>}
+
+          {dashboardWidget('highFives').visible && <HighFivesCard userEmail={userEmail} className={dashboardSizeClass('highFives')} />}
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
             {dashboardWidget('offToday').visible && <Card className={cn("p-4 md:p-5 bg-card", dashboardSizeClass('offToday'))}>
@@ -1283,12 +1398,15 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
               {peopleOff.length === 0 ? (
                 <p className="text-muted-foreground text-xs md:text-sm py-1">{t.hub.overview.noOneOff}</p>
               ) : (
-                <div className="flex flex-col gap-1.5">
+                <div className="grid grid-cols-2 gap-x-3 gap-y-2">
                   {peopleOff.map((person, idx) => (
-                    <div key={idx} className="flex items-center gap-2">
-                      <User size={14} className="text-muted-foreground md:hidden" />
-                      <User size={16} className="text-muted-foreground hidden md:block" />
-                      <span className="text-xs md:text-sm text-foreground">{person.name}</span>
+                    <div key={idx} className="flex min-w-0 items-start gap-2">
+                      <User size={14} className="mt-0.5 shrink-0 text-muted-foreground md:hidden" />
+                      <User size={16} className="mt-0.5 shrink-0 text-muted-foreground hidden md:block" />
+                      <span className="min-w-0 break-words text-xs md:text-sm text-foreground">
+                        {person.name}{person.kind === 'parental' && <span className="text-muted-foreground"> ({parentalSuffix})</span>}
+                        {backLabel(person.backDate) && <span className="block text-[11px] text-muted-foreground">{backLabel(person.backDate)}</span>}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -1321,12 +1439,12 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
               {peopleSick.length === 0 ? (
                 <p className="text-muted-foreground text-xs md:text-sm py-1">{t.hub.overview.noOneSick}</p>
               ) : (
-                <div className="flex flex-col gap-1.5">
+                <div className="grid grid-cols-2 gap-x-3 gap-y-2">
                   {peopleSick.map((person, idx) => (
-                    <div key={idx} className="flex items-center gap-2">
-                      <User size={14} className="text-muted-foreground md:hidden" />
-                      <User size={16} className="text-muted-foreground hidden md:block" />
-                      <span className="text-xs md:text-sm text-foreground">{person}</span>
+                    <div key={idx} className="flex min-w-0 items-start gap-2">
+                      <User size={14} className="mt-0.5 shrink-0 text-muted-foreground md:hidden" />
+                      <User size={16} className="mt-0.5 shrink-0 text-muted-foreground hidden md:block" />
+                      <span className="min-w-0 break-words text-xs md:text-sm text-foreground">{person}</span>
                     </div>
                   ))}
                 </div>
@@ -1348,12 +1466,15 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                 {otherTeamsOff.length === 0 ? (
                   <p className="text-muted-foreground text-xs md:text-sm py-1">{t.hub.overview.noOneOffSupplyChain}</p>
                 ) : (
-                  <div className="flex flex-col gap-1.5">
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-2">
                     {otherTeamsOff.map((person, idx) => (
-                      <div key={idx} className="flex items-center gap-2">
-                        <User size={14} className="text-muted-foreground md:hidden" />
-                        <User size={16} className="text-muted-foreground hidden md:block" />
-                        <span className="text-xs md:text-sm text-foreground">{person.name} <span className="text-muted-foreground">({person.teamCode})</span></span>
+                      <div key={idx} className="flex min-w-0 items-start gap-2">
+                        <User size={14} className="mt-0.5 shrink-0 text-muted-foreground md:hidden" />
+                        <User size={16} className="mt-0.5 shrink-0 text-muted-foreground hidden md:block" />
+                        <span className="min-w-0 break-words text-xs md:text-sm text-foreground">
+                          {person.name}{person.kind === 'parental' && <span className="text-muted-foreground"> ({parentalSuffix})</span>} <span className="text-muted-foreground">({person.teamCode})</span>
+                          {backLabel(person.backDate) && <span className="block text-[11px] text-muted-foreground">{backLabel(person.backDate)}</span>}
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -1371,12 +1492,12 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                 {otherTeamsHomeOffice.length === 0 ? (
                   <p className="text-muted-foreground text-xs md:text-sm py-1">{t.hub.overview.noOneHomeOfficeSupplyChain}</p>
                 ) : (
-                  <div className="flex flex-col gap-1.5">
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-2">
                     {otherTeamsHomeOffice.map((person, idx) => (
-                      <div key={idx} className="flex items-center gap-2">
-                        <User size={14} className="text-muted-foreground md:hidden" />
-                        <User size={16} className="text-muted-foreground hidden md:block" />
-                        <span className="text-xs md:text-sm text-foreground">{person.name} <span className="text-muted-foreground">({person.teamCode})</span></span>
+                      <div key={idx} className="flex min-w-0 items-start gap-2">
+                        <User size={14} className="mt-0.5 shrink-0 text-muted-foreground md:hidden" />
+                        <User size={16} className="mt-0.5 shrink-0 text-muted-foreground hidden md:block" />
+                        <span className="min-w-0 break-words text-xs md:text-sm text-foreground">{person.name} <span className="text-muted-foreground">({person.teamCode})</span></span>
                       </div>
                     ))}
                   </div>
@@ -1394,12 +1515,12 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                 {otherTeamsSick.length === 0 ? (
                   <p className="text-muted-foreground text-xs md:text-sm py-1">{t.hub.overview.noOneSickSupplyChain}</p>
                 ) : (
-                  <div className="flex flex-col gap-1.5">
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-2">
                     {otherTeamsSick.map((person, idx) => (
-                      <div key={idx} className="flex items-center gap-2">
-                        <User size={14} className="text-muted-foreground md:hidden" />
-                        <User size={16} className="text-muted-foreground hidden md:block" />
-                        <span className="text-xs md:text-sm text-foreground">{person.name} <span className="text-muted-foreground">({person.teamCode})</span></span>
+                      <div key={idx} className="flex min-w-0 items-start gap-2">
+                        <User size={14} className="mt-0.5 shrink-0 text-muted-foreground md:hidden" />
+                        <User size={16} className="mt-0.5 shrink-0 text-muted-foreground hidden md:block" />
+                        <span className="min-w-0 break-words text-xs md:text-sm text-foreground">{person.name} <span className="text-muted-foreground">({person.teamCode})</span></span>
                       </div>
                     ))}
                   </div>
@@ -1410,12 +1531,14 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
         </motion.div>
 
         <motion.div 
-          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 auto-rows-fr gap-4"
+          className={cn('grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 auto-rows-fr gap-4', christmas.active && 'gap-y-8 pt-3')}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.5, duration: 0.6 }}
         >
           {modules.filter(module => module.available).map((module, index) => {
+            const hasBadge = (module.id === 'email' && unreadInboxCount > 0) || (module.id === 'manager' && pendingVacationRequests > 0)
+              || (module.id === 'guides' && pendingGuideReviews > 0) || (module.id === 'knowledge' && pendingKnowledgeReviews > 0)
             return (
               <motion.div
                 key={module.id}
@@ -1425,13 +1548,17 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                 transition={{ delay: 0.5 + index * 0.05, duration: 0.4 }}
               >
                 <motion.div
-                  className="h-full"
+                  className="xmas-tile relative h-full"
                   initial={cardAnimation.initial}
                   whileHover={cardAnimation.hover}
                   whileTap={cardAnimation.tap}
                   transition={cardAnimation.transition}
                 >
+                  {/* Something hangs on about two in five cards, never where a badge sits in the corner. */}
+                  {christmas.active && <SnowCap seed={index + 1} ornament={hasBadge ? null : cardOrnament(index * 13 + 5)} />}
+                  {module.id === 'calendar' && <NisseSpot spot="front-tile" pose="peek" className="absolute -top-[16px] right-8" />}
                   <Card
+                    snow={false}
                     className="module-tile relative overflow-hidden py-0 transition-colors duration-200 group h-full flex flex-col cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                     style={{ ['--module-color' as string]: module.color }}
                     onClick={() => handleModuleClick(module.id)}
@@ -1454,12 +1581,17 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
                     )}
                     {module.id === 'manager' && pendingVacationRequests > 0 && (
                       <Badge className="absolute top-4 right-4 md:top-5 md:right-5 z-10 bg-[oklch(0.55_0.16_25)] text-white px-3 py-1.5 md:px-4 md:py-2 text-xs max-w-[calc(100%-2rem)] text-center whitespace-nowrap">
-                        {pendingVacationRequests} {pendingVacationRequests > 1 ? (language === 'da' ? 'anmodninger' : language === 'fi' ? 'pyynnöt' : 'requests') : (language === 'da' ? 'anmodning' : language === 'fi' ? 'pyyntö' : 'request')}
+                        {pendingVacationRequests} {pendingVacationRequests > 1 ? (language === 'da' ? 'anmodninger' : language === 'fi' ? 'pyynnöt' : language === 'sv' ? 'förfrågningar' : 'requests') : (language === 'da' ? 'anmodning' : language === 'fi' ? 'pyyntö' : language === 'sv' ? 'förfrågan' : 'request')}
                       </Badge>
                     )}
                     {module.id === 'guides' && pendingGuideReviews > 0 && (
                       <Badge className="absolute top-4 right-4 md:top-5 md:right-5 z-10 bg-amber-600 text-white px-3 py-1.5 md:px-4 md:py-2 text-xs max-w-[calc(100%-2rem)] text-center whitespace-nowrap">
-                        {pendingGuideReviews} {pendingGuideReviews === 1 ? (language === 'da' ? 'guide til review' : language === 'fi' ? 'opas tarkistettavana' : 'guide to review') : (language === 'da' ? 'guides til review' : language === 'fi' ? 'opasta tarkistettavana' : 'guides to review')}
+                        {pendingGuideReviews} {pendingGuideReviews === 1 ? (language === 'da' ? 'guide til review' : language === 'fi' ? 'opas tarkistettavana' : language === 'sv' ? 'guide att granska' : 'guide to review') : (language === 'da' ? 'guides til review' : language === 'fi' ? 'opasta tarkistettavana' : language === 'sv' ? 'guider att granska' : 'guides to review')}
+                      </Badge>
+                    )}
+                    {module.id === 'knowledge' && pendingKnowledgeReviews > 0 && (
+                      <Badge className="absolute top-4 right-4 md:top-5 md:right-5 z-10 bg-amber-600 text-white px-3 py-1.5 md:px-4 md:py-2 text-xs max-w-[calc(100%-2rem)] text-center whitespace-nowrap">
+                        {pendingKnowledgeReviews} {pendingKnowledgeReviews === 1 ? (language === 'da' ? 'artikel til review' : language === 'fi' ? 'artikkeli tarkistettavana' : language === 'sv' ? 'artikel att granska' : 'article to review') : (language === 'da' ? 'artikler til review' : language === 'fi' ? 'artikkelia tarkistettavana' : language === 'sv' ? 'artiklar att granska' : 'articles to review')}
                       </Badge>
                     )}
                     <motion.div 
@@ -1505,10 +1637,14 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
             )
           })}
         </motion.div>
+        {/* Only seen by scrolling all the way down. */}
+        <div className="mt-16 flex justify-end pr-6 empty:hidden">
+          <NisseSpot spot="front-bottom" pose="stand" />
+        </div>
       </div>
 
       {appVersion && (
-        <div className="fixed bottom-3 left-3 z-10 text-[11px] font-medium text-muted-foreground select-none pointer-events-none">
+        <div className={cn('fixed bottom-3 left-3 z-20 text-[11px] font-medium text-muted-foreground select-none pointer-events-none', christmas.active && 'rounded bg-background/85 px-1.5 py-0.5')}>
           v{appVersion}
         </div>
       )}
@@ -1543,7 +1679,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
             })}
           </div>
           <DialogFooter className="sm:justify-between gap-2">
-            <Button variant="outline" onClick={() => setDashboardPreferences(DEFAULT_DASHBOARD_PREFERENCES)}>{t.hub.dashboard.reset}</Button>
+            <Button variant="outline" onClick={() => { void setDashboardPreferences(DEFAULT_DASHBOARD_PREFERENCES) }}>{t.hub.dashboard.reset}</Button>
             <Button onClick={() => setShowDashboardEditor(false)}>{t.hub.dashboard.done}</Button>
           </DialogFooter>
         </DialogContent>
@@ -1553,7 +1689,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
         <DialogContent className="sm:max-w-[450px]">
           <DialogHeader className="text-center">
             <DialogTitle className="text-xl font-bold text-center">
-              {language === 'da' ? 'Tildel opgave' : language === 'fi' ? 'Määrittele tehtävä' : 'Assign task'}
+              {language === 'da' ? 'Tildel opgave' : language === 'fi' ? 'Määrittele tehtävä' : language === 'sv' ? 'Tilldela uppgift' : 'Assign task'}
               {selectedTaskForAssign && (
                 <span className="block text-sm text-muted-foreground font-normal mt-1">
                   {selectedTaskForAssign.roleName}
@@ -1564,11 +1700,11 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label htmlFor="employee-select">
-                {language === 'da' ? 'Vælg medarbejder' : language === 'fi' ? 'Valitse työntekijä' : 'Select employee'}
+                {language === 'da' ? 'Vælg medarbejder' : language === 'fi' ? 'Valitse työntekijä' : language === 'sv' ? 'Välj medarbetare' : 'Select employee'}
               </Label>
               <Select value={selectedEmployeeForAssign} onValueChange={setSelectedEmployeeForAssign}>
                 <SelectTrigger id="employee-select">
-                  <SelectValue placeholder={language === 'da' ? 'Vælg medarbejder...' : language === 'fi' ? 'Valitse työntekijä...' : 'Select employee...'} />
+                  <SelectValue placeholder={language === 'da' ? 'Vælg medarbejder...' : language === 'fi' ? 'Valitse työntekijä...' : language === 'sv' ? 'Välj medarbetare...' : 'Select employee...'} />
                 </SelectTrigger>
                 <SelectContent>
                   {allEmployees.map((employee) => (
@@ -1582,13 +1718,13 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowQuickAssignDialog(false)}>
-              {language === 'da' ? 'Annuller' : language === 'fi' ? 'Peruuta' : 'Cancel'}
+              {language === 'da' ? 'Annuller' : language === 'fi' ? 'Peruuta' : language === 'sv' ? 'Avbryt' : 'Cancel'}
             </Button>
             <Button
               onClick={() => handleQuickAssign()}
-              
+              loading={assigning}
             >
-              {language === 'da' ? 'Tildel' : language === 'fi' ? 'Valitse' : 'Assign'}
+              {language === 'da' ? 'Tildel' : language === 'fi' ? 'Valitse' : language === 'sv' ? 'Tilldela' : 'Assign'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1598,7 +1734,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
         <DialogContent className="sm:max-w-[450px]">
           <DialogHeader className="text-center">
             <DialogTitle className="text-xl font-bold text-center">
-              {language === 'da' ? 'Tilføj opgave' : language === 'fi' ? 'Lisää tehtävä' : 'Add task'}
+              {language === 'da' ? 'Tilføj opgave' : language === 'fi' ? 'Lisää tehtävä' : language === 'sv' ? 'Lägg till uppgift' : 'Add task'}
               {widgetAssignUser && (
                 <span className="block text-sm text-muted-foreground font-normal mt-1">{widgetAssignUser.name}</span>
               )}
@@ -1606,10 +1742,10 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="widget-role-select">{language === 'da' ? 'Vælg opgave' : language === 'fi' ? 'Valitse tehtävä' : 'Select task'}</Label>
+              <Label htmlFor="widget-role-select">{language === 'da' ? 'Vælg opgave' : language === 'fi' ? 'Valitse tehtävä' : language === 'sv' ? 'Välj uppgift' : 'Select task'}</Label>
               <Select value={widgetAssignRoleId} onValueChange={setWidgetAssignRoleId}>
                 <SelectTrigger id="widget-role-select">
-                  <SelectValue placeholder={language === 'da' ? 'Vælg opgave...' : language === 'fi' ? 'Valitse tehtävä...' : 'Select task...'} />
+                  <SelectValue placeholder={language === 'da' ? 'Vælg opgave...' : language === 'fi' ? 'Valitse tehtävä...' : language === 'sv' ? 'Välj uppgift...' : 'Select task...'} />
                 </SelectTrigger>
                 <SelectContent>
                   {(teamTasks || []).map((tk) => (
@@ -1621,14 +1757,14 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowWidgetAssignDialog(false)}>
-              {language === 'da' ? 'Annuller' : language === 'fi' ? 'Peruuta' : 'Cancel'}
+              {language === 'da' ? 'Annuller' : language === 'fi' ? 'Peruuta' : language === 'sv' ? 'Avbryt' : 'Cancel'}
             </Button>
             <Button
               onClick={handleWidgetAssign}
               disabled={!widgetAssignRoleId}
-              
+              loading={assigning}
             >
-              {language === 'da' ? 'Tildel' : language === 'fi' ? 'Valitse' : 'Assign'}
+              {language === 'da' ? 'Tildel' : language === 'fi' ? 'Valitse' : language === 'sv' ? 'Tilldela' : 'Assign'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1638,7 +1774,7 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader className="text-center">
             <DialogTitle className="text-xl font-bold text-center">
-              {language === 'da' ? 'Tilføj eller rediger kommentar' : language === 'fi' ? 'Lisää tai muokkaa kommenttia' : 'Add or edit comment'}
+              {language === 'da' ? 'Tilføj eller rediger kommentar' : language === 'fi' ? 'Lisää tai muokkaa kommenttia' : language === 'sv' ? 'Lägg till eller redigera kommentar' : 'Add or edit comment'}
               {selectedUserForComment && (
                 <span className="block text-sm text-muted-foreground font-normal mt-1">
                   {selectedUserForComment.name}
@@ -1649,20 +1785,20 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label htmlFor="comment-text">
-                {language === 'da' ? 'Kommentar' : language === 'fi' ? 'Huomautus' : 'Comment'}
+                {language === 'da' ? 'Kommentar' : language === 'fi' ? 'Huomautus' : language === 'sv' ? 'Kommentar' : 'Comment'}
               </Label>
               <Textarea
                 id="comment-text"
                 value={newComment}
                 onChange={(e) => setNewComment(e.target.value)}
-                placeholder={language === 'da' ? 'Skriv en kommentar...' : language === 'fi' ? 'Kirjoita kommentti...' : 'Write a comment...'}
+                placeholder={language === 'da' ? 'Skriv en kommentar...' : language === 'fi' ? 'Kirjoita kommentti...' : language === 'sv' ? 'Skriv en kommentar...' : 'Write a comment...'}
                 rows={4}
                 className="resize-none"
               />
               <p className="text-xs text-muted-foreground">
                 {language === 'da' 
                   ? 'Tilføj information som fx "går tidligt" eller "kommer sent"' 
-                  : language === 'fi' ? 'Lisää tietoa, kuten "lähteminen aikaisin" tai "meneminen myöhään"' : 'Add information like "leaving early" or "arriving late"'
+                  : language === 'fi' ? 'Lisää tietoa, kuten "lähteminen aikaisin" tai "meneminen myöhään"' : language === 'sv' ? 'Lägg till information som "går tidigt" eller "kommer sent"' : 'Add information like "leaving early" or "arriving late"'
                 }
               </p>
             </div>
@@ -1673,13 +1809,13 @@ export function Hub({ onNavigate, onLogout, userEmail, onChooseAccessView }: Hub
               setSelectedUserForComment(null)
               setNewComment('')
             }}>
-              {language === 'da' ? 'Annuller' : language === 'fi' ? 'Peruuta' : 'Cancel'}
+              {language === 'da' ? 'Annuller' : language === 'fi' ? 'Peruuta' : language === 'sv' ? 'Avbryt' : 'Cancel'}
             </Button>
             <Button
               onClick={handleAddOrUpdateComment}
               
             >
-              {language === 'da' ? 'Gem' : language === 'fi' ? 'Tallenna' : 'Save'}
+              {language === 'da' ? 'Gem' : language === 'fi' ? 'Tallenna' : language === 'sv' ? 'Spara' : 'Save'}
             </Button>
           </DialogFooter>
         </DialogContent>

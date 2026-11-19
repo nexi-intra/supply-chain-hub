@@ -18,19 +18,33 @@ export interface TeamAdministration extends RegisteredTeam {
   managers: TeamManagerSummary[]
 }
 
-export interface AccessView {
-  viewId: string
-  name: string
-  teamIds: string[]
-  userEmails: string[]
-  createdAt: string
-  updatedAt: string
-}
-
 export interface RegistryUserOption {
   email: string
   fullName: string
   primaryTeamId: string
+}
+
+export interface ManagerAccessEntry {
+  email: string
+  fullName: string
+  homeTeamId: string | null
+  teamIds: string[]
+  updatedAt: string | null
+}
+
+/** A hub the signed-in person may open: the home team or a team where the creator made them manager. */
+export interface MyHub extends RegisteredTeam {
+  home: boolean
+  manager: boolean
+  /** Pending user and vacation approvals waiting for this person as manager. */
+  pending: number
+  active: boolean
+}
+
+export interface ExtraManager {
+  email: string
+  fullName: string
+  homeTeam: { teamId: string; name: string; abbreviation: string } | null
 }
 
 export interface ElectronRegistryApi {
@@ -43,16 +57,17 @@ export interface ElectronRegistryApi {
   createTeam(team: { teamId: string; name: string; folderName: string }): Promise<string>
   listTeamAdministration(requesterEmail: string): Promise<TeamAdministration[]>
   updateTeam(requesterEmail: string, teamId: string, input: { name: string; abbreviation: string }): Promise<RegisteredTeam>
-  listAccessViews(requesterEmail: string): Promise<AccessView[]>
-  listMyAccessViews(email: string): Promise<AccessView[]>
-  createAccessView(requesterEmail: string, input: { name: string; teamIds: string[]; userEmails: string[] }): Promise<AccessView>
-  updateAccessView(requesterEmail: string, viewId: string, input: { name: string; teamIds: string[]; userEmails: string[] }): Promise<AccessView>
-  deleteAccessView(requesterEmail: string, viewId: string): Promise<boolean>
   listUserOptions(requesterEmail: string): Promise<RegistryUserOption[]>
-  readAccessViewKey<T = unknown>(email: string, viewId: string, teamId: string, key: string): Promise<T>
+  listManagerAccess(): Promise<ManagerAccessEntry[]>
+  setManagerAccess(email: string, teamIds: string[]): Promise<{ email: string; teamIds: string[] }>
+  listMyHubs(): Promise<MyHub[]>
+  listExtraManagers(): Promise<ExtraManager[]>
+  onHubsChanged(callback: () => void): () => void
   getCurrentTeam(): Promise<RegisteredTeam | null>
   readTeamKey<T = unknown>(folderName: string, key: string): Promise<T>
   readTeamKeys(folderName: string, keys: string[]): Promise<unknown[]>
   readTeamsKeys(requests: Array<{ folderName: string; keys: string[] }>): Promise<unknown[][]>
+  readSharedGuideFile<T = unknown>(kind: 'guides' | 'knowledge', guideId: string, key: string): Promise<T>
   submitGuideAccessRequest<T = unknown>(folderName: string, request: T): Promise<T[]>
+  submitKnowledgeAccessRequest<T = unknown>(folderName: string, request: T): Promise<T[]>
 }

@@ -1,0 +1,778 @@
+/* Word-Puzzle: the game in the shared board-game room (src/components/boardgame) and its lobby, the
+   arcade cabinet in walnut and brass. The board is a walnut-framed premium board with maple tiles; the
+   room, the table, the paper panels and Hubert come from boardgame.css.
+   Colours that dialogs, the drag ghost or the lobby need sit on :root so portals inherit them. */
+
+@import '@fontsource-variable/ibm-plex-sans/wdth.css';
+
+:root {
+  --wp-display: 'IBM Plex Sans Variable', var(--font-sans), sans-serif;
+  --wp-brass: #c9a24b;
+  --wp-brass-hi: #ecca7a;
+  --wp-brass-lo: #94722a;
+  --wp-tile-1: #f6ead0;
+  --wp-tile-2: #e6d2a6;
+  --wp-tile-edge: #b89259;
+  --wp-tile-ink: #2a1c10;
+  --wp-blank-ink: #9a3b2c;
+  --wp-amber: #f0b847;
+
+  --wp-field: #ebe2cc;
+  --wp-groove: rgba(74, 46, 24, 0.55);
+  --wp-tw: #8c2f2b;
+  --wp-dw: #c98e7e;
+  --wp-tl: #2f4d6b;
+  --wp-dl: #9db5c0;
+  --wp-grain: image-set(url('../../assets/multiplayer/grain-1x.png') 1x, url('../../assets/multiplayer/grain-1.25x.png') 1.25x, url('../../assets/multiplayer/grain-1.5x.png') 1.5x, url('../../assets/multiplayer/grain-2x.png') 2x);
+}
+
+.dark {
+  --wp-field: #ddd1b7;
+  --wp-tw: #7f2a26;
+  --wp-dw: #b98172;
+  --wp-tl: #2a4560;
+  --wp-dl: #8ea6b1;
+}
+
+/* ------------------------------------------------------------------ tiles */
+
+.wp-tile {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  border-radius: 12%;
+  background:
+    radial-gradient(120% 90% at 28% 12%, rgba(255, 255, 255, 0.6), transparent 55%),
+    repeating-linear-gradient(97deg, rgba(150, 105, 50, 0.05) 0 1px, transparent 1px 5px),
+    linear-gradient(160deg, var(--wp-tile-1) 0%, var(--wp-tile-2) 100%);
+  color: var(--wp-tile-ink);
+  box-shadow:
+    inset 0 0.05em 0 rgba(255, 255, 255, 0.95),
+    inset 0.04em 0 0 rgba(255, 255, 255, 0.5),
+    inset 0 -0.07em 0.04em rgba(120, 82, 32, 0.35),
+    inset -0.04em 0 0.03em rgba(120, 82, 32, 0.2),
+    0 0.05em 0 var(--wp-tile-edge),
+    0 0.11em 0.08em rgba(40, 20, 4, 0.4),
+    0 0.2em 0.3em -0.05em rgba(40, 20, 4, 0.35);
+  font-family: var(--wp-display);
+  font-stretch: 84%;
+  font-weight: 650;
+  line-height: 1;
+  font-size: calc(var(--wp-tile-size, var(--wp-sq, 2rem)) * 0.6);
+  user-select: none;
+}
+
+.wp-tile__letter { transform: translate(-5%, -3%); text-shadow: 0 0.03em 0 rgba(255, 255, 255, 0.6); }
+
+.wp-tile__points {
+  position: absolute;
+  right: 0.13em;
+  bottom: 0.09em;
+  font-family: var(--wp-display);
+  font-stretch: 90%;
+  font-size: 0.34em;
+  font-weight: 650;
+  opacity: 0.78;
+}
+
+.wp-tile[data-blank] .wp-tile__letter { color: var(--wp-blank-ink); }
+
+.wp-tile[data-state="draft"] {
+  transform: translateY(-5%);
+  box-shadow:
+    0 0 0 0.065em var(--wp-amber),
+    0 0.22em 0.35em rgba(20, 8, 0, 0.55),
+    inset 0 0.05em 0 rgba(255, 255, 255, 0.95);
+  cursor: grab;
+}
+
+.wp-tile[data-state="pending"] {
+  box-shadow: 0 0 0 0.065em var(--wp-amber), 0 0 0.5em 0.08em rgba(240, 184, 71, 0.6), inset 0 0.05em 0 rgba(255, 255, 255, 0.95);
+  animation: wp-pending 2.2s ease-in-out infinite;
+}
+
+.wp-tile[data-state="selected"] {
+  transform: translateY(-16%);
+  box-shadow: 0 0 0 0.065em var(--wp-amber), 0 0.3em 0.4em rgba(20, 8, 0, 0.5), inset 0 0.05em 0 rgba(255, 255, 255, 0.95);
+}
+
+.wp-tile[data-state="swap"] {
+  transform: translateY(-16%) rotate(-3deg);
+  box-shadow: 0 0 0 0.065em #74c7b3, 0 0.3em 0.4em rgba(20, 8, 0, 0.5), inset 0 0.05em 0 rgba(255, 255, 255, 0.95);
+}
+
+@keyframes wp-pending { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.07); } }
+
+/* ------------------------------------------------------------------ lobby: the walnut cabinet */
+
+.wp-lobby[data-arcade-theme="word"] {
+  --cab-ink: #1a120c;
+  --cab-accent: #e0b252;
+  --cab-hot: #7c2f35;
+  --cab-paper: #fbf0da;
+  --cab-glow: #ffd88a;
+  --primary: #8a5a1c;
+  --primary-foreground: #fffaf0;
+  --ring: #b8862e;
+  /* Tailwind's colour tokens are resolved on :root, so they need the override as well. */
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-ring: var(--ring);
+}
+
+.dark .wp-lobby[data-arcade-theme="word"] {
+  --primary: #e0b252;
+  --primary-foreground: #24170a;
+  --ring: #e0b252;
+}
+
+.wp-lobby .arcade-cabinet {
+  padding: 0.65rem;
+  border: 0;
+  border-radius: 22px;
+  background:
+    linear-gradient(160deg, rgba(255, 220, 170, 0.14), transparent 35%),
+    linear-gradient(0deg, rgba(20, 8, 2, 0.35), rgba(20, 8, 2, 0.35)),
+    var(--bgr-walnut, #4a2b18) center / cover;
+  box-shadow:
+    inset 0 0 0 1px rgba(236, 202, 122, 0.4),
+    inset 0 2px 0 rgba(255, 220, 170, 0.25),
+    inset 0 -3px 0 rgba(0, 0, 0, 0.3),
+    0 2rem 3rem -1.6rem rgba(30, 12, 0, 0.6);
+}
+
+.wp-lobby .arcade-cabinet__marquee {
+  min-height: 320px;
+  overflow: hidden;
+  border-radius: 14px;
+  box-shadow: inset 0 0 0 1px rgba(236, 202, 122, 0.45), inset 0 0 3rem rgba(0, 0, 0, 0.55);
+}
+
+.wp-lobby .arcade-cabinet__title {
+  font-family: var(--wp-display);
+  font-size: clamp(2.7rem, 5.6vw, 4.6rem);
+  font-stretch: 76%;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: #fff3db;
+  text-shadow: 0 0 1.6rem rgba(255, 190, 90, 0.5), 0 3px 0 var(--cab-hot);
+}
+
+.wp-lobby .arcade-cabinet__tagline { color: rgba(251, 240, 218, 0.86); }
+
+.wp-lobby .arcade-cabinet__panel {
+  margin-top: 0.65rem;
+  border-top: 0;
+  border-radius: 14px;
+  background: var(--wp-grain), color-mix(in srgb, var(--card) 88%, var(--wp-brass));
+  box-shadow: inset 0 3px 0 var(--cab-accent);
+}
+.dark .wp-lobby .arcade-cabinet__panel { background: var(--wp-grain), color-mix(in srgb, var(--card) 45%, #2a1c12); }
+
+.wp-lobby .arcade-cabinet__start {
+  background: linear-gradient(180deg, var(--wp-brass-hi), var(--wp-brass));
+  color: #2a1a0b;
+  box-shadow: 0 4px 0 var(--wp-brass-lo), 0 10px 20px -10px rgba(60, 30, 0, 0.6);
+}
+.wp-lobby .arcade-cabinet__start:hover { box-shadow: 0 4px 0 var(--wp-brass-lo), 0 0 26px rgba(236, 202, 122, 0.55); }
+.wp-lobby .arcade-cabinet__start:active { box-shadow: 0 1px 0 var(--wp-brass-lo); }
+.wp-lobby .arcade-cabinet__start:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+/* The marquee looks into the living room: the sofa, the lamp and Hubert asleep in his basket. */
+.wp-marquee-art {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(18, 9, 3, 0.92) 0%, rgba(18, 9, 3, 0.72) 38%, rgba(18, 9, 3, 0.12) 72%, rgba(18, 9, 3, 0.3) 100%),
+    linear-gradient(0deg, rgba(18, 9, 3, 0.55), transparent 40%),
+    var(--bgr-plate-day) 64% 12% / 165% auto no-repeat,
+    #2a1a10;
+}
+.dark .wp-marquee-art {
+  background:
+    linear-gradient(90deg, rgba(10, 6, 3, 0.9) 0%, rgba(10, 6, 3, 0.66) 38%, rgba(10, 6, 3, 0.05) 72%, rgba(10, 6, 3, 0.25) 100%),
+    linear-gradient(0deg, rgba(10, 6, 3, 0.5), transparent 40%),
+    var(--bgr-plate-night) 64% 12% / 165% auto no-repeat,
+    #140c07;
+}
+
+.arcade-cabinet__marquee-art .wp-marquee-hubert {
+  position: absolute;
+  bottom: 0.4rem;
+  right: clamp(1rem, 22%, 18rem);
+  width: clamp(13rem, 24vw, 19rem);
+  filter: drop-shadow(0 0.6rem 0.8rem rgba(0, 0, 0, 0.35));
+}
+.dark .arcade-cabinet__marquee-art .wp-marquee-hubert { filter: brightness(0.85) drop-shadow(0 0.6rem 0.8rem rgba(0, 0, 0, 0.45)); }
+
+.wp-marquee-tiles {
+  --mq-sq: clamp(1.4rem, 2.3vw, 1.9rem);
+  position: absolute;
+  top: 1.5rem;
+  right: 1.75rem;
+  display: grid;
+  grid-template-columns: repeat(6, var(--mq-sq));
+  grid-auto-rows: var(--mq-sq);
+  opacity: 0.96;
+  filter: drop-shadow(0 0.4rem 0.4rem rgba(0, 0, 0, 0.35));
+}
+
+.wp-marquee-tile { --wp-tile-size: var(--mq-sq); padding: 0.06rem; }
+
+@media (max-width: 1180px) {
+  .wp-marquee-tiles { opacity: 0.35; }
+  .arcade-cabinet__marquee-art .wp-marquee-hubert { right: 1rem; width: 13rem; }
+}
+
+@media (max-width: 860px) {
+  .wp-marquee-hubert { display: none; }
+}
+
+.wp-lobby-grid { display: grid; gap: 1.75rem; margin-top: 1.75rem; }
+
+@media (min-width: 1024px) {
+  .wp-lobby-grid { grid-template-columns: minmax(0, 1fr) 21rem; align-items: start; }
+}
+
+.wp-section + .wp-section { margin-top: 1.9rem; }
+
+.wp-section__head { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.7rem; }
+
+.wp-section__title {
+  margin: 0;
+  font-family: var(--wp-display);
+  font-size: 1.3rem;
+  font-stretch: 82%;
+  font-weight: 650;
+  color: var(--foreground);
+}
+
+.wp-count {
+  min-width: 1.6rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--wp-brass) 28%, var(--card));
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-align: center;
+  color: var(--foreground);
+}
+
+.wp-subtitle { margin: 1rem 0 0.45rem; font-size: 0.85rem; font-weight: 600; color: var(--muted-foreground); }
+
+.wp-list { display: grid; gap: 0.55rem; margin: 0; padding: 0; list-style: none; }
+
+.wp-game-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem 0.95rem;
+  padding: 0.7rem 0.9rem 0.7rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.wp-game-row:has(button.wp-game-row__main:hover) { border-color: color-mix(in srgb, var(--wp-brass) 60%, var(--border)); }
+
+.wp-game-row[data-group="yourTurn"] {
+  border-color: color-mix(in srgb, var(--wp-brass) 70%, var(--border));
+  background: color-mix(in srgb, var(--wp-brass) 10%, var(--card));
+  box-shadow: inset 4px 0 0 var(--wp-brass);
+}
+.wp-game-row[data-group="invitation"] { box-shadow: inset 4px 0 0 color-mix(in srgb, var(--primary) 70%, transparent); }
+.wp-game-row[data-group="finished"] { background: color-mix(in srgb, var(--card) 70%, transparent); }
+
+.wp-game-row__tile { --wp-tile-size: 2.6rem; width: 2.6rem; height: 2.6rem; }
+.wp-game-row[data-group="finished"] .wp-game-row__tile { filter: saturate(0.6); opacity: 0.85; }
+
+.wp-game-row__main {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+}
+button.wp-game-row__main { cursor: pointer; }
+button.wp-game-row__main:hover .wp-game-row__name { text-decoration: underline; text-underline-offset: 3px; }
+button.wp-game-row__main:focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; border-radius: 4px; }
+
+.wp-game-row__who { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; min-width: 0; }
+.wp-game-row__name { font-weight: 650; color: var(--foreground); overflow-wrap: anywhere; }
+.wp-game-row__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.2rem 0.75rem; font-size: 0.82rem; color: var(--muted-foreground); }
+.wp-game-row__score { font-variant-numeric: tabular-nums; font-weight: 650; color: var(--foreground); }
+.wp-game-row__actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0.4rem; }
+
+.wp-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--secondary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--secondary-foreground);
+}
+.wp-badge[data-tone="turn"] { border-color: var(--wp-brass); background: color-mix(in srgb, var(--wp-brass) 30%, var(--card)); color: var(--foreground); }
+.wp-badge[data-tone="invite"] { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); color: var(--primary); }
+.wp-badge[data-tone="won"] { border-color: var(--signal-ok); background: var(--signal-ok-surface); color: var(--signal-ok); }
+.wp-badge[data-tone="lost"] { border-color: var(--signal-blocked); background: var(--signal-blocked-surface); color: var(--signal-blocked); }
+.wp-badge[data-tone="check"] { border-color: var(--signal-attention); background: var(--signal-attention-surface); color: var(--signal-attention); }
+
+.wp-flag { display: inline-block; width: 1.25rem; height: 0.875rem; border-radius: 2px; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.18); vertical-align: -0.1em; flex: none; }
+
+.wp-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 1rem;
+  padding: 0.8rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--foreground);
+  font-size: 0.9rem;
+}
+.wp-notice[data-tone="warn"] { border-color: var(--signal-attention); background: var(--signal-attention-surface); }
+.wp-notice[data-tone="error"] { border-color: var(--signal-blocked); background: var(--signal-blocked-surface); }
+.wp-notice > p { margin: 0; flex: 1 1 16rem; }
+.wp-notice > p strong { display: block; }
+
+.wp-lobby .arcade-fame { border-radius: 14px; box-shadow: inset 0 3px 0 var(--wp-brass); }
+.wp-lobby .arcade-fame__title { font-family: var(--wp-display); font-stretch: 82%; font-weight: 650; }
+.wp-lobby .arcade-fame__name { line-height: 1.25; }
+.wp-lobby .arcade-fame__team { display: block; margin: 0; }
+.wp-lobby .arcade-fame__row[data-me] { background: color-mix(in srgb, var(--wp-brass) 16%, transparent); box-shadow: inset 3px 0 0 var(--wp-brass); }
+.wp-top-word { display: inline-flex; align-items: center; gap: 0.4rem; font-family: var(--wp-display); font-stretch: 84%; font-weight: 700; letter-spacing: 0.04em; }
+
+/* head-to-head records */
+.wp-lobby-side { display: grid; gap: 1.25rem; align-content: start; }
+.wp-rivals__list { display: grid; gap: 0.5rem; margin: 0; padding: 0; list-style: none; }
+.wp-rival {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.35rem 0.75rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+}
+.wp-rival[data-standing="ahead"] { box-shadow: inset 3px 0 0 var(--signal-ok); }
+.wp-rival[data-standing="behind"] { box-shadow: inset 3px 0 0 var(--signal-blocked); }
+.wp-rival[data-standing="level"] { box-shadow: inset 3px 0 0 var(--wp-brass); }
+.wp-rival__who { min-width: 0; line-height: 1.25; }
+.wp-rival__name { display: block; overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.wp-rival__team { display: block; font-size: 0.75rem; color: var(--muted-foreground); }
+.wp-rival__score { display: flex; align-items: baseline; gap: 0.25rem; font-family: var(--wp-display); font-size: 1.35rem; font-stretch: 82%; font-weight: 700; font-variant-numeric: tabular-nums; }
+.wp-rival__wins { color: var(--signal-ok); }
+.wp-rival__losses { color: var(--signal-blocked); }
+.wp-rival__draws { font-size: 0.85rem; font-weight: 500; color: var(--muted-foreground); }
+.wp-rival__bar { grid-column: 1 / -1; display: flex; height: 5px; overflow: hidden; border-radius: 999px; background: var(--muted); }
+.wp-rival__bar > [data-part="wins"] { background: var(--signal-ok); }
+.wp-rival__bar > [data-part="draws"] { background: var(--wp-brass); }
+.wp-rival__bar > [data-part="losses"] { background: var(--signal-blocked); }
+.wp-rival__meta { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; font-size: 0.78rem; color: var(--muted-foreground); }
+
+/* challenge dialog */
+
+.wp-person-list { display: grid; gap: 0.25rem; max-height: 15rem; margin: 0; padding: 0.25rem; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; }
+.wp-person {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.1rem 0.6rem;
+  padding: 0.5rem 0.7rem;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--foreground);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.wp-person:hover { background: var(--secondary); }
+.wp-person[aria-checked="true"] { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 9%, var(--background)); }
+.wp-person:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.wp-person small { color: var(--muted-foreground); font-size: 0.8rem; }
+
+.wp-lang-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.5rem; }
+.wp-lang {
+  display: grid;
+  justify-items: start;
+  gap: 0.35rem;
+  padding: 0.6rem 0.7rem;
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--foreground);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.wp-lang:hover { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); }
+.wp-lang[aria-checked="true"] { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 9%, var(--background)); }
+.wp-lang:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+@media (max-width: 480px) { .wp-lang-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+.wp-blank-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(3rem, 1fr)); gap: 0.5rem; }
+.wp-blank-key { --wp-tile-size: 3rem; height: 3rem; padding: 0; border: 0; background: none; cursor: pointer; }
+.wp-blank-key:hover .wp-tile { filter: brightness(1.05); transform: translateY(-2px); }
+.wp-blank-key:focus-visible { outline: 3px solid var(--ring); outline-offset: 2px; border-radius: 8px; }
+
+/* ------------------------------------------------------------------ the match (in the board-game room) */
+
+/* The board gets the height left once the room's top bar and Hubert's walkway are drawn.
+   17.6 squares = board 15.84 + rack 1.76; 8.4rem = table padding, three gaps, the hint line and the action row. */
+.wp-room {
+  --wp-sq-h: clamp(1.1rem, (100vh - var(--bgr-head) - var(--bgr-lane-h) - 8.4rem) / 17.6, 3.3rem);
+  --bgr-board-w: calc(var(--wp-sq-h) * 15.84);
+}
+
+/* --wp-sq resolves where it is used, against the board column's width. */
+.wp-room .bgr-table__play { --wp-sq: min(var(--wp-sq-h), max(1.5rem, (100cqw - 0.5rem) / 15.84)); }
+@media (max-width: 1023px) {
+  .wp-room .bgr-table__play { --wp-sq: clamp(1.4rem, (100cqw - 0.5rem) / 15.84, 3rem); }
+}
+
+.wp-status { width: min(30rem, 100%); }
+
+.wp-banner { width: calc(var(--wp-sq) * 15.84); max-width: 100%; }
+
+/* ---- the board: walnut frame with brass corners, a bone field with recessed grooves */
+
+.wp-board-frame {
+  position: relative;
+  padding: calc(var(--wp-sq) * 0.42);
+  border-radius: calc(var(--wp-sq) * 0.26);
+  background:
+    linear-gradient(160deg, rgba(255, 220, 170, 0.16), transparent 35%, rgba(0, 0, 0, 0.18)),
+    var(--bgr-walnut, #4a2c1a) center / 720px auto;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 220, 170, 0.35),
+    inset 0 -2px 0 rgba(0, 0, 0, 0.4),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 0.2rem 0.3rem rgba(8, 3, 0, 0.45),
+    0 1.4rem 1.6rem -0.7rem rgba(8, 3, 0, 0.7);
+}
+
+/* brass corner caps */
+.wp-board-frame::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  --c: calc(var(--wp-sq) * 0.9);
+  background:
+    linear-gradient(135deg, var(--wp-brass-hi), var(--wp-brass) 45%, var(--wp-brass-lo)) top left / var(--c) var(--c) no-repeat,
+    linear-gradient(225deg, var(--wp-brass-hi), var(--wp-brass) 45%, var(--wp-brass-lo)) top right / var(--c) var(--c) no-repeat,
+    linear-gradient(45deg, var(--wp-brass-hi), var(--wp-brass) 45%, var(--wp-brass-lo)) bottom left / var(--c) var(--c) no-repeat,
+    linear-gradient(315deg, var(--wp-brass-hi), var(--wp-brass) 45%, var(--wp-brass-lo)) bottom right / var(--c) var(--c) no-repeat;
+  -webkit-mask:
+    linear-gradient(#000 0 0) top left / var(--c) calc(var(--wp-sq) * 0.42) no-repeat,
+    linear-gradient(#000 0 0) top left / calc(var(--wp-sq) * 0.42) var(--c) no-repeat,
+    linear-gradient(#000 0 0) top right / var(--c) calc(var(--wp-sq) * 0.42) no-repeat,
+    linear-gradient(#000 0 0) top right / calc(var(--wp-sq) * 0.42) var(--c) no-repeat,
+    linear-gradient(#000 0 0) bottom left / var(--c) calc(var(--wp-sq) * 0.42) no-repeat,
+    linear-gradient(#000 0 0) bottom left / calc(var(--wp-sq) * 0.42) var(--c) no-repeat,
+    linear-gradient(#000 0 0) bottom right / var(--c) calc(var(--wp-sq) * 0.42) no-repeat,
+    linear-gradient(#000 0 0) bottom right / calc(var(--wp-sq) * 0.42) var(--c) no-repeat;
+  mask:
+    linear-gradient(#000 0 0) top left / var(--c) calc(var(--wp-sq) * 0.42) no-repeat,
+    linear-gradient(#000 0 0) top left / calc(var(--wp-sq) * 0.42) var(--c) no-repeat,
+    linear-gradient(#000 0 0) top right / var(--c) calc(var(--wp-sq) * 0.42) no-repeat,
+    linear-gradient(#000 0 0) top right / calc(var(--wp-sq) * 0.42) var(--c) no-repeat,
+    linear-gradient(#000 0 0) bottom left / var(--c) calc(var(--wp-sq) * 0.42) no-repeat,
+    linear-gradient(#000 0 0) bottom left / calc(var(--wp-sq) * 0.42) var(--c) no-repeat,
+    linear-gradient(#000 0 0) bottom right / var(--c) calc(var(--wp-sq) * 0.42) no-repeat,
+    linear-gradient(#000 0 0) bottom right / calc(var(--wp-sq) * 0.42) var(--c) no-repeat;
+  opacity: 0.92;
+}
+
+.wp-board {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(15, var(--wp-sq));
+  grid-auto-rows: var(--wp-sq);
+  width: calc(var(--wp-sq) * 15);
+  background: var(--wp-field);
+  box-shadow:
+    0 0 0 1px rgba(30, 14, 4, 0.7),
+    0 0 0 3px color-mix(in srgb, var(--wp-brass) 55%, #2a170a),
+    0 0 0 4px rgba(30, 14, 4, 0.6),
+    inset 0 2px 5px rgba(40, 20, 4, 0.35);
+  outline: none;
+  /* Own layer: a hover or drop filter on one square then re-rasters the board, not the whole room. */
+  will-change: opacity;
+}
+
+.wp-board-row { display: contents; }
+
+.wp-cell {
+  position: relative;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--wp-groove);
+  background:
+    var(--wp-grain),
+    linear-gradient(160deg, rgba(255, 255, 255, 0.35), transparent 60%),
+    var(--wp-field);
+  box-shadow: inset 1px 1px 0 rgba(255, 255, 255, 0.55), inset -1px -1px 0 rgba(90, 60, 30, 0.12);
+  color: rgba(60, 40, 22, 0.55);
+  font-family: var(--wp-display);
+  font-stretch: 76%;
+  font-size: calc(var(--wp-sq) * 0.29);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  user-select: none;
+}
+
+/* Premium squares are pressed into the board: a darker inset with a soft lip of light. */
+.wp-cell[data-premium]::before {
+  content: '';
+  position: absolute;
+  inset: 6%;
+  border-radius: 9%;
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.22), transparent 55%),
+    var(--wp-prem);
+  box-shadow:
+    inset 0 0.08em 0.12em rgba(0, 0, 0, 0.35),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.25),
+    0 1px 0 rgba(255, 255, 255, 0.6);
+}
+.wp-cell > * { position: relative; z-index: 1; }
+.wp-cell[data-premium="TW"] { --wp-prem: var(--wp-tw); color: #fbe9dc; }
+.wp-cell[data-premium="DW"] { --wp-prem: var(--wp-dw); color: #4c1b12; }
+.wp-cell[data-premium="TL"] { --wp-prem: var(--wp-tl); color: #eaf3f8; }
+.wp-cell[data-premium="DL"] { --wp-prem: var(--wp-dl); color: #18394a; }
+.wp-cell[data-centre] { --wp-prem: var(--wp-dw); }
+.wp-cell[data-centre] svg { width: 64%; height: 64%; fill: var(--wp-brass); filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.55)) drop-shadow(0 -1px 0 rgba(70, 40, 10, 0.4)); }
+
+.wp-cell__tile { position: absolute; inset: 3.5%; z-index: 2; --wp-tile-size: var(--wp-sq); }
+.wp-cell[data-interactive]:hover { filter: brightness(1.06) saturate(1.1); cursor: pointer; }
+
+.wp-cell[data-cursor]::after {
+  position: absolute;
+  inset: -1px;
+  z-index: 3;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding-right: 6%;
+  pointer-events: none;
+  outline: 2px solid rgba(192, 128, 30, 0.55);
+  outline-offset: -2px;
+  color: #a5650c;
+  font-size: calc(var(--wp-sq) * 0.38);
+  line-height: 1;
+}
+.wp-board:focus-visible .wp-cell[data-cursor]::after { outline: 3px solid #d9901c; box-shadow: 0 0 0.9rem 0.1rem rgba(240, 170, 60, 0.6); }
+.wp-cell[data-cursor="across"]::after { content: '\25B8'; }
+.wp-cell[data-cursor="down"]::after { content: '\25BE'; }
+
+.wp-cell[data-drop] { filter: brightness(1.08); outline: 2px solid #d9901c; outline-offset: -2px; z-index: 2; }
+
+/* ---- rack: a walnut rack with a slanted lip */
+
+.wp-rack {
+  position: relative;
+  display: flex;
+  gap: calc(var(--wp-sq) * 0.14);
+  padding: calc(var(--wp-sq) * 0.24) calc(var(--wp-sq) * 0.46) calc(var(--wp-sq) * 0.4);
+  border-radius: calc(var(--wp-sq) * 0.16) calc(var(--wp-sq) * 0.16) calc(var(--wp-sq) * 0.3) calc(var(--wp-sq) * 0.3);
+  background:
+    linear-gradient(180deg, rgba(255, 220, 170, 0.18), transparent 30%, rgba(0, 0, 0, 0.12) 70%),
+    var(--bgr-walnut, #4a2c1a) center / 500px auto;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 220, 170, 0.35),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 0.2rem 0.25rem rgba(8, 3, 0, 0.5),
+    0 1rem 1.2rem -0.6rem rgba(8, 3, 0, 0.75);
+}
+/* the front lip the tiles lean against */
+.wp-rack::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 0 0;
+  height: calc(var(--wp-sq) * 0.3);
+  border-radius: 0 0 calc(var(--wp-sq) * 0.3) calc(var(--wp-sq) * 0.3);
+  background:
+    linear-gradient(180deg, rgba(255, 220, 170, 0.3) 0 1px, rgba(0, 0, 0, 0.12) 1px, rgba(0, 0, 0, 0.45)),
+    var(--bgr-walnut, #4a2c1a) center / 500px auto;
+  box-shadow: 0 -0.12rem 0.25rem rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+
+.wp-rack__slot {
+  position: relative;
+  z-index: 1;
+  width: calc(var(--wp-sq) * 1.12);
+  height: calc(var(--wp-sq) * 1.12);
+  border-radius: 12%;
+  background: rgba(15, 6, 0, 0.22);
+  box-shadow: inset 0 0.12rem 0.3rem rgba(0, 0, 0, 0.45);
+}
+
+.wp-rack__tile {
+  --wp-tile-size: calc(var(--wp-sq) * 1.12);
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 13%;
+  background: none;
+  cursor: grab;
+  touch-action: none;
+}
+.wp-rack__tile:hover .wp-tile:not([data-state]) { transform: translateY(-7%); }
+.wp-rack__tile:focus-visible { outline: 3px solid #fff3c4; outline-offset: 2px; }
+.wp-rack[data-disabled] .wp-rack__tile { cursor: default; }
+
+.wp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: max(calc(var(--wp-sq) * 15.84), min(100%, 36rem));
+  max-width: 100%;
+}
+.wp-actions__group { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.wp-actions[data-mode="swap"] .bgr-hint { flex: 1 1 14rem; text-align: left; }
+
+.wp-score-chip {
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  background: rgba(10, 4, 0, 0.45);
+  color: var(--wp-brass-hi);
+  font-family: var(--wp-display);
+  font-size: 1.25rem;
+  font-stretch: 84%;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- paper on the table: Word-Puzzle's contents of the shared score pad, index card and folds */
+
+.wp-banner__row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 1rem; }
+.wp-banner__row > p { flex: 1 1 14rem; margin: 0; font-size: 0.85rem; line-height: 1.4; color: var(--bgr-paper-soft); }
+.wp-banner__row > strong { font-size: 1rem; }
+.wp-banner .bgr-chip { height: 2.15rem; }
+.wp-banner .bgr-chip[data-tone="primary"] { height: 2.35rem; padding: 0 1.2rem; font-size: 0.95rem; }
+.wp-banner .bgr-calls { margin-left: auto; }
+
+/* score pad rows */
+.wp-player {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.1rem 0.7rem;
+  padding: 0.38rem 0.5rem;
+  border-radius: 6px;
+}
+.wp-player + .wp-player { margin-top: 0.15rem; }
+.wp-player[data-turn] { background: color-mix(in srgb, var(--wp-amber) 20%, transparent); box-shadow: inset 3px 0 0 var(--wp-brass); }
+.wp-player__avatar { --wp-tile-size: 2.15rem; width: 2.15rem; height: 2.15rem; }
+.wp-player__name { display: block; font-weight: 650; overflow-wrap: anywhere; }
+.wp-player__meta { display: block; font-size: 0.8rem; color: var(--bgr-paper-soft); }
+.wp-player__score {
+  font-family: var(--wp-display);
+  font-size: 1.8rem;
+  font-stretch: 80%;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  text-align: right;
+  color: #20314a;
+}
+.wp-player__score small { display: block; margin-top: 0.1rem; font-family: var(--font-sans); font-size: 0.7rem; font-weight: 600; font-stretch: 100%; color: var(--bgr-paper-soft); }
+.wp-player__turn { grid-column: 2 / -1; display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; font-weight: 600; color: #7a5410; }
+.wp-player__turn::before { content: ''; width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--wp-amber); box-shadow: 0 0 0.45rem var(--wp-amber); }
+
+.wp-meta-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.25rem 1rem; margin-top: 0.5rem; padding-top: 0.45rem; border-top: 1px solid var(--bgr-paper-line); font-size: 0.82rem; color: var(--bgr-paper-soft); }
+.wp-meta-row strong { color: var(--bgr-paper-ink); font-variant-numeric: tabular-nums; }
+
+/* move note */
+.wp-words { display: grid; gap: 0.35rem; margin: 0; padding: 0; list-style: none; }
+.wp-words li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0.1rem 0.6rem; }
+.wp-words__word { font-family: var(--wp-display); font-size: 1.1rem; font-stretch: 84%; font-weight: 650; letter-spacing: 0.06em; overflow-wrap: anywhere; }
+.wp-words__score { font-weight: 700; font-variant-numeric: tabular-nums; }
+.wp-words__flag { grid-column: 1 / -1; font-size: 0.78rem; color: #855607; }
+.wp-words__total { display: flex; justify-content: space-between; align-items: baseline; margin-top: 0.6rem; padding-top: 0.5rem; border-top: 1px solid var(--bgr-paper-line); font-weight: 650; }
+.wp-words__total strong { font-family: var(--wp-display); font-size: 1.6rem; font-stretch: 80%; font-variant-numeric: tabular-nums; }
+
+.wp-more { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.65rem; padding-top: 0.6rem; border-top: 1px dashed var(--bgr-paper-line); }
+.wp-more .bgr-chip { height: 2.1rem; padding: 0 0.75rem; font-size: 0.82rem; }
+/* narrow panels: pass, swap and resign stay on one line */
+@media (max-width: 1279px) {
+  .wp-more { gap: 0.3rem; }
+  .wp-more .bgr-chip { gap: 0.3rem; padding: 0 0.45rem; font-size: 0.76rem; }
+}
+
+.wp-decision { display: grid; gap: 0.3rem; margin-top: 0.65rem; padding: 0.6rem 0.7rem; border-radius: 6px; background: color-mix(in srgb, var(--wp-amber) 20%, transparent); }
+.wp-decision strong { font-size: 0.92rem; line-height: 1.3; }
+.wp-decision p { margin: 0; font-size: 0.82rem; line-height: 1.4; color: var(--bgr-paper-soft); }
+.wp-decision__actions { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.3rem; }
+
+/* Short laptop windows: tighter score rows so the notebook keeps its input in view; whose turn it is
+   still shows on the highlighted row and in the top bar. */
+@media (max-height: 860px) {
+  .wp-player { padding-block: 0.22rem; }
+  .wp-player__avatar { --wp-tile-size: 1.8rem; width: 1.8rem; height: 1.8rem; }
+  .wp-player__score { font-size: 1.45rem; }
+  .wp-player__turn { display: none; }
+  .wp-meta-row { margin-top: 0.3rem; padding-top: 0.3rem; }
+}
+
+/* history */
+.wp-history { display: grid; gap: 0.15rem; max-height: 10rem; margin: 0; padding: 0; overflow-y: auto; list-style: none; font-size: 0.85rem; }
+.wp-history li { display: flex; justify-content: space-between; gap: 0.75rem; padding: 0.25rem 0; border-bottom: 1px solid var(--bgr-paper-line); }
+.wp-history li:last-child { border-bottom: 0; }
+.wp-history li[data-me] span:first-child { font-weight: 600; }
+.wp-history b { font-variant-numeric: tabular-nums; }
+
+.wp-kbd-help dl { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; gap: 0.45rem 0.75rem; margin: 0; font-size: 0.82rem; }
+.wp-kbd-help dt {
+  justify-self: start;
+  padding: 0.1rem 0.45rem;
+  border: 1px solid color-mix(in srgb, var(--bgr-paper-ink) 25%, transparent);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: #fffdf8;
+  font-size: 0.78rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.wp-kbd-help dd { margin: 0; color: var(--bgr-paper-soft); }
+
+/* ---- drag ghost */
+
+.wp-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 80;
+  width: var(--wp-ghost-size, 3rem);
+  height: var(--wp-ghost-size, 3rem);
+  pointer-events: none;
+  opacity: 0.97;
+  filter: drop-shadow(0 0.6rem 0.5rem rgba(0, 0, 0, 0.45));
+  --wp-tile-size: var(--wp-ghost-size, 3rem);
+}
+.wp-ghost .wp-tile { transform: scale(1.12) rotate(-4deg); }
+body.wp-dragging, body.wp-dragging * { cursor: grabbing !important; user-select: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .wp-tile[data-state="pending"] { animation: none; }
+  .wp-game-row { transition: none; }
+}

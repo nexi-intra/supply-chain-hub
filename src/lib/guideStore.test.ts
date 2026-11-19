@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { saveDraft, getDraft, deleteDraft, draftKey, listDrafts, draftLabel, saveVersionSnapshot, getVersionHistory } from './guideStore'
+import { saveDraft, getDraft, deleteDraft, draftKey, versionsKey, listDrafts, draftLabel, saveVersionSnapshot, getVersionHistory, deleteGuideArtifacts } from './guideStore'
 import type { Guide, GuideDraft } from './guideTypes'
 
 afterEach(() => vi.unstubAllGlobals())
@@ -34,6 +34,26 @@ const draft: GuideDraft = {
 describe('guide draft autosave storage', () => {
   it('draftKey namespaces by guide id, separate from published guides/versions', () => {
     expect(draftKey('g1')).toBe('guide-draft-g1')
+  })
+  it('Knowledge Base drafts and versions use their own keys and never mix with guides', async () => {
+    const { store } = fixture()
+    expect(draftKey('k1', 'knowledge')).toBe('knowledge-draft-k1')
+    expect(versionsKey('k1', 'knowledge')).toBe('knowledge-versions-k1')
+    await saveDraft({ ...draft, guideId: 'k1' }, 'knowledge')
+    await saveDraft(draft)
+    expect(store.has('knowledge-draft-k1')).toBe(true)
+    expect((await listDrafts('user@example.test', 'knowledge')).map((entry) => entry.guideId)).toEqual(['k1'])
+    expect((await listDrafts('user@example.test')).map((entry) => entry.guideId)).toEqual(['g1'])
+    expect(await getDraft('k1')).toBeUndefined()
+    await deleteDraft('k1', 'knowledge')
+    expect(await getDraft('k1', 'knowledge')).toBeUndefined()
+    const article = { id: 'k1', title: 'LocalMode', category: 'Error Codes', tags: [], content: '', createdAt: 1, updatedAt: 1, version: '1.00', sections: [] } as Guide
+    await saveVersionSnapshot(article, 'user@example.test', undefined, 'knowledge')
+    expect(store.has('knowledge-versions-k1')).toBe(true)
+    expect(await getVersionHistory('k1')).toEqual([])
+    expect((await getVersionHistory('k1', 'knowledge'))[0].version).toBe('1.00')
+    await deleteGuideArtifacts(article, 'knowledge')
+    expect(store.has('knowledge-versions-k1')).toBe(false)
   })
   it('saveDraft then getDraft round-trips the exact draft', async () => {
     fixture()
@@ -123,5 +143,25 @@ describe('original Word guide versions', () => {
     const [version] = await getVersionHistory(guide.id)
     expect(version.snapshot.fileUrl).toBe(guide.fileUrl)
     expect(version.snapshot.previewPdfUrl).toBe(guide.previewPdfUrl)
+  })
+})
+
+describe('deleteGuideArtifacts', () => {
+  it('sends the history and image deletions at the same time instead of one round trip per image', async () => {
+    const { store } = fixture()
+    const pending: Array<() => void> = []
+    vi.mocked(window.kv.delete).mockImplementation((key: string) => new Promise<void>((resolve) => {
+      pending.push(() => { store.delete(key); resolve() })
+    }))
+    vi.mocked(window.kv.get).mockImplementation(async (key: string) => (key.endsWith('_meta') ? { chunkCount: 0 } : store.get(key)))
+    const guide = {
+      id: 'g1', title: 'T', category: 'General', tags: [], content: '', createdAt: 1, updatedAt: 1,
+      sections: [{ id: 's1', heading: 'H', steps: [{ id: 'st1', text: 'x', imageIds: ['img1', 'img2'] }] }],
+    } as Guide
+    const deletion = deleteGuideArtifacts(guide)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(window.kv.delete).toHaveBeenCalledTimes(3)
+    pending.forEach((finish) => finish())
+    await deletion
   })
 })

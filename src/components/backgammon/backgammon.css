@@ -1,0 +1,117 @@
+/* Backgammon in the shared board-game room: a walnut case with a linen field, mahogany and bottle-green points,
+   ivory and ebony checkers and two bone dice. The board is one SVG (BackgammonBoard.tsx); the lobby marquee and the
+   hub tile reuse the same colours. */
+
+/* ------------------------------------------------------------------ sizing */
+
+.bgm-room {
+  --bgm-h: clamp(15rem, 100vh - var(--bgr-head) - var(--bgr-lane-h) - 8.6rem, 42rem);
+  --bgr-board-w: calc(var(--bgm-h) * 1000 / 720);
+}
+.bgm-room .wp-banner { width: var(--bgr-board-w); max-width: 100%; }
+/* the wrapper gets the real width: an SVG in a shrink-to-fit box would fall back to its 300px default */
+.bgm-board-wrap { width: var(--bgr-board-w); max-width: 100%; display: flex; justify-content: center; }
+.bgm-board {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1000 / 720;
+  user-select: none;
+  -webkit-user-select: none;
+  filter: drop-shadow(0 1.2rem 1.4rem rgba(8, 3, 0, 0.55));
+}
+
+/* ------------------------------------------------------------------ the board */
+
+.bgm-frame { fill: #4a2c1a; stroke: #24130a; stroke-width: 3; }
+.bgm-field { fill: #ecdcb8; stroke: #2a170a; stroke-width: 2; }
+.bgm-bar { fill: #3b2213; stroke: #24130a; stroke-width: 2; }
+.bgm-tray { fill: #2d1a0f; stroke: rgba(236, 202, 122, 0.35); stroke-width: 1.5; }
+.bgm-triangle[data-shade="dark"] { fill: #7c2f1e; }
+.bgm-triangle[data-shade="light"] { fill: #2f4a3a; }
+.bgm-hit { fill: transparent; }
+.bgm-number { fill: rgba(236, 210, 160, 0.75); font: 600 18px/1 var(--bgr-display, system-ui); text-anchor: middle; pointer-events: none; }
+
+.bgm-checker circle:first-child { stroke-width: 2; }
+.bgm-checker[data-color="white"] circle:first-child { fill: url(#bgm-white); stroke: #a88d62; }
+.bgm-checker[data-color="black"] circle:first-child { fill: url(#bgm-black); stroke: #0b0503; }
+.bgm-checker__ring { fill: none; stroke-width: 2; }
+.bgm-checker[data-color="white"] .bgm-checker__ring { stroke: rgba(150, 120, 80, 0.45); }
+.bgm-checker[data-color="black"] .bgm-checker__ring { stroke: rgba(160, 120, 90, 0.35); }
+.bgm-count { fill: #f4d36b; font: 700 24px/1 system-ui; text-anchor: middle; paint-order: stroke; stroke: #1a0d06; stroke-width: 4; pointer-events: none; }
+.bgm-slab[data-color="white"] { fill: #efe2c6; stroke: #a88d62; }
+.bgm-slab[data-color="black"] { fill: #2b1913; stroke: #0b0503; }
+.bgm-last { fill: #f4d36b; opacity: 0.85; }
+
+/* what the player can do: glowing sources, marked targets */
+.bgm-point[data-source], .bgm-barzone[data-source], .bgm-offzone[data-target], .bgm-point[data-target] { cursor: pointer; }
+.bgm-point[data-source] .bgm-checker:last-of-type circle:first-child,
+.bgm-barzone[data-source] .bgm-checker circle:first-child { stroke: #f4d36b; stroke-width: 4; }
+.bgm-point[data-selected] .bgm-triangle, .bgm-barzone[data-selected] .bgm-hit { filter: brightness(1.35); }
+.bgm-point[data-selected] .bgm-checker:last-of-type { transform-box: fill-box; }
+.bgm-target { fill: rgba(244, 211, 107, 0.55); stroke: #f4d36b; stroke-width: 3; animation: bgm-pulse 1.1s ease-in-out infinite; pointer-events: none; }
+.bgm-offzone[data-target] .bgm-hit { fill: rgba(244, 211, 107, 0.25); stroke: #f4d36b; stroke-width: 3; }
+.bgm-point:focus-visible, .bgm-barzone:focus-visible, .bgm-offzone:focus-visible { outline: none; }
+.bgm-point:focus-visible .bgm-triangle { stroke: #fff; stroke-width: 4; }
+
+.bgm-die rect { fill: #f7efe0; stroke: #8a6a42; stroke-width: 2; }
+.bgm-die circle { fill: #2b1913; }
+.bgm-die[data-used] { opacity: 0.35; }
+.bgm-dice { animation: bgm-roll 0.45s ease-out; transform-box: fill-box; transform-origin: center; }
+
+@keyframes bgm-pulse { 50% { opacity: 0.55; } }
+@keyframes bgm-roll { from { opacity: 0; transform: rotate(-25deg) scale(0.6); } to { opacity: 1; transform: none; } }
+
+.bgm-actions { align-items: center; }
+.bgm-left { font-size: 0.85rem; color: rgba(255, 240, 215, 0.85); }
+.bgm-player__score { display: grid; gap: 0.1rem; text-align: right; font-size: 0.8rem; }
+.bgm-rules { margin: 0; padding-left: 1.1rem; display: grid; gap: 0.35rem; font-size: 0.85rem; line-height: 1.35; }
+
+/* ------------------------------------------------------------------ checkers outside the board */
+
+.bgm-chip-checker {
+  display: inline-block;
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 0.3rem rgba(0, 0, 0, 0.08), 0 0.2rem 0.3rem rgba(0, 0, 0, 0.35);
+}
+.bgm-chip-checker[data-color="white"] { background: radial-gradient(circle at 38% 32%, #fffaf0, #ecdcbc 65%, #c9b28a); border: 2px solid #a88d62; }
+.bgm-chip-checker[data-color="black"] { background: radial-gradient(circle at 38% 32%, #6b4a3c, #2b1913 60%, #120905); border: 2px solid #0b0503; }
+.cx-color[data-color="random"] .bgm-chip-checker:first-child { margin-right: -0.9rem; }
+.cx-color__art .bgm-chip-checker { align-self: center; }
+.bgm-title-chip { width: 1.5rem; height: 1.5rem; margin-right: 0.15rem; vertical-align: middle; }
+.bgm-player .bgm-chip-checker { width: 1.9rem; height: 1.9rem; }
+
+.bgm-row-art {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  background: linear-gradient(90deg, #7c2f1e 0 50%, #2f4a3a 50%);
+  box-shadow: inset 0 0 0 3px #4a2c1a, 0 2px 4px rgba(40, 20, 6, 0.25);
+}
+.wp-game-row[data-group="finished"] .bgm-row-art { filter: saturate(0.6); opacity: 0.85; }
+
+/* Lobby marquee and hub tile: a corner of the board with a few checkers and the dice. */
+.bgm-marquee {
+  position: absolute;
+  top: 1.2rem;
+  right: 1.6rem;
+  width: clamp(9rem, 15vw, 13rem);
+  aspect-ratio: 1000 / 720;
+  transform: perspective(40rem) rotateX(24deg);
+  transform-origin: 50% 100%;
+}
+.bgm-marquee .bgm-board { filter: drop-shadow(0 1rem 1.2rem rgba(0, 0, 0, 0.55)); }
+@media (max-width: 1180px) { .bgm-marquee { opacity: 0.4; } }
+
+.arcade-tile[data-game="backgammon"] { --arcade-accent: #7c2f1e; }
+.bgm-tile-art { position: relative; overflow: hidden; background: linear-gradient(90deg, #4a2c1a, #2d1a0f); }
+.bgm-tile-art .bgm-board { position: absolute; left: 0.8rem; top: 0.5rem; width: 12rem; filter: drop-shadow(0 0.4rem 0.4rem rgba(0, 0, 0, 0.45)); }
+
+@media (prefers-reduced-motion: reduce) {
+  .bgm-target, .bgm-dice { animation: none; }
+}

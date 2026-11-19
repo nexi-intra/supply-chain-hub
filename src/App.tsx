@@ -1,7 +1,14 @@
-import { useState, useEffect, lazy, Suspense } from 'react'
+import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react'
+import { dismissStartupIntro } from './lib/startupIntro'
+import { HubLoader, hubLoaderLabel } from './components/HubMark'
+import { ChristmasProvider } from './contexts/ChristmasContext'
+import { ChristmasLayer } from './components/christmas/ChristmasDecorations'
+import { NisseProvider } from './components/christmas/NisseContext'
+import { NisseGreeting } from './components/christmas/NisseGreeting'
+import { christmasMode } from './lib/christmas'
 import { Hub } from '@/views/Hub'
 import { Auth } from '@/views/Auth'
-import { LanguageProvider } from '@/contexts/LanguageContext'
+import { LanguageProvider, useLanguage } from '@/contexts/LanguageContext'
 import { ThemeProvider } from '@/contexts/ThemeContext'
 import { AnimatedBackground } from '@/components/AnimatedBackground'
 import { BirthdayCelebration } from '@/components/BirthdayCelebration'
@@ -10,14 +17,22 @@ import { GuideImportStatus } from '@/components/GuideImportStatus'
 import { LoginDigest } from '@/components/LoginDigest'
 import { WhatsNewDialog } from '@/components/WhatsNewDialog'
 import { CommandPalette } from '@/components/CommandPalette'
-import { AccessContextPicker } from '@/components/AccessContextPicker'
 import { StorageConnectionBanner } from '@/components/StorageConnectionBanner'
 import { HubAssistant } from '@/components/HubAssistant'
 import { AccountMigrationRecovery } from '@/components/AccountMigrationRecovery'
+import { DesktopNotificationBridge } from '@/components/DesktopNotificationBridge'
+import { HubNotificationsProvider } from '@/contexts/HubNotificationsContext'
 import { toast, Toaster } from 'sonner'
 import { setKvObjectField, deleteKvObjectField } from '@/lib/kvArrays'
-import { NAVIGATE_EVENT, type AppViewId } from '@/lib/appNavigation'
-import type { AccessView, RegisteredTeam } from '@/lib/electronRegistryBridge'
+import { trackPendingWrite } from '@/lib/pendingWrites'
+import { NAVIGATE_EVENT, peekNavigationParams, type AppViewId } from '@/lib/appNavigation'
+import { watchInactivity } from '@/lib/inactivityWatcher'
+import { HubPicker } from '@/components/HubPicker'
+import { HubSwitchController } from '@/components/HubSwitchController'
+import { HUB_SWITCHED_EVENT, rememberHub, rememberedHub } from '@/lib/hubSwitch'
+import type { MyHub } from '@/lib/electronRegistryBridge'
+import { clearKvSnapshotCache } from '@/hooks/useKV'
+import { clearCachedState } from '@/hooks/useCachedState'
 
 // Lazy-loadet: Hub og Auth vises altid lige efter opstart/login, så de
 // forbliver i hoved-bundlen. Alle andre views hentes først når brugeren
@@ -33,19 +48,22 @@ const EmailSystem = lazy(() => import('@/views/EmailSystem').then(m => ({ defaul
 const MealPlan = lazy(() => import('@/views/MealPlan').then(m => ({ default: m.MealPlan })))
 const GameCorner = lazy(() => import('@/views/GameCorner').then(m => ({ default: m.GameCorner })))
 const ProjectBoard = lazy(() => import('@/views/ProjectBoard').then(m => ({ default: m.ProjectBoard })))
+const Improvements = lazy(() => import('@/views/Improvements').then(m => ({ default: m.Improvements })))
 const VirtualNotebook = lazy(() => import('@/views/VirtualNotebook').then(m => ({ default: m.VirtualNotebook })))
-const ObserverWorkspace = lazy(() => import('@/views/ObserverWorkspace').then(m => ({ default: m.ObserverWorkspace })))
+const LinkLibrary = lazy(() => import('@/views/LinkLibrary').then(m => ({ default: m.LinkLibrary })))
+const Warehouse = lazy(() => import('@/views/warehouse/Warehouse').then(m => ({ default: m.Warehouse })))
 
 /** Vises kortvarigt mens et views kode hentes ved første besøg. */
 function ViewLoadingFallback() {
+  const { language } = useLanguage()
   return (
     <div className="min-h-screen flex items-center justify-center">
-      <div className="h-10 w-10 rounded-full border-4 border-primary/20 border-t-primary animate-spin" />
+      <HubLoader label={hubLoaderLabel(language)} />
     </div>
   )
 }
 
-type View = 'hub' | 'guides' | 'calendar' | 'shifts' | 'admin' | 'manager' | 'creator' | 'team' | 'email' | 'meals' | 'games' | 'projects' | 'notebook'
+type View = 'hub' | 'guides' | 'knowledge' | 'calendar' | 'shifts' | 'admin' | 'manager' | 'creator' | 'team' | 'email' | 'meals' | 'games' | 'projects' | 'improvements' | 'notebook' | 'links' | 'warehouse'
 
 interface UserSession {
   userId: string
@@ -109,12 +127,12 @@ async function createSession(userId: string, email: string, duration: number): P
   const createdAt = Date.now()
   
   const sessions = await window.kv.get<Record<string, StoredSession>>('active-sessions') || {}
-  // Ryd udløbne sessioner, så den delte fil ikke vokser ubegrænset.
+  // Ryd udløbne sessioner, så den delte fil ikke vokser ubegrænset – samtidig med den nye, ikke én ad gangen.
   const now = Date.now()
-  for (const key of Object.keys(sessions)) {
-    if (sessions[key].expiresAt < now) await deleteKvObjectField('active-sessions', key)
-  }
-  await setKvObjectField('active-sessions', token, { token, email, userId, expiresAt, createdAt })
+  await Promise.all([
+    ...Object.keys(sessions).filter(key => sessions[key].expiresAt < now).map(key => deleteKvObjectField('active-sessions', key)),
+    setKvObjectField('active-sessions', token, { token, email, userId, expiresAt, createdAt }),
+  ])
   
   return token
 }
@@ -135,34 +153,54 @@ async function deleteSession(token: string): Promise<void> {
 
 function App() {
   const [currentView, setCurrentView] = useState<View>('hub')
+  const currentViewRef = useRef<View>(currentView)
+  currentViewRef.current = currentView
+  const [viewNonce, setViewNonce] = useState(0)
   const [userSession, setUserSession] = useState<UserSession | null>(null)
   const [isCheckingAuth, setIsCheckingAuth] = useState(true)
-  const [lastActivity, setLastActivity] = useState(Date.now())
+  // Ref, not state: input events must not re-render the whole app.
+  const lastActivityRef = useRef(Date.now())
   // Se checkForcedUpdate herunder: undertrykker den globale opdaterings-popup
   // mens en manager-paatvunget version installeres i baggrunden.
   const [suppressUpdatePopup, setSuppressUpdatePopup] = useState(false)
-  const [accessViews, setAccessViews] = useState<AccessView[]>([])
-  const [registeredTeams, setRegisteredTeams] = useState<RegisteredTeam[]>([])
-  const [homeTeam, setHomeTeam] = useState<RegisteredTeam | null>(null)
-  const [activeAccessView, setActiveAccessView] = useState<AccessView | null>(null)
-  const [isAccessPickerOpen, setIsAccessPickerOpen] = useState(false)
+  // Hubs this person may open; the picker shows after login when there is more than one.
+  const [hubChoice, setHubChoice] = useState<{ token: string; hubs: MyHub[]; choosing: boolean } | null>(null)
+  // Bumped on every hub switch so all modules remount on the new team's data.
+  const [hubNonce, setHubNonce] = useState(0)
 
-  const loadAccessOptions = async (email: string, openPicker: boolean) => {
-    if (!window.electronRegistry) return
+  const loadHubChoice = useCallback(async (token: string, choosing: boolean) => {
+    let hubs: MyHub[] = []
+    try { hubs = await window.electronRegistry?.listMyHubs() || [] } catch (error) { console.error('Kunne ikke hente hubs:', error) }
+    setHubChoice({ token, hubs, choosing: choosing && hubs.length > 1 })
+  }, [])
+
+  useEffect(() => {
+    if (!userSession) { setHubChoice(null); return }
+    void loadHubChoice(userSession.token, true)
+  }, [userSession?.token, loadHubChoice]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const switchHub = useCallback(async (folderName: string) => {
+    if (!userSession) return false
     try {
-      const [views, teams, primaryTeam] = await Promise.all([
-        window.electronRegistry.listMyAccessViews(email),
-        window.electronRegistry.listTeams(),
-        window.electronRegistry.lookupTeam(email),
-      ])
-      setAccessViews(views)
-      setRegisteredTeams(teams)
-      setHomeTeam(primaryTeam)
-      if (openPicker && views.length > 0) setIsAccessPickerOpen(true)
+      const current = await window.electronRegistry?.getCurrentTeam()
+      if (current?.folderName !== folderName) await window.electronRegistry?.switchToTeam(folderName)
+      clearKvSnapshotCache()
+      clearCachedState()
+      rememberHub(userSession.userId, folderName)
+      setHubChoice(choice => choice && { ...choice, choosing: false })
+      setCurrentView('hub')
+      setHubNonce(nonce => nonce + 1)
+      window.dispatchEvent(new Event(HUB_SWITCHED_EVENT))
+      return true
     } catch (error) {
-      console.error('Kunne ikke hente brugerens samlevisninger:', error)
+      console.error('Kunne ikke skifte hub:', error)
+      return false
     }
-  }
+  }, [userSession])
+
+  const openHubPicker = useCallback(() => {
+    if (userSession) void loadHubChoice(userSession.token, true)
+  }, [userSession, loadHubChoice])
 
   useEffect(() => {
     // Éngangs-migrering: ældre ferie-poster med fulde ISO-datoer ('...T00:00:00.000Z')
@@ -190,12 +228,20 @@ function App() {
     // så Manager Panel kan se hvem der kører hvilken version. Kun i desktop-appen.
     if (!userSession || !window.electronUpdates) return
 
+    // Hver skrivning til den delte fil koster en laasefil paa M: (maalt 10-77 s under belastning),
+    // og ~40 klienter skrev hvert 5. minut. Manager Panel kalder en klient "offline" efter 24 t,
+    // saa vi skriver kun ved ny version/platform eller naar lastSeen er over 6 timer gammel.
+    const WRITE_AFTER_MS = 6 * 60 * 60 * 1000
     const reportVersion = async () => {
       try {
+        if (document.visibilityState === 'hidden') return
         const status = await window.electronUpdates!.getStatus()
+        const platform = navigator.platform || 'unknown'
+        const stored = (await window.kv.get<Record<string, { version?: string; platform?: string; lastSeen?: number }>>('client-versions'))?.[userSession.email]
+        if (stored && stored.version === status.currentVersion && stored.platform === platform && Date.now() - (stored.lastSeen || 0) < WRITE_AFTER_MS) return
         await setKvObjectField('client-versions', userSession.email, {
           version: status.currentVersion,
-          platform: navigator.platform || 'unknown',
+          platform,
           lastSeen: Date.now(),
         })
       } catch (error) {
@@ -204,7 +250,7 @@ function App() {
     }
 
     reportVersion()
-    const interval = setInterval(reportVersion, 5 * 60 * 1000)
+    const interval = setInterval(reportVersion, 15 * 60 * 1000)
     return () => clearInterval(interval)
   }, [userSession])
 
@@ -227,7 +273,9 @@ function App() {
         // over (netop det scenarie tvungen-version-valg findes for at undgaa).
         setSuppressUpdatePopup(true)
 
-        await deleteKvObjectField('force-update-requests', userSession.email)
+        // The request must be gone from the shared drive before the install restarts the app (otherwise it would
+        // install again after the restart); the update check runs while it is removed.
+        const removal = deleteKvObjectField('force-update-requests', userSession.email)
         toast.info(
           request.version
             ? `En manager har udløst en tvungen opdatering til v${request.version} — appen opdateres automatisk om lidt…`
@@ -238,9 +286,10 @@ function App() {
         if (request.version) {
           // Manageren har valgt en specifik version — installér den direkte,
           // uanset om den er nyere/ældre end den aktuelt publicerede.
+          await removal
           await window.electronUpdates!.install(request.version)
         } else {
-          const manifest = await window.electronUpdates!.check()
+          const [manifest] = await Promise.all([window.electronUpdates!.check(), removal])
           if (manifest) {
             await window.electronUpdates!.install()
           }
@@ -294,7 +343,9 @@ function App() {
         const users = await window.kv.get<Record<string, { status?: string }>>('users') || {}
         const user = users[session.email] || users[session.email.toLowerCase()]
         if (user && user.status !== 'pending' && user.status !== 'rejected') {
-          await renewSession(token)
+          // The session is valid (resumed above); extending it is a write to the shared drive (up to 90 s), so the
+          // hub opens at once and the renewal finishes in the background.
+          void trackPendingWrite(renewSession(token)).catch(error => console.error('Kunne ikke forlænge sessionen:', error))
           if (cancelled) return true
           setUserSession({
             userId: session.userId,
@@ -303,7 +354,6 @@ function App() {
             expiresAt: Date.now() + REMEMBERED_SESSION_DURATION,
             remembered: true,
           })
-          await loadAccessOptions(session.email, true)
           return true
         }
         // En reelt afventende/afvist konto rydder tokenet — men aldrig når den
@@ -340,37 +390,20 @@ function App() {
   useEffect(() => {
     if (!userSession) return
 
-    const handleActivity = () => {
-      setLastActivity(Date.now())
-    }
-
-    const events = ['mousedown', 'keydown', 'scroll', 'touchstart']
-    events.forEach(event => {
-      document.addEventListener(event, handleActivity)
-    })
-
-    return () => {
-      events.forEach(event => {
-        document.removeEventListener(event, handleActivity)
-      })
-    }
-  }, [userSession])
-
-  useEffect(() => {
-    // Huskede sessioner logges ikke ud ved inaktivitet — maskinen er personlig.
-    if (!userSession || userSession.remembered) return
-
-    const checkSessionTimeout = setInterval(() => {
-      const timeSinceActivity = Date.now() - lastActivity
-      
-      if (timeSinceActivity > SESSION_TIMEOUT) {
+    return watchInactivity({
+      target: document,
+      events: ['mousedown', 'keydown', 'scroll', 'touchstart'],
+      lastActivity: lastActivityRef,
+      // Huskede sessioner logges ikke ud ved inaktivitet — maskinen er personlig.
+      enforce: !userSession.remembered,
+      timeoutMs: SESSION_TIMEOUT,
+      checkEveryMs: 60000,
+      onTimeout: () => {
         toast.info('Din session er udløbet på grund af inaktivitet')
         handleLogout()
-      }
-    }, 60000)
-
-    return () => clearInterval(checkSessionTimeout)
-  }, [userSession, lastActivity])
+      },
+    })
+  }, [userSession])
 
   const handleAuthenticated = async (userId: string, email: string, rememberMe: boolean) => {
     const duration = rememberMe ? REMEMBERED_SESSION_DURATION : SESSION_DURATION
@@ -396,27 +429,25 @@ function App() {
       localStorage.removeItem(REMEMBER_TOKEN_KEY)
     }
 
+    lastActivityRef.current = Date.now()
     setUserSession({ userId, email, token, expiresAt, remembered: rememberMe })
-    setLastActivity(Date.now())
-    await loadAccessOptions(email, true)
   }
 
-  const handleLogout = async () => {
-    try { if (userSession?.token) await deleteSession(userSession.token) } catch (error) { console.error('Session cleanup failed during logout', error) }
+  const handleLogout = () => {
+    // The desktop app forgets the session at once when logout is called; removing it from the shared drive (up to
+    // 90 s) finishes in the background, so the login screen shows straight away.
+    if (userSession?.token) void trackPendingWrite(deleteSession(userSession.token)).catch(error => console.error('Session cleanup failed during logout', error))
     localStorage.removeItem(REMEMBER_TOKEN_KEY)
     
     setUserSession(null)
     setCurrentView('hub')
-    setAccessViews([])
-    setRegisteredTeams([])
-    setHomeTeam(null)
-    setActiveAccessView(null)
-    setIsAccessPickerOpen(false)
   }
 
   const handleNavigate = (moduleId: string) => {
     if (moduleId === 'guides') {
       setCurrentView('guides')
+    } else if (moduleId === 'knowledge') {
+      setCurrentView('knowledge')
     } else if (moduleId === 'calendar') {
       setCurrentView('calendar')
     } else if (moduleId === 'shifts') {
@@ -437,8 +468,14 @@ function App() {
       setCurrentView('games')
     } else if (moduleId === 'projects') {
       setCurrentView('projects')
+    } else if (moduleId === 'improvements') {
+      setCurrentView('improvements')
     } else if (moduleId === 'notebook') {
       setCurrentView('notebook')
+    } else if (moduleId === 'links') {
+      setCurrentView('links')
+    } else if (moduleId === 'warehouse') {
+      setCurrentView('warehouse')
     }
   }
 
@@ -451,11 +488,19 @@ function App() {
     if (!userSession) return
     const handleDeepLink = (e: Event) => {
       const view = (e as CustomEvent).detail?.view as AppViewId | undefined
-      if (view) setCurrentView(view)
+      if (!view) return
+      // Views read their params on mount, so a deep link into the open view (not Game Corner, which listens itself) remounts it.
+      if (view === currentViewRef.current && view !== 'games' && peekNavigationParams()) setViewNonce(nonce => nonce + 1)
+      setCurrentView(view)
     }
     window.addEventListener(NAVIGATE_EVENT, handleDeepLink)
     return () => window.removeEventListener(NAVIGATE_EVENT, handleDeepLink)
   }, [userSession])
+
+  const firstScreenReady = !isCheckingAuth && (!userSession || hubChoice?.token === userSession.token)
+  useEffect(() => {
+    if (firstScreenReady) dismissStartupIntro()
+  }, [firstScreenReady])
 
   // Bemærk: der er IKKE en global Escape-lytter her længere. Hver view ejer nu
   // sin egen Escape-håndtering (luk egen dialog → naviger tilbage), så vi
@@ -470,55 +515,34 @@ function App() {
     return (
       <ThemeProvider>
         <LanguageProvider>
+          <ChristmasProvider mode="full">
           <Toaster position="top-center" richColors />
           <AnimatedBackground />
+          <ChristmasLayer />
           <UpdateNotification />
           <StorageConnectionBanner />
           <Auth onAuthenticated={handleAuthenticated} />
+          </ChristmasProvider>
         </LanguageProvider>
       </ThemeProvider>
     )
   }
 
-  if (isAccessPickerOpen && accessViews.length > 0) {
-    return (
-      <ThemeProvider userId={userSession.userId}>
-        <LanguageProvider userId={userSession.userId}>
-          <Toaster position="top-center" richColors />
-          <AnimatedBackground />
-          <AccessContextPicker
-            homeTeam={homeTeam}
-            views={accessViews}
-            teams={registeredTeams}
-            onSelectHome={async () => { try { await window.electronAuth?.selectView(null); setActiveAccessView(null); setCurrentView('hub'); setIsAccessPickerOpen(false) } catch { toast.error('Adgangen til hubben kunne ikke bekræftes') } }}
-            onSelectView={async (view) => { try { await window.electronAuth?.selectView(view.viewId); setActiveAccessView(view); setCurrentView('hub'); setIsAccessPickerOpen(false) } catch { toast.error('Adgangen til hubben kunne ikke bekræftes') } }}
-            onLogout={handleLogout}
-          />
-          <AccountMigrationRecovery userEmail={userSession.email} onLogout={handleLogout} />
-        </LanguageProvider>
-      </ThemeProvider>
-    )
+  if (!hubChoice || hubChoice.token !== userSession.token) {
+    return null
   }
 
-  if (activeAccessView) {
+  if (hubChoice.choosing) {
     return (
       <ThemeProvider userId={userSession.userId}>
         <LanguageProvider userId={userSession.userId}>
+          <ChristmasProvider userId={userSession.userId} mode="full">
           <Toaster position="top-center" richColors />
           <AnimatedBackground />
-          <UpdateNotification suppressed={suppressUpdatePopup} />
+          <ChristmasLayer />
           <StorageConnectionBanner />
-          <Suspense fallback={<ViewLoadingFallback />}>
-            <ObserverWorkspace
-              userEmail={userSession.email}
-              view={activeAccessView}
-              allTeams={registeredTeams}
-              onChangeView={() => setIsAccessPickerOpen(true)}
-              onLogout={handleLogout}
-            />
-          </Suspense>
-          <HubAssistant key={activeAccessView.viewId} token={userSession.token} viewId={activeAccessView.viewId} />
-          <AccountMigrationRecovery userEmail={userSession.email} onLogout={handleLogout} />
+          <HubPicker hubs={hubChoice.hubs} preferred={rememberedHub(userSession.userId)} onChoose={hub => switchHub(hub.folderName)} onLogout={handleLogout} />
+          </ChristmasProvider>
         </LanguageProvider>
       </ThemeProvider>
     )
@@ -527,20 +551,29 @@ function App() {
   return (
     <ThemeProvider userId={userSession.userId}>
       <LanguageProvider userId={userSession.userId}>
+        <ChristmasProvider userId={userSession.userId} mode={christmasMode(currentView)}>
+        {/* Outside the remounted tree, so a message sent during a hub switch is not lost. */}
         <Toaster position="top-center" richColors />
+        <HubNotificationsProvider key={hubNonce} userEmail={userSession.email}>
+        <NisseProvider>
+        <NisseGreeting view={currentView} userEmail={userSession.email} />
+        <HubSwitchController onSwitch={switchHub} onOpenPicker={openHubPicker} />
         <AnimatedBackground />
+        <ChristmasLayer />
         <UpdateNotification suppressed={suppressUpdatePopup} />
         <StorageConnectionBanner />
-        <GuideImportStatus onOpenGuideLibrary={() => handleNavigate('guides')} />
+        <GuideImportStatus onOpenGuideLibrary={(kind) => handleNavigate(kind)} />
         <BirthdayCelebration userEmail={userSession.email} />
         <LoginDigest userEmail={userSession.email} />
         <WhatsNewDialog />
         <CommandPalette userEmail={userSession.email} />
+        <DesktopNotificationBridge />
         <HubAssistant key={userSession.token} token={userSession.token} />
         <AccountMigrationRecovery userEmail={userSession.email} onLogout={handleLogout} />
-        {currentView === 'hub' && <Hub onNavigate={handleNavigate} onLogout={handleLogout} userEmail={userSession.email} onChooseAccessView={accessViews.length > 0 ? () => setIsAccessPickerOpen(true) : undefined} />}
-        <Suspense fallback={<ViewLoadingFallback />}>
+        {currentView === 'hub' && <Hub onNavigate={handleNavigate} onLogout={handleLogout} userEmail={userSession.email} />}
+        <Suspense key={viewNonce} fallback={<ViewLoadingFallback />}>
           {currentView === 'guides' && <GuideLibrary onNavigateBack={handleNavigateBack} onLogout={handleLogout} userEmail={userSession.email} />}
+          {currentView === 'knowledge' && <GuideLibrary key="knowledge" kind="knowledge" onNavigateBack={handleNavigateBack} onLogout={handleLogout} userEmail={userSession.email} />}
           {currentView === 'calendar' && <VacationCalendar onNavigateBack={handleNavigateBack} onLogout={handleLogout} userEmail={userSession.email} />}
           {currentView === 'shifts' && <ShiftSchedule onNavigateBack={handleNavigateBack} onLogout={handleLogout} userEmail={userSession.email} />}
           {currentView === 'admin' && <AdminPanel onNavigateBack={handleNavigateBack} onLogout={handleLogout} userEmail={userSession.email} />}
@@ -551,8 +584,14 @@ function App() {
           {currentView === 'meals' && <MealPlan onNavigateBack={handleNavigateBack} />}
           {currentView === 'games' && <GameCorner onNavigateBack={handleNavigateBack} userEmail={userSession.email} />}
           {currentView === 'projects' && <ProjectBoard onNavigateBack={handleNavigateBack} userEmail={userSession.email} />}
+          {currentView === 'improvements' && <Improvements onNavigateBack={handleNavigateBack} userEmail={userSession.email} />}
           {currentView === 'notebook' && <VirtualNotebook onNavigateBack={handleNavigateBack} userEmail={userSession.email} />}
+          {currentView === 'links' && <LinkLibrary onNavigateBack={handleNavigateBack} userEmail={userSession.email} />}
+          {currentView === 'warehouse' && <Warehouse onNavigateBack={handleNavigateBack} />}
         </Suspense>
+        </NisseProvider>
+        </HubNotificationsProvider>
+        </ChristmasProvider>
       </LanguageProvider>
     </ThemeProvider>
   )

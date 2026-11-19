@@ -1,7 +1,7 @@
-// Neural da↔en↔fi-oversættelse via Bergamot/Firefox Translations (WASM) — kører
+// Neural da↔en↔fi↔sv-oversættelse via Bergamot/Firefox Translations (WASM) — kører
 // 100 % offline i appen. Modellerne ligger i <datamappe>/translation-models/
-// (daen/, enda/, enfi/, fien/), så én download på det delte drev tjener alle
-// klienter. Dansk↔finsk pivoterer neuralt gennem engelsk.
+// (daen/, enda/, enfi/, fien/, ensv/, sven/), så én download på det delte drev tjener
+// alle klienter. Par uden direkte model (fx dansk↔svensk) pivoterer neuralt gennem engelsk.
 //
 // Electron-produktionsappen kører under file://, hvor hverken fetch() eller
 // Worker-URL'er virker — derfor bygges workeren som en Blob med et prelude,
@@ -15,7 +15,7 @@ type BergamotStatus = 'unavailable' | 'idle' | 'loading' | 'ready' | 'error'
 
 interface TranslatorModule {
   translate(request: { from: string; to: string; text: string; html?: boolean }): Promise<{ target: { text: string } }>
-  delete(): void
+  delete(): void | Promise<void>
 }
 
 let status: BergamotStatus = 'idle'
@@ -41,8 +41,9 @@ async function loadAvailablePairs(): Promise<Set<string>> {
     const registry = await window.electronTranslation!.registry()
     availablePairs = new Set(registry.map((entry) => `${entry.from}${entry.to}`))
   } catch (error) {
+    // Not cached: before login the registry answers AUTH_REQUIRED, and neural translation must still work after login.
     console.error('Kunne ikke læse oversættelses-registry:', error)
-    availablePairs = new Set()
+    return new Set()
   }
   return availablePairs
 }
@@ -154,7 +155,12 @@ async function createTranslator(): Promise<TranslatorModule | null> {
         if (data.error !== undefined) reject(Object.assign(new Error(), data.error))
         else accept(data.result)
       })
-      worker.addEventListener('error', (event) => console.error('Bergamot worker-fejl:', event))
+      worker.addEventListener('error', (event) => {
+        console.error('Bergamot worker-fejl:', event)
+        // A dead worker never answers; fail the waiting calls so the queue and fallback move on.
+        for (const { reject } of pending.values()) reject(new Error('Bergamot worker stoppede'))
+        pending.clear()
+      })
 
       await call('initialize', this.options)
 
@@ -174,8 +180,30 @@ async function createTranslator(): Promise<TranslatorModule | null> {
   return translator as unknown as TranslatorModule
 }
 
+/**
+ * Bergamot's WASM worker never frees a loaded model, and its heap runs out after ~5 models
+ * (verified: the 6th aborts with "Failed to allocate memory on CPU"). Keep at most this many;
+ * a language switch beyond it starts a fresh engine.
+ */
+const MAX_LOADED_MODELS = 4
+let loadedModels = new Set<string>()
+// Translations run one at a time so an engine reset never cuts off a translation in flight.
+let queue: Promise<unknown> = Promise.resolve()
+
+export function planModelLoad(loaded: Set<string>, needed: string[], budget: number): { reset: boolean; loaded: Set<string> } {
+  const merged = new Set([...loaded, ...needed])
+  if (merged.size <= budget) return { reset: false, loaded: merged }
+  return { reset: true, loaded: new Set(needed) }
+}
+
 /** Oversætter med Bergamot. Returnerer null hvis motoren/modellen ikke er tilgængelig. */
-export async function bergamotTranslate(text: string, from: GuideLanguage, to: GuideLanguage): Promise<string | null> {
+export function bergamotTranslate(text: string, from: GuideLanguage, to: GuideLanguage): Promise<string | null> {
+  const run = queue.then(() => translateNow(text, from, to))
+  queue = run.catch(() => undefined)
+  return run
+}
+
+async function translateNow(text: string, from: GuideLanguage, to: GuideLanguage): Promise<string | null> {
   if (!text.trim()) return text
   try {
     const hasDirectModel = await hasBergamotModel(from, to)
@@ -183,6 +211,14 @@ export async function bergamotTranslate(text: string, from: GuideLanguage, to: G
       && await hasBergamotModel(from, 'en')
       && await hasBergamotModel('en', to)
     if (!hasDirectModel && !canPivotThroughEnglish) return null
+
+    const plan = planModelLoad(loadedModels, hasDirectModel ? [`${from}${to}`] : [`${from}en`, `en${to}`], MAX_LOADED_MODELS)
+    if (plan.reset && translatorPromise) {
+      const previous = await translatorPromise
+      translatorPromise = null
+      await previous?.delete()
+    }
+    loadedModels = plan.loaded
 
     if (!translatorPromise) {
       translatorPromise = createTranslator()
@@ -210,6 +246,11 @@ export async function bergamotTranslate(text: string, from: GuideLanguage, to: G
     return response.target.text
   } catch (error) {
     console.error('Bergamot-oversættelse fejlede:', error)
+    // A crashed WASM worker cannot recover; the next translation starts a fresh engine.
+    const failed = translatorPromise
+    translatorPromise = null
+    loadedModels = new Set()
+    failed?.then((translator) => translator?.delete()).catch(() => undefined)
     return null
   }
 }

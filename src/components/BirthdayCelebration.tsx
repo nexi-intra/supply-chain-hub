@@ -55,7 +55,8 @@ export function BirthdayCelebration({ userEmail }: BirthdayCelebrationProps) {
         
         if (!hasShownConfetti) {
           setShowConfettiBurst(true)
-          await window.kv.set(confettiKey, true)
+          // The burst lasts 4 s from now, not from when the shared drive has saved that it was shown (up to 90 s).
+          void window.kv.set(confettiKey, true).catch(error => console.error('Kunne ikke gemme konfetti-markering:', error))
           
           setTimeout(() => {
             setShowConfettiBurst(false)

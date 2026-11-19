@@ -10,6 +10,7 @@ import { appendToKvArray, setKvObjectField } from '@/lib/kvArrays'
 import { motion } from 'framer-motion'
 import nexiLogo from '@/assets/images/nexi-logo.svg'
 import nexiLogoWhite from '@/assets/images/nexi-logo-white.svg'
+import { HubMark } from '@/components/HubMark'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { LanguageToggle } from '@/components/LanguageToggle'
 import { useLanguage } from '@/contexts/LanguageContext'
@@ -171,8 +172,8 @@ export function Auth({ onAuthenticated }: AuthProps) {
           type: 'user-signup',
           read: false,
         }))
-        await appendToKvArray('emails', newEmails)
-        await appendToKvArray('email-notifications', newNotifications)
+        // Different keys: saved at the same time.
+        await Promise.all([appendToKvArray('emails', newEmails), appendToKvArray('email-notifications', newNotifications)])
       } catch (error) {
         console.error('Kunne ikke sende signup-notifikation til managere:', error)
       }
@@ -288,7 +289,10 @@ export function Auth({ onAuthenticated }: AuthProps) {
               <img src={nexiLogo} alt="Nexi" className="relative h-12 sm:h-14 md:h-16 w-auto dark:hidden" />
               <img src={nexiLogoWhite} alt="Nexi" className="relative h-12 sm:h-14 md:h-16 w-auto hidden dark:block" />
             </motion.div>
-            <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight text-foreground mb-2">Supply Chain Hub</h1>
+            <h1 className="flex items-center justify-center gap-3 text-3xl sm:text-4xl font-semibold tracking-tight text-foreground mb-2">
+              <HubMark size={44} decorative className="sm:w-12 sm:h-12" />
+              Supply Chain Hub
+            </h1>
             <p className="text-muted-foreground text-sm sm:text-base">
               {mode === 'login' ? t.auth.loginSubtitle : t.auth.signupSubtitle}
             </p>
