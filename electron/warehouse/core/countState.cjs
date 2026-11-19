@@ -183,8 +183,9 @@ function applyApprovals(aggregate, approvals = {}) {
     if (!frozenOf(material)) continue
     for (const frozen of approval.frozen) {
       if (seen.has(`${material}|${frozen.sloc}|${frozen.stockType}`)) continue
-      const base = template.get(material) || { material, description: '', kind: materialKind(material), serialManaged: false, unitPrice: null, sapSerials: 0, countedSerials: 0, countedLines: 0, misplaced: false, suggestions: [], sapMismatch: false }
-      rows.push({ ...base, sloc: frozen.sloc, stockType: frozen.stockType, sapQty: frozen.sapQty, counted: frozen.counted, diff: frozen.diff, valueDiff: frozen.valueDiff, frozenAt: approval.at, countedAfter: -frozen.counted })
+      const base = template.get(material) || { material, description: '', kind: materialKind(material), serialManaged: false, unitPrice: null, misplaced: false, suggestions: [], sapMismatch: false }
+      // The location or stock type is gone from SAP since the approval: nothing is expected or counted there today.
+      rows.push({ ...base, sloc: frozen.sloc, stockType: frozen.stockType, sapSerials: 0, countedSerials: 0, countedLines: 0, sapQty: frozen.sapQty, counted: frozen.counted, diff: frozen.diff, valueDiff: frozen.valueDiff, frozenAt: approval.at, countedAfter: -frozen.counted })
     }
   }
   return { ...aggregate, rows, totals: totalsOf(rows) }
@@ -236,12 +237,19 @@ function computeProgress({ snapshot, aggregate, countLists = [], events, approva
   const accessorySerials = { found: 0, expected: 0 }
   const slocs = new Map()
   const slocFor = sloc => { if (!slocs.has(sloc)) slocs.set(sloc, { sloc, found: 0, expected: 0, countedQty: 0, sapQty: 0 }); return slocs.get(sloc) }
+  // Progress is how far the count has come, not whether everything was found: an approved (or posted) material is done,
+  // also with a difference. Its missing serials stay recorded on the approval for the count document.
+  const done = material => ['approved', 'posted'].includes(approvals[material]?.status)
+  let reached = 0
+  let total = 0
   for (const row of aggregate.rows) {
     const bucket = slocFor(row.sloc)
     if (row.serialManaged) {
-      const found = Math.min(row.countedSerials, row.sapSerials)
+      const found = done(row.material) ? row.sapSerials : Math.min(row.countedSerials, row.sapSerials)
       bucket.found += found
       bucket.expected += row.sapSerials
+      reached += found
+      total += row.sapSerials
       if (row.kind === 'new' || row.kind === 'used') {
         terminals[row.kind][row.stockType].found += found
         terminals[row.kind][row.stockType].expected += row.sapSerials
@@ -252,6 +260,9 @@ function computeProgress({ snapshot, aggregate, countLists = [], events, approva
     } else {
       bucket.countedQty += row.countedLines
       bucket.sapQty += row.sapQty
+      // Without serials a row is counted by quantity: what is counted counts up to SAP's quantity (more is a difference, not progress).
+      reached += done(row.material) ? row.sapQty : Math.min(row.countedLines, row.sapQty)
+      total += row.sapQty
     }
   }
 
@@ -277,17 +288,9 @@ function computeProgress({ snapshot, aggregate, countLists = [], events, approva
   }
   let accessoryCounted = 0
   let accessorySap = 0
-  // Without serials a row is counted by quantity: what is counted counts up to SAP's quantity (more is a difference, not progress).
-  let quantityReached = 0
-  let quantityTotal = 0
   for (const row of aggregate.rows) {
     if (row.kind === 'accessory' && !row.serialManaged) { accessoryCounted += row.countedLines; accessorySap += row.sapQty }
-    if (!row.serialManaged) { quantityReached += Math.min(row.countedLines, row.sapQty); quantityTotal += row.sapQty }
   }
-
-  // In pieces: every expected serial is one piece, and every piece SAP has of a material without serials.
-  const reached = aggregate.serials.found + quantityReached
-  const total = aggregate.serials.expected + quantityTotal
 
   const counters = new Map()
   const active = activeEvents(events)
@@ -312,6 +315,7 @@ function computeProgress({ snapshot, aggregate, countLists = [], events, approva
   for (const listLine of countLists) {
     if (activeLines.get(listLine.lineId)?.status !== 'counted' && materials.has(listLine.material)) materials.get(listLine.material).done = false
   }
+  for (const [material, entry] of materials) if (done(material)) entry.done = true
   const approvalValues = Object.entries(approvals).filter(([material]) => materials.has(material)).map(([, value]) => value?.status)
 
   const hourAgo = now - 3600 * 1000

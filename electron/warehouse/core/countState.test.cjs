@@ -199,10 +199,10 @@ test('progress: overall, terminals, accessories, per area and per counter', () =
   assert.equal(progress.terminals.used.unrestricted.found, 1)
   assert.equal(progress.terminals.used.unrestricted.expected, 3)
   assert.deepEqual(progress.accessory.lines, { counted: 1, total: 2 })
-  // In pieces: 6 serials + 100 + 10 + 5 pieces without serials; reached: N1, U2 and 50 of R162-0717.
-  assert.equal(progress.overall.reached, 52)
+  // In pieces: 6 serials + 100 + 10 + 5 pieces without serials; reached: N1, U2 and R162-0717 in full (it is approved).
+  assert.equal(progress.overall.reached, 112)
   assert.equal(progress.overall.total, 121)
-  assert.equal(progress.overall.percent, 43)
+  assert.equal(progress.overall.percent, 93)
   assert.deepEqual(progress.areas.find(item => item.area === 'A'), { area: 'A', counted: 1, total: 1 })
   assert.equal(progress.counters.find(item => item.email === 'bo@example.test').events, 2)
   assert.equal(progress.materials.approved, 1)
@@ -226,6 +226,21 @@ test('progress counts pieces: quantities without serials count up to the SAP qua
   const progress = progressOf(more)
   assert.deepEqual(progress.overall, { reached: 106, total: 108, percent: 98 }, 'more than SAP on a row counts as the SAP quantity')
   assert.equal(progress.pace.perHour, 1 + 80 + 30 + 5, 'the pace is pieces too; a changed line counts its change')
+})
+
+test('an approved or posted material is 100 % of the progress, also with a difference', () => {
+  const events = [scan('N1'), scan('U2')]
+  const raw = aggregateCount({ snapshot, index, events })
+  const approvals = {
+    'INT4300-4921-0': { status: 'approved', at: ++ids, frozen: freezeRows(raw.rows, 'INT4300-4921-0', raw.serials.missing) },
+    'R162-0800': { status: 'posted', at: ++ids, frozen: freezeRows(raw.rows, 'R162-0800') },
+  }
+  const progress = computeProgress({ snapshot, aggregate: applyApprovals(raw, approvals), countLists: [], events, approvals, now: 3600 * 1000 })
+  // INT4300-4921-0: 3 serials (1 found, 2 missing) count in full; R162-0800: 5 pieces, none counted, posted. U2 is found; the rest is open.
+  assert.deepEqual(progress.overall, { reached: 3 + 5 + 1, total: 121, percent: 7 })
+  assert.deepEqual(progress.terminals.new, { unrestricted: { found: 2, expected: 2 }, blocked: { found: 1, expected: 1 } })
+  assert.equal(progress.materials.counted, 2, 'approved materials are done')
+  assert.deepEqual(approvals['INT4300-4921-0'].frozen.map(row => row.missingSerials), [['N2'], ['N3']], 'the missing serials stay recorded for the count document')
 })
 
 test('approval freezes the missing serials of serial-managed rows, not of quantity rows', () => {
