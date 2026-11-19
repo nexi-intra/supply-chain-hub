@@ -1,4 +1,5 @@
 import fiTranslations from './translations.fi.json'
+import svTranslations from './translations.sv.json'
 
 const baseTranslations = {
   da: {
@@ -51,7 +52,9 @@ const baseTranslations = {
       loadingUsers: "Indlæser brugere...",
       noUsers: "Ingen registrerede brugere endnu",
       noUsersHint: "Brugere vil blive vist her når de opretter en konto",
-      otherTeamsTitle: "Andre teams i Supply Chain"
+      otherTeamsTitle: "Andre teams i Supply Chain",
+      searchPlaceholder: "Søg efter navn eller e-mail",
+      noMatches: "Ingen kolleger matcher søgningen"
     },
     mealPlan: {
       title: "Madplan",
@@ -219,25 +222,6 @@ const baseTranslations = {
         submit: "Opret bruger",
         created: "Bruger oprettet",
         fieldsRequired: "Udfyld alle felter"
-      },
-      accessViews: {
-        title: "Skrivebeskyttede samlehubs",
-        description: "Opret en rigtig hub med data fra flere teams uden at gøre de tildelte personer til medlemmer af teamene.",
-        create: "Opret samlehub",
-        edit: "Rediger samlehub",
-        name: "Navn",
-        namePlaceholder: "fx TCD + TRR",
-        teams: "Teams i hubben",
-        people: "Personer med adgang",
-        noPeople: "Ingen personer tildelt",
-        noneFound: "Ingen samlehubs oprettet endnu",
-        readOnly: "Kun læsning",
-        selectTwoTeams: "Vælg mindst to teams",
-        nameRequired: "Indtast et navn",
-        saved: "Samlehub gemt",
-        deleted: "Samlehub slettet",
-        deleteConfirm: "Vil du slette denne samlehub? Ingen teamdata bliver slettet.",
-        save: "Gem samlehub"
       }
     },
     managerPanel: {
@@ -265,6 +249,11 @@ const baseTranslations = {
         reject: "Afvis",
         approved: "Adgang godkendt",
         rejected: "Anmodning afvist"
+      },
+      knowledgeAccessRequests: {
+        title: "Knowledge Base-adgangsanmodninger",
+        description: "Andre teams' brugere kan anmode om adgang til jeres vidensartikler. Godkendelse giver 2 dages adgang til selve indholdet.",
+        none: "Ingen afventende anmodninger"
       },
       permissions: {
         newRequestsTitle: "Nye brugeranmodninger",
@@ -497,6 +486,9 @@ const baseTranslations = {
       importModeDescription: "Trin kan redigeres i Hub. Bevar originalen, hvis tabeller og sidelayout skal være præcise i Word.",
       importEditable: "Konvertér til redigerbare trin",
       importOriginal: "Bevar original Word-layout",
+      importDocument: "Importér dokument",
+      importDocumentTitle: "Importér Word eller PDF",
+      importPdf: "Importér PDF (teksten bliver søgbar, originalen bevares)",
       newGuide: "Ny guide",
       searchPlaceholder: "Søg i guides...",
       needsReview: "Skal opdateres",
@@ -542,6 +534,7 @@ const baseTranslations = {
         created: "Guide oprettet!",
         deleted: "Guide slettet!",
         importStartFailed: "Kunne ikke starte importen",
+        onlyPdf: "Vælg en PDF-fil",
         importEmptyContent: "Kunne ikke finde noget indhold i dokumentet — prøv at redigere det manuelt i editoren",
         guideNoLongerExists: "Guiden findes ikke længere",
         exportFolderChosen: "Eksport-mappe valgt",
@@ -590,6 +583,9 @@ const baseTranslations = {
       replaceWordFile: "Indlæs rettet DOCX",
       wordDownloadFailed: "Kunne ikke hente Word-filen",
       onlyDocxAllowed: "Vælg en DOCX-fil",
+      originalPdfLabel: "Original PDF",
+      originalPdfHint: "PDF'en bevares uændret og kan altid ses under fanen Original PDF. Teksten herover er den søgbare og oversættelige udgave.",
+      downloadPdf: "Download PDF",
       editInWordHint: "Rediger filen i Word, gem den lokalt, og indlæs derefter den rettede DOCX her. HTML-previewet er ikke identisk med Word.",
       onlyImagesAllowed: "Kun billeder kan tilføjes her",
       uploadImageFailed: "Kunne ikke uploade billede",
@@ -638,6 +634,7 @@ const baseTranslations = {
       languageDanish: "Dansk",
       languageEnglish: "Engelsk",
       languageFinnish: "Finsk",
+      languageSwedish: "Svensk",
       reviewIntervalLabel: "Opdaterings-interval",
       reviewIntervalHintPrefix: "Guiden markeres som \"skal opdateres\"",
       reviewIntervalHintSuffix: "efter seneste gemning/gennemgang.",
@@ -696,6 +693,9 @@ const baseTranslations = {
       editableViewTab: "Redigerbar visning",
       originalFormatTab: "Forenklet preview",
       originalFileTab: "Original DOCX",
+      originalPdfTab: "Original PDF",
+      textViewTab: "Tekst",
+      downloadOriginalPdf: "Download original PDF",
       exactLayoutHint: "Åbn den originale DOCX i Word for at se alle sider, tabeller og billeder korrekt. Ret en kopi og indlæs den rettede fil som ny revision.",
       openInWord: "Åbn kopi i Word",
       simplifiedPreviewHint: "Forenklet visning: placering af billeder, sider og tekst kan afvige. Åbn DOCX i Word for det korrekte layout.",
@@ -872,7 +872,15 @@ const baseTranslations = {
       scorePlaceholder: "Indtast score",
       levelLabel: "Level *",
       levelPlaceholder: "Indtast level",
-      saveChanges: "Gem ændringer"
+      saveChanges: "Gem ændringer",
+      legacyBadge: "Gammel version",
+      legacyTitleSuffix: "(gammel version)",
+      legacyDescription: "Highscores fra den gamle version af spillet. De vises ikke længere i spillet og kan slettes enkeltvis eller samlet.",
+      deleteAllLegacy: "Slet alle gamle highscores",
+      deleteAllLegacyTitle: "Slet alle gamle highscores?",
+      deleteAllLegacyDescription: "Alle highscores fra den gamle version i dette team slettes på tværs af sværhedsgrader. Handlingen kan ikke fortrydes.",
+      legacyDeleted: "Gamle highscores slettet",
+      deleteFailed: "Scoren kunne ikke slettes. Tjek forbindelsen til det delte drev."
     },
     manualVacationGrant: {
       selectUser: "Vælg en bruger",
@@ -897,6 +905,30 @@ const baseTranslations = {
       granting: "Giver...",
       grantDayOff: "Giv Fridag",
       grantVacation: "Giv Ferie"
+    },
+    parentalLeave: {
+      badge: "Barsel",
+      registerButton: "Registrer barsel",
+      title: "Registrer barsel",
+      description: "Barsel tildeles af en leder og kræver ingen ansøgning. Slutdatoen er sidste barselsdag og kan rettes senere.",
+      selectUserLabel: "Vælg medarbejder *",
+      selectUser: "Vælg en medarbejder",
+      startDateLabel: "Startdato *",
+      endDateLabel: "Slutdato (sidste barselsdag) *",
+      notesLabel: "Bemærkninger (valgfri)",
+      notesPlaceholder: "Tilføj evt. bemærkninger...",
+      submit: "Registrer barsel",
+      selectStartDate: "Vælg en startdato",
+      selectEndDate: "Vælg en slutdato",
+      endBeforeStart: "Slutdato må ikke være før startdato",
+      registered: "Barsel registreret",
+      registerFailed: "Kunne ikke registrere barsel",
+      notification: "Din leder har registreret barsel for dig",
+      typeLabel: "Type",
+      typeVacation: "Ferie",
+      typeParental: "Barsel",
+      back: "Tilbage {date}",
+      backTomorrow: "Tilbage i morgen"
     },
     sickLeaveManager: {
       deleted: "Sygemelding slettet",
@@ -990,6 +1022,7 @@ const baseTranslations = {
         shifts: "Vagtplan",
         calendar: "Kalender",
         guides: "Guide Bibliotek",
+        knowledge: "Knowledge Base",
         team: "Team Oversigt",
         manager: "Manager Panel",
         email: "Email System",
@@ -1007,6 +1040,7 @@ const baseTranslations = {
         team: "Kontaktoplysninger og teammedlemmer",
         email: "Send og modtag beskeder internt",
         guides: "Søg og administrer afdelingens guides og procedurer",
+        knowledge: "Opslagsviden som fejlkoder, specifikationer og referencer",
         games: "Sjove spil til pause og afslapning",
         documents: "Fælles dokumenter og filer",
         projects: "Team-to-do's og personlige to-do's",
@@ -1497,7 +1531,7 @@ const baseTranslations = {
       selectDate: "Vælg datoen for din sygemelding",
       editDate: "Rediger sygemeldingsdatoen",
       notes: "Bemærkninger (valgfrit)",
-      notesPlaceholder: "Eventuelle bemærkninger til din sygemelding...",
+      notesPlaceholder: "Kun praktiske oplysninger, fx 'går hjem kl. 12'. Skriv ikke, hvad du fejler.",
       cancel: "Annuller",
       submit: "Indsend sygemelding",
       update: "Gem ændringer",
@@ -1607,9 +1641,15 @@ const baseTranslations = {
       trigger: "Hjemmearbejde",
       title: "Hjemmearbejde",
       description: "Sæt dit faste mønster for hjemmearbejdsdage, eller meld en enkelt dag anderledes. Ingen godkendelse krævet.",
-      patternTitle: "Fast ugentligt mønster",
-      patternHint: "Vælg hvilke dage du normalt arbejder hjemmefra",
+      patternTitle: "Gentagende hjemmearbejde",
+      patternHint: "Vælg dage og hvor ofte de gentages",
       weekdays: { monday: "Man", tuesday: "Tir", wednesday: "Ons", thursday: "Tor", friday: "Fre" },
+      intervalLabel: "Gentag hver",
+      weekUnit: "uge",
+      weeksUnit: "uger",
+      firstOccurrence: "Første forekomst",
+      invalidInterval: "Vælg et helt antal uger mellem 1 og 52",
+      invalidFirstDate: "Vælg en gyldig første dato på {day}",
       savePattern: "Gem mønster",
       patternSaved: "Mønster gemt",
       exceptionsTitle: "Undtagelser",
@@ -1677,7 +1717,9 @@ const baseTranslations = {
       loadingUsers: "Loading users...",
       noUsers: "No registered users yet",
       noUsersHint: "Users will be shown here once they create an account",
-      otherTeamsTitle: "Other teams in Supply Chain"
+      otherTeamsTitle: "Other teams in Supply Chain",
+      searchPlaceholder: "Search by name or email",
+      noMatches: "No colleagues match the search"
     },
     mealPlan: {
       title: "Meal Plan",
@@ -1845,25 +1887,6 @@ const baseTranslations = {
         submit: "Create user",
         created: "User created",
         fieldsRequired: "Fill in all fields"
-      },
-      accessViews: {
-        title: "Read-only combined hubs",
-        description: "Create a full hub with data from multiple teams without making assigned people members of those teams.",
-        create: "Create combined hub",
-        edit: "Edit combined hub",
-        name: "Name",
-        namePlaceholder: "e.g. TCD + TRR",
-        teams: "Teams in the hub",
-        people: "People with access",
-        noPeople: "No people assigned",
-        noneFound: "No combined hubs created yet",
-        readOnly: "Read only",
-        selectTwoTeams: "Select at least two teams",
-        nameRequired: "Enter a name",
-        saved: "Combined hub saved",
-        deleted: "Combined hub deleted",
-        deleteConfirm: "Delete this combined hub? No team data will be deleted.",
-        save: "Save combined hub"
       }
     },
     managerPanel: {
@@ -1891,6 +1914,11 @@ const baseTranslations = {
         reject: "Reject",
         approved: "Access approved",
         rejected: "Request rejected"
+      },
+      knowledgeAccessRequests: {
+        title: "Knowledge Base Access Requests",
+        description: "Users from other teams can request access to your knowledge articles. Approval grants 2 days of access to the actual content.",
+        none: "No pending requests"
       },
       permissions: {
         newRequestsTitle: "New user requests",
@@ -2123,6 +2151,9 @@ const baseTranslations = {
       importModeDescription: "Steps can be edited in Hub. Keep the original for exact tables and page layout in Word.",
       importEditable: "Convert to editable steps",
       importOriginal: "Keep original Word layout",
+      importDocument: "Import document",
+      importDocumentTitle: "Import Word or PDF",
+      importPdf: "Import PDF (text becomes searchable, original is kept)",
       newGuide: "New guide",
       searchPlaceholder: "Search guides...",
       needsReview: "Needs review",
@@ -2168,6 +2199,7 @@ const baseTranslations = {
         created: "Guide created!",
         deleted: "Guide deleted!",
         importStartFailed: "Could not start the import",
+        onlyPdf: "Choose a PDF file",
         importEmptyContent: "Could not find any content in the document — try editing it manually in the editor",
         guideNoLongerExists: "The guide no longer exists",
         exportFolderChosen: "Export folder selected",
@@ -2216,6 +2248,9 @@ const baseTranslations = {
       replaceWordFile: "Upload edited DOCX",
       wordDownloadFailed: "Could not download Word file",
       onlyDocxAllowed: "Choose a DOCX file",
+      originalPdfLabel: "Original PDF",
+      originalPdfHint: "The PDF is kept unchanged and can always be viewed in the Original PDF tab. The text above is the searchable, translatable version.",
+      downloadPdf: "Download PDF",
       editInWordHint: "Edit in Word, save locally, then upload the edited DOCX here. The HTML preview is not identical to Word.",
       onlyImagesAllowed: "Only images can be added here",
       uploadImageFailed: "Could not upload image",
@@ -2264,6 +2299,7 @@ const baseTranslations = {
       languageDanish: "Danish",
       languageEnglish: "English",
       languageFinnish: "Finnish",
+      languageSwedish: "Swedish",
       reviewIntervalLabel: "Review interval",
       reviewIntervalHintPrefix: "The guide is marked as \"needs review\"",
       reviewIntervalHintSuffix: "after the latest save/review.",
@@ -2322,6 +2358,9 @@ const baseTranslations = {
       editableViewTab: "Editable view",
       originalFormatTab: "Simplified preview",
       originalFileTab: "Original DOCX",
+      originalPdfTab: "Original PDF",
+      textViewTab: "Text",
+      downloadOriginalPdf: "Download original PDF",
       exactLayoutHint: "Open the original DOCX in Word to see its pages, tables, and images accurately. Edit a copy and upload the edited file as a new revision.",
       openInWord: "Open copy in Word",
       simplifiedPreviewHint: "Simplified view: images, pages, and text may shift. Open the DOCX in Word for the correct layout.",
@@ -2498,7 +2537,15 @@ const baseTranslations = {
       scorePlaceholder: "Enter score",
       levelLabel: "Level *",
       levelPlaceholder: "Enter level",
-      saveChanges: "Save changes"
+      saveChanges: "Save changes",
+      legacyBadge: "Old version",
+      legacyTitleSuffix: "(old version)",
+      legacyDescription: "Highscores from the old version of the game. They are no longer shown in the game and can be deleted one by one or all at once.",
+      deleteAllLegacy: "Delete all old highscores",
+      deleteAllLegacyTitle: "Delete all old highscores?",
+      deleteAllLegacyDescription: "All highscores from the old version in this team are deleted across difficulties. This action cannot be undone.",
+      legacyDeleted: "Old highscores deleted",
+      deleteFailed: "The score could not be deleted. Check the connection to the shared drive."
     },
     manualVacationGrant: {
       selectUser: "Select a user",
@@ -2523,6 +2570,30 @@ const baseTranslations = {
       granting: "Granting...",
       grantDayOff: "Grant Day Off",
       grantVacation: "Grant Vacation"
+    },
+    parentalLeave: {
+      badge: "Parental leave",
+      registerButton: "Register parental leave",
+      title: "Register parental leave",
+      description: "Parental leave is assigned by a manager and needs no request. The end date is the last day of leave and can be corrected later.",
+      selectUserLabel: "Select employee *",
+      selectUser: "Select an employee",
+      startDateLabel: "Start date *",
+      endDateLabel: "End date (last day of leave) *",
+      notesLabel: "Notes (optional)",
+      notesPlaceholder: "Add any notes...",
+      submit: "Register parental leave",
+      selectStartDate: "Select a start date",
+      selectEndDate: "Select an end date",
+      endBeforeStart: "End date must not be before start date",
+      registered: "Parental leave registered",
+      registerFailed: "Could not register parental leave",
+      notification: "Your manager has registered parental leave for you",
+      typeLabel: "Type",
+      typeVacation: "Vacation",
+      typeParental: "Parental leave",
+      back: "Back {date}",
+      backTomorrow: "Back tomorrow"
     },
     sickLeaveManager: {
       deleted: "Sick leave entry deleted",
@@ -2616,6 +2687,7 @@ const baseTranslations = {
         shifts: "Shift Schedule",
         calendar: "Calendar",
         guides: "Guide Library",
+        knowledge: "Knowledge Base",
         team: "Team Overview",
         manager: "Manager Panel",
         email: "Email System",
@@ -2633,6 +2705,7 @@ const baseTranslations = {
         team: "Contact information and team members",
         email: "Send and receive messages internally",
         guides: "Search and manage department guides and procedures",
+        knowledge: "Reference knowledge such as error codes, specifications and references",
         games: "Fun games for breaks and relaxation",
         documents: "Shared documents and files",
         projects: "Team and personal to-do's",
@@ -3123,7 +3196,7 @@ const baseTranslations = {
       selectDate: "Select the date for your sick leave",
       editDate: "Edit sick leave date",
       notes: "Notes (optional)",
-      notesPlaceholder: "Any notes regarding your sick leave...",
+      notesPlaceholder: "Practical notes only, e.g. 'leaving at 12'. Don't write what you are ill with.",
       cancel: "Cancel",
       submit: "Submit sick leave",
       update: "Save changes",
@@ -3142,9 +3215,15 @@ const baseTranslations = {
       trigger: "Home office",
       title: "Home office",
       description: "Set your regular home-office pattern, or report a single day differently. No approval needed.",
-      patternTitle: "Regular weekly pattern",
-      patternHint: "Choose which days you normally work from home",
+      patternTitle: "Recurring home office",
+      patternHint: "Choose days and how often they repeat",
       weekdays: { monday: "Mon", tuesday: "Tue", wednesday: "Wed", thursday: "Thu", friday: "Fri" },
+      intervalLabel: "Repeat every",
+      weekUnit: "week",
+      weeksUnit: "weeks",
+      firstOccurrence: "First occurrence",
+      invalidInterval: "Choose a whole number of weeks between 1 and 52",
+      invalidFirstDate: "Choose a valid first {day} date",
       savePattern: "Save pattern",
       patternSaved: "Pattern saved",
       exceptionsTitle: "Exceptions",
@@ -3258,6 +3337,7 @@ const baseTranslations = {
 export const translations = {
   ...baseTranslations,
   fi: fiTranslations as typeof baseTranslations.en,
+  sv: svTranslations as typeof baseTranslations.en,
 }
 
 export type Language = keyof typeof translations

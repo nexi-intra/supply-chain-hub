@@ -8,15 +8,18 @@ import { Progress } from '@/components/ui/progress'
 import { toast } from 'sonner'
 import { guideImportManager } from '@/lib/guideImportManager'
 import { useLanguage } from '@/contexts/LanguageContext'
+import { adaptLibraryTranslations } from '@/lib/libraryTerms'
+import type { LibraryKind } from '@/lib/libraryConfig'
 
 interface GuideImportStatusProps {
   /** Kaldes når brugeren klikker "Åbn bibliotek" i afslutnings-toasten. */
-  onOpenGuideLibrary: () => void
+  onOpenGuideLibrary: (kind: LibraryKind) => void
 }
 
 export function GuideImportStatus({ onOpenGuideLibrary }: GuideImportStatusProps) {
-  const { t } = useLanguage()
+  const { t: appT, language } = useLanguage()
   const job = useSyncExternalStore(guideImportManager.subscribe, guideImportManager.getJob)
+  const t = adaptLibraryTranslations(appT, language, job?.kind ?? 'guides')
   const [elapsedMs, setElapsedMs] = useState(0)
 
   useEffect(() => {
@@ -36,13 +39,14 @@ export function GuideImportStatus({ onOpenGuideLibrary }: GuideImportStatusProps
     if (completion.error) {
       toast.error(completion.error)
     } else if (completion.title) {
-      toast.success(`"${completion.title}" ${t.guideImportStatus.importedSuffix}`, {
-        description: t.guideImportStatus.openLibraryDescription,
-        action: { label: t.guideImportStatus.openLibrary, onClick: onOpenGuideLibrary },
+      const done = adaptLibraryTranslations(appT, language, completion.kind)
+      toast.success(`"${completion.title}" ${done.guideImportStatus.importedSuffix}`, {
+        description: done.guideImportStatus.openLibraryDescription,
+        action: { label: done.guideImportStatus.openLibrary, onClick: () => onOpenGuideLibrary(completion.kind) },
         duration: 10000,
       })
     }
-  }, [job, onOpenGuideLibrary])
+  }, [job, onOpenGuideLibrary, appT, language])
 
   return (
     <AnimatePresence>

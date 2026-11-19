@@ -1,0 +1,10 @@
+﻿
+	Material					Material Description					Plnt	Location	S	Special stock descr.
+	PhysInvDoc	Item	Batch	Period	Plan. Date		Count Date	STy	Phys. Inv. No.	Doc. Status
+
+	INT4100-7920-0					LANE3600 PCI PTS 6.x.					D301	D000
+	100000102	   1		2025.06	18.06.2025		18.06.2025	1
+	100000103	   1		2025.06	18.06.2025		18.06.2025	4
+	100000523	   1		2025.12	10.12.2025		10.12.2025	4
+	100000556	   1		2025.12	09.12.2025		09.12.2025	1
+	105000893	   1		0000.00	19.10.2026			1		Doc. Active

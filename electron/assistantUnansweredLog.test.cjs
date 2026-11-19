@@ -5,8 +5,8 @@ const { buildUnansweredLogEntry } = require('./assistantUnansweredLog.cjs')
 const now = new Date('2026-09-17T12:00:00.000Z')
 
 test('logs a question when the answer mode is unsupported', () => {
-  const entry = buildUnansweredLogEntry({ question: 'hvad er meningen med livet?', language: 'da', viewId: 'team-a' }, { mode: 'unsupported' }, now)
-  assert.deepEqual(entry, { question: 'hvad er meningen med livet?', language: 'da', viewId: 'team-a', createdAt: now.toISOString() })
+  const entry = buildUnansweredLogEntry({ question: 'hvad er meningen med livet?', language: 'da' }, { mode: 'unsupported' }, now)
+  assert.deepEqual(entry, { question: 'hvad er meningen med livet?', language: 'da', createdAt: now.toISOString() })
 })
 
 test('never logs data, action-proposal or ai answers', () => {
@@ -26,6 +26,17 @@ test('never logs an app-guide answer that did match a topic', () => {
   assert.equal(buildUnansweredLogEntry({ question: 'hvordan opretter jeg en note?' }, { mode: 'app-guide' }, now), null)
 })
 
+test('logs a zero-result answer as a weak answer, tagged so it can be told apart', () => {
+  const entry = buildUnansweredLogEntry({ question: 'hvilke noter har jeg om pasta?', language: 'da', email: 'a@test' }, { mode: 'data', total: 0, text: 'Ingen' }, now)
+  assert.deepEqual(Object.keys(entry).sort(), ['createdAt', 'language', 'question', 'reason'])
+  assert.equal(entry.reason, 'empty')
+})
+
+test('does not log a zero-result answer that is the real answer, or any answer with results', () => {
+  assert.equal(buildUnansweredLogEntry({ question: 'hvem er syg i morgen?' }, { mode: 'data', total: 0, weak: false }, now), null)
+  assert.equal(buildUnansweredLogEntry({ question: 'hvilke noter har jeg?' }, { mode: 'data', total: 2 }, now), null)
+})
+
 test('never logs an empty or missing question', () => {
   assert.equal(buildUnansweredLogEntry({ question: '' }, { mode: 'unsupported' }, now), null)
   assert.equal(buildUnansweredLogEntry({ question: '   ' }, { mode: 'unsupported' }, now), null)
@@ -33,15 +44,14 @@ test('never logs an empty or missing question', () => {
   assert.equal(buildUnansweredLogEntry(null, { mode: 'unsupported' }, now), null)
 })
 
-test('never includes anything beyond question/language/viewId/createdAt', () => {
-  const entry = buildUnansweredLogEntry({ question: 'x', language: 'en', viewId: 'v', token: 'secret-token', email: 'a@test' }, { mode: 'unsupported' }, now)
-  assert.deepEqual(Object.keys(entry).sort(), ['createdAt', 'language', 'question', 'viewId'])
+test('never includes anything beyond question/language/createdAt', () => {
+  const entry = buildUnansweredLogEntry({ question: 'x', language: 'en', token: 'secret-token', email: 'a@test' }, { mode: 'unsupported' }, now)
+  assert.deepEqual(Object.keys(entry).sort(), ['createdAt', 'language', 'question'])
 })
 
-test('falls back to Danish and a null viewId when missing', () => {
+test('falls back to Danish when the language is missing', () => {
   const entry = buildUnansweredLogEntry({ question: 'x' }, { mode: 'unsupported' }, now)
   assert.equal(entry.language, 'da')
-  assert.equal(entry.viewId, null)
 })
 
 test('truncates an overly long question to 1000 characters', () => {

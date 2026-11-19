@@ -77,10 +77,10 @@ export function CrossHubHighscores({ gameTitle, leaderboardKey, categories = DEF
         <Trophy size={24} weight="duotone" className="text-accent" />
         <div>
           <h3 className="text-lg font-bold">
-            {language === 'da' ? `${gameTitle} — highscores på tværs af alle hubs` : language === 'fi' ? `${gameTitle} — ennätykset kaikissa hubeissa` : `${gameTitle} — highscores across all hubs`}
+            {language === 'da' ? `${gameTitle} — highscores på tværs af alle hubs` : language === 'fi' ? `${gameTitle} — ennätykset kaikissa hubeissa` : language === 'sv' ? `${gameTitle} — rekord över alla hubbar` : `${gameTitle} — highscores across all hubs`}
           </h3>
           <p className="text-xs text-muted-foreground">
-            {language === 'da' ? 'Skrivebeskyttet overblik — redigér scores under det aktive hub ovenfor' : language === 'fi' ? 'Vain luku — muokkaa pisteitä aktiivisen hubin kohdalla yllä' : 'Read-only overview — edit scores under the active hub above'}
+            {language === 'da' ? 'Skrivebeskyttet overblik — redigér scores under det aktive hub ovenfor' : language === 'fi' ? 'Vain luku — muokkaa pisteitä aktiivisen hubin kohdalla yllä' : language === 'sv' ? 'Skrivskyddad översikt — redigera poäng under den aktiva hubben ovan' : 'Read-only overview — edit scores under the active hub above'}
           </p>
         </div>
       </div>

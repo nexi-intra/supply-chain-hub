@@ -40,15 +40,13 @@ app.whenReady().then(async () => {
       'creator@example.test': { email: 'creator@example.test', fullName: 'Synthetic Creator', password: 'creator123', role: 'creator', status: 'approved' },
     })
     createStore(path.join(platform, 'B')).set('guides', [{ id: 'g', title: 'Synthetic external guide', content: 'SECRET CONTENT', sections: [] }])
-    const view = registry.createAccessView(platform, { name: 'Synthetic Combined', teamIds: ['a', 'b'], userEmails: ['user@example.test'] })
     let folder = 'A'
     let failMigration = false
     const accounts = createAccountService({ getRoot: () => platform, registry, openStore: createStore, beforeStep: ({ index }) => { if (failMigration && index === 1) throw new Error('SYNTHETIC MIGRATION FAILURE') } })
-    const auth = createAuthService({ registry, getRoot: () => platform, runWrite: accounts.runWrite, runAuthentication: accounts.runAuthentication, assertAvailable: accounts.assertAvailable, openTeam: team => createStore(path.join(platform, team.folderName)), openSessions: () => sessions, switchTeam: team => { folder = team.folderName }, deviceSecret: loadDeviceSecret(path.join(local, 'auth-device-key')) })
+    const auth = createAuthService({ registry, getRoot: () => platform, runWrite: accounts.runWrite, runAuthentication: accounts.runAuthentication, runWriteAsync: accounts.runWriteAsync, runAuthenticationAsync: accounts.runAuthenticationAsync, assertAvailable: accounts.assertAvailable, openTeam: team => createStore(path.join(platform, team.folderName)), openSessions: () => sessions, switchTeam: team => { folder = team.folderName }, deviceSecret: loadDeviceSecret(path.join(local, 'auth-device-key')) })
     const ipc = createSecuredIpc(native, { auth: () => auth, accounts: () => accounts, trusted: createTrustedWindow(BrowserWindow, () => pageUrl), currentFolder: () => folder, listTeams: () => registry.listTeams(platform) })
-    const reader = createTeamReader({ getRoot: () => platform, listTeams: () => registry.listTeams(platform), listViews: email => registry.listAccessViewsForEmail(platform, email), openStore: createStore })
+    const reader = createTeamReader({ getRoot: () => platform, listTeams: () => registry.listTeams(platform), openStore: createStore })
     for (const name of ['login', 'signup', 'resume', 'current', 'renew', 'logout', 'profile']) ipc.handle(`auth:${name}`, (event, input) => auth[name](event.sender.id, input))
-    ipc.handle('auth:select-view', (event, id) => auth.selectView(event.sender.id, id))
     ipc.handle('accounts:status', event => accounts.status(auth.current(event.sender.id)))
     for (const action of ['resume', 'rollback']) ipc.handle(`accounts:${action}`, (event, id) => accounts[action](auth.current(event.sender.id), id))
     ipc.handle('kv:get', (_, key) => key === 'users' ? publicUsers(store.get(key, { skipCache: true })) : store.get(key, { skipCache: true }))
@@ -64,7 +62,6 @@ app.whenReady().then(async () => {
     ipc.handle('backup:export', () => exportBackup(createStore(store.dataDir)))
     ipc.handle('registry:update-team', (_, _email, id, input) => registry.updateTeam(platform, id, input))
     ipc.handle('registry:read-team-key', (event, name, key) => reader.readTeam(auth.current(event.sender.id), name, key))
-    ipc.handle('registry:read-access-view-key', (event, _email, id, team, key) => reader.readView(auth.current(event.sender.id), id, team, key))
     async function window(url = pageUrl) {
       const win = new BrowserWindow({ show: false, webPreferences: { preload: path.join(__dirname, '..', 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } })
       const senderId = win.webContents.id
@@ -85,10 +82,6 @@ app.whenReady().then(async () => {
     check(await invoke(creator, "window.electronRegistry.updateTeam('spoofed','a',{name:'Renamed Synthetic A',abbreviation:'SYNA'}).then(team=>team.name)"), 'Renamed Synthetic A')
     check(await invoke(user, "window.electronRegistry.readTeamKey('B','guides').then(guides=>guides[0].content)"), '')
     await denied(invoke(user, "window.electronRegistry.readTeamKey('../_shared','active-sessions')"), 'AUTH_FORBIDDEN')
-    await invoke(user, `window.electronAuth.selectView(${JSON.stringify(view.viewId)})`)
-    check(await invoke(user, `window.electronRegistry.readAccessViewKey('creator@example.test',${JSON.stringify(view.viewId)},'b','guides').then(guides=>guides[0].content)`), 'SECRET CONTENT')
-    await denied(invoke(user, "window.electronKv.set('guides',[])"), 'AUTH_FORBIDDEN')
-    await invoke(user, 'window.electronAuth.selectView(null)')
     await invoke(user, "window.electronAuth.profile({phone:'456',role:'creator'})")
     check(store.get('users', { skipCache: true })['user@example.test'].role, 'user')
     const untrusted = await window('data:text/html,<html><body>Untrusted test frame</body></html>')
@@ -103,7 +96,6 @@ app.whenReady().then(async () => {
     await denied(invoke(user, 'window.electronAuth.current()'), 'AUTH_REQUIRED')
     check(await invoke(user, "window.electronAuth.login({email:'renamed@example.test',password:'test123'}).then(actor=>actor.email)"), 'renamed@example.test')
     check(await invoke(user, "window.electronKv.get('app-language-user_renamed@example.test')"), 'fi')
-    check(registry.listAccessViewsForEmail(platform, 'renamed@example.test')[0].viewId, view.viewId)
     await denied(invoke(user, "window.electronAuth.signup({email:'user@example.test',password:'new123',fullName:'Synthetic duplicate',phone:'123'})"), 'ACCOUNT_EMAIL_RETIRED')
     failMigration = true
     await denied(invoke(creator, "window.electronKv.get('users').then(users=>window.electronKv.update('users',{op:'renameField',field:'renamed@example.test',newField:'recovered@example.test',expected:users['renamed@example.test'],value:{email:'recovered@example.test',password:''}}))"), 'SYNTHETIC MIGRATION FAILURE')

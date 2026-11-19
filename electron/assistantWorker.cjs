@@ -6,7 +6,9 @@ const { keyToFilename } = require('./store.cjs')
 const { createReadCache } = require('./assistantReadCache.cjs')
 const { createAssistantContext } = require('./assistantContext.cjs')
 const { indexGuide } = require('./assistantGuideIndex.cjs')
-const SHARED = new Set(['meal-plan-weeks', 'shared-guides', 'active-sessions'])
+const { PLATFORM_SHARED_KV_KEYS: SHARED, LIBRARIES } = require('./libraryKeys.cjs')
+// Published library content is stamp-validated and reused; access-request keys are always read fresh.
+const REUSABLE = new Set(Object.values(LIBRARIES).flatMap(keys => [keys.items, keys.shared]))
 const METHODS = new Set(['authorize', 'query', 'getGuide', 'getImage', 'getRecord', 'moduleCatalog', 'revalidateSources', 'prepare'])
 
 function createWorkerRuntime() {
@@ -22,7 +24,7 @@ function createWorkerRuntime() {
   function read(dir, key) {
     const file = path.join(dir, keyToFilename(key))
     if (memo.has(file)) return memo.get(file)
-    const value = cache.get(file, key === 'guides' || key === 'shared-guides')
+    const value = cache.get(file, REUSABLE.has(key))
     memo.set(file, value)
     return value
   }
@@ -33,8 +35,8 @@ function createWorkerRuntime() {
       const directory = once('registry:users', () => registry.readUserDirectory(config.platformRoot))
       return teams().find(team => team.teamId === directory[String(email || '').trim().toLowerCase()]) || null
     },
-    listViews: email => once(`registry:views:${email}`, () => registry.listAccessViewsForEmail(config.platformRoot, email)),
     creatorEmail: () => once('registry:creator', () => registry.getCreatorEmail(config.platformRoot)),
+    managerTeams: email => once(`registry:manager-access:${email}`, () => registry.managerTeamsForEmail(config.platformRoot, email)),
     currentFolder: () => config.currentFolder,
     readShared,
     readTeam: (team, key) => {
@@ -53,10 +55,10 @@ function createWorkerRuntime() {
     scope = nextScope; config = state; memo = new Map()
     if (method === 'revalidateSources') {
       const [request, answer] = args
-      const principal = context.authorize(request.token, request.viewId)
+      const principal = context.authorize(request.token)
       for (const source of answer.sources) {
         if (source.kind === 'guide') {
-          const { guide } = context.getGuide(request.token, request.viewId, source.teamId, source.guideId)
+          const { guide } = context.getGuide(request.token, source.teamId, source.guideId, source.library || 'guides')
           if (source.revision && indexGuide(guide)[0]?.revision !== source.revision) throw new Error('En guide blev ændret under svaret. Stil spørgsmålet igen, så du får de nyeste oplysninger.')
         }
         if (source.kind === 'module') {

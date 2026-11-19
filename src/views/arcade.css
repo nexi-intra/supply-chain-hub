@@ -1,14 +1,15 @@
-.arcade-screen, .arcade-library {
-  background-color: var(--background);
-  background-image: linear-gradient(90deg, color-mix(in srgb, var(--border) 15%, transparent) 1px, transparent 1px), linear-gradient(color-mix(in srgb, var(--border) 15%, transparent) 1px, transparent 1px);
-  background-size: 48px 48px;
-}
-
-:is(.arcade-screen, .arcade-tile)[data-game="endlessdodger"] { --arcade-accent: #1292b8; }
-:is(.arcade-screen, .arcade-tile)[data-game="brickbreak"] { --arcade-accent: #da5572; }
-:is(.arcade-screen, .arcade-tile)[data-game="nexiflyer"] { --arcade-accent: #d99122; }
-:is(.arcade-screen, .arcade-tile)[data-game="tetris"] { --arcade-accent: #498dd4; }
-:is(.arcade-screen, .arcade-tile)[data-game="neonsnake"] { --arcade-accent: #49ac70; }
+:is(.arcade-screen, .arcade-tile)[data-game="endlessdodger"] { --arcade-accent: #e8a317; }
+:is(.arcade-screen, .arcade-tile)[data-game="brickbreak"] { --arcade-accent: #2fae93; }
+:is(.arcade-screen, .arcade-tile)[data-game="nexiflyer"] { --arcade-accent: #e07a3f; }
+:is(.arcade-screen, .arcade-tile)[data-game="tetris"] { --arcade-accent: #d4a21f; }
+:is(.arcade-screen, .arcade-tile)[data-game="neonsnake"] { --arcade-accent: #c98a1c; }
+.arcade-tile[data-game="wordpuzzle"] { --arcade-accent: #b8863b; }
+.arcade-tile[data-game="soon"] { --arcade-accent: color-mix(in srgb, var(--muted-foreground) 55%, var(--card)); border-style: dashed; opacity: 0.75; }
+.arcade-tile-words { display: flex; gap: 0.35rem; width: 9.5rem; }
+.arcade-tile-words > * { flex: 1; transition: transform 180ms ease; }
+.arcade-tile:hover .arcade-tile-words > :nth-child(odd) { transform: translateY(-3px) rotate(-3deg); }
+.arcade-tile:hover .arcade-tile-words > :nth-child(even) { transform: translateY(2px) rotate(2deg); }
+@media (prefers-reduced-motion: reduce) { .arcade-tile-words > * { transition: none; } }
 
 .arcade-banner {
   background: color-mix(in srgb, var(--card) 92%, var(--arcade-accent));
@@ -80,3 +81,123 @@
 .arcade-tile:hover .arcade-tile-icon { transform: scale(1.35); }
 @media (prefers-reduced-motion: reduce) { .arcade-tile-icon { transition: none; } }
 .arcade-tile:focus-visible { outline: 2px solid var(--arcade-accent); outline-offset: 3px; }
+
+/* Game Corner / Modern selection cards — each one keeps its own unique accent. */
+:is(.arcade-tile, .section-badge)[data-game="section-arcade"] { --arcade-accent: oklch(0.6 0.2 350); }
+:is(.arcade-tile, .section-badge)[data-game="section-modern"] { --arcade-accent: oklch(0.56 0.14 240); }
+:is(.arcade-tile, .section-badge)[data-game="section-multiplayer"] { --arcade-accent: oklch(0.6 0.15 145); }
+.arcade-tile[data-game="cubebasher"] { --arcade-accent: oklch(0.55 0.19 25); }
+
+.section-tile, .section-badge {
+  --section-ink: color-mix(in srgb, var(--arcade-accent) 70%, black);
+  --section-light: color-mix(in srgb, var(--arcade-accent) 55%, white);
+}
+.section-tile {
+  cursor: pointer;
+  transition: transform 200ms ease, box-shadow 200ms ease, border-color 160ms ease;
+}
+.section-tile:hover {
+  transform: translateY(-3px);
+  border-inline-color: color-mix(in srgb, var(--arcade-accent) 45%, var(--border));
+  border-bottom-color: color-mix(in srgb, var(--arcade-accent) 45%, var(--border));
+  box-shadow: 0 16px 30px -18px color-mix(in srgb, var(--arcade-accent) 70%, transparent);
+}
+.section-tile:active { transform: translateY(-1px); }
+.section-tile-art { overflow: hidden; }
+.section-tile-art::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(color-mix(in srgb, var(--arcade-accent) 22%, transparent) 1px, transparent 1.5px);
+  background-size: 12px 12px;
+  -webkit-mask-image: linear-gradient(90deg, transparent 35%, black);
+  mask-image: linear-gradient(90deg, transparent 35%, black);
+  pointer-events: none;
+}
+.section-tile-art > * { position: relative; z-index: 1; }
+.section-tile-cta svg { color: var(--arcade-accent); transition: transform 180ms ease; }
+.section-tile:hover .section-tile-cta svg { transform: translateX(3px); }
+
+/* Arcade: pixel invader + joystick */
+.section-invader { width: 4rem; height: auto; fill: var(--arcade-accent); filter: drop-shadow(0 2px 0 var(--section-ink)); transition: transform 240ms steps(2); }
+.section-pixels { display: flex; flex-direction: column; gap: 0.3rem; }
+.section-pixels i { display: block; width: 0.35rem; height: 0.35rem; background: var(--arcade-accent); opacity: 0.55; }
+.section-pixels i:nth-child(2) { opacity: 0.8; transform: translateX(0.45rem); }
+.section-joystick { color: var(--arcade-accent); transform-origin: 50% 85%; transition: transform 220ms ease; }
+.section-tile:hover .section-invader { transform: translateX(6px); }
+.section-tile:hover .section-joystick { transform: rotate(-10deg); }
+
+/* Iso cubes (Modern + Cube Basher) */
+.section-cube { display: block; height: auto; overflow: visible; transition: transform 260ms ease; }
+.section-cube polygon { stroke: var(--section-ink); stroke-width: 0.8; stroke-linejoin: round; }
+.section-cube-top { fill: var(--section-light); }
+.section-cube-left { fill: var(--arcade-accent); }
+.section-cube-right { fill: color-mix(in srgb, var(--arcade-accent) 72%, black); }
+.section-cube-eyes polygon { fill: color-mix(in srgb, var(--arcade-accent) 25%, black); stroke: none; }
+
+.section-orbit { position: absolute; left: 0; top: 50%; width: 10rem; transform: translateY(-50%) rotate(-8deg); }
+.section-orbit ellipse { fill: none; stroke: var(--arcade-accent); stroke-width: 1.4; stroke-dasharray: 4 5; opacity: 0.55; }
+.section-cube-main { width: 4rem; margin-left: 1.6rem; }
+.section-cube-float { position: absolute; width: 1.8rem; left: 7.6rem; top: 0.8rem; transform: rotate(14deg); }
+.section-tile:hover .section-cube-main { transform: translateY(-3px); }
+.section-tile:hover .section-cube-float { transform: translate(4px, -6px) rotate(28deg); }
+
+.section-cube-a { width: 3.8rem; }
+.section-cube-b { width: 2.5rem; transform: rotate(-10deg) translateY(-2px); }
+.section-cube-c { width: 1.8rem; transform: rotate(14deg) translateY(-26px); }
+.section-tile:hover .section-cube-a { transform: translateY(-4px); }
+.section-tile:hover .section-cube-b { transform: rotate(-18deg) translateY(-8px); }
+.section-tile:hover .section-cube-c { transform: rotate(30deg) translateY(-34px); }
+
+/* Multiplayer: word tiles + knight */
+.section-letter {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 6px;
+  background: linear-gradient(160deg, #fbf3e1, #ead8b2);
+  color: #3a2a16;
+  font-size: 1.35rem;
+  font-weight: 800;
+  box-shadow: 0 3px 0 var(--section-ink), inset 0 0 0 1px rgb(0 0 0 / 0.08);
+  transition: transform 180ms ease;
+}
+.section-letter::after { content: attr(data-score); position: absolute; right: 4px; bottom: 1px; font-size: 0.55rem; font-weight: 700; opacity: 0.7; }
+.section-knight { margin-left: 0.6rem; color: var(--arcade-accent); transition: transform 220ms ease; }
+.section-tile:hover .section-letter:nth-child(1) { transform: translateY(-3px) rotate(-4deg); }
+.section-tile:hover .section-letter:nth-child(2) { transform: translateY(2px) rotate(3deg); }
+.section-tile:hover .section-knight { transform: translateY(-4px) rotate(-6deg); }
+
+/* Module page header badge: a static, scaled-down copy of the section tile's art band. */
+.section-badge {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 9rem;
+  height: 5.5rem;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border) 55%, var(--arcade-accent));
+  border-top: 3px solid var(--arcade-accent);
+  border-radius: 6px;
+  background: linear-gradient(115deg, color-mix(in srgb, var(--arcade-accent) 21%, var(--card)), color-mix(in srgb, var(--arcade-accent) 4%, var(--card)));
+}
+.section-badge > * { zoom: 0.75; }
+.section-badge .section-art-modern { height: 7rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  .section-tile, .section-tile *, .section-tile:hover { transition: none; }
+  .section-tile:hover, .section-tile:active { transform: none; }
+}
+
+/* Lagerstyring: Placeringer (pin over boxes) and Optælling (clipboard and barcode) */
+:is(.arcade-tile, .section-badge)[data-game="section-warehouse-locations"] { --arcade-accent: oklch(0.58 0.13 160); }
+:is(.arcade-tile, .section-badge)[data-game="section-warehouse-counts"] { --arcade-accent: oklch(0.66 0.14 80); }
+.section-art-warehouse { display: flex; align-items: flex-end; gap: 0.4rem; color: var(--arcade-accent); }
+.section-warehouse-main { filter: drop-shadow(0 2px 0 var(--section-ink)); transition: transform 220ms ease; }
+.section-warehouse-side { opacity: 0.7; transition: transform 220ms ease; }
+.section-tile:hover .section-warehouse-main { transform: translateY(-4px); }
+.section-tile:hover .section-warehouse-side { transform: translateX(4px) rotate(-6deg); }
+@media (prefers-reduced-motion: reduce) { .section-warehouse-main, .section-warehouse-side { transition: none; } }

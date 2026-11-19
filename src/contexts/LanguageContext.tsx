@@ -1,4 +1,4 @@
-import { createContext, useContext, ReactNode } from 'react'
+import { createContext, useContext, useEffect, ReactNode } from 'react'
 import { useKV } from '@/hooks/useKV'
 import { translations, Language } from '@/lib/translations'
 
@@ -15,6 +15,10 @@ export function LanguageProvider({ children, userId }: { children: ReactNode; us
   const [language, setLanguage] = useKV<Language>(languageKey, 'da')
 
   const t = translations[language || 'da']
+
+  useEffect(() => {
+    void window.electronShell?.setSpellcheckLanguage?.(language || 'da').catch(() => {})
+  }, [language])
 
   return (
     <LanguageContext.Provider value={{ language: language || 'da', setLanguage, t }}>

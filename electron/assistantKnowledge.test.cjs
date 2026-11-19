@@ -1,4 +1,5 @@
 const test = require('node:test')
+const { localize: D } = require('./assistantDateReference.cjs')
 const assert = require('node:assert/strict')
 const { createAssistantContext, resolveDates } = require('./assistantContext.cjs')
 const { parsePlan, resolveAssistantAnswer } = require('./assistantPlanner.cjs')
@@ -31,7 +32,7 @@ function fixture() {
   }
   const shared = { 'active-sessions': { valid: { email: 'me@test', expiresAt: Date.now() + 600000 } } }
   const reads = []
-  const api = createAssistantContext({ listTeams: () => teams, lookupTeam: () => teams[0], listViews: () => [{ viewId: 'allowed', teamIds: ['ONE', 'TWO'] }], creatorEmail: () => 'creator@test', currentFolder: () => 'ONE', readTeam: (team, key) => { reads.push(`${team.teamId}:${key}`); return stores[team.teamId][key] }, readShared: key => shared[key] })
+  const api = createAssistantContext({ listTeams: () => teams, lookupTeam: () => teams[0], creatorEmail: () => 'creator@test', currentFolder: () => 'ONE', readTeam: (team, key) => { reads.push(`${team.teamId}:${key}`); return stores[team.teamId][key] }, readShared: key => shared[key] })
   const query = (question, extra = {}) => api.query({ token: 'valid', question, language: 'da', ...extra }, now)
   return { api, stores, shared, reads, query }
 }
@@ -120,7 +121,7 @@ test('reported meal-plan question retrieves stored week 36 with explicit dates a
   const { query, reads } = fixture()
   const answer = query('hvordan så madplanen ud i uge 36?')
   assert.equal(answer.mode, 'data')
-  assert.match(answer.text, /2026-08-31 – 2026-09-06/)
+  assert.match(answer.text, D(/2026-08-31 – 2026-09-06/, 'da'))
   assert.match(answer.text, /Mandag: Synthetic pasta/)
   assert.match(answer.text, /Fredag: Ikke registreret/)
   assert.ok(!answer.text.includes('Week37 test'))
@@ -130,7 +131,7 @@ test('reported meal-plan question retrieves stored week 36 with explicit dates a
 test('meal-plan historical year, missing period, unknown week and missing record are explicit', () => {
   const { query } = fixture()
   assert.match(query('madplan uge 36 2025').text, /Old year test/)
-  assert.match(query('madplan').text, /Hvilken dato/)
+  assert.match(query('madplan').text, D(/Ingen tilgængelige[\s\S]*\(2026-09-15\)/, 'da'))
   assert.match(query('madplan uge 54').text, /Hvilken dato/)
   assert.match(query('madplan uge 35').text, /Ingen tilgængelige/)
 })
@@ -152,7 +153,7 @@ for (const [question, language, weekday] of [
   assert.equal(answer.mode, 'data')
   assert.equal(answer.total, 1)
   assert.match(answer.text, new RegExp(`${weekday}: Synthetic pasta`))
-  assert.match(answer.text, /2026-08-31 – 2026-09-06/)
+  assert.match(answer.text, D(/2026-08-31 – 2026-09-06/, language))
   assert.ok(!answer.text.includes('Old year test'))
   assert.ok(!reads.some(key => key.startsWith('TWO:')))
 })
@@ -196,7 +197,7 @@ test('calendar follow-ups retain module but replace week and year; new topic cle
 })
 test('projects expose status/members, counts and historical activity without outside-team records', () => {
   const { query } = fixture()
-  assert.match(query('hvor mange åbne projekter har vi?').text, /registreringer: 1/)
+  assert.match(query('hvor mange åbne projekter har vi?').text, /Antal: 1/)
   assert.match(query('mine projekter').text, /Terminal rollout/)
   assert.ok(!query('mine projekter').text.includes('Warehouse upgrade'))
   assert.match(query('afsluttede projekter').text, /Warehouse upgrade/)
@@ -222,7 +223,7 @@ test('messages and folders are participant/owner-filtered even for managers', ()
   assert.match(answer.text, /OWN_INCOMING_TEXT/)
   assert.match(answer.text, /OWN_OUTGOING_TEXT/)
   for (const forbidden of ['PRIVATE_MESSAGE_TITLE', 'PRIVATE_MESSAGE_SECRET', 'PRIVATE_FOLDER']) assert.ok(!JSON.stringify(answer).includes(forbidden))
-  assert.match(query('hvor mange ulæste mails?').text, /registreringer: 1/)
+  assert.match(query('hvor mange ulæste mails?').text, /Antal: 1/)
   assert.ok(!query('sendte beskeder').text.includes('OWN_INCOMING_TEXT'))
   assert.throws(() => api.getRecord({ token: 'valid', moduleId: 'messages', recordId: 'private', teamId: 'ONE' }), /ikke adgang/)
 })
@@ -230,7 +231,7 @@ test('team overview reads approved contacts/roles/birthdays, never passwords or 
   const { query } = fixture()
   const answer = query('teamoversigt')
   assert.match(answer.text, /123456/)
-  assert.match(answer.text, /09-20/)
+  assert.match(answer.text, /20\. sep\./)
   assert.ok(!JSON.stringify(answer).includes('PASSWORD'))
   assert.ok(!JSON.stringify(answer).includes('Pending Person'))
   const managers = query('hvem er manageren i teamet?')
@@ -242,11 +243,14 @@ test('absence masks other people’s health/notes and pending requests except fo
   let answer = query('fravær')
   for (const forbidden of ['OTHER_VACATION_NOTES', 'PENDING_PRIVATE_NOTES', 'HEALTH_REASON_SECRET']) assert.ok(!answer.text.includes(forbidden))
   assert.match(answer.text, /OWN_VACATION_NOTES/)
-  assert.match(query('hvor mange ferieanmodninger afventer?').text, /registreringer: 1/)
+  assert.match(query('hvor mange ferieanmodninger afventer?').text, /Antal: 1/)
   stores.ONE.users['me@test'].role = 'manager'
   answer = query('fravær')
-  assert.match(answer.text, /HEALTH_REASON_SECRET/)
-  assert.match(query('hvor mange ferieanmodninger afventer?').text, /registreringer: 2/)
+  // Managers see vacation notes, but a colleague's sick-leave reason is never shown (user decision 2026-10-05).
+  assert.match(answer.text, /OTHER_VACATION_NOTES/)
+  assert.ok(!JSON.stringify(answer).includes('HEALTH_REASON_SECRET'))
+  assert.ok(!JSON.stringify(query('hvem er syg i denne uge?')).includes('HEALTH_REASON_SECRET'))
+  assert.match(query('hvor mange ferieanmodninger afventer?').text, /Antal: 2/)
 })
 test('guide reviews, archives and version history honor reviewer/author permission and draft labels', () => {
   const { query, stores, api } = fixture()
@@ -304,14 +308,9 @@ test('pagination reports total, exposes no omitted source content, and source fe
   shared['active-sessions'].valid.expiresAt = 1
   assert.throws(() => api.getRecord({ token: 'valid', ...source }), /Log ind/)
 })
-test('observer scope grants no extra modules, private row privileges or other teams', () => {
+test('another team is not reachable through records or an explicit team name', () => {
   const { query, stores, reads, api } = fixture()
   stores.ONE.users['me@test'].role = 'manager'
-  const viewId = 'allowed'
-  for (const question of ['madplan uge 36', 'projekter', 'noter', 'beskeder', 'guide review', 'dashboard']) assert.match(query(question, { viewId }).text, /ikke tilgængeligt/)
-  const absence = query('fravær', { viewId })
-  assert.ok(!absence.text.includes('HEALTH_REASON_SECRET'))
-  assert.ok(!absence.text.includes('PENDING_PRIVATE_NOTES'))
   assert.ok(!reads.includes('TWO:notebook-notes'))
   assert.throws(() => api.getRecord({ token: 'valid', moduleId: 'projects', recordId: 'outside-project', teamId: 'TWO' }), /Ingen adgang/)
   assert.throws(() => query('projekter i TWO'), /ikke adgang/)
@@ -346,12 +345,13 @@ test('semantic planner skips model when low RAM, and revalidates auth after asyn
 
 test('an unknown question gets a capability overview instead of a dead end', () => {
   const { query } = fixture()
-  const answer = query('hvad er hovedstaden i frankrig?')
+  const answer = query('hvad med den lilla dims fra sidst?')
   assert.equal(answer.mode, 'app-guide')
   assert.equal(answer.unmatched, true)
   // Brugeren skal kunne se hvad Hubert FAKTISK kan, i stedet for en afvisning.
-  assert.match(answer.text, /Vagtplan/)
-  assert.match(answer.text, /Kalender/)
+  assert.match(answer.text, /vagtplan/)
+  assert.match(answer.text, /ferie/)
+  assert.match(answer.text, /Prøv fx/)
   assert.ok(!answer.text.includes('Jeg fandt ikke et underbygget svar'))
 })
 
@@ -362,7 +362,7 @@ test('an unknown question still reaches the semantic planner', async () => {
     status: () => ({ installed: true, freeGiB: 5, minimumFreeGiB: 2.75 }),
     complete: async () => { asked++; return { text: '{"modules":["meals"],"terms":["pasta"]}' } },
   }
-  const answer = await resolveAssistantAnswer(api, ai, { token: 'valid', question: 'noget om pasta i uge 36', language: 'da' })
+  const answer = await resolveAssistantAnswer(api, ai, { token: 'valid', question: 'ting om pasta i uge 36', language: 'da' })
   assert.equal(asked, 1, 'planlaeggeren skal stadig koere naar app-viden ikke rammer')
   assert.equal(answer.mode, 'data')
   assert.match(answer.text, /Synthetic pasta/)
@@ -385,18 +385,17 @@ test('combined meal/shift question returns both modules and no private shift com
 test('when-person-has-vacation can search all stored approved periods without assuming a day off', () => {
   const { query } = fixture()
   const answer = query('hvornår har Colleague ferie?')
-  assert.match(answer.text, /2026-09-21/)
-  assert.ok(!answer.text.includes('2026-09-28'))
+  assert.match(answer.text, D(/2026-09-21 – 2026-09-25/, 'da'))
+  assert.ok(!answer.text.includes('28.'))
   assert.ok(!answer.text.includes('OTHER_VACATION_NOTES'))
 })
-test('administration respects real manager status, projects credentials out and never grants observer privilege', () => {
+test('administration respects real manager status and projects credentials out', () => {
   const { query, stores, api } = fixture()
   assert.ok(!JSON.stringify(query('administration')).includes('Pending Person'))
   stores.ONE.users['me@test'].role = 'manager'
   const answer = query('brugeranmodninger afventer')
   assert.match(answer.text, /Pending Person/)
   assert.ok(!JSON.stringify(answer).includes('PASSWORD'))
-  assert.match(query('administration', { viewId: 'allowed' }).text, /ikke tilgængeligt/)
   stores.ONE.users['me@test'].role = 'user'
   assert.throws(() => api.getRecord({ token: 'valid', moduleId: 'administration', recordId: 'user:pending@test', teamId: 'ONE' }), /ikke adgang/)
 })
@@ -406,21 +405,20 @@ test('expired external guide grants never become evidence or permit source fetch
   const answer = query('terminal outside guide')
   assert.ok(answer.sources.some(source => source.guideId === 'outside'))
   stores.TWO['guide-access-requests'][0].expiresAt = '2000-01-01T00:00:00Z'
-  assert.throws(() => api.getGuide('valid', undefined, 'TWO', 'outside'), /ikke adgang/)
+  assert.throws(() => api.getGuide('valid', 'TWO', 'outside'), /ikke adgang/)
   assert.ok(!JSON.stringify(query('terminal outside guide')).includes('OUTSIDE_GUIDE_SECRET'))
-  assert.ok(!JSON.stringify(query('terminal outside guide', { viewId: 'allowed' })).includes('PRIVATE_NOTE_SECRET'))
 })
 test('local classification cannot override an explicitly unauthorized team', async () => {
   const { api } = fixture()
   const ai = { status: () => ({ installed: true, freeGiB: 5, minimumFreeGiB: 2.75 }), complete: async () => ({ text: '{"modules":["projects"],"terms":[]}' }) }
-  await assert.rejects(() => resolveAssistantAnswer(api, ai, { token: 'valid', question: 'show work in TWO', language: 'en' }), /ikke adgang/)
+  await assert.rejects(() => resolveAssistantAnswer(api, ai, { token: 'valid', question: 'show work in TWO', language: 'en' }), /no access to that team/)
 })
 test('notification source/count includes own unread events but no other people’s private messages', () => {
   const { query } = fixture()
   const answer = query('notifikationer')
   assert.match(answer.text, /Terminal message/)
   assert.ok(!answer.text.includes('PRIVATE_MESSAGE'))
-  assert.match(query('hvor mange notifikationer har jeg?').text, /registreringer: 1/)
+  assert.match(query('hvor mange notifikationer har jeg?').text, /Antal: 1/)
 })
 test('birthdays filter by actual day/month and date range, not merely every team member', () => {
   const { query } = fixture()
@@ -487,4 +485,24 @@ test('manager-only guidance is not handed to an ordinary user', () => {
   const asManager = query('hvordan godkender jeg en ferieanmodning?')
   assert.equal(asManager.mode, 'app-guide')
   assert.match(asManager.text, /Godkend/)
+})
+
+test('Hubert finds only approved Link Library links the team can see, by description, and never quotes the address', () => {
+  const { shared, query } = fixture()
+  const link = (id, extra) => ({ id, url: `https://${id}.example.test/path?token=URL_SECRET`, title: `Title ${id}`, description: 'Fakturaer og ordrer i portalen', category: 'Systemer', ownerTeamCode: 'ONE', sharedWithTeamCodes: [], status: 'approved', reports: [], createdAt: '2026-09-01T10:00:00Z', ...extra })
+  shared['link-library'] = { operations: [], links: [
+    link('own'),
+    link('sharedin', { ownerTeamCode: 'TWO', sharedWithTeamCodes: ['ONE'] }),
+    link('otherteam', { ownerTeamCode: 'TWO' }),
+    link('pending', { status: 'pending' }),
+    link('rejected', { status: 'rejected' }),
+    link('suspicious', { reports: [{ id: 'r', status: 'open', reason: 'suspicious' }] }),
+    link('dead', { reports: [{ id: 'r', status: 'open', reason: 'dead' }] }),
+  ] }
+  const result = query('hvor er linket til fakturaer?')
+  assert.deepEqual(result.sources.map(source => source.recordId).sort(), ['link:dead', 'link:own', 'link:sharedin'])
+  assert.ok(result.sources.every(source => source.moduleId === 'links'))
+  assert.match(result.text, /own\.example\.test/)
+  assert.ok(!result.text.includes('URL_SECRET'))
+  assert.deepEqual(query('Where is the link to fakturaer?', { language: 'en' }).sources.map(source => source.recordId).sort(), ['link:dead', 'link:own', 'link:sharedin'])
 })

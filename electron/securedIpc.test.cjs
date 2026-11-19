@@ -1,15 +1,80 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { createSecuredIpc } = require('./securedIpc.cjs')
+const { createSecuredIpc, PUBLIC_CHANNELS } = require('./securedIpc.cjs')
+const { createDesktopNotificationHandlers } = require('./desktopNotifications.cjs')
 function fixture(accounts = null) {
   const handlers = new Map(), event = { sender: { id: 1 } }
-  let actor = { email: 'user@example.test', userId: 'user_user@example.test', role: 'user', token: 'verified', home: { teamId: 'a', folderName: 'A' }, viewId: null }
+  let actor = { email: 'user@example.test', userId: 'user_user@example.test', role: 'user', token: 'verified', home: { teamId: 'a', folderName: 'A' }, activeTeam: { teamId: 'a', folderName: 'A' }, teams: [{ teamId: 'a', folderName: 'A' }] }
   let folder = 'A', trusted = true
-  const service = { current() { if (!actor) throw Object.assign(new Error('AUTH_REQUIRED'), { code: 'AUTH_REQUIRED' }); return structuredClone(actor) }, requireRole(_, role) { if (actor.viewId || (actor.role !== 'creator' && (role === 'creator' || actor.role !== 'manager'))) throw Object.assign(new Error('AUTH_FORBIDDEN'), { code: 'AUTH_FORBIDDEN' }) } }
+  const service = { current() { if (!actor) throw Object.assign(new Error('AUTH_REQUIRED'), { code: 'AUTH_REQUIRED' }); return structuredClone(actor) }, requireRole(_, role) { if (actor.role !== 'creator' && (role === 'creator' || actor.role !== 'manager')) throw Object.assign(new Error('AUTH_FORBIDDEN'), { code: 'AUTH_FORBIDDEN' }) } }
   const ipc = createSecuredIpc({ handle: (key, handler) => handlers.set(key, handler) }, { auth: () => service, accounts: () => accounts, trusted: () => trusted, currentFolder: () => folder, listTeams: () => [{ teamId: 'a', folderName: 'A' }, { teamId: 'b', folderName: 'B' }] })
   return { register(channel, handler = () => 'ok') { ipc.handle(channel, handler); return (...args) => handlers.get(channel)(event, ...args) }, actor: change => { actor = change === null ? null : { ...actor, ...change } }, folder: value => { folder = value }, trust: value => { trusted = value } }
 }
 const code = expected => error => error.code === expected
+// Auth is awaited before a listener runs, so a test that changes context mid-call first waits for the listener to start.
+const listenerStarted = async started => { for (let i = 0; i < 50 && !started(); i++) await new Promise(resolve => setImmediate(resolve)); assert.ok(started(), 'listener did not start') }
+test('improvement case state cannot be bypassed through generic KV, including creator', async () => {
+  const f = fixture()
+  for (const role of ['user', 'manager', 'creator']) {
+    f.actor({ role })
+    for (const channel of ['kv:get', 'kv:set', 'kv:update', 'kv:delete']) {
+      const call = f.register(channel)
+      await assert.rejects(call('improvement-cases', []), code('AUTH_FORBIDDEN'))
+    }
+    await assert.rejects(f.register('kv:get-many')(['guides', 'improvement-cases']), code('AUTH_FORBIDDEN'))
+  }
+})
+test('multiplayer index state cannot be bypassed through generic KV, including creator', async () => {
+  const f = fixture()
+  for (const role of ['user', 'manager', 'creator']) {
+    f.actor({ role })
+    for (const channel of ['kv:get', 'kv:set', 'kv:update', 'kv:delete']) {
+      await assert.rejects(f.register(channel)('multiplayer-index', []), code('AUTH_FORBIDDEN'))
+    }
+    await assert.rejects(f.register('kv:get-many')(['guides', 'multiplayer-index']), code('AUTH_FORBIDDEN'))
+  }
+})
+test('high-fives state cannot be bypassed through generic KV, including creator', async () => {
+  const f = fixture()
+  for (const role of ['user', 'manager', 'creator']) {
+    f.actor({ role })
+    for (const channel of ['kv:get', 'kv:set', 'kv:update', 'kv:delete']) {
+      await assert.rejects(f.register(channel)('high-fives', []), code('AUTH_FORBIDDEN'))
+    }
+    await assert.rejects(f.register('kv:get-many')(['guides', 'high-fives']), code('AUTH_FORBIDDEN'))
+  }
+})
+test('high-five commands use the account write gate and reference check while the snapshot stays ungated', async () => {
+  let gated = false
+  let checked = null
+  const accounts = { context: () => null, assertReferences(key, value) { assert.ok(gated); checked = [key, value] }, async runWriteAsync(callback) { gated = true; try { return await callback() } finally { gated = false } } }
+  const f = fixture(accounts)
+  const input = { type: 'send', recipientEmail: 'new@example.test' }
+  assert.equal(await f.register('highFives:command', () => { assert.ok(gated); return 'committed' })(input), 'committed')
+  assert.deepEqual(checked, ['high-fives', input])
+  assert.equal(await f.register('highFives:snapshot', () => { assert.equal(gated, false); return 'snapshot' })(), 'snapshot')
+})
+test('multiplayer commands use the account write gate and reference check while reads stay ungated', async () => {
+  let gated = false
+  let checked = null
+  const accounts = { context: () => null, assertReferences(key, value) { assert.ok(gated); checked = [key, value] }, async runWriteAsync(callback) { gated = true; try { return await callback() } finally { gated = false } } }
+  const f = fixture(accounts)
+  const input = { type: 'challenge', opponentEmail: 'new@example.test' }
+  assert.equal(await f.register('multiplayer:command', () => { assert.ok(gated); return 'committed' })(input), 'committed')
+  assert.deepEqual(checked, ['multiplayer-index', input])
+  for (const channel of ['multiplayer:snapshot', 'multiplayer:game', 'multiplayer:preview']) {
+    assert.equal(await f.register(channel, () => { assert.equal(gated, false); return channel })({ gameId: 'g' }), channel)
+  }
+})
+test('improvement commands use the account write gate while snapshots remain read-only', async () => {
+  let gated = false
+  let checked = false
+  const accounts = { context: () => null, assertReferences(key) { assert.ok(gated); assert.equal(key, 'improvement-cases'); checked = true }, async runWriteAsync(callback) { gated = true; try { return await callback() } finally { gated = false } } }
+  const f = fixture(accounts)
+  assert.equal(await f.register('improvements:command', () => { assert.ok(gated); return 'committed' })({ type: 'comment' }), 'committed')
+  assert.equal(await f.register('improvements:snapshot', () => { assert.equal(gated, false); return 'snapshot' })(), 'snapshot')
+  assert.equal(checked, true)
+})
 test('pending migrations block normal reads and writes before their handler but not authenticated recovery', async () => {
   const accounts = { context() { throw Object.assign(new Error('ACCOUNT_MIGRATION_PENDING'), { code: 'ACCOUNT_MIGRATION_PENDING' }) } }
   const f = fixture(accounts); let calls = 0
@@ -22,13 +87,14 @@ test('pending migrations block normal reads and writes before their handler but 
   await assert.rejects(recovery('id'), code('AUTH_FORBIDDEN'))
   f.actor({ role: 'creator' }); assert.equal(await recovery('id'), 'ok')
   assert.equal(await f.register('accounts:status')(), 'ok')
-  f.actor({ viewId: 'combined' }); await assert.rejects(recovery('id'), code('AUTH_FORBIDDEN'))
 })
 test('asynchronous reads cannot return data across a completed account migration', async () => {
   let context = 'before', resolve
   const f = fixture({ context: () => context })
   const call = f.register('kv:get', () => new Promise(done => { resolve = done }))
-  const pending = call('guides'); context = 'after'; resolve('must not leak')
+  const pending = call('guides')
+  await listenerStarted(() => resolve)
+  context = 'after'; resolve('must not leak')
   await assert.rejects(pending, code('AUTH_CONTEXT_CHANGED'))
 })
 test('ordinary writes and directory assignments execute inside the account gate and check retired identities', async () => {
@@ -52,6 +118,25 @@ test('unknown and ordinary handlers require a native session by default', async 
   const f = fixture(), call = f.register('future:feature'); f.actor(null)
   await assert.rejects(call(), code('AUTH_REQUIRED'))
 })
+test('desktop notification channels are authenticated-only and validate their input before touching the notifier', async () => {
+  for (const channel of ['notifications:desktop', 'notifications:desktop-enabled']) assert.equal(PUBLIC_CHANNELS.has(channel), false)
+  const shown = [], state = { enabled: true }
+  const handlers = createDesktopNotificationHandlers({ notify: request => { shown.push(request); return 'shown' }, isEnabled: () => state.enabled, setEnabled: value => { state.enabled = value } })
+  const f = fixture()
+  const notify = f.register('notifications:desktop', (event, request) => handlers.notify({ userId: 'u1' }, request))
+  const enabled = f.register('notifications:desktop-enabled', (event, value) => handlers.enabled(value))
+  const request = { id: 'x', title: 'T', body: 'B', target: { view: 'games', params: { tab: 'multiplayer', itemId: 'g' } } }
+  assert.equal(await notify(request), 'shown')
+  assert.equal(shown[0].id, 'u1:x')
+  for (const bad of [{ ...request, target: { view: 'bogus' } }, { ...request, title: 'a'.repeat(121) }, { ...request, extra: 1 }, 'text']) await assert.rejects(notify(bad), code('NOTIFICATION_INVALID'))
+  assert.equal(shown.length, 1)
+  assert.equal(await enabled(false), false)
+  await assert.rejects(enabled('yes'), code('NOTIFICATION_INVALID'))
+  f.actor(null)
+  await assert.rejects(notify(request), code('AUTH_REQUIRED'))
+  await assert.rejects(enabled(), code('AUTH_REQUIRED'))
+  assert.equal(shown.length, 1)
+})
 test('guest preferences alone are available before authentication', async () => {
   const f = fixture(), call = f.register('kv:get'); f.actor(null)
   assert.equal(await call('app-language-guest'), 'ok')
@@ -71,7 +156,6 @@ test('an explicit credential backup is restricted to creator in the normal hub',
   const f = fixture(), call = f.register('backup:export')
   await assert.rejects(call(), code('AUTH_FORBIDDEN'))
   f.actor({ role: 'creator' }); assert.equal(await call(), 'ok')
-  f.actor({ viewId: 'both' }); await assert.rejects(call(), code('AUTH_FORBIDDEN'))
 })
 test('tokens and internal keys cannot be read, updated, set or deleted through generic KV', async () => {
   const f = fixture()
@@ -85,29 +169,45 @@ test('batched reads validate every key and bound the batch size', async () => {
   assert.equal(await call(['users', 'guides']), 'ok')
   for (const keys of [[], ['users', 'active-sessions'], ['users', '__private'], Array(101).fill('users')]) await assert.rejects(call(keys), code('AUTH_FORBIDDEN'))
 })
+test('nobody can read another person\'s personal to-dos or notification state', async () => {
+  const f = fixture(), get = f.register('kv:get'), many = f.register('kv:get-many')
+  assert.equal(await get('todos-personal-user@example.test'), 'ok')
+  await assert.rejects(get('todos-personal-other@example.test'), code('AUTH_FORBIDDEN'))
+  await assert.rejects(many(['guides', 'hub-notifications-dismissed-other@example.test']), code('AUTH_FORBIDDEN'))
+  f.actor({ role: 'manager' })
+  await assert.rejects(get('todos-personal-other@example.test'), code('AUTH_FORBIDDEN'))
+})
 test('user management requires a manager and raw whole-user replacements remain forbidden', async () => {
   const f = fixture(), update = f.register('kv:update'), set = f.register('kv:set')
   await assert.rejects(update('users', {}), code('AUTH_FORBIDDEN'))
   f.actor({ role: 'manager' }); assert.equal(await update('users', {}), 'ok')
   await assert.rejects(set('users', {}), code('AUTH_FORBIDDEN'))
 })
-test('read-only hub blocks writes and allows only its own personal preferences', async () => {
-  const f = fixture(), call = f.register('kv:set'); f.actor({ viewId: 'both' })
-  await assert.rejects(call('guides', []), code('AUTH_FORBIDDEN'))
-  assert.equal(await call('hub-dashboard-user@example.test', {}), 'ok')
-  await assert.rejects(call('hub-dashboard-other@example.test', {}), code('AUTH_FORBIDDEN'))
-  assert.equal(await call('todos-personal-user@example.test', {}), 'ok')
-  await assert.rejects(call('todos-personal-other@example.test', {}), code('AUTH_FORBIDDEN'))
-})
 test('team switches must match a registered home, not arbitrary folders', async () => {
   const f = fixture(), call = f.register('registry:switch-to-team')
   assert.equal(await call('A'), 'ok')
   for (const folder of ['B', '../other', '_shared']) await assert.rejects(call(folder), code('AUTH_FORBIDDEN'))
 })
-test('assistant must use the authenticated token and selected view', async () => {
+test('a manager in an extra team may switch to it, read and write there and add users only to the open team', async () => {
+  const f = fixture(), switchTeam = f.register('registry:switch-to-team'), get = f.register('kv:get'), assign = f.register('registry:assign-user')
+  f.folder('B')
+  await assert.rejects(get('shift-roles'), code('AUTH_FORBIDDEN'))
+  f.actor({ role: 'manager', activeTeam: { teamId: 'b', folderName: 'B' }, teams: [{ teamId: 'a', folderName: 'A' }, { teamId: 'b', folderName: 'B' }] })
+  assert.equal(await switchTeam('B'), 'ok')
+  assert.equal(await get('shift-roles'), 'ok')
+  assert.equal(await assign('new@example.test', 'b'), 'ok')
+  await assert.rejects(assign('new@example.test', 'a'), code('AUTH_FORBIDDEN'))
+})
+test('a hub whose access was removed blocks the team data but still lets the person switch home', async () => {
+  const f = fixture(), switchTeam = f.register('registry:switch-to-team'), get = f.register('kv:get')
+  f.folder('B'); f.actor({ activeTeam: null })
+  await assert.rejects(get('shift-roles'), code('AUTH_FORBIDDEN'))
+  await assert.rejects(switchTeam('B'), code('AUTH_FORBIDDEN'))
+  assert.equal(await switchTeam('A'), 'ok')
+})
+test('assistant must use the authenticated token', async () => {
   const f = fixture(), call = f.register('assistant:ask')
   await assert.rejects(call({ token: 'other' }), code('AUTH_FORBIDDEN'))
-  await assert.rejects(call({ token: 'verified', viewId: 'both' }), code('AUTH_FORBIDDEN'))
   assert.equal(await call({ token: 'verified' }), 'ok')
 })
 test('a client can consume its own forced-update request but cannot forge or delete another account request', async () => {
@@ -116,13 +216,155 @@ test('a client can consume its own forced-update request but cannot forge or del
   await assert.rejects(call('force-update-requests', { op: 'deleteField', field: 'other@example.test' }), code('AUTH_FORBIDDEN'))
   await assert.rejects(call('force-update-requests', { op: 'setField', field: 'user@example.test', value: {} }), code('AUTH_FORBIDDEN'))
 })
-for (const change of ['logout', 'view', 'role', 'folder', 'token']) test(`an asynchronous result is discarded after ${change}`, async () => {
+for (const change of ['logout', 'role', 'folder', 'token']) test(`an asynchronous result is discarded after ${change}`, async () => {
   const f = fixture(); let resolve
   const call = f.register('kv:get', () => new Promise(done => { resolve = done }))
   const pending = call('guides')
+  await listenerStarted(() => resolve)
   if (change === 'logout') f.actor(null)
   else if (change === 'folder') f.folder('B')
-  else f.actor(change === 'view' ? { viewId: 'both' } : change === 'role' ? { role: 'manager' } : { token: 'new' })
+  else f.actor(change === 'role' ? { role: 'manager' } : { token: 'new' })
   resolve('must not leak')
   await assert.rejects(pending, code(change === 'logout' ? 'AUTH_REQUIRED' : 'AUTH_CONTEXT_CHANGED'))
+})
+test('auth and the migration gate are awaited asynchronously and retired identities are prepared before a write', async () => {
+  const calls = []
+  const accounts = {
+    context: () => { throw new Error('sync context must not be used') },
+    contextAsync: async () => { calls.push('contextAsync'); return null },
+    prepareReferenceChecksAsync: async () => { calls.push('prepare') },
+    async runWriteAsync(callback) { calls.push('gate'); return callback() },
+    assertReferences: () => { calls.push('references') },
+  }
+  const handlers = new Map(), event = { sender: { id: 1 } }
+  const actor = { email: 'user@example.test', role: 'user', token: 't', home: { teamId: 'a', folderName: 'A' }, activeTeam: { teamId: 'a', folderName: 'A' }, teams: [{ teamId: 'a', folderName: 'A' }] }
+  const service = { current: () => { throw new Error('sync current must not be used') }, currentAsync: async () => { calls.push('auth'); return structuredClone(actor) } }
+  const ipc = createSecuredIpc({ handle: (key, handler) => handlers.set(key, handler) }, { auth: () => service, accounts: () => accounts, trusted: () => true, currentFolder: () => 'A', listTeams: () => [] })
+  ipc.handle('kv:set', () => 'saved')
+  assert.equal(await handlers.get('kv:set')(event, 'guides', []), 'saved')
+  assert.deepEqual(calls, ['auth', 'contextAsync', 'prepare', 'gate', 'references', 'contextAsync', 'auth'])
+})
+
+// Integration med de rigtige auth-/konto-services: et forældet snapshot serveres
+// foer handleren, men efterkontrollen ser resultatet af genlaesningen i baggrunden.
+function liveFixture() {
+  const path = require('node:path')
+  const { createAuthService } = require('./authService.cjs')
+  const { createAccountService } = require('./accountService.cjs')
+  const memory = () => {
+    const values = new Map()
+    const get = key => structuredClone(values.get(key))
+    const mutate = (key, callback) => { const next = callback(structuredClone(values.get(key))); if (next !== undefined) values.set(key, structuredClone(next)); return structuredClone(next) }
+    return { get, mutate, set: (key, value) => values.set(key, structuredClone(value)), async getAsync(key) { return get(key) }, async mutateAsync(key, callback) { return mutate(key, callback) }, async updateAsync(key, operation) { return mutate(key, current => { const next = { ...(current || {}) }; if (operation.op === 'deleteField') delete next[operation.field]; else next[operation.field] = operation.value; return next }) } }
+  }
+  const root = path.resolve('synthetic-secured-ipc-root'), team = { teamId: 'a', folderName: 'A' }
+  const users = memory(), sessions = memory(), meta = memory()
+  users.set('users', { 'user@example.test': { email: 'user@example.test', password: 'secret123', status: 'approved', role: 'user' } })
+  let clock = 1000000
+  const auth = createAuthService({
+    registry: { listTeams: () => [team], lookupTeamForEmail: () => team, getCreatorEmail: () => 'creator@example.test' },
+    getRoot: () => root, openTeam: () => users, openSessions: () => sessions, switchTeam: () => {}, deviceSecret: Buffer.alloc(32, 7), now: () => clock, contextTtlMs: 15000,
+  })
+  const accounts = createAccountService({ getRoot: () => root, registry: {}, openStore: () => meta, now: () => clock, contextTtlMs: 5000 })
+  const handlers = new Map(), event = { sender: { id: 1 } }
+  const ipc = createSecuredIpc({ handle: (key, handler) => handlers.set(key, handler) }, { auth: () => auth, accounts: () => accounts, trusted: () => true, currentFolder: () => null, listTeams: () => [team] })
+  let release
+  ipc.handle('kv:set', () => new Promise(done => { release = done }))
+  const drain = async () => { for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve)) }
+  return { auth, accounts, users, sessions, meta, root, drain, advance: value => { clock += value },
+    register(channel, listener = () => 'ok') { ipc.handle(channel, listener); return (...args) => handlers.get(channel)(event, ...args) },
+    async start() { release = null; const pending = handlers.get('kv:set')(event, 'guides', []); await listenerStarted(() => release); return { pending, finish: value => release(value) } } }
+}
+test('the after-check denies AUTH_CONTEXT_CHANGED when a soft revalidation during the handler changes the role', async () => {
+  const f = liveFixture()
+  await f.auth.login(1, { email: 'user@example.test', password: 'secret123' })
+  f.advance(20000)
+  const call = await f.start()
+  f.users.mutate('users', users => ({ ...users, 'user@example.test': { ...users['user@example.test'], role: 'manager' } }))
+  f.auth.revalidateAll(); await f.drain()
+  call.finish('must not leak')
+  await assert.rejects(call.pending, code('AUTH_CONTEXT_CHANGED'))
+})
+test('the after-check rejects when a soft revalidation during the handler finds the session revoked', async () => {
+  const f = liveFixture()
+  await f.auth.login(1, { email: 'user@example.test', password: 'secret123' })
+  f.advance(20000)
+  const call = await f.start()
+  f.sessions.set('active-sessions', {})
+  f.auth.revalidateAll(); await f.drain()
+  call.finish('must not leak')
+  await assert.rejects(call.pending, code('AUTH_REQUIRED'))
+})
+test('the after-check denies AUTH_CONTEXT_CHANGED when the background migration-context refresh sees a new terminal state', async () => {
+  const f = liveFixture()
+  await f.auth.login(1, { email: 'user@example.test', password: 'secret123' })
+  f.meta.set('account-migration-control', { id: 'm1', root: f.root, state: 'rolled-back', applied: 0, total: 1 })
+  assert.equal(await f.accounts.contextAsync(), 'm1:rolled-back')
+  f.advance(6000)
+  f.meta.set('account-migration-control', { id: 'm2', root: f.root, state: 'committed', applied: 1, total: 1 })
+  const call = await f.start()
+  await f.drain()
+  call.finish('must not leak')
+  await assert.rejects(call.pending, code('AUTH_CONTEXT_CHANGED'))
+})
+
+// Rolle-tjek paa sjaeldne kanaler: venter async paa en frisk aktoer i stedet for en
+// synkron M:-laesning paa main-traaden, og efterkontrollen bygger paa samme friske aktoer.
+function roleFixture() {
+  const handlers = new Map(), event = { sender: { id: 1 } }
+  const base = { email: 'user@example.test', userId: 'user_user@example.test', role: 'user', token: 'verified', home: { teamId: 'a', folderName: 'A' }, activeTeam: { teamId: 'a', folderName: 'A' }, teams: [{ teamId: 'a', folderName: 'A' }] }
+  let stale = base, fresh = base, served = base, syncCalls = 0
+  const service = {
+    current() { syncCalls++; throw new Error('synchronous actor resolve on the main thread') },
+    requireRole() { syncCalls++; throw new Error('synchronous actor resolve on the main thread') },
+    async currentAsync() { return structuredClone(served) },
+    async requireRoleAsync(_, role) {
+      served = fresh
+      if (fresh.role !== 'creator' && (role === 'creator' || fresh.role !== 'manager')) throw Object.assign(new Error('AUTH_FORBIDDEN'), { code: 'AUTH_FORBIDDEN' })
+      return structuredClone(fresh)
+    },
+  }
+  const ipc = createSecuredIpc({ handle: (key, handler) => handlers.set(key, handler) }, { auth: () => service, accounts: () => null, trusted: () => true, currentFolder: () => 'A', listTeams: () => [{ teamId: 'a', folderName: 'A' }] })
+  return {
+    register(channel, handler = () => 'ok') { ipc.handle(channel, handler); return (...args) => handlers.get(channel)(event, ...args) },
+    actors(staleChange, freshChange) { stale = { ...base, ...staleChange }; fresh = { ...base, ...freshChange }; served = stale },
+    syncCalls: () => syncCalls,
+  }
+}
+test('role-gated channels never resolve the actor synchronously', async () => {
+  const f = roleFixture()
+  const creatorChannel = f.register('registry:list-user-options'), usersWrite = f.register('kv:update'), assign = f.register('registry:assign-user'), recovery = f.register('accounts:resume')
+  const setField = { op: 'setField', field: 'x@example.test', value: {} }
+  f.actors({ role: 'creator' }, { role: 'creator' }); assert.equal(await creatorChannel(), 'ok')
+  f.actors({ role: 'creator' }, { role: 'creator' }); assert.equal(await recovery(), 'ok')
+  f.actors({ role: 'manager' }, { role: 'manager' }); assert.equal(await usersWrite('users', setField), 'ok')
+  f.actors({ role: 'manager' }, { role: 'manager' }); assert.equal(await assign('x@example.test', 'a'), 'ok')
+  f.actors({ role: 'creator' }, { role: 'creator' }); assert.equal(await usersWrite('guide-admin-emails', setField), 'ok')
+  // A demoted creator/manager is denied at once, even though the stale snapshot still holds the old role.
+  f.actors({ role: 'creator' }, { role: 'user' }); await assert.rejects(creatorChannel(), code('AUTH_FORBIDDEN'))
+  f.actors({ role: 'creator' }, { role: 'manager' }); await assert.rejects(creatorChannel(), code('AUTH_FORBIDDEN'))
+  f.actors({ role: 'creator' }, { role: 'user' }); await assert.rejects(recovery(), code('AUTH_FORBIDDEN'))
+  f.actors({ role: 'manager' }, { role: 'user' }); await assert.rejects(usersWrite('users', setField), code('AUTH_FORBIDDEN'))
+  f.actors({ role: 'manager' }, { role: 'user' }); await assert.rejects(assign('x@example.test', 'a'), code('AUTH_FORBIDDEN'))
+  f.actors({ role: 'manager' }, { role: 'user' }); await assert.rejects(usersWrite('force-update-requests', setField), code('AUTH_FORBIDDEN'))
+  f.actors({ role: 'manager' }, { role: 'user' }); await assert.rejects(f.register('kv:set')('guide-admin-emails', []), code('AUTH_FORBIDDEN'))
+  assert.equal(f.syncCalls(), 0, 'no role check read the actor synchronously')
+})
+test('a role-gated call after a stale actor does not fail with AUTH_CONTEXT_CHANGED', async () => {
+  const f = roleFixture()
+  const usersWrite = f.register('kv:update'), creatorChannel = f.register('registry:list-user-options'), assign = f.register('registry:assign-user')
+  const setField = { op: 'setField', field: 'x@example.test', value: {} }
+  f.actors({ role: 'user' }, { role: 'manager' }); assert.equal(await usersWrite('users', setField), 'ok')
+  f.actors({ role: 'user', token: 'old' }, { role: 'manager', token: 'renewed' }); assert.equal(await assign('x@example.test', 'a'), 'ok')
+  f.actors({ role: 'manager' }, { role: 'creator' }); assert.equal(await creatorChannel(), 'ok')
+  assert.equal(f.syncCalls(), 0)
+})
+test('a role-gated write after a stale snapshot uses the fresh role from the real auth service, without a synchronous read', async () => {
+  const f = liveFixture()
+  await f.auth.login(1, { email: 'user@example.test', password: 'secret123' })
+  f.users.mutate('users', users => ({ ...users, 'user@example.test': { ...users['user@example.test'], role: 'manager' } }))
+  f.users.get = () => { throw new Error('synchronous read of the shared drive') }
+  f.advance(20000)
+  assert.equal((await f.auth.currentAsync(1)).role, 'user', 'the stale snapshot is still served')
+  assert.equal(await f.register('kv:update')('guide-admin-emails', { op: 'setField', field: 'x@example.test', value: true }), 'ok')
 })

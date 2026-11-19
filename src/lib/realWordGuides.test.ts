@@ -32,7 +32,7 @@ describe.skipIf(samples.length === 0)('real Word guide round-trip', () => {
     expect(draft.preserveWordLayout).toBe(true)
     expect(draft.sections).toEqual([])
 
-    const stored = await fileStorage.uploadFile(draft.originalFile)
+    const stored = await fileStorage.uploadFile(draft.originalFile!)
     expect(Buffer.compare(Buffer.from(await (await fileStorage.downloadFile(stored.url)).arrayBuffer()), bytes)).toBe(0)
     const guide = {
       id: 'real-guide', title: draft.title, category: 'General', tags: [], content: '',

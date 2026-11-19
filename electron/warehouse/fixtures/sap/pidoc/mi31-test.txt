@@ -1,0 +1,12 @@
+﻿*** S t a t i s t i c s ***
+Total Number of Stock Management Units for PI             2
+Number of Possible PID Items                              2
+Number of Errors Found                                    0
+
+
+	Plnt	Location	Material	Batch	STy	Bin		Matl Group	PhysInvDoc
+	Msg.	Note					Status
+
+	D301	D000	R133-0032		1			GSOLD-TAC
+
+	D301	D000	R133-0033		1			GSOLD-TAC

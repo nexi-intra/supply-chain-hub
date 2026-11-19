@@ -61,7 +61,7 @@ export function DatePickerField({ id, value, onChange, min, max, placeholder, di
         <Calendar
           mode="single"
           selected={selected}
-          defaultMonth={selected}
+          defaultMonth={minDate && (!selected || selected < minDate) ? minDate : selected}
           weekStartsOn={1}
           ISOWeek
           showWeekNumber

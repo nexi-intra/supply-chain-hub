@@ -66,29 +66,34 @@ export function mergeFlatLeaderboard(
   ownUsers: Record<string, { fullName: string }> | null | undefined,
   otherTeams: Array<OtherTeamLeaderboardData<RawEntry[]>>
 ): CrossTeamEntry[] {
-  const merged: CrossTeamEntry[] = asEntries(own).map(e => ({ ...e, displayName: ownUsers?.[e.email]?.fullName || e.email }))
+  const merged: CrossTeamEntry[] = asEntries(own).map(e => ({ ...e, displayName: nameFor(ownUsers, e.email) }))
   for (const team of otherTeams) {
     for (const e of asEntries(team.leaderboard)) {
-      merged.push({ ...e, displayName: team.users?.[e.email]?.fullName || e.email, teamCode: team.teamCode })
+      merged.push({ ...e, displayName: nameFor(team.users, e.email), teamCode: team.teamCode })
     }
   }
   return merged.sort((a, b) => b.score - a.score)
 }
 
-/** Fletter en sværhedsgrad-opdelt leaderboard (Brick Break/Neon Snake/Nexi Flyer/Endless Dodger). */
+/** Fletter en sværhedsgrad-opdelt leaderboard (Brick Break/Neon Snake/Nexi Flyer/Chicken Invaders). */
 export function mergeNestedLeaderboard<D extends string>(
   own: Record<D, RawEntry[]> | null | undefined,
   ownUsers: Record<string, { fullName: string }> | null | undefined,
   otherTeams: Array<OtherTeamLeaderboardData<Record<D, RawEntry[]>>>,
   category: D
 ): CrossTeamEntry[] {
-  const merged: CrossTeamEntry[] = asEntries(own?.[category]).map(e => ({ ...e, displayName: ownUsers?.[e.email]?.fullName || e.email }))
+  const merged: CrossTeamEntry[] = asEntries(own?.[category]).map(e => ({ ...e, displayName: nameFor(ownUsers, e.email) }))
   for (const team of otherTeams) {
     for (const e of asEntries(team.leaderboard?.[category])) {
-      merged.push({ ...e, displayName: team.users?.[e.email]?.fullName || e.email, teamCode: team.teamCode })
+      merged.push({ ...e, displayName: nameFor(team.users, e.email), teamCode: team.teamCode })
     }
   }
   return merged.sort((a, b) => b.score - a.score)
+}
+
+function nameFor(users: Record<string, { fullName: string }> | null | undefined, email: string): string {
+  const name = users?.[email]?.fullName
+  return typeof name === 'string' && name.trim() ? name : email
 }
 
 /**
@@ -98,10 +103,12 @@ export function mergeNestedLeaderboard<D extends string>(
  */
 function asEntries(value: unknown): RawEntry[] {
   if (!Array.isArray(value)) return []
-  return value.filter((entry): entry is RawEntry =>
-    !!entry && typeof entry === 'object'
-    && typeof (entry as RawEntry).email === 'string'
-    && typeof (entry as RawEntry).score === 'number'
-    && Number.isFinite((entry as RawEntry).score)
-  )
+  return value
+    .filter((entry): entry is RawEntry =>
+      !!entry && typeof entry === 'object'
+      && typeof (entry as RawEntry).email === 'string'
+      && typeof (entry as RawEntry).score === 'number'
+      && Number.isFinite((entry as RawEntry).score)
+    )
+    .map(entry => (typeof entry.id === 'string' && entry.id ? entry : { ...entry, id: entry.email }))
 }

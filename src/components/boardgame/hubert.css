@@ -1,0 +1,129 @@
+/* Hubert: Blender-rendered sprite strips (see scripts/blender/hubert.py) played with CSS steps(). */
+
+.hb-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.hb-prop,
+.hb-dog {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.hb-prop { z-index: 1; }
+.hb-dog {
+  z-index: 2;
+  transition-property: transform;
+  transition-timing-function: linear;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+/* Every pose is its own layer with its own direction; a new one fades in over the old (see SpriteStack). */
+.hb-flip {
+  position: absolute;
+  inset: 0;
+  transform: scaleX(var(--hb-dir, 1));
+  transform-origin: 50% 100%;
+}
+.hb-flip[data-facing="left"] { --hb-dir: -1; }
+.hb-flip[data-enter] { animation: hb-fade-in 180ms ease-out both; }
+.hb-flip[data-waiting] { opacity: 0; }
+@keyframes hb-fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+.hb-sprite {
+  width: 100%;
+  height: 100%;
+  background-image: var(--hb-sheet);
+  background-repeat: no-repeat;
+  background-size: calc(var(--hb-frames) * 100%) 100%;
+  background-position: 0% 0%;
+  animation: var(--hb-name, hb-play) var(--hb-duration) var(--hb-timing) var(--hb-delay, 0s) var(--hb-count) both;
+}
+@keyframes hb-play {
+  from { background-position-x: 0%; }
+  to { background-position-x: var(--hb-end); }
+}
+/* A one-shot played backwards: stop is start reversed, stand-up is sit-down reversed. */
+@keyframes hb-play-rev {
+  from { background-position-x: var(--hb-end); }
+  to { background-position-x: 0%; }
+}
+
+/* The room's light: a little warmer at golden hour, firelit and dimmer in the evening. */
+.hb-layer .hb-sprite { filter: var(--hb-grade, none); }
+.dark .hb-layer { --hb-grade: brightness(0.8) saturate(0.92) sepia(0.12); }
+
+.hb-layer[data-paused] .hb-sprite,
+.hb-layer[data-paused] .hb-flip,
+.hb-layer[data-paused] .hb-dog { animation-play-state: paused; }
+
+/* The name tag, large enough to read, hangs from his collar while he begs or when he is petted. */
+.hb-tag-pin {
+  position: absolute;
+  z-index: 3;
+  width: clamp(2.6rem, 26%, 3.6rem);
+  transform: translate(-50%, -38%);
+  transform-origin: 50% 0;
+  animation: hb-tag-in 0.5s cubic-bezier(0.3, 1.5, 0.5, 1) both;
+  pointer-events: none;
+  filter: drop-shadow(0 0.15rem 0.2rem rgba(40, 18, 4, 0.45));
+}
+.hb-tag { display: block; width: 100%; height: auto; overflow: visible; }
+.hb-tag text { font: 700 13px/1 var(--wp-display, var(--font-sans)), sans-serif; font-stretch: 86%; letter-spacing: 0.02em; fill: #3d2808; }
+@keyframes hb-tag-in {
+  from { opacity: 0; transform: translate(-50%, -38%) rotate(-14deg) scale(0.5); }
+  to { opacity: 1; transform: translate(-50%, -38%) rotate(0) scale(1); }
+}
+
+.hb-bubble {
+  position: absolute;
+  left: 84%;
+  bottom: 48%;
+  z-index: 4;
+  padding: 0.32rem 0.7rem;
+  border-radius: 999px 999px 999px 4px;
+  background: #fffaf0;
+  color: #3b2412;
+  font-size: 0.85rem;
+  font-weight: 700;
+  white-space: nowrap;
+  box-shadow: 0 0.35rem 0.8rem -0.3rem rgba(30, 12, 0, 0.5);
+  /* he is scaled for depth; his words are not */
+  scale: calc(1 / var(--hb-s, 1));
+  transform-origin: 0 100%;
+  animation: hb-pop 0.25s cubic-bezier(0.3, 1.6, 0.6, 1) both;
+  pointer-events: none;
+}
+.hb-bubble[data-wide] { white-space: normal; width: max-content; max-width: 15rem; border-radius: 0.9rem 0.9rem 0.9rem 4px; line-height: 1.3; }
+.hb-dog[data-facing="left"] .hb-bubble { left: auto; right: 84%; border-radius: 999px 999px 4px 999px; transform-origin: 100% 100%; }
+.hb-dog[data-facing="left"] .hb-bubble[data-wide] { border-radius: 0.9rem 0.9rem 4px 0.9rem; }
+/* Above his head the bubble stays within his width, so it never reaches the table or the window edge. */
+.hb-dog[data-bubble="above"] .hb-bubble {
+  left: auto;
+  right: 6%;
+  bottom: 94%;
+  width: max-content;
+  max-width: min(15rem, calc(88% * var(--hb-s, 1)));
+  white-space: normal;
+  line-height: 1.3;
+  border-radius: 0.9rem 0.9rem 4px 0.9rem;
+  transform-origin: 100% 100%;
+}
+.hb-dog[data-bubble="above"][data-facing="left"] .hb-bubble { left: 6%; right: auto; border-radius: 0.9rem 0.9rem 0.9rem 4px; transform-origin: 0 100%; }
+@keyframes hb-pop { from { opacity: 0; transform: translateY(6px) scale(0.6); } to { opacity: 1; transform: none; } }
+
+.hb-napping { position: relative; aspect-ratio: 400 / 280; }
+/* Own layer: each frame re-rasters just the sprite, not the cabinet art behind it. */
+.hb-napping > .hb-sprite { position: absolute; inset: 0; will-change: opacity; }
+
+@media (prefers-reduced-motion: reduce) {
+  .hb-sprite, .hb-bubble, .hb-tag-pin, .hb-flip { animation: none !important; }
+  .hb-dog { transition: none !important; }
+}

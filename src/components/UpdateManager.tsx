@@ -70,12 +70,13 @@ export function UpdateManager({ userEmail }: UpdateManagerProps) {
     setIsBusy(true)
     try {
       const manifest = await window.electronUpdates!.check()
-      await refreshStatus()
       if (manifest) {
         toast.success(`${t.updateManager.newVersionPrefix} ${manifest.version} ${t.updateManager.newVersionAvailableSuffix}`)
       } else {
         toast.info(t.updateManager.alreadyLatest)
       }
+      // The answer is already shown; the status line follows without the button waiting for it.
+      void refreshStatus()
     } catch (error) {
       console.error('Opdaterings-tjek fejlede:', error)
       toast.error(t.updateManager.checkFailed)
@@ -125,8 +126,8 @@ export function UpdateManager({ userEmail }: UpdateManagerProps) {
       setSelectedZip(null)
       setVersion('')
       setNotes('')
-      await refreshStatus()
-      await refreshLibrary()
+      // Status and library are read again at the same time, without the button waiting for them.
+      void Promise.all([refreshStatus(), refreshLibrary()])
     } catch (error) {
       console.error('Publicering fejlede:', error)
       toast.error(error instanceof Error && error.message ? error.message : t.updateManager.publishFailed)
@@ -177,7 +178,7 @@ export function UpdateManager({ userEmail }: UpdateManagerProps) {
         </div>
         {status?.manifest && (
           <p className="text-xs text-muted-foreground">
-            {t.updateManager.publishedPrefix} {new Date(status.manifest.publishedAt).toLocaleString(language === 'en' ? 'en-US' : language === 'fi' ? 'fi-FI' : 'da-DK')}
+            {t.updateManager.publishedPrefix} {new Date(status.manifest.publishedAt).toLocaleString(language === 'en' ? 'en-US' : language === 'fi' ? 'fi-FI' : language === 'sv' ? 'sv-SE' : 'da-DK')}
             {status.manifest.publishedBy && <> {t.updateManager.byPrefix} {status.manifest.publishedBy}</>} · {status.manifest.file} ({formatMB(status.manifest.size)})
           </p>
         )}
@@ -301,7 +302,7 @@ export function UpdateManager({ userEmail }: UpdateManagerProps) {
                   {entry.notes && <div className="text-xs text-muted-foreground truncate">{entry.notes}</div>}
                 </div>
                 <div className="text-xs text-muted-foreground shrink-0">
-                  {new Date(entry.publishedAt).toLocaleDateString(language === 'en' ? 'en-US' : language === 'fi' ? 'fi-FI' : 'da-DK')} · {formatMB(entry.size)}
+                  {new Date(entry.publishedAt).toLocaleDateString(language === 'en' ? 'en-US' : language === 'fi' ? 'fi-FI' : language === 'sv' ? 'sv-SE' : 'da-DK')} · {formatMB(entry.size)}
                 </div>
               </div>
             ))}

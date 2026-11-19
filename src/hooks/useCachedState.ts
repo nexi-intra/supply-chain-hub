@@ -4,6 +4,11 @@ import type { Dispatch, SetStateAction } from 'react'
 // Session-lived cache of the last value under each key, surviving unmount.
 const cache = new Map<string, unknown>()
 
+/** After a hub switch the remembered values belong to the previous team. */
+export function clearCachedState() {
+  cache.clear()
+}
+
 // useState variant whose value is remembered across unmount/remount within the
 // session. A re-mounted view (e.g. returning to the Hub) renders its previous
 // content instantly while its effects revalidate against the shared folder in

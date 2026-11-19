@@ -8,22 +8,31 @@ import { cn } from '@/lib/utils'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { GuideViewer } from '@/components/GuideViewer'
 import { useLanguage } from '@/contexts/LanguageContext'
+import { LibraryProvider } from '@/contexts/LibraryContext'
 import type { AssistantScope, AssistantSource, AssistantAnswer, AssistantStatus } from '@/lib/assistantBridge'
+import { APP_VIEW_IDS, navigateTo, type AppViewId } from '@/lib/appNavigation'
 import type { Guide } from '@/lib/guideTypes'
 import { submitVacationRequest } from '@/lib/vacationRequests'
-import { createPersonalTodo } from '@/lib/personalTodos'
+import { createPersonalTodo, personalTodoScheduleProblem } from '@/lib/personalTodos'
+import { registerSickLeave } from '@/lib/sickLeave'
+import { buildNote, createNote, createTeamTodo, isTeamRecipient, sendInternalMessage, setHomeOfficeDay } from '@/lib/moduleWrites'
+import { isHighFiveEmoji, highFiveMessageProblem } from '@/lib/highFives'
+import { newOperationId } from '@/lib/multiplayerView'
 import { submitHubertFeedback } from '@/lib/hubertFeedback'
-const KNOWLEDGE_LABEL = { da: 'Søgning i hubdata', en: 'Hub data search', fi: 'Hub-tietojen haku' }
-const MORE_LABEL = { da: 'Vis flere resultater', en: 'Show more results', fi: 'Näytä lisää tuloksia' }
+import { BRIEFING_QUESTIONS, briefingDue, markBriefingShown } from '@/lib/hubertBriefing'
+const KNOWLEDGE_LABEL = { da: 'Søgning i hubdata', en: 'Hub data search', fi: 'Hub-tietojen haku', sv: 'Sökning i hubdata' }
+const MORE_LABEL = { da: 'Vis flere resultater', en: 'Show more results', fi: 'Näytä lisää tuloksia', sv: 'Visa fler resultat' }
 const PREPARE_LABEL = {
   da: { loading: 'Forbereder guides i baggrunden…', ready: 'Guidesøgning klar', failed: 'Guides kunne ikke forberedes. Kontrollér forbindelsen til datamappen.', retry: 'Prøv igen' },
   en: { loading: 'Preparing guides in the background…', ready: 'Guide search ready', failed: 'Guides could not be prepared. Check the storage connection.', retry: 'Retry' },
   fi: { loading: 'Oppaita valmistellaan taustalla…', ready: 'Opashaku valmis', failed: 'Oppaita ei voitu valmistella. Tarkista yhteys tietokansioon.', retry: 'Yritä uudelleen' },
+  sv: { loading: 'Förbereder guider i bakgrunden…', ready: 'Guidesökning redo', failed: 'Guiderna kunde inte förberedas. Kontrollera anslutningen till datamappen.', retry: 'Försök igen' },
 }
 const CHAT_TEXT = {
   da: { open: 'Spørg Hubert', welcome: 'Vuf! 🐾 Hvad kan jeg hjælpe dig med?', placeholder: 'Spørg Hubert…', stopped: 'Svaret blev afbrudt.' },
   en: { open: 'Ask Hubert', welcome: 'Woof! 🐾 How can I help?', placeholder: 'Ask Hubert…', stopped: 'The answer was stopped.' },
   fi: { open: 'Kysy Hubertilta', welcome: 'Hau! 🐾 Miten voin auttaa?', placeholder: 'Kysy Hubertilta…', stopped: 'Vastaus keskeytettiin.' },
+  sv: { open: 'Fråga Hubert', welcome: 'Voff! 🐾 Vad kan jag hjälpa dig med?', placeholder: 'Fråga Hubert…', stopped: 'Svaret avbröts.' },
 }
 // Generel tilstand er BEVIDST adskilt fra hub-tilstand: svar herfra er ikke
 // bygget paa hubbens data, og maerkaten maa derfor aldrig kunne forveksles med
@@ -50,14 +59,33 @@ const GENERAL_TEXT = {
     placeholder: 'Kysy mitä tahansa…',
     badge: 'Tekoälyn tuottama — ei hubin tiedoista, voi sisältää virheitä',
   },
+  sv: {
+    hub: 'Hub', general: 'Allmänt',
+    hubHint: 'Svarar utifrån hubbens data och guider',
+    generalHint: 'Allmänna frågor — utan tillgång till hubbens data',
+    placeholder: 'Fråga vad som helst…',
+    badge: 'AI-genererat — inte från hubbdata, kan innehålla fel',
+  },
 }
 // Handlings-forslag (fx "opret en ferieanmodning") kraever ALTID et eksplicit
 // bekraeft-klik - Hubert skriver aldrig noget uden det, uanset hvor "simpel"
 // handlingen er. Se electron/assistantActions.cjs for selve genkendelsen.
 const ACTION_TEXT = {
-  da: { confirm: 'Bekræft', cancel: 'Annuller', cancelled: 'Annulleret — der er ikke skrevet noget.', vacationSuccess: 'Ferieanmodningen er oprettet og sendt til godkendelse.', todoSuccess: 'To-do\'en er oprettet.', failed: 'Kunne ikke gennemføre handlingen. Prøv igen fra den relevante side i appen.' },
-  en: { confirm: 'Confirm', cancel: 'Cancel', cancelled: 'Cancelled — nothing was written.', vacationSuccess: 'The vacation request was created and sent for approval.', todoSuccess: 'The to-do was created.', failed: 'Could not complete the action. Try again from the relevant page in the app.' },
-  fi: { confirm: 'Vahvista', cancel: 'Peruuta', cancelled: 'Peruttu — mitään ei tallennettu.', vacationSuccess: 'Loma-anomus luotiin ja lähetettiin hyväksyttäväksi.', todoSuccess: 'To-do luotiin.', failed: 'Toimintoa ei voitu suorittaa. Yritä uudelleen sovelluksen asianomaiselta sivulta.' },
+  da: { confirm: 'Bekræft', cancel: 'Annuller', cancelled: 'Annulleret — der er ikke skrevet noget.', vacationSuccess: 'Ferieanmodningen er oprettet og sendt til godkendelse.', todoSuccess: 'To-do\'en er oprettet.', sickSuccess: 'Sygemeldingen er registreret, og din leder har fået besked.', sickNoNotice: 'Sygemeldingen er registreret, men din leder fik ikke automatisk besked. Giv selv besked.', homeOfficeSuccess: 'Hjemmearbejdet er registreret.', noteSuccess: 'Noten er oprettet i Notesbog.', messageSuccess: 'Beskeden er sendt.', teamTodoSuccess: 'Den fælles to-do er oprettet.', highFiveSuccess: 'High-fiven er sendt.', failed: 'Kunne ikke gennemføre handlingen. Prøv igen fra den relevante side i appen.' },
+  en: { confirm: 'Confirm', cancel: 'Cancel', cancelled: 'Cancelled — nothing was written.', vacationSuccess: 'The vacation request was created and sent for approval.', todoSuccess: 'The to-do was created.', sickSuccess: 'Your sick leave is registered and your manager has been notified.', sickNoNotice: 'Your sick leave is registered, but your manager was not notified automatically. Please tell them yourself.', homeOfficeSuccess: 'Home office is registered.', noteSuccess: 'The note was created in Notebook.', messageSuccess: 'The message was sent.', teamTodoSuccess: 'The shared to-do was created.', highFiveSuccess: 'The high-five was sent.', failed: 'Could not complete the action. Try again from the relevant page in the app.' },
+  fi: { confirm: 'Vahvista', cancel: 'Peruuta', cancelled: 'Peruttu — mitään ei tallennettu.', vacationSuccess: 'Loma-anomus luotiin ja lähetettiin hyväksyttäväksi.', todoSuccess: 'To-do luotiin.', sickSuccess: 'Sairauspoissaolo on kirjattu, ja esihenkilösi sai ilmoituksen.', sickNoNotice: 'Sairauspoissaolo on kirjattu, mutta esihenkilösi ei saanut automaattista ilmoitusta. Ilmoita hänelle itse.', homeOfficeSuccess: 'Etätyö on kirjattu.', noteSuccess: 'Muistiinpano luotiin Muistikirjaan.', messageSuccess: 'Viesti lähetettiin.', teamTodoSuccess: 'Yhteinen to-do luotiin.', highFiveSuccess: 'High five lähetettiin.', failed: 'Toimintoa ei voitu suorittaa. Yritä uudelleen sovelluksen asianomaiselta sivulta.' },
+  sv: { confirm: 'Bekräfta', cancel: 'Avbryt', cancelled: 'Avbrutet — inget har skrivits.', vacationSuccess: 'Semesteransökan har skapats och skickats för godkännande.', todoSuccess: 'To do-uppgiften har skapats.', sickSuccess: 'Sjukanmälan är registrerad och din chef har fått besked.', sickNoNotice: 'Sjukanmälan är registrerad, men din chef fick inget automatiskt besked. Meddela chefen själv.', homeOfficeSuccess: 'Hemarbetet är registrerat.', noteSuccess: 'Anteckningen har skapats i Anteckningsboken.', messageSuccess: 'Meddelandet har skickats.', teamTodoSuccess: 'Den gemensamma uppgiften har skapats.', highFiveSuccess: 'High fiven har skickats.', failed: 'Åtgärden kunde inte genomföras. Försök igen från rätt sida i appen.' },
+}
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/
+const param = (proposal: NonNullable<AssistantAnswer['actionProposal']>, key: string) => {
+  const value = proposal.params[key]
+  return typeof value === 'string' ? value : ''
+}
+/** The signed-in user's display name, as the module screens store it next to the e-mail. */
+async function displayName(email: string) {
+  const users = await window.kv.get<Record<string, { email?: string; fullName?: string; name?: string }>>('users')
+  const user = users ? (users[email] || Object.values(users).find(item => item?.email === email)) : undefined
+  return String(user?.fullName || user?.name || email)
 }
 // "Var dette svar nyttigt?"-feedback vises kun paa almindelige svar (ikke
 // handlings-forslag, der allerede har deres eget bekraeft/annuller-flow).
@@ -65,27 +93,33 @@ const FEEDBACK_TEXT = {
   da: { question: 'Var dette svar nyttigt?', thanks: 'Tak for din feedback!' },
   en: { question: 'Was this answer helpful?', thanks: 'Thanks for your feedback!' },
   fi: { question: 'Oliko tästä vastauksesta apua?', thanks: 'Kiitos palautteestasi!' },
+  sv: { question: 'Var det här svaret till hjälp?', thanks: 'Tack för din feedback!' },
 }
 const AI_LABELS = {
   da: { activate: 'Aktivér AI-svar', hint: 'AI-sammenfatning er ikke aktiveret på denne pc. Hent modellen fra det delte drev (engangs, ca. 3 GB).', downloading: 'Henter AI-model', retry: 'Prøv igen' },
   en: { activate: 'Enable AI answers', hint: 'AI summaries are not enabled on this PC. Fetch the model from the shared drive (one-time, ~3 GB).', downloading: 'Downloading AI model', retry: 'Retry' },
   fi: { activate: 'Ota tekoäly käyttöön', hint: 'Tekoälykoosteita ei ole otettu käyttöön tällä koneella. Nouda malli jaetulta asemalta (kertaluontoinen, n. 3 Gt).', downloading: 'Ladataan tekoälymallia', retry: 'Yritä uudelleen' },
+  sv: { activate: 'Aktivera AI-svar', hint: 'AI-sammanfattningar är inte aktiverade på den här datorn. Hämta modellen från den delade enheten (engångsåtgärd, ca 3 GB).', downloading: 'Hämtar AI-modell', retry: 'Försök igen' },
 }
 const readableError = (failure: unknown) => (failure instanceof Error ? failure.message : String(failure)).replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, '').replace(/^Error:\s*/, '')
 
 const LABELS = {
-  da: { title: 'Hub-assistent · lokal test', intro: 'Spørg om dine opgaver, hjemmearbejde, ferie eller guides. Planlægning slås direkte op; guideforklaringer bruger lokal AI. Der ændres ingen data.', placeholder: 'Fx: Hvor er Anne i dag?', send: 'Send', wait: 'Arbejder lokalt…', stop: 'Stop', images: 'Læs også guidebillede (langsommere)', attach: 'Vedhæft testbillede', data: 'Direkte dataopslag', retrieval: 'Guideopslag', ai: 'Lokal AI — kontrollér kilderne', sources: 'Kilder', clear: 'Ryd chat', size: 'Bredde', examples: ['Hvem er på arbejde i dag?', 'Hvor er kollegaen i morgen?', 'Hvem har flest opgaver i næste uge?', 'Hvilke opgaver skal jeg lave i næste uge?'], missing: 'Modellen er ikke installeret endnu.', version: 'Guiden er ændret siden svaret. Den aktuelle version vises uden trinmarkering.' },
-  en: { title: 'Hub assistant · local pilot', intro: 'Ask about your tasks, working from home, vacation or guides. Planning uses direct lookups; guide explanations use local AI. No data is changed.', placeholder: 'E.g. Where is Anne today?', send: 'Send', wait: 'Working locally…', stop: 'Stop', images: 'Read a guide image too (slower)', attach: 'Attach test image', data: 'Direct data lookup', retrieval: 'Guide lookup', ai: 'Local AI — check sources', sources: 'Sources', clear: 'Clear chat', size: 'Width', examples: ['Who is at work today?', 'When is my colleague back?', 'Who has the most tasks next week?', 'Which tasks do I have next week?'], missing: 'The model is not installed yet.', version: 'The guide changed since the answer. Showing the current version without a step highlight.' },
-  fi: { title: 'Hub-avustaja · paikallinen testi', intro: 'Kysy tehtävistäsi, etätyöstä, lomista tai oppaista. Suunnittelutiedot haetaan suoraan; oppaiden selitykset käyttävät paikallista tekoälyä. Tietoja ei muuteta.', placeholder: 'Esim. Missä Anne on tänään?', send: 'Lähetä', wait: 'Käsitellään paikallisesti…', stop: 'Pysäytä', images: 'Lue myös oppaan kuva (hitaampi)', attach: 'Liitä testikuva', data: 'Suora tietohaku', retrieval: 'Opashaku', ai: 'Paikallinen tekoäly — tarkista lähteet', sources: 'Lähteet', clear: 'Tyhjennä keskustelu', size: 'Leveys', examples: ['Ketkä ovat töissä tänään?', 'Milloin kollega palaa?', 'Kenellä on eniten tehtäviä ensi viikolla?', 'Mitkä tehtävät minulla on ensi viikolla?'], missing: 'Mallia ei ole vielä asennettu.', version: 'Opas muuttui vastauksen jälkeen. Nykyinen versio näytetään ilman vaihemerkintää.' },
+  da: { title: 'Hub-assistent · lokal test', intro: 'Spørg om dine opgaver, hjemmearbejde, ferie eller guides. Planlægning slås direkte op; guideforklaringer bruger lokal AI. Der ændres ingen data.', placeholder: 'Fx: Hvor er Anne i dag?', send: 'Send', wait: 'Arbejder lokalt…', stop: 'Stop', images: 'Læs også guidebillede (langsommere)', attach: 'Vedhæft testbillede', data: 'Direkte dataopslag', retrieval: 'Guideopslag', ai: 'Lokal AI — kontrollér kilderne', sources: 'Kilder', openLink: 'Åbn link', clear: 'Ryd chat', size: 'Bredde', examples: ['Hvem er på arbejde i dag?', 'Hvor er kollegaen i morgen?', 'Hvem har flest opgaver i næste uge?', 'Hvilke opgaver skal jeg lave i næste uge?'], missing: 'Modellen er ikke installeret endnu.', version: 'Guiden er ændret siden svaret. Den aktuelle version vises uden trinmarkering.' },
+  en: { title: 'Hub assistant · local pilot', intro: 'Ask about your tasks, working from home, vacation or guides. Planning uses direct lookups; guide explanations use local AI. No data is changed.', placeholder: 'E.g. Where is Anne today?', send: 'Send', wait: 'Working locally…', stop: 'Stop', images: 'Read a guide image too (slower)', attach: 'Attach test image', data: 'Direct data lookup', retrieval: 'Guide lookup', ai: 'Local AI — check sources', sources: 'Sources', openLink: 'Open link', clear: 'Clear chat', size: 'Width', examples: ['Who is at work today?', 'When is my colleague back?', 'Who has the most tasks next week?', 'Which tasks do I have next week?'], missing: 'The model is not installed yet.', version: 'The guide changed since the answer. Showing the current version without a step highlight.' },
+  fi: { title: 'Hub-avustaja · paikallinen testi', intro: 'Kysy tehtävistäsi, etätyöstä, lomista tai oppaista. Suunnittelutiedot haetaan suoraan; oppaiden selitykset käyttävät paikallista tekoälyä. Tietoja ei muuteta.', placeholder: 'Esim. Missä Anne on tänään?', send: 'Lähetä', wait: 'Käsitellään paikallisesti…', stop: 'Pysäytä', images: 'Lue myös oppaan kuva (hitaampi)', attach: 'Liitä testikuva', data: 'Suora tietohaku', retrieval: 'Opashaku', ai: 'Paikallinen tekoäly — tarkista lähteet', sources: 'Lähteet', openLink: 'Avaa linkki', clear: 'Tyhjennä keskustelu', size: 'Leveys', examples: ['Ketkä ovat töissä tänään?', 'Milloin kollega palaa?', 'Kenellä on eniten tehtäviä ensi viikolla?', 'Mitkä tehtävät minulla on ensi viikolla?'], missing: 'Mallia ei ole vielä asennettu.', version: 'Opas muuttui vastauksen jälkeen. Nykyinen versio näytetään ilman vaihemerkintää.' },
+  sv: { title: 'Hub-assistent · lokal test', intro: 'Fråga om dina uppgifter, hemarbete, semester eller guider. Planering slås upp direkt; guideförklaringar använder lokal AI. Inga data ändras.', placeholder: 'T.ex.: Var är Anne idag?', send: 'Skicka', wait: 'Arbetar lokalt…', stop: 'Stopp', images: 'Läs även guidebilden (långsammare)', attach: 'Bifoga testbild', data: 'Direkt datauppslag', retrieval: 'Guideuppslag', ai: 'Lokal AI — kontrollera källorna', sources: 'Källor', openLink: 'Öppna länk', clear: 'Rensa chatten', size: 'Bredd', examples: ['Vem är på jobbet idag?', 'När är kollegan tillbaka?', 'Vem har flest uppgifter nästa vecka?', 'Vilka uppgifter har jag nästa vecka?'], missing: 'Modellen är inte installerad ännu.', version: 'Guiden har ändrats sedan svaret. Den aktuella versionen visas utan stegmarkering.' },
 }
 
-export function HubAssistant({ token, viewId }: AssistantScope) {
+/** A Link Library answer opens the link itself; the main process checks it is still approved and visible. */
+const linkSourceId = (source: AssistantSource) => source.kind === 'module' && source.moduleId === 'links' && source.recordId?.startsWith('link:') ? source.recordId.slice(5) : ''
+
+export function HubAssistant({ token }: AssistantScope) {
   const { language } = useLanguage()
   const t = LABELS[language]
   const [open, setOpen] = useState(false)
   const [minimized, setMinimized] = useState(false)
   const [input, setInput] = useState('')
-  const [messages, setMessages] = useState<Array<{ id: number; question: string; answer?: AssistantAnswer; error?: string; actionOutcome?: 'confirmed' | 'cancelled' | 'success' | 'failed'; actionOutcomeMessage?: string; feedback?: 'helpful' | 'unhelpful' }>>([])
+  const [messages, setMessages] = useState<Array<{ id: number; question: string; auto?: boolean; answer?: AssistantAnswer; error?: string; actionOutcome?: 'confirmed' | 'cancelled' | 'success' | 'failed'; actionOutcomeMessage?: string; feedback?: 'helpful' | 'unhelpful' }>>([])
   const [busy, setBusy] = useState(false)
   const [preparation, setPreparation] = useState<'loading' | 'ready' | 'failed'>('loading')
   const [prepareAttempt, setPrepareAttempt] = useState(0)
@@ -108,6 +142,7 @@ export function HubAssistant({ token, viewId }: AssistantScope) {
   const composer = useRef<HTMLInputElement>(null)
   const api = window.electronAssistant
   const enabled = !!api
+  const briefingRequested = useRef(false)
 
   useEffect(() => {
     // Kun til at udfylde afsender/ejer paa en handling Hubert opretter EFTER
@@ -121,17 +156,17 @@ export function HubAssistant({ token, viewId }: AssistantScope) {
     setMessages([]); setSelectedGuide(null); setSelectedRecord(null); setImage(null); setInput(''); setError(''); setBusy(false); setOpen(false)
     void api?.stop({ clearCache: true })
     return () => { sequence.current++; void api?.stop({ clearCache: true }) }
-  }, [token, viewId, api])
+  }, [token, api])
 
   useEffect(() => {
     if (!enabled || !token || !open) return
     let cancelled = false
     setPreparation('loading')
     const timer = setTimeout(() => {
-      void api!.prepare({ token, viewId }).then(() => { if (!cancelled) setPreparation('ready') }).catch(() => { if (!cancelled) setPreparation('failed') })
+      void api!.prepare({ token }).then(() => { if (!cancelled) setPreparation('ready') }).catch(() => { if (!cancelled) setPreparation('failed') })
     }, 1000)
     return () => { cancelled = true; clearTimeout(timer) }
-  }, [enabled, token, viewId, api, prepareAttempt, open])
+  }, [enabled, token, api, prepareAttempt, open])
 
   useEffect(() => {
     if (!enabled) return
@@ -141,9 +176,9 @@ export function HubAssistant({ token, viewId }: AssistantScope) {
   useEffect(() => {
     if (!enabled || !token || !open) return
     let cancelled = false
-    void api!.status({ token, viewId }).then(value => { if (!cancelled) setAiStatus(value) }).catch(() => {})
+    void api!.status({ token }).then(value => { if (!cancelled) setAiStatus(value) }).catch(() => {})
     return () => { cancelled = true }
-  }, [enabled, token, viewId, api, open, prepareAttempt])
+  }, [enabled, token, api, open, prepareAttempt])
 
   useEffect(() => {
     if (!enabled) return
@@ -179,6 +214,23 @@ export function HubAssistant({ token, viewId }: AssistantScope) {
     else setPrepareAttempt(value => value + 1)
   }, [open, api])
 
+  // First open of the day: Hubert's briefing becomes the first message. The marker is set only once it was shown; a failure stays silent.
+  useEffect(() => {
+    if (!open) { briefingRequested.current = false; return }
+    if (!enabled || !token || !userEmail || generalMode || busy || preparation !== 'ready' || briefingRequested.current || !briefingDue(userEmail)) return
+    briefingRequested.current = true
+    const requestId = ++sequence.current
+    setBusy(true)
+    void api!.ask({ token, question: BRIEFING_QUESTIONS[language], language, includeImages: false })
+      .then(answer => {
+        if (requestId !== sequence.current) return
+        setMessages(current => [{ id: requestId, question: BRIEFING_QUESTIONS[language], auto: true, answer }, ...current])
+        markBriefingShown(userEmail)
+      })
+      .catch(() => {})
+      .finally(() => { if (requestId === sequence.current) setBusy(false) })
+  }, [open, enabled, token, userEmail, generalMode, busy, preparation, language, api])
+
   const send = async (question = input.trim(), selectedPerson?: string, page?: number) => {
     if (!api || busy || !question.trim()) return
     const requestId = ++sequence.current
@@ -191,8 +243,8 @@ export function HubAssistant({ token, viewId }: AssistantScope) {
       const conversation = messages.filter(message => message.answer).slice(-6).map(message => message.answer?.contextQuestion || message.answer?.scoreContext || message.question)
       // Generel tilstand sender bevidst INTET hub-kontekst med.
       const answer = generalMode
-        ? await api.ask({ token, viewId, question, language, includeImages: false, image: image?.data, general: true })
-        : await api.ask({ token, viewId, question, language, includeImages, image: image?.data, selectedPerson, previousQuestion, conversation, page })
+        ? await api.ask({ token, question, language, includeImages: false, image: image?.data, general: true })
+        : await api.ask({ token, question, language, includeImages, image: image?.data, selectedPerson, previousQuestion, conversation, page })
       if (requestId !== sequence.current) return
       setMessages(current => current.map(message => message.id === requestId ? { ...message, answer } : message)); setImage(null)
     } catch (failure) {
@@ -210,18 +262,64 @@ export function HubAssistant({ token, viewId }: AssistantScope) {
   const confirmAction = async (messageId: number, proposal: NonNullable<AssistantAnswer['actionProposal']>) => {
     setMessages(current => current.map(message => message.id === messageId ? { ...message, actionOutcome: 'confirmed' } : message))
     const text = ACTION_TEXT[language]
+    const done = (message: string) => setMessages(current => current.map(item => item.id === messageId ? { ...item, actionOutcome: 'success', actionOutcomeMessage: message } : item))
+    const failed = (failure: unknown) => {
+      console.error('Hubert action failed:', failure)
+      setMessages(current => current.map(message => message.id === messageId ? { ...message, actionOutcome: 'failed', actionOutcomeMessage: text.failed } : message))
+    }
+    // The input is checked first (at most a quick read); then the result is shown at once and the write – up to 90 s
+    // on the shared drive – runs in the background. A failed write turns the answer into "failed".
+    const showThenSave = <T,>(write: Promise<T>, success: string, onSaved?: (result: T) => void) => {
+      done(success)
+      void write.then(result => onSaved?.(result), failed)
+    }
     try {
       if (!userEmail) throw new Error('Ingen bruger fundet')
       if (proposal.type === 'vacation-request') {
-        await submitVacationRequest({ userEmail, startDate: proposal.params.startDate, endDate: proposal.params.endDate })
-        setMessages(current => current.map(message => message.id === messageId ? { ...message, actionOutcome: 'success', actionOutcomeMessage: text.vacationSuccess } : message))
+        const startDate = param(proposal, 'startDate')
+        const endDate = param(proposal, 'endDate')
+        if (!startDate || !endDate || endDate < startDate) throw new Error('Ugyldige datoer')
+        showThenSave(submitVacationRequest({ userEmail, startDate, endDate }), text.vacationSuccess)
       } else if (proposal.type === 'personal-todo') {
-        await createPersonalTodo(userEmail, proposal.params.title)
-        setMessages(current => current.map(message => message.id === messageId ? { ...message, actionOutcome: 'success', actionOutcomeMessage: text.todoSuccess } : message))
+        const dueDate = ISO_DAY.test(param(proposal, 'dueDate')) ? param(proposal, 'dueDate') : undefined
+        const schedule = dueDate ? { startTime: param(proposal, 'startTime'), endTime: param(proposal, 'endTime') } : undefined
+        const problem = !param(proposal, 'title').trim() ? 'MISSING_TITLE' : personalTodoScheduleProblem(dueDate, schedule)
+        if (problem) throw new Error(problem)
+        showThenSave(createPersonalTodo(userEmail, param(proposal, 'title'), undefined, dueDate, undefined, schedule), text.todoSuccess)
+      } else if (proposal.type === 'sick-leave') {
+        const date = param(proposal, 'date')
+        if (!ISO_DAY.test(date)) throw new Error('Ugyldig dato')
+        const name = await displayName(userEmail)
+        showThenSave(
+          registerSickLeave({ reporterEmail: userEmail, reporterName: name, userEmail, userName: name, date: new Date(`${date}T12:00:00`), type: param(proposal, 'type') === 'child' ? 'child' : 'self' }),
+          text.sickSuccess,
+          ({ notified }) => { if (!notified) done(text.sickNoNotice) },
+        )
+      } else if (proposal.type === 'home-office-day') {
+        const date = param(proposal, 'date')
+        if (!ISO_DAY.test(date)) throw new Error('INVALID_DATE')
+        showThenSave(setHomeOfficeDay(userEmail, date, true), text.homeOfficeSuccess)
+      } else if (proposal.type === 'note') {
+        const params = { userEmail, userName: await displayName(userEmail), title: param(proposal, 'title'), content: param(proposal, 'content'), isPersonal: proposal.params.isPersonal !== false }
+        buildNote(params)
+        showThenSave(createNote(params), text.noteSuccess)
+      } else if (proposal.type === 'message') {
+        const to = param(proposal, 'to')
+        if (!to || !param(proposal, 'subject').trim() || !param(proposal, 'message').trim()) throw new Error('MISSING_FIELDS')
+        if (!isTeamRecipient(await window.kv.get<Record<string, { email: string }>>('users'), to)) throw new Error('USER_NOT_FOUND')
+        showThenSave(sendInternalMessage({ from: userEmail, to, subject: param(proposal, 'subject'), message: param(proposal, 'message') }), text.messageSuccess)
+      } else if (proposal.type === 'team-todo') {
+        const dueDate = ISO_DAY.test(param(proposal, 'dueDate')) ? param(proposal, 'dueDate') : undefined
+        if (!param(proposal, 'title').trim()) throw new Error('MISSING_TITLE')
+        showThenSave(createTeamTodo({ userEmail, userName: await displayName(userEmail), title: param(proposal, 'title'), dueDate }), text.teamTodoSuccess)
+      } else if (proposal.type === 'high-five') {
+        const emoji = param(proposal, 'emoji')
+        const message = param(proposal, 'message')
+        if (!window.electronHighFives || !isHighFiveEmoji(emoji) || highFiveMessageProblem(message)) throw new Error('Ugyldig high-five')
+        showThenSave(window.electronHighFives.command({ operationId: newOperationId(), type: 'send', recipientEmail: param(proposal, 'recipientEmail'), emoji, message }), text.highFiveSuccess)
       }
     } catch (failure) {
-      console.error('Hubert action failed:', failure)
-      setMessages(current => current.map(message => message.id === messageId ? { ...message, actionOutcome: 'failed', actionOutcomeMessage: text.failed } : message))
+      failed(failure)
     }
   }
   // Best-effort feedback-logning - paavirker aldrig selve svaret, og et klik
@@ -238,13 +336,18 @@ export function HubAssistant({ token, viewId }: AssistantScope) {
     if (!api) return
     const requestId = sequence.current
     try {
+      const linkId = linkSourceId(source)
+      if (linkId) {
+        await window.electronLinks?.open(linkId)
+        return
+      }
       if (source.kind === 'module' && source.moduleId && source.recordId) {
-        const record = await api.record({ token, viewId, teamId: source.teamId, moduleId: source.moduleId, recordId: source.recordId, language })
+        const record = await api.record({ token, teamId: source.teamId, moduleId: source.moduleId, recordId: source.recordId, language })
         if (requestId === sequence.current) setSelectedRecord(record)
         return
       }
       if (!source.guideId) return
-      const guide = await api.guide({ token, viewId, teamId: source.teamId, guideId: source.guideId })
+      const guide = await api.guide({ token, teamId: source.teamId, guideId: source.guideId, library: source.library })
       if (requestId !== sequence.current) return
       const sameVersion = (guide.version || '1.00') === source.version
       setSelectedGuide({ guide, source: sameVersion ? source : { ...source, reference: undefined } })
@@ -253,15 +356,15 @@ export function HubAssistant({ token, viewId }: AssistantScope) {
   }
   const fileLoader = useCallback(async (url: string) => {
     if (!api || !selectedGuide) throw new Error('No guide selected')
-    const data = await api.image({ token, viewId, teamId: selectedGuide.source.teamId, guideId: selectedGuide.guide.id, imageId: url.replace(/^kv:\/\//, '') })
+    const data = await api.image({ token, teamId: selectedGuide.source.teamId, guideId: selectedGuide.guide.id, imageId: url.replace(/^kv:\/\//, ''), library: selectedGuide.source.library })
     return (await fetch(data)).blob()
-  }, [api, token, viewId, selectedGuide])
+  }, [api, token, selectedGuide])
 
   const provisionModel = async () => {
     if (!api || isProvisioning) return
     setProvisionError(''); setProvisionPct(0); setIsProvisioning(true)
     try {
-      const updated = await api.provision({ token, viewId })
+      const updated = await api.provision({ token })
       setAiStatus(updated)
     } catch (failure) {
       setProvisionError(readableError(failure))
@@ -288,7 +391,7 @@ export function HubAssistant({ token, viewId }: AssistantScope) {
               ) : (
                 <>
                   <p className="text-muted-foreground">{AI_LABELS[language].hint}</p>
-                  <Button size="sm" className="h-7 text-xs" onClick={() => void provisionModel()}>{AI_LABELS[language].activate}</Button>
+                  <Button size="sm" className="h-7 text-xs" onClick={() => provisionModel()}>{AI_LABELS[language].activate}</Button>
                   {provisionError && <p className="text-destructive">{provisionError}</p>}
                 </>
               )}
@@ -296,7 +399,7 @@ export function HubAssistant({ token, viewId }: AssistantScope) {
           )}
           {!messages.length && <div className="flex h-full flex-col items-center justify-center gap-3 text-center"><span className="rounded-md bg-primary/10 p-3 text-primary"><HubertIcon size={30} /></span><p className="text-sm text-muted-foreground">{CHAT_TEXT[language].welcome}</p></div>}
           {messages.map(message => <div key={message.id} className="space-y-3">
-            <div className="ml-auto max-w-[88%] rounded-md bg-primary/15 px-3.5 py-2.5 text-sm whitespace-pre-wrap break-words">{message.question}</div>
+            {!message.auto && <div className="ml-auto max-w-[88%] rounded-md bg-primary/15 px-3.5 py-2.5 text-sm whitespace-pre-wrap break-words">{message.question}</div>}
             {message.answer && <div className={cn('mr-3 rounded-md px-3.5 py-3 text-sm space-y-3', message.answer.mode === 'general' ? 'border border-amber-500/40 bg-amber-500/5' : 'bg-muted/55')}>
               {message.answer.mode === 'general' && (
                 <p className="flex items-start gap-1.5 text-[11px] font-medium text-amber-600">
@@ -312,14 +415,16 @@ export function HubAssistant({ token, viewId }: AssistantScope) {
                   <p className="text-xs text-muted-foreground">{ACTION_TEXT[language].cancelled}</p>
                 ) : (
                   <div className="flex items-center gap-2">
-                    <Button type="button" size="sm" disabled={message.actionOutcome === 'confirmed'} onClick={() => void confirmAction(message.id, message.answer!.actionProposal!)}>{ACTION_TEXT[language].confirm}</Button>
+                    <Button type="button" size="sm" disabled={message.actionOutcome === 'confirmed'} onClick={() => confirmAction(message.id, message.answer!.actionProposal!)}>{ACTION_TEXT[language].confirm}</Button>
                     <Button type="button" size="sm" variant="outline" disabled={message.actionOutcome === 'confirmed'} onClick={() => cancelAction(message.id)}>{ACTION_TEXT[language].cancel}</Button>
                   </div>
                 )
               )}
-              {!!message.answer.personChoices?.length && <div className="flex flex-col items-start gap-2">{message.answer.personChoices.map(choice => <Button key={choice.id} type="button" variant="outline" size="sm" disabled={busy} onClick={() => void send(message.question, choice.id)}>{choice.label}</Button>)}</div>}
-              {message.answer.nextPage !== undefined && <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void send(message.answer!.contextQuestion || message.question, undefined, message.answer!.nextPage)}>{MORE_LABEL[language]}</Button>}
+              {!!message.answer.personChoices?.length && <div className="flex flex-col items-start gap-2">{message.answer.personChoices.map(choice => <Button key={choice.id} type="button" variant="outline" size="sm" disabled={busy} onClick={() => send(message.question, choice.id)}>{choice.label}</Button>)}</div>}
+              {message.answer.navigation && (APP_VIEW_IDS as readonly string[]).includes(message.answer.navigation.view) && <Button type="button" size="sm" variant="outline" className="gap-1.5" onClick={() => { const target = message.answer!.navigation!; navigateTo(target.view as AppViewId, target.params); setMinimized(true) }}><ArrowSquareOut size={14} />{message.answer.navigation.label}</Button>}
+              {message.answer.nextPage !== undefined && <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => send(message.answer!.contextQuestion || message.question, undefined, message.answer!.nextPage)}>{MORE_LABEL[language]}</Button>}
               {message.answer.warning && <details className="text-xs text-amber-600"><summary className="cursor-pointer">{t.ai}</summary><p className="mt-1 whitespace-pre-wrap break-words">{message.answer.warning}</p></details>}
+              {message.answer.sources.some(source => linkSourceId(source)) && <div className="flex flex-wrap gap-2">{message.answer.sources.filter(source => linkSourceId(source)).map((source, sourceIndex) => <Button key={sourceIndex} type="button" size="sm" variant="outline" className="h-auto min-h-8 gap-1.5 whitespace-normal text-left text-xs" onClick={() => openSource(source)}><ArrowSquareOut size={14} className="shrink-0" />{t.openLink}: {source.title.split(' · ').slice(2).join(' · ') || source.title}</Button>)}</div>}
               {!!message.answer.sources.length && <details className="border-t border-border/50 pt-2"><summary className="cursor-pointer text-xs text-muted-foreground">{t.sources} · {message.answer.sources.length}</summary><div className="mt-2 space-y-2">{message.answer.sources.map((source, sourceIndex) => source.kind === 'guide' || source.kind === 'module' ? <button key={sourceIndex} onClick={() => void openSource(source)} className="flex items-start gap-1.5 text-primary text-left text-xs hover:underline"><span>[{sourceIndex + 1}] {source.title}</span><ArrowSquareOut size={14} className="mt-0.5 shrink-0" /></button> : <p key={sourceIndex} className="text-xs">{source.title}</p>)}</div></details>}
               {!message.answer.actionProposal && (
                 message.feedback ? (
@@ -370,7 +475,7 @@ export function HubAssistant({ token, viewId }: AssistantScope) {
         </form>
       </AssistantChatWindow>
     </div>}
-    <GuideViewer guide={selectedGuide?.guide || null} open={!!selectedGuide} onOpenChange={value => { if (!value) setSelectedGuide(null) }} fileLoader={fileLoader} targetReference={selectedGuide?.source.reference} />
+    <LibraryProvider kind={selectedGuide?.source.library || 'guides'}><GuideViewer guide={selectedGuide?.guide || null} open={!!selectedGuide} onOpenChange={value => { if (!value) setSelectedGuide(null) }} fileLoader={fileLoader} targetReference={selectedGuide?.source.reference} /></LibraryProvider>
     <Dialog open={!!selectedRecord} onOpenChange={value => { if (!value) setSelectedRecord(null) }}><DialogContent className="max-w-3xl"><DialogHeader><DialogTitle>{selectedRecord?.title}</DialogTitle><DialogDescription>{KNOWLEDGE_LABEL[language]}</DialogDescription></DialogHeader><div className="max-h-[65vh] overflow-y-auto whitespace-pre-wrap break-words text-sm">{selectedRecord?.text}</div></DialogContent></Dialog>
   </>
 }
