@@ -160,7 +160,7 @@ export function StatusFigures({ status }: { status: CountStatus }) {
           <span className="text-lg font-semibold tabular-nums">{progress.total ? `${progress.percent} %` : '–'}</span>
         </div>
         <Progress value={progress.percent} />
-        <p className="text-xs text-muted-foreground tabular-nums">{t(`${formatNumber(progress.reached)} af ${formatNumber(progress.total)} serienumre og tællelinjer`, `${formatNumber(progress.reached)} of ${formatNumber(progress.total)} serial numbers and count lines`)}</p>
+        <p className="text-xs text-muted-foreground tabular-nums">{t(`${formatNumber(progress.reached)} af ${formatNumber(progress.total)} stk. (serienumre og antal)`, `${formatNumber(progress.reached)} of ${formatNumber(progress.total)} pcs (serial numbers and quantities)`)}</p>
       </div>
       <Figure label={t('Optællinger', 'Counts')} value={t(`${progress.closed} af ${progress.counts} afsluttet`, `${progress.closed} of ${progress.counts} closed`)} />
       <Figure label={t('Værdidifference', 'Value difference')} value={formatMoney(progress.valueDiff)} tone={progress.valueDiff < 0 ? 'negative' : progress.valueDiff > 0 ? 'positive' : undefined} />

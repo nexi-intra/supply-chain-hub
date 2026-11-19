@@ -199,13 +199,33 @@ test('progress: overall, terminals, accessories, per area and per counter', () =
   assert.equal(progress.terminals.used.unrestricted.found, 1)
   assert.equal(progress.terminals.used.unrestricted.expected, 3)
   assert.deepEqual(progress.accessory.lines, { counted: 1, total: 2 })
-  assert.equal(progress.overall.reached, 3)
-  assert.equal(progress.overall.total, 8)
-  assert.equal(progress.overall.percent, 38)
+  // In pieces: 6 serials + 100 + 10 + 5 pieces without serials; reached: N1, U2 and 50 of R162-0717.
+  assert.equal(progress.overall.reached, 52)
+  assert.equal(progress.overall.total, 121)
+  assert.equal(progress.overall.percent, 43)
   assert.deepEqual(progress.areas.find(item => item.area === 'A'), { area: 'A', counted: 1, total: 1 })
   assert.equal(progress.counters.find(item => item.email === 'bo@example.test').events, 2)
   assert.equal(progress.materials.approved, 1)
   assert.ok(progress.materials.total >= 4)
+})
+
+test('progress counts pieces: quantities without serials count up to the SAP quantity, also without a placement sheet', () => {
+  const accessories = buildSnapshot({
+    team: 'TCD', scope: { type: 'slocs', slocs: ['D000'] }, rulesByTeam, fetchedAt: 1, fetchedBy: 'anna@example.test',
+    mb52: [stock('R162-0717', 'D000', 100), stock('R162-0800', 'D000', 5), stock('R140-0100', 'D000', 3)],
+    serials: [serial('S1', 'R140-0100', 'D000'), serial('S2', 'R140-0100', 'D000'), serial('S3', 'R140-0100', 'D000')],
+  })
+  const accessoryIndex = indexSnapshot(accessories)
+  const progressOf = events => computeProgress({ snapshot: accessories, aggregate: aggregateCount({ snapshot: accessories, index: accessoryIndex, events }), countLists: [], events, now: 10 * 3600 * 1000 })
+  const qty = (lineId, material, value, at) => line(lineId, { place: 'Reol 1', area: '', material, sloc: 'D000', stockType: 'unrestricted', qty: value, status: 'counted' }, 'anna@example.test', at)
+
+  assert.deepEqual(progressOf([]).overall, { reached: 0, total: 108, percent: 0 }, 'the whole SAP quantity is to be counted before anything is')
+  const some = [scan('S1', 'anna@example.test', 9 * 3600 * 1000 + 1), qty('L1', 'R162-0717', 60, 9 * 3600 * 1000 + 2)]
+  assert.deepEqual(progressOf(some).overall, { reached: 61, total: 108, percent: 56 })
+  const more = [...some, qty('L1', 'R162-0717', 80, 9 * 3600 * 1000 + 3), qty('L2', 'R162-0717', 30, 9 * 3600 * 1000 + 4), qty('L3', 'R162-0800', 5, 9 * 3600 * 1000 + 5)]
+  const progress = progressOf(more)
+  assert.deepEqual(progress.overall, { reached: 106, total: 108, percent: 98 }, 'more than SAP on a row counts as the SAP quantity')
+  assert.equal(progress.pace.perHour, 1 + 80 + 30 + 5, 'the pace is pieces too; a changed line counts its change')
 })
 
 test('approval freezes the missing serials of serial-managed rows, not of quantity rows', () => {

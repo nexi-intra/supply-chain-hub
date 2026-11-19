@@ -16,6 +16,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Spilhjørnet ligger nu altid nederst i venstre hjørne af forsiden, uanset hvor mange moduler du ser, og hvor bredt vinduet er',
       'Nyt værktøj i TCD og TRR: Stempelkort. Stempl ind og ud på dine opgaver med start, pause og stop. Din opgave fra vagtplanen er valgt på forhånd, og en ny opgave oprettes på samme måde som i vagtplanen og kommer også dér. Kun managere kan se de gemte tider, og de har en oversigt med statistik pr. opgave, person og dag',
       'Lagerstyring hedder nu Arbejdsværktøjer og samler Stempelkort, Placeringer og Optælling',
+      'Optælling: fremdriften regnes nu i stk. Tilbehør og andre materialer uden serienumre tæller med efter det optalte antal mod SAP, også uden placeringsark. Før talte kun serienumre og tællelinjer, så fx D000-tilbehørsoptællingen viste forkerte procenter',
     ],
   },
   {

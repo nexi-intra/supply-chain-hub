@@ -277,13 +277,17 @@ function computeProgress({ snapshot, aggregate, countLists = [], events, approva
   }
   let accessoryCounted = 0
   let accessorySap = 0
+  // Without serials a row is counted by quantity: what is counted counts up to SAP's quantity (more is a difference, not progress).
+  let quantityReached = 0
+  let quantityTotal = 0
   for (const row of aggregate.rows) {
     if (row.kind === 'accessory' && !row.serialManaged) { accessoryCounted += row.countedLines; accessorySap += row.sapQty }
+    if (!row.serialManaged) { quantityReached += Math.min(row.countedLines, row.sapQty); quantityTotal += row.sapQty }
   }
 
-  const expectedSerials = aggregate.serials.expected
-  const reached = aggregate.serials.found + linesCounted
-  const total = expectedSerials + linesTotal
+  // In pieces: every expected serial is one piece, and every piece SAP has of a material without serials.
+  const reached = aggregate.serials.found + quantityReached
+  const total = aggregate.serials.expected + quantityTotal
 
   const counters = new Map()
   const active = activeEvents(events)
@@ -311,8 +315,18 @@ function computeProgress({ snapshot, aggregate, countLists = [], events, approva
   const approvalValues = Object.entries(approvals).filter(([material]) => materials.has(material)).map(([, value]) => value?.status)
 
   const hourAgo = now - 3600 * 1000
-  const recent = active.filter(event => ['scan', 'import', 'line'].includes(event.type) && event.at >= hourAgo)
-  const perHour = recent.reduce((sum, event) => sum + (event.type === 'import' ? event.serials?.length || 0 : 1), 0)
+  // The pace is in pieces like the progress: a scan is one, an import its serials, a count line what it changed.
+  const lineQty = new Map()
+  let perHour = 0
+  for (const event of active) {
+    if (event.type === 'line' && typeof event.lineId === 'string') {
+      const qty = Number.isFinite(event.qty) && event.qty >= 0 ? event.qty : 0
+      if (event.at >= hourAgo) perHour += Math.max(0, qty - (lineQty.get(event.lineId) || 0))
+      lineQty.set(event.lineId, qty)
+    } else if (event.type === 'line-delete') lineQty.delete(event.lineId)
+    else if (event.at >= hourAgo && event.type === 'scan') perHour += 1
+    else if (event.at >= hourAgo && event.type === 'import') perHour += event.serials?.length || 0
+  }
 
   return {
     overall: { reached, total, percent: total ? Math.round((reached / total) * 100) : 0 },
