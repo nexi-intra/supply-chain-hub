@@ -6,6 +6,8 @@
 // a task. Every move lands in a search index shared by TRR and TCD. No Electron imports: register.cjs wires it to IPC,
 // tests drive it.
 const crypto = require('node:crypto')
+const fs = require('node:fs')
+const path = require('node:path')
 const { normalizeSerial } = require('../core/countState.cjs')
 const { normalizeMatdoc } = require('../core/sapParsers.cjs')
 const { monthsBetween } = require('../core/period.cjs')
@@ -27,6 +29,9 @@ const BLOCK_BWART = '344'
 /** How long a claim on a pending task keeps others out; a run renews it on a timer and before every SAP call. */
 const CLAIM_MS = 2 * 60 * 1000
 const RENEW_CLAIM_MS = 30 * 1000
+/** A write of a SAP document to M: is tried this often, with a growing pause, before it fails. */
+const SAVE_TRIES = 5
+const SAVE_PAUSE_MS = 200
 /** Outcomes that need nothing from SAP: the terminal stays where it is. */
 const NOTHING_TO_MOVE = ['not-found', 'blocked-stock', 'already-blocked', 'skipped', 'manual']
 
@@ -101,6 +106,47 @@ function stepsWithMark(result, row) {
 }
 
 const withoutMark = ({ uncertain, ...result } = {}) => result
+const sameMove = (a, b) => Boolean(a && b) && (a.bwart ? a.bwart === b.bwart : a.from === b.from && a.to === b.to)
+
+/** A KIF move stopped midway: a terminal it still meant to move but never did is `interrupted`. */
+const interruptedResults = results => Object.fromEntries(Object.entries(results).map(([serial, result]) => [
+  serial, result.outcome === 'to-target' && !result.steps.length ? { ...result, outcome: 'interrupted' } : result,
+]))
+
+/**
+ * SAP documents on their way to M:, kept in a folder on this PC. An entry is written before the M: write it stands for
+ * and removed after it, so a document SAP posted survives a drive that fails. Without a folder it does nothing.
+ */
+function createJournal(dir) {
+  const file = name => path.join(dir, `${name}.json`)
+  let sequence = 0
+  return {
+    /** A name that sorts in the order the entries were made. */
+    nameFor: prefix => `${prefix}-${String(Date.now()).padStart(15, '0')}-${String(++sequence).padStart(6, '0')}`,
+    async put(name, entry) {
+      if (!dir) return
+      try {
+        await fs.promises.mkdir(dir, { recursive: true })
+        await fs.promises.writeFile(`${file(name)}.tmp`, JSON.stringify(entry), 'utf8')
+        await fs.promises.rename(`${file(name)}.tmp`, file(name))
+      } catch { /* this PC's disk failing too leaves the uncertain mark on M: as the last guard */ }
+    },
+    async remove(name) {
+      if (dir) await fs.promises.rm(file(name), { force: true }).catch(() => {})
+    },
+    async list() {
+      if (!dir) return []
+      const names = (await fs.promises.readdir(dir).catch(() => [])).filter(name => name.endsWith('.json')).sort()
+      const entries = []
+      for (const name of names) {
+        try {
+          entries.push({ name: name.slice(0, -'.json'.length), entry: JSON.parse(await fs.promises.readFile(path.join(dir, name), 'utf8')) })
+        } catch { /* unreadable: left for a person to look at */ }
+      }
+      return entries
+    },
+  }
+}
 
 /** One search line per serial; `to` is where the last Transfer put it. */
 function indexLines(task) {
@@ -147,7 +193,11 @@ async function runChunks({ groups, size, failures, attempt, saved, refused = asy
   }
 }
 
-function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now = Date.now, newId = () => crypto.randomUUID(), matdocs, renewClaimMs = RENEW_CLAIM_MS }) {
+function createSoftwareloadService({
+  storeFor, indexStore, sap, timeclock, now = Date.now, newId = () => crypto.randomUUID(), matdocs, renewClaimMs = RENEW_CLAIM_MS,
+  journalDir = null, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
+}) {
+  const journal = createJournal(journalDir)
   /** A Hub manager or creator; a status manager from Optælling is a manager there only. */
   const isManager = user => (user.role === 'manager' || user.role === 'creator') && !user.statusManager
   const me = user => ({ email: lower(user.email), name: user.fullName || user.email })
@@ -211,6 +261,8 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
   }
 
   async function status(user) {
+    // SAP documents this PC could not save on M: earlier go there first; a drive still away leaves them for later.
+    await mergeJournal(user).catch(() => {})
     const [running, pending] = await Promise.all([readRunning(user), pendingTasks(user)])
     return { running: view(running), pending, isManager: isManager(user), writeEnabled: Boolean(sap?.writeEnabled) }
   }
@@ -410,6 +462,68 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
     return indexStore.mutateAsync(indexKey(at), index => ({ ...index, lines: [...(index?.lines || []).filter(line => !replaces(line)), ...lines] }))
   }
 
+  /** Runs a write to M: again with a growing pause while the drive fails; the service's own refusals go straight through. */
+  async function retried(write) {
+    let failure = null
+    for (let attempt = 0; attempt < SAVE_TRIES; attempt++) {
+      try {
+        return await write()
+      } catch (error) {
+        if (/^(SOFTWARELOAD_|MANAGER_ONLY)/.test(String(error?.code || ''))) throw error
+        failure = error
+        if (attempt < SAVE_TRIES - 1) await sleep(SAVE_PAUSE_MS * 2 ** attempt)
+      }
+    }
+    throw failure
+  }
+
+  const saveFailed = (doc, later) => codeError('SOFTWARELOAD_SAVE_FAILED', `SAP har lavet materialedokument ${doc}, men det kunne ikke gemmes på M:. Det er gemt på denne PC og kommer med, ${later}`)
+  const writeKif = move => storeFor(move.team).mutateAsync(kifKey(move.at), month => ({ ...month, moves: { ...month?.moves, [move.id]: move } }))
+  const kifLinesOf = move => line => line.kind === 'kif' && line.email === move.email && line.at === move.at
+
+  /** Adds a journalled SAP step to the pending task, once, in place of the unverified step it may have got since. */
+  function mergeStep(user, { taskId, serials, step }) {
+    return changePending(user, taskId, current => {
+      const results = { ...current.results }
+      let changed = false
+      for (const serial of serials) {
+        const result = results[serial]
+        if (!result) continue
+        const steps = result.steps || []
+        const unverified = steps.findIndex(item => item.unverified && sameMove(item, step))
+        const next = steps.some(item => item.doc === step.doc) ? steps
+          : unverified === -1 ? [...steps, step] : steps.map((item, index) => (index === unverified ? step : item))
+        results[serial] = { ...(sameMove(result.uncertain, step) ? withoutMark(result) : result), steps: next }
+        changed = true
+      }
+      return changed ? { ...current, results } : undefined
+    })
+  }
+
+  /**
+   * Writes what this PC's journal holds for the user's team to M: and empties it: SAP steps of pending tasks (`pendingTasks`,
+   * `taskId` limits it to one task) and KIF move records (`kif`). A task that is no longer pending has nothing to add to.
+   */
+  async function mergeJournal(user, { pendingTasks: withTasks = true, taskId = null, kif = true } = {}) {
+    for (const { name, entry } of await journal.list()) {
+      if (entry?.team !== user.team) continue
+      if (entry.kind === 'task' && withTasks && (!taskId || entry.taskId === taskId)) {
+        try {
+          await mergeStep(user, entry)
+        } catch (error) {
+          if (error?.code !== 'SOFTWARELOAD_NOT_PENDING') throw error
+        }
+        await journal.remove(name)
+      } else if (entry.kind === 'kif' && kif) {
+        const move = entry.final ? entry.move : { ...entry.move, results: interruptedResults(entry.move.results) }
+        await writeKif(move)
+        const lines = kifLines(move)
+        await addToIndex(move.at, entry.final ? lines : lines.filter(line => line.docs.length), kifLinesOf(move))
+        await journal.remove(name)
+      }
+    }
+  }
+
   /**
    * Writes a pending task as finished: the month file of its owner first, then the search index, and the pending file
    * last. Until then the task stays pending, and both writes replace rather than add, so running it again is harmless.
@@ -443,6 +557,7 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
   async function moveInSap(user, taskId, runId, onProgress) {
     const report = (step, done, total) => { try { onProgress?.({ done, total, step }) } catch { /* the screen is gone */ } }
     const by = lower(user.email)
+    await mergeJournal(user, { taskId, kif: false })
     const task = await readPending(user, taskId)
     const serials = Object.keys(task.terminals || {})
 
@@ -472,17 +587,26 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
     })
 
     const failures = new Map()
+    /** Saves a SAP document on its serials: in this PC's journal first, then on M:, tried again while the drive fails. */
     const addSteps = async (items, step) => {
+      const name = journal.nameFor(`task-${taskId}`)
+      await journal.put(name, { kind: 'task', team: user.team, taskId, serials: items, step })
       let taken = null
-      await changePending(user, taskId, current => {
-        const results = { ...current.results }
-        for (const serial of items) {
-          const result = withoutMark(results[serial])
-          results[serial] = { ...result, steps: [...(result.steps || []), step] }
-        }
-        taken = takenBy(current)
-        return { ...current, results, claim: taken || claimOf(user, runId) }
-      })
+      try {
+        await retried(() => changePending(user, taskId, current => {
+          const results = { ...current.results }
+          for (const serial of items) {
+            const result = withoutMark(results[serial])
+            results[serial] = { ...result, steps: [...(result.steps || []), step] }
+          }
+          taken = takenBy(current)
+          return { ...current, results, claim: taken || claimOf(user, runId) }
+        }))
+      } catch (error) {
+        if (/^SOFTWARELOAD_/.test(String(error?.code || ''))) throw error
+        throw saveFailed(step.doc, 'når opgaven fortsættes på denne PC')
+      }
+      await journal.remove(name)
       // The document is saved either way; then the run stops, so two people never move the same task at once.
       if (taken) throw busy(taken)
     }
@@ -656,6 +780,7 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
     if (movingToKif.has(email)) throw codeError('SOFTWARELOAD_BUSY', 'Du er allerede ved at flytte terminaler til D005')
     movingToKif.add(email)
     try {
+      await mergeJournal(user, { pendingTasks: false }).catch(() => {})
       return await moveToKif(user, confirmed, matdoc, onProgress)
     } finally {
       movingToKif.delete(email)
@@ -679,7 +804,16 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
       return [serial, { material: row?.material ?? null, from: row?.sloc ?? null, outcome: outcomes[serial], steps: [] }]
     }))
     const move = { id: newId(), team: user.team, ...me(user), at, ...(document ? { document } : {}), results }
-    const save = () => storeFor(user.team).mutateAsync(kifKey(at), month => ({ ...month, moves: { ...month?.moves, [move.id]: move } }))
+    const journalName = `kif-${move.id}`
+    /** Writes the record to this PC's journal and then to M:; `doc` names the SAP document in the error when M: fails. */
+    const save = async ({ doc = null, final = false } = {}) => {
+      await journal.put(journalName, { kind: 'kif', team: user.team, final, move })
+      try {
+        await retried(() => writeKif(move))
+      } catch (error) {
+        throw doc ? saveFailed(doc, 'næste gang Softwareload åbnes på denne PC') : error
+      }
+    }
 
     const failures = new Map()
     const settle = async interrupted => {
@@ -687,9 +821,10 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
       if (interrupted) {
         for (const serial of serials) if (results[serial].outcome === 'to-target' && !results[serial].steps.length) results[serial] = { ...results[serial], outcome: 'interrupted' }
       }
-      await save()
+      await save({ final: !interrupted })
       const lines = kifLines(move)
-      await addToIndex(at, interrupted ? lines.filter(line => line.docs.length) : lines)
+      await addToIndex(at, interrupted ? lines.filter(line => line.docs.length) : lines, kifLinesOf(move))
+      await journal.remove(journalName)
     }
     try {
       await runChunks({
@@ -708,12 +843,12 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
             const result = withoutMark(results[serial])
             results[serial] = { ...result, steps: [...result.steps, { from: group.from, to: group.to, doc, by, at: now() }] }
           }
-          return save()
+          return save({ doc })
         },
         report: (done, total) => report('transfer', done, total),
       })
     } catch (error) {
-      // SAP's error is the one to show; a failing drive here loses at most the lines, never the error.
+      // SAP's error is the one to show; a failing drive here leaves the record in this PC's journal, never the error.
       await settle(true).catch(() => {})
       throw error
     }

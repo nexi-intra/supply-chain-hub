@@ -96,6 +96,19 @@ function setup({ timeclockRunning = null, sap = { writeEnabled: false }, matdocs
     if (!stores.has(dir)) stores.set(dir, createStore(path.join(root, dir)))
     return stores.get(dir)
   }
+  // `faults.venter = n` makes the next n writes to a pending task fail as if M: were gone; `faults.kif` the same for KIF.
+  const faults = { venter: 0, kif: 0 }
+  const faulty = store => new Proxy(store, {
+    get: (target, name) => (name !== 'mutateAsync' ? target[name] : (key, change) => {
+      const kind = ['venter', 'kif'].find(prefix => key.startsWith(`${prefix}-`))
+      if (kind && faults[kind] > 0) {
+        faults[kind]--
+        return Promise.reject(Object.assign(new Error('M: svarer ikke'), { code: 'STORAGE_UNAVAILABLE' }))
+      }
+      return target.mutateAsync(key, change)
+    }),
+  })
+  const journalDir = path.join(root, 'journal')
   // 18 November 2026, 07:00 local time.
   const clock = { now: new Date(2026, 10, 18, 7, 0, 0).getTime() }
   const stops = []
@@ -113,24 +126,28 @@ function setup({ timeclockRunning = null, sap = { writeEnabled: false }, matdocs
   }
   let ids = 0
   const service = () => createSoftwareloadService({
-    storeFor: team => storeAt(path.join(team, 'lagerstyring', 'softwareload')),
+    storeFor: team => faulty(storeAt(path.join(team, 'lagerstyring', 'softwareload'))),
     indexStore: storeAt(path.join('_lagerstyring', 'softwareload')),
     sap,
     timeclock,
     now: () => clock.now,
     newId: () => `t${++ids}`,
     matdocs,
+    journalDir,
+    sleep: async () => {},
     ...(renewClaimMs ? { renewClaimMs } : {}),
   })
   const storeFor = team => storeAt(path.join(team, 'lagerstyring', 'softwareload'))
   const index = storeAt(path.join('_lagerstyring', 'softwareload'))
+  /** The local journal's files: SAP documents not yet saved on M:. */
+  const journal = () => (fs.existsSync(journalDir) ? fs.readdirSync(journalDir).filter(name => name.endsWith('.json')) : [])
   /** The finished tasks of one month, whoever wrote them. */
   const finished = async month => {
     const store = storeFor('TCD')
     const keys = (await store.keysAsync()).filter(key => key.startsWith('opgaver-') && key.endsWith(month))
     return Object.assign({}, ...await Promise.all(keys.map(async key => (await store.getAsync(key)).tasks)))
   }
-  return { root, clock, timeclock, stops, storeFor, index, finished, service, tick: ms => { clock.now += ms } }
+  return { root, clock, timeclock, stops, storeFor, index, finished, service, faults, journal, tick: ms => { clock.now += ms } }
 }
 
 test('start saves type, KIF, target and version, and remembers the version', async () => {
@@ -404,6 +421,77 @@ test('a terminal moved by someone else after the lookup is refused by the Transf
   ])
   assert.deepEqual([result.results.B.outcome, result.results.B.message], ['failed-sap', 'Står ikke længere på D000 i SAP'])
   assert.equal(result.results.A.outcome, 'to-target')
+})
+
+/** Makes every Transfer leave M: failing for the next `n` writes of `kind`, as if the drive went away right after SAP posted. */
+function dropDriveAfterTransfer(sap, ctx, kind, n) {
+  const transfer = sap.transfer
+  sap.transfer = async input => {
+    const answer = await transfer(input)
+    ctx.faults[kind] = n
+    return answer
+  }
+  return () => { sap.transfer = transfer }
+}
+
+test('saving a SAP document on M: is tried again before it fails', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, { ...TASK, kif: false }, ['A'])
+  dropDriveAfterTransfer(sap, ctx, 'venter', 4)
+  const result = await svc.finish(ANNA, {})
+  assert.deepEqual(result.results.A.steps.map(step => step.doc), [doc(1)])
+  assert.deepEqual(ctx.journal(), [])
+})
+
+test('a SAP document M: would not take is kept on this PC, named in the error and merged before the task goes on', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, TASK, ['A'])
+  const restore = dropDriveAfterTransfer(sap, ctx, 'venter', 5)
+  await assert.rejects(svc.finish(ANNA, {}), { code: 'SOFTWARELOAD_SAVE_FAILED', message: new RegExp(doc(1)) })
+  assert.equal(ctx.journal().length, 1)
+  restore()
+
+  const pending = (await svc.status(ANNA)).pending
+  assert.deepEqual(pending.map(task => task.id), ['t1'])
+  assert.deepEqual(ctx.journal(), [], 'the status merged the journal into the task')
+  const saved = await ctx.storeFor('TCD').getAsync('venter-t1', { skipCache: true })
+  assert.deepEqual([saved.results.A.steps.map(step => [step.to, step.doc]), 'uncertain' in saved.results.A], [[['D005', doc(1)]], false])
+
+  const result = await svc.continueFinish(ANNA, { taskId: 't1' })
+  assert.deepEqual(transfers(sap), [['D005', ['A']], ['D006', ['A']]], 'never moved to D005 twice')
+  assert.deepEqual(result.results.A.steps.map(step => [step.to, step.doc, step.unverified]), [['D005', doc(1), undefined], ['D006', doc(2), undefined]])
+})
+
+test('continue merges the journal itself when no status came first', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, TASK, ['A'])
+  const restore = dropDriveAfterTransfer(sap, ctx, 'venter', 5)
+  await assert.rejects(svc.finish(ANNA, {}), { code: 'SOFTWARELOAD_SAVE_FAILED' })
+  restore()
+  const result = await svc.continueFinish(ANNA, { taskId: 't1' })
+  assert.deepEqual(result.results.A.steps.map(step => [step.to, step.doc, step.unverified]), [['D005', doc(1), undefined], ['D006', doc(2), undefined]])
+  assert.deepEqual(ctx.journal(), [])
+})
+
+test('a KIF move whose record M: would not take keeps it on this PC and saves and indexes it later', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D001' } })
+  const ctx = setup({ sap })
+  const svc = ctx.service()
+  const at = ctx.clock.now
+  const restore = dropDriveAfterTransfer(sap, ctx, 'kif', 100)
+  await assert.rejects(svc.kifMove(ANNA, { serials: ['A'] }), { code: 'SOFTWARELOAD_SAVE_FAILED', message: new RegExp(doc(1)) })
+  assert.equal(ctx.journal().length, 1)
+  restore()
+  ctx.faults.kif = 0
+
+  await svc.status(ANNA)
+  assert.deepEqual(ctx.journal(), [])
+  const { results } = (await ctx.storeFor('TCD').getAsync('kif-2026-11')).moves.t1
+  assert.deepEqual(results.A.steps, [{ from: 'D001', to: 'D005', doc: doc(1), by: 'anna@example.test', at }])
+  assert.deepEqual((await svc.search(TRINE, { serial: 'A' })).map(line => [line.kind, line.to, line.docs]), [['kif', 'D005', [doc(1)]]])
 })
 
 test('groups larger than one SAP call go in chunks', async () => {

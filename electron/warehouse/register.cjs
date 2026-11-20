@@ -213,6 +213,8 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
     sap: createSoftwareloadSap({ bridge: sap, runScript, clipboard, system: config.sapSystem, expected: sapExpected }),
     timeclock,
     matdocs: args => learningFetcher.fetchMatdoc(args),
+    // A SAP document is written here before M:, so a drive that fails right after SAP posted never loses it.
+    journalDir: path.join(localDir, 'softwareload-journal'),
   })
   const fakeOutlookDir = !isPackaged && env.TCD_HUB_OUTLOOK_FAKE_DIR ? path.resolve(env.TCD_HUB_OUTLOOK_FAKE_DIR) : null
   const sapChecks = createSapCheckService({

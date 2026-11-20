@@ -154,6 +154,7 @@ const MESSAGES: Record<string, string> = {
   SOFTWARELOAD_WRITE_DISABLED: 'Softwareload må endnu ikke flytte i dette SAP-system.',
   SOFTWARELOAD_SAP_FAILED: 'SAP-trinnet fejlede. Prøv igen.',
   SOFTWARELOAD_SAP_LANGUAGE: 'Appen kan kun læse SAP\'s svar på engelsk. Log på SAP på engelsk (EN), og prøv igen.',
+  SOFTWARELOAD_SAVE_FAILED: 'SAP har flyttet, men det kunne ikke gemmes på M:. Det er gemt på denne PC og kommer med senere.',
   UNEXPECTED_ERROR: 'Der skete en uventet fejl. Prøv igen.',
 }
 
@@ -312,6 +313,7 @@ const MESSAGES_EN: Record<string, string> = {
   SOFTWARELOAD_WRITE_DISABLED: 'Softwareload may not move anything in this SAP system yet.',
   SOFTWARELOAD_SAP_FAILED: 'The SAP step failed. Try again.',
   SOFTWARELOAD_SAP_LANGUAGE: "The app can only read SAP's answers in English. Log on to SAP in English (EN) and try again.",
+  SOFTWARELOAD_SAVE_FAILED: 'SAP made the move, but it could not be saved on M:. It is kept on this PC and saved later.',
   UNEXPECTED_ERROR: 'Something unexpected went wrong. Try again.',
 }
 
