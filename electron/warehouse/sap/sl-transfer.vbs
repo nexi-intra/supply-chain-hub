@@ -18,7 +18,9 @@ Dim systemName, mode, target, outDir, inFile, errFile, tcode, app, conn, base, s
 Dim wanted, asked, firstSerial, text, lines, key, re
 
 Function JsonText(value)
+  On Error Resume Next
   Dim t
+  JsonText = """"""
   t = CStr(value)
   t = Replace(t, "\", "\\")
   t = Replace(t, """", "\""")
@@ -88,12 +90,43 @@ End Function
 
 ' Serial as compared: upper case, no blanks, no leading zeros (SAP may show numeric serials without them).
 Function SerialKey(value)
+  On Error Resume Next
   Dim t
+  SerialKey = ""
   t = UCase(Trim(CStr(value)))
   Do While Len(t) > 1 And Left(t, 1) = "0"
     t = Mid(t, 2)
   Loop
   SerialKey = t
+End Function
+
+' Number of distinct rows in an ALV SelectedRows text ("0-4", "0,1,2" or "0,2-4"); -1 when a row is outside 0..total-1
+' or the text cannot be read.
+Function SelectedCount(selection, total)
+  On Error Resume Next
+  Dim parts, part, bounds, first, last, n, seen, result
+  SelectedCount = -1
+  If total < 1 Then Exit Function
+  ReDim seen(total - 1)
+  result = 0
+  parts = Replace(CStr(selection), " ", "")
+  If Len(parts) = 0 Then Exit Function
+  parts = Split(parts, ",")
+  For Each part In parts
+    If Len(part) = 0 Then Exit Function
+    bounds = Split(part, "-")
+    If UBound(bounds) > 1 Then Exit Function
+    If Not IsNumeric(bounds(0)) Or Not IsNumeric(bounds(UBound(bounds))) Then Exit Function
+    first = CLng(bounds(0))
+    last = CLng(bounds(UBound(bounds)))
+    If Err.Number <> 0 Then Err.Clear : Exit Function
+    If first < 0 Or last < first Or last > total - 1 Then Exit Function
+    For n = first To last
+      If Not seen(n) Then seen(n) = True : result = result + 1
+    Next
+  Next
+  If Err.Number <> 0 Then Err.Clear : Exit Function
+  SelectedCount = result
 End Function
 
 ' Reads a text property; "" when it does not exist (an error inside an If condition would run the Then branch).
@@ -349,11 +382,17 @@ Err.Clear
 s.findById("wnd[0]/tbar[1]/btn[5]").press
 WaitIdle
 If Err.Number <> 0 Then Err.Clear : Finish False, "select-all-failed"
-Dim selected
+' All or nothing: Transfer moves the selected rows, so every row of the checked list must be selected.
+Dim selected, chosenRows, rowsNow
 selected = ""
 selected = CStr(s.findById(GRID_ID).SelectedRows)
 If Err.Number <> 0 Then Err.Clear : selected = ""
 If Len(selected) = 0 Then Finish False, "select-all-failed"
+rowsNow = -1
+rowsNow = s.findById(GRID_ID).RowCount
+If Err.Number <> 0 Then Err.Clear : rowsNow = -1
+chosenRows = SelectedCount(selected, total)
+If rowsNow <> total Or chosenRows <> total Then Finish False, "selection-mismatch"
 s.findById("wnd[0]/tbar[1]/btn[36]").press
 WaitIdle
 If Err.Number <> 0 Then Err.Clear : Finish False, "transfer-button-failed"

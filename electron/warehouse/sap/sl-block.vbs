@@ -18,7 +18,9 @@ Dim systemName, outDir, inFile, material, bwart, app, conn, base, s, i, before, 
 Dim serials, count, text, lines, value, re, carrier, firstLine, tabs, matches
 
 Function JsonText(value)
+  On Error Resume Next
   Dim t
+  JsonText = """"""
   t = CStr(value)
   t = Replace(t, "\", "\\")
   t = Replace(t, """", "\""")

@@ -14,7 +14,9 @@ Const MAX_ROWS = 2000
 Dim mode, outDir, outFile, tcode, app, conn, base, s, i, before, beforeIds, fso, rows, grid, ownId
 
 Function JsonText(value)
+  On Error Resume Next
   Dim t
+  JsonText = """"""
   t = CStr(value)
   t = Replace(t, "\", "\\")
   t = Replace(t, """", "\""")
