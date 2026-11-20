@@ -40,3 +40,38 @@ test('results passed to onDone survive an exception later in the run', async () 
   await assert.rejects(bisect(['A', 'B', 'C', 'D'], attempt, async entry => { saved.push(entry) }), { code: 'SAP_NOT_READY' })
   assert.deepEqual(saved, [{ items: ['A', 'B'], doc: '49' }])
 })
+
+const systemic = message => Object.assign(new Error(message), { code: 'SYSTEMIC' })
+
+test('with the systemic policy a group SAP refuses for one shared reason stops after two single serials fail the same way', async () => {
+  const items = Array.from({ length: 200 }, (_, i) => `S${i}`)
+  const calls = []
+  const refuseAll = async group => { calls.push(group); return { ok: false, message: 'No authorization for plant D301' } }
+  await assert.rejects(bisect(items, refuseAll, undefined, { systemic }), { code: 'SYSTEMIC', message: 'No authorization for plant D301' })
+  assert.ok(calls.length <= 4, `${calls.length} calls`)
+  assert.deepEqual(calls.map(group => group.length), [200, 1, 1])
+  assert.deepEqual([calls[1], calls[2]], [['S0'], ['S199']], 'the first and the last serial are tried alone')
+})
+
+test('with the systemic policy one bad serial is still isolated, and a single serial that differs or goes through stops the probing', async () => {
+  const saved = []
+  const attempt = async items => (items.includes('C') ? { ok: false, message: 'Deficit' } : { ok: true, doc: items.join('') })
+  const r = await bisect(['A', 'B', 'C', 'D'], attempt, async entry => { saved.push(entry.items.join('')) }, { systemic })
+  assert.deepEqual(r.failed, [{ item: 'C', message: 'Deficit' }])
+  assert.deepEqual(r.done.flatMap(entry => entry.items).sort(), ['A', 'B', 'D'])
+  assert.deepEqual(saved, ['A', 'B', 'D'])
+
+  const calls = []
+  const twoReasons = async items => { calls.push(items.join('')); return items.includes('A') && items.length === 1 ? { ok: false, message: 'Other' } : { ok: false, message: 'Deficit' } }
+  const mixed = await bisect(['A', 'B', 'C'], twoReasons, undefined, { systemic })
+  assert.deepEqual(mixed.failed.map(entry => entry.item).sort(), ['A', 'B', 'C'], 'a first single serial with another message is no shared reason')
+  assert.equal(calls[1], 'A')
+  assert.notEqual(calls[2], 'C', 'no second probe after a different message')
+})
+
+test('without the policy a group refused for one shared reason is still split all the way', async () => {
+  const calls = []
+  const r = await bisect(['A', 'B', 'C', 'D'], async items => { calls.push(items.length); return { ok: false, message: 'Same' } })
+  assert.equal(r.failed.length, 4)
+  assert.deepEqual(calls, [4, 2, 1, 1, 2, 1, 1])
+})

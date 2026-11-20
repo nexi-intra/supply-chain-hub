@@ -166,10 +166,14 @@ function kifLines(move) {
   }))
 }
 
+/** SAP refused a whole group for one shared reason; the run stops and the task can be continued when it is fixed. */
+const refusedAll = message => codeError('SOFTWARELOAD_SAP_FAILED', `SAP afviste alle terminalerne i gruppen af samme grund: ${message}`)
+
 /**
  * Runs one SAP step for groups of serials, at most `size` per call, each call split by bisect until a refused serial
- * stands alone. A serial already in `failures` is left out, and a refused one is added with SAP's message. `saved`
- * is awaited for every document before the next call, so a crash never loses one that was saved.
+ * stands alone; a refusal SAP gives every serial for one shared reason stops the run (`refusedAll`). A serial already
+ * in `failures` is left out, and a refused one is added with SAP's message. `saved` is awaited for every document
+ * before the next call, so a crash never loses one that was saved.
  */
 async function runChunks({ groups, size, failures, attempt, saved, refused = async () => {}, report = () => {} }) {
   const total = groups.reduce((sum, group) => sum + group.serials.length, 0)
@@ -184,7 +188,7 @@ async function runChunks({ groups, size, failures, attempt, saved, refused = asy
         await saved(group, items, doc)
         done += items.length
         report(done, total)
-      })
+      }, { systemic: refusedAll })
       for (const { item, message } of failed) failures.set(item, message)
       await refused(failed)
       done += failed.length

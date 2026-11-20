@@ -412,12 +412,12 @@ test('one serial SAP refuses is isolated and the rest still move', async () => {
   const result = await svc.finish(ANNA, {})
 
   assert.deepEqual(transfers(sap), [
-    ['D005', ['A', 'B', 'C', 'D']], ['D005', ['A', 'B']], ['D005', ['C', 'D']], ['D005', ['C']], ['D005', ['D']],
+    ['D005', ['A', 'B', 'C', 'D']], ['D005', ['A']], ['D005', ['B', 'C', 'D']], ['D005', ['B', 'C']], ['D005', ['B']], ['D005', ['C']], ['D005', ['D']],
     ['D006', ['A', 'B', 'D']],
   ], 'C never reaches the target around D005')
   assert.deepEqual([result.results.C.outcome, result.results.C.message, result.results.C.steps], ['failed-sap', 'Deficit of SL Unrestricted-use 1 EA', []])
   assert.deepEqual(['A', 'B', 'D'].map(serial => result.results[serial].outcome), ['to-target', 'to-target', 'to-target'])
-  assert.deepEqual(result.results.D.steps.map(step => step.doc), [doc(2), doc(3)])
+  assert.deepEqual(result.results.D.steps.map(step => step.doc), [doc(3), doc(4)])
   assert.deepEqual(result.counts, { 'to-target': 3, 'failed-sap': 1 })
   const { lines } = await ctx.index.getAsync('serier-2026-11')
   assert.deepEqual(lines.find(line => line.serial === 'C'), {
@@ -512,6 +512,21 @@ test('a KIF move whose record M: would not take keeps it on this PC and saves an
   const { results } = (await ctx.storeFor('TCD').getAsync('kif-2026-11')).moves.t1
   assert.deepEqual(results.A.steps, [{ from: 'D001', to: 'D005', doc: doc(1), by: 'anna@example.test', at }])
   assert.deepEqual((await svc.search(TRINE, { serial: 'A' })).map(line => [line.kind, line.to, line.docs]), [['kif', 'D005', [doc(1)]]])
+})
+
+test('SAP refusing a whole group for one shared reason stops after a few calls and leaves the task pending', async () => {
+  const { TRANSFER_CHUNK } = require('./softwareloadSap.cjs')
+  const serials = Array.from({ length: TRANSFER_CHUNK }, (_, i) => `R${i}`)
+  const sap = fakeSap(Object.fromEntries(serials.map(serial => [serial, { material: 'M-R', sloc: 'D001' }])))
+  for (const serial of serials) sap.refuse.add(serial)
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, { ...TASK, kif: false }, [])
+  const store = ctx.storeFor('TCD')
+  const [key] = (await store.keysAsync()).filter(name => name.startsWith('aktiv-'))
+  await store.mutateAsync(key, task => ({ ...task, terminals: Object.fromEntries(serials.map(serial => [serial, { at: 1 }])) }))
+  await assert.rejects(svc.finish(ANNA, {}), { code: 'SOFTWARELOAD_SAP_FAILED', message: /Deficit of SL Unrestricted-use 1 EA/ })
+  assert.ok(transfers(sap).length <= 4, `${transfers(sap).length} Transfers`)
+  assert.deepEqual((await svc.status(ANNA)).pending.map(task => task.id), ['t1'], 'the task waits to be continued')
 })
 
 test('groups larger than one SAP call go in chunks', async () => {
