@@ -124,10 +124,14 @@ const interruptedResults = results => Object.fromEntries(Object.entries(results)
  */
 function createJournal(dir) {
   const file = name => path.join(dir, `${name}.json`)
+  // Entries a run of this process is still writing to M:; a merge leaves them alone until they are released.
+  const held = new Set()
   let sequence = 0
   return {
     /** A name that sorts in the order the entries were made. */
     nameFor: prefix => `${prefix}-${String(Date.now()).padStart(15, '0')}-${String(++sequence).padStart(6, '0')}`,
+    hold: name => { held.add(name) },
+    release: name => { held.delete(name) },
     async put(name, entry) {
       if (!dir) return
       try {
@@ -137,6 +141,7 @@ function createJournal(dir) {
       } catch { /* this PC's disk failing too leaves the uncertain mark on M: as the last guard */ }
     },
     async remove(name) {
+      held.delete(name)
       if (dir) await fs.promises.rm(file(name), { force: true }).catch(() => {})
     },
     async list() {
@@ -144,6 +149,7 @@ function createJournal(dir) {
       const names = (await fs.promises.readdir(dir).catch(() => [])).filter(name => name.endsWith('.json')).sort()
       const entries = []
       for (const name of names) {
+        if (held.has(name.slice(0, -'.json'.length))) continue
         try {
           entries.push({ name: name.slice(0, -'.json'.length), entry: JSON.parse(await fs.promises.readFile(path.join(dir, name), 'utf8')) })
         } catch { /* unreadable: left for a person to look at */ }
@@ -618,6 +624,7 @@ function createSoftwareloadService({
     /** Saves a SAP document on its serials: in this PC's journal first, then on M:, tried again while the drive fails. */
     const addSteps = async (items, step) => {
       const name = journal.nameFor(`task-${taskId}`)
+      journal.hold(name)
       await journal.put(name, { kind: 'task', team: user.team, taskId, serials: items, step })
       let taken = null
       try {
@@ -625,12 +632,15 @@ function createSoftwareloadService({
           const results = { ...current.results }
           for (const serial of items) {
             const result = withoutMark(results[serial])
-            results[serial] = { ...result, steps: [...(result.steps || []), step] }
+            const steps = result.steps || []
+            results[serial] = { ...result, steps: steps.some(item => item.doc === step.doc) ? steps : [...steps, step] }
           }
           taken = takenBy(current)
           return { ...current, results, claim: taken || claimOf(user, runId) }
         }))
       } catch (error) {
+        // The journal keeps the document; the next status or continue on this PC merges it.
+        journal.release(name)
         if (/^SOFTWARELOAD_/.test(String(error?.code || ''))) throw error
         throw saveFailed(step.doc, 'når opgaven fortsættes på denne PC')
       }
@@ -833,6 +843,8 @@ function createSoftwareloadService({
     }))
     const move = { id: newId(), team: user.team, ...me(user), at, ...(document ? { document } : {}), results }
     const journalName = `kif-${move.id}`
+    // Held while this run writes it, so a status poll meanwhile does not merge a record still on its way.
+    journal.hold(journalName)
     /** Writes the record to this PC's journal and then to M:; `doc` names the SAP document in the error when M: fails. */
     const save = async ({ doc = null, final = false } = {}) => {
       await journal.put(journalName, { kind: 'kif', team: user.team, final, move })
@@ -878,9 +890,14 @@ function createSoftwareloadService({
     } catch (error) {
       // SAP's error is the one to show; a failing drive here leaves the record in this PC's journal, never the error.
       await settle(true).catch(() => {})
+      journal.release(journalName)
       throw error
     }
-    await settle(false)
+    try {
+      await settle(false)
+    } finally {
+      journal.release(journalName)
+    }
     return { id: move.id, results, counts: countOutcomes(results) }
   }
 

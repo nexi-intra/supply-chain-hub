@@ -90,7 +90,7 @@ async function until(ready) {
   assert.ok(ready(), 'the service never got there')
 }
 
-function setup({ timeclockRunning = null, sap = { writeEnabled: false }, matdocs, renewClaimMs } = {}) {
+function setup({ timeclockRunning = null, sap = { writeEnabled: false }, matdocs, renewClaimMs, sleep = async () => {} } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'softwareload-'))
   const stores = new Map()
   const storeAt = dir => {
@@ -146,7 +146,7 @@ function setup({ timeclockRunning = null, sap = { writeEnabled: false }, matdocs
     newId: () => `t${++ids}`,
     matdocs,
     journalDir,
-    sleep: async () => {},
+    sleep,
     ...(renewClaimMs ? { renewClaimMs } : {}),
   })
   const storeFor = team => storeAt(path.join(team, 'lagerstyring', 'softwareload'))
@@ -504,6 +504,24 @@ test('a SAP document M: would not take is kept on this PC, named in the error an
   const result = await svc.continueFinish(ANNA, { taskId: 't1' })
   assert.deepEqual(transfers(sap), [['D005', ['A']], ['D006', ['A']]], 'never moved to D005 twice')
   assert.deepEqual(result.results.A.steps.map(step => [step.to, step.doc, step.unverified]), [['D005', doc(1), undefined], ['D006', doc(2), undefined]])
+})
+
+test('a status while a SAP document is still on its way to M: leaves it to the run, so it is saved once', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
+  const pause = gate()
+  let paused = false
+  const ctx = setup({ sap, sleep: async () => { paused = true; await pause.promise } })
+  const svc = await startWith(ctx, TASK, ['A'])
+  const restore = dropDriveAfterTransfer(sap, ctx, 'venter', 1)
+  const running = svc.finish(ANNA, {})
+  await until(() => paused)
+  restore()
+  await svc.status(ANNA)
+  assert.equal(ctx.journal().length, 1, 'the entry of the running save is left alone')
+  pause.open()
+  const result = await running
+  assert.deepEqual(result.results.A.steps.map(step => [step.to, step.doc]), [['D005', doc(1)], ['D006', doc(2)]])
+  assert.deepEqual(ctx.journal(), [])
 })
 
 test('continue merges the journal itself when no status came first', async () => {
