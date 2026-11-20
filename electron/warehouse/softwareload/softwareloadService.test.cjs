@@ -141,6 +141,32 @@ test('start refuses an unknown type, an invalid target and an empty version', as
   assert.deepEqual(await svc.versions(ANNA), [])
 })
 
+test('start refuses a target outside the list, e.g. D102', async () => {
+  const ctx = setup()
+  const svc = ctx.service()
+  for (const target of ['D102', 'D106', 'D007', 'X000']) {
+    await assert.rejects(svc.start(ANNA, { ...TASK, target }), { code: 'SOFTWARELOAD_INVALID', message: 'Vælg en lokation fra listen' })
+  }
+  assert.equal((await svc.status(ANNA)).running, null)
+  const started = await svc.start(ANNA, { ...TASK, target: ' d002 ' })
+  assert.equal(started.target, 'D002')
+})
+
+test('the target list is the seven SAP locations with description and team, frozen', () => {
+  const { SOFTWARELOAD_TARGETS, isSoftwareloadTarget } = require('./core/targets.cjs')
+  assert.deepEqual(SOFTWARELOAD_TARGETS.map(item => [item.sloc, item.description, item.team]), [
+    ['D000', 'Central Warehous', 'TCD'],
+    ['D001', 'Raw Terminals', 'TRR'],
+    ['D002', 'Repair', 'TRR'],
+    ['D003', 'SWAP Inbound', 'TRR'],
+    ['D004', 'SWAP Outbound', 'TCD'],
+    ['D005', 'SA \u2013 secure room', 'TCD'],
+    ['D006', 'Forecast Prep', 'TCD'],
+  ])
+  assert.ok(Object.isFrozen(SOFTWARELOAD_TARGETS) && SOFTWARELOAD_TARGETS.every(Object.isFrozen))
+  assert.deepEqual(['D000', 'D006', 'd003', 'D102', '', null].map(isSoftwareloadTarget), [true, true, false, false, false, false])
+})
+
 test('start stops a running Stempelkort task and reports it', async () => {
   const ctx = setup({ timeclockRunning: { taskName: 'Pakning' } })
   const started = await ctx.service().start(ANNA, TASK)

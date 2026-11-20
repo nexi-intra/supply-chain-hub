@@ -2,12 +2,11 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
-import { outcomeLabel } from '@/lib/softwareload'
+import { outcomeLabel, targetLabel } from '@/lib/softwareload'
 import { currentWarehouseLanguage, t } from '@/lib/warehouse/text'
 import { cn } from '@/lib/utils'
 import type { SoftwareloadCounts, SoftwareloadOutcome, SoftwareloadProgress, SoftwareloadResult } from '@/types/warehouse'
 
-export const SLOC_PATTERN = /^[A-Z]\d{3}$/
 /** As the main process cleans a serial: no spaces, capitals, then the same pattern. */
 export const SERIAL_PATTERN = /^[A-Z0-9][A-Z0-9._/-]{0,39}$/
 export const cleanSerial = (value: string) => value.replace(/\s+/g, '').toUpperCase()
@@ -105,7 +104,7 @@ export function ResultTable({ results, notes }: { results: Record<string, Softwa
             <tr key={serial} className="align-top">
               <td className="whitespace-nowrap px-4 py-2 font-mono">{serial}</td>
               <td className="whitespace-nowrap px-4 py-2 font-mono text-muted-foreground">{result.material || '–'}</td>
-              <td className="px-4 py-2 font-mono text-muted-foreground">{result.from || '–'}</td>
+              <td className="whitespace-nowrap px-4 py-2 text-muted-foreground">{result.from ? targetLabel(result.from) : '–'}</td>
               <td className="px-4 py-2">
                 <span className={cn(isProblem(result.outcome) && 'font-medium text-destructive')}>{label(outcomeLabel(result.outcome))}</span>
                 {result.message && <p className="text-xs text-destructive">SAP: {result.message}</p>}

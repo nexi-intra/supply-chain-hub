@@ -6,7 +6,7 @@ import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/warehouse/ui'
-import { previewGroups } from '@/lib/softwareload'
+import { previewGroups, targetLabel } from '@/lib/softwareload'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { t } from '@/lib/warehouse/text'
 import { cn } from '@/lib/utils'
@@ -115,7 +115,7 @@ export function SoftwareloadKif({ user, writeEnabled, active, onBusy }: { user: 
         ))}
         {preview.transfers.length > 0 && (
           <ul className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-            {preview.transfers.map(item => <li key={`${item.wave}-${item.from}-${item.to}`} className="rounded border px-2 py-0.5 font-mono">{item.from} → {item.to} ({item.serials.length})</li>)}
+            {preview.transfers.map(item => <li key={`${item.wave}-${item.from}-${item.to}`} className="rounded border px-2 py-0.5">{targetLabel(item.from)} → {targetLabel(item.to)} ({item.serials.length})</li>)}
           </ul>
         )}
         {failed && <ErrorLine text={failed} />}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { outcomeLabel, previewGroups, summarizeTasks, TYPE_LABELS } from './softwareload'
+import { outcomeLabel, previewGroups, SOFTWARELOAD_TARGETS, summarizeTasks, targetLabel, TYPE_LABELS } from './softwareload'
 import type { SoftwareloadOutcome, SoftwareloadResult, SoftwareloadTask } from '@/types/warehouse'
 
 const HOUR = 3_600_000
@@ -20,6 +20,17 @@ describe('labels', () => {
     expect(TYPE_LABELS['sw+key']).toEqual({ da: 'Softwareload + keyload', en: 'Softwareload + keyload' })
     expect(outcomeLabel('to-target')).toEqual({ da: 'Flyttet til målet', en: 'Moved to target' })
     expect(outcomeLabel('interrupted')).toEqual({ da: 'Afbrudt', en: 'Interrupted' })
+  })
+})
+
+describe('targets', () => {
+  it('targetLabel shows SAP description and team', () => {
+    expect(SOFTWARELOAD_TARGETS.map(item => item.sloc)).toEqual(['D000', 'D001', 'D002', 'D003', 'D004', 'D005', 'D006'])
+    expect(targetLabel('D002')).toBe('D002 · Repair (TRR)')
+    expect(targetLabel('D005')).toBe('D005 · SA \u2013 secure room (TCD)')
+    expect(targetLabel('D000')).toBe('D000 · Central Warehous (TCD)')
+    expect(targetLabel('D102')).toBe('D102')
+    expect(targetLabel('')).toBe('')
   })
 })
 

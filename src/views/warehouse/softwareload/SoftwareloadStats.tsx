@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { NativeSelect } from '@/components/warehouse/ui'
-import { outcomeLabel, SOFTWARELOAD_TYPES as TYPES, summarizeTasks, TYPE_LABELS } from '@/lib/softwareload'
+import { outcomeLabel, SOFTWARELOAD_TYPES as TYPES, summarizeTasks, targetLabel, TYPE_LABELS } from '@/lib/softwareload'
 import { formatDuration, periodRange, type PeriodKind } from '@/lib/timeclock'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { formatDateTime, formatTime } from '@/lib/warehouse/format'
@@ -218,7 +218,7 @@ function TaskList({ tasks }: { tasks: SoftwareloadTask[] }) {
                     <td className="px-4 py-2">{task.name}</td>
                     <td className="px-4 py-2">{label(TYPE_LABELS[task.type])}{task.kif && <Badge variant="outline" className="ml-2">KIF</Badge>}</td>
                     <td className="px-4 py-2">{task.version}</td>
-                    <td className="px-4 py-2 font-mono">{task.target}</td>
+                    <td className="whitespace-nowrap px-4 py-2">{targetLabel(task.target)}</td>
                     <td className="whitespace-nowrap px-4 py-2 text-right tabular-nums">
                       {movedOf(task)}/{count}
                       {failed > 0 && <span className="ml-1 text-destructive">({t(`${failed} fejlet`, `${failed} failed`)})</span>}

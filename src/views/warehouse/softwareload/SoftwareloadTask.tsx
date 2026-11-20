@@ -8,18 +8,17 @@ import { Card } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/warehouse/ui'
+import { NativeSelect, Textarea } from '@/components/warehouse/ui'
 import { trackPendingWrite } from '@/lib/pendingWrites'
-import { SOFTWARELOAD_TYPES as TYPES, TYPE_LABELS } from '@/lib/softwareload'
+import { SOFTWARELOAD_TARGETS, SOFTWARELOAD_TYPES as TYPES, targetLabel, TYPE_LABELS } from '@/lib/softwareload'
 import { formatClock, formatDuration } from '@/lib/timeclock'
 import { errorCode, errorMessage } from '@/lib/warehouse/errors'
 import { formatTime, type Tone } from '@/lib/warehouse/format'
 import { playTone } from '@/lib/warehouse/sound'
 import { currentWarehouseLanguage, t } from '@/lib/warehouse/text'
-import { TEAM_SLOCS } from '@/lib/warehouse/teams'
 import { cn } from '@/lib/utils'
 import type { SoftwareloadTaskView, SoftwareloadType } from '@/types/warehouse'
-import { ErrorLine, label, SERIAL_PATTERN, SLOC_PATTERN, cleanSerial, useReportBusy, type ReportBusy } from './common'
+import { ErrorLine, label, SERIAL_PATTERN, cleanSerial, useReportBusy, type ReportBusy } from './common'
 
 const LAST_START_KEY = 'softwareload-last-start'
 const NOTE_MAX = 200
@@ -62,7 +61,8 @@ type LastStart = { type: SoftwareloadType; kif: boolean; target: string }
 function readLastStart(): LastStart {
   try {
     const saved = JSON.parse(localStorage.getItem(LAST_START_KEY) || 'null') as Partial<LastStart> | null
-    return { type: saved?.type && TYPES.includes(saved.type) ? saved.type : 'sw+key', kif: saved?.kif === true, target: typeof saved?.target === 'string' ? saved.target : '' }
+    const target = typeof saved?.target === 'string' && SOFTWARELOAD_TARGETS.some(item => item.sloc === saved.target) ? saved.target : ''
+    return { type: saved?.type && TYPES.includes(saved.type) ? saved.type : 'sw+key', kif: saved?.kif === true, target }
   } catch {
     return { type: 'sw+key', kif: false, target: '' }
   }
@@ -85,17 +85,16 @@ function StartForm({ onStarted, reload, onOpenTimeclock }: { onStarted: (view: S
     return () => { current = false }
   }, [])
 
-  const sloc = target.trim().toUpperCase()
   const start = async () => {
     if (busy) return
-    if (!SLOC_PATTERN.test(sloc)) { setProblem(t('Skriv målet som et bogstav og tre cifre, fx D006.', 'Write the target as a letter and three digits, e.g. D006.')); return }
+    if (!target) { setProblem(t('Vælg målet.', 'Choose the target.')); return }
     if (!version.trim()) { setProblem(t('Skriv softwareversionen.', 'Write the software version.')); return }
     setProblem(null)
     setLongRun(null)
     setBusy(true)
     try {
-      const { stoppedTimeclock, ...view } = await window.electronWarehouse!.softwareload.start({ type, kif, target: sloc, version: version.trim() })
-      try { localStorage.setItem(LAST_START_KEY, JSON.stringify({ type, kif, target: sloc })) } catch { /* only a convenience */ }
+      const { stoppedTimeclock, ...view } = await window.electronWarehouse!.softwareload.start({ type, kif, target, version: version.trim() })
+      try { localStorage.setItem(LAST_START_KEY, JSON.stringify({ type, kif, target })) } catch { /* only a convenience */ }
       onStarted(view, stoppedTimeclock)
     } catch (error) {
       const code = errorCode(error)
@@ -138,10 +137,10 @@ function StartForm({ onStarted, reload, onOpenTimeclock }: { onStarted: (view: S
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">
             <Label htmlFor="sl-target">{t('Mål (storage location)', 'Target (storage location)')}</Label>
-            <Input id="sl-target" list="sl-targets" value={target} maxLength={4} autoComplete="off" onChange={event => setTarget(event.target.value.toUpperCase())} placeholder="D006" className="font-mono" />
-            <datalist id="sl-targets">
-              {(['TCD', 'TRR'] as const).flatMap(team => TEAM_SLOCS[team].map(item => <option key={item} value={item}>{team}</option>))}
-            </datalist>
+            <NativeSelect id="sl-target" value={target} onChange={event => setTarget(event.target.value)} className="w-full">
+              <option value="" disabled>{t('Vælg en lokation', 'Choose a location')}</option>
+              {SOFTWARELOAD_TARGETS.map(item => <option key={item.sloc} value={item.sloc}>{targetLabel(item.sloc)}</option>)}
+            </NativeSelect>
           </div>
           <div className="space-y-2">
             <Label htmlFor="sl-version">{t('Softwareversion', 'Software version')}</Label>
@@ -336,7 +335,7 @@ function RunningTask({ running, receivedAt, active, stopped, onDismissStopped, o
           <div className="flex flex-wrap justify-center gap-2">
             <Badge variant="secondary">{label(TYPE_LABELS[running.type])}</Badge>
             <Badge variant="outline">{running.kif ? t('I KIF', 'In KIF') : t('Uden for KIF', 'Outside KIF')}</Badge>
-            <Badge variant="outline" className="font-mono">{t('Mål', 'Target')} {running.target}</Badge>
+            <Badge variant="outline">{t('Mål', 'Target')} {targetLabel(running.target)}</Badge>
             <Badge variant="outline">{t('Version', 'Version')} {running.version}</Badge>
           </div>
           <p className={cn('font-mono text-6xl font-semibold tabular-nums tracking-tight sm:text-7xl', running.paused && 'text-muted-foreground')}>{formatClock(worked)}</p>

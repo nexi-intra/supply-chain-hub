@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { outcomeLabel, TYPE_LABELS } from '@/lib/softwareload'
+import { outcomeLabel, targetLabel, TYPE_LABELS } from '@/lib/softwareload'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { formatDateTime } from '@/lib/warehouse/format'
 import { t } from '@/lib/warehouse/text'
@@ -82,7 +82,7 @@ function IndexLineCard({ line }: { line: SoftwareloadIndexLine }) {
         <Field term={t('Hvem', 'Who')} value={line.name || line.email} />
         <Field term={t('Hvornår', 'When')} value={formatDateTime(line.at)} />
         {line.kind === 'load' && <Field term={t('Software', 'Software')} value={line.version} />}
-        <Field term={t('Fra og til', 'From and to')} value={`${line.from || '–'} → ${line.to || '–'}`} mono />
+        <Field term={t('Fra og til', 'From and to')} value={`${line.from ? targetLabel(line.from) : '–'} → ${line.to ? targetLabel(line.to) : '–'}`} />
         <Field term={t('Dokumenter', 'Documents')} value={line.docs.length ? line.docs.join(', ') : '–'} mono />
         {line.kind === 'load' && line.note && <Field term={t('Note', 'Note')} value={line.note} />}
       </dl>

@@ -297,7 +297,7 @@ const WAREHOUSE_MODULE = {
       steps: [
         'Åbn "Arbejdsværktøjer" på forsiden og vælg "Softwareload". Fanen "Min opgave" er åben.',
         'Vælg typen "Softwareload + keyload", "Softwareload" eller "Keyload", og vælg "I KIF" eller "Uden for KIF".',
-        'Skriv målet under "Mål (storage location)", fx D006, og versionen under "Softwareversion". Klik "Start".',
+        'Vælg målet på listen under "Mål (storage location)". Listen viser SAP\'s beskrivelse, og om lokationen hører til TCD eller TRR. Skriv versionen under "Softwareversion", og klik "Start".',
         'Uret tæller nu. Scan hver terminal i feltet "Scan serienummer". Du kan klikke "Pause" og "Fortsæt", og et forkert serienummer fjerner du med skraldespanden.',
       ],
       notes: 'Kører Stempelkort, bliver det stoppet, når du starter, så tiden ikke tæller to gange. Starter du Stempelkort, holder softwareload-opgaven pause. I KIF flyttes alle terminaler via D005, før de kommer til målet. Uden for KIF flyttes de direkte til målet. Type, KIF og mål huskes til næste gang. "Annullér" smider opgaven væk, uden at tiden gemmes eller noget flyttes.',
@@ -305,7 +305,7 @@ const WAREHOUSE_MODULE = {
     {
       id: 'softwareload-failed',
       title: 'Markér en terminal som fejlet',
-      keywords: ['terminal som fejlet', 'terminalen som fejlet', 'som fejlet', 'fejlet terminal', 'fejlede terminaler', 'terminal der fejler', 'terminalen fejler', 'loader ikke', 'fortryd fejlet', 'mark a terminal as failed', 'mark as failed', 'terminal as failed', 'failed terminal', 'terminal failed', 'does not load', 'paeaete epaeonnistuneeksi', 'paeaetteen epaeonnistuneeksi', 'epaeonnistuneeksi', 'epaeonnistunut paeaete', 'ei lataudu', 'terminal som misslyckad', 'terminalen som misslyckad', 'som misslyckad', 'misslyckad terminal', 'laddar inte'],
+      keywords: ['terminal som fejlet', 'terminalen som fejlet', 'som fejlet', 'fejlet terminal', 'fejlede terminaler', 'terminal der fejler', 'terminalen fejler', 'terminal loader ikke', 'terminalen loader ikke', 'terminal der ikke loader', 'terminal ikke loader', 'terminalen ikke loader', 'fortryd fejlet', 'mark a terminal as failed', 'mark as failed', 'terminal as failed', 'failed terminal', 'terminal failed', 'terminal does not load', 'terminal that does not load', 'paeaete epaeonnistuneeksi', 'paeaetteen epaeonnistuneeksi', 'epaeonnistuneeksi', 'epaeonnistunut paeaete', 'paeaete ei lataudu', 'terminal som misslyckad', 'terminalen som misslyckad', 'som misslyckad', 'misslyckad terminal', 'terminal laddar inte', 'terminalen laddar inte', 'terminal som inte laddar'],
       steps: [
         'Find terminalen i listen "Scannede serienumre" i din igangværende opgave, og klik "Fejlet".',
         'Skriv i noten, hvad der er galt, fx at den ikke loader, og klik "Markér som fejlet".',
@@ -316,7 +316,7 @@ const WAREHOUSE_MODULE = {
     {
       id: 'softwareload-finish',
       title: 'Afslut og flyt i SAP',
-      keywords: ['afslut og flyt', 'afslut softwareload', 'afslutter softwareload', 'afslutte softwareload', 'flyt i sap', 'flyt terminalerne i sap', 'terminalerne i sap', 'venter paa sap', 'fortsaet i sap', 'opgiv flytningerne', 'finish and move', 'finish the softwareload', 'finish a softwareload', 'move in sap', 'move the terminals in sap', 'terminals in sap', 'waiting for sap', 'continue in sap', 'give up the moves', 'paeaetae ja siirrae', 'paeaetaen ja siirraen', 'siirrae sapissa', 'siirraen sapissa', 'paeaetteet sapissa', 'odottaa sapia', 'jatka sapissa', 'avsluta och flytta', 'avslutar och flyttar', 'flytta i sap', 'flyttar i sap', 'terminalerna i sap', 'vaentar paa sap', 'fortsaett i sap'],
+      keywords: ['afslut og flyt', 'afslut softwareload', 'afslutter softwareload', 'afslutte softwareload', 'flyt i sap', 'flyt terminalerne i sap', 'terminalerne i sap', 'venter paa sap', 'fortsaet i sap', 'fortsaetter i sap', 'fortsaette i sap', 'opgiv flytningerne', 'opgave der venter paa sap', 'opgaven der venter paa sap', 'opgave som venter paa sap', 'finish and move', 'finish the softwareload', 'finish a softwareload', 'move in sap', 'move the terminals in sap', 'terminals in sap', 'waiting for sap', 'continue in sap', 'give up the moves', 'task waiting for sap', 'task that is waiting for sap', 'paeaetae ja siirrae', 'paeaetaen ja siirraen', 'siirrae sapissa', 'siirraen sapissa', 'paeaetteet sapissa', 'odottaa sapia', 'jatka sapissa', 'jatkan sapissa', 'jatkaa sapissa', 'joka odottaa sapia', 'avsluta och flytta', 'avslutar och flyttar', 'flytta i sap', 'flyttar i sap', 'terminalerna i sap', 'vaentar paa sap', 'fortsaett i sap', 'fortsaetter i sap', 'fortsaetta i sap', 'uppgift som vaentar paa sap'],
       steps: [
         'Når alle terminaler er scannet, klik "Afslut opgave". Appen slår terminalerne op i SAP og viser, hvordan de bliver flyttet. Intet er flyttet endnu, og tiden kører stadig.',
         'Tjek grupperne: til målet, fejlede nye til D000 og blocked stock, fejlede brugte til D002 og problemer, fx "Ikke fundet i SAP" eller blocked stock, som ikke flyttes. I KIF går alt via D005.',

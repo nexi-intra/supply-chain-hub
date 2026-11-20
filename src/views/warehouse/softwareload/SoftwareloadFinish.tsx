@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { previewGroups, TYPE_LABELS, type PreviewGroups } from '@/lib/softwareload'
+import { previewGroups, targetLabel, TYPE_LABELS, type PreviewGroups } from '@/lib/softwareload'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { t } from '@/lib/warehouse/text'
 import { cn } from '@/lib/utils'
@@ -16,7 +16,7 @@ type GroupKey = keyof PreviewGroups
 
 /** The groups of the confirmation, in the order of the design; the problems are marked. */
 const GROUPS: { key: GroupKey; title: (task: { kif: boolean; target: string }) => string; problem?: boolean }[] = [
-  { key: 'toTarget', title: task => (task.kif && task.target !== 'D005' ? t(`Til målet ${task.target} via D005`, `To the target ${task.target} via D005`) : t(`Til målet ${task.target}`, `To the target ${task.target}`)) },
+  { key: 'toTarget', title: task => (task.kif && task.target !== 'D005' ? t(`Til målet ${targetLabel(task.target)} via D005`, `To the target ${targetLabel(task.target)} via D005`) : t(`Til målet ${targetLabel(task.target)}`, `To the target ${targetLabel(task.target)}`)) },
   { key: 'toBlocked', title: task => (task.kif ? t('Fejlede nye (-0) til D000 og blocked stock via D005', 'Failed new (-0) to D000 and blocked stock via D005') : t('Fejlede nye (-0) til D000 og blocked stock', 'Failed new (-0) to D000 and blocked stock')) },
   { key: 'toD002', title: task => (task.kif ? t('Fejlede brugte (-R) til D002 via D005', 'Failed used (-R) to D002 via D005') : t('Fejlede brugte (-R) til D002', 'Failed used (-R) to D002')) },
   { key: 'notFound', title: () => t('Ikke fundet i SAP. Flyttes ikke', 'Not found in SAP. Not moved'), problem: true },
@@ -99,7 +99,7 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
     return (
       <div className="space-y-4">
         <ResultCard title={t('Opgaven er afsluttet og flyttet i SAP', 'The task is finished and moved in SAP')} counts={result.counts} results={result.results} notes={notes}>
-          <p className="text-sm text-muted-foreground">{label(TYPE_LABELS[task.type])} · {task.kif ? t('I KIF', 'In KIF') : t('Uden for KIF', 'Outside KIF')} · {t('Mål', 'Target')} {task.target} · {t('Version', 'Version')} {task.version}</p>
+          <p className="text-sm text-muted-foreground">{label(TYPE_LABELS[task.type])} · {task.kif ? t('I KIF', 'In KIF') : t('Uden for KIF', 'Outside KIF')} · {t('Mål', 'Target')} {targetLabel(task.target)} · {t('Version', 'Version')} {task.version}</p>
         </ResultCard>
         <Button onClick={onBack}><CheckCircle size={18} /> {t('Færdig', 'Done')}</Button>
       </div>
@@ -131,7 +131,7 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
           <span className="flex flex-wrap gap-2">
             <Badge variant="secondary">{label(TYPE_LABELS[task.type])}</Badge>
             <Badge variant="outline">{task.kif ? t('I KIF', 'In KIF') : t('Uden for KIF', 'Outside KIF')}</Badge>
-            <Badge variant="outline" className="font-mono">{t('Mål', 'Target')} {task.target}</Badge>
+            <Badge variant="outline">{t('Mål', 'Target')} {targetLabel(task.target)}</Badge>
           </span>
         </div>
         <p className="text-sm text-muted-foreground">{t('Appen har slået terminalerne op i SAP. Sådan bliver de flyttet. Intet er flyttet endnu, og tiden kører stadig.', 'The app has looked up the terminals in SAP. This is how they will be moved. Nothing is moved yet and the time is still running.')}</p>
@@ -207,7 +207,7 @@ function PlanSummary({ preview, groups, task, rowOf, notes }: { preview: Softwar
         <div className="space-y-1 text-xs text-muted-foreground">
           <p className="font-medium">{t('Trin i SAP', 'Steps in SAP')}</p>
           <ul className="flex flex-wrap gap-2">
-            {preview.transfers.map(move => <li key={`${move.wave}-${move.from}-${move.to}`} className="rounded border px-2 py-0.5 font-mono">{move.from} → {move.to} ({move.serials.length})</li>)}
+            {preview.transfers.map(move => <li key={`${move.wave}-${move.from}-${move.to}`} className="rounded border px-2 py-0.5">{targetLabel(move.from)} → {targetLabel(move.to)} ({move.serials.length})</li>)}
             {preview.blocks.map(block => <li key={`344-${block.material}`} className="rounded border px-2 py-0.5 font-mono">MIGO 344 {block.material} ({block.serials.length})</li>)}
           </ul>
         </div>

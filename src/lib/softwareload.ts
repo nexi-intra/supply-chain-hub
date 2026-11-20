@@ -29,6 +29,29 @@ const OUTCOME_LABELS: Record<SoftwareloadOutcome, Label> = {
 
 export const outcomeLabel = (outcome: SoftwareloadOutcome): Label => OUTCOME_LABELS[outcome]
 
+export interface SoftwareloadTarget {
+  sloc: string
+  description: string
+  team: 'TCD' | 'TRR'
+}
+
+/** The storage locations a task may end in, with SAP's description; the same list as electron/warehouse/softwareload/core/targets.cjs. */
+export const SOFTWARELOAD_TARGETS: readonly SoftwareloadTarget[] = [
+  { sloc: 'D000', description: 'Central Warehous', team: 'TCD' },
+  { sloc: 'D001', description: 'Raw Terminals', team: 'TRR' },
+  { sloc: 'D002', description: 'Repair', team: 'TRR' },
+  { sloc: 'D003', description: 'SWAP Inbound', team: 'TRR' },
+  { sloc: 'D004', description: 'SWAP Outbound', team: 'TCD' },
+  { sloc: 'D005', description: 'SA – secure room', team: 'TCD' },
+  { sloc: 'D006', description: 'Forecast Prep', team: 'TCD' },
+]
+
+/** "D002 · Repair (TRR)" for a location in the list, otherwise just the code. */
+export function targetLabel(sloc: string): string {
+  const item = SOFTWARELOAD_TARGETS.find(target => target.sloc === sloc)
+  return item ? `${item.sloc} · ${item.description} (${item.team})` : sloc
+}
+
 export interface PreviewGroups {
   toTarget: string[]
   toBlocked: string[]

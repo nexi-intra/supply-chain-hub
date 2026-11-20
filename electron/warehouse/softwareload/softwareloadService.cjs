@@ -11,6 +11,7 @@ const { normalizeMatdoc } = require('../core/sapParsers.cjs')
 const { monthsBetween } = require('../core/period.cjs')
 const { KIF, USED_FAILED_SLOC, normalizeSloc, planMoves } = require('./core/planMoves.cjs')
 const { bisect } = require('./core/bisect.cjs')
+const { isSoftwareloadTarget } = require('./core/targets.cjs')
 const { TRANSFER_CHUNK, BLOCK_CHUNK } = require('./softwareloadSap.cjs')
 
 const TYPES = ['sw+key', 'sw', 'key']
@@ -126,7 +127,7 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
     const type = TYPES.includes(input?.type) ? input.type : null
     if (!type) throw codeError('SOFTWARELOAD_INVALID', 'Vælg om der lægges software, nøgle eller begge dele på')
     const target = normalizeSloc(input?.target)
-    if (!target) throw codeError('SOFTWARELOAD_INVALID', 'Lagerstedet skal være et bogstav og tre cifre, fx D006')
+    if (!isSoftwareloadTarget(target)) throw codeError('SOFTWARELOAD_INVALID', 'Vælg en lokation fra listen')
     const version = clean(input?.version, VERSION_MAX)
     if (!version) throw codeError('SOFTWARELOAD_INVALID', 'Skriv softwareversionen')
     return { type, kif: input?.kif === true, target, version }

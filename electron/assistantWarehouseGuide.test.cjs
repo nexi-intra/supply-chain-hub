@@ -2,6 +2,8 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const { ask, DANISH_GUIDE } = require('./assistantTrainingBank.cjs')
+const { APP_GUIDE, APP_TOPICS } = require('./assistantAppGuide.cjs')
+const { LOCALIZED } = require('./assistantAppGuideI18n.cjs')
 
 const MODULE = { da: 'Arbejdsværktøjer', en: 'Work Tools', fi: 'Työkalut', sv: 'Arbetsverktyg' }
 const starts = (language, title) => new RegExp(`^${MODULE[language]} - ${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`)
@@ -141,6 +143,7 @@ test('the Softwareload guide states the facts of the tool: Stempelkort stops, -0
   const start = ask({ q: 'hvordan starter jeg en softwareload-opgave?', lang: 'da' }).text
   assert.match(start, /"Softwareload \+ keyload", "Softwareload" eller "Keyload"/)
   assert.match(start, /Kører Stempelkort, bliver det stoppet/)
+  assert.match(start, /Vælg målet på listen under "Mål \(storage location\)"/)
   const failed = ask({ q: 'hvordan markerer jeg en terminal som fejlet?', lang: 'da' }).text
   assert.match(failed, /-0\) til D000 og blocked stock/)
   assert.match(failed, /\(-R\) går til D002/)
@@ -151,4 +154,36 @@ test('the Softwareload guide states the facts of the tool: Stempelkort stops, -0
   const en = ask({ q: 'how do I finish and move the terminals in SAP?', lang: 'en' }).text
   assert.match(en, /"Finish and move in SAP"/)
   assert.match(en, /"Waiting for SAP"/)
+})
+
+test('continuing or giving up a task that waits for SAP reaches the finish task, and general "does not load" questions never reach Softwareload', () => {
+  const WAITING = [
+    ['hvordan fortsætter jeg i SAP?', 'da', 'Afslut og flyt i SAP'], ['hvordan opgiver jeg en opgave der venter på SAP?', 'da', 'Afslut og flyt i SAP'],
+    ['how do I continue a task that is waiting for SAP?', 'en', 'Finish and move in SAP'], ['how do I give up a task that is waiting for SAP?', 'en', 'Finish and move in SAP'],
+    ['miten jatkan tehtävää, joka odottaa SAPia?', 'fi', 'Päätä ja siirrä SAPissa'], ['miten luovun tehtävästä, joka odottaa SAPia?', 'fi', 'Päätä ja siirrä SAPissa'],
+    ['hur fortsätter jag i SAP?', 'sv', 'Avsluta och flytta i SAP'], ['hur ger jag upp en uppgift som väntar på SAP?', 'sv', 'Avsluta och flytta i SAP'],
+  ]
+  for (const [question, language, title] of WAITING) {
+    const answer = ask({ q: question, lang: language }, { role: 'user' })
+    assert.equal(answer.mode, 'app-guide', `${language}: ${question} -> ${answer.text.slice(0, 80)}`)
+    assert.match(answer.text, starts(language, title), `${language}: ${question} -> ${answer.text.slice(0, 80)}`)
+  }
+  const SOFTWARELOAD_TITLES = /^(?:Arbejdsværktøjer|Work Tools|Työkalut|Arbetsverktyg) - (?:Start en softwareload|Markér en terminal|Afslut og flyt|Flyt ind i KIF|Søg på et serienummer|Se softwareload|Start a softwareload|Mark a terminal|Finish and move|Move into KIF|Search a serial|See softwareload|Aloita softwareload|Merkitse pääte|Päätä ja siirrä|Siirrä KIF|Hae sarjanumerolla|Katso softwareload|Starta en softwareload|Markera en terminal|Avsluta och flytta|Flytta in i KIF|Sök på ett serienummer|Visa softwareload)/
+  const GENERAL = [['what do I do if a link does not load?', 'en'], ['hvad gør jeg hvis hubben loader ikke?', 'da'], ['sovellus ei lataudu', 'fi'], ['appen laddar inte', 'sv']]
+  for (const [question, language] of GENERAL) assert.doesNotMatch(String(ask({ q: question, lang: language }, { role: 'user' }).text), SOFTWARELOAD_TITLES, `${language}: ${question}`)
+  assert.match(ask({ q: 'what do I do if a link does not load?', lang: 'en' }, { role: 'user' }).text, /^Link Library - Report a link that does not work/)
+  assert.match(ask({ q: 'what do I do if a terminal does not load?', lang: 'en' }, { role: 'user' }).text, starts('en', 'Mark a terminal as failed'))
+})
+
+test('no guide text has two or more spaces in a row (answers are shown with whitespace-pre-wrap)', () => {
+  const doubled = []
+  const walk = (value, where) => {
+    if (typeof value === 'string') { if (/ {2,}/.test(value)) doubled.push(`${where}: ${value.slice(0, 60)}`) }
+    else if (Array.isArray(value)) value.forEach((item, index) => walk(item, `${where}[${index}]`))
+    else if (value && typeof value === 'object' && !(value instanceof RegExp)) for (const [key, item] of Object.entries(value)) walk(item, `${where}.${key}`)
+  }
+  walk(APP_GUIDE, 'da')
+  walk(APP_TOPICS, 'topics')
+  walk(LOCALIZED, 'localized')
+  assert.deepEqual(doubled, [])
 })
