@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CaretDown, CaretRight } from '@phosphor-icons/react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -7,19 +7,18 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { NativeSelect } from '@/components/warehouse/ui'
-import { outcomeLabel, summarizeTasks, TYPE_LABELS } from '@/lib/softwareload'
+import { outcomeLabel, SOFTWARELOAD_TYPES as TYPES, summarizeTasks, TYPE_LABELS } from '@/lib/softwareload'
 import { formatDuration, periodRange, type PeriodKind } from '@/lib/timeclock'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { formatDateTime, formatTime } from '@/lib/warehouse/format'
 import { currentWarehouseLanguage, t, warehouseLocale } from '@/lib/warehouse/text'
 import { cn } from '@/lib/utils'
-import type { SoftwareloadTask, SoftwareloadType } from '@/types/warehouse'
+import type { SoftwareloadTask } from '@/types/warehouse'
 import { ErrorLine, isProblem, label } from './common'
 
 type Period = PeriodKind | 'custom'
 
 const POLL_MS = 60_000
-const TYPES: SoftwareloadType[] = ['sw+key', 'sw', 'key']
 const PERIODS: { value: Period; label: () => string }[] = [
   { value: 'today', label: () => t('I dag', 'Today') },
   { value: 'week', label: () => t('Denne uge', 'This week') },
@@ -44,12 +43,17 @@ export function SoftwareloadStats({ isManager }: { isManager: boolean }) {
   const [version, setVersion] = useState('')
   const language = currentWarehouseLanguage()
 
+  // Only the newest request may fill the screen: a slow answer for an earlier period must not replace a newer one.
+  const latest = useRef(0)
   const load = useCallback(async () => {
+    const request = ++latest.current
     try {
-      setTasks(await window.electronWarehouse!.softwareload.tasks({ from, to }))
+      const next = await window.electronWarehouse!.softwareload.tasks({ from, to })
+      if (request !== latest.current) return
+      setTasks(next)
       setFailed(null)
     } catch (error) {
-      setFailed(errorMessage(error))
+      if (request === latest.current) setFailed(errorMessage(error))
     }
   }, [from, to])
 

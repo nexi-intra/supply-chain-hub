@@ -21,12 +21,14 @@ export function SoftwareloadSearch() {
   const [loading, setLoading] = useState(false)
   const [failed, setFailed] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const searching = useRef(false)
 
   useEffect(() => { inputRef.current?.focus() }, [])
 
   const search = async () => {
     const value = cleanSerial(serial)
-    if (!value) return
+    if (!value || searching.current) return
+    searching.current = true
     setLoading(true)
     setFailed(null)
     try {
@@ -35,6 +37,7 @@ export function SoftwareloadSearch() {
     } catch (error) {
       setFailed(errorMessage(error))
     } finally {
+      searching.current = false
       setLoading(false)
       inputRef.current?.select()
     }

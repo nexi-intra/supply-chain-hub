@@ -5,7 +5,7 @@ import { Tabs } from '@/components/warehouse/ui'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { t } from '@/lib/warehouse/text'
 import type { SoftwareloadBridge, SoftwareloadTaskView, WarehouseUser } from '@/types/warehouse'
-import { ErrorLine } from './common'
+import { ErrorLine, type ReportBusy } from './common'
 import { SoftwareloadFinish } from './SoftwareloadFinish'
 import { SoftwareloadKif } from './SoftwareloadKif'
 import { SoftwareloadPending } from './SoftwareloadPending'
@@ -20,7 +20,7 @@ type Tab = 'task' | 'pending' | 'kif' | 'search' | 'stats'
 const STATUS_POLL_MS = 30_000
 
 /** Softwareload: the person's own timed task with scanned terminals, moved in SAP when it is finished. */
-export function Softwareload({ user, onOpenTimeclock }: { user: WarehouseUser; onOpenTimeclock: () => void }) {
+export function Softwareload({ user, onOpenTimeclock, onBusyChange }: { user: WarehouseUser; onOpenTimeclock: () => void; onBusyChange?: (busy: boolean) => void }) {
   const [tab, setTab] = useState<Tab>('task')
   const [status, setStatus] = useState<SoftwareloadStatus | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
@@ -29,6 +29,17 @@ export function Softwareload({ user, onOpenTimeclock }: { user: WarehouseUser; o
   const [receivedAt, setReceivedAt] = useState(() => Date.now())
   // A status read that started before a change on this screen must not undo that change when it answers late.
   const changes = useRef(0)
+
+  // The parts that are working (a SAP run, scans being saved); while any is, the tool must not be left.
+  const busyParts = useRef(new Set<string>())
+  const reportBusy = useCallback<ReportBusy>((key, busy) => {
+    const before = busyParts.current.size > 0
+    if (busy) busyParts.current.add(key)
+    else busyParts.current.delete(key)
+    const after = busyParts.current.size > 0
+    if (before !== after) onBusyChange?.(after)
+  }, [onBusyChange])
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange])
 
   const load = useCallback(async () => {
     const before = changes.current
@@ -96,6 +107,7 @@ export function Softwareload({ user, onOpenTimeclock }: { user: WarehouseUser; o
             onBack={() => { setFinishing(false); void load() }}
             onChanged={load}
             onOpenPending={() => { setFinishing(false); choose('pending') }}
+            onBusy={reportBusy}
           />
         ) : (
           <SoftwareloadTask
@@ -106,11 +118,12 @@ export function Softwareload({ user, onOpenTimeclock }: { user: WarehouseUser; o
             onFinish={() => setFinishing(true)}
             reload={load}
             onOpenTimeclock={onOpenTimeclock}
+            onBusy={reportBusy}
           />
         )}
       </div>
-      {status && <div hidden={tab !== 'pending'}><SoftwareloadPending user={user} status={status} reload={load} /></div>}
-      <div hidden={tab !== 'kif'}><SoftwareloadKif user={user} writeEnabled={status?.writeEnabled ?? false} active={tab === 'kif'} /></div>
+      {status && <div hidden={tab !== 'pending'}><SoftwareloadPending user={user} status={status} reload={load} onBusy={reportBusy} /></div>}
+      <div hidden={tab !== 'kif'}><SoftwareloadKif user={user} writeEnabled={status?.writeEnabled ?? false} active={tab === 'kif'} onBusy={reportBusy} /></div>
       {tab === 'search' && <SoftwareloadSearch />}
       {tab === 'stats' && <SoftwareloadStats isManager={status?.isManager ?? false} />}
     </div>

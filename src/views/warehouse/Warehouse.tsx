@@ -67,6 +67,8 @@ export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
   const [tool, setTool] = useState<Tool>(start.tool)
   const [view, setView] = useState<View>(start.view)
   const toHome = useCallback(() => { setTool('home'); setView({ kind: 'list' }) }, [])
+  // A tool that is working (Softwareload moving in SAP or saving scans) is not left: Escape and Tilbage wait.
+  const [toolBusy, setToolBusy] = useState(false)
   // Keeps t() in step with the Hub language; the whole module re-renders below this component when it changes.
   const language = useWarehouseLanguage()
   const { language: hubLanguage } = useLanguage()
@@ -80,20 +82,20 @@ export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented || isAnyModalOpen()) return
+      if (event.key !== 'Escape' || event.defaultPrevented || isAnyModalOpen() || toolBusy) return
       // Escape goes one level up: from a tool to the Arbejdsværktøjer page, from there to the front page.
       if (tool === 'home') onNavigateBack()
       else if (tool === 'timeclock' || tool === 'softwareload' || TOP_LEVEL.has(view.kind)) toHome()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [tool, view.kind, onNavigateBack, toHome])
+  }, [tool, view.kind, onNavigateBack, toHome, toolBusy])
 
   const page = (
     <div className="min-h-screen bg-background">
       <div className="sticky top-0 z-30 border-b border-border bg-background/95 shadow-sm backdrop-blur-sm">
         <div className="container mx-auto flex flex-wrap items-center gap-4 px-4 py-6 sm:px-6">
-          <Button variant="outline" size="lg" onClick={tool === 'home' ? onNavigateBack : toHome} className="gap-2 px-4 font-semibold">
+          <Button variant="outline" size="lg" onClick={tool === 'home' ? onNavigateBack : toHome} disabled={toolBusy} className="gap-2 px-4 font-semibold">
             <ArrowLeft size={20} />
             {t('Tilbage', 'Back')}
           </Button>
@@ -118,7 +120,7 @@ export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
       {user && tool === 'home' && <WarehouseHome key={language} user={user} onOpen={setTool} />}
       {user && tool === 'locations' && <Locations key={language} user={user} initial={start.locations} />}
       {user && tool === 'timeclock' && <Timeclock key={language} user={user} />}
-      {user && tool === 'softwareload' && <Softwareload key={language} user={user} onOpenTimeclock={() => setTool('timeclock')} />}
+      {user && tool === 'softwareload' && <Softwareload key={language} user={user} onOpenTimeclock={() => setTool('timeclock')} onBusyChange={setToolBusy} />}
       {user && tool === 'counts' && (
         <>
           <WarehouseContent key={language} user={user} view={view} onNavigate={setView} />

@@ -8,7 +8,10 @@ export const TYPE_LABELS: Record<SoftwareloadType, Label> = {
   key: { da: 'Keyload', en: 'Keyload' },
 }
 
-const TYPE_ORDER: SoftwareloadType[] = ['sw+key', 'sw', 'key']
+/** The types in the order of the design (the order of TYPE_LABELS). */
+export const SOFTWARELOAD_TYPES = Object.keys(TYPE_LABELS) as SoftwareloadType[]
+
+const TYPE_ORDER = SOFTWARELOAD_TYPES
 
 const OUTCOME_LABELS: Record<SoftwareloadOutcome, Label> = {
   'to-target': { da: 'Flyttet til målet', en: 'Moved to target' },

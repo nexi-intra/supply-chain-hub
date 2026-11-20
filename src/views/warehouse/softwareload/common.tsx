@@ -5,10 +5,7 @@ import { Progress } from '@/components/ui/progress'
 import { outcomeLabel } from '@/lib/softwareload'
 import { currentWarehouseLanguage, t } from '@/lib/warehouse/text'
 import { cn } from '@/lib/utils'
-import type { SoftwareloadCounts, SoftwareloadOutcome, SoftwareloadProgress, SoftwareloadResult, TeamId } from '@/types/warehouse'
-
-/** The storage locations of both teams, offered as targets; any other location can be typed. */
-export const TEAM_SLOCS: Record<TeamId, string[]> = { TCD: ['D000', 'D004', 'D005', 'D006', 'D102', 'D103', 'D104', 'D105', 'D106'], TRR: ['D001', 'D002', 'D003'] }
+import type { SoftwareloadCounts, SoftwareloadOutcome, SoftwareloadProgress, SoftwareloadResult } from '@/types/warehouse'
 
 export const SLOC_PATTERN = /^[A-Z]\d{3}$/
 /** As the main process cleans a serial: no spaces, capitals, then the same pattern. */
@@ -48,6 +45,14 @@ export function useSoftwareloadProgress(email: string): [SoftwareloadProgress | 
   }, [email])
   const reset = useCallback(() => setProgress(null), [])
   return [progress, reset]
+}
+
+export type ReportBusy = (key: string, busy: boolean) => void
+
+/** Tells the tool that a part of it is working (a SAP run, scans being saved), so it is not left midway; cleared on unmount. */
+export function useReportBusy(onBusy: ReportBusy | undefined, key: string, busy: boolean) {
+  useEffect(() => { onBusy?.(key, busy) }, [onBusy, key, busy])
+  useEffect(() => () => onBusy?.(key, false), [onBusy, key])
 }
 
 const stepLabel = (step: SoftwareloadProgress['step']) =>

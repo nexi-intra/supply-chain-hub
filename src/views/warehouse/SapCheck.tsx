@@ -15,6 +15,7 @@ import { fetchSteps, formatDateTime, formatNumber, stockLabel } from '@/lib/ware
 import { cn } from '@/lib/utils'
 import type { WarehouseUser, FetchStep, MailLanguage, SapCheckOverview, SapCheckScope, SapCheckSettings, SapError, SapErrorType, TeamId } from '@/types/warehouse'
 import { t } from '@/lib/warehouse/text'
+import { TEAM_SLOCS } from '@/lib/warehouse/teams'
 
 const types = (): { type: SapErrorType; label: string; help: string }[] => [
   { type: 'count-mismatch', label: t('Antal passer ikke', 'Quantity does not match'), help: t('Lagerbeholdning (MB52) og antal serienumre (IQ09) er forskellige.', 'Stock (MB52) and the number of serial numbers (IQ09) differ.') },
@@ -23,7 +24,6 @@ const types = (): { type: SapErrorType; label: string; help: string }[] => [
   { type: 'serials-without-stock', label: t('Serienumre uden lager', 'Serial numbers without stock'), help: t('Der er serienumre, men intet lager af den lagertype.', 'There are serial numbers, but no stock of that stock type.') },
 ]
 const typeLabel = (type: SapErrorType) => types().find(item => item.type === type)?.label ?? type
-const TEAM_SLOCS: Record<TeamId, string[]> = { TCD: ['D000', 'D004', 'D005', 'D006', 'D102', 'D103', 'D104', 'D105', 'D106'], TRR: ['D001', 'D002', 'D003'] }
 const teamOf = (sloc: string): TeamId | null => (TEAM_SLOCS.TCD.includes(sloc) ? 'TCD' : TEAM_SLOCS.TRR.includes(sloc) ? 'TRR' : null)
 const scopeLabel = (scope: SapCheckScope) => (scope === 'D301' ? t('Hele D301', 'All of D301') : scope)
 const sourceLabel = (source: 'both' | 'countpoint' | 'sap-report') => ({ both: t('Begge', 'Both'), countpoint: t('Kun Optælling', 'Stock count only'), 'sap-report': t('Kun SAP-rapporten', 'SAP report only') })[source]

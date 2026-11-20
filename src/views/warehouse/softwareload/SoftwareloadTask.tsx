@@ -10,17 +10,17 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/warehouse/ui'
 import { trackPendingWrite } from '@/lib/pendingWrites'
-import { TYPE_LABELS } from '@/lib/softwareload'
+import { SOFTWARELOAD_TYPES as TYPES, TYPE_LABELS } from '@/lib/softwareload'
 import { formatClock, formatDuration } from '@/lib/timeclock'
 import { errorCode, errorMessage } from '@/lib/warehouse/errors'
 import { formatTime, type Tone } from '@/lib/warehouse/format'
 import { playTone } from '@/lib/warehouse/sound'
 import { currentWarehouseLanguage, t } from '@/lib/warehouse/text'
+import { TEAM_SLOCS } from '@/lib/warehouse/teams'
 import { cn } from '@/lib/utils'
 import type { SoftwareloadTaskView, SoftwareloadType } from '@/types/warehouse'
-import { ErrorLine, label, SERIAL_PATTERN, SLOC_PATTERN, TEAM_SLOCS, cleanSerial } from './common'
+import { ErrorLine, label, SERIAL_PATTERN, SLOC_PATTERN, cleanSerial, useReportBusy, type ReportBusy } from './common'
 
-const TYPES: SoftwareloadType[] = ['sw+key', 'sw', 'key']
 const LAST_START_KEY = 'softwareload-last-start'
 const NOTE_MAX = 200
 
@@ -34,10 +34,11 @@ interface TaskProps {
   onFinish: () => void
   reload: () => Promise<void>
   onOpenTimeclock: () => void
+  onBusy?: ReportBusy
 }
 
 /** "Min opgave": the start form, or the running task with its clock and scanner. */
-export function SoftwareloadTask({ running, receivedAt, active, onRunning, onFinish, reload, onOpenTimeclock }: TaskProps) {
+export function SoftwareloadTask({ running, receivedAt, active, onRunning, onFinish, reload, onOpenTimeclock, onBusy }: TaskProps) {
   const [stopped, setStopped] = useState<Stopped | null>(null)
   if (!running) return <StartForm onStarted={(view, stoppedTimeclock) => { setStopped(stoppedTimeclock ?? null); onRunning(view) }} reload={reload} onOpenTimeclock={onOpenTimeclock} />
   return (
@@ -51,6 +52,7 @@ export function SoftwareloadTask({ running, receivedAt, active, onRunning, onFin
       onRunning={onRunning}
       onFinish={onFinish}
       reload={reload}
+      onBusy={onBusy}
     />
   )
 }
@@ -183,9 +185,10 @@ interface RunningProps {
   onRunning: (running: SoftwareloadTaskView | null) => void
   onFinish: () => void
   reload: () => Promise<void>
+  onBusy?: ReportBusy
 }
 
-function RunningTask({ running, receivedAt, active, stopped, onDismissStopped, onRunning, onFinish, reload }: RunningProps) {
+function RunningTask({ running, receivedAt, active, stopped, onDismissStopped, onRunning, onFinish, reload, onBusy }: RunningProps) {
   const [serial, setSerial] = useState('')
   // Scans shown before the main process has them, and serials taken out before it has removed them.
   const [added, setAdded] = useState<Map<string, { at: number; saving: boolean }>>(() => new Map())
@@ -200,6 +203,7 @@ function RunningTask({ running, receivedAt, active, stopped, onDismissStopped, o
   const queue = useRef<Job[]>([])
   const working = useRef(false)
   const language = currentWarehouseLanguage()
+  useReportBusy(onBusy, 'scans', queueSize > 0)
 
   useEffect(() => { if (active) inputRef.current?.focus() }, [active])
 

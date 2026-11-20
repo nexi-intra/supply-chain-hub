@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { ArrowsClockwise, Prohibit } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -11,18 +11,23 @@ import { formatDateTime } from '@/lib/warehouse/format'
 import { t } from '@/lib/warehouse/text'
 import type { SoftwareloadFinishResult, SoftwareloadPending as PendingTask, WarehouseUser } from '@/types/warehouse'
 import type { SoftwareloadStatus } from './Softwareload'
-import { ProgressBlock, ResultCard, useSoftwareloadProgress, WriteDisabledLine } from './common'
+import { ProgressBlock, ResultCard, useReportBusy, useSoftwareloadProgress, WriteDisabledLine, type ReportBusy } from './common'
 
 const REASON_MAX = 200
 
 /** Finished tasks whose moves in SAP are not all done: the owner or a manager continues them, a manager can give them up. */
-export function SoftwareloadPending({ user, status, reload }: { user: WarehouseUser; status: SoftwareloadStatus; reload: () => Promise<void> }) {
+export function SoftwareloadPending({ user, status, reload, onBusy }: { user: WarehouseUser; status: SoftwareloadStatus; reload: () => Promise<void>; onBusy?: ReportBusy }) {
   const [moving, setMoving] = useState<string | null>(null)
   const [abandoning, setAbandoning] = useState<PendingTask | null>(null)
   const [done, setDone] = useState<{ name: string; result: SoftwareloadFinishResult; abandoned: boolean } | null>(null)
   const [progress, resetProgress] = useSoftwareloadProgress(user.email)
+  const inFlight = useRef(false)
+  useReportBusy(onBusy, 'pending', moving !== null)
 
   const continueTask = async (task: PendingTask) => {
+    // One SAP run at a time; a second press must not touch the state of the run in progress.
+    if (inFlight.current) return
+    inFlight.current = true
     resetProgress()
     setMoving(task.id)
     setDone(null)
@@ -32,6 +37,7 @@ export function SoftwareloadPending({ user, status, reload }: { user: WarehouseU
     } catch (error) {
       toast.error(errorMessage(error))
     } finally {
+      inFlight.current = false
       setMoving(null)
       void reload()
     }

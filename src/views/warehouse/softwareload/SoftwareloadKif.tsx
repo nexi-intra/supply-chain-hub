@@ -11,12 +11,12 @@ import { errorMessage } from '@/lib/warehouse/errors'
 import { t } from '@/lib/warehouse/text'
 import { cn } from '@/lib/utils'
 import type { SoftwareloadKifMoveResult, SoftwareloadKifPreview, WarehouseUser } from '@/types/warehouse'
-import { ErrorLine, ProgressBlock, ResultCard, parseSerials, useSoftwareloadProgress, WriteDisabledLine } from './common'
+import { ErrorLine, ProgressBlock, ResultCard, parseSerials, useReportBusy, useSoftwareloadProgress, WriteDisabledLine, type ReportBusy } from './common'
 
 const KIF = 'D005'
 
 /** "Flyt ind i KIF": terminals to D005 ahead of loading, from scanned or pasted serials or a material document. */
-export function SoftwareloadKif({ user, writeEnabled, active }: { user: WarehouseUser; writeEnabled: boolean; active: boolean }) {
+export function SoftwareloadKif({ user, writeEnabled, active, onBusy }: { user: WarehouseUser; writeEnabled: boolean; active: boolean; onBusy?: ReportBusy }) {
   const [text, setText] = useState('')
   const [matdoc, setMatdoc] = useState('')
   const [preview, setPreview] = useState<SoftwareloadKifPreview | null>(null)
@@ -27,6 +27,8 @@ export function SoftwareloadKif({ user, writeEnabled, active }: { user: Warehous
   const [result, setResult] = useState<SoftwareloadKifMoveResult | null>(null)
   const [progress, resetProgress] = useSoftwareloadProgress(user.email)
   const textRef = useRef<HTMLTextAreaElement>(null)
+  const inFlight = useRef(false)
+  useReportBusy(onBusy, 'kif', loading || moving)
 
   useEffect(() => { if (active && !preview && !result) textRef.current?.focus() }, [active, preview, result])
 
@@ -35,6 +37,8 @@ export function SoftwareloadKif({ user, writeEnabled, active }: { user: Warehous
   const groups = useMemo(() => (preview ? previewGroups(preview.outcomes) : null), [preview])
 
   const showPreview = async () => {
+    if (inFlight.current) return
+    inFlight.current = true
     setFailed(null)
     setLoading(true)
     try {
@@ -44,12 +48,15 @@ export function SoftwareloadKif({ user, writeEnabled, active }: { user: Warehous
     } catch (error) {
       setFailed(errorMessage(error))
     } finally {
+      inFlight.current = false
       setLoading(false)
     }
   }
 
   const move = async () => {
-    if (!preview) return
+    // One SAP run at a time; a second press must not touch the state of the run in progress.
+    if (!preview || inFlight.current) return
+    inFlight.current = true
     setFailed(null)
     resetProgress()
     setMoving(true)
@@ -59,6 +66,7 @@ export function SoftwareloadKif({ user, writeEnabled, active }: { user: Warehous
     } catch (error) {
       setFailed(errorMessage(error))
     } finally {
+      inFlight.current = false
       setMoving(false)
     }
   }

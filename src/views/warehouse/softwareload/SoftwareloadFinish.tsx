@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, ArrowsClockwise, CheckCircle } from '@phosphor-icons/react'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
@@ -10,7 +10,7 @@ import { errorMessage } from '@/lib/warehouse/errors'
 import { t } from '@/lib/warehouse/text'
 import { cn } from '@/lib/utils'
 import type { SoftwareloadFinishResult, SoftwareloadPreview, SoftwareloadSapRow, SoftwareloadTaskView, WarehouseUser } from '@/types/warehouse'
-import { ErrorLine, label, ProgressBlock, ResultCard, useSoftwareloadProgress, WriteDisabledLine } from './common'
+import { ErrorLine, label, ProgressBlock, ResultCard, useReportBusy, useSoftwareloadProgress, WriteDisabledLine, type ReportBusy } from './common'
 
 type GroupKey = keyof PreviewGroups
 
@@ -33,10 +33,11 @@ interface FinishProps {
   onBack: () => void
   onChanged: () => Promise<void>
   onOpenPending: () => void
+  onBusy?: ReportBusy
 }
 
 /** Finishing the running task: the plan from SAP, a confirmation, the moves with progress and the result per serial. */
-export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, onChanged, onOpenPending }: FinishProps) {
+export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, onChanged, onOpenPending, onBusy }: FinishProps) {
   // The running task disappears from the status when the time stops; the screen keeps showing what was finished.
   const [task] = useState(initial)
   const [preview, setPreview] = useState<SoftwareloadPreview | null>(null)
@@ -46,6 +47,8 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
   const [result, setResult] = useState<SoftwareloadFinishResult | null>(null)
   const [finishError, setFinishError] = useState<{ text: string; stillRunning: boolean } | null>(null)
   const [progress, resetProgress] = useSoftwareloadProgress(user.email)
+  const inFlight = useRef(false)
+  useReportBusy(onBusy, 'finish', moving)
 
   const loadPreview = useCallback(async () => {
     setPreviewError(null)
@@ -64,6 +67,9 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
 
   const finish = async () => {
     setConfirming(false)
+    // The dialog closes with an animation, so its button can be pressed twice; the second press must not touch this run.
+    if (inFlight.current) return
+    inFlight.current = true
     setFinishError(null)
     resetProgress()
     setMoving(true)
@@ -74,6 +80,7 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
       const now = await window.electronWarehouse!.softwareload.status().catch(() => null)
       setFinishError({ text: errorMessage(error), stillRunning: now?.running?.id === task?.id })
     } finally {
+      inFlight.current = false
       setMoving(false)
       void onChanged()
     }
