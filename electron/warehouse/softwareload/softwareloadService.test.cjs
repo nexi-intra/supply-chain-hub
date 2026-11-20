@@ -1,5 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
+const crypto = require('node:crypto')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
@@ -71,11 +72,11 @@ function fakeSap(stock, { writeEnabled = true } = {}) {
 
 const transfers = sap => sap.calls.filter(([kind]) => kind === 'transfer').map(([, call]) => [call.to, call.serials])
 const doc = n => `49${String(n).padStart(8, '0')}`
-/** Every line of the search index, in the order of its files and lines. */
+/** Every line of the search index, by serial and then in the order they were written. */
 async function allIndexLines(ctx) {
   const keys = (await ctx.index.keysAsync()).filter(key => key.startsWith('serier-')).sort()
   const files = await Promise.all(keys.map(key => ctx.index.getAsync(key)))
-  return files.flatMap(file => file?.lines || [])
+  return files.flatMap(file => file?.lines || []).sort((a, b) => a.serial.localeCompare(b.serial))
 }
 /** A promise the test releases by hand, to hold a SAP call open. */
 function gate() {
@@ -109,6 +110,16 @@ function setup({ timeclockRunning = null, sap = { writeEnabled: false }, matdocs
     }),
   })
   const journalDir = path.join(root, 'journal')
+  // The shared search index records the files a search reads; a key in `unreadableIndex` fails like a broken file.
+  const indexReads = []
+  const unreadableIndex = new Set()
+  const sharedIndex = new Proxy(storeAt(path.join('_lagerstyring', 'softwareload')), {
+    get: (target, name) => (name !== 'getAsync' ? target[name] : (key, options) => {
+      indexReads.push(key)
+      if (unreadableIndex.has(key)) return Promise.reject(new Error('Filen kan ikke læses'))
+      return target.getAsync(key, options)
+    }),
+  })
   // 18 November 2026, 07:00 local time.
   const clock = { now: new Date(2026, 10, 18, 7, 0, 0).getTime() }
   const stops = []
@@ -127,7 +138,7 @@ function setup({ timeclockRunning = null, sap = { writeEnabled: false }, matdocs
   let ids = 0
   const service = () => createSoftwareloadService({
     storeFor: team => faulty(storeAt(path.join(team, 'lagerstyring', 'softwareload'))),
-    indexStore: storeAt(path.join('_lagerstyring', 'softwareload')),
+    indexStore: sharedIndex,
     sap,
     timeclock,
     now: () => clock.now,
@@ -147,7 +158,7 @@ function setup({ timeclockRunning = null, sap = { writeEnabled: false }, matdocs
     const keys = (await store.keysAsync()).filter(key => key.startsWith('opgaver-') && key.endsWith(month))
     return Object.assign({}, ...await Promise.all(keys.map(async key => (await store.getAsync(key)).tasks)))
   }
-  return { root, clock, timeclock, stops, storeFor, index, finished, service, faults, journal, tick: ms => { clock.now += ms } }
+  return { root, clock, timeclock, stops, storeFor, index, indexReads, unreadableIndex, finished, service, faults, journal, tick: ms => { clock.now += ms } }
 }
 
 test('start saves type, KIF, target and version, and remembers the version', async () => {
@@ -375,7 +386,7 @@ test('finish in KIF moves via D005 and records every document per serial', async
   assert.deepEqual([status.running, status.pending], [null, []])
   const task = (await ctx.finished('2026-11')).t1
   assert.deepEqual([task.state, task.email, task.endedAt, task.workedMs, task.results.A.steps.length], ['faerdig', 'anna@example.test', endedAt, 30 * MIN, 2])
-  const { lines } = await ctx.index.getAsync('serier-2026-11')
+  const lines = await allIndexLines(ctx)
   assert.deepEqual(lines.map(line => [line.serial, line.kind, line.team]), [['A', 'load', 'TCD'], ['B', 'load', 'TCD']])
   assert.deepEqual(lines[0], {
     serial: 'A', team: 'TCD', kind: 'load', taskId: 't1', email: 'anna@example.test', name: 'Anna', at: endedAt,
@@ -396,7 +407,7 @@ test('a failed new terminal ends in blocked stock with its note in the index', a
   assert.deepEqual(result.results.A.steps.at(-1), { bwart: '344', doc: doc(2), by: 'anna@example.test', at: ctx.clock.now })
   assert.deepEqual(result.counts, { 'to-blocked': 1, skipped: 1 })
   assert.ok((await ctx.finished('2026-11')).t1, 'the task is kept in the month it started')
-  const { lines } = await ctx.index.getAsync('serier-2026-12')
+  const lines = await allIndexLines(ctx)
   assert.deepEqual(
     lines.map(line => [line.serial, line.outcome, line.from, line.to, line.docs, line.note]),
     [['A', 'to-blocked', 'D006', 'D000', [doc(1), doc(2)], 'Skærm død'], ['B', 'skipped', 'D006', null, [], undefined]],
@@ -419,7 +430,7 @@ test('one serial SAP refuses is isolated and the rest still move', async () => {
   assert.deepEqual(['A', 'B', 'D'].map(serial => result.results[serial].outcome), ['to-target', 'to-target', 'to-target'])
   assert.deepEqual(result.results.D.steps.map(step => step.doc), [doc(3), doc(4)])
   assert.deepEqual(result.counts, { 'to-target': 3, 'failed-sap': 1 })
-  const { lines } = await ctx.index.getAsync('serier-2026-11')
+  const lines = await allIndexLines(ctx)
   assert.deepEqual(lines.find(line => line.serial === 'C'), {
     serial: 'C', team: 'TCD', kind: 'load', taskId: 't1', email: 'anna@example.test', name: 'Anna', at: ctx.clock.now,
     type: 'sw+key', version: 'v2.1.3', kif: true, from: 'D001', to: null, docs: [], outcome: 'failed-sap',
@@ -511,7 +522,7 @@ test('a KIF move whose record M: would not take keeps it on this PC and saves an
   assert.deepEqual(ctx.journal(), [])
   const { results } = (await ctx.storeFor('TCD').getAsync('kif-2026-11')).moves.t1
   assert.deepEqual(results.A.steps, [{ from: 'D001', to: 'D005', doc: doc(1), by: 'anna@example.test', at }])
-  assert.deepEqual((await svc.search(TRINE, { serial: 'A' })).map(line => [line.kind, line.to, line.docs]), [['kif', 'D005', [doc(1)]]])
+  assert.deepEqual((await svc.search(TRINE, { serial: 'A' })).lines.map(line => [line.kind, line.to, line.docs]), [['kif', 'D005', [doc(1)]]])
 })
 
 test('SAP refusing a whole group for one shared reason stops after a few calls and leaves the task pending', async () => {
@@ -575,7 +586,7 @@ test('SAP closing mid-finish leaves the task pending and continueFinish never mo
   assert.deepEqual([result.results.A.from, result.results.A.outcome, result.state], ['D000', 'to-target', 'faerdig'])
   assert.deepEqual((await svc.status(ANNA)).pending, [])
   assert.equal(await ctx.storeFor('TCD').getAsync('venter-t1', { skipCache: true }), undefined)
-  const { lines } = await ctx.index.getAsync('serier-2026-11')
+  const lines = await allIndexLines(ctx)
   assert.deepEqual(lines.map(line => [line.serial, line.from, line.to, line.docs]), [['A', 'D000', 'D006', [doc(1), doc(2)]], ['B', 'D000', 'D006', [doc(1), doc(2)]]])
 })
 
@@ -639,7 +650,7 @@ test('abandon marks the unmoved terminals and keeps who and why', async () => {
   assert.deepEqual(task.abandoned, { by: 'mona@example.test', reason: 'SAP nede hele dagen', at: ctx.clock.now })
   assert.equal(task.state, 'faerdig')
   assert.deepEqual((await svc.status(MONA)).pending, [])
-  const { lines } = await ctx.index.getAsync('serier-2026-11')
+  const lines = await allIndexLines(ctx)
   assert.deepEqual(lines.find(line => line.serial === 'C'), {
     serial: 'C', team: 'TCD', kind: 'load', taskId: 't1', email: 'anna@example.test', name: 'Anna', at: task.endedAt,
     type: 'sw+key', version: 'v2.1.3', kif: false, from: 'D001', to: 'D000', docs: [doc(2)], outcome: 'abandoned', note: 'Knap i stykker',
@@ -976,10 +987,10 @@ test('kif move by material document moves to D005 and is found by search from th
     t1: { id: 't1', team: 'TCD', email: 'bo@example.test', name: 'Bo', at, document: '4900229137 2026 01', results },
   })
 
-  assert.deepEqual(await svc.search(TRINE, { serial: ' a ' }), [
+  assert.deepEqual(await svc.search(TRINE, { serial: ' a ' }), { lines: [
     { serial: 'A', team: 'TCD', kind: 'kif', email: 'bo@example.test', name: 'Bo', at, from: 'D000', to: 'D005', docs: [doc(1)], outcome: 'to-target' },
-  ])
-  assert.deepEqual((await svc.search(TRINE, { serial: 'N' })).map(line => [line.kind, line.outcome, line.to, line.docs]), [['kif', 'not-found', null, []]])
+  ], unreadable: 0 })
+  assert.deepEqual((await svc.search(TRINE, { serial: 'N' })).lines.map(line => [line.kind, line.outcome, line.to, line.docs]), [['kif', 'not-found', null, []]])
 })
 
 test('kif move skips terminals already on D005', async () => {
@@ -993,7 +1004,7 @@ test('kif move skips terminals already on D005', async () => {
   assert.deepEqual(moved.results.A, { material: 'M-0', from: 'D005', outcome: 'skipped', steps: [] })
   assert.deepEqual(moved.counts, { skipped: 1, 'blocked-stock': 1 })
   assert.equal('document' in (await ctx.storeFor('TCD').getAsync('kif-2026-11')).moves[moved.id], false)
-  const { lines } = await ctx.index.getAsync('serier-2026-11')
+  const lines = await allIndexLines(ctx)
   assert.deepEqual(
     lines.map(line => [line.serial, line.kind, line.outcome, line.from, line.to, line.docs]),
     [['A', 'kif', 'skipped', 'D005', null, []], ['B', 'kif', 'blocked-stock', 'D000', null, []]],
@@ -1064,18 +1075,18 @@ test('a kif move interrupted by SAP keeps its posted moves searchable', async ()
     B: { material: 'M-R', from: 'D002', outcome: 'interrupted', steps: [], uncertain: { from: 'D002', to: 'D005', by: 'anna@example.test', at } },
     N: { material: null, from: null, outcome: 'not-found', steps: [] },
   })
-  assert.deepEqual(await svc.search(TRINE, { serial: 'A' }), [
+  assert.deepEqual((await svc.search(TRINE, { serial: 'A' })).lines, [
     { serial: 'A', team: 'TCD', kind: 'kif', email: 'anna@example.test', name: 'Anna', at, from: 'D001', to: 'D005', docs: [doc(1)], outcome: 'to-target' },
   ])
-  assert.deepEqual((await ctx.index.getAsync('serier-2026-11')).lines.map(line => line.serial), ['A'], 'only what SAP posted is indexed')
+  assert.deepEqual((await allIndexLines(ctx)).map(line => line.serial), ['A'], 'only what SAP posted is indexed')
 })
 
-test('search returns every event for a serial, newest first, across months', async () => {
+test('search returns every event for a serial, newest first, across months and years', async () => {
   const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' }, B: { material: 'M-R', sloc: 'D000' } })
   const ctx = setup({ sap })
   const svc = ctx.service()
-  ctx.clock.now = new Date(2026, 9, 30, 9, 0).getTime()
-  const october = ctx.clock.now
+  ctx.clock.now = new Date(2025, 11, 30, 9, 0).getTime()
+  const lastYear = ctx.clock.now
   await svc.kifMove(TRINE, { serials: ['A', 'B'] })
   ctx.clock.now = new Date(2026, 10, 18, 7, 0).getTime()
   await svc.start(ANNA, TASK)
@@ -1089,13 +1100,26 @@ test('search returns every event for a serial, newest first, across months', asy
 
   const found = await svc.search(TRINE, { serial: 'a' })
   assert.deepEqual(
-    found.map(line => [line.kind, line.team, line.name, line.at, line.from, line.to]),
-    [['kif', 'TCD', 'Bo', later, 'D006', 'D005'], ['load', 'TCD', 'Anna', finished, 'D005', 'D006'], ['kif', 'TRR', 'Trine', october, 'D000', 'D005']],
+    found.lines.map(line => [line.kind, line.team, line.name, line.at, line.from, line.to]),
+    [['kif', 'TCD', 'Bo', later, 'D006', 'D005'], ['load', 'TCD', 'Anna', finished, 'D005', 'D006'], ['kif', 'TRR', 'Trine', lastYear, 'D000', 'D005']],
   )
-  assert.equal(found[1].taskId, 't2')
-  assert.deepEqual((await svc.search(ANNA, { serial: 'B' })).map(line => [line.team, line.at]), [['TRR', october]])
-  assert.deepEqual(await svc.search(ANNA, { serial: '  ' }), [])
-  assert.deepEqual(await svc.search(ANNA, { serial: 'NOPE1' }), [])
+  assert.equal(found.lines[1].taskId, 't2')
+  assert.equal(found.unreadable, 0)
+  assert.deepEqual((await svc.search(ANNA, { serial: 'B' })).lines.map(line => [line.team, line.at]), [['TRR', lastYear]])
+  assert.deepEqual(await svc.search(ANNA, { serial: '  ' }), { lines: [], unreadable: 0 })
+  assert.deepEqual(await svc.search(ANNA, { serial: 'NOPE1' }), { lines: [], unreadable: 0 })
+
+  // One file per year and per the first two hex characters of the serial's sha256; a search reads only its own.
+  const shard = serial => crypto.createHash('sha256').update(serial).digest('hex').slice(0, 2)
+  const keys = (await ctx.index.keysAsync()).filter(key => key.startsWith('serier-')).sort()
+  assert.deepEqual(keys, [...new Set([`serier-2025-${shard('A')}`, `serier-2025-${shard('B')}`, `serier-2026-${shard('A')}`])].sort())
+  ctx.indexReads.length = 0
+  await svc.search(TRINE, { serial: 'A' })
+  assert.deepEqual(ctx.indexReads.sort(), [`serier-2025-${shard('A')}`, `serier-2026-${shard('A')}`])
+
+  ctx.unreadableIndex.add(`serier-2025-${shard('A')}`)
+  const partly = await svc.search(TRINE, { serial: 'A' })
+  assert.deepEqual([partly.lines.map(line => line.at), partly.unreadable], [[later, finished], 1], 'an unreadable file is reported, the rest is shown')
 })
 
 test('tasks: an employee gets own tasks, a manager all in the period', async () => {

@@ -1382,8 +1382,8 @@ export interface SoftwareloadBridge {
   /** The serials of `document` (a material document) when given, else `serials`. */
   kifPreview(request: { serials?: string[]; document?: string }): Promise<SoftwareloadKifPreview>
   kifMove(request: { serials: string[]; document?: string }): Promise<SoftwareloadKifMoveResult>
-  /** Every event for the serial in TCD and TRR, newest first. */
-  search(request: { serial: string }): Promise<SoftwareloadIndexLine[]>
+  /** Every event for the serial in TCD and TRR, newest first; `unreadable` counts index files that could not be read. */
+  search(request: { serial: string }): Promise<{ lines: SoftwareloadIndexLine[]; unreadable: number }>
   /** Finished tasks started in the period (`YYYY-MM-DD`): the own, or the hub's for a manager. */
   tasks(request: { from: string; to: string }): Promise<SoftwareloadTask[]>
   onProgress(listener: (progress: SoftwareloadProgress) => void): () => void

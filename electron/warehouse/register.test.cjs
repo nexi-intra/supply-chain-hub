@@ -203,7 +203,7 @@ test('softwareload channels are registered and starting Stempelkort pauses a run
   assert.ok(fs.readdirSync(path.join(root, 'TCD', 'lagerstyring', 'softwareload')).length > 0)
   // Only QS4 may move terminals; the window gets the code and the Danish detail.
   await assert.rejects(call('anna', 'softwareload:finish'), /^Error: SOFTWARELOAD_WRITE_DISABLED: /)
-  assert.deepEqual(await call('anna', 'softwareload:search', { serial: 'NCC1' }), [])
+  assert.deepEqual(await call('anna', 'softwareload:search', { serial: 'NCC1' }), { lines: [], unreadable: 0 })
   assert.deepEqual(await call('anna', 'softwareload:versions'), ['4.2.1'])
   await assert.rejects(call('pim', 'softwareload:status'), /WAREHOUSE_TEAM_NOT_ALLOWED/)
 })

@@ -18,6 +18,7 @@ export function SoftwareloadSearch() {
   const [serial, setSerial] = useState('')
   const [searched, setSearched] = useState<string | null>(null)
   const [lines, setLines] = useState<SoftwareloadIndexLine[] | null>(null)
+  const [unreadable, setUnreadable] = useState(0)
   const [loading, setLoading] = useState(false)
   const [failed, setFailed] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -32,7 +33,9 @@ export function SoftwareloadSearch() {
     setLoading(true)
     setFailed(null)
     try {
-      setLines(await window.electronWarehouse!.softwareload.search({ serial: value }))
+      const found = await window.electronWarehouse!.softwareload.search({ serial: value })
+      setLines(found.lines)
+      setUnreadable(found.unreadable)
       setSearched(value)
     } catch (error) {
       setFailed(errorMessage(error))
@@ -55,6 +58,7 @@ export function SoftwareloadSearch() {
       </Card>
 
       {failed && <ErrorLine text={failed} />}
+      {lines && searched && unreadable > 0 && <ErrorLine text={t('Nogle søgedata kunne ikke læses, så der kan mangle hændelser. Prøv igen senere.', 'Some search data could not be read, so events may be missing. Try again later.')} />}
       {lines && searched && (
         lines.length === 0 ? (
           <Card className="items-center border-dashed px-6 py-12 text-center text-sm text-muted-foreground">{t(`Ingen hændelser for ${searched}.`, `No events for ${searched}.`)}</Card>

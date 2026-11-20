@@ -151,7 +151,7 @@ Detaljerede skærm-id'er står i sessionens noter og skal over i scriptene.
   - type, KIF, mål, softwareversion
   - start, pauser og slut
   - serienumre med materiale, fra-location, status (flyttet, fejlet, ikke fundet, blocked, sprunget over), note og materialedokumenter
-- **Søgeindeks på tværs af teams (Jacobs beslutning: TRR og TCD søger i hinandens data):** `<platform>\_lagerstyring\softwareload\serier-<yyyy-mm>` med en linje pr. serienummer pr. hændelse og teamet på linjen. Det ligger samme sted som det fælles materialekatalog `materialtekster`. Opgaverne bliver i hvert sit team. Indekset rummer kun det, søgningen viser (hvem, hvornår, type, software, KIF, fra og til, materialedokumenter, fejlet og note). Søgningen behøver derfor ikke åbne det andet teams filer.
+- **Søgeindeks på tværs af teams (Jacobs beslutning: TRR og TCD søger i hinandens data):** `<platform>\_lagerstyring\softwareload\serier-<yyyy>-<hh>` med en linje pr. serienummer pr. hændelse og teamet på linjen. `yyyy` er hændelsens år, og `hh` er de to første hex-tegn af serienummerets sha256, så en søgning kun læser én fil pr. år. Filer der ikke kan læses, nævnes i svaret ("Nogle søgedata kunne ikke læses"). Det ligger samme sted som det fælles materialekatalog `materialtekster`. Opgaverne bliver i hvert sit team. Indekset rummer kun det, søgningen viser (hvem, hvornår, type, software, KIF, fra og til, materialedokumenter, fejlet og note). Søgningen behøver derfor ikke åbne det andet teams filer.
 - **KIF-indflytninger:** `kif-<yyyy-mm>`.
 - **Softwareversioner til forslag:** `versioner` (liste over brugte versioner).
 

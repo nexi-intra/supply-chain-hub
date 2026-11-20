@@ -55,7 +55,12 @@ const monthOf = ms => { const date = new Date(ms); return `${date.getFullYear()}
 const dayOf = ms => `${monthOf(ms)}-${pad(new Date(ms).getDate())}`
 const pendingKey = id => `${PENDING_PREFIX}${id}`
 const finishedKey = task => `${FINISHED_PREFIX}${writerOf(task.email)}-${monthOf(task.startedAt)}`
-const indexKey = at => `${INDEX_PREFIX}${monthOf(at)}`
+/**
+ * The search index is split by year and serial: `serier-<yyyy>-<hh>`, where hh is the first two hex characters of
+ * the serial's sha256 and yyyy the (local) year of the event. A search reads one file per year.
+ */
+const shardOf = serial => crypto.createHash('sha256').update(String(serial)).digest('hex').slice(0, 2)
+const indexKey = line => `${INDEX_PREFIX}${new Date(line.at).getFullYear()}-${shardOf(line.serial)}`
 const kifKey = at => `kif-${monthOf(at)}`
 const serialsOf = list => [...new Set((Array.isArray(list) ? list : []).map(normalizeSerial).filter(Boolean))]
 const chunks = (list, size) => Array.from({ length: Math.ceil(list.length / size) }, (_, index) => list.slice(index * size, (index + 1) * size))
@@ -473,9 +478,16 @@ function createSoftwareloadService({
     return () => clearInterval(timer)
   }
 
-  /** Adds lines to the search index of the month of `at`; `replaces` drops the lines of an earlier run of the same event. */
-  function addToIndex(at, lines, replaces = () => false) {
-    return indexStore.mutateAsync(indexKey(at), index => ({ ...index, lines: [...(index?.lines || []).filter(line => !replaces(line)), ...lines] }))
+  /**
+   * Adds search lines, each to the file of its year and serial; `replaces` drops the lines of an earlier run of the
+   * same event from those files.
+   */
+  async function addToIndex(lines, replaces = () => false) {
+    const byKey = new Map()
+    for (const line of lines) byKey.set(indexKey(line), [...(byKey.get(indexKey(line)) || []), line])
+    for (const [key, added] of byKey) {
+      await indexStore.mutateAsync(key, index => ({ ...index, lines: [...(index?.lines || []).filter(line => !replaces(line)), ...added] }))
+    }
   }
 
   /** Runs a write to M: again with a growing pause while the drive fails; the service's own refusals go straight through. */
@@ -534,7 +546,7 @@ function createSoftwareloadService({
         const move = entry.final ? entry.move : { ...entry.move, results: interruptedResults(entry.move.results) }
         await writeKif(move)
         const lines = kifLines(move)
-        await addToIndex(move.at, entry.final ? lines : lines.filter(line => line.docs.length), kifLinesOf(move))
+        await addToIndex(entry.final ? lines : lines.filter(line => line.docs.length), kifLinesOf(move))
         await journal.remove(name)
       }
     }
@@ -548,7 +560,7 @@ function createSoftwareloadService({
     const current = await readPending(user, taskId)
     const { claim, ...task } = { ...change(current), state: 'faerdig' }
     await storeFor(user.team).mutateAsync(finishedKey(task), month => ({ ...month, tasks: { ...month?.tasks, [task.id]: task } }))
-    await addToIndex(task.endedAt, indexLines(task), line => line.kind === 'load' && line.taskId === task.id)
+    await addToIndex(indexLines(task), line => line.kind === 'load' && line.taskId === task.id)
     await storeFor(user.team).deleteAsync(pendingKey(taskId))
     return { taskId: task.id, results: task.results, counts: countOutcomes(task.results), state: task.state }
   }
@@ -839,7 +851,7 @@ function createSoftwareloadService({
       }
       await save({ final: !interrupted })
       const lines = kifLines(move)
-      await addToIndex(at, interrupted ? lines.filter(line => line.docs.length) : lines, kifLinesOf(move))
+      await addToIndex(interrupted ? lines.filter(line => line.docs.length) : lines, kifLinesOf(move))
       await journal.remove(journalName)
     }
     try {
@@ -872,13 +884,20 @@ function createSoftwareloadService({
     return { id: move.id, results, counts: countOutcomes(results) }
   }
 
-  /** Every event for a serial in either team, newest first. Anyone in TRR or TCD may search. */
+  /**
+   * Every event for a serial in either team, newest first; anyone in TRR or TCD may search. Only the serial's own
+   * files are read (one per year), and `unreadable` counts those that could not be read.
+   */
   async function search(user, { serial } = {}) {
     const wanted = normalizeSerial(serial)
-    if (!wanted) return []
-    const keys = (await indexStore.keysAsync()).filter(key => key.startsWith(INDEX_PREFIX))
-    const files = await Promise.all(keys.map(key => indexStore.getAsync(key).catch(() => null)))
-    return files.flatMap(file => (file?.lines || []).filter(line => line.serial === wanted)).sort((a, b) => b.at - a.at)
+    if (!wanted) return { lines: [], unreadable: 0 }
+    const own = new RegExp(`^${INDEX_PREFIX}\\d{4}-${shardOf(wanted)}$`)
+    const keys = (await indexStore.keysAsync()).filter(key => own.test(key))
+    const files = await Promise.all(keys.map(key => indexStore.getAsync(key).then(file => ({ file }), () => ({ unreadable: true }))))
+    return {
+      lines: files.flatMap(({ file }) => (file?.lines || []).filter(line => line.serial === wanted)).sort((a, b) => b.at - a.at),
+      unreadable: files.filter(item => item.unreadable).length,
+    }
   }
 
   /** Finished tasks started (local day) in the period: the person's own, or the whole team's for a manager. */
