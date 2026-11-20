@@ -20,6 +20,8 @@ const { createCountService } = require('./countService.cjs')
 const { createRoles } = require('./roles.cjs')
 const { createSapCheckService } = require('./sapCheckService.cjs')
 const { createTimeclockService } = require('./timeclockService.cjs')
+const { createSoftwareloadService } = require('./softwareload/softwareloadService.cjs')
+const { createSoftwareloadSap } = require('./softwareload/softwareloadSap.cjs')
 const { createOutlookDrafter, createFakeDrafter } = require('./outlookDraft.cjs')
 const { createLocalCache } = require('./localCache.cjs')
 const { findNewestPlacementSheet, readPlacementSheet } = require('./core/placements.cjs')
@@ -197,6 +199,21 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   const layouts = createLayoutService({ repo: locationRepo, locations })
   // Stempelkort: one store per hub in <team>/lagerstyring/stempelkort; times are only read back by managers.
   const timeclock = createTimeclockService({ storeFor: team => openStore(path.join(dataDirOf(team), 'stempelkort')) })
+  // Softwareload: own tasks in <team>/lagerstyring/softwareload; the search index is shared by TCD and TRR. The
+  // platform root may not be known yet when this runs, so the shared store is opened on every call.
+  const softwareloadIndex = () => openStore(path.join(platformRoot(), SHARED_FOLDER, 'softwareload'))
+  const softwareload = createSoftwareloadService({
+    storeFor: team => openStore(path.join(dataDirOf(team), 'softwareload')),
+    indexStore: {
+      getAsync: (...args) => softwareloadIndex().getAsync(...args),
+      mutateAsync: (...args) => softwareloadIndex().mutateAsync(...args),
+      keysAsync: (...args) => softwareloadIndex().keysAsync(...args),
+      deleteAsync: (...args) => softwareloadIndex().deleteAsync(...args),
+    },
+    sap: createSoftwareloadSap({ bridge: sap, runScript, clipboard, system: config.sapSystem, expected: sapExpected }),
+    timeclock,
+    matdocs: args => learningFetcher.fetchMatdoc(args),
+  })
   const fakeOutlookDir = !isPackaged && env.TCD_HUB_OUTLOOK_FAKE_DIR ? path.resolve(env.TCD_HUB_OUTLOOK_FAKE_DIR) : null
   const sapChecks = createSapCheckService({
     sharedStore,
@@ -229,7 +246,7 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   const channels = []
   // SAP channels wait for SAP (and the user's F8) by design; everything else should answer within a few seconds.
   const SLOW_CALL_MS = 2000
-  const waitsForSap = channel => /^(sap|pidocs|sap-check):|^counts:(preview|matdoc-lookup|refetch-preview|refetch-apply|doc-fetch)$|^locations:(preview-import|lookup-document)$/.test(channel)
+  const waitsForSap = channel => /^(sap|pidocs|sap-check):|^counts:(preview|matdoc-lookup|refetch-preview|refetch-apply|doc-fetch)$|^locations:(preview-import|lookup-document)$|^softwareload:(preview|finish|continue|kif-preview|kif-move)$/.test(channel)
   const handle = (channel, fn) => {
     channels.push(channel)
     ipcMain.handle(`warehouse:${channel}`, async (event, payload) => {
@@ -352,7 +369,12 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
 
   // Stempelkort: own clock for everyone; registrations, corrections and statistics for managers only.
   handle('timeclock:status', user => timeclock.status(user))
-  handle('timeclock:start', (user, p) => timeclock.start(user, { taskId: p.taskId, taskName: p.taskName, taskColor: p.taskColor, switchTask: p.switchTask === true }))
+  // Stempelkort and a softwareload task never count the same time: starting the clock pauses the running task.
+  handle('timeclock:start', async (user, p) => {
+    const started = await timeclock.start(user, { taskId: p.taskId, taskName: p.taskName, taskColor: p.taskColor, switchTask: p.switchTask === true })
+    await softwareload.pauseIfRunning(user)
+    return started
+  })
   handle('timeclock:pause', user => timeclock.pause(user))
   handle('timeclock:resume', user => timeclock.resume(user))
   handle('timeclock:stop', (user, p) => timeclock.stop(user, { endAt: typeof p.endAt === 'number' ? p.endAt : undefined }))
@@ -360,6 +382,27 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   handle('timeclock:entries', (user, p) => timeclock.entries(user, { from: p.from, to: p.to }))
   handle('timeclock:update-entry', (user, p) => timeclock.updateEntry(user, { email: p.email, id: p.id, startedAt: p.startedAt, endedAt: p.endedAt, ...(p.taskId !== undefined ? { taskId: p.taskId, taskName: p.taskName, taskColor: p.taskColor } : {}) }))
   handle('timeclock:delete-entry', (user, p) => timeclock.deleteEntry(user, { email: p.email, id: p.id }))
+
+  // Softwareload: the own running task, then the moves in SAP. Every window hears the progress and shows only its own.
+  const softwareloadProgress = user => progress => emit('softwareload-progress', { email: user.email, ...progress })
+  handle('softwareload:status', user => softwareload.status(user))
+  handle('softwareload:start', (user, p) => softwareload.start(user, { type: p.type, kif: p.kif === true, target: p.target, version: p.version }))
+  handle('softwareload:scan', (user, p) => softwareload.scan(user, { serial: p.serial }))
+  handle('softwareload:unscan', (user, p) => softwareload.unscan(user, { serial: p.serial }))
+  handle('softwareload:mark-failed', (user, p) => softwareload.markFailed(user, { serial: p.serial, note: p.note }))
+  handle('softwareload:unmark-failed', (user, p) => softwareload.unmarkFailed(user, { serial: p.serial }))
+  handle('softwareload:pause', user => softwareload.pause(user))
+  handle('softwareload:resume', user => softwareload.resume(user))
+  handle('softwareload:cancel', user => softwareload.cancel(user))
+  handle('softwareload:versions', user => softwareload.versions(user))
+  handle('softwareload:preview', user => softwareload.preview(user))
+  handle('softwareload:finish', user => softwareload.finish(user, { onProgress: softwareloadProgress(user) }))
+  handle('softwareload:continue', (user, p) => softwareload.continueFinish(user, { taskId: p.taskId, onProgress: softwareloadProgress(user) }))
+  handle('softwareload:abandon', (user, p) => softwareload.abandon(user, { taskId: p.taskId, reason: p.reason }))
+  handle('softwareload:kif-preview', (user, p) => softwareload.kifPreview(user, { serials: p.serials, document: p.document }))
+  handle('softwareload:kif-move', (user, p) => softwareload.kifMove(user, { serials: p.serials, document: p.document, onProgress: softwareloadProgress(user) }))
+  handle('softwareload:search', (user, p) => softwareload.search(user, { serial: p.serial }))
+  handle('softwareload:tasks', (user, p) => softwareload.tasks(user, { from: p.from, to: p.to }))
 
   // Placeringer: reads, then the changes; every change tells the open windows of that hub.
   const LOCATION_READS = { overview: 'overview', 'lookup-document': 'lookupDocument', suggest: 'suggest', search: 'search', 'material-card': 'materialCard', 'location-card': 'locationCard', 'pallet-card': 'palletCard', list: 'list', stamp: 'stamp', log: 'log', 'rack-card': 'rackCard', 'map-contents': 'mapContents' }

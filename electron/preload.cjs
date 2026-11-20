@@ -168,6 +168,28 @@ contextBridge.exposeInMainWorld('electronWarehouse', {
     updateEntry: request => warehouse('timeclock:update-entry', request),
     deleteEntry: request => warehouse('timeclock:delete-entry', request),
   },
+  // Softwareload: the own timed task of loading terminals, its moves in SAP, "Flyt ind i KIF" and the serial search.
+  softwareload: {
+    status: () => warehouse('softwareload:status'),
+    start: request => warehouse('softwareload:start', request),
+    scan: request => warehouse('softwareload:scan', request),
+    unscan: request => warehouse('softwareload:unscan', request),
+    markFailed: request => warehouse('softwareload:mark-failed', request),
+    unmarkFailed: request => warehouse('softwareload:unmark-failed', request),
+    pause: () => warehouse('softwareload:pause'),
+    resume: () => warehouse('softwareload:resume'),
+    cancel: () => warehouse('softwareload:cancel'),
+    versions: () => warehouse('softwareload:versions'),
+    preview: () => warehouse('softwareload:preview'),
+    finish: () => warehouse('softwareload:finish'),
+    continueFinish: request => warehouse('softwareload:continue', request),
+    abandon: request => warehouse('softwareload:abandon', request),
+    kifPreview: request => warehouse('softwareload:kif-preview', request),
+    kifMove: request => warehouse('softwareload:kif-move', request),
+    search: request => warehouse('softwareload:search', request),
+    tasks: request => warehouse('softwareload:tasks', request),
+    onProgress: warehouseEvents('softwareload-progress'),
+  },
   // Placeringer: where pallets stand, pick places and FIFO, per hub.
   locations: {
     overview: request => warehouse('locations:overview', request),

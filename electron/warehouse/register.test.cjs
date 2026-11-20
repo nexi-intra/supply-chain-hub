@@ -184,6 +184,29 @@ test('shelf work goes through the local queue (applied once), and racks and dele
   assert.deepEqual(await call('mona', 'locations:set-active-many', { locations: ['E9 H1'], active: false }), { changed: 1 })
 })
 
+const SOFTWARELOAD_CHANNELS = ['status', 'start', 'scan', 'unscan', 'mark-failed', 'unmark-failed', 'pause', 'resume', 'cancel', 'versions',
+  'preview', 'finish', 'continue', 'abandon', 'kif-preview', 'kif-move', 'search', 'tasks']
+
+test('softwareload channels are registered and starting Stempelkort pauses a running softwareload task', async () => {
+  const { root, handlers, call } = setup()
+  for (const channel of SOFTWARELOAD_CHANNELS) assert.ok(handlers.has(`warehouse:softwareload:${channel}`), channel)
+  const started = await call('anna', 'softwareload:start', { type: 'sw', target: 'd006', version: '4.2.1' })
+  assert.equal(started.target, 'D006')
+  assert.deepEqual(await call('anna', 'softwareload:scan', { serial: 'ncc1' }), { serial: 'NCC1', count: 1 })
+  await assert.rejects(call('anna', 'softwareload:scan', { serial: 'NCC1' }), /^Error: SOFTWARELOAD_DUPLICATE: /)
+  const clock = await call('anna', 'timeclock:start', { taskId: 'lager', taskName: 'Lager' })
+  assert.equal(clock.taskName, 'Lager')
+  const { running } = await call('anna', 'softwareload:status')
+  assert.equal(running.paused, true)
+  assert.deepEqual(running.terminals.map(terminal => terminal.serial), ['NCC1'])
+  assert.ok(fs.readdirSync(path.join(root, 'TCD', 'lagerstyring', 'softwareload')).length > 0)
+  // Only QS4 may move terminals; the window gets the code and the Danish detail.
+  await assert.rejects(call('anna', 'softwareload:finish'), /^Error: SOFTWARELOAD_WRITE_DISABLED: /)
+  assert.deepEqual(await call('anna', 'softwareload:search', { serial: 'NCC1' }), [])
+  assert.deepEqual(await call('anna', 'softwareload:versions'), ['4.2.1'])
+  await assert.rejects(call('pim', 'softwareload:status'), /WAREHOUSE_TEAM_NOT_ALLOWED/)
+})
+
 test('the CountPoint role of a user is read once per 30 s, and again at once after a role change through this Hub', async () => {
   const realNow = Date.now
   const realReadFile = fs.promises.readFile

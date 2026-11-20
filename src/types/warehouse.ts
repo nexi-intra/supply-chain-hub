@@ -1166,6 +1166,7 @@ export interface WarehouseBridge {
   }
   locations: LocationsBridge
   timeclock: TimeclockBridge
+  softwareload: SoftwareloadBridge
 }
 
 /** A task as the clock knows it (from the shift schedule's tasks). */
@@ -1209,6 +1210,170 @@ export interface TimeclockBridge {
   entries(request: { from: string; to: string }): Promise<{ entries: TimeclockEntry[]; running: (TimeclockRunning & { email: string; name: string })[] }>
   updateEntry(request: { email: string; id: string; startedAt?: number; endedAt?: number } & Partial<TimeclockTask>): Promise<TimeclockEntry>
   deleteEntry(request: { email: string; id: string }): Promise<{ ok: true }>
+}
+
+/** What is loaded on the terminals: software and key, software only, or key only. */
+export type SoftwareloadType = 'sw+key' | 'sw' | 'key'
+
+/**
+ * Where a terminal ends up. `to-target`/`to-blocked`/`to-d002` are moves; `not-found` (not in SAP), `blocked-stock`,
+ * `already-blocked`, `skipped` (already on the target) and `manual` (a failed terminal of another kind) need no move.
+ * `failed-sap`: SAP refused it; `abandoned`: a manager gave up its move; `interrupted`: a KIF move stopped before it.
+ */
+export type SoftwareloadOutcome = 'to-target' | 'to-blocked' | 'to-d002' | 'not-found' | 'blocked-stock' | 'already-blocked' | 'skipped' | 'manual' | 'failed-sap' | 'abandoned' | 'interrupted'
+
+/** The user's own running task. `now` is the main process's clock when it answered; terminals newest first. */
+export interface SoftwareloadTaskView {
+  id: string
+  type: SoftwareloadType
+  kif: boolean
+  target: string
+  version: string
+  startedAt: number
+  paused: boolean
+  pausedMs: number
+  workedMs: number
+  now: number
+  terminals: { serial: string; at: number; failed?: { note: string } }[]
+}
+
+/** A finished task waiting for its moves in SAP; the owner sees their own, a manager the whole hub's. */
+export interface SoftwareloadPending {
+  id: string
+  name: string
+  email: string
+  endedAt: number
+  count: number
+}
+
+/** Where SAP says a serial stands now. */
+export interface SoftwareloadSapRow {
+  serial: string
+  material: string
+  plant: string
+  sloc: string
+  blocked: boolean
+  userStatus: string
+}
+
+/** One Transfer group: wave 1 runs before wave 2 (in KIF, into D005 and then out of it). */
+export interface SoftwareloadTransfer { wave: 1 | 2; from: string; to: string; serials: string[] }
+/** Serials of one material for MIGO 344 (blocked stock). */
+export interface SoftwareloadBlock { material: string; serials: string[] }
+
+/** A saved SAP document on a serial: a Transfer (`from`/`to`) or MIGO 344 (`bwart`). `by` is an email. */
+export type SoftwareloadStep = ({ from: string; to: string } | { bwart: '344' }) & { doc: string; by: string; at: number }
+
+export interface SoftwareloadResult {
+  material: string | null
+  from: string | null
+  outcome: SoftwareloadOutcome
+  steps: SoftwareloadStep[]
+  /** SAP's message when it refused the serial. */
+  message?: string
+}
+
+export type SoftwareloadCounts = Partial<Record<SoftwareloadOutcome, number>>
+
+export interface SoftwareloadPreview {
+  outcomes: Record<string, SoftwareloadOutcome>
+  transfers: SoftwareloadTransfer[]
+  blocks: SoftwareloadBlock[]
+  rows: SoftwareloadSapRow[]
+}
+
+/** A task whose moves are all done or given up. */
+export interface SoftwareloadFinishResult {
+  taskId: string
+  results: Record<string, SoftwareloadResult>
+  counts: SoftwareloadCounts
+  state: 'faerdig'
+}
+
+export interface SoftwareloadKifPreview {
+  serials: string[]
+  outcomes: Record<string, SoftwareloadOutcome>
+  transfers: SoftwareloadTransfer[]
+}
+
+export interface SoftwareloadKifMoveResult {
+  id: string
+  results: Record<string, SoftwareloadResult>
+  counts: SoftwareloadCounts
+}
+
+/** One search line per serial and event: a finished task (`load`) or a move into KIF (`kif`). `to` is where it ended. */
+export type SoftwareloadIndexLine = {
+  serial: string
+  team: TeamId
+  email: string
+  name: string
+  at: number
+  from: string | null
+  to: string | null
+  docs: string[]
+  outcome: SoftwareloadOutcome
+} & (
+  | { kind: 'load'; taskId: string; type: SoftwareloadType; version: string; kif: boolean; note?: string }
+  | { kind: 'kif' }
+)
+
+/** A finished task as saved for its owner's month. */
+export interface SoftwareloadTask {
+  id: string
+  team: TeamId
+  email: string
+  name: string
+  type: SoftwareloadType
+  kif: boolean
+  target: string
+  version: string
+  startedAt: number
+  endedAt: number
+  pauses: { from: number; to: number }[]
+  pausedMs: number
+  workedMs: number
+  terminals: Record<string, { at: number; failed?: { note: string; at: number; by: Person } }>
+  results: Record<string, SoftwareloadResult>
+  state: 'faerdig'
+  /** `by` is the manager's email. */
+  abandoned?: { by: string; reason: string; at: number }
+}
+
+export type SoftwareloadProgressStep = 'lookup' | 'transfer' | 'block'
+
+/** Broadcast to every window; a window shows only its own user's (`email`). */
+export interface SoftwareloadProgress { email: string; done: number; total: number; step: SoftwareloadProgressStep }
+
+export interface SoftwareloadBridge {
+  status(): Promise<{ running: SoftwareloadTaskView | null; pending: SoftwareloadPending[]; isManager: boolean; writeEnabled: boolean }>
+  /** Stops a running Stempelkort first (`stoppedTimeclock`); fails with SOFTWARELOAD_TIMECLOCK_LONG_RUN after 10 hours. */
+  start(request: { type: SoftwareloadType; kif?: boolean; target: string; version: string }): Promise<SoftwareloadTaskView & { stoppedTimeclock?: { taskName: string; workedMs: number } }>
+  scan(request: { serial: string }): Promise<{ serial: string; count: number }>
+  unscan(request: { serial: string }): Promise<{ serial: string; count: number }>
+  markFailed(request: { serial: string; note: string }): Promise<SoftwareloadTaskView>
+  unmarkFailed(request: { serial: string }): Promise<SoftwareloadTaskView>
+  pause(): Promise<SoftwareloadTaskView>
+  resume(): Promise<SoftwareloadTaskView>
+  cancel(): Promise<{ ok: true }>
+  /** The hub's latest versions, newest first. */
+  versions(): Promise<string[]>
+  /** The plan for the running task, without moving anything. */
+  preview(): Promise<SoftwareloadPreview>
+  /** Stops the time and moves the terminals in SAP; on an error the task waits in `pending` to be continued. */
+  finish(): Promise<SoftwareloadFinishResult>
+  /** The owner or a manager. */
+  continueFinish(request: { taskId: string }): Promise<SoftwareloadFinishResult>
+  /** Managers only. */
+  abandon(request: { taskId: string; reason: string }): Promise<SoftwareloadFinishResult>
+  /** The serials of `document` (a material document) when given, else `serials`. */
+  kifPreview(request: { serials?: string[]; document?: string }): Promise<SoftwareloadKifPreview>
+  kifMove(request: { serials: string[]; document?: string }): Promise<SoftwareloadKifMoveResult>
+  /** Every event for the serial in TCD and TRR, newest first. */
+  search(request: { serial: string }): Promise<SoftwareloadIndexLine[]>
+  /** Finished tasks started in the period (`YYYY-MM-DD`): the own, or the hub's for a manager. */
+  tasks(request: { from: string; to: string }): Promise<SoftwareloadTask[]>
+  onProgress(listener: (progress: SoftwareloadProgress) => void): () => void
 }
 
 declare global {
