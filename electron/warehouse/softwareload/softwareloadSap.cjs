@@ -36,6 +36,9 @@ function uniqueSerials(serials) {
   return [...new Set((serials || []).map(normalizeSerial).filter(Boolean))]
 }
 
+/** A serial as the scripts compare it (SerialKey in the VBS): without leading zeros. */
+const serialKey = serial => String(serial).replace(/^0+(?=.)/, '')
+
 /** A failed script answer as an exception; `what` names the SAP step. */
 function scriptFailure(result, what) {
   const error = String(result?.error || 'ukendt fejl').slice(0, 300)
@@ -91,7 +94,11 @@ function createSoftwareloadSap({ bridge, runScript, clipboard, system, expected 
     if (!writeEnabled) throw sapError('SOFTWARELOAD_WRITE_DISABLED', `Softwareload må ikke flytte i SAP-systemet ${system || '(ukendt)'}`)
   }
 
-  /** Where each serial stands in SAP; serials SAP does not know are simply missing from the answer. */
+  /**
+   * Where each serial stands in SAP; serials SAP does not know are simply missing from the answer. A row for a serial
+   * that was not asked for means the clipboard changed under the script, so the answer is not used. Rows carry the
+   * serial as asked (SAP shows numeric serials without leading zeros).
+   */
   async function lookup({ team, serials }) {
     const wanted = uniqueSerials(serials)
     if (!wanted.length) return []
@@ -102,9 +109,15 @@ function createSoftwareloadSap({ bridge, runScript, clipboard, system, expected 
         const chunk = wanted.slice(start, start + LOOKUP_CHUNK)
         await fs.promises.rm(path.join(dir, 'lookup.txt'), { force: true })
         await putList(chunk)
-        const { mode, result } = await onCockpit(cockpit, mode => runScript('sl-lookup', [mode, dir, 'lookup.txt'], { timeoutMs: SCRIPT_TIMEOUT_MS }))
+        const { mode, result } = await onCockpit(cockpit, mode => runScript('sl-lookup', [mode, dir, 'lookup.txt', chunk[0]], { timeoutMs: SCRIPT_TIMEOUT_MS }))
         if (!result?.ok) throw scriptFailure(result, `Opslaget i ${COCKPIT[mode]}`)
-        if (result.rows > 0) rows.push(...parseSlLookup(await fs.promises.readFile(path.join(dir, 'lookup.txt'), 'utf8')))
+        if (!(result.rows > 0)) continue
+        const asked = new Map(chunk.map(serial => [serialKey(serial), serial]))
+        for (const row of parseSlLookup(await fs.promises.readFile(path.join(dir, 'lookup.txt'), 'utf8'))) {
+          const serial = asked.get(serialKey(row.serial))
+          if (!serial) throw sapError('SOFTWARELOAD_SAP_FAILED', 'Udklipsholderen blev ændret undervejs. Prøv igen')
+          rows.push({ ...row, serial })
+        }
       }
       return rows
     }, { useClipboard: true })

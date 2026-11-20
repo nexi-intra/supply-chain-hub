@@ -102,7 +102,7 @@ test('softwareload write scripts only run on their own systems', async () => {
   assert.deepEqual(calls[0].slice(2), [path.join('C:\\app\\sap', 'sl-transfer.vbs'), 'QS4', 'prep', 'D005', 'C:\\t', 'in.txt', 'err.txt', 'D000'])
   await run('sl-block', ['QS4', 'C:\\t', 'in.txt', 'INT4100-7883-0', '344'])
   await run('pidoc-post', ['PS4', '2026'])
-  await run('sl-lookup', ['prep', 'C:\\t', 'out.txt'])
+  await run('sl-lookup', ['prep', 'C:\\t', 'out.txt', '393031157352189282'])
   assert.deepEqual(calls.map(args => path.basename(args[2])), ['sl-transfer.vbs', 'sl-block.vbs', 'pidoc-post.vbs', 'sl-lookup.vbs'])
 })
 

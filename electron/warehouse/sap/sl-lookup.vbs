@@ -1,6 +1,7 @@
 ' CountPoint - Softwareload: where serial numbers stand, via ZMS_REP (TCD) or ZMS_PREP (TRR). Read only.
-' Usage: sl-lookup.vbs <rep|prep> <outDir> <outFile>
-' CountPoint puts the serials (one per line) on the clipboard before calling; VBScript cannot.
+' Usage: sl-lookup.vbs <rep|prep> <outDir> <outFile> <firstSerial>
+' CountPoint puts the serials (one per line) on the clipboard before calling; VBScript cannot. <firstSerial> is the
+' first of them: the upload counts only when the serial filter then starts with it (else the clipboard was replaced).
 ' Opens its OWN session, selects "Serial number", plant D301, uploads the serials into the S_SERNR multiple selection,
 ' F8, reads the result list and closes the session. The cockpit's other buttons (transfer, status ...) are never pressed.
 ' Never runs without the serial filter (the cockpit would list the whole plant).
@@ -11,7 +12,7 @@ On Error Resume Next
 
 Const PLANT = "D301"
 Const MAX_ROWS = 2000
-Dim mode, outDir, outFile, tcode, app, conn, base, s, i, before, beforeIds, fso, rows, grid, ownId
+Dim mode, outDir, outFile, firstSerial, tcode, app, conn, base, s, i, before, beforeIds, fso, rows, grid, ownId
 
 Function JsonText(value)
   On Error Resume Next
@@ -85,7 +86,20 @@ Function SystemConnection(engine)
   Err.Clear
 End Function
 
+' Serial as compared: upper case, no blanks, no leading zeros (SAP may show numeric serials without them).
+Function SerialKey(value)
+  On Error Resume Next
+  Dim t
+  SerialKey = ""
+  t = UCase(Trim(CStr(value)))
+  Do While Len(t) > 1 And Left(t, 1) = "0"
+    t = Mid(t, 2)
+  Loop
+  SerialKey = t
+End Function
+
 ' Multiple selection on the serial number: upload from the clipboard (it is sometimes not ready on the first try).
+' The upload counts only when the filter starts with <firstSerial>; anything else is someone else's clipboard text.
 Function UploadSerials()
   On Error Resume Next
   Dim attempt, current
@@ -102,18 +116,20 @@ Function UploadSerials()
     current = ""
     current = Trim(s.findById("wnd[0]/usr/txtS_SERNR-LOW").Text)
     If Err.Number <> 0 Then Err.Clear : current = ""
-    If Len(current) > 0 Then UploadSerials = True : Exit Function
+    If Len(current) > 0 And SerialKey(current) = SerialKey(firstSerial) Then UploadSerials = True : Exit Function
     WScript.Sleep 500
   Next
 End Function
 
 rows = 0
 Set s = Nothing
-If WScript.Arguments.Count < 3 Then Err.Clear : Finish False, "arguments"
+If WScript.Arguments.Count < 4 Then Err.Clear : Finish False, "arguments"
 mode = LCase(WScript.Arguments(0))
 outDir = WScript.Arguments(1)
 outFile = WScript.Arguments(2)
+firstSerial = Trim(WScript.Arguments(3))
 Set fso = CreateObject("Scripting.FileSystemObject")
+If Len(SerialKey(firstSerial)) = 0 Then Finish False, "arguments"
 If mode = "rep" Then
   tcode = "ZMS_REP"
 ElseIf mode = "prep" Then

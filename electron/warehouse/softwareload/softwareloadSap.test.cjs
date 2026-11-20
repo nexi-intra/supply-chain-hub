@@ -41,11 +41,24 @@ test('lookup uses ZMS_REP for TCD, falls back to ZMS_PREP on no access, and rest
   assert.deepEqual(rows.map(row => `${row.serial} ${row.material} ${row.sloc} ${row.blocked}`), ['393031157352189282 INT4100-7883-0 D000 true', '393031157352189283 INT4100-7883-0 D005 false'])
   const lookups = scriptCalls('sl-lookup')
   assert.deepEqual(lookups.map(call => call.args[0]), ['rep', 'prep'])
+  assert.deepEqual(lookups.map(call => call.args[3]), ['393031157352189282', '393031157352189282'], 'the script checks the clipboard against the first serial')
   assert.ok(lookups.every(call => call.clipboard === '393031157352189282\r\n393031157352189283'), 'SAP reads the serials from the clipboard')
   assert.equal(clip.at(-1), 'the user text')
   assert.deepEqual(await sap.lookup({ team: 'TCD', serials: [] }), [])
   assert.equal(scriptCalls('sl-lookup').length, 2, 'an empty list never reaches SAP')
   assert.deepEqual(fs.readdirSync(tempRoot), [])
+})
+
+test('lookup refuses rows of serials it did not ask for (the clipboard was replaced) and keeps the asked spelling', async () => {
+  const { sap } = makeSap({
+    handle: (name, [mode, dir, outFile]) => {
+      fs.copyFileSync(path.join(FIXTURES, 'sl-lookup-prep-sample.txt'), path.join(dir, outFile))
+      return '{"ok":true,"rows":2}'
+    },
+  })
+  await assert.rejects(sap.lookup({ team: 'TRR', serials: ['393031157352189282', 'S1'] }), { code: 'SOFTWARELOAD_SAP_FAILED', message: 'Udklipsholderen blev ændret undervejs. Prøv igen' })
+  const rows = await sap.lookup({ team: 'TRR', serials: ['0393031157352189282', '393031157352189283'] })
+  assert.deepEqual(rows.map(row => row.serial), ['0393031157352189282', '393031157352189283'], 'SAP leaves out leading zeros')
 })
 
 test('lookup without access to either cockpit fails, splits big lists and still restores the clipboard', async () => {
