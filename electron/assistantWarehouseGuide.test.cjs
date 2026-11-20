@@ -158,10 +158,11 @@ test('the Softwareload guide states the facts of the tool: Stempelkort stops, -0
 
 test('continuing or giving up a task that waits for SAP reaches the finish task, and general "does not load" questions never reach Softwareload', () => {
   const WAITING = [
-    ['hvordan fortsætter jeg i SAP?', 'da', 'Afslut og flyt i SAP'], ['hvordan opgiver jeg en opgave der venter på SAP?', 'da', 'Afslut og flyt i SAP'],
+    ['hvordan fortsætter jeg en softwareload-opgave i SAP?', 'da', 'Afslut og flyt i SAP'], ['hvordan opgiver jeg en opgave der venter på SAP?', 'da', 'Afslut og flyt i SAP'],
+    ['hvad gør jeg når opgaven venter på SAP?', 'da', 'Afslut og flyt i SAP'],
     ['how do I continue a task that is waiting for SAP?', 'en', 'Finish and move in SAP'], ['how do I give up a task that is waiting for SAP?', 'en', 'Finish and move in SAP'],
     ['miten jatkan tehtävää, joka odottaa SAPia?', 'fi', 'Päätä ja siirrä SAPissa'], ['miten luovun tehtävästä, joka odottaa SAPia?', 'fi', 'Päätä ja siirrä SAPissa'],
-    ['hur fortsätter jag i SAP?', 'sv', 'Avsluta och flytta i SAP'], ['hur ger jag upp en uppgift som väntar på SAP?', 'sv', 'Avsluta och flytta i SAP'],
+    ['hur fortsätter jag en softwareload-uppgift i SAP?', 'sv', 'Avsluta och flytta i SAP'], ['hur ger jag upp en uppgift som väntar på SAP?', 'sv', 'Avsluta och flytta i SAP'],
   ]
   for (const [question, language, title] of WAITING) {
     const answer = ask({ q: question, lang: language }, { role: 'user' })
@@ -169,10 +170,19 @@ test('continuing or giving up a task that waits for SAP reaches the finish task,
     assert.match(answer.text, starts(language, title), `${language}: ${question} -> ${answer.text.slice(0, 80)}`)
   }
   const SOFTWARELOAD_TITLES = /^(?:Arbejdsværktøjer|Work Tools|Työkalut|Arbetsverktyg) - (?:Start en softwareload|Markér en terminal|Afslut og flyt|Flyt ind i KIF|Søg på et serienummer|Se softwareload|Start a softwareload|Mark a terminal|Finish and move|Move into KIF|Search a serial|See softwareload|Aloita softwareload|Merkitse pääte|Päätä ja siirrä|Siirrä KIF|Hae sarjanumerolla|Katso softwareload|Starta en softwareload|Markera en terminal|Avsluta och flytta|Flytta in i KIF|Sök på ett serienummer|Visa softwareload)/
-  const GENERAL = [['what do I do if a link does not load?', 'en'], ['hvad gør jeg hvis hubben loader ikke?', 'da'], ['sovellus ei lataudu', 'fi'], ['appen laddar inte', 'sv']]
+  const GENERAL = [
+    ['what do I do if a link does not load?', 'en'], ['hvad gør jeg hvis hubben loader ikke?', 'da'], ['sovellus ei lataudu', 'fi'], ['appen laddar inte', 'sv'],
+    // Optælling also continues in SAP: those questions belong to Optælling, not to Softwareload.
+    ['hvordan fortsætter jeg i SAP med optællingen?', 'da'], ['how do I continue in SAP with the stock count?', 'en'], ['hur fortsätter jag i SAP med inventeringen?', 'sv'],
+  ]
   for (const [question, language] of GENERAL) assert.doesNotMatch(String(ask({ q: question, lang: language }, { role: 'user' }).text), SOFTWARELOAD_TITLES, `${language}: ${question}`)
   assert.match(ask({ q: 'what do I do if a link does not load?', lang: 'en' }, { role: 'user' }).text, /^Link Library - Report a link that does not work/)
-  assert.match(ask({ q: 'what do I do if a terminal does not load?', lang: 'en' }, { role: 'user' }).text, starts('en', 'Mark a terminal as failed'))
+  const FAILED = [
+    ['what do I do if a terminal does not load?', 'en', 'Mark a terminal as failed'], ['hvad gør jeg hvis en terminal ikke loader?', 'da', 'Markér en terminal som fejlet'],
+    ['mitä teen, jos pääte ei lataudu?', 'fi', 'Merkitse pääte epäonnistuneeksi'], ['mitä teen, jos ohjelmisto ei lataudu päätteeseen?', 'fi', 'Merkitse pääte epäonnistuneeksi'],
+    ['vad gör jag om terminalen inte laddar?', 'sv', 'Markera en terminal som misslyckad'], ['vad gör jag om en terminal inte laddar?', 'sv', 'Markera en terminal som misslyckad'],
+  ]
+  for (const [question, language, title] of FAILED) assert.match(ask({ q: question, lang: language }, { role: 'user' }).text, starts(language, title), `${language}: ${question}`)
 })
 
 test('no guide text has two or more spaces in a row (answers are shown with whitespace-pre-wrap)', () => {
