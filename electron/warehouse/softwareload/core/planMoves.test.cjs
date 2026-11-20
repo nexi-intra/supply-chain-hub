@@ -71,6 +71,19 @@ test('resume: a terminal that passed D005 in this task and stands on the target 
   assert.equal(p.outcomes.A, 'to-target')
 })
 
+test('resume: a terminal that passed D005 but now stands elsewhere moves directly to its destination', () => {
+  const p = planMoves({ kif: true, target: 'D006', terminals: [{ serial: 'A', failed: false }], sapRows: [row('A', 'M-0', 'D000')], passedD005: new Set(['A']) })
+  assert.deepEqual(p.transfers, [{ wave: 2, from: 'D000', to: 'D006', serials: ['A'] }])
+  assert.equal(p.outcomes.A, 'to-target')
+})
+
+test('resume: a failed new terminal that passed D005 but now stands elsewhere moves directly to D000 and is blocked', () => {
+  const p = planMoves({ kif: true, target: 'D006', terminals: [{ serial: 'A', failed: true }], sapRows: [row('A', 'M-0', 'D006')], passedD005: new Set(['A']) })
+  assert.deepEqual(p.transfers, [{ wave: 2, from: 'D006', to: 'D000', serials: ['A'] }])
+  assert.deepEqual(p.blocks, [{ material: 'M-0', serials: ['A'] }])
+  assert.equal(p.outcomes.A, 'to-blocked')
+})
+
 test('terminals with the same wave, from and to share one transfer', () => {
   const p = planMoves({ kif: false, target: 'D006', terminals: [{ serial: 'A', failed: false }, { serial: 'B', failed: false }], sapRows: [row('A', 'M-0', 'D000'), row('B', 'N-0', 'D000')], passedD005: new Set() })
   assert.deepEqual(p.transfers, [{ wave: 1, from: 'D000', to: 'D006', serials: ['A', 'B'] }])

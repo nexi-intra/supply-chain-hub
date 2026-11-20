@@ -20,9 +20,8 @@ function planMoves({ kif, target, terminals, sapRows, passedD005 }) {
   const blocksByMaterial = new Map()
   const outcomes = {}
 
-  const addMove = (from, to, serial) => {
-    // In KIF a move to D005 is wave 1 and a move from D005 is wave 2.
-    const wave = kif && from === KIF ? 2 : 1
+  // In KIF a move to D005 is wave 1 and a move from D005 is wave 2.
+  const addMove = (from, to, serial, wave = kif && from === KIF ? 2 : 1) => {
     const key = `${wave}|${from}|${to}`
     if (!transfersByKey.has(key)) transfersByKey.set(key, { wave, from, to, serials: [] })
     transfersByKey.get(key).serials.push(serial)
@@ -47,11 +46,14 @@ function planMoves({ kif, target, terminals, sapRows, passedD005 }) {
     }
 
     if (kif) {
-      const passed = passedD005.has(serial)
-      if (row.sloc !== KIF && !passed) addMove(row.sloc, KIF, serial)
-      // Unless it already passed D005 and stands on the destination (resume), it goes
-      // D005 -> destination, also when it stood on the destination before.
-      if (destination !== KIF && (!passed || row.sloc !== destination)) addMove(KIF, destination, serial)
+      if (passedD005.has(serial) && row.sloc !== KIF) {
+        // Resume: it already passed D005 in this task and no longer stands there, so it moves directly.
+        if (row.sloc !== destination) addMove(row.sloc, destination, serial, 2)
+      } else {
+        if (row.sloc !== KIF) addMove(row.sloc, KIF, serial)
+        // D005 -> destination, also when it stood on the destination before.
+        if (destination !== KIF) addMove(KIF, destination, serial)
+      }
     } else if (row.sloc !== destination) {
       addMove(row.sloc, destination, serial)
     } else if (!failed) {
