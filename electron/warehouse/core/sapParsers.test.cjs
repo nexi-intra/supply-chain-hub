@@ -2,9 +2,31 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
-const { parseSapNumber, parseMb52, parseIq09, parseMatdoc, normalizeMatdoc, parseLongSerno, parseStockCheck, parseMi31Log, parseMi22, parseMi20, parseMm60 } = require('./sapParsers.cjs')
+const { parseSapNumber, parseMb52, parseIq09, parseMatdoc, normalizeMatdoc, parseLongSerno, parseStockCheck, parseMi31Log, parseMi22, parseMi20, parseMm60, parseSlLookup, parseSlErrors } = require('./sapParsers.cjs')
 
 const fixture = name => fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'sap', name), 'utf8')
+
+test('sl lookup rows from ZMS_PREP and ZMS_REP give the same shape and blocked flag', () => {
+  const prep = parseSlLookup(fixture('sl-lookup-prep-sample.txt'))
+  const rep = parseSlLookup(fixture('sl-lookup-rep-sample.txt'))
+  assert.deepEqual(prep[0], { serial: '393031157352189282', material: 'INT4100-7883-0', plant: '', sloc: 'D000', blocked: true, userStatus: 'ONHA' })
+  assert.deepEqual(prep[1], { serial: '393031157352189283', material: 'INT4100-7883-0', plant: '', sloc: 'D005', blocked: false, userStatus: 'ONHA TBDL' }, 'upper case for planMoves')
+  assert.deepEqual(rep[0], { serial: '393031157352189282', material: 'INT4100-7883-0', plant: 'D301', sloc: 'D000', blocked: false, userStatus: 'On Hand' })
+  assert.deepEqual([rep[1].serial, rep[1].blocked], ['NXC600007186', true], 'STOCK_TYPE 07 is blocked')
+  assert.deepEqual(Object.keys(prep[0]), Object.keys(rep[0]))
+  assert.equal(parseSlLookup('SERNR\tMATNR\tLGORT\tSTOCK_TYPE_ICON\tUSER_STAT\r\n393031157352189282\tINT4100-7883-0\tD000\t@06\\QBlocked Stock@\tONHA')[0].blocked, true, 'icon with quick info')
+  assert.deepEqual(parseSlLookup('SERNR\tMATNR\r\n'), [])
+  assert.throws(() => parseSlLookup('nothing'), { code: 'SAP_FORMAT' })
+})
+
+test('sl errors: message, material and where per line, header optional', () => {
+  const text = '\uFEFFMESSAGE\tMESSAGE_V3\tMESSAGE_V4\r\nDeficit of SL Unrestricted-use 1 EA : INT4320-7842-0 D301 D000\tINT4320-7842-0\tD301 D000\r\n\r\nSomething else\r\n'
+  assert.deepEqual(parseSlErrors(text), [
+    { message: 'Deficit of SL Unrestricted-use 1 EA : INT4320-7842-0 D301 D000', material: 'INT4320-7842-0', where: 'D301 D000' },
+    { message: 'Something else', material: '', where: '' },
+  ])
+  assert.deepEqual(parseSlErrors(''), [])
+})
 
 test('MI20 (QS4): book, counted, difference and amount per item; MI22 after posting has no "Doc. Active"', () => {
   const items = parseMi20(fixture('pidoc/mi20-list.txt'))

@@ -6,11 +6,14 @@ const path = require('node:path')
 const childProcess = require('node:child_process')
 const { computeSapState, EXPECTED } = require('./sapState.cjs')
 
-const SCRIPTS = Object.freeze({ status: 'status.vbs', export: 'export.vbs', matdoc: 'matdoc.vbs', longserno: 'longserno.vbs', stockcheck: 'stockcheck.vbs', mm60: 'mm60.vbs', 'sap-show': 'sap-show.vbs' })
+const SCRIPTS = Object.freeze({ status: 'status.vbs', export: 'export.vbs', matdoc: 'matdoc.vbs', longserno: 'longserno.vbs', stockcheck: 'stockcheck.vbs', mm60: 'mm60.vbs', 'sap-show': 'sap-show.vbs', 'sl-lookup': 'sl-lookup.vbs' })
 // Scripts that CHANGE SAP. Their first argument is the SAP system, which must be on WRITE_SYSTEMS (the scripts check it again).
-const WRITE_SCRIPTS = Object.freeze({ 'pidoc-create': 'pidoc-create.vbs', 'pidoc-print': 'pidoc-print.vbs', 'pidoc-serials': 'pidoc-serials.vbs', 'pidoc-count': 'pidoc-count.vbs', 'pidoc-post': 'pidoc-post.vbs', 'pidoc-delete': 'pidoc-delete.vbs' })
+const WRITE_SCRIPTS = Object.freeze({ 'pidoc-create': 'pidoc-create.vbs', 'pidoc-print': 'pidoc-print.vbs', 'pidoc-serials': 'pidoc-serials.vbs', 'pidoc-count': 'pidoc-count.vbs', 'pidoc-post': 'pidoc-post.vbs', 'pidoc-delete': 'pidoc-delete.vbs', 'sl-transfer': 'sl-transfer.vbs', 'sl-block': 'sl-block.vbs' })
 // PS4 enabled 2026-10-20 after the full flow was verified in QS4.
 const WRITE_SYSTEMS = Object.freeze(['PS4', 'QS4'])
+// Write scripts with their own, narrower list of systems (instead of WRITE_SYSTEMS). Softwareload: QS4 only until verified.
+const SCRIPT_WRITE_SYSTEMS = Object.freeze({ 'sl-transfer': Object.freeze(['QS4']), 'sl-block': Object.freeze(['QS4']) })
+const SOFTWARELOAD_WRITE_SYSTEMS = SCRIPT_WRITE_SYSTEMS['sl-transfer']
 const SAFE_ARGUMENT = /^[A-Za-z0-9 _.:\\/-]{0,260}$/
 
 function codeError(code) {
@@ -32,7 +35,7 @@ function createCscriptRunner({ scriptDir, cscriptPath = defaultCscriptPath(), ex
     const write = Object.hasOwn(WRITE_SCRIPTS, name)
     if (!write && !Object.hasOwn(SCRIPTS, name)) return Promise.reject(codeError('SAP_SCRIPT_NOT_ALLOWED'))
     if (!Array.isArray(args) || !args.every(arg => typeof arg === 'string' && SAFE_ARGUMENT.test(arg))) return Promise.reject(codeError('SAP_INVALID_ARGUMENT'))
-    if (write && !writeSystems.includes(args[0])) return Promise.reject(codeError('SAP_WRITE_SYSTEM_NOT_ALLOWED'))
+    if (write && !(SCRIPT_WRITE_SYSTEMS[name] || writeSystems).includes(args[0])) return Promise.reject(codeError('SAP_WRITE_SYSTEM_NOT_ALLOWED'))
     const script = path.join(scriptDir, write ? WRITE_SCRIPTS[name] : SCRIPTS[name])
     return new Promise((resolve, reject) => {
       execFile(cscriptPath, ['//NoLogo', '//E:vbscript', script, ...args], { timeout: options.timeoutMs || timeoutMs, windowsHide: true, encoding: 'utf8', maxBuffer: 1024 * 1024, env }, (error, stdout) => {
@@ -79,4 +82,4 @@ function createSapBridge({ runScript, expected = EXPECTED, now = Date.now, cache
   return { status, exclusive }
 }
 
-module.exports = { createSapBridge, createCscriptRunner, defaultCscriptPath, SCRIPTS, WRITE_SCRIPTS, WRITE_SYSTEMS }
+module.exports = { createSapBridge, createCscriptRunner, defaultCscriptPath, SCRIPTS, WRITE_SCRIPTS, WRITE_SYSTEMS, SCRIPT_WRITE_SYSTEMS, SOFTWARELOAD_WRITE_SYSTEMS }

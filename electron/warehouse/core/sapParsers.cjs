@@ -252,4 +252,40 @@ function parseMm60(text) {
   return [...seen.values()]
 }
 
-module.exports = { parseSapNumber, parseMb52, parseIq09, parseMatdoc, normalizeMatdoc, parseLongSerno, parseStockCheck, parseMi31Log, parseMi22, parseMi20, parseMm60 }
+/**
+ * Serial lookup saved by sap/sl-lookup.vbs from ZMS_PREP (LGORT, STOCK_TYPE_ICON, USER_STAT) or ZMS_REP
+ * (WERKS_LGORT "D301-D000", STOCK_TYPE, USER_STAT_TXT). Blocked stock is icon @06@ or stock type 07.
+ */
+function parseSlLookup(text) {
+  const rows = splitRows(text)
+  const header = rows[0] || []
+  const at = name => header.indexOf(name)
+  if (at('SERNR') === -1 || at('MATNR') === -1) throw formatError('Softwareload-opslaget har ikke de forventede kolonner')
+  const cell = (cells, name) => (at(name) !== -1 ? cells[at(name)] || '' : '')
+  const result = []
+  for (const cells of rows.slice(1)) {
+    const serial = cell(cells, 'SERNR').toUpperCase()
+    if (!serial) continue
+    let plant = ''
+    let sloc = cell(cells, 'LGORT')
+    if (at('WERKS_LGORT') !== -1) [plant, sloc] = cell(cells, 'WERKS_LGORT').split('-')
+    result.push({
+      serial,
+      material: cell(cells, 'MATNR').toUpperCase(),
+      plant: (plant || '').trim().toUpperCase(),
+      sloc: (sloc || '').trim().toUpperCase(),
+      blocked: /^@06[@\\]/.test(cell(cells, 'STOCK_TYPE_ICON')) || cell(cells, 'STOCK_TYPE') === '07',
+      userStatus: at('USER_STAT_TXT') !== -1 ? cell(cells, 'USER_STAT_TXT') : cell(cells, 'USER_STAT'),
+    })
+  }
+  return result
+}
+
+/** The error log of a rejected ZMS_PREP/ZMS_REP Transfer as saved by sap/sl-transfer.vbs: MESSAGE, MESSAGE_V3 (material), MESSAGE_V4 (plant and location). */
+function parseSlErrors(text) {
+  return splitRows(text)
+    .filter(cells => cells[0] && cells[0] !== 'MESSAGE')
+    .map(([message, material = '', where = '']) => ({ message, material: material.toUpperCase(), where }))
+}
+
+module.exports = { parseSapNumber, parseMb52, parseIq09, parseMatdoc, normalizeMatdoc, parseLongSerno, parseStockCheck, parseMi31Log, parseMi22, parseMi20, parseMm60, parseSlLookup, parseSlErrors }
