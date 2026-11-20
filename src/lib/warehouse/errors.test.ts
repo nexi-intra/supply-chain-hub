@@ -36,6 +36,18 @@ describe('errorMessage', () => {
     expect(errorMessage(new Error('Error: SAP_TIMEOUT'))).toMatch(/SAP/)
   })
 
+  it('in English the softwareload codes that carry the service\'s detail still show it', () => {
+    setWarehouseLanguage('en')
+    try {
+      expect(errorMessage(new Error('Error: SOFTWARELOAD_SAP_FAILED: Transfer i ZMS_PREP fejlede: unknown-result'))).toBe('The SAP step failed: Transfer i ZMS_PREP fejlede: unknown-result')
+      expect(errorMessage(new Error('Error: SOFTWARELOAD_INVALID: Vælg en lokation fra listen'))).toBe('Invalid details for the task: Vælg en lokation fra listen')
+      expect(errorMessage(new Error('Error: SOFTWARELOAD_SAVE_FAILED: SAP har lavet materialedokument 4905204921, men'))).toMatch(/4905204921/)
+      expect(errorMessage(new Error('Error: SOFTWARELOAD_SAP_FAILED'))).toBe('The SAP step failed. Try again.')
+    } finally {
+      setWarehouseLanguage('da')
+    }
+  })
+
   it('in English the Danish backend detail is never shown; every Danish code has an English text', () => {
     setWarehouseLanguage('en')
     try {

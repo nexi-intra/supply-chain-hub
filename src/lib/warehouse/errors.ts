@@ -158,13 +158,24 @@ const MESSAGES: Record<string, string> = {
   UNEXPECTED_ERROR: 'Der skete en uventet fejl. Prøv igen.',
 }
 
+// The backend's detail text is Danish; in English the code's own text is shown instead, except for the codes below,
+// whose detail is the point (SAP's own message, what was invalid, the document number).
+const EN_WITH_DETAIL: Record<string, string> = {
+  SOFTWARELOAD_SAP_FAILED: 'The SAP step failed',
+  SOFTWARELOAD_INVALID: 'Invalid details for the task',
+  SOFTWARELOAD_SAVE_FAILED: 'SAP made the move, but it could not be saved on M:',
+}
+
 export function errorMessage(error: unknown, fallback?: string): string {
   const code = errorCode(error)
-  if (currentWarehouseLanguage() === 'en') return (code && MESSAGES_EN[code]) || fallback || MESSAGES_EN.UNEXPECTED_ERROR
+  if (currentWarehouseLanguage() === 'en') {
+    const detail = errorDetail(error)
+    if (code && detail && EN_WITH_DETAIL[code]) return `${EN_WITH_DETAIL[code]}: ${detail}`
+    return (code && MESSAGES_EN[code]) || fallback || MESSAGES_EN.UNEXPECTED_ERROR
+  }
   return errorDetail(error) || (code && MESSAGES[code]) || fallback || MESSAGES.UNEXPECTED_ERROR
 }
 
-// The backend's detail text is Danish; in English the code's own text is shown instead.
 const MESSAGES_EN: Record<string, string> = {
   WAREHOUSE_TEAM_NOT_ALLOWED: 'Work Tools is only for TCD and TRR. Open the TCD or TRR hub.',
   AUTH_REQUIRED: 'Please log in again.',

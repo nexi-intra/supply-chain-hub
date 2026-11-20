@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { previewGroups, sapRunErrorMessage, targetLabel, TYPE_LABELS, type PreviewGroups } from '@/lib/softwareload'
+import { finishTitle, previewGroups, sapRunErrorMessage, targetLabel, TYPE_LABELS, type PreviewGroups } from '@/lib/softwareload'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { t } from '@/lib/warehouse/text'
 import { cn } from '@/lib/utils'
@@ -98,7 +98,7 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
   if (result) {
     return (
       <div className="space-y-4">
-        <ResultCard title={t('Opgaven er afsluttet og flyttet i SAP', 'The task is finished and moved in SAP')} counts={result.counts} results={result.results} notes={notes}>
+        <ResultCard title={finishTitle(result.results)} counts={result.counts} results={result.results} notes={notes}>
           <p className="text-sm text-muted-foreground">{label(TYPE_LABELS[task.type])} · {task.kif ? t('I KIF', 'In KIF') : t('Uden for KIF', 'Outside KIF')} · {t('Mål', 'Target')} {targetLabel(task.target)} · {t('Version', 'Version')} {task.version}</p>
         </ResultCard>
         <Button onClick={onBack}><CheckCircle size={18} /> {t('Færdig', 'Done')}</Button>

@@ -1,4 +1,4 @@
-import type { SoftwareloadOutcome, SoftwareloadTask, SoftwareloadType } from '@/types/warehouse'
+import type { SoftwareloadOutcome, SoftwareloadResult, SoftwareloadTask, SoftwareloadType } from '@/types/warehouse'
 import { errorCode, errorMessage } from './warehouse/errors'
 import { t } from './warehouse/text'
 
@@ -33,6 +33,22 @@ export const outcomeLabel = (outcome: SoftwareloadOutcome): Label => OUTCOME_LAB
 
 /** Errors after which SAP may have posted a move the app never heard about. */
 const UNCERTAIN_CODES = ['SAP_TIMEOUT', 'SAP_SCRIPT_FAILED', 'SOFTWARELOAD_SAP_FAILED']
+
+/** Outcomes of a terminal that should have moved and did not (all of its way). */
+const NOT_MOVED: SoftwareloadOutcome[] = ['failed-sap', 'abandoned', 'interrupted']
+
+/**
+ * The title over the result of a finished task (`name` for someone else's): "flyttet i SAP" only when something moved,
+ * and it says when not everything did.
+ */
+export function finishTitle(results: Record<string, SoftwareloadResult>, name?: string): string {
+  const list = Object.values(results)
+  const subject = name ? t(`${name}s opgave`, `${name}'s task`) : t('Opgaven', 'The task')
+  if (!list.length) return t(`${subject} er afsluttet. Der var ingen terminaler at flytte`, `${subject} is finished. There were no terminals to move`)
+  if (!list.some(result => result.steps.length)) return t(`${subject} er afsluttet. Intet er flyttet i SAP`, `${subject} is finished. Nothing was moved in SAP`)
+  if (list.some(result => NOT_MOVED.includes(result.outcome))) return t(`${subject} er afsluttet. Noget er flyttet i SAP, men ikke alt`, `${subject} is finished. Some was moved in SAP, but not all`)
+  return t(`${subject} er afsluttet og flyttet i SAP`, `${subject} is finished and moved in SAP`)
+}
 
 /**
  * The text for an error of a finish, a continue or a move into KIF. When SAP may have posted without the app getting

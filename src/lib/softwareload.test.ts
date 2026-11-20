@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { outcomeLabel, previewGroups, sapRunErrorMessage, SOFTWARELOAD_TARGETS, summarizeTasks, targetLabel, TYPE_LABELS } from './softwareload'
+import { finishTitle, outcomeLabel, previewGroups, sapRunErrorMessage, SOFTWARELOAD_TARGETS, summarizeTasks, targetLabel, TYPE_LABELS } from './softwareload'
 import { setWarehouseLanguage } from './warehouse/text'
 import type { SoftwareloadOutcome, SoftwareloadResult, SoftwareloadTask } from '@/types/warehouse'
 
@@ -56,6 +56,23 @@ describe('sapRunErrorMessage', () => {
     setWarehouseLanguage('en')
     try {
       expect(sapRunErrorMessage(new Error('Error: SAP_TIMEOUT'))).toBe('SAP did not answer in time. Check in SAP before you continue.')
+    } finally {
+      setWarehouseLanguage('da')
+    }
+  })
+})
+
+describe('finishTitle', () => {
+  const moved = { ...result('to-target'), steps: [{ from: 'D001', to: 'D006', doc: '49', by: 'a', at: 0 }] }
+  it('says "flyttet i SAP" only when something moved, and says so when not all did', () => {
+    expect(finishTitle({ a: moved })).toBe('Opgaven er afsluttet og flyttet i SAP')
+    expect(finishTitle({ a: moved, b: result('failed-sap') })).toBe('Opgaven er afsluttet. Noget er flyttet i SAP, men ikke alt')
+    expect(finishTitle({ a: result('skipped'), b: result('not-found') })).toBe('Opgaven er afsluttet. Intet er flyttet i SAP')
+    expect(finishTitle({})).toBe('Opgaven er afsluttet. Der var ingen terminaler at flytte')
+    expect(finishTitle({ a: moved }, 'Anna')).toBe('Annas opgave er afsluttet og flyttet i SAP')
+    setWarehouseLanguage('en')
+    try {
+      expect(finishTitle({ a: result('skipped') }, 'Anna')).toBe("Anna's task is finished. Nothing was moved in SAP")
     } finally {
       setWarehouseLanguage('da')
     }

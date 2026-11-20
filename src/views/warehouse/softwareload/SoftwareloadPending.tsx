@@ -6,7 +6,7 @@ import { Card } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/warehouse/ui'
-import { sapRunErrorMessage } from '@/lib/softwareload'
+import { finishTitle, sapRunErrorMessage } from '@/lib/softwareload'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { formatDateTime } from '@/lib/warehouse/format'
 import { t } from '@/lib/warehouse/text'
@@ -48,7 +48,7 @@ export function SoftwareloadPending({ user, status, reload, onBusy }: { user: Wa
     <div className="space-y-4">
       {done && (
         <ResultCard
-          title={done.abandoned ? t(`${done.name}s opgave er opgivet`, `${done.name}'s task is given up`) : t(`${done.name}s opgave er flyttet i SAP`, `${done.name}'s task is moved in SAP`)}
+          title={done.abandoned ? t(`${done.name}s opgave er opgivet`, `${done.name}'s task is given up`) : finishTitle(done.result.results, done.name)}
           counts={done.result.counts}
           results={done.result.results}
         >
