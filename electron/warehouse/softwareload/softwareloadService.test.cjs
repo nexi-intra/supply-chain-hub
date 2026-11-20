@@ -735,6 +735,24 @@ test('kif move needs writing in SAP, refuses a double click, and a serial SAP re
   assert.deepEqual(moved.counts, { 'to-target': 1, 'failed-sap': 1 })
 })
 
+test('kif move reports progress like finish', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D001' }, B: { material: 'M-0', sloc: 'D000' }, C: { material: 'M-0', sloc: 'D005' } })
+  const svc = setup({ sap }).service()
+  const progress = []
+  const moved = await svc.kifMove(ANNA, { serials: ['A', 'B', 'C', 'N'] }, { onProgress: item => progress.push(item) })
+  const steps = progress.map(item => item.step)
+  assert.ok(steps.includes('lookup'), 'the lookup is reported')
+  assert.deepEqual(progress[0], { done: 0, total: 4, step: 'lookup' })
+  const last = progress.filter(item => item.step === 'transfer').at(-1)
+  assert.equal(last.done, last.total)
+  assert.equal(last.total, Object.values(moved.results).filter(result => result.outcome === 'to-target').length)
+  assert.equal(last.total, 2)
+  // A closed window must never stop the move.
+  const other = setup({ sap: fakeSap({ A: { material: 'M-R', sloc: 'D001' } }) }).service()
+  const after = await other.kifMove(ANNA, { serials: ['A'] }, { onProgress: () => { throw new Error('window closed') } })
+  assert.deepEqual(after.counts, { 'to-target': 1 })
+})
+
 test('a kif move interrupted by SAP keeps its posted moves searchable', async () => {
   const sap = fakeSap({ A: { material: 'M-R', sloc: 'D001' }, C: { material: 'M-R', sloc: 'D001' }, B: { material: 'M-R', sloc: 'D002' } })
   sap.refuse.add('C')

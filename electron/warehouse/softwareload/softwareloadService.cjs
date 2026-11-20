@@ -562,7 +562,7 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
   }
 
   /** Moves the serials the user confirmed to D005. SAP is asked again, as stock may have moved since the preview. */
-  async function kifMove(user, { serials, document } = {}) {
+  async function kifMove(user, { serials, document } = {}, { onProgress } = {}) {
     requireWrite()
     const confirmed = serialsOf(serials)
     if (!confirmed.length) throw noSerials()
@@ -573,7 +573,7 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
     if (movingToKif.has(email)) throw codeError('SOFTWARELOAD_BUSY', 'Du er allerede ved at flytte terminaler til D005')
     movingToKif.add(email)
     try {
-      return await moveToKif(user, confirmed, matdoc)
+      return await moveToKif(user, confirmed, matdoc, onProgress)
     } finally {
       movingToKif.delete(email)
     }
@@ -583,10 +583,13 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
    * Saves the record in `kif-<yyyy-mm>` after every SAP document and once more at the end, then adds the search lines.
    * When SAP throws midway, what was posted is still saved and indexed, the rest is `interrupted`, and the error goes on.
    */
-  async function moveToKif(user, serials, document) {
+  async function moveToKif(user, serials, document, onProgress) {
+    const report = (step, done, total) => { try { onProgress?.({ done, total, step }) } catch { /* the screen is gone */ } }
     const at = now()
     const by = lower(user.email)
+    report('lookup', 0, serials.length)
     const { rows, outcomes, transfers } = await kifPlan(user.team, serials)
+    report('lookup', serials.length, serials.length)
     const rowOf = new Map(rows.map(row => [row.serial, row]))
     const results = Object.fromEntries(serials.map(serial => {
       const row = rowOf.get(serial)
@@ -613,6 +616,7 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
           for (const serial of items) results[serial] = { ...results[serial], steps: [...results[serial].steps, { from: group.from, to: group.to, doc, by, at: now() }] }
           return save()
         },
+        report: (done, total) => report('transfer', done, total),
       })
     } catch (error) {
       // SAP's error is the one to show; a failing drive here loses at most the lines, never the error.
