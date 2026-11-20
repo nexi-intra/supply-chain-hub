@@ -735,6 +735,29 @@ test('kif move needs writing in SAP, refuses a double click, and a serial SAP re
   assert.deepEqual(moved.counts, { 'to-target': 1, 'failed-sap': 1 })
 })
 
+test('a kif move interrupted by SAP keeps its posted moves searchable', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D001' }, C: { material: 'M-R', sloc: 'D001' }, B: { material: 'M-R', sloc: 'D002' } })
+  sap.refuse.add('C')
+  sap.throwWhen = (kind, call) => kind === 'transfer' && call.serials.includes('B')
+  const ctx = setup({ sap })
+  const svc = ctx.service()
+  const at = ctx.clock.now
+  await assert.rejects(svc.kifMove(ANNA, { serials: ['A', 'C', 'B', 'N'] }), { code: 'SAP_NOT_READY' })
+  assert.deepEqual(transfers(sap), [['D005', ['A', 'C']], ['D005', ['A']], ['D005', ['C']], ['D005', ['B']]])
+
+  const { results } = (await ctx.storeFor('TCD').getAsync('kif-2026-11')).moves.t1
+  assert.deepEqual(results, {
+    A: { material: 'M-R', from: 'D001', outcome: 'to-target', steps: [{ from: 'D001', to: 'D005', doc: doc(1), by: 'anna@example.test', at }] },
+    C: { material: 'M-R', from: 'D001', outcome: 'failed-sap', steps: [], message: 'Deficit of SL Unrestricted-use 1 EA' },
+    B: { material: 'M-R', from: 'D002', outcome: 'interrupted', steps: [] },
+    N: { material: null, from: null, outcome: 'not-found', steps: [] },
+  })
+  assert.deepEqual(await svc.search(TRINE, { serial: 'A' }), [
+    { serial: 'A', team: 'TCD', kind: 'kif', email: 'anna@example.test', name: 'Anna', at, from: 'D001', to: 'D005', docs: [doc(1)], outcome: 'to-target' },
+  ])
+  assert.deepEqual((await ctx.index.getAsync('serier-2026-11')).lines.map(line => line.serial), ['A'], 'only what SAP posted is indexed')
+})
+
 test('search returns every event for a serial, newest first, across months', async () => {
   const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' }, B: { material: 'M-R', sloc: 'D000' } })
   const ctx = setup({ sap })

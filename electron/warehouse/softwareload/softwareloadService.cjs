@@ -579,7 +579,10 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
     }
   }
 
-  /** Saves the record in `kif-<yyyy-mm>` after every SAP document and once more at the end, then adds the search lines. */
+  /**
+   * Saves the record in `kif-<yyyy-mm>` after every SAP document and once more at the end, then adds the search lines.
+   * When SAP throws midway, what was posted is still saved and indexed, the rest is `interrupted`, and the error goes on.
+   */
   async function moveToKif(user, serials, document) {
     const at = now()
     const by = lower(user.email)
@@ -593,17 +596,30 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
     const save = () => storeFor(user.team).mutateAsync(kifKey(at), month => ({ ...month, moves: { ...month?.moves, [move.id]: move } }))
 
     const failures = new Map()
-    await runChunks({
-      groups: transfers, size: TRANSFER_CHUNK, failures,
-      attempt: (group, items) => sap.transfer({ team: user.team, serials: items, to: group.to }),
-      saved: (group, items, doc) => {
-        for (const serial of items) results[serial] = { ...results[serial], steps: [...results[serial].steps, { from: group.from, to: group.to, doc, by, at: now() }] }
-        return save()
-      },
-    })
-    for (const [serial, message] of failures) results[serial] = { ...results[serial], outcome: 'failed-sap', message }
-    await save()
-    await addToIndex(at, kifLines(move))
+    const settle = async interrupted => {
+      for (const [serial, message] of failures) results[serial] = { ...results[serial], outcome: 'failed-sap', message }
+      if (interrupted) {
+        for (const serial of serials) if (results[serial].outcome === 'to-target' && !results[serial].steps.length) results[serial] = { ...results[serial], outcome: 'interrupted' }
+      }
+      await save()
+      const lines = kifLines(move)
+      await addToIndex(at, interrupted ? lines.filter(line => line.docs.length) : lines)
+    }
+    try {
+      await runChunks({
+        groups: transfers, size: TRANSFER_CHUNK, failures,
+        attempt: (group, items) => sap.transfer({ team: user.team, serials: items, to: group.to }),
+        saved: (group, items, doc) => {
+          for (const serial of items) results[serial] = { ...results[serial], steps: [...results[serial].steps, { from: group.from, to: group.to, doc, by, at: now() }] }
+          return save()
+        },
+      })
+    } catch (error) {
+      // SAP's error is the one to show; a failing drive here loses at most the lines, never the error.
+      await settle(true).catch(() => {})
+      throw error
+    }
+    await settle(false)
     return { id: move.id, results, counts: countOutcomes(results) }
   }
 
