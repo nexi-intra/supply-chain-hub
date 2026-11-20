@@ -97,11 +97,12 @@ function setup({ timeclockRunning = null, sap = { writeEnabled: false }, matdocs
     if (!stores.has(dir)) stores.set(dir, createStore(path.join(root, dir)))
     return stores.get(dir)
   }
-  // `faults.venter = n` makes the next n writes to a pending task fail as if M: were gone; `faults.kif` the same for KIF.
-  const faults = { venter: 0, kif: 0 }
+  // `faults.venter = n` makes the next n writes to a pending task fail as if M: were gone; `faults.kif` and
+  // `faults.versioner` the same for KIF records and the version list.
+  const faults = { venter: 0, kif: 0, versioner: 0 }
   const faulty = store => new Proxy(store, {
     get: (target, name) => (name !== 'mutateAsync' ? target[name] : (key, change) => {
-      const kind = ['venter', 'kif'].find(prefix => key.startsWith(`${prefix}-`))
+      const kind = Object.keys(faults).find(prefix => key === prefix || key.startsWith(`${prefix}-`))
       if (kind && faults[kind] > 0) {
         faults[kind]--
         return Promise.reject(Object.assign(new Error('M: svarer ikke'), { code: 'STORAGE_UNAVAILABLE' }))
@@ -173,6 +174,16 @@ test('start saves type, KIF, target and version, and remembers the version', asy
   assert.deepEqual(await svc.versions(ANNA), ['v2.1.3'])
   const status = await svc.status(ANNA)
   assert.deepEqual([status.running.id, status.running.target, status.pending, status.isManager, status.writeEnabled], ['t1', 'D006', [], false, false])
+})
+
+test('start never fails after the task is saved: the version list is best effort', async () => {
+  const ctx = setup()
+  const svc = ctx.service()
+  ctx.faults.versioner = 1
+  const started = await svc.start(ANNA, TASK)
+  assert.equal(started.id, 't1')
+  assert.equal((await svc.status(ANNA)).running.id, 't1')
+  assert.deepEqual(await svc.versions(ANNA), [])
 })
 
 test('start refuses an unknown type, an invalid target and an empty version', async () => {
@@ -716,6 +727,19 @@ test('a serial still where it stood when SAP did not answer is moved again', asy
   const result = await svc.continueFinish(ANNA, { taskId: 't1' })
   assert.deepEqual(transfers(sap), [['D006', ['A']], ['D006', ['A']]])
   assert.deepEqual(result.results.A.steps.map(step => [step.to, step.doc, step.unverified]), [['D006', doc(1), undefined]])
+})
+
+test('a terminal this task already moved keeps its outcome when SAP later shows it blocked or not at all', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D001' }, B: { material: 'M-R', sloc: 'D001' }, C: { material: 'M-0', sloc: 'D001' } })
+  sap.throwWhen = kind => kind === 'block'
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, { ...TASK, kif: false }, ['A', 'B', 'C'], { C: 'Knap i stykker' })
+  await assert.rejects(svc.finish(ANNA, {}), { code: 'SAP_NOT_READY' })
+  sap.throwWhen = null
+  sap.rows.get('A').blocked = true
+  sap.rows.delete('B')
+  const result = await svc.continueFinish(ANNA, { taskId: 't1' })
+  assert.deepEqual(['A', 'B'].map(serial => [result.results[serial].outcome, result.results[serial].steps.map(step => step.to)]), [['to-target', ['D006']], ['to-target', ['D006']]])
 })
 
 test('a second person cannot continue while the first holds a fresh claim, but can after it expires', async () => {

@@ -308,7 +308,7 @@ function createSoftwareloadService({
       started = { id: newId(), team: user.team, ...me(user), ...chosen, startedAt: now(), pauses: [], terminals: {}, state: 'running' }
       return started
     })
-    await rememberVersion(user, chosen.version)
+    await rememberVersion(user, chosen.version).catch(() => { /* only suggestions; the task is saved and runs */ })
     return { ...view(started), ...(stoppedTimeclock ? { stoppedTimeclock } : {}) }
   }
 
@@ -608,7 +608,7 @@ function createSoftwareloadService({
         const steps = stepsWithMark(before, row)
         let outcome = plan.outcomes[serial]
         // A terminal this task already moved needs nothing more; it keeps the outcome it was moved for.
-        if (steps.length && before.outcome && ['skipped', 'already-blocked'].includes(outcome)) outcome = before.outcome
+        if (steps.length && before.outcome && NOTHING_TO_MOVE.includes(outcome)) outcome = before.outcome
         results[serial] = { material: before?.material ?? row?.material ?? null, from: before?.from ?? row?.sloc ?? null, outcome, steps }
       }
       return { ...current, results }
