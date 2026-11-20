@@ -128,6 +128,12 @@ Detaljerede skærm-id'er står i sessionens noter og skal over i scriptene.
 - Fejlede -R: Transfer til D002.
 - Fejler en gruppe, deles den i halve, indtil de skyldige serienumre er fundet. Resten flyttes.
 - Efter hver lykket Transfer gemmes materialedokumentet på hvert serienummer i gruppen med det samme, før næste gruppe. Det gør afslutningen genoptagelig: en terminal med et gemt skridt flyttes ikke igen.
+- *(Rettet efter den afsluttende gennemgang:)*
+  - Før hvert kald til SAP gemmes et "usikker"-mærke på serienumrene. Svarer SAP ikke, ser næste kørsel i SAP, hvor terminalen står. Står den, hvor skridtet skulle sætte den, gemmes skridtet uden dokumentnummer og som ikke bekræftet. Så flyttes en terminal aldrig to gange, heller ikke i KIF.
+  - Scriptene kører kun, når SAP er logget på på engelsk, fordi de læser SAP's svar på engelsk.
+  - Hvert materialedokument skrives først i en journal på PC'en og så på M:. Svarer M: ikke, prøves det igen, og fejlbeskeden nævner dokumentnummeret. Journalen kommer med ved næste status, fortsættelse eller flytning til D005.
+  - Afviser SAP en hel gruppe af samme grund (de to første enkelte terminaler giver samme besked som gruppen), stopper kørslen, og opgaven venter på SAP.
+  - Hver kørsel har sit eget id i opgavens lås, så samme person ikke kan køre opgaven fra to PC'er på én gang. Låsen fornyes hvert 30. sekund og udløber efter 2 minutter.
 - Bliver afslutningen afbrudt (SAP lukket, PC slukket), står opgaven som "Mangler SAP". Appen slår op i SAP igen, før den fortsætter. *(Mine beslutninger:)*
   - Ejeren kan starte en ny opgave, selv om en gammel venter på SAP. Opgaven er allerede afsluttet tidsmæssigt, så det giver ikke dobbelt tid.
   - Opgaver, der venter på SAP, vises for ejeren og for managers. En manager kan fuldføre flytningerne i sin egen SAP. Opgaven tilhører stadig ejeren, og managerens navn gemmes ved de flytninger, han lavede.
