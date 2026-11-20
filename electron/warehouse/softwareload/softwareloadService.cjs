@@ -24,8 +24,9 @@ const FINISHED_PREFIX = 'opgaver-'
 const INDEX_PREFIX = 'serier-'
 const TASK_ID_PATTERN = /^[\w-]{1,100}$/
 const BLOCK_BWART = '344'
-/** How long a claim on a pending task keeps others out; every saved SAP document renews it. */
-const CLAIM_MS = 10 * 60 * 1000
+/** How long a claim on a pending task keeps others out; a run renews it on a timer and before every SAP call. */
+const CLAIM_MS = 2 * 60 * 1000
+const RENEW_CLAIM_MS = 30 * 1000
 /** Outcomes that need nothing from SAP: the terminal stays where it is. */
 const NOTHING_TO_MOVE = ['not-found', 'blocked-stock', 'already-blocked', 'skipped', 'manual']
 
@@ -146,7 +147,7 @@ async function runChunks({ groups, size, failures, attempt, saved, refused = asy
   }
 }
 
-function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now = Date.now, newId = () => crypto.randomUUID(), matdocs }) {
+function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now = Date.now, newId = () => crypto.randomUUID(), matdocs, renewClaimMs = RENEW_CLAIM_MS }) {
   /** A Hub manager or creator; a status manager from Optælling is a manager there only. */
   const isManager = user => (user.role === 'manager' || user.role === 'creator') && !user.statusManager
   const me = user => ({ email: lower(user.email), name: user.fullName || user.email })
@@ -199,9 +200,13 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
     const keys = (await store.keysAsync()).filter(key => key.startsWith(PENDING_PREFIX))
     const tasks = await Promise.all(keys.map(key => store.getAsync(key).catch(() => null)))
     const email = lower(user.email)
+    const fresh = claim => claim && now() - claim.at < CLAIM_MS
     return tasks
       .filter(task => task && (isManager(user) || task.email === email))
-      .map(task => ({ id: task.id, name: task.name, email: task.email, endedAt: task.endedAt, count: Object.keys(task.terminals || {}).length }))
+      .map(task => ({
+        id: task.id, name: task.name, email: task.email, endedAt: task.endedAt, count: Object.keys(task.terminals || {}).length,
+        ...(fresh(task.claim) ? { movingBy: { name: task.claim.name } } : {}),
+      }))
       .sort((a, b) => a.endedAt - b.endedAt)
   }
 
@@ -351,28 +356,53 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
     return { outcomes, transfers, blocks, rows }
   }
 
-  const claimOf = user => ({ by: lower(user.email), name: user.fullName || user.email, at: now() })
+  const claimOf = (user, runId) => ({ by: lower(user.email), name: user.fullName || user.email, runId, at: now() })
   const busy = claim => codeError('SOFTWARELOAD_BUSY', `${claim.name} er ved at flytte opgaven i SAP`)
-  // Runs in this process: the claim lets the same person in again after a crash, so a double click is stopped here.
+  // Runs in this process; a run on another PC (also of the same person) is kept out by the claim and its runId.
   const finishing = new Set()
   const inFlight = new Set()
   const alreadyMoving = () => codeError('SOFTWARELOAD_BUSY', 'Opgaven er allerede ved at blive flyttet i SAP')
+  const newRunId = () => crypto.randomUUID()
 
-  /** Refuses while another person holds a fresh claim; the same person may always go again (a retry after a crash). */
-  function requireFreeClaim(task, user) {
+  /** Refuses while another run holds a fresh claim; that includes a run of the same person on another PC. */
+  function requireFreeClaim(task, runId) {
     const { claim } = task
-    if (claim && claim.by !== lower(user.email) && now() - claim.at < CLAIM_MS) throw busy(claim)
+    if (claim && claim.runId !== runId && now() - claim.at < CLAIM_MS) throw busy(claim)
   }
 
-  /** Clears this person's claim after a failed run, so someone else can continue at once. Best effort: it expires anyway. */
-  async function releaseClaim(user, taskId) {
+  /** Takes the claim for a run under the pending task's lock. */
+  function takeClaim(user, taskId, runId) {
+    return changePending(user, taskId, current => {
+      requireFreeClaim(current, runId)
+      return { ...current, claim: claimOf(user, runId) }
+    })
+  }
+
+  /** Clears the run's own claim after a failed run, so someone else can continue at once. Best effort: it expires anyway. */
+  async function releaseClaim(user, taskId, runId) {
     try {
       await storeFor(user.team).mutateAsync(pendingKey(taskId), current => {
-        if (current?.claim?.by !== lower(user.email)) return undefined
+        if (!current?.claim || current.claim.runId !== runId) return undefined
         const { claim, ...task } = current
         return task
       })
     } catch { /* the claim runs out after CLAIM_MS */ }
+  }
+
+  /** Keeps the run's claim fresh while SAP works on a long call; a claim that another run took is left alone. */
+  function renewWhileRunning(user, taskId, runId) {
+    let renewing = false
+    const timer = setInterval(() => {
+      // A slow drive must not pile up renewals in front of the run's own writes.
+      if (renewing) return
+      renewing = true
+      storeFor(user.team).mutateAsync(pendingKey(taskId), current => {
+        if (!current?.claim || current.claim.runId !== runId) return undefined
+        return { ...current, claim: { ...current.claim, at: now() } }
+      }).catch(() => { /* the next SAP call checks the claim again */ }).finally(() => { renewing = false })
+    }, renewClaimMs)
+    timer.unref?.()
+    return () => clearInterval(timer)
   }
 
   /** Adds lines to the search index of the month of `at`; `replaces` drops the lines of an earlier run of the same event. */
@@ -396,18 +426,21 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
   /**
    * Moves a pending task's terminals in SAP. Every SAP document is saved on its serials before the next call, so a
    * crash or a closed SAP leaves the task pending and a later run starts from what SAP and the saved steps say.
-   * The caller holds the claim; a failed run gives it back.
+   * The caller holds the claim for `runId`; the run keeps it fresh and gives it back when it fails.
    */
-  async function execute(user, taskId, onProgress) {
+  async function execute(user, taskId, runId, onProgress) {
+    const stopRenewing = renewWhileRunning(user, taskId, runId)
     try {
-      return await moveInSap(user, taskId, onProgress)
+      return await moveInSap(user, taskId, runId, onProgress)
     } catch (error) {
-      await releaseClaim(user, taskId)
+      await releaseClaim(user, taskId, runId)
       throw error
+    } finally {
+      stopRenewing()
     }
   }
 
-  async function moveInSap(user, taskId, onProgress) {
+  async function moveInSap(user, taskId, runId, onProgress) {
     const report = (step, done, total) => { try { onProgress?.({ done, total, step }) } catch { /* the screen is gone */ } }
     const by = lower(user.email)
     const task = await readPending(user, taskId)
@@ -421,8 +454,8 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
     const passedD005 = new Set(serials.filter(serial => stepsWithMark(task.results?.[serial], rowOf.get(serial)).some(step => step.to === KIF)))
     const plan = planMoves({ kif: task.kif, target: task.target, terminals: terminalsOf(task), sapRows: rows, passedD005 })
 
-    // Someone else took over a stale claim while SAP answered; they move the task now, so this run stops before SAP.
-    const takenBy = current => (current.claim && current.claim.by !== by ? current.claim : null)
+    // Another run took over a stale claim while SAP answered; it moves the task now, so this run stops before SAP.
+    const takenBy = current => (current.claim && current.claim.runId !== runId ? current.claim : null)
     await changePending(user, taskId, current => {
       if (takenBy(current)) throw busy(current.claim)
       const results = {}
@@ -448,7 +481,7 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
           results[serial] = { ...result, steps: [...(result.steps || []), step] }
         }
         taken = takenBy(current)
-        return { ...current, results, claim: taken || claimOf(user) }
+        return { ...current, results, claim: taken || claimOf(user, runId) }
       })
       // The document is saved either way; then the run stops, so two people never move the same task at once.
       if (taken) throw busy(taken)
@@ -467,7 +500,7 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
       if (takenBy(current)) throw busy(current.claim)
       const results = { ...current.results }
       for (const serial of items) results[serial] = { ...results[serial], uncertain: mark }
-      return { ...current, results, claim: claimOf(user) }
+      return { ...current, results, claim: claimOf(user, runId) }
     })
 
     /** Runs one step for groups of serials; a serial that failed earlier (also in wave 1) is left out. */
@@ -518,14 +551,15 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
       })
       if (inFlight.has(ended.id)) throw alreadyMoving()
       inFlight.add(taskId = ended.id)
+      const runId = newRunId()
       // After a crash between these two writes both files exist; the pending one wins, so saved steps are never lost.
       await store.mutateAsync(pendingKey(ended.id), current => {
         const task = current ?? ended
-        requireFreeClaim(task, user)
-        return { ...task, claim: claimOf(user) }
+        requireFreeClaim(task, runId)
+        return { ...task, claim: claimOf(user, runId) }
       })
       await store.deleteAsync(runningKey(user.email))
-      return await execute(user, ended.id, onProgress)
+      return await execute(user, ended.id, runId, onProgress)
     } finally {
       finishing.delete(email)
       if (taskId) inFlight.delete(taskId)
@@ -539,32 +573,45 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
     if (inFlight.has(task.id)) throw alreadyMoving()
     inFlight.add(task.id)
     try {
-      await changePending(user, task.id, current => {
-        requireFreeClaim(current, user)
-        return { ...current, claim: claimOf(user) }
-      })
-      return await execute(user, task.id, onProgress)
+      const runId = newRunId()
+      await takeClaim(user, task.id, runId)
+      return await execute(user, task.id, runId, onProgress)
     } finally {
       inFlight.delete(task.id)
     }
   }
 
-  /** A manager gives up the remaining moves; terminals that still had a move to make are marked `abandoned`. */
+  /**
+   * A manager gives up the remaining moves; terminals that still had a move to make are marked `abandoned`. It takes
+   * the claim first, like a run, so nobody starts moving the task while it is written as finished.
+   */
   async function abandon(user, { taskId, reason } = {}) {
     if (!isManager(user)) throw codeError('MANAGER_ONLY', 'Kun en manager kan opgive flytningerne')
     const why = clean(reason, NOTE_MAX)
     if (!why) throw codeError('SOFTWARELOAD_INVALID', 'Skriv hvorfor flytningerne opgives')
-    return complete(user, taskId, current => {
-      requireFreeClaim(current, user)
-      const results = {}
-      for (const serial of Object.keys(current.terminals || {})) {
-        const result = current.results?.[serial]
-        results[serial] = reached(current, result)
-          ? result
-          : { material: null, from: null, ...result, outcome: 'abandoned', steps: result?.steps || [] }
-      }
-      return { ...current, results, abandoned: { by: lower(user.email), reason: why, at: now() } }
-    })
+    const task = await readPending(user, taskId)
+    if (inFlight.has(task.id)) throw alreadyMoving()
+    inFlight.add(task.id)
+    const runId = newRunId()
+    try {
+      await takeClaim(user, task.id, runId)
+      return await complete(user, task.id, current => {
+        if (current.claim?.runId !== runId) throw busy(current.claim || claimOf(user, runId))
+        const results = {}
+        for (const serial of Object.keys(current.terminals || {})) {
+          const result = current.results?.[serial]
+          results[serial] = reached(current, result)
+            ? result
+            : { material: null, from: null, ...result, outcome: 'abandoned', steps: result?.steps || [] }
+        }
+        return { ...current, results, abandoned: { by: lower(user.email), reason: why, at: now() } }
+      })
+    } catch (error) {
+      await releaseClaim(user, task.id, runId)
+      throw error
+    } finally {
+      inFlight.delete(task.id)
+    }
   }
 
   const noSerials = () => codeError('SOFTWARELOAD_INVALID', 'Scan eller indsæt mindst ét serienummer')

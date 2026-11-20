@@ -1244,6 +1244,8 @@ export interface SoftwareloadPending {
   email: string
   endedAt: number
   count: number
+  /** Someone is moving the task in SAP right now (a fresh claim, on this or another PC). */
+  movingBy?: { name: string }
 }
 
 /** Where SAP says a serial stands now. */

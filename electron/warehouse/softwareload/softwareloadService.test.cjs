@@ -87,7 +87,7 @@ async function until(ready) {
   assert.ok(ready(), 'the service never got there')
 }
 
-function setup({ timeclockRunning = null, sap = { writeEnabled: false }, matdocs } = {}) {
+function setup({ timeclockRunning = null, sap = { writeEnabled: false }, matdocs, renewClaimMs } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'softwareload-'))
   const stores = new Map()
   const storeAt = dir => {
@@ -118,6 +118,7 @@ function setup({ timeclockRunning = null, sap = { writeEnabled: false }, matdocs
     now: () => clock.now,
     newId: () => `t${++ids}`,
     matdocs,
+    ...(renewClaimMs ? { renewClaimMs } : {}),
   })
   const storeFor = team => storeAt(path.join(team, 'lagerstyring', 'softwareload'))
   const index = storeAt(path.join('_lagerstyring', 'softwareload'))
@@ -595,15 +596,17 @@ test('abandon is refused while someone else is moving the task', async () => {
   const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
   const ctx = setup({ sap })
   const svc = await startWith(ctx, TASK, ['A'])
+  const otherPc = ctx.service()
   const annaGate = sap.hold('lookup', 1)
   const anna = svc.finish(ANNA, {})
   anna.catch(() => {})
   await until(() => sap.calls.length === 1)
 
-  await assert.rejects(svc.abandon(MONA, { taskId: 't1', reason: 'Væk' }), { code: 'SOFTWARELOAD_BUSY', message: 'Anna er ved at flytte opgaven i SAP' })
-  assert.deepEqual((await svc.status(MONA)).pending.map(task => task.id), ['t1'])
+  await assert.rejects(otherPc.abandon(MONA, { taskId: 't1', reason: 'Væk' }), { code: 'SOFTWARELOAD_BUSY', message: 'Anna er ved at flytte opgaven i SAP' })
+  assert.deepEqual((await svc.status(MONA)).pending.map(task => [task.id, task.movingBy]), [['t1', { name: 'Anna' }]])
   ctx.tick(CLAIM_MS)
-  const result = await svc.abandon(MONA, { taskId: 't1', reason: 'Annas PC gik ned' })
+  await assert.rejects(svc.abandon(MONA, { taskId: 't1', reason: 'Væk' }), { code: 'SOFTWARELOAD_BUSY', message: 'Opgaven er allerede ved at blive flyttet i SAP' }, 'never while this PC runs it')
+  const result = await otherPc.abandon(MONA, { taskId: 't1', reason: 'Annas PC gik ned' })
   assert.deepEqual([result.results.A.outcome, result.counts], ['abandoned', { abandoned: 1 }])
 
   annaGate.open()
@@ -622,11 +625,75 @@ test('a claim is released when SAP fails, so the owner can continue at once', as
   await assert.rejects(svc.continueFinish(MONA, { taskId: 't1' }), { code: 'SAP_NOT_READY' })
   assert.equal((await store.getAsync('venter-t1', { skipCache: true })).claim, undefined, 'a manager\'s failed run lets go too')
 
-  // Anna's PC died mid-run: her own fresh claim never stops her.
-  await store.mutateAsync('venter-t1', task => ({ ...task, claim: { by: 'anna@example.test', name: 'Anna', at: ctx.clock.now } }))
+  // Anna's PC died mid-run: the claim of that dead run keeps everyone out, Anna too, until it runs out.
+  await store.mutateAsync('venter-t1', task => ({ ...task, claim: { by: 'anna@example.test', name: 'Anna', runId: 'dead-run', at: ctx.clock.now } }))
   sap.throwWhen = null
+  await assert.rejects(svc.continueFinish(ANNA, { taskId: 't1' }), { code: 'SOFTWARELOAD_BUSY', message: 'Anna er ved at flytte opgaven i SAP' })
+  assert.deepEqual((await svc.status(ANNA)).pending.map(task => task.movingBy), [{ name: 'Anna' }], 'the screen shows who moves it')
+  ctx.tick(CLAIM_MS)
+  assert.equal((await svc.status(ANNA)).pending[0].movingBy, undefined)
   const result = await svc.continueFinish(ANNA, { taskId: 't1' })
   assert.deepEqual([result.state, result.counts], ['faerdig', { 'to-target': 1 }])
+})
+
+test('the same person on two PCs cannot run the same task twice', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
+  sap.throwWhen = kind => kind === 'lookup'
+  const ctx = setup({ sap })
+  await assert.rejects((await startWith(ctx, TASK, ['A'])).finish(ANNA, {}), { code: 'SAP_NOT_READY' })
+  sap.throwWhen = null
+  sap.calls.length = 0
+  const pc1 = ctx.service()
+  const pc2 = ctx.service()
+  const held = sap.hold('lookup', 2)
+  const first = pc1.continueFinish(ANNA, { taskId: 't1' })
+  await until(() => sap.calls.length === 1)
+  await assert.rejects(pc2.continueFinish(ANNA, { taskId: 't1' }), { code: 'SOFTWARELOAD_BUSY', message: 'Anna er ved at flytte opgaven i SAP' })
+  held.open()
+  const result = await first
+  assert.equal(result.state, 'faerdig')
+  assert.deepEqual(sap.calls.map(([kind]) => kind), ['lookup', 'transfer', 'transfer'], 'one SAP sequence')
+})
+
+test('a run renews its claim while SAP works, and a run that lost it to the same person on another PC lets it be', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
+  const ctx = setup({ sap, renewClaimMs: 20 })
+  const svc = await startWith(ctx, TASK, ['A'])
+  const store = ctx.storeFor('TCD')
+  const annaGate = sap.hold('lookup', 1)
+  const anna = svc.finish(ANNA, {})
+  anna.catch(() => {})
+  await until(() => sap.calls.length === 1)
+  ctx.tick(CLAIM_MS)
+  const claimAt = async () => (await store.getAsync('venter-t1', { skipCache: true }))?.claim?.at
+  for (let i = 0; i < 300 && await claimAt() !== ctx.clock.now; i++) await new Promise(resolve => setTimeout(resolve, 10))
+  assert.equal(await claimAt(), ctx.clock.now, 'the timer renewed the claim while SAP was busy')
+  await assert.rejects(ctx.service().continueFinish(MONA, { taskId: 't1' }), { code: 'SOFTWARELOAD_BUSY' }, 'the renewed claim still holds')
+  annaGate.open()
+  assert.equal((await anna).state, 'faerdig')
+  assert.deepEqual(transfers(sap), [['D005', ['A']], ['D006', ['A']]])
+
+  // A second task: PC 1 of Bo hangs, its claim runs out and Bo goes on from PC 2.
+  const other = fakeSap({ B: { material: 'M-R', sloc: 'D000' } })
+  const ctx2 = setup({ sap: other })
+  const pc1 = ctx2.service()
+  await pc1.start(BO, TASK)
+  await pc1.scan(BO, { serial: 'B' })
+  const stuck = other.hold('lookup', 1)
+  const hanging = pc1.finish(BO, {})
+  hanging.catch(() => {})
+  await until(() => other.calls.length === 1)
+  ctx2.tick(CLAIM_MS)
+  const pc2Gate = other.hold('lookup', 2)
+  const pc2 = ctx2.service().continueFinish(BO, { taskId: 't1' })
+  await until(() => other.calls.length === 2)
+  stuck.open()
+  await assert.rejects(hanging, { code: 'SOFTWARELOAD_BUSY', message: 'Bo er ved at flytte opgaven i SAP' })
+  const kept = (await ctx2.storeFor('TCD').getAsync('venter-t1', { skipCache: true })).claim
+  assert.ok(kept?.runId, 'the run that stopped did not release the claim of PC 2')
+  pc2Gate.open()
+  assert.equal((await pc2).state, 'faerdig')
+  assert.deepEqual(transfers(other), [['D005', ['B']], ['D006', ['B']]])
 })
 
 test('a run that keeps failing checks its claim before each SAP call and stops when someone else took over', async () => {

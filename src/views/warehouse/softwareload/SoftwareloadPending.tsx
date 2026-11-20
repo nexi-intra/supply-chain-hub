@@ -65,19 +65,23 @@ export function SoftwareloadPending({ user, status, reload, onBusy }: { user: Wa
             <p className="text-xs text-muted-foreground">{t('Tiden er stoppet, men ikke alle terminaler er flyttet. Det der er flyttet, er gemt og flyttes ikke igen.', 'The time is stopped, but not every terminal is moved. What was moved is saved and is not moved again.')}</p>
           </div>
           <ul className="divide-y">
-            {status.pending.map(task => (
-              <li key={task.id} className="space-y-3 px-5 py-3">
-                <div className="flex flex-wrap items-center gap-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="font-medium">{task.name}</p>
-                    <p className="text-xs text-muted-foreground">{t(`Afsluttet ${formatDateTime(task.endedAt)} · ${task.count} serienumre`, `Finished ${formatDateTime(task.endedAt)} · ${task.count} serial numbers`)}</p>
+            {status.pending.map(task => {
+              const movedElsewhere = task.movingBy && moving !== task.id
+              return (
+                <li key={task.id} className="space-y-3 px-5 py-3">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium">{task.name}</p>
+                      <p className="text-xs text-muted-foreground">{t(`Afsluttet ${formatDateTime(task.endedAt)} · ${task.count} serienumre`, `Finished ${formatDateTime(task.endedAt)} · ${task.count} serial numbers`)}</p>
+                      {movedElsewhere && <p className="text-xs font-medium text-amber-700 dark:text-amber-300">{t(`${task.movingBy!.name} er ved at flytte opgaven i SAP. Stopper flytningen, kan den fortsættes efter 2 minutter.`, `${task.movingBy!.name} is moving the task in SAP. If that move stops, it can be continued after 2 minutes.`)}</p>}
+                    </div>
+                    <Button onClick={() => continueTask(task)} loading={moving === task.id} disabled={moving !== null || !status.writeEnabled || movedElsewhere}><ArrowsClockwise size={18} /> {t('Fortsæt i SAP', 'Continue in SAP')}</Button>
+                    {status.isManager && <Button variant="outline" className="text-destructive hover:text-destructive" onClick={() => setAbandoning(task)} disabled={moving !== null || movedElsewhere}><Prohibit size={18} /> {t('Opgiv', 'Give up')}</Button>}
                   </div>
-                  <Button onClick={() => continueTask(task)} loading={moving === task.id} disabled={moving !== null || !status.writeEnabled}><ArrowsClockwise size={18} /> {t('Fortsæt i SAP', 'Continue in SAP')}</Button>
-                  {status.isManager && <Button variant="outline" className="text-destructive hover:text-destructive" onClick={() => setAbandoning(task)} disabled={moving !== null}><Prohibit size={18} /> {t('Opgiv', 'Give up')}</Button>}
-                </div>
-                {moving === task.id && <ProgressBlock progress={progress} />}
-              </li>
-            ))}
+                  {moving === task.id && <ProgressBlock progress={progress} />}
+                </li>
+              )
+            })}
           </ul>
           {!status.writeEnabled && <div className="border-t px-5 py-3"><WriteDisabledLine /></div>}
         </Card>
