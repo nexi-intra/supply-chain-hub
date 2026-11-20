@@ -4,7 +4,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { createStore } = require('../../store.cjs')
-const { createSoftwareloadService } = require('./softwareloadService.cjs')
+const { createSoftwareloadService, CLAIM_MS } = require('./softwareloadService.cjs')
 
 const ANNA = { email: 'Anna@example.test', fullName: 'Anna', role: 'user', team: 'TCD' }
 const BO = { email: 'bo@example.test', fullName: 'Bo', role: 'user', team: 'TCD' }
@@ -24,9 +24,12 @@ function fakeSap(stock, { writeEnabled = true } = {}) {
     rows,
     refuse: new Set(),
     throwWhen: null,
+    holds: [],
     async lookup({ team, serials }) {
       this.calls.push(['lookup', { team, serials: [...serials] }])
       if (this.throwWhen?.('lookup', { team, serials })) throw NOT_READY()
+      const hold = this.holds.shift()
+      if (hold) await hold
       return serials.filter(serial => rows.has(serial)).map(serial => ({ serial, plant: 'D301', userStatus: 'ONHA', ...rows.get(serial) }))
     },
     async transfer({ team, serials, to }) {
@@ -47,6 +50,17 @@ function fakeSap(stock, { writeEnabled = true } = {}) {
 
 const transfers = sap => sap.calls.filter(([kind]) => kind === 'transfer').map(([, call]) => [call.to, call.serials])
 const doc = n => `49${String(n).padStart(8, '0')}`
+/** A promise the test releases by hand, to hold a SAP call open. */
+function gate() {
+  let open
+  const promise = new Promise(resolve => { open = resolve })
+  return { promise, open }
+}
+/** Waits until the service has got as far as `ready` says. */
+async function until(ready) {
+  for (let i = 0; i < 500 && !ready(); i++) await new Promise(resolve => setTimeout(resolve, 5))
+  assert.ok(ready(), 'the service never got there')
+}
 
 function setup({ timeclockRunning = null, sap = { writeEnabled: false } } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'softwareload-'))
@@ -450,6 +464,73 @@ test('a terminal moved before SAP closed keeps its outcome when the task continu
   assert.deepEqual(sap.calls, [['lookup', { team: 'TCD', serials: ['A', 'C'] }], ['block', { material: 'M-0', serials: ['C'], bwart: '344' }]])
   assert.deepEqual(['A', 'C'].map(serial => [result.results[serial].outcome, result.results[serial].steps.length]), [['to-target', 1], ['to-blocked', 2]])
   assert.deepEqual(result.counts, { 'to-target': 1, 'to-blocked': 1 })
+})
+
+test('a second person cannot continue while the first holds a fresh claim, but can after it expires', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, TASK, ['A'])
+  const annaGate = gate()
+  sap.holds.push(annaGate.promise)
+  const anna = svc.finish(ANNA, {})
+  anna.catch(() => {})
+  await until(() => sap.calls.length === 1)
+
+  await assert.rejects(svc.continueFinish(MONA, { taskId: 't1' }), { code: 'SOFTWARELOAD_BUSY', message: 'Anna er ved at flytte opgaven i SAP' })
+  ctx.tick(CLAIM_MS - 1)
+  await assert.rejects(svc.continueFinish(MONA, { taskId: 't1' }), { code: 'SOFTWARELOAD_BUSY' })
+  ctx.tick(1)
+  const monaGate = gate()
+  sap.holds.push(monaGate.promise)
+  const mona = svc.continueFinish(MONA, { taskId: 't1' })
+  await until(() => sap.calls.length === 2)
+
+  annaGate.open()
+  await assert.rejects(anna, { code: 'SOFTWARELOAD_BUSY', message: 'Mona er ved at flytte opgaven i SAP' }, 'the run that lost its claim stops before SAP')
+  monaGate.open()
+  const result = await mona
+  assert.deepEqual(transfers(sap), [['D005', ['A']], ['D006', ['A']]], 'each move once')
+  assert.deepEqual(result.results.A.steps.map(step => [step.to, step.by]), [['D005', 'mona@example.test'], ['D006', 'mona@example.test']])
+  assert.equal('claim' in (await ctx.finished('2026-11')).t1, false, 'the claim is not kept on the finished task')
+})
+
+test('abandon is refused while someone else is moving the task', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, TASK, ['A'])
+  const annaGate = gate()
+  sap.holds.push(annaGate.promise)
+  const anna = svc.finish(ANNA, {})
+  anna.catch(() => {})
+  await until(() => sap.calls.length === 1)
+
+  await assert.rejects(svc.abandon(MONA, { taskId: 't1', reason: 'Væk' }), { code: 'SOFTWARELOAD_BUSY', message: 'Anna er ved at flytte opgaven i SAP' })
+  assert.deepEqual((await svc.status(MONA)).pending.map(task => task.id), ['t1'])
+  ctx.tick(CLAIM_MS)
+  const result = await svc.abandon(MONA, { taskId: 't1', reason: 'Annas PC gik ned' })
+  assert.deepEqual([result.results.A.outcome, result.counts], ['abandoned', { abandoned: 1 }])
+
+  annaGate.open()
+  await assert.rejects(anna, { code: 'SOFTWARELOAD_NOT_PENDING' })
+  assert.deepEqual(transfers(sap), [], 'nothing moves after the task was given up')
+})
+
+test('a claim is released when SAP fails, so the owner can continue at once', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
+  sap.throwWhen = kind => kind === 'lookup'
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, TASK, ['A'])
+  const store = ctx.storeFor('TCD')
+  await assert.rejects(svc.finish(ANNA, {}), { code: 'SAP_NOT_READY' })
+  assert.equal((await store.getAsync('venter-t1', { skipCache: true })).claim, undefined)
+  await assert.rejects(svc.continueFinish(MONA, { taskId: 't1' }), { code: 'SAP_NOT_READY' })
+  assert.equal((await store.getAsync('venter-t1', { skipCache: true })).claim, undefined, 'a manager\'s failed run lets go too')
+
+  // Anna's PC died mid-run: her own fresh claim never stops her.
+  await store.mutateAsync('venter-t1', task => ({ ...task, claim: { by: 'anna@example.test', name: 'Anna', at: ctx.clock.now } }))
+  sap.throwWhen = null
+  const result = await svc.continueFinish(ANNA, { taskId: 't1' })
+  assert.deepEqual([result.state, result.counts], ['faerdig', { 'to-target': 1 }])
 })
 
 test('writing disabled: finish is refused before the clock stops', async () => {

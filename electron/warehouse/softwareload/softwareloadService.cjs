@@ -17,6 +17,8 @@ const VERSIONS_KEY = 'versioner'
 const PENDING_PREFIX = 'venter-'
 const TASK_ID_PATTERN = /^[\w-]{1,100}$/
 const BLOCK_BWART = '344'
+/** How long a claim on a pending task keeps others out; every saved SAP document renews it. */
+const CLAIM_MS = 10 * 60 * 1000
 /** Outcomes that need nothing from SAP: the terminal stays where it is. */
 const NOTHING_TO_MOVE = ['not-found', 'blocked-stock', 'already-blocked', 'skipped', 'manual']
 
@@ -274,13 +276,33 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
     return { outcomes, transfers, blocks, rows }
   }
 
+  const claimOf = user => ({ by: lower(user.email), name: user.fullName || user.email, at: now() })
+  const busy = claim => codeError('SOFTWARELOAD_BUSY', `${claim.name} er ved at flytte opgaven i SAP`)
+
+  /** Refuses while another person holds a fresh claim; the same person may always go again (a retry after a crash). */
+  function requireFreeClaim(task, user) {
+    const { claim } = task
+    if (claim && claim.by !== lower(user.email) && now() - claim.at < CLAIM_MS) throw busy(claim)
+  }
+
+  /** Clears this person's claim after a failed run, so someone else can continue at once. Best effort: it expires anyway. */
+  async function releaseClaim(user, taskId) {
+    try {
+      await storeFor(user.team).mutateAsync(pendingKey(taskId), current => {
+        if (current?.claim?.by !== lower(user.email)) return undefined
+        const { claim, ...task } = current
+        return task
+      })
+    } catch { /* the claim runs out after CLAIM_MS */ }
+  }
+
   /**
    * Writes a pending task as finished: the month file of its owner first, then the search index, and the pending file
    * last. Until then the task stays pending, and both writes replace rather than add, so running it again is harmless.
    */
   async function complete(user, taskId, change) {
     const current = await readPending(user, taskId)
-    const task = { ...change(current), state: 'faerdig' }
+    const { claim, ...task } = { ...change(current), state: 'faerdig' }
     await storeFor(user.team).mutateAsync(finishedKey(task), month => ({ ...month, tasks: { ...month?.tasks, [task.id]: task } }))
     await indexStore.mutateAsync(indexKey(task), index => ({
       ...index,
@@ -293,8 +315,18 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
   /**
    * Moves a pending task's terminals in SAP. Every SAP document is saved on its serials before the next call, so a
    * crash or a closed SAP leaves the task pending and a later run starts from what SAP and the saved steps say.
+   * The caller holds the claim; a failed run gives it back.
    */
   async function execute(user, taskId, onProgress) {
+    try {
+      return await moveInSap(user, taskId, onProgress)
+    } catch (error) {
+      await releaseClaim(user, taskId)
+      throw error
+    }
+  }
+
+  async function moveInSap(user, taskId, onProgress) {
     const report = (step, done, total) => { try { onProgress?.({ done, total, step }) } catch { /* the screen is gone */ } }
     const by = lower(user.email)
     const task = await readPending(user, taskId)
@@ -307,7 +339,10 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
     const plan = planMoves({ kif: task.kif, target: task.target, terminals: terminalsOf(task), sapRows: rows, passedD005 })
 
     const rowOf = new Map(rows.map(row => [row.serial, row]))
+    // Someone else took over a stale claim while SAP answered; they move the task now, so this run stops before SAP.
+    const takenBy = current => (current.claim && current.claim.by !== by ? current.claim : null)
     await changePending(user, taskId, current => {
+      if (takenBy(current)) throw busy(current.claim)
       const results = {}
       for (const serial of serials) {
         const before = current.results?.[serial]
@@ -322,11 +357,17 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
     })
 
     const failures = new Map()
-    const addSteps = (items, step) => changePending(user, taskId, current => {
-      const results = { ...current.results }
-      for (const serial of items) results[serial] = { ...results[serial], steps: [...(results[serial]?.steps || []), step] }
-      return { ...current, results }
-    })
+    const addSteps = async (items, step) => {
+      let taken = null
+      await changePending(user, taskId, current => {
+        const results = { ...current.results }
+        for (const serial of items) results[serial] = { ...results[serial], steps: [...(results[serial]?.steps || []), step] }
+        taken = takenBy(current)
+        return { ...current, results, claim: taken || claimOf(user) }
+      })
+      // The document is saved either way; then the run stops, so two people never move the same task at once.
+      if (taken) throw busy(taken)
+    }
     const keepFailures = async failed => {
       if (!failed.length) return
       for (const { item, message } of failed) failures.set(item, message)
@@ -390,7 +431,11 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
       return undefined
     })
     // After a crash between these two writes both files exist; the pending one wins, so saved steps are never lost.
-    const pending = await store.mutateAsync(pendingKey(ended.id), current => current ?? ended)
+    const pending = await store.mutateAsync(pendingKey(ended.id), current => {
+      const task = current ?? ended
+      requireFreeClaim(task, user)
+      return { ...task, claim: claimOf(user) }
+    })
     await store.deleteAsync(runningKey(user.email))
     return execute(user, pending.id, onProgress)
   }
@@ -399,6 +444,10 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
     requireWrite()
     const task = await readPending(user, taskId)
     if (task.email !== lower(user.email) && !isManager(user)) throw codeError('MANAGER_ONLY', 'Kun ejeren eller en manager kan fortsætte opgaven i SAP')
+    await changePending(user, task.id, current => {
+      requireFreeClaim(current, user)
+      return { ...current, claim: claimOf(user) }
+    })
     return execute(user, task.id, onProgress)
   }
 
@@ -408,6 +457,7 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
     const why = clean(reason, NOTE_MAX)
     if (!why) throw codeError('SOFTWARELOAD_INVALID', 'Skriv hvorfor flytningerne opgives')
     return complete(user, taskId, current => {
+      requireFreeClaim(current, user)
       const results = {}
       for (const serial of Object.keys(current.terminals || {})) {
         const result = current.results?.[serial]
@@ -426,4 +476,4 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
   }
 }
 
-module.exports = { createSoftwareloadService }
+module.exports = { createSoftwareloadService, CLAIM_MS }
