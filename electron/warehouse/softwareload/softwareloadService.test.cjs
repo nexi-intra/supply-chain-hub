@@ -14,38 +14,48 @@ const MIN = 60_000
 
 const NOT_READY = () => Object.assign(new Error('SAP er ikke klar'), { code: 'SAP_NOT_READY' })
 
-/** A fake SAP that remembers every call, moves its own stock and can refuse (`refuse`) or throw (`throwWhen`). */
+/**
+ * A fake SAP that remembers every call, moves its own stock and can refuse (`refuse`), throw (`throwWhen`) or hold
+ * its n-th call of a kind open until the test opens the gate (`hold(kind, n)`).
+ */
 function fakeSap(stock, { writeEnabled = true } = {}) {
   let docs = 0
   const rows = new Map(Object.entries(stock).map(([serial, row]) => [serial, { blocked: false, ...row }]))
-  return {
+  const counts = { lookup: 0, transfer: 0, block: 0 }
+  const holds = new Map()
+  const call = async (kind, input) => {
+    sap.calls.push([kind, input])
+    if (sap.throwWhen?.(kind, input)) throw NOT_READY()
+    await holds.get(`${kind}#${++counts[kind]}`)
+  }
+  const sap = {
     writeEnabled,
     calls: [],
     rows,
     refuse: new Set(),
     throwWhen: null,
-    holds: [],
+    hold(kind, n) {
+      const held = gate()
+      holds.set(`${kind}#${n}`, held.promise)
+      return held
+    },
     async lookup({ team, serials }) {
-      this.calls.push(['lookup', { team, serials: [...serials] }])
-      if (this.throwWhen?.('lookup', { team, serials })) throw NOT_READY()
-      const hold = this.holds.shift()
-      if (hold) await hold
+      await call('lookup', { team, serials: [...serials] })
       return serials.filter(serial => rows.has(serial)).map(serial => ({ serial, plant: 'D301', userStatus: 'ONHA', ...rows.get(serial) }))
     },
     async transfer({ team, serials, to }) {
-      this.calls.push(['transfer', { team, serials: [...serials], to }])
-      if (this.throwWhen?.('transfer', { team, serials, to })) throw NOT_READY()
-      if (serials.some(serial => this.refuse.has(serial))) return { ok: false, message: 'Deficit of SL Unrestricted-use 1 EA' }
+      await call('transfer', { team, serials: [...serials], to })
+      if (serials.some(serial => sap.refuse.has(serial))) return { ok: false, message: 'Deficit of SL Unrestricted-use 1 EA' }
       for (const serial of serials) rows.get(serial).sloc = to
       return { ok: true, doc: `49${String(++docs).padStart(8, '0')}` }
     },
     async block({ material, serials, bwart }) {
-      this.calls.push(['block', { material, serials: [...serials], bwart }])
-      if (this.throwWhen?.('block', { material, serials, bwart })) throw NOT_READY()
+      await call('block', { material, serials: [...serials], bwart })
       for (const serial of serials) rows.get(serial).blocked = true
       return { ok: true, doc: `49${String(++docs).padStart(8, '0')}` }
     },
   }
+  return sap
 }
 
 const transfers = sap => sap.calls.filter(([kind]) => kind === 'transfer').map(([, call]) => [call.to, call.serials])
@@ -470,19 +480,18 @@ test('a second person cannot continue while the first holds a fresh claim, but c
   const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
   const ctx = setup({ sap })
   const svc = await startWith(ctx, TASK, ['A'])
-  const annaGate = gate()
-  sap.holds.push(annaGate.promise)
+  const otherPc = ctx.service()
+  const annaGate = sap.hold('lookup', 1)
   const anna = svc.finish(ANNA, {})
   anna.catch(() => {})
   await until(() => sap.calls.length === 1)
 
-  await assert.rejects(svc.continueFinish(MONA, { taskId: 't1' }), { code: 'SOFTWARELOAD_BUSY', message: 'Anna er ved at flytte opgaven i SAP' })
+  await assert.rejects(otherPc.continueFinish(MONA, { taskId: 't1' }), { code: 'SOFTWARELOAD_BUSY', message: 'Anna er ved at flytte opgaven i SAP' })
   ctx.tick(CLAIM_MS - 1)
-  await assert.rejects(svc.continueFinish(MONA, { taskId: 't1' }), { code: 'SOFTWARELOAD_BUSY' })
+  await assert.rejects(otherPc.continueFinish(MONA, { taskId: 't1' }), { code: 'SOFTWARELOAD_BUSY' })
   ctx.tick(1)
-  const monaGate = gate()
-  sap.holds.push(monaGate.promise)
-  const mona = svc.continueFinish(MONA, { taskId: 't1' })
+  const monaGate = sap.hold('lookup', 2)
+  const mona = otherPc.continueFinish(MONA, { taskId: 't1' })
   await until(() => sap.calls.length === 2)
 
   annaGate.open()
@@ -498,8 +507,7 @@ test('abandon is refused while someone else is moving the task', async () => {
   const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
   const ctx = setup({ sap })
   const svc = await startWith(ctx, TASK, ['A'])
-  const annaGate = gate()
-  sap.holds.push(annaGate.promise)
+  const annaGate = sap.hold('lookup', 1)
   const anna = svc.finish(ANNA, {})
   anna.catch(() => {})
   await until(() => sap.calls.length === 1)
@@ -531,6 +539,97 @@ test('a claim is released when SAP fails, so the owner can continue at once', as
   sap.throwWhen = null
   const result = await svc.continueFinish(ANNA, { taskId: 't1' })
   assert.deepEqual([result.state, result.counts], ['faerdig', { 'to-target': 1 }])
+})
+
+test('a run that keeps failing checks its claim before each SAP call and stops when someone else took over', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D001' }, B: { material: 'M-R', sloc: 'D001' } })
+  sap.refuse.add('A')
+  sap.refuse.add('B')
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, { ...TASK, kif: false }, ['A', 'B'])
+  const otherPc = ctx.service()
+  const annaGate = sap.hold('transfer', 2)
+  const anna = svc.finish(ANNA, {})
+  anna.catch(() => {})
+  await until(() => transfers(sap).length === 2)
+
+  ctx.tick(CLAIM_MS)
+  const monaGate = sap.hold('lookup', 2)
+  const mona = otherPc.continueFinish(MONA, { taskId: 't1' })
+  await until(() => sap.calls.filter(([kind]) => kind === 'lookup').length === 2)
+  annaGate.open()
+  await assert.rejects(anna, { code: 'SOFTWARELOAD_BUSY', message: 'Mona er ved at flytte opgaven i SAP' })
+  assert.deepEqual(transfers(sap), [['D006', ['A', 'B']], ['D006', ['A']]], 'no SAP call from the first run after the takeover')
+  const pending = await ctx.storeFor('TCD').getAsync('venter-t1', { skipCache: true })
+  assert.equal(pending.claim.by, 'mona@example.test', 'the first run neither deleted the task nor took the claim back')
+
+  sap.refuse.clear()
+  monaGate.open()
+  const result = await mona
+  assert.deepEqual(transfers(sap).slice(2), [['D006', ['A', 'B']]])
+  assert.deepEqual(result.counts, { 'to-target': 2 })
+})
+
+test('a run whose last SAP call fails after a takeover leaves the task to the new holder', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D001' } })
+  sap.refuse.add('A')
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, { ...TASK, kif: false }, ['A'])
+  const otherPc = ctx.service()
+  const annaGate = sap.hold('transfer', 1)
+  const anna = svc.finish(ANNA, {})
+  anna.catch(() => {})
+  await until(() => transfers(sap).length === 1)
+
+  ctx.tick(CLAIM_MS)
+  const monaGate = sap.hold('lookup', 2)
+  const mona = otherPc.continueFinish(MONA, { taskId: 't1' })
+  await until(() => sap.calls.filter(([kind]) => kind === 'lookup').length === 2)
+  annaGate.open()
+  await assert.rejects(anna, { code: 'SOFTWARELOAD_BUSY', message: 'Mona er ved at flytte opgaven i SAP' })
+  assert.equal((await ctx.storeFor('TCD').getAsync('venter-t1', { skipCache: true })).claim.by, 'mona@example.test', 'not completed under the new holder')
+
+  sap.refuse.clear()
+  monaGate.open()
+  const result = await mona
+  assert.deepEqual([result.results.A.outcome, result.results.A.steps.map(step => step.by)], ['to-target', ['mona@example.test']])
+})
+
+test('a second continue of the same task in the same process is refused while the first runs', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
+  sap.throwWhen = kind => kind === 'lookup'
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, TASK, ['A'])
+  await assert.rejects(svc.finish(ANNA, {}), { code: 'SAP_NOT_READY' })
+  sap.throwWhen = null
+
+  const held = sap.hold('lookup', 1)
+  const first = svc.continueFinish(ANNA, { taskId: 't1' })
+  await until(() => sap.calls.length === 2)
+  await assert.rejects(svc.continueFinish(ANNA, { taskId: 't1' }), { code: 'SOFTWARELOAD_BUSY', message: 'Opgaven er allerede ved at blive flyttet i SAP' })
+  await assert.rejects(svc.continueFinish(MONA, { taskId: 't1' }), { code: 'SOFTWARELOAD_BUSY' })
+  held.open()
+  const result = await first
+  assert.equal(result.state, 'faerdig')
+  assert.deepEqual(transfers(sap), [['D005', ['A']], ['D006', ['A']]])
+  assert.equal(sap.calls.filter(([kind]) => kind === 'lookup').length, 2, 'the refused runs never reached SAP')
+})
+
+test('a double finish is refused while the first runs', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, TASK, ['A'])
+  ctx.tick(30 * MIN)
+  const held = sap.hold('lookup', 1)
+  const first = svc.finish(ANNA, {})
+  await assert.rejects(svc.finish(ANNA, {}), { code: 'SOFTWARELOAD_BUSY', message: 'Opgaven er allerede ved at blive afsluttet' })
+  await until(() => sap.calls.length === 1)
+  await assert.rejects(svc.continueFinish(ANNA, { taskId: 't1' }), { code: 'SOFTWARELOAD_BUSY' })
+  held.open()
+  const result = await first
+  assert.deepEqual([result.state, transfers(sap)], ['faerdig', [['D005', ['A']], ['D006', ['A']]]])
+  assert.equal(sap.calls.filter(([kind]) => kind === 'lookup').length, 1)
+  assert.equal((await ctx.finished('2026-11')).t1.workedMs, 30 * MIN)
 })
 
 test('writing disabled: finish is refused before the clock stops', async () => {

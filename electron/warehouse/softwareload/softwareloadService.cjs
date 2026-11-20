@@ -278,6 +278,10 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
 
   const claimOf = user => ({ by: lower(user.email), name: user.fullName || user.email, at: now() })
   const busy = claim => codeError('SOFTWARELOAD_BUSY', `${claim.name} er ved at flytte opgaven i SAP`)
+  // Runs in this process: the claim lets the same person in again after a crash, so a double click is stopped here.
+  const finishing = new Set()
+  const inFlight = new Set()
+  const alreadyMoving = () => codeError('SOFTWARELOAD_BUSY', 'Opgaven er allerede ved at blive flyttet i SAP')
 
   /** Refuses while another person holds a fresh claim; the same person may always go again (a retry after a crash). */
   function requireFreeClaim(task, user) {
@@ -378,6 +382,11 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
       })
     }
 
+    const holdClaim = () => changePending(user, taskId, current => {
+      if (takenBy(current)) throw busy(current.claim)
+      return { ...current, claim: claimOf(user) }
+    })
+
     /** Runs one step for groups of serials; a serial that failed earlier (also in wave 1) is left out. */
     async function run(step, groups, size, attempt, stepOf) {
       const total = groups.reduce((sum, group) => sum + group.serials.length, 0)
@@ -388,7 +397,8 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
         const waiting = group.serials.filter(serial => !failures.has(serial))
         done += group.serials.length - waiting.length
         for (const part of chunks(waiting, size)) {
-          const { failed } = await bisect(part, items => attempt(group, items), async ({ items, doc }) => {
+          // Every SAP call renews the claim first, so a long run of refusals keeps it, and a run that lost it stops.
+          const { failed } = await bisect(part, async items => { await holdClaim(); return attempt(group, items) }, async ({ items, doc }) => {
             await addSteps(items, { ...stepOf(group), doc, by, at: now() })
             done += items.length
             report(step, done, total)
@@ -408,6 +418,7 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
       () => ({ bwart: BLOCK_BWART }))
 
     return complete(user, taskId, current => {
+      if (takenBy(current)) throw busy(current.claim)
       const results = {}
       for (const serial of serials) {
         const { message, ...result } = current.results[serial]
@@ -420,35 +431,52 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
   /** Stops the time and hands the running task over to SAP; it waits as `venter-<id>` until every move is done. */
   async function finish(user, { onProgress } = {}) {
     requireWrite()
-    const store = storeFor(user.team)
-    let ended = null
-    await store.mutateAsync(runningKey(user.email), current => {
-      if (!current) throw notRunning()
-      const endedAt = now()
-      const pauses = current.pauses.map(pause => (pause.to == null ? { ...pause, to: endedAt } : pause))
-      const paused = pausedMs(pauses, endedAt)
-      ended = { ...current, pauses, endedAt, pausedMs: paused, workedMs: endedAt - current.startedAt - paused, state: 'mangler-sap' }
-      return undefined
-    })
-    // After a crash between these two writes both files exist; the pending one wins, so saved steps are never lost.
-    const pending = await store.mutateAsync(pendingKey(ended.id), current => {
-      const task = current ?? ended
-      requireFreeClaim(task, user)
-      return { ...task, claim: claimOf(user) }
-    })
-    await store.deleteAsync(runningKey(user.email))
-    return execute(user, pending.id, onProgress)
+    const email = lower(user.email)
+    if (finishing.has(email)) throw codeError('SOFTWARELOAD_BUSY', 'Opgaven er allerede ved at blive afsluttet')
+    finishing.add(email)
+    let taskId = null
+    try {
+      const store = storeFor(user.team)
+      let ended = null
+      await store.mutateAsync(runningKey(user.email), current => {
+        if (!current) throw notRunning()
+        const endedAt = now()
+        const pauses = current.pauses.map(pause => (pause.to == null ? { ...pause, to: endedAt } : pause))
+        const paused = pausedMs(pauses, endedAt)
+        ended = { ...current, pauses, endedAt, pausedMs: paused, workedMs: endedAt - current.startedAt - paused, state: 'mangler-sap' }
+        return undefined
+      })
+      if (inFlight.has(ended.id)) throw alreadyMoving()
+      inFlight.add(taskId = ended.id)
+      // After a crash between these two writes both files exist; the pending one wins, so saved steps are never lost.
+      await store.mutateAsync(pendingKey(ended.id), current => {
+        const task = current ?? ended
+        requireFreeClaim(task, user)
+        return { ...task, claim: claimOf(user) }
+      })
+      await store.deleteAsync(runningKey(user.email))
+      return await execute(user, ended.id, onProgress)
+    } finally {
+      finishing.delete(email)
+      if (taskId) inFlight.delete(taskId)
+    }
   }
 
   async function continueFinish(user, { taskId, onProgress } = {}) {
     requireWrite()
     const task = await readPending(user, taskId)
     if (task.email !== lower(user.email) && !isManager(user)) throw codeError('MANAGER_ONLY', 'Kun ejeren eller en manager kan fortsætte opgaven i SAP')
-    await changePending(user, task.id, current => {
-      requireFreeClaim(current, user)
-      return { ...current, claim: claimOf(user) }
-    })
-    return execute(user, task.id, onProgress)
+    if (inFlight.has(task.id)) throw alreadyMoving()
+    inFlight.add(task.id)
+    try {
+      await changePending(user, task.id, current => {
+        requireFreeClaim(current, user)
+        return { ...current, claim: claimOf(user) }
+      })
+      return await execute(user, task.id, onProgress)
+    } finally {
+      inFlight.delete(task.id)
+    }
   }
 
   /** A manager gives up the remaining moves; terminals that still had a move to make are marked `abandoned`. */
