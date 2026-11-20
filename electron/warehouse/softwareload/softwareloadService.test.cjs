@@ -36,6 +36,7 @@ function fakeSap(stock, { writeEnabled = true } = {}) {
   const sap = {
     writeEnabled,
     calls: [],
+    moves: [],
     rows,
     refuse: new Set(),
     throwWhen: null,
@@ -54,7 +55,10 @@ function fakeSap(stock, { writeEnabled = true } = {}) {
       if (serials.some(serial => sap.refuse.has(serial))) return { ok: false, message: 'Deficit of SL Unrestricted-use 1 EA' }
       // Like sl-transfer.vbs: nothing moves when a row no longer stands where the plan said.
       if (serials.some(serial => rows.get(serial).sloc !== from)) return { ok: false, message: `Står ikke længere på ${from} i SAP` }
-      for (const serial of serials) rows.get(serial).sloc = to
+      for (const serial of serials) {
+        sap.moves.push({ serial, from: rows.get(serial).sloc, to })
+        rows.get(serial).sloc = to
+      }
       const posted = `49${String(++docs).padStart(8, '0')}`
       if (sap.postThenThrow?.('transfer', { serials, to })) throw TIMEOUT()
       return { ok: true, doc: posted }
@@ -71,6 +75,8 @@ function fakeSap(stock, { writeEnabled = true } = {}) {
 }
 
 const transfers = sap => sap.calls.filter(([kind]) => kind === 'transfer').map(([, call]) => [call.to, call.serials])
+/** Every Transfer SAP made for one serial, as [from, to]; refused calls moved nothing and are left out. */
+const movesOf = (sap, serial) => sap.moves.filter(move => move.serial === serial).map(move => [move.from, move.to])
 const doc = n => `49${String(n).padStart(8, '0')}`
 /** Every line of the search index, by serial and then in the order they were written. */
 async function allIndexLines(ctx) {
@@ -261,24 +267,38 @@ test('a second start while one runs is refused', async () => {
 test('scan normalizes and refuses duplicates', async () => {
   const ctx = setup()
   const svc = ctx.service()
-  await assert.rejects(svc.scan(ANNA, { serial: 'ABC123' }), { code: 'SOFTWARELOAD_NOT_RUNNING' })
+  await assert.rejects(svc.scan(ANNA, { serial: 'ABC123', taskId: 't1' }), { code: 'SOFTWARELOAD_NOT_RUNNING' })
   await svc.start(ANNA, TASK)
-  assert.deepEqual(await svc.scan(ANNA, { serial: ' abc123 ' }), { serial: 'ABC123', count: 1 })
-  await assert.rejects(svc.scan(ANNA, { serial: 'ABC123' }), { code: 'SOFTWARELOAD_DUPLICATE' })
-  await assert.rejects(svc.scan(ANNA, { serial: '  ' }), { code: 'SOFTWARELOAD_INVALID' })
+  assert.deepEqual(await svc.scan(ANNA, { serial: ' abc123 ', taskId: 't1' }), { serial: 'ABC123', count: 1 })
+  await assert.rejects(svc.scan(ANNA, { serial: 'ABC123', taskId: 't1' }), { code: 'SOFTWARELOAD_DUPLICATE' })
+  await assert.rejects(svc.scan(ANNA, { serial: '  ', taskId: 't1' }), { code: 'SOFTWARELOAD_INVALID' })
   ctx.tick(MIN)
-  assert.deepEqual(await svc.scan(ANNA, { serial: 'xyz9' }), { serial: 'XYZ9', count: 2 })
+  assert.deepEqual(await svc.scan(ANNA, { serial: 'xyz9', taskId: 't1' }), { serial: 'XYZ9', count: 2 })
   const { running } = await svc.status(ANNA)
   assert.deepEqual(running.terminals.map(terminal => terminal.serial), ['XYZ9', 'ABC123'], 'newest scan first')
-  assert.deepEqual(await svc.unscan(ANNA, { serial: 'abc123' }), { serial: 'ABC123', count: 1 })
+  assert.deepEqual(await svc.unscan(ANNA, { serial: 'abc123', taskId: 't1' }), { serial: 'ABC123', count: 1 })
   assert.deepEqual((await svc.status(ANNA)).running.terminals.map(terminal => terminal.serial), ['XYZ9'])
+})
+
+test('a scan or unscan for another task than the running one is refused and never lands in it', async () => {
+  const ctx = setup()
+  const svc = ctx.service()
+  await svc.start(ANNA, TASK)
+  await svc.scan(ANNA, { serial: 'OLD1', taskId: 't1' })
+  await svc.cancel(ANNA)
+  await svc.start(ANNA, { ...TASK, version: 'v3' })
+  await svc.scan(ANNA, { serial: 'NEW1', taskId: 't2' })
+  await assert.rejects(svc.scan(ANNA, { serial: 'OLD2', taskId: 't1' }), { code: 'SOFTWARELOAD_NOT_RUNNING' })
+  await assert.rejects(svc.scan(ANNA, { serial: 'OLD3' }), { code: 'SOFTWARELOAD_NOT_RUNNING' }, 'a scan must name its task')
+  await assert.rejects(svc.unscan(ANNA, { serial: 'NEW1', taskId: 't1' }), { code: 'SOFTWARELOAD_NOT_RUNNING' })
+  assert.deepEqual((await svc.status(ANNA)).running.terminals.map(terminal => terminal.serial), ['NEW1'])
 })
 
 test('a failed terminal needs a note and can be undone', async () => {
   const ctx = setup()
   const svc = ctx.service()
   await svc.start(ANNA, TASK)
-  await svc.scan(ANNA, { serial: 'ABC123' })
+  await svc.scan(ANNA, { serial: 'ABC123', taskId: 't1' })
   await assert.rejects(svc.markFailed(ANNA, { serial: 'ABC123', note: '  ' }), { code: 'SOFTWARELOAD_INVALID' })
   await assert.rejects(svc.markFailed(ANNA, { serial: 'NOPE1', note: 'Skærm død' }), { code: 'SOFTWARELOAD_INVALID' })
   const marked = await svc.markFailed(ANNA, { serial: 'abc123', note: ' Skærm   død ' })
@@ -337,9 +357,9 @@ test('another person cannot see or change my running task', async () => {
   const ctx = setup()
   const svc = ctx.service()
   await svc.start(BO, TASK)
-  await svc.scan(BO, { serial: 'ABC123' })
+  await svc.scan(BO, { serial: 'ABC123', taskId: 't1' })
   assert.equal((await svc.status(ANNA)).running, null)
-  await assert.rejects(svc.scan(ANNA, { serial: 'XYZ9' }), { code: 'SOFTWARELOAD_NOT_RUNNING' })
+  await assert.rejects(svc.scan(ANNA, { serial: 'XYZ9', taskId: 't1' }), { code: 'SOFTWARELOAD_NOT_RUNNING' })
   await assert.rejects(svc.markFailed(ANNA, { serial: 'ABC123', note: 'Død' }), { code: 'SOFTWARELOAD_NOT_RUNNING' })
   await assert.rejects(svc.cancel(ANNA), { code: 'SOFTWARELOAD_NOT_RUNNING' })
   const started = await svc.start(ANNA, { ...TASK, version: 'v3' })
@@ -356,8 +376,8 @@ test('another person cannot see or change my running task', async () => {
 /** Starts Anna's task and scans the serials; `failed` maps a serial to its note. */
 async function startWith(ctx, task, serials, failed = {}) {
   const svc = ctx.service()
-  await svc.start(ANNA, task)
-  for (const serial of serials) await svc.scan(ANNA, { serial })
+  const started = await svc.start(ANNA, task)
+  for (const serial of serials) await svc.scan(ANNA, { serial, taskId: started.id })
   for (const [serial, note] of Object.entries(failed)) await svc.markFailed(ANNA, { serial, note })
   return svc
 }
@@ -722,6 +742,33 @@ test('a KIF Transfer SAP posted without an answer is never repeated: D000, D005,
   assert.deepEqual(lines.map(line => [line.serial, line.from, line.to, line.docs, line.unverified]), [['A', 'D000', 'D004', [], true]])
 })
 
+test('a KIF terminal that started on D005 is not moved again after a lost answer', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D005' } })
+  sap.postThenThrow = kind => kind === 'transfer'
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, TASK, ['A'])
+  await assert.rejects(svc.finish(ANNA, {}), { code: 'SAP_TIMEOUT' })
+  sap.postThenThrow = null
+  const result = await svc.continueFinish(ANNA, { taskId: 't1' })
+  assert.deepEqual(movesOf(sap, 'A'), [['D005', 'D006']], 'no further Transfer for A')
+  assert.deepEqual(result.results.A.steps.map(step => [step.from, step.to, step.doc, step.unverified]), [['D005', 'D006', null, true]])
+  assert.equal(result.results.A.outcome, 'to-target')
+})
+
+test('a KIF terminal that started on D005 and was saved is not moved again when a later step failed', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D005' }, C: { material: 'M-0', sloc: 'D005' } })
+  sap.throwWhen = kind => kind === 'block'
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, TASK, ['A', 'C'], { C: 'Død' })
+  await assert.rejects(svc.finish(ANNA, {}), { code: 'SAP_NOT_READY' })
+  sap.throwWhen = null
+  const result = await svc.continueFinish(ANNA, { taskId: 't1' })
+  assert.deepEqual(movesOf(sap, 'A'), [['D005', 'D006']], 'no further Transfer for A')
+  assert.deepEqual(movesOf(sap, 'C'), [['D005', 'D000']], 'no further Transfer for C')
+  assert.deepEqual(result.results.A.steps.map(step => [step.from, step.to, step.doc]), [['D005', 'D006', doc(1)]])
+  assert.deepEqual([result.results.C.outcome, result.results.C.steps.map(step => step.to ?? step.bwart)], ['to-blocked', ['D000', '344']])
+})
+
 test('a MIGO 344 SAP posted without an answer is recorded as unverified and never repeated', async () => {
   const sap = fakeSap({ A: { material: 'M-0', sloc: 'D006' } })
   sap.postThenThrow = kind => kind === 'block'
@@ -873,7 +920,7 @@ test('a run renews its claim while SAP works, and a run that lost it to the same
   const ctx2 = setup({ sap: other })
   const pc1 = ctx2.service()
   await pc1.start(BO, TASK)
-  await pc1.scan(BO, { serial: 'B' })
+  await pc1.scan(BO, { serial: 'B', taskId: 't1' })
   const stuck = other.hold('lookup', 1)
   const hanging = pc1.finish(BO, {})
   hanging.catch(() => {})
@@ -991,7 +1038,7 @@ test('writing disabled: finish is refused before the clock stops', async () => {
   assert.deepEqual(sap.calls, [])
   const status = await svc.status(ANNA)
   assert.deepEqual([status.running.id, status.running.paused, status.running.workedMs, status.pending], ['t1', false, 10 * MIN, []])
-  assert.deepEqual(await svc.scan(ANNA, { serial: 'B' }), { serial: 'B', count: 2 }, 'the task still runs')
+  assert.deepEqual(await svc.scan(ANNA, { serial: 'B', taskId: 't1' }), { serial: 'B', count: 2 }, 'the task still runs')
 })
 
 test('kif move by material document moves to D005 and is found by search from the other team', async () => {
@@ -1132,7 +1179,7 @@ test('search returns every event for a serial, newest first, across months and y
   await svc.kifMove(TRINE, { serials: ['A', 'B'] })
   ctx.clock.now = new Date(2026, 10, 18, 7, 0).getTime()
   await svc.start(ANNA, TASK)
-  await svc.scan(ANNA, { serial: 'A' })
+  await svc.scan(ANNA, { serial: 'A', taskId: 't2' })
   ctx.tick(30 * MIN)
   const finished = ctx.clock.now
   await svc.finish(ANNA, {})
@@ -1170,8 +1217,8 @@ test('tasks: an employee gets own tasks, a manager all in the period', async () 
   const svc = ctx.service()
   const finishTask = async (user, startAt, serial) => {
     ctx.clock.now = startAt
-    await svc.start(user, { ...TASK, kif: false })
-    await svc.scan(user, { serial })
+    const started = await svc.start(user, { ...TASK, kif: false })
+    await svc.scan(user, { serial, taskId: started.id })
     ctx.tick(30 * MIN)
     return (await svc.finish(user, {})).taskId
   }

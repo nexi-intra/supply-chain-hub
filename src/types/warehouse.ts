@@ -1361,8 +1361,9 @@ export interface SoftwareloadBridge {
   status(): Promise<{ running: SoftwareloadTaskView | null; pending: SoftwareloadPending[]; isManager: boolean; writeEnabled: boolean }>
   /** Stops a running Stempelkort first (`stoppedTimeclock`); fails with SOFTWARELOAD_TIMECLOCK_LONG_RUN after 10 hours. */
   start(request: { type: SoftwareloadType; kif?: boolean; target: string; version: string }): Promise<SoftwareloadTaskView & { stoppedTimeclock?: { taskName: string; workedMs: number } }>
-  scan(request: { serial: string }): Promise<{ serial: string; count: number }>
-  unscan(request: { serial: string }): Promise<{ serial: string; count: number }>
+  /** `taskId` is the task the scan belongs to; another running task refuses it with SOFTWARELOAD_NOT_RUNNING. */
+  scan(request: { serial: string; taskId: string }): Promise<{ serial: string; count: number }>
+  unscan(request: { serial: string; taskId: string }): Promise<{ serial: string; count: number }>
   markFailed(request: { serial: string; note: string }): Promise<SoftwareloadTaskView>
   unmarkFailed(request: { serial: string }): Promise<SoftwareloadTaskView>
   pause(): Promise<SoftwareloadTaskView>

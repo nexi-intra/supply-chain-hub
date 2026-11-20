@@ -318,18 +318,31 @@ function createSoftwareloadService({
     return { ...view(started), ...(stoppedTimeclock ? { stoppedTimeclock } : {}) }
   }
 
+  /**
+   * Scans and unscans name their task: a scan the screen kept for a task that has since ended must never land in the
+   * next one, so another id (or none) is refused as not running.
+   */
+  function requireTask(current, taskId) {
+    if (current.id !== taskId) throw codeError('SOFTWARELOAD_NOT_RUNNING', 'Scanningen hører til en opgave, der ikke kører længere')
+  }
+
   async function scan(user, input) {
     const serial = serialOf(input)
     const task = await changeRunning(user, current => {
+      requireTask(current, input?.taskId)
       if (current.terminals[serial]) throw codeError('SOFTWARELOAD_DUPLICATE', 'Serienummeret er allerede scannet i opgaven')
       return { ...current, terminals: { ...current.terminals, [serial]: { at: now() } } }
     })
     return { serial, count: Object.keys(task.terminals).length }
   }
 
-  /** Changes one scanned terminal of the running task; `change` returns the new terminal, or null to remove it. */
-  function changeTerminal(user, serial, change) {
+  /**
+   * Changes one scanned terminal of the running task; `change` returns the new terminal, or null to remove it. With
+   * `taskId` the change only applies to that task.
+   */
+  function changeTerminal(user, serial, change, taskId) {
     return changeRunning(user, current => {
+      if (taskId !== undefined) requireTask(current, taskId)
       const terminal = current.terminals[serial]
       if (!terminal) throw codeError('SOFTWARELOAD_INVALID', 'Serienummeret er ikke scannet i opgaven')
       const terminals = { ...current.terminals }
@@ -342,7 +355,7 @@ function createSoftwareloadService({
 
   async function unscan(user, input) {
     const serial = serialOf(input)
-    const task = await changeTerminal(user, serial, () => null)
+    const task = await changeTerminal(user, serial, () => null, input?.taskId ?? null)
     return { serial, count: Object.keys(task.terminals).length }
   }
 
@@ -600,7 +613,9 @@ function createSoftwareloadService({
     report('lookup', serials.length, serials.length)
     const rowOf = new Map(rows.map(row => [row.serial, row]))
     // A mark that put the serial on D005 counts as passing it, like a saved step.
-    const passedD005 = new Set(serials.filter(serial => stepsWithMark(task.results?.[serial], rowOf.get(serial)).some(step => step.to === KIF)))
+    // A step to D005 or out of it (also one a mark proves) means the terminal passed D005; one that started on D005
+    // only ever gets the step out of it.
+    const passedD005 = new Set(serials.filter(serial => stepsWithMark(task.results?.[serial], rowOf.get(serial)).some(step => step.to === KIF || step.from === KIF)))
     const plan = planMoves({ kif: task.kif, target: task.target, terminals: terminalsOf(task), sapRows: rows, passedD005 })
 
     // Another run took over a stale claim while SAP answered; it moves the task now, so this run stops before SAP.

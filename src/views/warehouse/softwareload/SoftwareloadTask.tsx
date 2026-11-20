@@ -280,9 +280,10 @@ function RunningTask({ email, running, receivedAt, active, stopped, onStopped, o
     try {
       const { stopped: problem } = await drainScanQueue(
         queue.current,
+        // The queue belongs to this task; a scan left for an ended task is refused (NOT_RUNNING) and dropped.
         job => trackPendingWrite(job.kind === 'scan'
-          ? window.electronWarehouse!.softwareload.scan({ serial: job.serial })
-          : window.electronWarehouse!.softwareload.unscan({ serial: job.serial })),
+          ? window.electronWarehouse!.softwareload.scan({ serial: job.serial, taskId: running.id })
+          : window.electronWarehouse!.softwareload.unscan({ serial: job.serial, taskId: running.id })),
         keep,
         onSent,
       )
