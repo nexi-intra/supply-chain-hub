@@ -502,6 +502,31 @@ test('an exception (SAP closed) is not swallowed', async () => {
   Kør uden at bekræfte flytning.
 - [ ] **Step 4: Commit** med `feat(softwareload): værktøjet i Arbejdsværktøjer`.
 
+### Task 9b: Faste mål-lokationer med SAP-beskrivelse (Jacobs ønske 20.11)
+
+Jacob: D102–D106 må ikke kunne vælges, og målet skal vise SAP's rigtige lokationsbeskrivelse og om lokationen hører til TCD eller TRR.
+
+Beskrivelser er aflæst i SAP (QS4, MB52 F4-hjælp på Storage Location, plant D301) 20.11.2026:
+
+| Lokation | SAP-beskrivelse | Team |
+|---|---|---|
+| D000 | Central Warehous | TCD |
+| D001 | Raw Terminals | TRR |
+| D002 | Repair | TRR |
+| D003 | SWAP Inbound | TRR |
+| D004 | SWAP Outbound | TCD |
+| D005 | SA – secure room | TCD |
+| D006 | Forecast Prep | TCD |
+
+**Files:**
+- Create: `electron/warehouse/softwareload/core/targets.cjs` med `SOFTWARELOAD_TARGETS` (listen ovenfor, frosset, i den rækkefølge) og `isSoftwareloadTarget(sloc)`
+- Modify: `electron/warehouse/softwareload/softwareloadService.cjs`, så `start` afviser et mål uden for listen med `SOFTWARELOAD_INVALID` ('Vælg en lokation fra listen')
+- Modify: `src/lib/softwareload.ts` (samme liste til visningen, `targetLabel(sloc)` giver "D002 · Repair (TRR)" og falder tilbage til koden for ukendte), `src/views/warehouse/softwareload/SoftwareloadTask.tsx` (målet er en select med de 7 lokationer, ikke fritekst; `TEAM_SLOCS` bruges ikke længere her)
+- Overalt hvor et mål eller fra/til vises (Finish, Søg, Statistik, Venter, KIF): brug `targetLabel`
+- Test: `softwareloadService.test.cjs` ('start refuses a target outside the list, e.g. D102'), `src/lib/softwareload.test.ts` ('targetLabel shows SAP description and team')
+
+- [ ] Tests først, se dem fejle, implementér, se dem bestå, typecheck og vitest, commit `feat(softwareload): faste mål-lokationer med SAP-beskrivelse`
+
 ## Fase 5: Hubert, changelog og oprydning
 
 ### Task 10: Guide, coverage og changelog
