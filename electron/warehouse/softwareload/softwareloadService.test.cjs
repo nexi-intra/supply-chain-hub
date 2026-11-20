@@ -12,7 +12,43 @@ const MONA = { email: 'mona@example.test', fullName: 'Mona', role: 'manager', te
 const TASK = { type: 'sw+key', kif: true, target: ' d006 ', version: 'v2.1.3' }
 const MIN = 60_000
 
-function setup({ timeclockRunning = null } = {}) {
+const NOT_READY = () => Object.assign(new Error('SAP er ikke klar'), { code: 'SAP_NOT_READY' })
+
+/** A fake SAP that remembers every call, moves its own stock and can refuse (`refuse`) or throw (`throwWhen`). */
+function fakeSap(stock, { writeEnabled = true } = {}) {
+  let docs = 0
+  const rows = new Map(Object.entries(stock).map(([serial, row]) => [serial, { blocked: false, ...row }]))
+  return {
+    writeEnabled,
+    calls: [],
+    rows,
+    refuse: new Set(),
+    throwWhen: null,
+    async lookup({ team, serials }) {
+      this.calls.push(['lookup', { team, serials: [...serials] }])
+      if (this.throwWhen?.('lookup', { team, serials })) throw NOT_READY()
+      return serials.filter(serial => rows.has(serial)).map(serial => ({ serial, plant: 'D301', userStatus: 'ONHA', ...rows.get(serial) }))
+    },
+    async transfer({ team, serials, to }) {
+      this.calls.push(['transfer', { team, serials: [...serials], to }])
+      if (this.throwWhen?.('transfer', { team, serials, to })) throw NOT_READY()
+      if (serials.some(serial => this.refuse.has(serial))) return { ok: false, message: 'Deficit of SL Unrestricted-use 1 EA' }
+      for (const serial of serials) rows.get(serial).sloc = to
+      return { ok: true, doc: `49${String(++docs).padStart(8, '0')}` }
+    },
+    async block({ material, serials, bwart }) {
+      this.calls.push(['block', { material, serials: [...serials], bwart }])
+      if (this.throwWhen?.('block', { material, serials, bwart })) throw NOT_READY()
+      for (const serial of serials) rows.get(serial).blocked = true
+      return { ok: true, doc: `49${String(++docs).padStart(8, '0')}` }
+    },
+  }
+}
+
+const transfers = sap => sap.calls.filter(([kind]) => kind === 'transfer').map(([, call]) => [call.to, call.serials])
+const doc = n => `49${String(n).padStart(8, '0')}`
+
+function setup({ timeclockRunning = null, sap = { writeEnabled: false } } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'softwareload-'))
   const stores = new Map()
   const storeAt = dir => {
@@ -38,13 +74,20 @@ function setup({ timeclockRunning = null } = {}) {
   const service = () => createSoftwareloadService({
     storeFor: team => storeAt(path.join(team, 'lagerstyring', 'softwareload')),
     indexStore: storeAt(path.join('_lagerstyring', 'softwareload')),
-    sap: { writeEnabled: false },
+    sap,
     timeclock,
     now: () => clock.now,
     newId: () => `t${++ids}`,
   })
   const storeFor = team => storeAt(path.join(team, 'lagerstyring', 'softwareload'))
-  return { root, clock, timeclock, stops, storeFor, service, tick: ms => { clock.now += ms } }
+  const index = storeAt(path.join('_lagerstyring', 'softwareload'))
+  /** The finished tasks of one month, whoever wrote them. */
+  const finished = async month => {
+    const store = storeFor('TCD')
+    const keys = (await store.keysAsync()).filter(key => key.startsWith('opgaver-') && key.endsWith(month))
+    return Object.assign({}, ...await Promise.all(keys.map(async key => (await store.getAsync(key)).tasks)))
+  }
+  return { root, clock, timeclock, stops, storeFor, index, finished, service, tick: ms => { clock.now += ms } }
 }
 
 test('start saves type, KIF, target and version, and remembers the version', async () => {
@@ -180,4 +223,243 @@ test('another person cannot see or change my running task', async () => {
   assert.deepEqual((await svc.status(ANNA)).pending, [], 'a task waiting for SAP is shown to its owner and managers only')
   assert.deepEqual((await svc.status(BO)).pending, [{ id: 'old', name: 'Bo', email: 'bo@example.test', endedAt: 5, count: 2 }])
   assert.deepEqual((await svc.status(MONA)).pending.map(task => task.id), ['old'])
+})
+
+/** Starts Anna's task and scans the serials; `failed` maps a serial to its note. */
+async function startWith(ctx, task, serials, failed = {}) {
+  const svc = ctx.service()
+  await svc.start(ANNA, task)
+  for (const serial of serials) await svc.scan(ANNA, { serial })
+  for (const [serial, note] of Object.entries(failed)) await svc.markFailed(ANNA, { serial, note })
+  return svc
+}
+
+test('preview plans the moves without changing anything', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } }, { writeEnabled: false })
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, TASK, ['A', 'B'])
+  const preview = await svc.preview(ANNA)
+  assert.deepEqual(preview.outcomes, { A: 'to-target', B: 'not-found' })
+  assert.deepEqual(preview.transfers, [{ wave: 1, from: 'D000', to: 'D005', serials: ['A'] }, { wave: 2, from: 'D005', to: 'D006', serials: ['A'] }])
+  assert.deepEqual([preview.blocks, preview.rows.map(row => row.serial)], [[], ['A']])
+  assert.deepEqual(sap.calls, [['lookup', { team: 'TCD', serials: ['A', 'B'] }]])
+  const status = await svc.status(ANNA)
+  assert.deepEqual([status.running.id, status.running.terminals.length, status.pending], ['t1', 2, []])
+})
+
+test('finish in KIF moves via D005 and records every document per serial', async () => {
+  const sap = fakeSap({ A: { material: 'M-0', sloc: 'D000' }, B: { material: 'M-R', sloc: 'D000' } })
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, TASK, ['A', 'B'])
+  ctx.tick(30 * MIN)
+  const endedAt = ctx.clock.now
+  const progress = []
+  const result = await svc.finish(ANNA, { onProgress: item => progress.push(item) })
+
+  assert.deepEqual(sap.calls[0], ['lookup', { team: 'TCD', serials: ['A', 'B'] }])
+  assert.deepEqual(transfers(sap), [['D005', ['A', 'B']], ['D006', ['A', 'B']]])
+  assert.deepEqual(result.results.A.steps.map(step => step.to), ['D005', 'D006'])
+  assert.deepEqual(result.results.A.steps[0], { from: 'D000', to: 'D005', doc: doc(1), by: 'anna@example.test', at: endedAt })
+  assert.deepEqual([result.results.B.material, result.results.B.from, result.results.B.outcome], ['M-R', 'D000', 'to-target'])
+  assert.deepEqual([result.taskId, result.state, result.counts], ['t1', 'faerdig', { 'to-target': 2 }])
+  assert.deepEqual(progress[0], { done: 0, total: 2, step: 'lookup' })
+  assert.deepEqual(progress.at(-1), { done: 4, total: 4, step: 'transfer' })
+
+  const status = await svc.status(ANNA)
+  assert.deepEqual([status.running, status.pending], [null, []])
+  const task = (await ctx.finished('2026-11')).t1
+  assert.deepEqual([task.state, task.email, task.endedAt, task.workedMs, task.results.A.steps.length], ['faerdig', 'anna@example.test', endedAt, 30 * MIN, 2])
+  const { lines } = await ctx.index.getAsync('serier-2026-11')
+  assert.deepEqual(lines.map(line => [line.serial, line.kind, line.team]), [['A', 'load', 'TCD'], ['B', 'load', 'TCD']])
+  assert.deepEqual(lines[0], {
+    serial: 'A', team: 'TCD', kind: 'load', taskId: 't1', email: 'anna@example.test', name: 'Anna', at: endedAt,
+    type: 'sw+key', version: 'v2.1.3', kif: true, from: 'D000', to: 'D006', docs: [doc(1), doc(2)], outcome: 'to-target',
+  })
+})
+
+test('a failed new terminal ends in blocked stock with its note in the index', async () => {
+  const sap = fakeSap({ A: { material: 'M-0', sloc: 'D006' }, B: { material: 'M-0', sloc: 'D006' } })
+  const ctx = setup({ sap })
+  ctx.clock.now = new Date(2026, 10, 30, 23, 50).getTime()
+  const svc = await startWith(ctx, { ...TASK, kif: false }, ['A', 'B'], { A: 'Skærm død' })
+  ctx.tick(20 * MIN)
+  const result = await svc.finish(ANNA, {})
+
+  assert.deepEqual(transfers(sap), [['D000', ['A']]])
+  assert.deepEqual(sap.calls.at(-1), ['block', { material: 'M-0', serials: ['A'], bwart: '344' }])
+  assert.deepEqual(result.results.A.steps.at(-1), { bwart: '344', doc: doc(2), by: 'anna@example.test', at: ctx.clock.now })
+  assert.deepEqual(result.counts, { 'to-blocked': 1, skipped: 1 })
+  assert.ok((await ctx.finished('2026-11')).t1, 'the task is kept in the month it started')
+  const { lines } = await ctx.index.getAsync('serier-2026-12')
+  assert.deepEqual(
+    lines.map(line => [line.serial, line.outcome, line.from, line.to, line.docs, line.note]),
+    [['A', 'to-blocked', 'D006', 'D000', [doc(1), doc(2)], 'Skærm død'], ['B', 'skipped', 'D006', null, [], undefined]],
+  )
+  assert.equal('note' in lines[1], false)
+})
+
+test('one serial SAP refuses is isolated and the rest still move', async () => {
+  const sap = fakeSap(Object.fromEntries(['A', 'B', 'C', 'D'].map(serial => [serial, { material: 'M-R', sloc: 'D001' }])))
+  sap.refuse.add('C')
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, TASK, ['A', 'B', 'C', 'D'])
+  const result = await svc.finish(ANNA, {})
+
+  assert.deepEqual(transfers(sap), [
+    ['D005', ['A', 'B', 'C', 'D']], ['D005', ['A', 'B']], ['D005', ['C', 'D']], ['D005', ['C']], ['D005', ['D']],
+    ['D006', ['A', 'B', 'D']],
+  ], 'C never reaches the target around D005')
+  assert.deepEqual([result.results.C.outcome, result.results.C.message, result.results.C.steps], ['failed-sap', 'Deficit of SL Unrestricted-use 1 EA', []])
+  assert.deepEqual(['A', 'B', 'D'].map(serial => result.results[serial].outcome), ['to-target', 'to-target', 'to-target'])
+  assert.deepEqual(result.results.D.steps.map(step => step.doc), [doc(2), doc(3)])
+  assert.deepEqual(result.counts, { 'to-target': 3, 'failed-sap': 1 })
+  const { lines } = await ctx.index.getAsync('serier-2026-11')
+  assert.deepEqual(lines.find(line => line.serial === 'C'), {
+    serial: 'C', team: 'TCD', kind: 'load', taskId: 't1', email: 'anna@example.test', name: 'Anna', at: ctx.clock.now,
+    type: 'sw+key', version: 'v2.1.3', kif: true, from: 'D001', to: null, docs: [], outcome: 'failed-sap',
+  })
+})
+
+test('groups larger than one SAP call go in chunks', async () => {
+  const { TRANSFER_CHUNK, BLOCK_CHUNK } = require('./softwareloadSap.cjs')
+  const moving = Array.from({ length: TRANSFER_CHUNK + 1 }, (_, i) => `R${i}`)
+  const blocking = Array.from({ length: BLOCK_CHUNK + 1 }, (_, i) => `N${i}`)
+  const sap = fakeSap({
+    ...Object.fromEntries(moving.map(serial => [serial, { material: 'M-R', sloc: 'D001' }])),
+    ...Object.fromEntries(blocking.map(serial => [serial, { material: 'M-0', sloc: 'D000' }])),
+  })
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, { ...TASK, kif: false }, [])
+  const store = ctx.storeFor('TCD')
+  const [key] = (await store.keysAsync()).filter(name => name.startsWith('aktiv-'))
+  const failed = { note: 'Død', at: 1, by: { email: 'anna@example.test', name: 'Anna' } }
+  await store.mutateAsync(key, task => ({
+    ...task,
+    terminals: Object.fromEntries([...moving.map(serial => [serial, { at: 1 }]), ...blocking.map(serial => [serial, { at: 1, failed }])]),
+  }))
+  const result = await svc.finish(ANNA, {})
+  assert.deepEqual(
+    sap.calls.filter(([kind]) => kind !== 'lookup').map(([kind, call]) => [kind, call.serials.length]),
+    [['transfer', TRANSFER_CHUNK], ['transfer', 1], ['block', BLOCK_CHUNK], ['block', 1]],
+  )
+  assert.deepEqual(result.counts, { 'to-target': TRANSFER_CHUNK + 1, 'to-blocked': BLOCK_CHUNK + 1 })
+})
+
+test('SAP closing mid-finish leaves the task pending and continueFinish never moves a terminal twice', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' }, B: { material: 'M-R', sloc: 'D000' } })
+  sap.throwWhen = (kind, call) => kind === 'transfer' && call.to === 'D006'
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, TASK, ['A', 'B'])
+  await assert.rejects(svc.finish(ANNA, {}), { code: 'SAP_NOT_READY' })
+  assert.deepEqual(transfers(sap), [['D005', ['A', 'B']], ['D006', ['A', 'B']]])
+  const status = await svc.status(ANNA)
+  assert.equal(status.running, null)
+  assert.deepEqual(status.pending.map(task => [task.id, task.count]), [['t1', 2]])
+  assert.deepEqual([...sap.rows.values()].map(row => row.sloc), ['D005', 'D005'], 'SAP now answers D005 for all')
+
+  sap.throwWhen = null
+  sap.calls.length = 0
+  const result = await svc.continueFinish(ANNA, { taskId: 't1' })
+  assert.deepEqual(sap.calls.map(([kind]) => kind), ['lookup', 'transfer'])
+  assert.deepEqual(transfers(sap), [['D006', ['A', 'B']]])
+  for (const serial of ['A', 'B']) assert.deepEqual(result.results[serial].steps.map(step => step.to), ['D005', 'D006'])
+  assert.deepEqual([result.results.A.from, result.results.A.outcome, result.state], ['D000', 'to-target', 'faerdig'])
+  assert.deepEqual((await svc.status(ANNA)).pending, [])
+  assert.equal(await ctx.storeFor('TCD').getAsync('venter-t1', { skipCache: true }), undefined)
+  const { lines } = await ctx.index.getAsync('serier-2026-11')
+  assert.deepEqual(lines.map(line => [line.serial, line.from, line.to, line.docs]), [['A', 'D000', 'D006', [doc(1), doc(2)]], ['B', 'D000', 'D006', [doc(1), doc(2)]]])
+})
+
+test('the owner can start a new task while one is pending', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
+  sap.throwWhen = kind => kind === 'lookup'
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, TASK, ['A'])
+  await assert.rejects(svc.finish(ANNA, {}), { code: 'SAP_NOT_READY' })
+  const started = await svc.start(ANNA, { ...TASK, version: 'v3' })
+  assert.equal(started.id, 't2')
+  let status = await svc.status(ANNA)
+  assert.deepEqual([status.running.id, status.pending.map(task => task.id)], ['t2', ['t1']])
+
+  sap.throwWhen = null
+  const result = await svc.continueFinish(ANNA, { taskId: 't1' })
+  assert.deepEqual(result.counts, { 'to-target': 1 })
+  status = await svc.status(ANNA)
+  assert.deepEqual([status.running.id, status.running.version, status.pending], ['t2', 'v3', []])
+})
+
+test('only the owner or a manager can continue, only a manager can abandon', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
+  sap.throwWhen = kind => kind === 'lookup'
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, TASK, ['A'])
+  await assert.rejects(svc.finish(ANNA, {}), { code: 'SAP_NOT_READY' })
+  sap.throwWhen = null
+  sap.calls.length = 0
+
+  await assert.rejects(svc.continueFinish(BO, { taskId: 't1' }), { code: 'MANAGER_ONLY' })
+  await assert.rejects(svc.abandon(BO, { taskId: 't1', reason: 'Væk' }), { code: 'MANAGER_ONLY' })
+  await assert.rejects(svc.abandon(ANNA, { taskId: 't1', reason: 'Væk' }), { code: 'MANAGER_ONLY' })
+  await assert.rejects(svc.continueFinish(MONA, { taskId: 'nope' }), { code: 'SOFTWARELOAD_NOT_PENDING' })
+  assert.deepEqual(sap.calls, [], 'a refused continue never reaches SAP')
+  assert.deepEqual((await svc.status(ANNA)).pending.map(task => task.id), ['t1'])
+
+  const result = await svc.continueFinish(MONA, { taskId: 't1' })
+  assert.deepEqual(result.results.A.steps.map(step => step.by), ['mona@example.test', 'mona@example.test'])
+  const task = (await ctx.finished('2026-11')).t1
+  assert.deepEqual([task.email, task.name, task.state], ['anna@example.test', 'Anna', 'faerdig'], 'the task still belongs to its owner')
+})
+
+test('abandon marks the unmoved terminals and keeps who and why', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D001' }, C: { material: 'M-0', sloc: 'D001' } })
+  sap.throwWhen = kind => kind === 'block'
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, { ...TASK, kif: false }, ['A', 'C', 'N'], { C: 'Knap i stykker' })
+  await assert.rejects(svc.finish(ANNA, {}), { code: 'SAP_NOT_READY' })
+  assert.deepEqual(transfers(sap), [['D006', ['A']], ['D000', ['C']]])
+
+  await assert.rejects(svc.abandon(MONA, { taskId: 't1', reason: '   ' }), { code: 'SOFTWARELOAD_INVALID' })
+  ctx.tick(MIN)
+  const result = await svc.abandon(MONA, { taskId: 't1', reason: ' SAP   nede hele dagen ' })
+  assert.deepEqual(
+    ['A', 'C', 'N'].map(serial => [result.results[serial].outcome, result.results[serial].steps.map(step => step.to)]),
+    [['to-target', ['D006']], ['abandoned', ['D000']], ['not-found', []]],
+  )
+  assert.deepEqual([result.state, result.counts], ['faerdig', { 'to-target': 1, abandoned: 1, 'not-found': 1 }])
+  const task = (await ctx.finished('2026-11')).t1
+  assert.deepEqual(task.abandoned, { by: 'mona@example.test', reason: 'SAP nede hele dagen', at: ctx.clock.now })
+  assert.equal(task.state, 'faerdig')
+  assert.deepEqual((await svc.status(MONA)).pending, [])
+  const { lines } = await ctx.index.getAsync('serier-2026-11')
+  assert.deepEqual(lines.find(line => line.serial === 'C'), {
+    serial: 'C', team: 'TCD', kind: 'load', taskId: 't1', email: 'anna@example.test', name: 'Anna', at: task.endedAt,
+    type: 'sw+key', version: 'v2.1.3', kif: false, from: 'D001', to: 'D000', docs: [doc(2)], outcome: 'abandoned', note: 'Knap i stykker',
+  })
+  assert.equal(sap.calls.filter(([kind]) => kind === 'block').length, 1, 'abandon never calls SAP')
+})
+
+test('a terminal moved before SAP closed keeps its outcome when the task continues', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D001' }, C: { material: 'M-0', sloc: 'D001' } })
+  sap.throwWhen = kind => kind === 'block'
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, { ...TASK, kif: false }, ['A', 'C'], { C: 'Knap i stykker' })
+  await assert.rejects(svc.finish(ANNA, {}), { code: 'SAP_NOT_READY' })
+  sap.throwWhen = null
+  sap.calls.length = 0
+  const result = await svc.continueFinish(ANNA, { taskId: 't1' })
+  assert.deepEqual(sap.calls, [['lookup', { team: 'TCD', serials: ['A', 'C'] }], ['block', { material: 'M-0', serials: ['C'], bwart: '344' }]])
+  assert.deepEqual(['A', 'C'].map(serial => [result.results[serial].outcome, result.results[serial].steps.length]), [['to-target', 1], ['to-blocked', 2]])
+  assert.deepEqual(result.counts, { 'to-target': 1, 'to-blocked': 1 })
+})
+
+test('writing disabled: finish is refused before the clock stops', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } }, { writeEnabled: false })
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, TASK, ['A'])
+  ctx.tick(10 * MIN)
+  await assert.rejects(svc.finish(ANNA, {}), { code: 'SOFTWARELOAD_WRITE_DISABLED' })
+  assert.deepEqual(sap.calls, [])
+  const status = await svc.status(ANNA)
+  assert.deepEqual([status.running.id, status.running.paused, status.running.workedMs, status.pending], ['t1', false, 10 * MIN, []])
+  assert.deepEqual(await svc.scan(ANNA, { serial: 'B' }), { serial: 'B', count: 2 }, 'the task still runs')
 })
