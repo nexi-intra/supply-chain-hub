@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label'
 import { NativeSelect, Textarea } from '@/components/warehouse/ui'
 import { trackPendingWrite } from '@/lib/pendingWrites'
 import { SOFTWARELOAD_TARGETS, SOFTWARELOAD_TYPES as TYPES, targetLabel, TYPE_LABELS } from '@/lib/softwareload'
+import { drainScanQueue, dropOtherScanQueues, readScanQueue, writeScanQueue, type ScanJob } from '@/lib/softwareloadScanQueue'
 import { formatClock, formatDuration } from '@/lib/timeclock'
 import { errorCode, errorMessage } from '@/lib/warehouse/errors'
 import { formatTime, type Tone } from '@/lib/warehouse/format'
@@ -26,6 +27,8 @@ const NOTE_MAX = 200
 type Stopped = { taskName: string; workedMs: number }
 
 interface TaskProps {
+  /** The person's email: the scans waiting to be saved are kept in localStorage per person and task. */
+  email: string
   running: SoftwareloadTaskView | null
   receivedAt: number
   active: boolean
@@ -37,12 +40,13 @@ interface TaskProps {
 }
 
 /** "Min opgave": the start form, or the running task with its clock and scanner. */
-export function SoftwareloadTask({ running, receivedAt, active, onRunning, onFinish, reload, onOpenTimeclock, onBusy }: TaskProps) {
+export function SoftwareloadTask({ email, running, receivedAt, active, onRunning, onFinish, reload, onOpenTimeclock, onBusy }: TaskProps) {
   const [stopped, setStopped] = useState<Stopped | null>(null)
   if (!running) return <StartForm onStarted={(view, stoppedTimeclock) => { setStopped(stoppedTimeclock ?? null); onRunning(view) }} reload={reload} onOpenTimeclock={onOpenTimeclock} />
   return (
     <RunningTask
       key={running.id}
+      email={email}
       running={running}
       receivedAt={receivedAt}
       active={active}
@@ -168,8 +172,10 @@ function StartForm({ onStarted, reload, onOpenTimeclock }: { onStarted: (view: S
 
 /** A scanned serial as shown: saved ones from the main process, and new ones at once while they are saved. */
 type Shown = { serial: string; at: number; failed?: { note: string }; saving: boolean }
-type Job = { kind: 'scan' | 'unscan'; serial: string }
 type Flash = { tone: Tone; text: string }
+
+/** After an error that may pass (the drive, the network), the waiting scans are sent again this much later. */
+const SCAN_RETRY_MS = 10_000
 
 const FLASH_STYLES: Record<Tone, string> = {
   success: 'border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
@@ -178,6 +184,7 @@ const FLASH_STYLES: Record<Tone, string> = {
 }
 
 interface RunningProps {
+  email: string
   running: SoftwareloadTaskView
   receivedAt: number
   active: boolean
@@ -191,22 +198,39 @@ interface RunningProps {
   onBusy?: ReportBusy
 }
 
-function RunningTask({ running, receivedAt, active, stopped, onStopped, onDismissStopped, onRunning, onFinish, reload, onOpenTimeclock, onBusy }: RunningProps) {
+/** The scans of this task still waiting in localStorage from an earlier visit; other tasks' leftovers are dropped. */
+function waitingScans(email: string, taskId: string): ScanJob[] {
+  try {
+    dropOtherScanQueues(localStorage, email, taskId)
+    return readScanQueue(localStorage, email, taskId)
+  } catch {
+    return []
+  }
+}
+
+function RunningTask({ email, running, receivedAt, active, stopped, onStopped, onDismissStopped, onRunning, onFinish, reload, onOpenTimeclock, onBusy }: RunningProps) {
   const [serial, setSerial] = useState('')
+  const [waiting] = useState(() => waitingScans(email, running.id))
   // Scans shown before the main process has them, and serials taken out before it has removed them.
-  const [added, setAdded] = useState<Map<string, { at: number; saving: boolean }>>(() => new Map())
-  const [removed, setRemoved] = useState<Set<string>>(() => new Set())
-  const [queueSize, setQueueSize] = useState(0)
+  const [added, setAdded] = useState<Map<string, { at: number; saving: boolean }>>(() => new Map(waiting.filter(job => job.kind === 'scan').map(job => [job.serial, { at: job.at, saving: true }])))
+  const [removed, setRemoved] = useState<Set<string>>(() => new Set(waiting.filter(job => job.kind === 'unscan').map(job => job.serial)))
+  const [queueSize, setQueueSize] = useState(waiting.length)
+  const [sending, setSending] = useState(false)
+  // The waiting scans could not be sent; they are kept on this PC and sent again shortly.
+  const [stuck, setStuck] = useState(false)
+  const stuckRef = useRef(false)
   const [flash, setFlash] = useState<Flash | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [failing, setFailing] = useState<string | null>(null)
   const [askCancel, setAskCancel] = useState(false)
   const [, setTick] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
-  const queue = useRef<Job[]>([])
+  const queue = useRef<ScanJob[]>(waiting)
   const working = useRef(false)
+  const retryTimer = useRef<number | undefined>(undefined)
   const language = currentWarehouseLanguage()
-  useReportBusy(onBusy, 'scans', queueSize > 0)
+  // Only while scans are being sent: waiting ones are safe in localStorage, so the tool may be left meanwhile.
+  useReportBusy(onBusy, 'scans', sending)
 
   useEffect(() => { if (active) inputRef.current?.focus() }, [active])
 
@@ -226,50 +250,70 @@ function RunningTask({ running, receivedAt, active, stopped, onStopped, onDismis
 
   const changeAdded = (change: (map: Map<string, { at: number; saving: boolean }>) => void) => setAdded(current => { const next = new Map(current); change(next); return next })
   const changeRemoved = (change: (set: Set<string>) => void) => setRemoved(current => { const next = new Set(current); change(next); return next })
+  const keep = (jobs: ScanJob[]) => {
+    writeScanQueue(localStorage, email, running.id, jobs)
+    setQueueSize(jobs.length)
+  }
+
+  const onSent = (job: ScanJob, outcome: 'saved' | 'dropped', error?: unknown) => {
+    const code = errorCode(error)
+    if (job.kind === 'unscan') {
+      changeAdded(map => { map.delete(job.serial) })
+      return
+    }
+    if (outcome === 'saved' || code === 'SOFTWARELOAD_DUPLICATE') {
+      changeAdded(map => { const entry = map.get(job.serial); if (entry) map.set(job.serial, { ...entry, saving: false }) })
+      // Already in the task (scanned on another PC or before the screen was updated): it stays.
+      if (code === 'SOFTWARELOAD_DUPLICATE') toast.warning(t(`${job.serial} var allerede scannet i opgaven`, `${job.serial} was already scanned in the task`))
+      return
+    }
+    changeAdded(map => { map.delete(job.serial) })
+    playTone('error')
+    toast.error(t(`${job.serial} blev ikke gemt. ${errorMessage(error)}`, `${job.serial} was not saved. ${errorMessage(error)}`))
+  }
 
   const processQueue = async () => {
     if (working.current) return
     working.current = true
+    window.clearTimeout(retryTimer.current)
+    setSending(true)
     try {
-      while (queue.current.length) {
-        const job = queue.current[0]
-        try {
-          if (job.kind === 'scan') {
-            await trackPendingWrite(window.electronWarehouse!.softwareload.scan({ serial: job.serial }))
-            changeAdded(map => { const entry = map.get(job.serial); if (entry) map.set(job.serial, { ...entry, saving: false }) })
-          } else {
-            await trackPendingWrite(window.electronWarehouse!.softwareload.unscan({ serial: job.serial }))
-            changeAdded(map => { map.delete(job.serial) })
-          }
-        } catch (error) {
-          const code = errorCode(error)
-          if (job.kind === 'scan' && code === 'SOFTWARELOAD_DUPLICATE') {
-            // Already in the task (scanned on another PC or before the screen was updated): it stays.
-            changeAdded(map => { const entry = map.get(job.serial); if (entry) map.set(job.serial, { ...entry, saving: false }) })
-            toast.warning(t(`${job.serial} var allerede scannet i opgaven`, `${job.serial} was already scanned in the task`))
-          } else if (job.kind === 'scan') {
-            changeAdded(map => { map.delete(job.serial) })
-            playTone('error')
-            toast.error(t(`${job.serial} blev ikke gemt. ${errorMessage(error)}`, `${job.serial} was not saved. ${errorMessage(error)}`))
-          } else if (code !== 'SOFTWARELOAD_INVALID') {
-            changeRemoved(set => { set.delete(job.serial) })
-            toast.error(t(`${job.serial} blev ikke fjernet. ${errorMessage(error)}`, `${job.serial} was not removed. ${errorMessage(error)}`))
-          }
-        }
-        queue.current.shift()
-        setQueueSize(queue.current.length)
+      const { stopped: problem } = await drainScanQueue(
+        queue.current,
+        job => trackPendingWrite(job.kind === 'scan'
+          ? window.electronWarehouse!.softwareload.scan({ serial: job.serial })
+          : window.electronWarehouse!.softwareload.unscan({ serial: job.serial })),
+        keep,
+        onSent,
+      )
+      if (problem) {
+        // Nothing is lost: the scans stay in localStorage and are sent again, also after a restart.
+        if (!stuckRef.current) toast.warning(t('Scanningerne kunne ikke gemmes i opgaven lige nu. De ligger på denne PC og bliver sendt igen om lidt.', 'The scans could not be saved in the task just now. They are kept on this PC and sent again shortly.'))
+        stuckRef.current = true
+        setStuck(true)
+        retryTimer.current = window.setTimeout(() => { void processQueue() }, SCAN_RETRY_MS)
+      } else {
+        stuckRef.current = false
+        setStuck(false)
       }
     } finally {
       working.current = false
-      setQueueSize(0)
+      setSending(false)
       void reload()
     }
   }
 
-  const enqueue = (job: Job) => {
+  // Scans left from an earlier visit (a closed window, a restart) go first.
+  useEffect(() => {
+    if (queue.current.length) void processQueue()
+    return () => window.clearTimeout(retryTimer.current)
+  }, [])
+
+  const enqueue = (job: ScanJob) => {
     queue.current.push(job)
-    setQueueSize(queue.current.length)
-    void processQueue()
+    keep(queue.current)
+    // While stuck, the retry timer sends it with the rest, so every scan does not wait on a drive that is away.
+    if (!stuckRef.current) void processQueue()
   }
 
   const submit = () => {
@@ -290,12 +334,12 @@ function RunningTask({ running, receivedAt, active, stopped, onStopped, onDismis
     changeAdded(map => { map.set(value, { at: Date.now(), saving: true }) })
     playTone('success')
     setFlash({ tone: 'success', text: value })
-    enqueue({ kind: 'scan', serial: value })
+    enqueue({ kind: 'scan', serial: value, at: Date.now() })
   }
 
   const unscan = (value: string) => {
     changeRemoved(set => { set.add(value) })
-    enqueue({ kind: 'unscan', serial: value })
+    enqueue({ kind: 'unscan', serial: value, at: Date.now() })
     inputRef.current?.focus()
   }
 
@@ -381,7 +425,13 @@ function RunningTask({ running, receivedAt, active, stopped, onStopped, onDismis
           {flash ? <span className={cn(flash.tone === 'success' && 'font-mono text-base')}>{flash.text}</span> : t('Klar til scanning.', 'Ready to scan.')}
         </div>
         {running.paused && <p className="text-xs text-muted-foreground">{t('Opgaven holder pause. Scanninger bliver stadig gemt.', 'The task is on a break. Scans are still saved.')}</p>}
-        {saving && <p className="text-xs text-muted-foreground">{t(`${queueSize} gemmes …`, `${queueSize} being saved …`)}</p>}
+        {stuck && saving && (
+          <p className="flex flex-wrap items-center gap-2 text-sm font-medium text-amber-700 dark:text-amber-300" role="status">
+            {t(`${queueSize} scanninger venter på at blive gemt. De ligger på denne PC og sendes igen af sig selv.`, `${queueSize} scans are waiting to be saved. They are kept on this PC and sent again by themselves.`)}
+            <Button size="sm" variant="outline" onClick={() => void processQueue()} disabled={sending}>{t('Prøv nu', 'Try now')}</Button>
+          </p>
+        )}
+        {!stuck && saving && <p className="text-xs text-muted-foreground">{t(`${queueSize} gemmes …`, `${queueSize} being saved …`)}</p>}
       </Card>
 
       <Card className="gap-0 overflow-hidden p-0">

@@ -111,6 +111,7 @@ export function Softwareload({ user, onOpenTimeclock, onBusyChange }: { user: Wa
           />
         ) : (
           <SoftwareloadTask
+            email={user.email}
             running={status.running}
             receivedAt={receivedAt}
             active={tab === 'task'}
