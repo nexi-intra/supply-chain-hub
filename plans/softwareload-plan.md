@@ -1,6 +1,6 @@
 # Softwareload Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Nyt værktøj "Softwareload" i Arbejdsværktøjer: én persons tidsmålte opgave med scannede serienumre, flytning i SAP ved afslutning (KIF via D005, fejlede til blocked stock eller D002), "Flyt ind i KIF", søgning på serienummer på tværs af TRR og TCD, og statistik.
 
@@ -16,6 +16,8 @@
 - Den krypterede store (`store.cjs`, `mutateAsync`).
 
 **Spec:** [softwareload-design.md](./softwareload-design.md)
+
+Status 20.11.2026: Fase 1 til 5 og opgave 9b er færdige, reviewet og røgtestet i QS4. Fase 6 (QS4 fra ende til anden med Jacob, derefter PS4) mangler.
 
 Start med **Fase 1**. Den er ren logik uden SAP og uden UI, og den låser reglerne fast.
 
@@ -98,7 +100,7 @@ for hver terminal:
 
 Bemærk: i KIF med `serial i passedD005` og `row.sloc == destination` er terminalen færdig, og outcome er destinationens outcome uden flytning. Det er tilfældet ved genoptagelse.
 
-- [ ] **Step 1: Skriv de fejlende tests** (`node:test` og `assert`, samme stil som `timeclockService.test.cjs`)
+- [x] **Step 1: Skriv de fejlende tests** (`node:test` og `assert`, samme stil som `timeclockService.test.cjs`)
 
 ```js
 const row = (serial, material, sloc, blocked = false) => ({ serial, material, sloc, blocked })
@@ -153,12 +155,12 @@ test('terminals with the same wave, from and to share one transfer', () => {
 })
 ```
 
-- [ ] **Step 2: Kør og se dem fejle**
+- [x] **Step 2: Kør og se dem fejle**
   - Kør: `node --test electron/warehouse/softwareload/core/planMoves.test.cjs`
   - Forventet: FAIL med "Cannot find module './planMoves.cjs'".
-- [ ] **Step 3: Implementér `planMoves.cjs` efter reglerne ovenfor.** Transfers sorteres efter wave og derefter efter rækkefølgen af terminalerne.
-- [ ] **Step 4: Kør testene igen.** Forventet: alle PASS.
-- [ ] **Step 5: Commit** med `feat(softwareload): regler for flytning (planMoves)`.
+- [x] **Step 3: Implementér `planMoves.cjs` efter reglerne ovenfor.** Transfers sorteres efter wave og derefter efter rækkefølgen af terminalerne.
+- [x] **Step 4: Kør testene igen.** Forventet: alle PASS.
+- [x] **Step 5: Commit** med `feat(softwareload): regler for flytning (planMoves)`.
 
 ### Task 2: `bisect`, find den skyldige i en fejlet gruppe
 
@@ -172,7 +174,7 @@ test('terminals with the same wave, from and to share one transfer', () => {
   - Et enkelt element, der fejler, ender i `failed` med SAP's besked.
 - Kaster aldrig for SAP-afvisninger. Fejler `attempt` med en exception (fx SAP lukket), kastes den videre, så afslutningen kan genoptages.
 
-- [ ] **Step 1: Skriv de fejlende tests**
+- [x] **Step 1: Skriv de fejlende tests**
 
 ```js
 test('all at once when SAP accepts the group', async () => {
@@ -189,10 +191,10 @@ test('an exception (SAP closed) is not swallowed', async () => {
 })
 ```
 
-- [ ] **Step 2: Kør og se dem fejle.** Kør `node --test electron/warehouse/softwareload/core/bisect.test.cjs`. Forventet: FAIL.
-- [ ] **Step 3: Implementér `bisect.cjs`.**
-- [ ] **Step 4: Kør testene igen.** Forventet: PASS.
-- [ ] **Step 5: Commit** med `feat(softwareload): find fejlende serienummer i en gruppe (bisect)`.
+- [x] **Step 2: Kør og se dem fejle.** Kør `node --test electron/warehouse/softwareload/core/bisect.test.cjs`. Forventet: FAIL.
+- [x] **Step 3: Implementér `bisect.cjs`.**
+- [x] **Step 4: Kør testene igen.** Forventet: PASS.
+- [x] **Step 5: Commit** med `feat(softwareload): find fejlende serienummer i en gruppe (bisect)`.
 
 ## Fase 2: SAP
 
@@ -249,7 +251,7 @@ test('an exception (SAP closed) is not swallowed', async () => {
   - `parseSlLookup(text)` returnerer `{serial, material, plant, sloc, blocked, userStatus}[]`. `blocked` er sand, når `STOCK_TYPE_ICON === '@06@'` eller `STOCK_TYPE === '07'`. WERKS_LGORT splittes som i `parseMatdoc`.
   - `parseSlErrors(text)` returnerer `{message, material, where}[]`.
 
-- [ ] **Step 1: Skriv de fejlende tests**
+- [x] **Step 1: Skriv de fejlende tests**
   - `sapBridge.test.cjs`: `'softwareload write scripts only run on their own systems'`. Med `system` PS4 afviser runneren `run('sl-transfer', ['PS4', 'prep', 'D005', 'C:\\t', 'in.txt', 'err.txt'])` med `SAP_WRITE_SYSTEM_NOT_ALLOWED`. QS4 kalder `execFile`. `pidoc-post` med PS4 er stadig tilladt.
   - `sapParsers.test.cjs`: `'sl lookup rows from ZMS_PREP and ZMS_REP give the same shape and blocked flag'` med fixtures:
     - En prep-række `393031157352189282 INT4100-7883-0 D000 @06@ ONHA` giver `{ serial: '393031157352189282', material: 'INT4100-7883-0', plant: '', sloc: 'D000', blocked: true, userStatus: 'ONHA' }`.
@@ -259,17 +261,17 @@ test('an exception (SAP closed) is not swallowed', async () => {
     - `'transfer returns the document number'`: svaret `{"ok":true,"doc":"4905204921"}` giver `{ ok: true, doc: '4905204921' }`, og args[0] er systemet.
     - `'transfer with SAP errors returns the message, not an exception'`: errFile `Deficit of SL Unrestricted-use 1 EA : INT4320-7842-0 D301 D000\tINT4320-7842-0\tD301 D000` giver `{ ok: false, message: /Deficit/ }`.
     - `'writing is refused when the system is not enabled'`: med `system: 'PS4'` kaster `transfer` en fejl med `code` lig `SOFTWARELOAD_WRITE_DISABLED`.
-- [ ] **Step 2: Kør og se dem fejle.** Kør `node --test electron/warehouse/sapBridge.test.cjs electron/warehouse/core/sapParsers.test.cjs electron/warehouse/softwareload/softwareloadSap.test.cjs`.
-- [ ] **Step 3: Implementér ændringerne i `sapBridge.cjs`, de to parsers og `softwareloadSap.cjs`.**
-- [ ] **Step 4: Skriv de tre VBS-scripts** med skærm-id'erne ovenfor og `matdoc.vbs` som skabelon (egen session, `CloseOwnSession`, `SystemConnection`).
-- [ ] **Step 5: Kør testene igen.** Forventet: PASS.
-- [ ] **Step 6: Røgtest i QS4** med Jacobs QS4 åben og ét serienummer (`393031157352189282`, INT4100-7883-0):
+- [x] **Step 2: Kør og se dem fejle.** Kør `node --test electron/warehouse/sapBridge.test.cjs electron/warehouse/core/sapParsers.test.cjs electron/warehouse/softwareload/softwareloadSap.test.cjs`.
+- [x] **Step 3: Implementér ændringerne i `sapBridge.cjs`, de to parsers og `softwareloadSap.cjs`.**
+- [x] **Step 4: Skriv de tre VBS-scripts** med skærm-id'erne ovenfor og `matdoc.vbs` som skabelon (egen session, `CloseOwnSession`, `SystemConnection`).
+- [x] **Step 5: Kør testene igen.** Forventet: PASS.
+- [x] **Step 6: Røgtest i QS4** med Jacobs QS4 åben og ét serienummer (`393031157352189282`, INT4100-7883-0):
   1. Opslag.
   2. Transfer til D005 og tilbage til D000.
   3. 344 og derefter 343.
 
   Kør det med en lille node-stub, der kalder `softwareloadSap` med den rigtige cscript-runner (`system: 'QS4'`). Forventet: fire materialedokumentnumre, og terminalen står til sidst på D000 som ONHA uden blocked.
-- [ ] **Step 7: Commit** med `feat(softwareload): SAP-scripts til opslag, Transfer og blocked stock (kun QS4)`.
+- [x] **Step 7: Commit** med `feat(softwareload): SAP-scripts til opslag, Transfer og blocked stock (kun QS4)`.
 
 ## Fase 3: Service og IPC
 
@@ -318,7 +320,7 @@ test('an exception (SAP closed) is not swallowed', async () => {
     - `versions(user)` returnerer `string[]`.
   - Fejlkoder: `SOFTWARELOAD_NOT_RUNNING`, `SOFTWARELOAD_RUNNING`, `SOFTWARELOAD_PAUSED`, `SOFTWARELOAD_NOT_PAUSED`, `SOFTWARELOAD_INVALID`, `SOFTWARELOAD_DUPLICATE`, `MANAGER_ONLY`.
 
-- [ ] **Step 1: Skriv de fejlende tests**
+- [x] **Step 1: Skriv de fejlende tests**
   - `'start saves type, KIF, target and version, and remembers the version'`. `start({ type: 'sw+key', kif: true, target: ' d006 ', version: 'v2.1.3' })` giver `target: 'D006'`, og `versions()` giver `['v2.1.3']`.
   - `'start refuses an unknown type, an invalid target and an empty version'`. Det giver tre `SOFTWARELOAD_INVALID`.
   - `'start stops a running Stempelkort task and reports it'`. Den falske timeclock svarer `running`, og `stop` bliver kaldt én gang. `stoppedTimeclock.taskName === 'Pakning'`.
@@ -327,10 +329,10 @@ test('an exception (SAP closed) is not swallowed', async () => {
   - `'a failed terminal needs a note and can be undone'`. Tom note giver `SOFTWARELOAD_INVALID`. Efter `markFailed` har viewet `failed.note`, og efter `unmarkFailed` er den væk.
   - `'pause and resume, and pauseIfRunning never throws'`. `pausedMs` tæller med det falske ur. `pauseIfRunning` uden kørende opgave resolver.
   - `'another person cannot see or change my running task'`. ANNAs `status` viser ikke BOs opgave.
-- [ ] **Step 2: Kør og se dem fejle.** Kør `node --test electron/warehouse/softwareload/softwareloadService.test.cjs`.
-- [ ] **Step 3: Implementér livsløbet i `softwareloadService.cjs`.** `mutateAsync` bruges til `aktiv-*`. Læsninger før ændringer bruger `{ skipCache: true }` som `requireRunning` i Stempelkort.
-- [ ] **Step 4: Kør testene igen.** Forventet: PASS.
-- [ ] **Step 5: Commit** med `feat(softwareload): opgavens livsløb`.
+- [x] **Step 2: Kør og se dem fejle.** Kør `node --test electron/warehouse/softwareload/softwareloadService.test.cjs`.
+- [x] **Step 3: Implementér livsløbet i `softwareloadService.cjs`.** `mutateAsync` bruges til `aktiv-*`. Læsninger før ændringer bruger `{ skipCache: true }` som `requireRunning` i Stempelkort.
+- [x] **Step 4: Kør testene igen.** Forventet: PASS.
+- [x] **Step 5: Commit** med `feat(softwareload): opgavens livsløb`.
 
 ### Task 5: Afslutning med flytning, genoptagelse og opgivelse
 
@@ -364,7 +366,7 @@ test('an exception (SAP closed) is not swallowed', async () => {
   - Kaster SAP en exception (fx `SAP_NOT_READY`), bliver `venter-<id>` stående. Svaret er fejlen, og `continueFinish` kan tage over.
   - `onProgress({ done, total, step: 'lookup'|'transfer'|'block' })`.
 
-- [ ] **Step 1: Skriv de fejlende tests** (falsk `sap` der husker kaldene og kan sættes til at fejle)
+- [x] **Step 1: Skriv de fejlende tests** (falsk `sap` der husker kaldene og kan sættes til at fejle)
   - `'finish in KIF moves via D005 and records every document per serial'`. To terminaler på D000, mål D006. Kaldene er `transfer(to D005)` og derefter `transfer(to D006)`. `results.A.steps.map(s => s.to)` er `['D005', 'D006']`. Indekset har to linjer med `kind: 'load'` og `team: 'TCD'`.
   - `'a failed new terminal ends in blocked stock with its note in the index'`. Kaldet `block({ material: 'M-0', serials: ['A'] })` sker, og indekslinjen har `note`.
   - `'one serial SAP refuses is isolated and the rest still move'`. Den falske transfer fejler, når `C` er med. `results.C.outcome === 'failed-sap'`, og de andre er `to-target`.
@@ -377,10 +379,10 @@ test('an exception (SAP closed) is not swallowed', async () => {
   - `'only the owner or a manager can continue, only a manager can abandon'`. Det giver `MANAGER_ONLY`.
   - `'abandon marks the unmoved terminals and keeps who and why'`.
   - `'writing disabled: finish is refused before the clock stops'`. Med `sap.writeEnabled = false` kaster `finish` `SOFTWARELOAD_WRITE_DISABLED`, og opgaven kører stadig.
-- [ ] **Step 2: Kør og se dem fejle.**
-- [ ] **Step 3: Implementér `preview`, `finish`, `continueFinish`, `abandon` og `execute`.**
-- [ ] **Step 4: Kør testene igen.** Forventet: PASS.
-- [ ] **Step 5: Commit** med `feat(softwareload): afslutning med SAP-flytning, genoptagelse og opgivelse`.
+- [x] **Step 2: Kør og se dem fejle.**
+- [x] **Step 3: Implementér `preview`, `finish`, `continueFinish`, `abandon` og `execute`.**
+- [x] **Step 4: Kør testene igen.** Forventet: PASS.
+- [x] **Step 5: Commit** med `feat(softwareload): afslutning med SAP-flytning, genoptagelse og opgivelse`.
 
 ### Task 6: Flyt ind i KIF, søgning og opgavelister
 
@@ -398,15 +400,15 @@ test('an exception (SAP closed) is not swallowed', async () => {
   - **`search(user, { serial })`** returnerer `IndexLine[]`, nyeste først. Den læser alle `serier-*` i indekset og dækker begge teams.
   - **`tasks(user, { from, to })`** returnerer `Task[]` med state `faerdig`, hvis `startedAt`-dag ligger i perioden. Medarbejderen får egne, managers alle i teamet. Perioden valideres som `monthsBetween` i Stempelkort (højst 370 dage).
 
-- [ ] **Step 1: Skriv de fejlende tests**
+- [x] **Step 1: Skriv de fejlende tests**
   - `'kif move by material document moves to D005 and is found by search from the other team'`. TCD flytter via dokument. `search` som en TRR-bruger finder linjen med `kind: 'kif'` og `team: 'TCD'`.
   - `'kif move skips terminals already on D005'`. Outcome er `skipped`, og der er ingen transfer.
   - `'search returns every event for a serial, newest first, across months'`.
   - `'tasks: an employee gets own tasks, a manager all in the period'`.
-- [ ] **Step 2: Kør og se dem fejle.**
-- [ ] **Step 3: Implementér funktionerne.**
-- [ ] **Step 4: Kør testene igen.** Forventet: PASS.
-- [ ] **Step 5: Commit** med `feat(softwareload): flyt ind i KIF, søgning og opgavelister`.
+- [x] **Step 2: Kør og se dem fejle.**
+- [x] **Step 3: Implementér funktionerne.**
+- [x] **Step 4: Kør testene igen.** Forventet: PASS.
+- [x] **Step 5: Commit** med `feat(softwareload): flyt ind i KIF, søgning og opgavelister`.
 
 ### Task 7: IPC, preload og typer
 
@@ -426,15 +428,15 @@ test('an exception (SAP closed) is not swallowed', async () => {
   - `softwareload:preview`, `finish`, `continue`, `abandon`, `kif-preview`, `kif-move`, `search`, `tasks`
 - **Fremskridt:** `emit('softwareload-progress', { email, done, total, step })`, broadcastet som `warehouse:softwareload-progress`. `onProgress(cb)` i preload filtrerer ikke. Visningen viser kun sit eget.
 
-- [ ] **Step 1: Skriv den fejlende test** `'softwareload channels are registered and starting Stempelkort pauses a running softwareload task'` i samme stil som de eksisterende kanaltests. Kald `warehouse:softwareload:start` og derefter `warehouse:timeclock:start`, og forvent at `warehouse:softwareload:status` svarer `running.paused === true`.
-- [ ] **Step 2: Kør og se den fejle.** Kør `node --test electron/warehouse/register.test.cjs`.
-- [ ] **Step 3: Implementér wiring, preload og typer.**
-- [ ] **Step 4: Kør testene igen og typetjek.**
+- [x] **Step 1: Skriv den fejlende test** `'softwareload channels are registered and starting Stempelkort pauses a running softwareload task'` i samme stil som de eksisterende kanaltests. Kald `warehouse:softwareload:start` og derefter `warehouse:timeclock:start`, og forvent at `warehouse:softwareload:status` svarer `running.paused === true`.
+- [x] **Step 2: Kør og se den fejle.** Kør `node --test electron/warehouse/register.test.cjs`.
+- [x] **Step 3: Implementér wiring, preload og typer.**
+- [x] **Step 4: Kør testene igen og typetjek.**
   - `node --test electron/warehouse/register.test.cjs`
   - `node node_modules/typescript/bin/tsc --noEmit -p .`
 
   Forventet: PASS og 0 fejl.
-- [ ] **Step 5: Commit** med `feat(softwareload): IPC og preload`.
+- [x] **Step 5: Commit** med `feat(softwareload): IPC og preload`.
 
 ## Fase 4: Brugerflade
 
@@ -454,14 +456,14 @@ test('an exception (SAP closed) is not swallowed', async () => {
     - `failed` er dem med `failed` sat på terminalen.
     - `perHour = moved / (workedMs / 3_600_000)`, afrundet til én decimal, og 0 når `workedMs` er 0.
 
-- [ ] **Step 1: Skriv de fejlende tests**
+- [x] **Step 1: Skriv de fejlende tests**
   - `'previewGroups sorts outcomes into the confirmation groups'`.
   - `'summarizeTasks: per person and type, failed counted apart and not in pace'`. To opgaver for Anna, `sw+key`: 30 flyttet og 2 fejlede på 1,5 timer giver `perHour` 20.
   - `'summarizeTasks: zero worked time gives pace 0, not Infinity'`.
-- [ ] **Step 2: Kør og se dem fejle.** Kør `node node_modules/vitest/vitest.mjs run src/lib/softwareload.test.ts`.
-- [ ] **Step 3: Implementér hjælperne.**
-- [ ] **Step 4: Kør testene igen.** Forventet: PASS.
-- [ ] **Step 5: Commit** med `feat(softwareload): hjælpere til visning og statistik`.
+- [x] **Step 2: Kør og se dem fejle.** Kør `node node_modules/vitest/vitest.mjs run src/lib/softwareload.test.ts`.
+- [x] **Step 3: Implementér hjælperne.**
+- [x] **Step 4: Kør testene igen.** Forventet: PASS.
+- [x] **Step 5: Commit** med `feat(softwareload): hjælpere til visning og statistik`.
 
 ### Task 9: Værktøjet i Arbejdsværktøjer
 
@@ -487,11 +489,11 @@ test('an exception (SAP closed) is not swallowed', async () => {
   - `src/views/warehouse/softwareload/SoftwareloadStats.tsx`: periodevælger (genbrug `periodRange` fra `src/lib/timeclock.ts`), filtre for person, type og version, og en tabel fra `summarizeTasks`. Managers ser alle, medarbejdere sig selv. En liste over opgaver kan foldes ud til serienumrene.
   - `src/views/warehouse/softwareload/SoftwareloadPending.tsx`: venter-opgaver med "Fortsæt i SAP" (`continueFinish`) og, for managers, "Opgiv" med begrundelse (`abandon`).
 
-- [ ] **Step 1: Byg visningerne.** Følg stilen i `Timeclock.tsx` og `TimeclockOverview.tsx`: kort, `t()`, spinner på knapper, fejltekst fra IPC-fejlkoden efter `CODE: detalje`.
-- [ ] **Step 2: Typetjek og kør hele vitest.**
+- [x] **Step 1: Byg visningerne.** Følg stilen i `Timeclock.tsx` og `TimeclockOverview.tsx`: kort, `t()`, spinner på knapper, fejltekst fra IPC-fejlkoden efter `CODE: detalje`.
+- [x] **Step 2: Typetjek og kør hele vitest.**
   - `node node_modules/typescript/bin/tsc --noEmit -p .` (forventet: 0 fejl)
   - `node node_modules/vitest/vitest.mjs run` (forventet: ingen nye fejl)
-- [ ] **Step 3: Manuel test i dev-vinduet** (Vite på 5069 og Electron med `TCD_HUB_USER_DATA_DIR=%APPDATA%\tcd-hub-dev-168`):
+- [x] **Step 3: Manuel test i dev-vinduet** (Vite på 5069 og Electron med `TCD_HUB_USER_DATA_DIR=%APPDATA%\tcd-hub-dev-168`):
   1. Start en opgave.
   2. Scan tre serienumre, en dublet og et med mellemrum.
   3. Marker ét som fejlet.
@@ -500,7 +502,7 @@ test('an exception (SAP closed) is not swallowed', async () => {
   6. Vis afslutningens oversigt.
 
   Kør uden at bekræfte flytning.
-- [ ] **Step 4: Commit** med `feat(softwareload): værktøjet i Arbejdsværktøjer`.
+- [x] **Step 4: Commit** med `feat(softwareload): værktøjet i Arbejdsværktøjer`.
 
 ### Task 9b: Faste mål-lokationer med SAP-beskrivelse (Jacobs ønske 20.11)
 
@@ -525,7 +527,7 @@ Beskrivelser er aflæst i SAP (QS4, MB52 F4-hjælp på Storage Location, plant D
 - Overalt hvor et mål eller fra/til vises (Finish, Søg, Statistik, Venter, KIF): brug `targetLabel`
 - Test: `softwareloadService.test.cjs` ('start refuses a target outside the list, e.g. D102'), `src/lib/softwareload.test.ts` ('targetLabel shows SAP description and team')
 
-- [ ] Tests først, se dem fejle, implementér, se dem bestå, typecheck og vitest, commit `feat(softwareload): faste mål-lokationer med SAP-beskrivelse`
+- [x] Tests først, se dem fejle, implementér, se dem bestå, typecheck og vitest, commit `feat(softwareload): faste mål-lokationer med SAP-beskrivelse`
 
 ## Fase 5: Hubert, changelog og oprydning
 
@@ -540,17 +542,17 @@ Beskrivelser er aflæst i SAP (QS4, MB52 F4-hjælp på Storage Location, plant D
   - `electron/assistantWarehouseGuide.test.cjs` (eksisterende coverage-test)
   - `electron/assistantCoverageAudit.test.cjs`
 
-- [ ] **Step 1: Tilføj guide, manifest og changelog.**
-- [ ] **Step 2: Kør alle node-tests.** Kør `node --test electron/*.test.cjs electron/warehouse/*.test.cjs electron/warehouse/core/*.test.cjs electron/warehouse/softwareload/*.test.cjs electron/warehouse/softwareload/core/*.test.cjs`. Forventet: alle PASS. `assistantWorker.test.cjs` kan være ustabil under belastning og køres så alene.
-- [ ] **Step 3: Commit** med `docs(softwareload): Hubert-guide, coverage og changelog`.
+- [x] **Step 1: Tilføj guide, manifest og changelog.**
+- [x] **Step 2: Kør alle node-tests.** Kør `node --test electron/*.test.cjs electron/warehouse/*.test.cjs electron/warehouse/core/*.test.cjs electron/warehouse/softwareload/*.test.cjs electron/warehouse/softwareload/core/*.test.cjs`. Forventet: alle PASS. `assistantWorker.test.cjs` kan være ustabil under belastning og køres så alene.
+- [x] **Step 3: Commit** med `docs(softwareload): Hubert-guide, coverage og changelog`.
 
 ### Task 11: Ryd Stempelkort-designet for softwareload
 
 **Files:**
 - Modify: `plans/stempelkort-felter-og-hold-design.md`. Fjern softwareload, terminalkatalog og valglister fra kataloget. Behold felter pr. opgave, fælles opgaver og "Afslut for holdet".
 
-- [ ] **Step 1: Ret dokumentet og læs det igennem for rester.**
-- [ ] **Step 2: Commit** med `docs: Stempelkort-design uden softwareload`.
+- [x] **Step 1: Ret dokumentet og læs det igennem for rester.**
+- [x] **Step 2: Commit** med `docs: Stempelkort-design uden softwareload`.
 
 ## Fase 6: QS4 fra ende til anden, derefter PS4
 
