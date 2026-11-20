@@ -1,4 +1,6 @@
 import type { SoftwareloadOutcome, SoftwareloadTask, SoftwareloadType } from '@/types/warehouse'
+import { errorCode, errorMessage } from './warehouse/errors'
+import { t } from './warehouse/text'
 
 type Label = { da: string; en: string }
 
@@ -28,6 +30,20 @@ const OUTCOME_LABELS: Record<SoftwareloadOutcome, Label> = {
 }
 
 export const outcomeLabel = (outcome: SoftwareloadOutcome): Label => OUTCOME_LABELS[outcome]
+
+/** Errors after which SAP may have posted a move the app never heard about. */
+const UNCERTAIN_CODES = ['SAP_TIMEOUT', 'SAP_SCRIPT_FAILED', 'SOFTWARELOAD_SAP_FAILED']
+
+/**
+ * The text for an error of a finish, a continue or a move into KIF. When SAP may have posted without the app getting
+ * the answer, it asks the person to check SAP rather than to try again.
+ */
+export function sapRunErrorMessage(error: unknown): string {
+  const message = errorMessage(error)
+  if (!UNCERTAIN_CODES.includes(errorCode(error) ?? '')) return message
+  const base = message.replace(/\s*(Prøv igen|Try again)\.?\s*$/, '').replace(/[.\s]+$/, '')
+  return t(`${base}. Tjek i SAP før du fortsætter.`, `${base}. Check in SAP before you continue.`)
+}
 
 export interface SoftwareloadTarget {
   sloc: string

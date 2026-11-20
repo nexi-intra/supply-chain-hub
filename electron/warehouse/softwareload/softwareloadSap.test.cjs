@@ -127,6 +127,13 @@ test('block posts 344 for one material in MIGO and returns the document number o
   await assert.rejects(sap.block({ material: 'INT4100-7883-0', serials: ['393031157352189282'] }), { code: 'SAP_NO_ACCESS' })
 })
 
+test('a SAP logon in another language than English is refused with a clear message before anything moves', async () => {
+  const { sap } = makeSap({ handle: () => '{"ok":false,"error":"language-not-supported"}' })
+  const english = /Log på SAP på engelsk/
+  await assert.rejects(sap.transfer({ team: 'TRR', serials: ['S1'], from: 'D000', to: 'D005' }), { code: 'SOFTWARELOAD_SAP_LANGUAGE', message: english })
+  await assert.rejects(sap.block({ material: 'INT4100-7883-0', serials: ['S1'] }), { code: 'SOFTWARELOAD_SAP_LANGUAGE', message: english })
+})
+
 test('writing is refused when the system is not enabled', async () => {
   const { sap, scriptCalls } = makeSap({ system: 'PS4', handle: () => '{"ok":true,"doc":"1"}' })
   assert.equal(sap.writeEnabled, false)

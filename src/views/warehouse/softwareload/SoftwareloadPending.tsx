@@ -6,6 +6,7 @@ import { Card } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/warehouse/ui'
+import { sapRunErrorMessage } from '@/lib/softwareload'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { formatDateTime } from '@/lib/warehouse/format'
 import { t } from '@/lib/warehouse/text'
@@ -35,7 +36,7 @@ export function SoftwareloadPending({ user, status, reload, onBusy }: { user: Wa
       const result = await window.electronWarehouse!.softwareload.continueFinish({ taskId: task.id })
       setDone({ name: task.name, result, abandoned: false })
     } catch (error) {
-      toast.error(errorMessage(error))
+      toast.error(sapRunErrorMessage(error))
     } finally {
       inFlight.current = false
       setMoving(null)

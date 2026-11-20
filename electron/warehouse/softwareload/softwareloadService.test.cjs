@@ -15,10 +15,12 @@ const TASK = { type: 'sw+key', kif: true, target: ' d006 ', version: 'v2.1.3' }
 const MIN = 60_000
 
 const NOT_READY = () => Object.assign(new Error('SAP er ikke klar'), { code: 'SAP_NOT_READY' })
+const TIMEOUT = () => Object.assign(new Error('SAP_TIMEOUT'), { code: 'SAP_TIMEOUT' })
 
 /**
- * A fake SAP that remembers every call, moves its own stock and can refuse (`refuse`), throw (`throwWhen`) or hold
- * its n-th call of a kind open until the test opens the gate (`hold(kind, n)`).
+ * A fake SAP that remembers every call, moves its own stock and can refuse (`refuse`), throw (`throwWhen`), post and
+ * then lose the answer (`postThenThrow`, as a SAP_TIMEOUT after the document exists) or hold its n-th call of a kind
+ * open until the test opens the gate (`hold(kind, n)`).
  */
 function fakeSap(stock, { writeEnabled = true } = {}) {
   let docs = 0
@@ -36,6 +38,7 @@ function fakeSap(stock, { writeEnabled = true } = {}) {
     rows,
     refuse: new Set(),
     throwWhen: null,
+    postThenThrow: null,
     hold(kind, n) {
       const held = gate()
       holds.set(`${kind}#${n}`, held.promise)
@@ -49,12 +52,16 @@ function fakeSap(stock, { writeEnabled = true } = {}) {
       await call('transfer', { team, serials: [...serials], to })
       if (serials.some(serial => sap.refuse.has(serial))) return { ok: false, message: 'Deficit of SL Unrestricted-use 1 EA' }
       for (const serial of serials) rows.get(serial).sloc = to
-      return { ok: true, doc: `49${String(++docs).padStart(8, '0')}` }
+      const posted = `49${String(++docs).padStart(8, '0')}`
+      if (sap.postThenThrow?.('transfer', { serials, to })) throw TIMEOUT()
+      return { ok: true, doc: posted }
     },
     async block({ material, serials, bwart }) {
       await call('block', { material, serials: [...serials], bwart })
       for (const serial of serials) rows.get(serial).blocked = true
-      return { ok: true, doc: `49${String(++docs).padStart(8, '0')}` }
+      const posted = `49${String(++docs).padStart(8, '0')}`
+      if (sap.postThenThrow?.('block', { material, serials, bwart })) throw TIMEOUT()
+      return { ok: true, doc: posted }
     },
   }
   return sap
@@ -62,6 +69,12 @@ function fakeSap(stock, { writeEnabled = true } = {}) {
 
 const transfers = sap => sap.calls.filter(([kind]) => kind === 'transfer').map(([, call]) => [call.to, call.serials])
 const doc = n => `49${String(n).padStart(8, '0')}`
+/** Every line of the search index, in the order of its files and lines. */
+async function allIndexLines(ctx) {
+  const keys = (await ctx.index.keysAsync()).filter(key => key.startsWith('serier-')).sort()
+  const files = await Promise.all(keys.map(key => ctx.index.getAsync(key)))
+  return files.flatMap(file => file?.lines || [])
+}
 /** A promise the test releases by hand, to hold a SAP call open. */
 function gate() {
   let open
@@ -505,6 +518,52 @@ test('a terminal moved before SAP closed keeps its outcome when the task continu
   assert.deepEqual(result.counts, { 'to-target': 1, 'to-blocked': 1 })
 })
 
+test('a KIF Transfer SAP posted without an answer is never repeated: D000, D005, D004 once each', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
+  sap.postThenThrow = kind => kind === 'transfer'
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, { ...TASK, target: 'D004' }, ['A'])
+  await assert.rejects(svc.finish(ANNA, {}), { code: 'SAP_TIMEOUT' })
+  const pending = await ctx.storeFor('TCD').getAsync('venter-t1', { skipCache: true })
+  assert.deepEqual(pending.results.A.uncertain, { from: 'D000', to: 'D005', by: 'anna@example.test', at: ctx.clock.now }, 'the run marks the serial before SAP is asked')
+
+  await assert.rejects(svc.continueFinish(ANNA, { taskId: 't1' }), { code: 'SAP_TIMEOUT' })
+  const result = await svc.continueFinish(ANNA, { taskId: 't1' })
+  assert.deepEqual(transfers(sap), [['D005', ['A']], ['D004', ['A']]], 'no further Transfer for A')
+  assert.deepEqual(result.results.A.steps, [
+    { from: 'D000', to: 'D005', doc: null, unverified: true, by: 'anna@example.test', at: ctx.clock.now },
+    { from: 'D005', to: 'D004', doc: null, unverified: true, by: 'anna@example.test', at: ctx.clock.now },
+  ])
+  assert.deepEqual([result.results.A.outcome, 'uncertain' in result.results.A], ['to-target', false])
+  const lines = await allIndexLines(ctx)
+  assert.deepEqual(lines.map(line => [line.serial, line.from, line.to, line.docs, line.unverified]), [['A', 'D000', 'D004', [], true]])
+})
+
+test('a MIGO 344 SAP posted without an answer is recorded as unverified and never repeated', async () => {
+  const sap = fakeSap({ A: { material: 'M-0', sloc: 'D006' } })
+  sap.postThenThrow = kind => kind === 'block'
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, { ...TASK, kif: false }, ['A'], { A: 'Død' })
+  await assert.rejects(svc.finish(ANNA, {}), { code: 'SAP_TIMEOUT' })
+  sap.calls.length = 0
+  const result = await svc.continueFinish(ANNA, { taskId: 't1' })
+  assert.deepEqual(sap.calls.map(([kind]) => kind), ['lookup'], 'neither a Transfer nor MIGO again')
+  assert.deepEqual(result.results.A.steps.map(step => [step.to ?? step.bwart, step.doc, step.unverified]), [['D000', doc(1), undefined], ['344', null, true]])
+  assert.equal(result.results.A.outcome, 'to-blocked')
+})
+
+test('a serial still where it stood when SAP did not answer is moved again', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D001' } })
+  sap.throwWhen = kind => kind === 'transfer'
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, { ...TASK, kif: false }, ['A'])
+  await assert.rejects(svc.finish(ANNA, {}), { code: 'SAP_NOT_READY' })
+  sap.throwWhen = null
+  const result = await svc.continueFinish(ANNA, { taskId: 't1' })
+  assert.deepEqual(transfers(sap), [['D006', ['A']], ['D006', ['A']]])
+  assert.deepEqual(result.results.A.steps.map(step => [step.to, step.doc, step.unverified]), [['D006', doc(1), undefined]])
+})
+
 test('a second person cannot continue while the first holds a fresh claim, but can after it expires', async () => {
   const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
   const ctx = setup({ sap })
@@ -793,7 +852,7 @@ test('a kif move interrupted by SAP keeps its posted moves searchable', async ()
   assert.deepEqual(results, {
     A: { material: 'M-R', from: 'D001', outcome: 'to-target', steps: [{ from: 'D001', to: 'D005', doc: doc(1), by: 'anna@example.test', at }] },
     C: { material: 'M-R', from: 'D001', outcome: 'failed-sap', steps: [], message: 'Deficit of SL Unrestricted-use 1 EA' },
-    B: { material: 'M-R', from: 'D002', outcome: 'interrupted', steps: [] },
+    B: { material: 'M-R', from: 'D002', outcome: 'interrupted', steps: [], uncertain: { from: 'D002', to: 'D005', by: 'anna@example.test', at } },
     N: { material: null, from: null, outcome: 'not-found', steps: [] },
   })
   assert.deepEqual(await svc.search(TRINE, { serial: 'A' }), [

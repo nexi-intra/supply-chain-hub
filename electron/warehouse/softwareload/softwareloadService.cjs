@@ -9,7 +9,7 @@ const crypto = require('node:crypto')
 const { normalizeSerial } = require('../core/countState.cjs')
 const { normalizeMatdoc } = require('../core/sapParsers.cjs')
 const { monthsBetween } = require('../core/period.cjs')
-const { KIF, USED_FAILED_SLOC, normalizeSloc, planMoves } = require('./core/planMoves.cjs')
+const { KIF, BLOCKED_SLOC, USED_FAILED_SLOC, normalizeSloc, planMoves } = require('./core/planMoves.cjs')
 const { bisect } = require('./core/bisect.cjs')
 const { isSoftwareloadTarget } = require('./core/targets.cjs')
 const { TRANSFER_CHUNK, BLOCK_CHUNK } = require('./softwareloadSap.cjs')
@@ -71,7 +71,35 @@ function reached(task, result) {
 }
 
 /** Where a terminal ended up and with which SAP documents; the part every search line has. */
-const movedOf = result => ({ from: result.from ?? null, to: lastTo(result.steps), docs: result.steps.map(step => step.doc), outcome: result.outcome })
+function movedOf(result) {
+  const steps = result.steps || []
+  return {
+    from: result.from ?? null, to: lastTo(steps), docs: steps.map(step => step.doc).filter(Boolean), outcome: result.outcome,
+    ...(steps.some(step => step.unverified) ? { unverified: true } : {}),
+  }
+}
+
+/**
+ * A run marks serials as `uncertain` before it asks SAP, and the mark goes when SAP's answer is saved. A mark left
+ * behind means SAP may have posted without the app reading the answer, so the next run asks SAP where the serial is:
+ * on the mark's `to` (or blocked on D000 after MIGO) it made the step, which is recorded without a document; anywhere
+ * else it did not.
+ */
+function settledStep(mark, row) {
+  if (!mark || !row) return null
+  const made = mark.bwart ? row.blocked && row.sloc === BLOCKED_SLOC : row.sloc === mark.to
+  if (!made) return null
+  const { by, at, ...step } = mark
+  return { ...step, doc: null, unverified: true, by, at }
+}
+
+/** The saved steps of a result plus the one its mark proves; the mark itself is left out. */
+function stepsWithMark(result, row) {
+  const settled = settledStep(result?.uncertain, row)
+  return [...(result?.steps || []), ...(settled ? [settled] : [])]
+}
+
+const withoutMark = ({ uncertain, ...result } = {}) => result
 
 /** One search line per serial; `to` is where the last Transfer put it. */
 function indexLines(task) {
@@ -384,14 +412,15 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
     const by = lower(user.email)
     const task = await readPending(user, taskId)
     const serials = Object.keys(task.terminals || {})
-    const passedD005 = new Set(serials.filter(serial => (task.results?.[serial]?.steps || []).some(step => step.to === KIF)))
 
     report('lookup', 0, serials.length)
     const rows = serials.length ? sapRowsOf(await sap.lookup({ team: task.team, serials })) : []
     report('lookup', serials.length, serials.length)
+    const rowOf = new Map(rows.map(row => [row.serial, row]))
+    // A mark that put the serial on D005 counts as passing it, like a saved step.
+    const passedD005 = new Set(serials.filter(serial => stepsWithMark(task.results?.[serial], rowOf.get(serial)).some(step => step.to === KIF)))
     const plan = planMoves({ kif: task.kif, target: task.target, terminals: terminalsOf(task), sapRows: rows, passedD005 })
 
-    const rowOf = new Map(rows.map(row => [row.serial, row]))
     // Someone else took over a stale claim while SAP answered; they move the task now, so this run stops before SAP.
     const takenBy = current => (current.claim && current.claim.by !== by ? current.claim : null)
     await changePending(user, taskId, current => {
@@ -399,11 +428,11 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
       const results = {}
       for (const serial of serials) {
         const before = current.results?.[serial]
-        const steps = before?.steps || []
+        const row = rowOf.get(serial)
+        const steps = stepsWithMark(before, row)
         let outcome = plan.outcomes[serial]
         // A terminal this task already moved needs nothing more; it keeps the outcome it was moved for.
         if (steps.length && before.outcome && ['skipped', 'already-blocked'].includes(outcome)) outcome = before.outcome
-        const row = rowOf.get(serial)
         results[serial] = { material: before?.material ?? row?.material ?? null, from: before?.from ?? row?.sloc ?? null, outcome, steps }
       }
       return { ...current, results }
@@ -414,7 +443,10 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
       let taken = null
       await changePending(user, taskId, current => {
         const results = { ...current.results }
-        for (const serial of items) results[serial] = { ...results[serial], steps: [...(results[serial]?.steps || []), step] }
+        for (const serial of items) {
+          const result = withoutMark(results[serial])
+          results[serial] = { ...result, steps: [...(result.steps || []), step] }
+        }
         taken = takenBy(current)
         return { ...current, results, claim: taken || claimOf(user) }
       })
@@ -425,21 +457,24 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
       if (!failed.length) return
       await changePending(user, taskId, current => {
         const results = { ...current.results }
-        for (const { item, message } of failed) results[item] = { ...results[item], message }
+        for (const { item, message } of failed) results[item] = { ...withoutMark(results[item]), message }
         return { ...current, results }
       })
     }
 
-    const holdClaim = () => changePending(user, taskId, current => {
+    /** Renews the claim and marks the serials SAP is about to get, so a lost answer is found again on the next run. */
+    const beforeSap = (items, mark) => changePending(user, taskId, current => {
       if (takenBy(current)) throw busy(current.claim)
-      return { ...current, claim: claimOf(user) }
+      const results = { ...current.results }
+      for (const serial of items) results[serial] = { ...results[serial], uncertain: mark }
+      return { ...current, results, claim: claimOf(user) }
     })
 
     /** Runs one step for groups of serials; a serial that failed earlier (also in wave 1) is left out. */
     const run = (step, groups, size, attempt, stepOf) => runChunks({
       groups, size, failures,
       // Every SAP call renews the claim first, so a long run of refusals keeps it, and a run that lost it stops.
-      attempt: async (group, items) => { await holdClaim(); return attempt(group, items) },
+      attempt: async (group, items) => { await beforeSap(items, { ...stepOf(group), by, at: now() }); return attempt(group, items) },
       saved: (group, items, doc) => addSteps(items, { ...stepOf(group), doc, by, at: now() }),
       refused: keepFailures,
       report: (done, total) => report(step, done, total),
@@ -601,7 +636,7 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
 
     const failures = new Map()
     const settle = async interrupted => {
-      for (const [serial, message] of failures) results[serial] = { ...results[serial], outcome: 'failed-sap', message }
+      for (const [serial, message] of failures) results[serial] = { ...withoutMark(results[serial]), outcome: 'failed-sap', message }
       if (interrupted) {
         for (const serial of serials) if (results[serial].outcome === 'to-target' && !results[serial].steps.length) results[serial] = { ...results[serial], outcome: 'interrupted' }
       }
@@ -612,9 +647,20 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
     try {
       await runChunks({
         groups: transfers, size: TRANSFER_CHUNK, failures,
-        attempt: (group, items) => sap.transfer({ team: user.team, serials: items, to: group.to }),
+        // The record keeps an `uncertain` mark until SAP's answer is saved; a lost answer leaves it in the history.
+        attempt: async (group, items) => {
+          for (const serial of items) results[serial] = { ...results[serial], uncertain: { from: group.from, to: group.to, by, at: now() } }
+          await save()
+          const answer = await sap.transfer({ team: user.team, serials: items, to: group.to })
+          // A refusal moved nothing, so the mark goes; the next save writes that down.
+          if (!answer.ok) for (const serial of items) results[serial] = withoutMark(results[serial])
+          return answer
+        },
         saved: (group, items, doc) => {
-          for (const serial of items) results[serial] = { ...results[serial], steps: [...results[serial].steps, { from: group.from, to: group.to, doc, by, at: now() }] }
+          for (const serial of items) {
+            const result = withoutMark(results[serial])
+            results[serial] = { ...result, steps: [...result.steps, { from: group.from, to: group.to, doc, by, at: now() }] }
+          }
           return save()
         },
         report: (done, total) => report('transfer', done, total),

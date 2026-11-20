@@ -5,7 +5,8 @@
 ' Opens its OWN session on <system> (refuses any other), searches exactly like sl-lookup.vbs and only presses Transfer
 ' when the result list holds exactly the serials of <inFile>. Then Select All, Transfer, target location, Enter.
 ' Output: {"ok":true,"doc":"<material document>"}, or {"ok":false,"error":"rows-mismatch"} (nothing pressed),
-' {"ok":false,"error":"sap-errors"} (SAP's log: TYPE=E rows to <errFile> as MESSAGE, MESSAGE_V3, MESSAGE_V4) or
+' {"ok":false,"error":"sap-errors"} (SAP's log: TYPE=E rows to <errFile> as MESSAGE, MESSAGE_V3, MESSAGE_V4),
+' {"ok":false,"error":"language-not-supported"} (the session is not in English; nothing pressed) or
 ' {"ok":false,"error":"..."}.
 Option Explicit
 On Error Resume Next
@@ -328,6 +329,13 @@ If s Is Nothing Then Err.Clear : Finish False, "session-not-created"
 ownId = s.Id
 WaitIdle
 If s.Info.SystemName <> systemName Then Err.Clear : Finish False, "wrong-system"
+' SAP's answers below ("successfully created", the log) are read in English; another logon language could hide a
+' posted document, so nothing is pressed unless the session is in English.
+Dim logonLanguage
+logonLanguage = ""
+logonLanguage = UCase(Trim(CStr(s.Info.Language)))
+Err.Clear
+If logonLanguage <> "EN" And logonLanguage <> "E" Then Finish False, "language-not-supported"
 s.findById("wnd[0]").Iconify
 Err.Clear
 

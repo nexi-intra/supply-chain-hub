@@ -110,7 +110,11 @@ export function ResultTable({ results, notes }: { results: Record<string, Softwa
                 {result.message && <p className="text-xs text-destructive">SAP: {result.message}</p>}
                 {notes?.[serial] && <p className="text-xs text-muted-foreground">{t('Note', 'Note')}: {notes[serial]}</p>}
               </td>
-              <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{result.steps.length ? result.steps.map(step => step.doc).join(', ') : '–'}</td>
+              <td className="px-4 py-2 font-mono text-xs text-muted-foreground">
+                {result.steps.length ? result.steps.map(step => step.doc ?? t('ukendt', 'unknown')).join(', ') : '–'}
+                {result.steps.some(step => step.unverified) && <p className="font-sans">{t('SAP flyttede uden at appen fik dokumentnummeret', 'SAP moved it without the app getting the document number')}</p>}
+                {result.uncertain && <p className="font-sans text-destructive">{t('SAP svarede ikke. Tjek i SAP om den er flyttet', 'SAP did not answer. Check in SAP whether it was moved')}</p>}
+              </td>
             </tr>
           ))}
         </tbody>

@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { previewGroups, targetLabel, TYPE_LABELS, type PreviewGroups } from '@/lib/softwareload'
+import { previewGroups, sapRunErrorMessage, targetLabel, TYPE_LABELS, type PreviewGroups } from '@/lib/softwareload'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { t } from '@/lib/warehouse/text'
 import { cn } from '@/lib/utils'
@@ -78,7 +78,7 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
     } catch (error) {
       // Some refusals come before the time stops; anything later leaves the task waiting for SAP. The status tells which.
       const now = await window.electronWarehouse!.softwareload.status().catch(() => null)
-      setFinishError({ text: errorMessage(error), stillRunning: now?.running?.id === task?.id })
+      setFinishError({ text: sapRunErrorMessage(error), stillRunning: now?.running?.id === task?.id })
     } finally {
       inFlight.current = false
       setMoving(false)

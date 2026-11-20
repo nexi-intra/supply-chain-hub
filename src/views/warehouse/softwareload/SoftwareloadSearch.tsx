@@ -83,7 +83,7 @@ function IndexLineCard({ line }: { line: SoftwareloadIndexLine }) {
         <Field term={t('Hvornår', 'When')} value={formatDateTime(line.at)} />
         {line.kind === 'load' && <Field term={t('Software', 'Software')} value={line.version} />}
         <Field term={t('Fra og til', 'From and to')} value={`${line.from ? targetLabel(line.from) : '–'} → ${line.to ? targetLabel(line.to) : '–'}`} />
-        <Field term={t('Dokumenter', 'Documents')} value={line.docs.length ? line.docs.join(', ') : '–'} mono />
+        <Field term={t('Dokumenter', 'Documents')} value={`${line.docs.length ? line.docs.join(', ') : '–'}${line.unverified ? ` (${t('et trin uden dokumentnummer', 'a step without document number')})` : ''}`} mono />
         {line.kind === 'load' && line.note && <Field term={t('Note', 'Note')} value={line.note} />}
       </dl>
     </Card>

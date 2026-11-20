@@ -153,6 +153,7 @@ const MESSAGES: Record<string, string> = {
   SOFTWARELOAD_BUSY: 'Opgaven er allerede ved at blive flyttet i SAP.',
   SOFTWARELOAD_WRITE_DISABLED: 'Softwareload må endnu ikke flytte i dette SAP-system.',
   SOFTWARELOAD_SAP_FAILED: 'SAP-trinnet fejlede. Prøv igen.',
+  SOFTWARELOAD_SAP_LANGUAGE: 'Appen kan kun læse SAP\'s svar på engelsk. Log på SAP på engelsk (EN), og prøv igen.',
   UNEXPECTED_ERROR: 'Der skete en uventet fejl. Prøv igen.',
 }
 
@@ -310,6 +311,7 @@ const MESSAGES_EN: Record<string, string> = {
   SOFTWARELOAD_BUSY: 'The task is already being moved in SAP.',
   SOFTWARELOAD_WRITE_DISABLED: 'Softwareload may not move anything in this SAP system yet.',
   SOFTWARELOAD_SAP_FAILED: 'The SAP step failed. Try again.',
+  SOFTWARELOAD_SAP_LANGUAGE: "The app can only read SAP's answers in English. Log on to SAP in English (EN) and try again.",
   UNEXPECTED_ERROR: 'Something unexpected went wrong. Try again.',
 }
 

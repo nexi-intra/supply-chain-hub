@@ -1261,8 +1261,14 @@ export interface SoftwareloadTransfer { wave: 1 | 2; from: string; to: string; s
 /** Serials of one material for MIGO 344 (blocked stock). */
 export interface SoftwareloadBlock { material: string; serials: string[] }
 
-/** A saved SAP document on a serial: a Transfer (`from`/`to`) or MIGO 344 (`bwart`). `by` is an email. */
-export type SoftwareloadStep = ({ from: string; to: string } | { bwart: '344' }) & { doc: string; by: string; at: number }
+/**
+ * A saved SAP document on a serial: a Transfer (`from`/`to`) or MIGO 344 (`bwart`). `by` is an email. `unverified`: SAP
+ * posted it, but the app lost the answer; the next run found the terminal where the step put it, so `doc` is unknown.
+ */
+export type SoftwareloadStep = ({ from: string; to: string } | { bwart: '344' }) & { doc: string | null; by: string; at: number; unverified?: true }
+
+/** A step a run was about to ask SAP for, saved before SAP answered; it goes when the answer is saved. */
+export type SoftwareloadMark = ({ from: string; to: string } | { bwart: '344' }) & { by: string; at: number }
 
 export interface SoftwareloadResult {
   material: string | null
@@ -1271,6 +1277,8 @@ export interface SoftwareloadResult {
   steps: SoftwareloadStep[]
   /** SAP's message when it refused the serial. */
   message?: string
+  /** SAP was asked for this step but never answered (kept in the history of an interrupted move). */
+  uncertain?: SoftwareloadMark
 }
 
 export type SoftwareloadCounts = Partial<Record<SoftwareloadOutcome, number>>
@@ -1313,6 +1321,8 @@ export type SoftwareloadIndexLine = {
   to: string | null
   docs: string[]
   outcome: SoftwareloadOutcome
+  /** A step was made without the app reading SAP's document number. */
+  unverified?: true
 } & (
   | { kind: 'load'; taskId: string; type: SoftwareloadType; version: string; kif: boolean; note?: string }
   | { kind: 'kif' }

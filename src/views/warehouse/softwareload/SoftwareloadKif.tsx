@@ -6,7 +6,7 @@ import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/warehouse/ui'
-import { previewGroups, targetLabel } from '@/lib/softwareload'
+import { previewGroups, sapRunErrorMessage, targetLabel } from '@/lib/softwareload'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { t } from '@/lib/warehouse/text'
 import { cn } from '@/lib/utils'
@@ -64,7 +64,7 @@ export function SoftwareloadKif({ user, writeEnabled, active, onBusy }: { user: 
       setResult(await window.electronWarehouse!.softwareload.kifMove({ serials: preview.serials, ...(usedDocument ? { document: usedDocument } : {}) }))
       setPreview(null)
     } catch (error) {
-      setFailed(errorMessage(error))
+      setFailed(sapRunErrorMessage(error))
     } finally {
       inFlight.current = false
       setMoving(false)

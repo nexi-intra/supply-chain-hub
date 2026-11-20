@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { outcomeLabel, previewGroups, SOFTWARELOAD_TARGETS, summarizeTasks, targetLabel, TYPE_LABELS } from './softwareload'
+import { outcomeLabel, previewGroups, sapRunErrorMessage, SOFTWARELOAD_TARGETS, summarizeTasks, targetLabel, TYPE_LABELS } from './softwareload'
+import { setWarehouseLanguage } from './warehouse/text'
 import type { SoftwareloadOutcome, SoftwareloadResult, SoftwareloadTask } from '@/types/warehouse'
 
 const HOUR = 3_600_000
@@ -43,6 +44,21 @@ describe('previewGroups', () => {
       toTarget: ['a', 'i'], toBlocked: ['b'], toD002: ['c'], notFound: ['d'], blockedStock: ['e'],
       skipped: ['f'], manual: ['g'], alreadyBlocked: ['h'],
     })
+  })
+})
+
+describe('sapRunErrorMessage', () => {
+  it('asks to check SAP, not to try again, when SAP may have posted without an answer', () => {
+    expect(sapRunErrorMessage(new Error('Error: SAP_TIMEOUT'))).toBe('SAP svarede ikke i tide. Tjek i SAP før du fortsætter.')
+    expect(sapRunErrorMessage(new Error('Error: SOFTWARELOAD_SAP_FAILED: Transfer i ZMS_PREP fejlede: unknown-result: SAPLSPO4/0300')))
+      .toBe('Transfer i ZMS_PREP fejlede: unknown-result: SAPLSPO4/0300. Tjek i SAP før du fortsætter.')
+    expect(sapRunErrorMessage(new Error('Error: SAP_NOT_READY: SAP er ikke klar'))).toBe('SAP er ikke klar')
+    setWarehouseLanguage('en')
+    try {
+      expect(sapRunErrorMessage(new Error('Error: SAP_TIMEOUT'))).toBe('SAP did not answer in time. Check in SAP before you continue.')
+    } finally {
+      setWarehouseLanguage('da')
+    }
   })
 })
 

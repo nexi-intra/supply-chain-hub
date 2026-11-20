@@ -41,6 +41,7 @@ function scriptFailure(result, what) {
   const error = String(result?.error || 'ukendt fejl').slice(0, 300)
   if (/^not-logged-in/.test(error)) return sapError('SAP_NOT_READY', `Du er ikke logget ind i ${error.slice('not-logged-in-'.length) || 'SAP'}`)
   if (/^no-access-/.test(error)) return sapError('SAP_NO_ACCESS', `Du har ikke adgang til ${error.slice('no-access-'.length).toUpperCase()} i SAP`)
+  if (error === 'language-not-supported') return sapError('SOFTWARELOAD_SAP_LANGUAGE', 'Appen kan kun læse SAP\'s svar på engelsk. Log på SAP på engelsk (EN), og prøv igen. Der er ikke flyttet noget')
   return sapError('SOFTWARELOAD_SAP_FAILED', `${what} fejlede: ${error}`)
 }
 
