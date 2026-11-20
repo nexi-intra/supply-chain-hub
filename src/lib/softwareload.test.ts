@@ -63,21 +63,21 @@ describe('sapRunErrorMessage', () => {
 })
 
 describe('summarizeTasks', () => {
-  it('summarizeTasks: per person and type, failed counted apart and not in pace', () => {
+  it('summarizeTasks: per person and type, the pace counts every terminal not marked failed, failed counted apart', () => {
     const summary = summarizeTasks([
       task({ id: 'a1', workedMs: HOUR, terminals: { ...terminals('a', 20), ...terminals('af', 1, true) },
         results: { ...results('a', 20, 'to-target'), af0: result('to-blocked') } }),
-      task({ id: 'a2', workedMs: HOUR / 2, terminals: { ...terminals('b', 10), ...terminals('bf', 1, true) },
-        results: { ...results('b', 10, 'to-target'), bf0: result('to-d002') } }),
+      task({ id: 'a2', workedMs: HOUR / 2, terminals: { ...terminals('b', 9), ...terminals('x', 1), ...terminals('bf', 1, true) },
+        results: { ...results('b', 9, 'to-target'), x0: result('failed-sap'), bf0: result('to-d002') } }),
       task({ id: 'a3', type: 'key', workedMs: HOUR, terminals: terminals('k', 3), results: results('k', 3, 'to-target') }),
       task({ id: 'b1', email: 'bo@example.test', name: 'Bo', type: 'sw', workedMs: HOUR, terminals: terminals('s', 5), results: results('s', 5, 'to-target') }),
       task({ id: 'ae', email: 'aeble@example.test', name: 'Æble', type: 'sw', workedMs: HOUR, terminals: terminals('e', 1), results: results('e', 1, 'skipped') }),
     ])
-    expect(summary.map(row => [row.key, row.name, row.type, row.tasks, row.moved, row.failed, row.workedMs, row.perHour])).toEqual([
-      ['anna@example.test|sw+key', 'Anna', 'sw+key', 2, 30, 2, 1.5 * HOUR, 20],
-      ['anna@example.test|key', 'Anna', 'key', 1, 3, 0, HOUR, 3],
-      ['bo@example.test|sw', 'Bo', 'sw', 1, 5, 0, HOUR, 5],
-      ['aeble@example.test|sw', 'Æble', 'sw', 1, 0, 0, HOUR, 0],
+    expect(summary.map(row => [row.key, row.name, row.type, row.tasks, row.moved, row.failed, row.sapFailed, row.workedMs, row.perHour])).toEqual([
+      ['anna@example.test|sw+key', 'Anna', 'sw+key', 2, 30, 2, 1, 1.5 * HOUR, 20],
+      ['anna@example.test|key', 'Anna', 'key', 1, 3, 0, 0, HOUR, 3],
+      ['bo@example.test|sw', 'Bo', 'sw', 1, 5, 0, 0, HOUR, 5],
+      ['aeble@example.test|sw', 'Æble', 'sw', 1, 1, 0, 0, HOUR, 1],
     ])
   })
 

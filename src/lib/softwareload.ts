@@ -105,22 +105,27 @@ export interface SoftwareloadSummaryRow {
   name: string
   type: SoftwareloadType
   tasks: number
+  /** Terminals loaded: every scanned terminal not marked as failed, whatever SAP did with it. */
   moved: number
   failed: number
+  /** Terminals not marked as failed that SAP refused to move; counted in `moved` as well. */
+  sapFailed: number
   workedMs: number
-  /** Terminals moved to the target per worked hour, one decimal; 0 without worked time. */
+  /** Terminals loaded (`moved`) per worked hour, one decimal; 0 without worked time. */
   perHour: number
 }
 
-/** One row per person and type, sorted by name and then type. Failed terminals are counted apart and not in the pace. */
+/** One row per person and type, sorted by name and then type. Only terminals marked as failed are left out of the pace. */
 export function summarizeTasks(tasks: SoftwareloadTask[]): SoftwareloadSummaryRow[] {
   const rows = new Map<string, SoftwareloadSummaryRow>()
   for (const task of tasks) {
     const key = `${task.email}|${task.type}`
-    const row = rows.get(key) ?? { key, name: task.name, type: task.type, tasks: 0, moved: 0, failed: 0, workedMs: 0, perHour: 0 }
+    const row = rows.get(key) ?? { key, name: task.name, type: task.type, tasks: 0, moved: 0, failed: 0, sapFailed: 0, workedMs: 0, perHour: 0 }
+    const loaded = Object.entries(task.terminals).filter(([, terminal]) => !terminal.failed)
     row.tasks += 1
-    row.moved += Object.values(task.results).filter(result => result.outcome === 'to-target').length
-    row.failed += Object.values(task.terminals).filter(terminal => terminal.failed).length
+    row.moved += loaded.length
+    row.failed += Object.keys(task.terminals).length - loaded.length
+    row.sapFailed += loaded.filter(([serial]) => task.results[serial]?.outcome === 'failed-sap').length
     row.workedMs += task.workedMs
     rows.set(key, row)
   }

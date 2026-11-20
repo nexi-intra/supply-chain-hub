@@ -359,9 +359,9 @@ const WAREHOUSE_MODULE = {
       steps: [
         'Åbn "Arbejdsværktøjer" > "Softwareload" og vælg fanen "Statistik".',
         'Vælg periode (i dag, denne uge, denne måned, sidste måned eller selv valgt) og eventuelt person, type og softwareversion.',
-        'Se antal opgaver, flyttet til målet, fejlede og terminaler i timen, en tabel pr. person og type og listen over opgaverne med tider.',
+        'Se antal opgaver, loadet, fejlede og terminaler i timen, en tabel pr. person og type og listen over opgaverne med tider.',
       ],
-      notes: 'Managere ser hele teamets opgaver, og medarbejdere ser kun deres egne. Tempoet tæller terminaler flyttet til målet pr. arbejdstime. Fejlede tælles for sig.',
+      notes: 'Managere ser hele teamets opgaver, og medarbejdere ser kun deres egne. Tempoet tæller terminaler pr. arbejdstime. Kun dem, der er markeret som fejlet, tæller ikke med. Dem SAP afviste, vises også for sig.',
     },
   ],
 }

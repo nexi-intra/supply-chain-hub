@@ -68,7 +68,7 @@ export function SoftwareloadStats({ isManager }: { isManager: boolean }) {
   const rows = useMemo(() => summarizeTasks(filtered), [filtered])
   const people = useMemo(() => [...new Map(all.map(task => [task.email, task.name])).entries()].sort((a, b) => a[1].localeCompare(b[1], 'da')), [all])
   const versions = useMemo(() => [...new Set(all.map(task => task.version))].sort((a, b) => b.localeCompare(a, 'da', { numeric: true })), [all])
-  const totals = useMemo(() => rows.reduce((sum, row) => ({ moved: sum.moved + row.moved, failed: sum.failed + row.failed, workedMs: sum.workedMs + row.workedMs }), { moved: 0, failed: 0, workedMs: 0 }), [rows])
+  const totals = useMemo(() => rows.reduce((sum, row) => ({ moved: sum.moved + row.moved, failed: sum.failed + row.failed, sapFailed: sum.sapFailed + row.sapFailed, workedMs: sum.workedMs + row.workedMs }), { moved: 0, failed: 0, sapFailed: 0, workedMs: 0 }), [rows])
   const pace = totals.workedMs > 0 ? Math.round((totals.moved / (totals.workedMs / 3_600_000)) * 10) / 10 : 0
 
   return (
@@ -111,7 +111,7 @@ export function SoftwareloadStats({ isManager }: { isManager: boolean }) {
         <>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Figure label={t('Opgaver', 'Tasks')} value={String(filtered.length)} />
-            <Figure label={t('Flyttet til målet', 'Moved to the target')} value={String(totals.moved)} />
+            <Figure label={t('Loadet', 'Loaded')} value={String(totals.moved)} note={totals.sapFailed ? t(`${totals.sapFailed} afvist af SAP`, `${totals.sapFailed} refused by SAP`) : undefined} />
             <Figure label={t('Fejlede', 'Failed')} value={String(totals.failed)} />
             <Figure label={t('Terminaler i timen', 'Terminals per hour')} value={formatRate(pace)} note={formatDuration(totals.workedMs, language)} />
           </div>
@@ -152,8 +152,9 @@ function SummaryTable({ rows }: { rows: ReturnType<typeof summarizeTasks> }) {
               <th className="px-4 py-2 font-medium">{t('Person', 'Person')}</th>
               <th className="px-4 py-2 font-medium">{t('Type', 'Type')}</th>
               <th className="px-4 py-2 text-right font-medium">{t('Opgaver', 'Tasks')}</th>
-              <th className="px-4 py-2 text-right font-medium">{t('Flyttet', 'Moved')}</th>
+              <th className="px-4 py-2 text-right font-medium">{t('Loadet', 'Loaded')}</th>
               <th className="px-4 py-2 text-right font-medium">{t('Fejlede', 'Failed')}</th>
+              <th className="px-4 py-2 text-right font-medium">{t('SAP afviste', 'Refused by SAP')}</th>
               <th className="px-4 py-2 text-right font-medium">{t('Tid', 'Time')}</th>
               <th className="px-4 py-2 text-right font-medium">{t('Pr. time', 'Per hour')}</th>
             </tr>
@@ -166,6 +167,7 @@ function SummaryTable({ rows }: { rows: ReturnType<typeof summarizeTasks> }) {
                 <td className="px-4 py-2 text-right tabular-nums">{row.tasks}</td>
                 <td className="px-4 py-2 text-right tabular-nums">{row.moved}</td>
                 <td className={cn('px-4 py-2 text-right tabular-nums', row.failed > 0 && 'text-destructive')}>{row.failed}</td>
+                <td className={cn('px-4 py-2 text-right tabular-nums', row.sapFailed > 0 && 'text-destructive')}>{row.sapFailed}</td>
                 <td className="px-4 py-2 text-right tabular-nums">{formatDuration(row.workedMs, language)}</td>
                 <td className="px-4 py-2 text-right font-medium tabular-nums">{formatRate(row.perHour)}</td>
               </tr>
@@ -173,7 +175,7 @@ function SummaryTable({ rows }: { rows: ReturnType<typeof summarizeTasks> }) {
           </tbody>
         </table>
       </div>
-      <p className="border-t px-5 py-2 text-xs text-muted-foreground">{t('Tempoet tæller terminaler flyttet til målet pr. arbejdstime. Fejlede tælles for sig.', 'The pace counts terminals moved to the target per working hour. Failed ones are counted apart.')}</p>
+      <p className="border-t px-5 py-2 text-xs text-muted-foreground">{t('Tempoet tæller terminaler pr. arbejdstime. Kun dem, der er markeret som fejlet, tæller ikke med. Dem SAP afviste, tæller med og vises også for sig.', 'The pace counts terminals per working hour. Only those marked as failed are left out. Those SAP refused are counted and also shown apart.')}</p>
     </Card>
   )
 }
