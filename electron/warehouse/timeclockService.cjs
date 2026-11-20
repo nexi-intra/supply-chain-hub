@@ -2,13 +2,12 @@
 // read registrations. Each person writes only their own files (the running clock and one file per month), so colleagues
 // never wait for each other's locks. No Electron imports: register.cjs wires it to IPC, tests drive it directly.
 const crypto = require('node:crypto')
+const { monthsBetween } = require('./core/period.cjs')
 
 const LONG_RUN_MS = 10 * 60 * 60 * 1000
-const RANGE_MAX_DAYS = 370
 const TASK_ID_MAX = 64
 const TASK_NAME_MAX = 80
 const COLOR = /^#[0-9a-f]{6}$/i
-const DATE = /^\d{4}-\d{2}-\d{2}$/
 
 function codeError(code, message) {
   return Object.assign(new Error(message || code), { code })
@@ -143,19 +142,10 @@ function createTimeclockService({ storeFor, now = Date.now }) {
   }
 
   // ---------- Managers ----------
-  function monthsBetween(from, to) {
-    if (!DATE.test(String(from)) || !DATE.test(String(to)) || from > to) throw codeError('TIMECLOCK_INVALID', 'Ugyldig periode')
-    const days = (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000
-    if (!Number.isFinite(days) || days > RANGE_MAX_DAYS) throw codeError('TIMECLOCK_INVALID', 'Vælg højst et år ad gangen')
-    const months = []
-    for (let [year, month] = from.split('-').map(Number); `${year}-${pad(month)}` <= to.slice(0, 7); month === 12 ? (year++, month = 1) : month++) months.push(`${year}-${pad(month)}`)
-    return months
-  }
-
   /** Every registration of the team in the period, and who is on the clock right now. */
   async function entries(user, { from, to } = {}) {
     requireManager(user)
-    const months = new Set(monthsBetween(from, to))
+    const months = new Set(monthsBetween(from, to, 'TIMECLOCK_INVALID'))
     const store = storeFor(user.team)
     const keys = await store.keysAsync()
     const monthKeys = keys.filter(key => key.startsWith('tider-') && months.has(key.slice(-7)))

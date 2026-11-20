@@ -9,6 +9,8 @@ const { createSoftwareloadService, CLAIM_MS } = require('./softwareloadService.c
 const ANNA = { email: 'Anna@example.test', fullName: 'Anna', role: 'user', team: 'TCD' }
 const BO = { email: 'bo@example.test', fullName: 'Bo', role: 'user', team: 'TCD' }
 const MONA = { email: 'mona@example.test', fullName: 'Mona', role: 'manager', team: 'TCD' }
+const TRINE = { email: 'trine@example.test', fullName: 'Trine', role: 'user', team: 'TRR' }
+const TOM = { email: 'tom@example.test', fullName: 'Tom', role: 'manager', team: 'TRR' }
 const TASK = { type: 'sw+key', kif: true, target: ' d006 ', version: 'v2.1.3' }
 const MIN = 60_000
 
@@ -72,7 +74,7 @@ async function until(ready) {
   assert.ok(ready(), 'the service never got there')
 }
 
-function setup({ timeclockRunning = null, sap = { writeEnabled: false } } = {}) {
+function setup({ timeclockRunning = null, sap = { writeEnabled: false }, matdocs } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'softwareload-'))
   const stores = new Map()
   const storeAt = dir => {
@@ -102,6 +104,7 @@ function setup({ timeclockRunning = null, sap = { writeEnabled: false } } = {}) 
     timeclock,
     now: () => clock.now,
     newId: () => `t${++ids}`,
+    matdocs,
   })
   const storeFor = team => storeAt(path.join(team, 'lagerstyring', 'softwareload'))
   const index = storeAt(path.join('_lagerstyring', 'softwareload'))
@@ -642,4 +645,151 @@ test('writing disabled: finish is refused before the clock stops', async () => {
   const status = await svc.status(ANNA)
   assert.deepEqual([status.running.id, status.running.paused, status.running.workedMs, status.pending], ['t1', false, 10 * MIN, []])
   assert.deepEqual(await svc.scan(ANNA, { serial: 'B' }), { serial: 'B', count: 2 }, 'the task still runs')
+})
+
+test('kif move by material document moves to D005 and is found by search from the other team', async () => {
+  const sap = fakeSap({ A: { material: 'M-0', sloc: 'D000' }, B: { material: 'M-R', sloc: 'D001' } })
+  const asked = []
+  const matdocs = async input => {
+    asked.push(input)
+    const rows = [{ serial: 'a', material: 'M-0' }, { serial: 'B', material: 'M-R' }, { serial: 'B', material: 'M-R' }, { serial: 'N', material: 'M-0' }]
+    return { document: '4900229137 2026 01', transaction: 'ZMS_REP', rows }
+  }
+  const ctx = setup({ sap, matdocs })
+  const svc = ctx.service()
+  const preview = await svc.kifPreview(BO, { document: ' 4900229137  2026 01 ' })
+  assert.deepEqual(asked, [{ team: 'TCD', document: ' 4900229137  2026 01 ' }])
+  assert.deepEqual(preview, {
+    serials: ['A', 'B', 'N'],
+    outcomes: { A: 'to-target', B: 'to-target', N: 'not-found' },
+    transfers: [{ wave: 1, from: 'D000', to: 'D005', serials: ['A'] }, { wave: 1, from: 'D001', to: 'D005', serials: ['B'] }],
+  })
+  assert.deepEqual(sap.calls, [['lookup', { team: 'TCD', serials: ['A', 'B', 'N'] }]], 'the preview moves nothing')
+
+  ctx.tick(MIN)
+  sap.rows.get('B').sloc = 'D005'
+  sap.calls.length = 0
+  const at = ctx.clock.now
+  const moved = await svc.kifMove(BO, { serials: preview.serials, document: ' 4900229137  2026 01 ' })
+  assert.deepEqual(sap.calls, [['lookup', { team: 'TCD', serials: ['A', 'B', 'N'] }], ['transfer', { team: 'TCD', serials: ['A'], to: 'D005' }]], 'SAP is asked again, B moved since the preview')
+  const results = {
+    A: { material: 'M-0', from: 'D000', outcome: 'to-target', steps: [{ from: 'D000', to: 'D005', doc: doc(1), by: 'bo@example.test', at }] },
+    B: { material: 'M-R', from: 'D005', outcome: 'skipped', steps: [] },
+    N: { material: null, from: null, outcome: 'not-found', steps: [] },
+  }
+  assert.deepEqual(moved, { id: 't1', results, counts: { 'to-target': 1, skipped: 1, 'not-found': 1 } })
+  assert.deepEqual((await ctx.storeFor('TCD').getAsync('kif-2026-11')).moves, {
+    t1: { id: 't1', team: 'TCD', email: 'bo@example.test', name: 'Bo', at, document: '4900229137 2026 01', results },
+  })
+
+  assert.deepEqual(await svc.search(TRINE, { serial: ' a ' }), [
+    { serial: 'A', team: 'TCD', kind: 'kif', email: 'bo@example.test', name: 'Bo', at, from: 'D000', to: 'D005', docs: [doc(1)], outcome: 'to-target' },
+  ])
+  assert.deepEqual((await svc.search(TRINE, { serial: 'N' })).map(line => [line.kind, line.outcome, line.to, line.docs]), [['kif', 'not-found', null, []]])
+})
+
+test('kif move skips terminals already on D005', async () => {
+  const sap = fakeSap({ A: { material: 'M-0', sloc: 'D005' }, B: { material: 'M-0', sloc: 'D000', blocked: true } })
+  const ctx = setup({ sap })
+  const svc = ctx.service()
+  const preview = await svc.kifPreview(ANNA, { serials: [' a ', 'b', 'A', '  '] })
+  assert.deepEqual(preview, { serials: ['A', 'B'], outcomes: { A: 'skipped', B: 'blocked-stock' }, transfers: [] })
+  const moved = await svc.kifMove(ANNA, { serials: ['a', 'B'] })
+  assert.deepEqual(transfers(sap), [])
+  assert.deepEqual(moved.results.A, { material: 'M-0', from: 'D005', outcome: 'skipped', steps: [] })
+  assert.deepEqual(moved.counts, { skipped: 1, 'blocked-stock': 1 })
+  assert.equal('document' in (await ctx.storeFor('TCD').getAsync('kif-2026-11')).moves[moved.id], false)
+  const { lines } = await ctx.index.getAsync('serier-2026-11')
+  assert.deepEqual(
+    lines.map(line => [line.serial, line.kind, line.outcome, line.from, line.to, line.docs]),
+    [['A', 'kif', 'skipped', 'D005', null, []], ['B', 'kif', 'blocked-stock', 'D000', null, []]],
+  )
+})
+
+test('kif move needs writing in SAP, refuses a double click, and a serial SAP refuses gets its message', async () => {
+  const stock = () => ({ A: { material: 'M-R', sloc: 'D001' }, B: { material: 'M-R', sloc: 'D001' } })
+  const off = fakeSap(stock(), { writeEnabled: false })
+  const offline = setup({ sap: off }).service()
+  assert.deepEqual((await offline.kifPreview(ANNA, { serials: ['A'] })).outcomes, { A: 'to-target' }, 'the preview works without writing')
+  off.calls.length = 0
+  await assert.rejects(offline.kifMove(ANNA, { serials: ['A'] }), { code: 'SOFTWARELOAD_WRITE_DISABLED' })
+  await assert.rejects(offline.kifMove(ANNA, {}), { code: 'SOFTWARELOAD_WRITE_DISABLED' })
+  assert.deepEqual(off.calls, [])
+
+  const sap = fakeSap(stock())
+  sap.refuse.add('B')
+  const svc = setup({ sap }).service()
+  await assert.rejects(svc.kifPreview(ANNA, {}), { code: 'SOFTWARELOAD_INVALID' })
+  await assert.rejects(svc.kifMove(ANNA, { serials: ['  '] }), { code: 'SOFTWARELOAD_INVALID' })
+  await assert.rejects(svc.kifMove(ANNA, { serials: ['A'], document: 'nonsense' }), { code: 'SOFTWARELOAD_INVALID' })
+  assert.deepEqual(sap.calls, [])
+  const held = sap.hold('lookup', 1)
+  const first = svc.kifMove(ANNA, { serials: ['A', 'B'] })
+  await until(() => sap.calls.length === 1)
+  await assert.rejects(svc.kifMove(ANNA, { serials: ['A'] }), { code: 'SOFTWARELOAD_BUSY' })
+  held.open()
+  const moved = await first
+  assert.equal(sap.calls.filter(([kind]) => kind === 'lookup').length, 1, 'the refused click never reached SAP')
+  assert.deepEqual(transfers(sap), [['D005', ['A', 'B']], ['D005', ['A']], ['D005', ['B']]])
+  assert.deepEqual(moved.results.B, { material: 'M-R', from: 'D001', outcome: 'failed-sap', steps: [], message: 'Deficit of SL Unrestricted-use 1 EA' })
+  assert.deepEqual(moved.counts, { 'to-target': 1, 'failed-sap': 1 })
+})
+
+test('search returns every event for a serial, newest first, across months', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' }, B: { material: 'M-R', sloc: 'D000' } })
+  const ctx = setup({ sap })
+  const svc = ctx.service()
+  ctx.clock.now = new Date(2026, 9, 30, 9, 0).getTime()
+  const october = ctx.clock.now
+  await svc.kifMove(TRINE, { serials: ['A', 'B'] })
+  ctx.clock.now = new Date(2026, 10, 18, 7, 0).getTime()
+  await svc.start(ANNA, TASK)
+  await svc.scan(ANNA, { serial: 'A' })
+  ctx.tick(30 * MIN)
+  const finished = ctx.clock.now
+  await svc.finish(ANNA, {})
+  ctx.tick(MIN)
+  const later = ctx.clock.now
+  await svc.kifMove(BO, { serials: ['A'] })
+
+  const found = await svc.search(TRINE, { serial: 'a' })
+  assert.deepEqual(
+    found.map(line => [line.kind, line.team, line.name, line.at, line.from, line.to]),
+    [['kif', 'TCD', 'Bo', later, 'D006', 'D005'], ['load', 'TCD', 'Anna', finished, 'D005', 'D006'], ['kif', 'TRR', 'Trine', october, 'D000', 'D005']],
+  )
+  assert.equal(found[1].taskId, 't2')
+  assert.deepEqual((await svc.search(ANNA, { serial: 'B' })).map(line => [line.team, line.at]), [['TRR', october]])
+  assert.deepEqual(await svc.search(ANNA, { serial: '  ' }), [])
+  assert.deepEqual(await svc.search(ANNA, { serial: 'NOPE1' }), [])
+})
+
+test('tasks: an employee gets own tasks, a manager all in the period', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' }, B: { material: 'M-R', sloc: 'D000' }, C: { material: 'M-R', sloc: 'D000' } })
+  const ctx = setup({ sap })
+  const svc = ctx.service()
+  const finishTask = async (user, startAt, serial) => {
+    ctx.clock.now = startAt
+    await svc.start(user, { ...TASK, kif: false })
+    await svc.scan(user, { serial })
+    ctx.tick(30 * MIN)
+    return (await svc.finish(user, {})).taskId
+  }
+  assert.equal(await finishTask(ANNA, new Date(2026, 9, 31, 23, 50).getTime(), 'A'), 't1')
+  assert.equal(await finishTask(ANNA, new Date(2026, 10, 18, 7, 0).getTime(), 'B'), 't2')
+  assert.equal(await finishTask(BO, new Date(2026, 10, 19, 7, 0).getTime(), 'C'), 't3')
+  await svc.start(ANNA, TASK)
+
+  const ids = async (user, period) => (await svc.tasks(user, period)).map(task => task.id)
+  const november = { from: '2026-11-01', to: '2026-11-30' }
+  assert.deepEqual(await ids(ANNA, november), ['t2'], 'a task started 31 October belongs to October; a running one is not listed')
+  assert.deepEqual(await ids(BO, november), ['t3'])
+  assert.deepEqual(await ids(MONA, november), ['t3', 't2'], 'newest first')
+  assert.deepEqual(await ids(MONA, { from: '2026-10-31', to: '2026-11-18' }), ['t2', 't1'])
+  assert.deepEqual(await ids(TOM, november), [], 'another team\'s manager sees only their own team')
+  const [task] = await svc.tasks(ANNA, november)
+  assert.deepEqual([task.state, task.email, task.workedMs, task.results.B.outcome], ['faerdig', 'anna@example.test', 30 * MIN, 'to-target'])
+
+  await assert.rejects(svc.tasks(MONA, { from: '2026-11-30', to: '2026-11-01' }), { code: 'SOFTWARELOAD_INVALID' })
+  await assert.rejects(svc.tasks(MONA, { from: '2025-11-01', to: '2026-11-30' }), { code: 'SOFTWARELOAD_INVALID' })
+  await assert.rejects(svc.tasks(ANNA, { from: '18-11-2026', to: '2026-11-30' }), { code: 'SOFTWARELOAD_INVALID' })
 })
