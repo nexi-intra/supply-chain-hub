@@ -104,7 +104,18 @@ const COMPONENT_MAP = {
   'components/VacationRequestDialog.tsx': 'calendar:request-vacation',
   'components/VirtualizedTable.tsx': INTERNAL,
   'components/WhatsNewDialog.tsx': 'hub:whats-new',
+  // Softwareload (Arbejdsværktøjer, TCD/TRR): every file of the tool folder is mapped one by one (see VIEW_FOLDERS).
+  'views/warehouse/softwareload/Softwareload.tsx': 'warehouse:softwareload-start',
+  'views/warehouse/softwareload/SoftwareloadTask.tsx': 'warehouse:softwareload-start', // also the "Fejlet" dialog: warehouse:softwareload-failed
+  'views/warehouse/softwareload/SoftwareloadFinish.tsx': 'warehouse:softwareload-finish',
+  'views/warehouse/softwareload/SoftwareloadPending.tsx': 'warehouse:softwareload-finish', // "Venter på SAP" is explained in the finish task
+  'views/warehouse/softwareload/SoftwareloadKif.tsx': 'warehouse:softwareload-kif',
+  'views/warehouse/softwareload/SoftwareloadSearch.tsx': 'warehouse:softwareload-search',
+  'views/warehouse/softwareload/SoftwareloadStats.tsx': 'warehouse:softwareload-stats',
+  'views/warehouse/softwareload/common.tsx': INTERNAL, // progress, result table and helpers shared by the tabs
 }
+// Sub-folders of src/views whose files are each mapped in COMPONENT_MAP (the other view folders are covered by their module).
+const VIEW_FOLDERS = ['warehouse/softwareload']
 // Sub-folders of src/components: one entry per folder.
 const COMPONENT_FOLDERS = {
   arcade: 'games:play-game',
@@ -186,4 +197,4 @@ const PROBES = [
   { id: 'links:approve-link', persona: 'F', role: 'manager', gated: ['user'], q: { da: 'hvordan godkender jeg et link?', en: 'how do I approve a link?', fi: 'miten hyväksyn linkin?', sv: 'hur godkänner jag en länk?' } },
 ]
 
-module.exports = { COMPONENT_MAP, COMPONENT_FOLDERS, TAB_MAP, PROFILE_MAP, DASHBOARD_TASK, PROBES, INTERNAL, resolveTarget, firstLine }
+module.exports = { COMPONENT_MAP, COMPONENT_FOLDERS, VIEW_FOLDERS, TAB_MAP, PROFILE_MAP, DASHBOARD_TASK, PROBES, INTERNAL, resolveTarget, firstLine }

@@ -1,4 +1,4 @@
-// Hubert's how-to answers for Arbejdsværktøjer > Optælling (TCD/TRR), in all four languages.
+// Hubert's how-to answers for Arbejdsværktøjer (Optælling, Placeringer, Stempelkort and Softwareload, TCD/TRR), in all four languages.
 const test = require('node:test')
 const assert = require('node:assert/strict')
 const { ask, DANISH_GUIDE } = require('./assistantTrainingBank.cjs')
@@ -101,4 +101,54 @@ test('the guide explains Stempelkort to everyone and the registered times to man
     assert.match(answer.text, starts(language, title), `${language}: ${question} -> ${answer.text.slice(0, 80)}`)
   }
   assert.doesNotMatch(ask({ q: 'hvor kan jeg se registrerede tider pr. opgave?', lang: 'da' }, { role: 'user' }).text, /^Arbejdsværktøjer - Se registrerede tider/, 'an employee is not handed the managers\' overview')
+})
+
+const SOFTWARELOAD_QUESTIONS = [
+  ['softwareload-start', { da: ['hvordan starter jeg en softwareload-opgave?', 'Start en softwareload-opgave'], en: ['how do I start a softwareload task?', 'Start a softwareload task'], fi: ['miten aloitan softwareload-tehtävän?', 'Aloita softwareload-tehtävä'], sv: ['hur startar jag en softwareload-uppgift?', 'Starta en softwareload-uppgift'] }],
+  ['softwareload-failed', { da: ['hvordan markerer jeg en terminal som fejlet?', 'Markér en terminal som fejlet'], en: ['how do I mark a terminal as failed?', 'Mark a terminal as failed'], fi: ['miten merkitsen päätteen epäonnistuneeksi?', 'Merkitse pääte epäonnistuneeksi'], sv: ['hur markerar jag en terminal som misslyckad?', 'Markera en terminal som misslyckad'] }],
+  ['softwareload-finish', { da: ['hvordan afslutter jeg softwareload og flytter i SAP?', 'Afslut og flyt i SAP'], en: ['how do I finish and move the terminals in SAP?', 'Finish and move in SAP'], fi: ['miten päätän tehtävän ja siirrän päätteet SAPissa?', 'Päätä ja siirrä SAPissa'], sv: ['hur avslutar jag och flyttar terminalerna i SAP?', 'Avsluta och flytta i SAP'] }],
+  ['softwareload-kif', { da: ['hvordan flytter jeg terminaler ind i KIF?', 'Flyt ind i KIF'], en: ['how do I move terminals into KIF?', 'Move into KIF'], fi: ['miten siirrän päätteet KIF:iin?', 'Siirrä KIF:iin'], sv: ['hur flyttar jag terminaler in i KIF?', 'Flytta in i KIF'] }],
+  ['softwareload-search', { da: ['hvordan søger jeg på et serienummer i softwareload?', 'Søg på et serienummer'], en: ['how do I search a serial number in softwareload?', 'Search a serial number'], fi: ['miten haen sarjanumerolla softwareloadissa?', 'Hae sarjanumerolla'], sv: ['hur söker jag på ett serienummer i softwareload?', 'Sök på ett serienummer'] }],
+  ['softwareload-stats', { da: ['hvordan ser jeg statistik for softwareload?', 'Se softwareload-statistik'], en: ['how do I see the softwareload statistics?', 'See softwareload statistics'], fi: ['miten näen softwareload-tilastot?', 'Katso softwareload-tilastot'], sv: ['hur ser jag statistik för softwareload?', 'Visa softwareload-statistik'] }],
+]
+
+test('the guide answers how-to questions about Softwareload in four languages', () => {
+  for (const [id, byLanguage] of SOFTWARELOAD_QUESTIONS) {
+    for (const [language, [question, title]] of Object.entries(byLanguage)) {
+      const answer = ask({ q: question, lang: language })
+      assert.equal(answer.mode, 'app-guide', `${id} ${language}: ${question} -> ${answer.text.slice(0, 80)}`)
+      assert.match(answer.text, starts(language, title), `${id} ${language}: ${question} -> ${answer.text.slice(0, 80)}`)
+      if (language !== 'da') assert.doesNotMatch(answer.text, DANISH_GUIDE, `${id} ${language}`)
+    }
+  }
+})
+
+test('"where can I see" questions about Softwareload get the search and the statistics directly, also for an employee', () => {
+  const WHERE = [
+    ['hvor kan jeg se hvem der har loadet en terminal?', 'da', 'Søg på et serienummer'], ['where can I see who loaded a terminal?', 'en', 'Search a serial number'],
+    ['mistä näen kuka latasi päätteen?', 'fi', 'Hae sarjanumerolla'], ['var ser jag vem som laddade en terminal?', 'sv', 'Sök på ett serienummer'],
+    ['hvor kan jeg se softwareload-statistik?', 'da', 'Se softwareload-statistik'], ['where can I see the softwareload statistics?', 'en', 'See softwareload statistics'],
+    ['mistä näen softwareload-tilastot?', 'fi', 'Katso softwareload-tilastot'], ['var ser jag softwareload-statistik?', 'sv', 'Visa softwareload-statistik'],
+  ]
+  for (const [question, language, title] of WHERE) {
+    const answer = ask({ q: question, lang: language }, { role: 'user' })
+    assert.equal(answer.mode, 'app-guide', `${language}: ${question} -> ${answer.text.slice(0, 80)}`)
+    assert.match(answer.text, starts(language, title), `${language}: ${question} -> ${answer.text.slice(0, 80)}`)
+  }
+})
+
+test('the Softwareload guide states the facts of the tool: Stempelkort stops, -0 to D000 and -R to D002, KIF via D005, "Venter på SAP"', () => {
+  const start = ask({ q: 'hvordan starter jeg en softwareload-opgave?', lang: 'da' }).text
+  assert.match(start, /"Softwareload \+ keyload", "Softwareload" eller "Keyload"/)
+  assert.match(start, /Kører Stempelkort, bliver det stoppet/)
+  const failed = ask({ q: 'hvordan markerer jeg en terminal som fejlet?', lang: 'da' }).text
+  assert.match(failed, /-0\) til D000 og blocked stock/)
+  assert.match(failed, /\(-R\) går til D002/)
+  const finish = ask({ q: 'hvordan afslutter jeg softwareload og flytter i SAP?', lang: 'da' }).text
+  assert.match(finish, /"Afslut og flyt i SAP"/)
+  assert.match(finish, /I KIF går alt via D005/)
+  assert.match(finish, /"Venter på SAP"/)
+  const en = ask({ q: 'how do I finish and move the terminals in SAP?', lang: 'en' }).text
+  assert.match(en, /"Finish and move in SAP"/)
+  assert.match(en, /"Waiting for SAP"/)
 })

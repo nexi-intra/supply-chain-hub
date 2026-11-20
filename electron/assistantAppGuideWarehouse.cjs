@@ -1,4 +1,4 @@
-// App-guide for Arbejdsværktøjer (was Lagerstyring) and its tools Stempelkort, Placeringer and Optælling, TCD and TRR only.
+// App-guide for Arbejdsværktøjer (was Lagerstyring) and its tools Stempelkort, Placeringer, Optælling and Softwareload, TCD and TRR only.
 // Danish base text and keywords (all languages' keywords, folded: æ->ae, ø->oe, å->aa); en/fi/sv texts are in assistantAppGuideWarehouseI18n.cjs.
 // The English UI labels quoted in en/fi/sv are the ones Optælling shows in English (fi/sv users get the English UI).
 const MANAGER = 'manager'
@@ -8,9 +8,9 @@ const WAREHOUSE_MODULE = {
   view: 'warehouse',
   title: 'Arbejdsværktøjer',
   inOverview: false,
-  summary: 'Arbejdsværktøjer findes kun i TCD- og TRR-hubben (hed før Lagerstyring). Det er en lille hub med værktøjer: Stempelkort (stempl ind og ud på dine opgaver med start, pause og stop; kun managere ser tiderne), Placeringer (hvor pallerne står, sæt på plads, tag den ældste først og fyld pluk-pladser op) og Optælling: kvartalets statusoptælling af terminaler og tilbehør i plant D301 med scanning af serienumre, godkendelse, SAP-optællingsdokumenter, endelige rapporter og et arkiv over afholdte statusser.',
-  where: 'Åbn feltet "Arbejdsværktøjer" på forsiden (kun i TCD- og TRR-hubben) og vælg "Stempelkort", "Placeringer" eller "Optælling".',
-  keywords: ['arbejdsvaerktoejer', 'arbejdsvaerktoej', 'work tools', 'tyokalut', 'tyoekalut', 'arbetsverktyg', 'stempelkort', 'stemple ind', 'stempl ind', 'time card', 'timecard', 'leimauskortti', 'staempelkort', 'lagerstyring', 'lagerstyringen', 'placeringer', 'placeringerne', 'placeringsark', 'sijainnit', 'sijoitustaulukko', 'placeringar', 'warehouse management', 'optaelling', 'optaellingen', 'optaellinger', 'statusoptaelling', 'lageroptaelling', 'stock count', 'stock counts', 'stocktake', 'stock taking', 'inventory count', 'varastonhallinta', 'inventointi', 'inventoinnin', 'varaston laskenta', 'lagerstyrning', 'inventering', 'inventeringen', 'lagerinventering', 'reol', 'reoler', 'reolen', 'hylde', 'hylder', 'rack', 'racks', 'shelf', 'shelves', 'hylly', 'hyllyt', 'hyllykkoe', 'hylla', 'hyllor'],
+  summary: 'Arbejdsværktøjer findes kun i TCD- og TRR-hubben (hed før Lagerstyring). Det er en lille hub med værktøjer: Stempelkort (stempl ind og ud på dine opgaver med start, pause og stop; kun managere ser tiderne), Placeringer (hvor pallerne står, sæt på plads, tag den ældste først og fyld pluk-pladser op), Optælling (kvartalets statusoptælling af terminaler og tilbehør i plant D301 med scanning af serienumre, godkendelse, SAP-optællingsdokumenter, endelige rapporter og et arkiv over afholdte statusser) og Softwareload (scan de terminaler, du loader, på en opgave med ur, og appen flytter dem i SAP, når opgaven afsluttes; søg på et serienummer og se statistik).',
+  where: 'Åbn feltet "Arbejdsværktøjer" på forsiden (kun i TCD- og TRR-hubben) og vælg "Stempelkort", "Placeringer", "Optælling" eller "Softwareload".',
+  keywords: ['arbejdsvaerktoejer', 'softwareload', 'keyload', 'arbejdsvaerktoej', 'work tools', 'tyokalut', 'tyoekalut', 'arbetsverktyg', 'stempelkort', 'stemple ind', 'stempl ind', 'time card', 'timecard', 'leimauskortti', 'staempelkort', 'lagerstyring', 'lagerstyringen', 'placeringer', 'placeringerne', 'placeringsark', 'sijainnit', 'sijoitustaulukko', 'placeringar', 'warehouse management', 'optaelling', 'optaellingen', 'optaellinger', 'statusoptaelling', 'lageroptaelling', 'stock count', 'stock counts', 'stocktake', 'stock taking', 'inventory count', 'varastonhallinta', 'inventointi', 'inventoinnin', 'varaston laskenta', 'lagerstyrning', 'inventering', 'inventeringen', 'lagerinventering', 'reol', 'reoler', 'reolen', 'hylde', 'hylder', 'rack', 'racks', 'shelf', 'shelves', 'hylly', 'hyllyt', 'hyllykkoe', 'hylla', 'hyllor'],
   tasks: [
     {
       id: 'timeclock',
@@ -288,6 +288,78 @@ const WAREHOUSE_MODULE = {
         'Mange: filtrér (fx område og "Kun tomme"), klik "Vælg alle i søgningen" eller vælg rækkerne, og klik "Slet valgte".',
       ],
       notes: 'Kun tomme placeringer slettes; står der paller eller varer, bliver pladsen, og du får at vide hvorfor. Sletningen står i loggen og kan fortrydes.',
+    },
+    {
+      id: 'softwareload-start',
+      title: 'Start en softwareload-opgave',
+      direct: true,
+      keywords: ['softwareload', 'software load', 'keyload', 'start softwareload', 'starte softwareload', 'starter softwareload', 'start en softwareload', 'starte en softwareload', 'starter en softwareload', 'softwareload opgave', 'softwareloadopgave', 'loade terminaler', 'loader terminaler', 'loade software', 'scanne terminalerne', 'start a softwareload', 'softwareload task', 'load software', 'load terminals', 'loading terminals', 'aloita softwareload', 'aloitan softwareload', 'softwareload tehtaevae', 'softwareload tehtaevaen', 'ohjelmiston lataus', 'lataan ohjelmiston', 'paeaetteiden lataus', 'starta softwareload', 'startar softwareload', 'startar en softwareload', 'softwareload uppgift', 'softwareloaduppgift', 'ladda programvara', 'laddar terminaler', 'ladda terminaler'],
+      steps: [
+        'Åbn "Arbejdsværktøjer" på forsiden og vælg "Softwareload". Fanen "Min opgave" er åben.',
+        'Vælg typen "Softwareload + keyload", "Softwareload" eller "Keyload", og vælg "I KIF" eller "Uden for KIF".',
+        'Skriv målet under "Mål (storage location)", fx D006, og versionen under "Softwareversion". Klik "Start".',
+        'Uret tæller nu. Scan hver terminal i feltet "Scan serienummer". Du kan klikke "Pause" og "Fortsæt", og et forkert serienummer fjerner du med skraldespanden.',
+      ],
+      notes: 'Kører Stempelkort, bliver det stoppet, når du starter, så tiden ikke tæller to gange. Starter du Stempelkort, holder softwareload-opgaven pause. I KIF flyttes alle terminaler via D005, før de kommer til målet. Uden for KIF flyttes de direkte til målet. Type, KIF og mål huskes til næste gang. "Annullér" smider opgaven væk, uden at tiden gemmes eller noget flyttes.',
+    },
+    {
+      id: 'softwareload-failed',
+      title: 'Markér en terminal som fejlet',
+      keywords: ['terminal som fejlet', 'terminalen som fejlet', 'som fejlet', 'fejlet terminal', 'fejlede terminaler', 'terminal der fejler', 'terminalen fejler', 'loader ikke', 'fortryd fejlet', 'mark a terminal as failed', 'mark as failed', 'terminal as failed', 'failed terminal', 'terminal failed', 'does not load', 'paeaete epaeonnistuneeksi', 'paeaetteen epaeonnistuneeksi', 'epaeonnistuneeksi', 'epaeonnistunut paeaete', 'ei lataudu', 'terminal som misslyckad', 'terminalen som misslyckad', 'som misslyckad', 'misslyckad terminal', 'laddar inte'],
+      steps: [
+        'Find terminalen i listen "Scannede serienumre" i din igangværende opgave, og klik "Fejlet".',
+        'Skriv i noten, hvad der er galt, fx at den ikke loader, og klik "Markér som fejlet".',
+        'Terminalen står nu med "Fejlet" og noten. Klik "Fortryd fejlet", hvis det var en fejl.',
+      ],
+      notes: 'Når opgaven afsluttes, går en ny terminal (materialet ender på -0) til D000 og blocked stock, og en brugt (-R) går til D002. I KIF går de via D005. Er materialet hverken -0 eller -R, skal terminalen håndteres manuelt.',
+    },
+    {
+      id: 'softwareload-finish',
+      title: 'Afslut og flyt i SAP',
+      keywords: ['afslut og flyt', 'afslut softwareload', 'afslutter softwareload', 'afslutte softwareload', 'flyt i sap', 'flyt terminalerne i sap', 'terminalerne i sap', 'venter paa sap', 'fortsaet i sap', 'opgiv flytningerne', 'finish and move', 'finish the softwareload', 'finish a softwareload', 'move in sap', 'move the terminals in sap', 'terminals in sap', 'waiting for sap', 'continue in sap', 'give up the moves', 'paeaetae ja siirrae', 'paeaetaen ja siirraen', 'siirrae sapissa', 'siirraen sapissa', 'paeaetteet sapissa', 'odottaa sapia', 'jatka sapissa', 'avsluta och flytta', 'avslutar och flyttar', 'flytta i sap', 'flyttar i sap', 'terminalerna i sap', 'vaentar paa sap', 'fortsaett i sap'],
+      steps: [
+        'Når alle terminaler er scannet, klik "Afslut opgave". Appen slår terminalerne op i SAP og viser, hvordan de bliver flyttet. Intet er flyttet endnu, og tiden kører stadig.',
+        'Tjek grupperne: til målet, fejlede nye til D000 og blocked stock, fejlede brugte til D002 og problemer, fx "Ikke fundet i SAP" eller blocked stock, som ikke flyttes. I KIF går alt via D005.',
+        'Klik "Afslut og flyt i SAP". Bekræftelsen viser grupperne med antal. Klik "Afslut og flyt": tiden stopper, og appen flytter alle terminalerne i SAP i én omgang. Luk ikke SAP imens.',
+        'Resultatet viser hvert serienummer med udfald og materialedokumenter. Klik "Færdig".',
+      ],
+      notes: 'Lukkes SAP under flytningen, venter opgaven under fanen "Venter på SAP". Klik "Fortsæt i SAP", når SAP er klar. Det, der allerede er flyttet, flyttes ikke igen. En manager kan klikke "Opgiv" og skrive en begrundelse, så resten står som opgivet.',
+    },
+    {
+      id: 'softwareload-kif',
+      title: 'Flyt ind i KIF',
+      keywords: ['flyt ind i kif', 'ind i kif', 'flyt til kif', 'flyt terminaler til d005', 'flyt til d005', 'move into kif', 'into kif', 'move to kif', 'move terminals to d005', 'move to d005', 'siirrae kif iin', 'siirraen kif iin', 'kif iin', 'kifiin', 'siirrae d005 een', 'd005 een', 'd005een', 'flytta in i kif', 'flyttar in i kif', 'in i kif', 'flytta till kif', 'flytta till d005', 'flyttar till d005'],
+      steps: [
+        'Åbn "Arbejdsværktøjer" > "Softwareload" og vælg fanen "Flyt ind i KIF".',
+        'Scan eller indsæt serienumrene, ét pr. linje. Du kan også skrive et materialedokument under "Eller et materialedokument", så bruges dokumentets serienumre.',
+        'Klik "Vis oversigt". Appen slår terminalerne op i SAP og viser, hvad der flyttes til D005, hvad der allerede står der, og hvad der ikke kan flyttes.',
+        'Klik "Flyt til D005". Resultatet viser hvert serienummer med materialedokumentet.',
+      ],
+      notes: 'Brug det til at flytte terminaler til D005 i forvejen, før de skal loades. Terminaler i blocked stock og serienumre, der ikke findes i SAP, flyttes ikke.',
+    },
+    {
+      id: 'softwareload-search',
+      title: 'Søg på et serienummer',
+      direct: true,
+      keywords: ['soeg paa et serienummer', 'soeger paa et serienummer', 'soege paa et serienummer', 'soeg serienummer', 'soeg et serienummer', 'soeger et serienummer', 'hvem der har loadet', 'hvem har loadet', 'hvem loadede', 'har loadet en terminal', 'har loadet terminalen', 'search serial number', 'search a serial number', 'search for a serial number', 'who loaded', 'who has loaded', 'loaded a terminal', 'loaded the terminal', 'hae sarjanumeroa', 'haen sarjanumeroa', 'hae sarjanumerolla', 'haen sarjanumerolla', 'kuka latasi', 'kuka on ladannut', 'latasi paeaetteen', 'ladannut paeaetteen', 'soek paa ett serienummer', 'soeker paa ett serienummer', 'soek serienummer', 'soeka paa ett serienummer', 'vem laddade', 'vem som laddade', 'vem som har laddat', 'laddade en terminal', 'laddat en terminal', 'laddat terminalen'],
+      steps: [
+        'Åbn "Arbejdsværktøjer" > "Softwareload" og vælg fanen "Søg serienummer".',
+        'Scan eller skriv serienummeret og klik "Søg". Søgningen dækker både TCD og TRR.',
+        'Hver load og hver flytning ind i KIF vises med hvem, hvornår, type, software, I KIF eller uden for KIF, fra og til og materialedokumenterne.',
+      ],
+      notes: 'Blev terminalen markeret som fejlet, står noten også.',
+    },
+    {
+      id: 'softwareload-stats',
+      title: 'Se softwareload-statistik',
+      direct: true,
+      keywords: ['softwareload', 'softwareload statistik', 'statistik for softwareload', 'statistik over softwareload', 'statistik i softwareload', 'terminaler i timen', 'terminaler pr time', 'loadet pr time', 'softwareload statistics', 'statistics for softwareload', 'terminals per hour', 'softwareload tilastot', 'softwareload tilastoja', 'softwareloadin tilastot', 'paeaetettae tunnissa', 'paeaetteitae tunnissa', 'terminaler per timme', 'terminaler i timmen', 'statistik foer softwareload'],
+      steps: [
+        'Åbn "Arbejdsværktøjer" > "Softwareload" og vælg fanen "Statistik".',
+        'Vælg periode (i dag, denne uge, denne måned, sidste måned eller selv valgt) og eventuelt person, type og softwareversion.',
+        'Se antal opgaver, flyttet til målet, fejlede og terminaler i timen, en tabel pr. person og type og listen over opgaverne med tider.',
+      ],
+      notes: 'Managere ser hele teamets opgaver, og medarbejdere ser kun deres egne. Tempoet tæller terminaler flyttet til målet pr. arbejdstime. Fejlede tælles for sig.',
     },
   ],
 }

@@ -9,7 +9,7 @@ const ts = require('typescript')
 const { APP_GUIDE, APP_TOPICS, formatAppGuide } = require('./assistantAppGuide.cjs')
 const { LOCALIZED } = require('./assistantAppGuideI18n.cjs')
 const { ask } = require('./assistantTrainingBank.cjs')
-const { COMPONENT_MAP, COMPONENT_FOLDERS, TAB_MAP, PROFILE_MAP, DASHBOARD_TASK, PROBES, INTERNAL, resolveTarget, firstLine } = require('./assistantCoverageManifest.cjs')
+const { COMPONENT_MAP, COMPONENT_FOLDERS, VIEW_FOLDERS, TAB_MAP, PROFILE_MAP, DASHBOARD_TASK, PROBES, INTERNAL, resolveTarget, firstLine } = require('./assistantCoverageManifest.cjs')
 
 const SRC = path.join(__dirname, '..', 'src')
 const LANGUAGES = ['da', 'en', 'fi', 'sv']
@@ -54,6 +54,7 @@ function deriveInventory() {
   const components = [
     ...fs.readdirSync(path.join(SRC, 'views')).filter(file => /\.tsx$/.test(file) && !/\.test\./.test(file)).map(file => `views/${file}`),
     ...fs.readdirSync(path.join(SRC, 'components')).filter(file => /\.tsx$/.test(file) && !/\.test\./.test(file)).map(file => `components/${file}`),
+    ...VIEW_FOLDERS.flatMap(folder => fs.readdirSync(path.join(SRC, 'views', folder)).filter(file => /\.tsx$/.test(file) && !/\.test\./.test(file)).map(file => `views/${folder}/${file}`)),
   ]
   const folders = fs.readdirSync(path.join(SRC, 'components'), { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name)
   const arcadeGames = [...read('views/Arcade.tsx').matchAll(/^\s+title: '([^']+)',$/gm)].map(match => match[1])
@@ -153,6 +154,7 @@ test('the real UI inventory is found (the audit is not vacuously green)', () => 
   assert.deepEqual(inventory.arcadeGames, ['Chicken Invaders', 'Prism Break', 'Parcel Pilot', 'Cargo Stack', 'Route Runner'])
   assert.deepEqual(inventory.modernGames, ['Cube Basher'])
   assert.ok(inventory.components.length >= 60)
+  assert.ok(['Softwareload', 'SoftwareloadTask', 'SoftwareloadFinish', 'SoftwareloadPending', 'SoftwareloadKif', 'SoftwareloadSearch', 'SoftwareloadStats'].every(name => inventory.components.includes(`views/warehouse/softwareload/${name}.tsx`)), 'the Softwareload views are in the inventory')
 })
 
 test('every tile, view, panel tab, profile-menu item, dashboard card, game and UI component has an app-guide entry in da/en/fi/sv', () => {
@@ -168,10 +170,10 @@ test('the audit reports a new tab, view, component, card or tile that has no gui
     tabs: [...real.tabs, 'ManagerPanel:new-tab'],
     profileMenu: [...real.profileMenu, 'menuNewThing'],
     dashboardCards: [...real.dashboardCards, { id: 'newCard', source: "language === 'da' ? 'Nyt kort' : 'New card'" }],
-    components: [...real.components, 'components/BrandNewDialog.tsx'],
+    components: [...real.components, 'components/BrandNewDialog.tsx', 'views/warehouse/softwareload/BrandNewPanel.tsx'],
     folders: [...real.folders, 'newFolder'],
   })
-  for (const expected of ['tile new-module', 'view new-view', 'panel tab ManagerPanel:new-tab', 'profile menu menuNewThing', 'dashboard card newCard', 'UI component components/BrandNewDialog.tsx', 'UI folder components/newFolder']) {
+  for (const expected of ['tile new-module', 'view new-view', 'panel tab ManagerPanel:new-tab', 'profile menu menuNewThing', 'dashboard card newCard', 'UI component components/BrandNewDialog.tsx', 'UI component views/warehouse/softwareload/BrandNewPanel.tsx', 'UI folder components/newFolder']) {
     assert.ok(gaps.some(gap => gap.startsWith(expected)), `${expected} -> ${JSON.stringify(gaps)}`)
   }
 })
