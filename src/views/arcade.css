@@ -196,6 +196,7 @@
 :is(.arcade-tile, .section-badge)[data-game="section-warehouse-locations"] { --arcade-accent: oklch(0.58 0.13 160); }
 :is(.arcade-tile, .section-badge)[data-game="section-warehouse-counts"] { --arcade-accent: oklch(0.66 0.14 80); }
 :is(.arcade-tile, .section-badge)[data-game="section-warehouse-timeclock"] { --arcade-accent: oklch(0.6 0.15 250); }
+:is(.arcade-tile, .section-badge)[data-game="section-warehouse-softwareload"] { --arcade-accent: oklch(0.58 0.16 300); }
 .section-art-warehouse { display: flex; align-items: flex-end; gap: 0.4rem; color: var(--arcade-accent); }
 .section-warehouse-main { filter: drop-shadow(0 2px 0 var(--section-ink)); transition: transform 220ms ease; }
 .section-warehouse-side { opacity: 0.7; transition: transform 220ms ease; }

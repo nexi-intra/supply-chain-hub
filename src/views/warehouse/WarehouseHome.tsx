@@ -1,12 +1,12 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
-import { Barcode, ClipboardText, Clock, IdentificationCard, MapPin, Package } from '@phosphor-icons/react'
+import { Barcode, ClipboardText, Clock, Cpu, IdentificationCard, MapPin, Package } from '@phosphor-icons/react'
 import { SectionTile } from '@/components/arcade/SectionTile'
 import { t } from '@/lib/warehouse/text'
 import { withoutDeleted } from './pendingDeletes'
 import type { WarehouseUser } from '@/types/warehouse'
 
-export type WarehouseTool = 'timeclock' | 'counts' | 'locations'
+export type WarehouseTool = 'timeclock' | 'counts' | 'locations' | 'softwareload'
 
 interface ToolTile {
   id: WarehouseTool
@@ -43,6 +43,15 @@ function TimeclockArt() {
   )
 }
 
+function SoftwareloadArt() {
+  return (
+    <span className="section-art-warehouse">
+      <Cpu className="section-warehouse-main" size={60} weight="duotone" />
+      <Barcode className="section-warehouse-side" size={46} weight="duotone" />
+    </span>
+  )
+}
+
 /** The tools of Arbejdsværktøjer, Stempelkort first (used every day by everyone). A new tool gets a tile here and its own view in Warehouse.tsx. */
 const tools = (): ToolTile[] => [
   {
@@ -62,6 +71,12 @@ const tools = (): ToolTile[] => [
     title: t('Optælling', 'Stock count'),
     description: t('Kvartalets statusoptælling: scanning, godkendelse, SAP-dokumenter og arkiv.', 'The quarterly stock count: scanning, approval, SAP documents and archive.'),
     art: <CountsArt />,
+  },
+  {
+    id: 'softwareload',
+    title: 'Softwareload',
+    description: t('Start en opgave, scan terminalerne og lad appen flytte dem i SAP. Søg på et serienummer for at se hvem der loadede det.', 'Start a task, scan the terminals and let the app move them in SAP. Search a serial number to see who loaded it.'),
+    art: <SoftwareloadArt />,
   },
 ]
 

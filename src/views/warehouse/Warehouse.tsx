@@ -26,6 +26,7 @@ import { SerialRules } from './SerialRules'
 import { StatusView } from './StatusView'
 import { WarehouseHome, type WarehouseTool } from './WarehouseHome'
 import { Locations } from './locations/Locations'
+import { Softwareload } from './softwareload/Softwareload'
 import { Timeclock } from './timeclock/Timeclock'
 
 export type View = { kind: 'list' } | { kind: 'new' } | { kind: 'count'; id: string; tab?: CountTab } | { kind: 'status'; id: string; from?: 'archive' } | { kind: 'archive' } | { kind: 'rules' } | { kind: 'serial-rules' } | { kind: 'sap-check' }
@@ -37,12 +38,13 @@ type Tool = 'home' | WarehouseTool
 /**
  * Without params Arbejdsværktøjer opens on its own hub page. Deep links (Hubert, notifications) go straight into Optælling:
  * tab = counts|archive|rules|serial-rules|sap-check, itemId = count id or "status:<id>". A count from a notification
- * opens on its tab: tab = count-members|count-approval (or count). tab = timeclock opens Stempelkort.
+ * opens on its tab: tab = count-members|count-approval (or count). tab = timeclock opens Stempelkort, tab = softwareload Softwareload.
  */
 function initialState(): { tool: Tool; view: View; locations: LocationsTarget } {
   const params = consumeNavigationParams()
   if (!params?.tab && !params?.itemId) return { tool: 'home', view: { kind: 'list' }, locations: { kind: 'home' } }
   if (params.tab === 'timeclock') return { tool: 'timeclock', view: { kind: 'list' }, locations: { kind: 'home' } }
+  if (params.tab === 'softwareload') return { tool: 'softwareload', view: { kind: 'list' }, locations: { kind: 'home' } }
   // tab = locations: Placeringer, itemId = material:X | location:Y | pallet:Z | refill | …
   if (params.tab === 'locations') return { tool: 'locations', view: { kind: 'list' }, locations: targetFromItem(params.itemId) }
   return { tool: 'counts', view: countsView(params.tab, params.itemId || ''), locations: { kind: 'home' } }
@@ -68,7 +70,7 @@ export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
   // Keeps t() in step with the Hub language; the whole module re-renders below this component when it changes.
   const language = useWarehouseLanguage()
   const { language: hubLanguage } = useLanguage()
-  const usesSap = Boolean(user) && (tool === 'counts' || tool === 'locations')
+  const usesSap = Boolean(user) && (tool === 'counts' || tool === 'locations' || tool === 'softwareload')
 
   useEffect(() => {
     const bridge = window.electronWarehouse
@@ -81,7 +83,7 @@ export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
       if (event.key !== 'Escape' || event.defaultPrevented || isAnyModalOpen()) return
       // Escape goes one level up: from a tool to the Arbejdsværktøjer page, from there to the front page.
       if (tool === 'home') onNavigateBack()
-      else if (tool === 'timeclock' || TOP_LEVEL.has(view.kind)) toHome()
+      else if (tool === 'timeclock' || tool === 'softwareload' || TOP_LEVEL.has(view.kind)) toHome()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -101,6 +103,7 @@ export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
             {tool === 'counts' && <><span className="text-muted-foreground">·</span><span className="text-muted-foreground">{t('Optælling', 'Stock count')}</span></>}
             {tool === 'locations' && <><span className="text-muted-foreground">·</span><span className="text-muted-foreground">{t('Placeringer', 'Locations')}</span></>}
             {tool === 'timeclock' && <><span className="text-muted-foreground">·</span><span className="text-muted-foreground">{t('Stempelkort', 'Time card')}</span></>}
+            {tool === 'softwareload' && <><span className="text-muted-foreground">·</span><span className="text-muted-foreground">Softwareload</span></>}
           </h1>
           {user && <Badge variant="secondary" className="font-mono">{user.team}</Badge>}
           {user && usesSap && <div className="ml-auto"><SapIndicator /></div>}
@@ -115,6 +118,7 @@ export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
       {user && tool === 'home' && <WarehouseHome key={language} user={user} onOpen={setTool} />}
       {user && tool === 'locations' && <Locations key={language} user={user} initial={start.locations} />}
       {user && tool === 'timeclock' && <Timeclock key={language} user={user} />}
+      {user && tool === 'softwareload' && <Softwareload key={language} user={user} onOpenTimeclock={() => setTool('timeclock')} />}
       {user && tool === 'counts' && (
         <>
           <WarehouseContent key={language} user={user} view={view} onNavigate={setView} />
@@ -123,7 +127,7 @@ export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
       )}
     </div>
   )
-  // SAP is polled only inside Placeringer and Optælling for a TCD/TRR person; the tools page, Stempelkort and other hubs never reach SAP.
+  // SAP is polled only inside Placeringer, Optælling and Softwareload for a TCD/TRR person; the tools page, Stempelkort and other hubs never reach SAP.
   return usesSap ? <SapStatusProvider>{page}</SapStatusProvider> : page
 }
 
