@@ -22,11 +22,13 @@ function setup({ timeclockRunning = null } = {}) {
   // 18 November 2026, 07:00 local time.
   const clock = { now: new Date(2026, 10, 18, 7, 0, 0).getTime() }
   const stops = []
+  // Like Stempelkort's stop: it reads past the cache, so it is the only call start may rely on (no status here).
   const timeclock = {
     running: timeclockRunning,
-    async status() { return { running: this.running } },
     async stop(user, input) {
       stops.push([user.email, input])
+      if (!this.running) throw Object.assign(new Error('Der kører ikke noget ur'), { code: 'TIMECLOCK_NOT_RUNNING' })
+      if (this.running.longRun) throw Object.assign(new Error('Uret har kørt i over 10 timer'), { code: 'TIMECLOCK_LONG_RUN' })
       const { taskName } = this.running
       this.running = null
       return { taskName, workedMs: 25 * MIN, pausedMs: 0 }
@@ -75,6 +77,24 @@ test('start stops a running Stempelkort task and reports it', async () => {
   assert.deepEqual(ctx.stops, [[ANNA.email, {}]])
   assert.deepEqual(started.stoppedTimeclock, { taskName: 'Pakning', workedMs: 25 * MIN })
   assert.equal(started.target, 'D006')
+  assert.equal(ctx.timeclock.running, null)
+})
+
+test('start when Stempelkort was already stopped on another PC still starts', async () => {
+  const ctx = setup()
+  const started = await ctx.service().start(ANNA, TASK)
+  assert.deepEqual(ctx.stops, [[ANNA.email, {}]])
+  assert.equal(started.stoppedTimeclock, undefined)
+  assert.equal((await ctx.service().status(ANNA)).running.id, 't1')
+})
+
+test('start refuses when Stempelkort has run over 10 hours and leaves both untouched', async () => {
+  const ctx = setup({ timeclockRunning: { taskName: 'Pakning', longRun: true } })
+  const svc = ctx.service()
+  await assert.rejects(svc.start(ANNA, TASK), { code: 'SOFTWARELOAD_TIMECLOCK_LONG_RUN' })
+  assert.equal((await svc.status(ANNA)).running, null)
+  assert.deepEqual(ctx.timeclock.running, { taskName: 'Pakning', longRun: true }, 'Stempelkort keeps running')
+  assert.deepEqual(await svc.versions(ANNA), [])
 })
 
 test('a second start while one runs is refused', async () => {
@@ -82,7 +102,8 @@ test('a second start while one runs is refused', async () => {
   await ctx.service().start(ANNA, TASK)
   ctx.timeclock.running = { taskName: 'Pakning' }
   await assert.rejects(ctx.service().start(ANNA, { ...TASK, version: 'v3' }), { code: 'SOFTWARELOAD_RUNNING' })
-  assert.deepEqual(ctx.stops, [], 'a refused start leaves Stempelkort running')
+  assert.equal(ctx.stops.length, 1, 'a refused start does not call Stempelkort')
+  assert.deepEqual(ctx.timeclock.running, { taskName: 'Pakning' }, 'a refused start leaves Stempelkort running')
   assert.equal((await ctx.service().status(ANNA)).running.version, 'v2.1.3')
 })
 

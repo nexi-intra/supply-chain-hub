@@ -96,14 +96,22 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
     })
   }
 
+  /** Stops Stempelkort when it runs. stop() reads past the cache, so it is asked directly rather than a (possibly stale) status. */
+  async function stopTimeclock(user) {
+    try {
+      const stopped = await timeclock.stop(user, {})
+      return { taskName: stopped.taskName, workedMs: stopped.workedMs }
+    } catch (error) {
+      if (error?.code === 'TIMECLOCK_NOT_RUNNING') return null
+      if (error?.code === 'TIMECLOCK_LONG_RUN') throw codeError('SOFTWARELOAD_TIMECLOCK_LONG_RUN', 'Stempelkortet har kørt i over 10 timer. Stop det i Stempelkort med det rigtige sluttidspunkt, og start så softwareload-opgaven')
+      throw error
+    }
+  }
+
   async function start(user, input = {}) {
     const chosen = choice(input)
     if (await readRunning(user, { skipCache: true })) throw codeError('SOFTWARELOAD_RUNNING', 'Der kører allerede en softwareload-opgave')
-    let stoppedTimeclock = null
-    if ((await timeclock.status(user))?.running) {
-      const stopped = await timeclock.stop(user, {})
-      stoppedTimeclock = { taskName: stopped.taskName, workedMs: stopped.workedMs }
-    }
+    const stoppedTimeclock = await stopTimeclock(user)
     let started = null
     await storeFor(user.team).mutateAsync(runningKey(user.email), current => {
       if (current) throw codeError('SOFTWARELOAD_RUNNING', 'Der kører allerede en softwareload-opgave')
