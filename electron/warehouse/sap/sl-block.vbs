@@ -2,8 +2,8 @@
 ' storage location D000. CHANGES SAP: one material document.
 ' Usage: sl-block.vbs <system> <outDir> <inFile> <material> <344|343>
 ' The serials are in <inFile> (one per line). Opens its OWN session on <system> (refuses any other): MIGO Transfer
-' Posting / Other, movement type, material, plant, location and quantity, the serials in the Serial Numbers tab, Check
-' (must say "Document is O.K."), Post.
+' Posting / Other, movement type, material, plant, location and quantity (read back after Enter: anything else gives
+' screen-mismatch before Check), the serials in the Serial Numbers tab, Check (must say "Document is O.K."), Post.
 ' Output: {"ok":true,"doc":"<material document>"} or {"ok":false,"error":"sap: <SAP's message>"} or
 ' {"ok":false,"error":"language-not-supported"} (the session is not in English; nothing entered) or {"ok":false,"error":"..."}.
 Option Explicit
@@ -188,6 +188,33 @@ Sub StopOnError()
   If messageType = "E" Or messageType = "A" Then Finish False, "sap: " & TextOf("wnd[0]/sbar")
 End Sub
 
+' Whether one of the fields in <area> shows <expected>. MIGO may put a typed key's text in the field and show the key
+' in a field of its own, so the key fields are listed too; a field that does not exist reads as "".
+Function ShowsValue(area, fields, expected)
+  On Error Resume Next
+  Dim field, shown
+  ShowsValue = False
+  For Each field In fields
+    shown = ""
+    shown = UCase(Trim(TextOf(area & "/" & field)))
+    If shown = UCase(expected) Then ShowsValue = True : Exit Function
+  Next
+End Function
+
+' The whole number MIGO shows as quantity ("20", or "20.000"/"20,000" with decimals); -1 when it is anything else.
+Function QuantityOf(value)
+  On Error Resume Next
+  Dim t, rx, found
+  QuantityOf = -1
+  t = Replace(Trim(CStr(value)), " ", "")
+  Set rx = New RegExp
+  rx.Pattern = "^(\d{1,6})([.,]0+)?$"
+  If Not rx.Test(t) Then Exit Function
+  Set found = rx.Execute(t)
+  QuantityOf = CLng(found(0).SubMatches(0))
+  If Err.Number <> 0 Then Err.Clear : QuantityOf = -1
+End Function
+
 Set s = Nothing
 doc = ""
 If WScript.Arguments.Count < 5 Then Err.Clear : Finish False, "arguments"
@@ -307,6 +334,19 @@ Err.Clear
 CloseTips
 StopOnPopup "item"
 StopOnError
+
+' 2b. Read back what MIGO kept after Enter: material, D301, D000 and the quantity. Anything else stops before Check.
+Dim keptMaterial, keptPlant, keptSloc, keptQuantity
+FindCarrier
+keptMaterial = ShowsValue(tabs & TRANS_AREA, Array("ctxtGODYNPRO-MAKTX", "ctxtGODYNPRO-MATNR", "txtGODYNPRO-MATNR"), material)
+keptPlant = ShowsValue(tabs & TRANS_AREA, Array("ctxtGODYNPRO-NAME1", "ctxtGODYNPRO-WERKS", "txtGODYNPRO-WERKS"), PLANT)
+keptSloc = ShowsValue(tabs & TRANS_AREA, Array("ctxtGODYNPRO-LGOBE", "ctxtGODYNPRO-LGORT", "txtGODYNPRO-LGORT"), SLOC)
+keptQuantity = QuantityOf(TextOf(tabs & TRANS_AREA & "/txtGODYNPRO-ERFMG"))
+Err.Clear
+If Not keptMaterial Then Finish False, "screen-mismatch: material"
+If Not keptPlant Then Finish False, "screen-mismatch: plant"
+If Not keptSloc Then Finish False, "screen-mismatch: location"
+If keptQuantity <> count Then Finish False, "screen-mismatch: quantity"
 
 ' 3. Serial Numbers tab: one serial per row, scrolling past the visible rows. No Enter.
 FindCarrier
