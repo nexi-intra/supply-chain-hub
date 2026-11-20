@@ -98,6 +98,7 @@ Detaljerede skærm-id'er står i sessionens noter og skal over i scriptene.
    - Stempelkort-opgaven gemmes som en almindelig registrering med sluttid lig softwareload-starten.
    - Er Stempelkort-opgaven fælles (holddesignet), stoppes kun personens egen tid, aldrig holdets.
    - Startes en Stempelkort-opgave, mens en softwareload-opgave kører, sættes softwareload-opgaven på pause.
+   - Det samme gælder, når en af dem genoptages efter en pause: genoptages softwareload-opgaven, stoppes Stempelkort som ved start, og genoptages Stempelkort, sættes softwareload-opgaven på pause.
    - "Ryddes for den" betyder kun Stempelkort-designdokumentet. Der findes ingen softwareload-kode i Stempelkort.
 2. **Scan.** Serienumre scannes ind. Appen fanger dubletter i opgaven med det samme. Der spørges ikke SAP pr. scan.
 3. **Træk ud.** Et scannet serienummer kan markeres "Fejlet" med en note om hvad der er galt. Det kan også fortrydes, indtil opgaven afsluttes.

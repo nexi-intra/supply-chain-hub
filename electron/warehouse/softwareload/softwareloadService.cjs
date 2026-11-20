@@ -274,14 +274,17 @@ function createSoftwareloadService({
     })
   }
 
-  /** Stops Stempelkort when it runs. stop() reads past the cache, so it is asked directly rather than a (possibly stale) status. */
-  async function stopTimeclock(user) {
+  /**
+   * Stops Stempelkort when it runs. stop() reads past the cache, so it is asked directly rather than a (possibly stale)
+   * status. `then` ends the message when Stempelkort has run too long, e.g. "start så softwareload-opgaven".
+   */
+  async function stopTimeclock(user, then = 'start så softwareload-opgaven') {
     try {
       const stopped = await timeclock.stop(user, {})
       return { taskName: stopped.taskName, workedMs: stopped.workedMs }
     } catch (error) {
       if (error?.code === 'TIMECLOCK_NOT_RUNNING') return null
-      if (error?.code === 'TIMECLOCK_LONG_RUN') throw codeError('SOFTWARELOAD_TIMECLOCK_LONG_RUN', 'Stempelkortet har kørt i over 10 timer. Stop det i Stempelkort med det rigtige sluttidspunkt, og start så softwareload-opgaven')
+      if (error?.code === 'TIMECLOCK_LONG_RUN') throw codeError('SOFTWARELOAD_TIMECLOCK_LONG_RUN', `Stempelkortet har kørt i over 10 timer. Stop det i Stempelkort med det rigtige sluttidspunkt, og ${then}`)
       throw error
     }
   }
@@ -351,6 +354,15 @@ function createSoftwareloadService({
       if (!pause && !paused) throw codeError('SOFTWARELOAD_NOT_PAUSED', 'Opgaven holder ikke pause')
       return withPause(current, pause)
     }))
+  }
+
+  /** Resumes the task; a running Stempelkort is stopped first, as at start, so the same time is never counted twice. */
+  async function resume(user) {
+    const current = await readRunning(user, { skipCache: true })
+    if (!current) throw notRunning()
+    if (!isPaused(current)) throw codeError('SOFTWARELOAD_NOT_PAUSED', 'Opgaven holder ikke pause')
+    const stoppedTimeclock = await stopTimeclock(user, 'fortsæt så softwareload-opgaven')
+    return { ...await changePause(user, false), ...(stoppedTimeclock ? { stoppedTimeclock } : {}) }
   }
 
   /** Pauses the running task when Stempelkort starts. Never fails: no task, a task already paused or a drive error leave it be. */
@@ -880,7 +892,7 @@ function createSoftwareloadService({
 
   return {
     status, start, scan, unscan, markFailed, unmarkFailed,
-    pause: user => changePause(user, true), resume: user => changePause(user, false), pauseIfRunning,
+    pause: user => changePause(user, true), resume, pauseIfRunning,
     cancel, versions, preview, finish, continueFinish, abandon, kifPreview, kifMove, search, tasks, isManager,
   }
 }

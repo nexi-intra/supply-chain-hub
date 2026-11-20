@@ -4,6 +4,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { registerWarehouse } = require('./register.cjs')
+const { createStore } = require('../store.cjs')
 
 function setup({ clipboard = { readText: () => '', writeText: () => {} } } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'warehouse-register-'))
@@ -205,6 +206,25 @@ test('softwareload channels are registered and starting Stempelkort pauses a run
   assert.deepEqual(await call('anna', 'softwareload:search', { serial: 'NCC1' }), [])
   assert.deepEqual(await call('anna', 'softwareload:versions'), ['4.2.1'])
   await assert.rejects(call('pim', 'softwareload:status'), /WAREHOUSE_TEAM_NOT_ALLOWED/)
+})
+
+test('Stempelkort and softwareload never count the same time: resuming one stops or pauses the other', async () => {
+  const { root, call } = setup()
+  await call('anna', 'softwareload:start', { type: 'sw', target: 'd006', version: '4.2.1' })
+  await call('anna', 'timeclock:start', { taskId: 'lager', taskName: 'Lager' })
+  const resumed = await call('anna', 'softwareload:resume')
+  assert.deepEqual([resumed.paused, resumed.stoppedTimeclock?.taskName], [false, 'Lager'], 'resuming the task stops Stempelkort, as starting it does')
+  assert.equal((await call('anna', 'timeclock:status')).running, null)
+
+  // Stempelkort on a break while the task runs (another PC, an older version): resuming Stempelkort pauses the task.
+  await call('anna', 'timeclock:start', { taskId: 'lager', taskName: 'Lager' })
+  await call('anna', 'timeclock:pause')
+  const store = createStore(path.join(root, 'TCD', 'lagerstyring', 'softwareload'))
+  const [key] = (await store.keysAsync()).filter(name => name.startsWith('aktiv-'))
+  await store.mutateAsync(key, task => ({ ...task, pauses: task.pauses.map(pause => ({ ...pause, to: pause.to ?? Date.now() })) }))
+  await call('anna', 'timeclock:resume')
+  const task = await store.getAsync(key, { skipCache: true })
+  assert.equal(task.pauses.at(-1).to, null, 'the task is on a break again')
 })
 
 test('the CountPoint role of a user is read once per 30 s, and again at once after a role change through this Hub', async () => {

@@ -1366,7 +1366,8 @@ export interface SoftwareloadBridge {
   markFailed(request: { serial: string; note: string }): Promise<SoftwareloadTaskView>
   unmarkFailed(request: { serial: string }): Promise<SoftwareloadTaskView>
   pause(): Promise<SoftwareloadTaskView>
-  resume(): Promise<SoftwareloadTaskView>
+  /** Stops a running Stempelkort first (`stoppedTimeclock`), like start; fails with SOFTWARELOAD_TIMECLOCK_LONG_RUN after 10 hours. */
+  resume(): Promise<SoftwareloadTaskView & { stoppedTimeclock?: { taskName: string; workedMs: number } }>
   cancel(): Promise<{ ok: true }>
   /** The hub's latest versions, newest first. */
   versions(): Promise<string[]>

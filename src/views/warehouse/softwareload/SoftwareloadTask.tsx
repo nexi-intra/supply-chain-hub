@@ -47,10 +47,12 @@ export function SoftwareloadTask({ running, receivedAt, active, onRunning, onFin
       receivedAt={receivedAt}
       active={active}
       stopped={stopped}
+      onStopped={setStopped}
       onDismissStopped={() => setStopped(null)}
       onRunning={onRunning}
       onFinish={onFinish}
       reload={reload}
+      onOpenTimeclock={onOpenTimeclock}
       onBusy={onBusy}
     />
   )
@@ -180,14 +182,16 @@ interface RunningProps {
   receivedAt: number
   active: boolean
   stopped: Stopped | null
+  onStopped: (stopped: Stopped) => void
   onDismissStopped: () => void
   onRunning: (running: SoftwareloadTaskView | null) => void
   onFinish: () => void
   reload: () => Promise<void>
+  onOpenTimeclock: () => void
   onBusy?: ReportBusy
 }
 
-function RunningTask({ running, receivedAt, active, stopped, onDismissStopped, onRunning, onFinish, reload, onBusy }: RunningProps) {
+function RunningTask({ running, receivedAt, active, stopped, onStopped, onDismissStopped, onRunning, onFinish, reload, onOpenTimeclock, onBusy }: RunningProps) {
   const [serial, setSerial] = useState('')
   // Scans shown before the main process has them, and serials taken out before it has removed them.
   const [added, setAdded] = useState<Map<string, { at: number; saving: boolean }>>(() => new Map())
@@ -300,7 +304,8 @@ function RunningTask({ running, receivedAt, active, stopped, onDismissStopped, o
     try {
       await action()
     } catch (error) {
-      toast.error(errorMessage(error))
+      if (errorCode(error) === 'SOFTWARELOAD_TIMECLOCK_LONG_RUN') toast.error(errorMessage(error), { action: { label: t('Åbn Stempelkort', 'Open time card'), onClick: onOpenTimeclock } })
+      else toast.error(errorMessage(error))
       void reload()
     } finally {
       setBusy(null)
@@ -309,7 +314,12 @@ function RunningTask({ running, receivedAt, active, stopped, onDismissStopped, o
   }
 
   const pause = () => run('pause', async () => onRunning(await window.electronWarehouse!.softwareload.pause()))
-  const resume = () => run('resume', async () => onRunning(await window.electronWarehouse!.softwareload.resume()))
+  // Resuming stops a running Stempelkort, as starting does; the screen says so.
+  const resume = () => run('resume', async () => {
+    const { stoppedTimeclock, ...view } = await window.electronWarehouse!.softwareload.resume()
+    if (stoppedTimeclock) onStopped(stoppedTimeclock)
+    onRunning(view)
+  })
   const unmarkFailed = (value: string) => run(`unfail-${value}`, async () => onRunning(await window.electronWarehouse!.softwareload.unmarkFailed({ serial: value })))
   const cancel = () => run('cancel', async () => {
     await window.electronWarehouse!.softwareload.cancel()

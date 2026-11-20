@@ -291,6 +291,26 @@ test('pause and resume, and pauseIfRunning never throws', async () => {
   await assert.rejects(svc.cancel(ANNA), { code: 'SOFTWARELOAD_NOT_RUNNING' })
 })
 
+test('resuming the task stops a running Stempelkort like start does, and refuses after 10 hours', async () => {
+  const ctx = setup()
+  const svc = ctx.service()
+  await svc.start(ANNA, TASK)
+  await svc.pause(ANNA)
+  ctx.timeclock.running = { taskName: 'Pakning' }
+  ctx.stops.length = 0
+  const resumed = await svc.resume(ANNA)
+  assert.deepEqual(ctx.stops, [[ANNA.email, {}]])
+  assert.deepEqual([resumed.paused, resumed.stoppedTimeclock], [false, { taskName: 'Pakning', workedMs: 25 * MIN }])
+  assert.equal(ctx.timeclock.running, null)
+
+  await assert.rejects(svc.resume(ANNA), { code: 'SOFTWARELOAD_NOT_PAUSED' })
+  assert.equal(ctx.stops.length, 1, 'a refused resume leaves Stempelkort alone')
+  await svc.pause(ANNA)
+  ctx.timeclock.running = { taskName: 'Pakning', longRun: true }
+  await assert.rejects(svc.resume(ANNA), { code: 'SOFTWARELOAD_TIMECLOCK_LONG_RUN' })
+  assert.equal((await svc.status(ANNA)).running.paused, true, 'the task stays on its break')
+})
+
 test('another person cannot see or change my running task', async () => {
   const ctx = setup()
   const svc = ctx.service()

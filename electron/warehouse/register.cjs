@@ -371,14 +371,18 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
 
   // Stempelkort: own clock for everyone; registrations, corrections and statistics for managers only.
   handle('timeclock:status', user => timeclock.status(user))
-  // Stempelkort and a softwareload task never count the same time: starting the clock pauses the running task.
+  // Stempelkort and a softwareload task never count the same time: starting or resuming the clock pauses the running task.
   handle('timeclock:start', async (user, p) => {
     const started = await timeclock.start(user, { taskId: p.taskId, taskName: p.taskName, taskColor: p.taskColor, switchTask: p.switchTask === true })
     await softwareload.pauseIfRunning(user)
     return started
   })
   handle('timeclock:pause', user => timeclock.pause(user))
-  handle('timeclock:resume', user => timeclock.resume(user))
+  handle('timeclock:resume', async user => {
+    const resumed = await timeclock.resume(user)
+    await softwareload.pauseIfRunning(user)
+    return resumed
+  })
   handle('timeclock:stop', (user, p) => timeclock.stop(user, { endAt: typeof p.endAt === 'number' ? p.endAt : undefined }))
   handle('timeclock:cancel', user => timeclock.cancel(user))
   handle('timeclock:entries', (user, p) => timeclock.entries(user, { from: p.from, to: p.to }))
