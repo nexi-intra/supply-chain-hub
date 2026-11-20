@@ -524,7 +524,7 @@ const APP_GUIDE = [
       {
         id: 'report-link',
         title: 'Rapportér et link, der ikke virker',
-        keywords: ['rapporter et link', 'rapportere et link', 'doedt link', 'doed link', 'link virker ikke', 'linket virker ikke', 'link ikke virker', 'linket ikke virker', 'mistaenkeligt link', 'farligt link', 'report a link', 'broken link', 'dead link', 'link does not work', 'suspicious link', 'ilmoita linkistae', 'rikkinaeinen linkki', 'linkki ei toimi', 'epaeilyttaevae linkki', 'rapportera en laenk', 'trasig laenk', 'laenken fungerar inte', 'laenken inte fungerar', 'laenk inte fungerar', 'misstaenkt laenk'],
+        keywords: ['rapporter et link', 'rapportere et link', 'doedt link', 'doed link', 'link virker ikke', 'linket virker ikke', 'link ikke virker', 'linket ikke virker', 'mistaenkeligt link', 'farligt link', 'report a link', 'broken link', 'dead link', 'link does not work', 'link does not load', 'link doesn t load', 'link won t load', 'suspicious link', 'ilmoita linkistae', 'rikkinaeinen linkki', 'linkki ei toimi', 'epaeilyttaevae linkki', 'rapportera en laenk', 'trasig laenk', 'laenken fungerar inte', 'laenken inte fungerar', 'laenk inte fungerar', 'misstaenkt laenk'],
         steps: [
           'Klik menuen med de tre prikker ved linket og vælg "Rapportér".',
           'Vælg hvorfor: "Linket virker ikke", "Forkert indhold eller beskrivelse" eller "Mistænkeligt / farligt", og uddyb gerne.',
