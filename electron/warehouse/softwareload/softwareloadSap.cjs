@@ -110,18 +110,23 @@ function createSoftwareloadSap({ bridge, runScript, clipboard, system, expected 
     }, { useClipboard: true })
   }
 
-  /** One Transfer in the cockpit: all serials move to `to` in one material document, or none of them move. */
-  async function transfer({ team, serials, to }) {
+  /**
+   * One Transfer in the cockpit: all serials move from `from` to `to` in one material document, or none of them move.
+   * The script refuses (`from-mismatch`) when a row no longer stands on `from`, as the cockpit moves from where it is.
+   */
+  async function transfer({ team, serials, from, to }) {
     requireWrite()
     const list = uniqueSerials(serials)
+    const source = normalizeSloc(from)
     const target = normalizeSloc(to)
-    if (!list.length || list.length > TRANSFER_CHUNK || list.length !== (serials || []).length || !target) throw sapError('SOFTWARELOAD_INVALID', `Transfer kræver 1-${TRANSFER_CHUNK} gyldige serienumre og et lagersted`)
+    if (!list.length || list.length > TRANSFER_CHUNK || list.length !== (serials || []).length || !source || !target) throw sapError('SOFTWARELOAD_INVALID', `Transfer kræver 1-${TRANSFER_CHUNK} gyldige serienumre, hvor de står, og et lagersted`)
     return job(async dir => {
       await fs.promises.writeFile(path.join(dir, 'in.txt'), list.join('\r\n'), 'utf8')
       await putList(list)
-      const { mode, result } = await onCockpit(cockpitFor(team), mode => runScript('sl-transfer', [system, mode, target, dir, 'in.txt', 'errors.txt'], { timeoutMs: SCRIPT_TIMEOUT_MS }))
+      const { mode, result } = await onCockpit(cockpitFor(team), mode => runScript('sl-transfer', [system, mode, target, dir, 'in.txt', 'errors.txt', source], { timeoutMs: SCRIPT_TIMEOUT_MS }))
       if (result?.ok && /^\d+$/.test(String(result.doc || ''))) return { ok: true, doc: String(result.doc) }
       if (result?.error === 'rows-mismatch') return { ok: false, message: ROWS_MISMATCH }
+      if (result?.error === 'from-mismatch') return { ok: false, message: `Står ikke længere på ${source} i SAP` }
       if (result?.error === 'sap-errors') {
         const errors = parseSlErrors(await fs.promises.readFile(path.join(dir, 'errors.txt'), 'utf8').catch(() => ''))
         return { ok: false, message: [...new Set(errors.map(error => error.message))].join('; ') || 'SAP afviste flytningen' }

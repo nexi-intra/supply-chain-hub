@@ -72,14 +72,15 @@ test('transfer returns the document number', async () => {
     },
   })
   assert.equal(sap.writeEnabled, true)
-  assert.deepEqual(await sap.transfer({ team: 'TRR', serials: ['S1', 's2'], to: 'd005' }), { ok: true, doc: '4905204921' })
+  assert.deepEqual(await sap.transfer({ team: 'TRR', serials: ['S1', 's2'], from: 'd000', to: 'd005' }), { ok: true, doc: '4905204921' })
   const [call] = scriptCalls('sl-transfer')
-  assert.deepEqual([call.args[0], call.args[1], call.args[2], call.args[4], call.args[5]], ['QS4', 'prep', 'D005', 'in.txt', 'errors.txt'])
+  assert.deepEqual([call.args[0], call.args[1], call.args[2], call.args[4], call.args[5], call.args[6]], ['QS4', 'prep', 'D005', 'in.txt', 'errors.txt', 'D000'])
   assert.equal(call.clipboard, 'S1\r\nS2')
   assert.equal(clip.at(-1), 'the user text')
-  await assert.rejects(sap.transfer({ team: 'TRR', serials: Array.from({ length: TRANSFER_CHUNK + 1 }, (_, index) => `S${index}`), to: 'D005' }), { code: 'SOFTWARELOAD_INVALID' })
-  await assert.rejects(sap.transfer({ team: 'TRR', serials: ['S1'], to: 'D005 & calc' }), { code: 'SOFTWARELOAD_INVALID' })
-  await assert.rejects(sap.transfer({ team: 'TRR', serials: [], to: 'D005' }), { code: 'SOFTWARELOAD_INVALID' })
+  await assert.rejects(sap.transfer({ team: 'TRR', serials: Array.from({ length: TRANSFER_CHUNK + 1 }, (_, index) => `S${index}`), from: 'D000', to: 'D005' }), { code: 'SOFTWARELOAD_INVALID' })
+  await assert.rejects(sap.transfer({ team: 'TRR', serials: ['S1'], from: 'D000', to: 'D005 & calc' }), { code: 'SOFTWARELOAD_INVALID' })
+  await assert.rejects(sap.transfer({ team: 'TRR', serials: ['S1'], to: 'D005' }), { code: 'SOFTWARELOAD_INVALID' }, 'the cockpit must know where the rows stand')
+  await assert.rejects(sap.transfer({ team: 'TRR', serials: [], from: 'D000', to: 'D005' }), { code: 'SOFTWARELOAD_INVALID' })
   assert.equal(scriptCalls('sl-transfer').length, 1)
   assert.deepEqual(fs.readdirSync(tempRoot), [])
 })
@@ -93,16 +94,18 @@ test('transfer with SAP errors returns the message, not an exception', async () 
       return '{"ok":false,"error":"sap-errors"}'
     },
   })
-  const result = await sap.transfer({ team: 'TCD', serials: ['S1'], to: 'D005' })
+  const result = await sap.transfer({ team: 'TCD', serials: ['S1'], from: 'D000', to: 'D005' })
   assert.equal(result.ok, false)
   assert.match(result.message, /Deficit/)
   assert.equal(scriptCalls('sl-transfer')[0].args[1], 'rep')
   answer = '{"ok":false,"error":"rows-mismatch"}'
-  assert.deepEqual(await sap.transfer({ team: 'TCD', serials: ['S1'], to: 'D005' }), { ok: false, message: 'SAP fandt ikke præcis de serienumre' })
+  assert.deepEqual(await sap.transfer({ team: 'TCD', serials: ['S1'], from: 'D000', to: 'D005' }), { ok: false, message: 'SAP fandt ikke præcis de serienumre' })
+  answer = '{"ok":false,"error":"from-mismatch"}'
+  assert.deepEqual(await sap.transfer({ team: 'TCD', serials: ['S1'], from: 'D000', to: 'D005' }), { ok: false, message: 'Står ikke længere på D000 i SAP' })
   answer = '{"ok":false,"error":"unknown-result: SAPLSPO4/0300"}'
-  await assert.rejects(sap.transfer({ team: 'TCD', serials: ['S1'], to: 'D005' }), { code: 'SOFTWARELOAD_SAP_FAILED' })
+  await assert.rejects(sap.transfer({ team: 'TCD', serials: ['S1'], from: 'D000', to: 'D005' }), { code: 'SOFTWARELOAD_SAP_FAILED' })
   answer = '{"ok":false,"error":"not-logged-in-QS4"}'
-  await assert.rejects(sap.transfer({ team: 'TCD', serials: ['S1'], to: 'D005' }), { code: 'SAP_NOT_READY' })
+  await assert.rejects(sap.transfer({ team: 'TCD', serials: ['S1'], from: 'D000', to: 'D005' }), { code: 'SAP_NOT_READY' })
   assert.equal(clip.at(-1), 'the user text', 'restored after an exception too')
 })
 
@@ -137,7 +140,7 @@ test('a SAP logon in another language than English is refused with a clear messa
 test('writing is refused when the system is not enabled', async () => {
   const { sap, scriptCalls } = makeSap({ system: 'PS4', handle: () => '{"ok":true,"doc":"1"}' })
   assert.equal(sap.writeEnabled, false)
-  await assert.rejects(sap.transfer({ team: 'TRR', serials: ['S1'], to: 'D005' }), { code: 'SOFTWARELOAD_WRITE_DISABLED' })
+  await assert.rejects(sap.transfer({ team: 'TRR', serials: ['S1'], from: 'D000', to: 'D005' }), { code: 'SOFTWARELOAD_WRITE_DISABLED' })
   await assert.rejects(sap.block({ material: 'INT4100-7883-0', serials: ['S1'] }), { code: 'SOFTWARELOAD_WRITE_DISABLED' })
   assert.equal(scriptCalls('sl-transfer').length + scriptCalls('sl-block').length, 0)
 })

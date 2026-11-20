@@ -514,7 +514,7 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
     })
 
     await run('transfer', plan.transfers, TRANSFER_CHUNK,
-      (move, items) => sap.transfer({ team: task.team, serials: items, to: move.to }),
+      (move, items) => sap.transfer({ team: task.team, serials: items, from: move.from, to: move.to }),
       move => ({ from: move.from, to: move.to }))
     await run('block', plan.blocks, BLOCK_CHUNK,
       (block, items) => sap.block({ material: block.material, serials: items, bwart: BLOCK_BWART }),
@@ -698,7 +698,7 @@ function createSoftwareloadService({ storeFor, indexStore, sap, timeclock, now =
         attempt: async (group, items) => {
           for (const serial of items) results[serial] = { ...results[serial], uncertain: { from: group.from, to: group.to, by, at: now() } }
           await save()
-          const answer = await sap.transfer({ team: user.team, serials: items, to: group.to })
+          const answer = await sap.transfer({ team: user.team, serials: items, from: group.from, to: group.to })
           // A refusal moved nothing, so the mark goes; the next save writes that down.
           if (!answer.ok) for (const serial of items) results[serial] = withoutMark(results[serial])
           return answer

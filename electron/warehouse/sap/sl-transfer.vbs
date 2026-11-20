@@ -1,10 +1,12 @@
 ' CountPoint - Softwareload: Transfer serial numbers to another storage location in ZMS_REP (TCD) or ZMS_PREP (TRR).
 ' CHANGES SAP: one transfer movement (material document) for all serials, or nothing (SAP moves all or nothing).
-' Usage: sl-transfer.vbs <system> <rep|prep> <to> <outDir> <inFile> <errFile>
+' Usage: sl-transfer.vbs <system> <rep|prep> <to> <outDir> <inFile> <errFile> <from>
 ' The serials are in <inFile> (one per line) and CountPoint has put the same list on the clipboard; VBScript cannot.
 ' Opens its OWN session on <system> (refuses any other), searches exactly like sl-lookup.vbs and only presses Transfer
-' when the result list holds exactly the serials of <inFile>. Then Select All, Transfer, target location, Enter.
+' when the result list holds exactly the serials of <inFile>, every one on <from> (the cockpit moves rows from where
+' they stand). Then Select All, Transfer, target location, Enter.
 ' Output: {"ok":true,"doc":"<material document>"}, or {"ok":false,"error":"rows-mismatch"} (nothing pressed),
+' {"ok":false,"error":"from-mismatch"} (a row is not on <from>; nothing pressed),
 ' {"ok":false,"error":"sap-errors"} (SAP's log: TYPE=E rows to <errFile> as MESSAGE, MESSAGE_V3, MESSAGE_V4),
 ' {"ok":false,"error":"language-not-supported"} (the session is not in English; nothing pressed) or
 ' {"ok":false,"error":"..."}.
@@ -15,7 +17,7 @@ Const PLANT = "D301"
 Const MAX_SERIALS = 500
 Const GRID_ID = "wnd[0]/usr/cntlGRID1/shellcont/shell/shellcont[1]/shell"
 Const TARGET_FIELD = "wnd[1]/usr/sub:SAPLSPO4:0300/ctxtSVALD-VALUE[0,21]"
-Dim systemName, mode, target, outDir, inFile, errFile, tcode, app, conn, base, s, i, before, beforeIds, fso, ownId, doc
+Dim systemName, mode, target, source, outDir, inFile, errFile, tcode, app, conn, base, s, i, before, beforeIds, fso, ownId, doc
 Dim wanted, asked, firstSerial, text, lines, key, re
 
 Function JsonText(value)
@@ -263,13 +265,14 @@ End Sub
 
 Set s = Nothing
 doc = ""
-If WScript.Arguments.Count < 6 Then Err.Clear : Finish False, "arguments"
+If WScript.Arguments.Count < 7 Then Err.Clear : Finish False, "arguments"
 systemName = WScript.Arguments(0)
 mode = LCase(WScript.Arguments(1))
 target = UCase(Trim(WScript.Arguments(2)))
 outDir = WScript.Arguments(3)
 inFile = WScript.Arguments(4)
 errFile = WScript.Arguments(5)
+source = UCase(Trim(WScript.Arguments(6)))
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set re = New RegExp
 re.IgnoreCase = True
@@ -283,6 +286,7 @@ Else
 End If
 re.Pattern = "^[A-Z][0-9]{3}$"
 If Not re.Test(target) Then Finish False, "target-invalid"
+If Not re.Test(source) Then Finish False, "from-invalid"
 If Not fso.FolderExists(outDir) Then Finish False, "out-dir-missing"
 If fso.FileExists(outDir & "\" & errFile) Then fso.DeleteFile outDir & "\" & errFile
 text = fso.OpenTextFile(outDir & "\" & inFile, 1).ReadAll
@@ -365,15 +369,26 @@ If screen = "1000" Then
 End If
 
 ' Only press Transfer when the list is exactly the serials asked for: every row asked for, every serial once.
-Dim grid, total, r, found
+Dim grid, total, r, found, hasLgort, hasWerksLgort, slocColumn, rowSloc, wrongPlace
 Set grid = s.findById(GRID_ID)
 If Err.Number <> 0 Then Err.Clear : Finish False, "result-list-changed"
 If Not HasColumn(grid, "SERNR") Then Finish False, "result-list-changed"
+' ZMS_PREP shows LGORT ("D000"), ZMS_REP shows WERKS_LGORT ("D301-D000").
+hasLgort = HasColumn(grid, "LGORT")
+hasWerksLgort = HasColumn(grid, "WERKS_LGORT")
+slocColumn = ""
+If hasLgort Then
+  slocColumn = "LGORT"
+ElseIf hasWerksLgort Then
+  slocColumn = "WERKS_LGORT"
+End If
+If slocColumn = "" Then Finish False, "result-list-changed"
 total = -1
 total = grid.RowCount
 If Err.Number <> 0 Then Err.Clear : Finish False, "read-failed"
 If total <> asked Then Finish False, "rows-mismatch"
 found = 0
+wrongPlace = False
 For r = 0 To total - 1
   If r Mod 30 = 0 Then grid.FirstVisibleRow = r : WaitIdle
   key = ""
@@ -383,8 +398,14 @@ For r = 0 To total - 1
   If wanted(key) <> 0 Then Finish False, "rows-mismatch"
   wanted(key) = 1
   found = found + 1
+  rowSloc = ""
+  rowSloc = UCase(Trim(CStr(grid.GetCellValue(CLng(r), slocColumn))))
+  If Err.Number <> 0 Then Err.Clear : Finish False, "read-failed"
+  If InStr(rowSloc, "-") > 0 Then rowSloc = Trim(Mid(rowSloc, InStrRev(rowSloc, "-") + 1))
+  If rowSloc <> source Then wrongPlace = True
 Next
 If found <> asked Then Finish False, "rows-mismatch"
+If wrongPlace Then Finish False, "from-mismatch"
 Err.Clear
 
 s.findById("wnd[0]/tbar[1]/btn[5]").press

@@ -48,9 +48,11 @@ function fakeSap(stock, { writeEnabled = true } = {}) {
       await call('lookup', { team, serials: [...serials] })
       return serials.filter(serial => rows.has(serial)).map(serial => ({ serial, plant: 'D301', userStatus: 'ONHA', ...rows.get(serial) }))
     },
-    async transfer({ team, serials, to }) {
-      await call('transfer', { team, serials: [...serials], to })
+    async transfer({ team, serials, from, to }) {
+      await call('transfer', { team, serials: [...serials], from, to })
       if (serials.some(serial => sap.refuse.has(serial))) return { ok: false, message: 'Deficit of SL Unrestricted-use 1 EA' }
+      // Like sl-transfer.vbs: nothing moves when a row no longer stands where the plan said.
+      if (serials.some(serial => rows.get(serial).sloc !== from)) return { ok: false, message: `Står ikke længere på ${from} i SAP` }
       for (const serial of serials) rows.get(serial).sloc = to
       const posted = `49${String(++docs).padStart(8, '0')}`
       if (sap.postThenThrow?.('transfer', { serials, to })) throw TIMEOUT()
@@ -385,6 +387,23 @@ test('one serial SAP refuses is isolated and the rest still move', async () => {
     serial: 'C', team: 'TCD', kind: 'load', taskId: 't1', email: 'anna@example.test', name: 'Anna', at: ctx.clock.now,
     type: 'sw+key', version: 'v2.1.3', kif: true, from: 'D001', to: null, docs: [], outcome: 'failed-sap',
   })
+})
+
+test('a terminal moved by someone else after the lookup is refused by the Transfer and the rest still move', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' }, B: { material: 'M-R', sloc: 'D000' } })
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, TASK, ['A', 'B'])
+  const held = sap.hold('transfer', 1)
+  const running = svc.finish(ANNA, {})
+  await until(() => transfers(sap).length === 1)
+  sap.rows.get('B').sloc = 'D002'
+  held.open()
+  const result = await running
+  assert.deepEqual(sap.calls.filter(([kind]) => kind === 'transfer').map(([, call]) => [call.from, call.to, call.serials]), [
+    ['D000', 'D005', ['A', 'B']], ['D000', 'D005', ['A']], ['D000', 'D005', ['B']], ['D005', 'D006', ['A']],
+  ])
+  assert.deepEqual([result.results.B.outcome, result.results.B.message], ['failed-sap', 'Står ikke længere på D000 i SAP'])
+  assert.equal(result.results.A.outcome, 'to-target')
 })
 
 test('groups larger than one SAP call go in chunks', async () => {
@@ -823,7 +842,7 @@ test('kif move by material document moves to D005 and is found by search from th
   sap.calls.length = 0
   const at = ctx.clock.now
   const moved = await svc.kifMove(BO, { serials: preview.serials, document: ' 4900229137  2026 01 ' })
-  assert.deepEqual(sap.calls, [['lookup', { team: 'TCD', serials: ['A', 'B', 'N'] }], ['transfer', { team: 'TCD', serials: ['A'], to: 'D005' }]], 'SAP is asked again, B moved since the preview')
+  assert.deepEqual(sap.calls, [['lookup', { team: 'TCD', serials: ['A', 'B', 'N'] }], ['transfer', { team: 'TCD', serials: ['A'], from: 'D000', to: 'D005' }]], 'SAP is asked again, B moved since the preview')
   const results = {
     A: { material: 'M-0', from: 'D000', outcome: 'to-target', steps: [{ from: 'D000', to: 'D005', doc: doc(1), by: 'bo@example.test', at }] },
     B: { material: 'M-R', from: 'D005', outcome: 'skipped', steps: [] },
