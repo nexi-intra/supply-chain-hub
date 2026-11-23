@@ -435,7 +435,7 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   handle('softwareload:continue', (user, p) => softwareload.continueFinish(user, { taskId: p.taskId, onProgress: softwareloadProgress(user) }))
   handle('softwareload:abandon', (user, p) => softwareload.abandon(user, { taskId: p.taskId, reason: p.reason }))
   handle('softwareload:kif-preview', (user, p) => softwareload.kifPreview(user, { serials: p.serials, document: p.document }))
-  handle('softwareload:kif-move', (user, p) => softwareload.kifMove(user, { serials: p.serials, document: p.document }, { onProgress: softwareloadProgress(user) }))
+  handle('softwareload:kif-move', (user, p) => softwareload.kifMove(user, { serials: p.serials, document: p.document, planned: p.planned }, { onProgress: softwareloadProgress(user) }))
   handle('softwareload:search', (user, p) => softwareload.search(user, { serial: p.serial }))
   handle('softwareload:tasks', (user, p) => softwareload.tasks(user, { from: p.from, to: p.to }))
   handle('softwareload:comments', (user, p) => softwareload.comments(user, { from: p.from, to: p.to }))

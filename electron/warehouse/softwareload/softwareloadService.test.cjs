@@ -93,6 +93,16 @@ async function confirmed(ctx, user) {
   const task = await savedRunning(ctx, user)
   return task ? { taskId: task.id, choice: { type: task.type, kif: task.kif, target: task.target, version: task.version } } : {}
 }
+/** What the KIF screen confirms: the from-location of every serial its preview moves to D005. */
+const plannedOf = preview => Object.fromEntries(preview.transfers.flatMap(move => move.serials.map(serial => [serial, move.from])))
+/** A KIF move as confirmed from a preview of the fake SAP's stock now, for tests that do not look at the preview itself. */
+const kifConfirmed = (sap, serials) => ({
+  serials,
+  planned: Object.fromEntries(serials.flatMap(serial => {
+    const row = sap.rows.get(serial)
+    return row && !row.blocked && row.sloc !== 'D005' ? [[serial, row.sloc]] : []
+  })),
+})
 /** A promise the test releases by hand, to hold a SAP call open. */
 function gate() {
   let open
@@ -799,7 +809,7 @@ test('a KIF move whose record M: would not take keeps it on this PC and saves an
   const svc = ctx.service()
   const at = ctx.clock.now
   const restore = dropDriveAfterTransfer(sap, ctx, 'kif', 100)
-  await assert.rejects(svc.kifMove(ANNA, { serials: ['A'] }), { code: 'SOFTWARELOAD_SAVE_FAILED', message: new RegExp(doc(1)) })
+  await assert.rejects(svc.kifMove(ANNA, kifConfirmed(sap, ['A'])), { code: 'SOFTWARELOAD_SAVE_FAILED', message: new RegExp(doc(1)) })
   assert.equal(ctx.journal().length, 1)
   restore()
   ctx.faults.kif = 0
@@ -1302,9 +1312,13 @@ test('kif move by material document moves to D005 and is found by search from th
   ctx.tick(MIN)
   sap.rows.get('B').sloc = 'D005'
   sap.calls.length = 0
+  await assert.rejects(svc.kifMove(BO, { serials: preview.serials, document: ' 4900229137  2026 01 ', planned: plannedOf(preview) }), { code: 'SOFTWARELOAD_KIF_CHANGED' }, 'B moved since the preview')
+  assert.deepEqual(transfers(sap), [], 'a changed plan moves nothing')
+  const again = await svc.kifPreview(BO, { document: ' 4900229137  2026 01 ' })
+  sap.calls.length = 0
   const at = ctx.clock.now
-  const moved = await svc.kifMove(BO, { serials: preview.serials, document: ' 4900229137  2026 01 ' })
-  assert.deepEqual(sap.calls, [['lookup', { team: 'TCD', serials: ['A', 'B', 'N'] }], ['transfer', { team: 'TCD', serials: ['A'], from: 'D000', to: 'D005' }]], 'SAP is asked again, B moved since the preview')
+  const moved = await svc.kifMove(BO, { serials: again.serials, document: ' 4900229137  2026 01 ', planned: plannedOf(again) })
+  assert.deepEqual(sap.calls, [['lookup', { team: 'TCD', serials: ['A', 'B', 'N'] }], ['transfer', { team: 'TCD', serials: ['A'], from: 'D000', to: 'D005' }]], 'SAP is asked again before the move')
   const results = {
     A: { material: 'M-0', from: 'D000', outcome: 'to-target', steps: [{ from: 'D000', to: 'D005', doc: doc(1), by: 'bo@example.test', at }] },
     B: { material: 'M-R', from: 'D005', outcome: 'skipped', steps: [] },
@@ -1321,13 +1335,39 @@ test('kif move by material document moves to D005 and is found by search from th
   assert.deepEqual((await svc.search(TRINE, { serial: 'N' })).lines.map(line => [line.kind, line.outcome, line.to, line.docs]), [['kif', 'not-found', null, []]])
 })
 
+test('a kif move is refused when SAP has the terminals elsewhere than in the confirmed plan, and moves when it is unchanged', async () => {
+  const sap = fakeSap({ A: { material: 'M-0', sloc: 'D000' }, B: { material: 'M-R', sloc: 'D001' } })
+  const ctx = setup({ sap })
+  const svc = ctx.service()
+  const preview = await svc.kifPreview(ANNA, { serials: ['A', 'B'] })
+  assert.deepEqual(plannedOf(preview), { A: 'D000', B: 'D001' })
+
+  sap.rows.get('A').sloc = 'D003'
+  await assert.rejects(svc.kifMove(ANNA, { serials: preview.serials, planned: plannedOf(preview) }), {
+    code: 'SOFTWARELOAD_KIF_CHANGED', message: 'Terminalerne er flyttet i SAP, siden du så planen. Se planen igen',
+  }, 'A stands on another location than the plan said')
+  await assert.rejects(svc.kifMove(ANNA, { serials: preview.serials, planned: { A: 'D003' } }), { code: 'SOFTWARELOAD_KIF_CHANGED' }, 'B is missing from the confirmed plan')
+  await assert.rejects(svc.kifMove(ANNA, { serials: preview.serials, planned: { A: 'D003', B: 'D001', C: 'D000' } }), { code: 'SOFTWARELOAD_KIF_CHANGED' }, 'the confirmed plan has a serial the new one has not')
+  await assert.rejects(svc.kifMove(ANNA, { serials: preview.serials }), { code: 'SOFTWARELOAD_KIF_CHANGED' }, 'nothing confirmed')
+  assert.deepEqual(transfers(sap), [], 'nothing moved')
+  assert.equal(await ctx.storeFor('TCD').getAsync('kif-2026-11'), undefined, 'nothing saved')
+  assert.deepEqual(ctx.journal(), [])
+  assert.deepEqual(await allIndexLines(ctx), [])
+
+  const again = await svc.kifPreview(ANNA, { serials: ['A', 'B'] })
+  const moved = await svc.kifMove(ANNA, { serials: again.serials, planned: { b: ' d001 ', A: 'D003' } })
+  assert.deepEqual(movesOf(sap, 'A'), [['D003', 'D005']])
+  assert.deepEqual(movesOf(sap, 'B'), [['D001', 'D005']])
+  assert.deepEqual(moved.counts, { 'to-target': 2 })
+})
+
 test('kif move skips terminals already on D005', async () => {
   const sap = fakeSap({ A: { material: 'M-0', sloc: 'D005' }, B: { material: 'M-0', sloc: 'D000', blocked: true } })
   const ctx = setup({ sap })
   const svc = ctx.service()
   const preview = await svc.kifPreview(ANNA, { serials: [' a ', 'b', 'A', '  '] })
   assert.deepEqual(preview, { serials: ['A', 'B'], outcomes: { A: 'skipped', B: 'blocked-stock' }, transfers: [] })
-  const moved = await svc.kifMove(ANNA, { serials: ['a', 'B'] })
+  const moved = await svc.kifMove(ANNA, { serials: ['a', 'B'], planned: plannedOf(preview) })
   assert.deepEqual(transfers(sap), [])
   assert.deepEqual(moved.results.A, { material: 'M-0', from: 'D005', outcome: 'skipped', steps: [] })
   assert.deepEqual(moved.counts, { skipped: 1, 'blocked-stock': 1 })
@@ -1345,7 +1385,7 @@ test('kif move moves terminals from several storage locations, one transfer per 
   })
   const ctx = setup({ sap })
   const svc = ctx.service()
-  const moved = await svc.kifMove(ANNA, { serials: ['A', 'B', 'C', 'D'] })
+  const moved = await svc.kifMove(ANNA, kifConfirmed(sap, ['A', 'B', 'C', 'D']))
   const calls = sap.calls.filter(([kind]) => kind === 'transfer').map(([, call]) => call)
   assert.equal(calls.length, 3)
   assert.deepEqual(calls.map(({ from, to, serials }) => ({ from, to, serials })).sort((a, b) => a.from.localeCompare(b.from)), [
@@ -1376,7 +1416,7 @@ test('a material document without year is shown and saved with the year SAP foun
   assert.deepEqual(asked, [' 4905204948 '], 'the lookup is asked once; it tries the years itself')
   assert.deepEqual(preview.serials, ['A'])
   assert.equal(preview.document, '4905204948 2025', 'the document used is returned with its year')
-  const moved = await svc.kifMove(ANNA, { serials: preview.serials, document: preview.document })
+  const moved = await svc.kifMove(ANNA, { serials: preview.serials, document: preview.document, planned: plannedOf(preview) })
   assert.equal((await ctx.storeFor('TCD').getAsync('kif-2026-11')).moves[moved.id].document, '4905204948 2025')
 
   await assert.rejects(svc.kifPreview(ANNA, { document: '4905204949' }), {
@@ -1402,9 +1442,9 @@ test('kif move needs writing in SAP, refuses a double click, and a serial SAP re
   await assert.rejects(svc.kifMove(ANNA, { serials: ['A'], document: 'nonsense' }), { code: 'SOFTWARELOAD_INVALID' })
   assert.deepEqual(sap.calls, [])
   const held = sap.hold('lookup', 1)
-  const first = svc.kifMove(ANNA, { serials: ['A', 'B'] })
+  const first = svc.kifMove(ANNA, kifConfirmed(sap, ['A', 'B']))
   await until(() => sap.calls.length === 1)
-  await assert.rejects(svc.kifMove(ANNA, { serials: ['A'] }), { code: 'SOFTWARELOAD_BUSY' })
+  await assert.rejects(svc.kifMove(ANNA, kifConfirmed(sap, ['A'])), { code: 'SOFTWARELOAD_BUSY' })
   held.open()
   const moved = await first
   assert.equal(sap.calls.filter(([kind]) => kind === 'lookup').length, 1, 'the refused click never reached SAP')
@@ -1417,7 +1457,7 @@ test('kif move reports progress like finish', async () => {
   const sap = fakeSap({ A: { material: 'M-R', sloc: 'D001' }, B: { material: 'M-0', sloc: 'D000' }, C: { material: 'M-0', sloc: 'D005' } })
   const svc = setup({ sap }).service()
   const progress = []
-  const moved = await svc.kifMove(ANNA, { serials: ['A', 'B', 'C', 'N'] }, { onProgress: item => progress.push(item) })
+  const moved = await svc.kifMove(ANNA, kifConfirmed(sap, ['A', 'B', 'C', 'N']), { onProgress: item => progress.push(item) })
   const steps = progress.map(item => item.step)
   assert.ok(steps.includes('lookup'), 'the lookup is reported')
   assert.deepEqual(progress[0], { done: 0, total: 4, step: 'lookup' })
@@ -1427,7 +1467,7 @@ test('kif move reports progress like finish', async () => {
   assert.equal(last.total, 2)
   // A closed window must never stop the move.
   const other = setup({ sap: fakeSap({ A: { material: 'M-R', sloc: 'D001' } }) }).service()
-  const after = await other.kifMove(ANNA, { serials: ['A'] }, { onProgress: () => { throw new Error('window closed') } })
+  const after = await other.kifMove(ANNA, { serials: ['A'], planned: { A: 'D001' } }, { onProgress: () => { throw new Error('window closed') } })
   assert.deepEqual(after.counts, { 'to-target': 1 })
 })
 
@@ -1438,7 +1478,7 @@ test('a kif move interrupted by SAP keeps its posted moves searchable', async ()
   const ctx = setup({ sap })
   const svc = ctx.service()
   const at = ctx.clock.now
-  await assert.rejects(svc.kifMove(ANNA, { serials: ['A', 'C', 'B', 'N'] }), { code: 'SAP_NOT_READY' })
+  await assert.rejects(svc.kifMove(ANNA, kifConfirmed(sap, ['A', 'C', 'B', 'N'])), { code: 'SAP_NOT_READY' })
   assert.deepEqual(transfers(sap), [['D005', ['A', 'C']], ['D005', ['A']], ['D005', ['C']], ['D005', ['B']]])
 
   const { results } = (await ctx.storeFor('TCD').getAsync('kif-2026-11')).moves.t1
@@ -1460,7 +1500,7 @@ test('search returns every event for a serial, newest first, across months and y
   const svc = ctx.service()
   ctx.clock.now = new Date(2025, 11, 30, 9, 0).getTime()
   const lastYear = ctx.clock.now
-  await svc.kifMove(TRINE, { serials: ['A', 'B'] })
+  await svc.kifMove(TRINE, kifConfirmed(sap, ['A', 'B']))
   ctx.clock.now = new Date(2026, 10, 18, 7, 0).getTime()
   await svc.start(ANNA, TASK)
   await svc.scan(ANNA, { serial: 'A', taskId: 't2' })
@@ -1469,7 +1509,7 @@ test('search returns every event for a serial, newest first, across months and y
   await svc.finish(ANNA, await confirmed(ctx, ANNA))
   ctx.tick(MIN)
   const later = ctx.clock.now
-  await svc.kifMove(BO, { serials: ['A'] })
+  await svc.kifMove(BO, kifConfirmed(sap, ['A']))
 
   const found = await svc.search(TRINE, { serial: 'a' })
   assert.deepEqual(
@@ -1541,7 +1581,7 @@ test('a manager deletes a finished task: it leaves the task list, the statistics
   ctx.tick(MIN)
   assert.equal(await finishedTask(ctx, svc, BO, ['C']), 't2')
   ctx.tick(MIN)
-  await svc.kifMove(BO, { serials: ['A'] })
+  await svc.kifMove(BO, kifConfirmed(sap, ['A']))
   assert.deepEqual((await svc.tasks(MONA, NOVEMBER)).map(task => task.id), ['t2', 't1'])
   sap.calls.length = 0
 
@@ -1564,11 +1604,11 @@ test('a manager deletes a KIF move and its search lines', async () => {
   const sap = fakeSap({ A: { material: 'M-R', sloc: 'D001' }, B: { material: 'M-R', sloc: 'D001' }, C: { material: 'M-R', sloc: 'D001' } })
   const ctx = setup({ sap })
   const svc = ctx.service()
-  assert.equal((await svc.kifMove(BO, { serials: ['A', 'B'] })).id, 't1')
+  assert.equal((await svc.kifMove(BO, kifConfirmed(sap, ['A', 'B']))).id, 't1')
   ctx.tick(MIN)
-  assert.equal((await svc.kifMove(BO, { serials: ['C'] })).id, 't2')
+  assert.equal((await svc.kifMove(BO, kifConfirmed(sap, ['C']))).id, 't2')
   ctx.tick(MIN)
-  assert.equal((await svc.kifMove(TRINE, { serials: ['A'] })).id, 't3')
+  assert.equal((await svc.kifMove(TRINE, kifConfirmed(sap, ['A']))).id, 't3')
 
   // A search line knows no move; a manager is given the id of the own team's moves, also of lines saved before this.
   assert.deepEqual((await svc.search(MONA, { serial: 'A' })).lines.map(line => [line.team, line.moveId]), [['TRR', undefined], ['TCD', 't1']])
@@ -1592,7 +1632,7 @@ test('an employee cannot delete', async () => {
   const ctx = setup({ sap })
   const svc = ctx.service()
   assert.equal(await finishedTask(ctx, svc, ANNA, ['A']), 't1')
-  assert.equal((await svc.kifMove(ANNA, { serials: ['B'] })).id, 't2')
+  assert.equal((await svc.kifMove(ANNA, kifConfirmed(sap, ['B']))).id, 't2')
   const STATUS_MANAGER = { ...BO, role: 'manager', statusManager: true }
   for (const user of [ANNA, BO, STATUS_MANAGER]) {
     await assert.rejects(svc.deleteTask(user, { taskId: 't1' }), { code: 'MANAGER_ONLY' }, user.email)
@@ -1630,7 +1670,7 @@ test('deletion is logged', async () => {
   const ctx = setup({ sap })
   const svc = ctx.service()
   assert.equal(await finishedTask(ctx, svc, ANNA, ['A', 'B']), 't1')
-  assert.equal((await svc.kifMove(BO, { serials: ['C'] })).id, 't2')
+  assert.equal((await svc.kifMove(BO, kifConfirmed(sap, ['C']))).id, 't2')
   ctx.tick(MIN)
   const at = ctx.clock.now
   await svc.deleteTask(MONA, { taskId: 't1' })
@@ -1682,7 +1722,7 @@ test('a KIF move deleted while a PC still holds its record is never brought back
   const ctx = setup({ sap })
   const svc = ctx.service()
   const restore = dropDriveAfterTransfer(sap, ctx, 'kif', 100)
-  await assert.rejects(svc.kifMove(ANNA, { serials: ['A'] }), { code: 'SOFTWARELOAD_SAVE_FAILED' })
+  await assert.rejects(svc.kifMove(ANNA, kifConfirmed(sap, ['A'])), { code: 'SOFTWARELOAD_SAVE_FAILED' })
   assert.equal(ctx.journal().length, 1)
   restore()
   ctx.faults.kif = 0
@@ -1700,7 +1740,7 @@ test('a KIF move deleted while one shard write fails: its lines are hidden from 
   const sap = fakeSap({ A: { material: 'M-R', sloc: 'D001' }, B: { material: 'M-R', sloc: 'D001' } })
   const ctx = setup({ sap })
   const svc = ctx.service()
-  assert.equal((await svc.kifMove(BO, { serials: ['A', 'B'] })).id, 't1')
+  assert.equal((await svc.kifMove(BO, kifConfirmed(sap, ['A', 'B']))).id, 't1')
   assert.notEqual(shardKey(2026, 'A'), shardKey(2026, 'B'))
   // A's file fails twice and is tried again; B's fails every try.
   ctx.indexFaults.set(shardKey(2026, 'A'), 2)
@@ -1720,7 +1760,7 @@ test('an index line written after its KIF move was deleted is hidden', async () 
   const sap = fakeSap({ A: { material: 'M-R', sloc: 'D001' }, B: { material: 'M-R', sloc: 'D000' } })
   const ctx = setup({ sap })
   const svc = ctx.service()
-  await svc.kifMove(BO, { serials: ['A'] })
+  await svc.kifMove(BO, kifConfirmed(sap, ['A']))
   // A task started on 31 October and finished on 1 November: its lines are filed under November.
   ctx.clock.now = new Date(2026, 9, 31, 23, 50).getTime()
   assert.equal(await finishedTask(ctx, svc, ANNA, ['B']), 't2')

@@ -60,6 +60,7 @@ const CHOICE_KEYS = ['type', 'kif', 'target', 'version']
 const choiceOf = task => Object.fromEntries(CHOICE_KEYS.map(key => [key, task[key]]))
 const sameChoice = (a, b) => Boolean(a && b) && CHOICE_KEYS.every(key => a[key] === b[key])
 const changedMeanwhile = () => codeError('SOFTWARELOAD_CHANGED', 'Opgaven er rettet imens. Se oversigten igen')
+const kifChanged = () => codeError('SOFTWARELOAD_KIF_CHANGED', 'Terminalerne er flyttet i SAP, siden du så planen. Se planen igen')
 const beingFinished = () => codeError('SOFTWARELOAD_BUSY', 'Opgaven er ved at blive afsluttet. Vent til flytningen er færdig, eller se under "Venter på SAP"')
 const alreadyFinished = () => codeError('SOFTWARELOAD_ALREADY_FINISHED', 'Opgaven er allerede afsluttet. Se Venter på SAP eller søg på et af serienumrene')
 const upper = value => String(value ?? '').trim().toUpperCase()
@@ -957,35 +958,48 @@ function createSoftwareloadService({
     return { serials, ...(document ? { document } : {}), outcomes, transfers }
   }
 
-  /** Moves the serials the user confirmed to D005. SAP is asked again, as stock may have moved since the preview. */
-  async function kifMove(user, { serials, document } = {}, { onProgress } = {}) {
+  /**
+   * Moves the serials the user confirmed to D005. SAP is asked again, as stock may have moved since the preview; `planned`
+   * is the from-location of every serial the confirmed preview moved, and a new plan that differs is refused with
+   * SOFTWARELOAD_KIF_CHANGED before anything moves, so SAP never moves along a plan nobody saw.
+   */
+  async function kifMove(user, { serials, document, planned } = {}, { onProgress } = {}) {
     requireWrite()
     const confirmed = serialsOf(serials)
     if (!confirmed.length) throw noSerials()
     const given = String(document ?? '').trim()
     const matdoc = given ? normalizeMatdoc(given) : null
     if (given && !matdoc) throw codeError('SOFTWARELOAD_INVALID', 'Skriv materialedokumentet som fx "4900229137" eller "4900229137 2026 01"')
+    if (!planned || typeof planned !== 'object' || Array.isArray(planned)) throw kifChanged()
     const email = lower(user.email)
     if (movingToKif.has(email)) throw codeError('SOFTWARELOAD_BUSY', 'Du er allerede ved at flytte terminaler til D005')
     movingToKif.add(email)
     try {
       await mergeJournal(user, { pendingTasks: false }).catch(() => {})
-      return await moveToKif(user, confirmed, matdoc, onProgress)
+      return await moveToKif(user, confirmed, matdoc, planned, onProgress)
     } finally {
       movingToKif.delete(email)
     }
+  }
+
+  /** Whether the transfers of a new plan take exactly the confirmed serials from exactly the confirmed locations. */
+  function samePlan(transfers, planned) {
+    const now = new Map(transfers.flatMap(move => move.serials.map(serial => [serial, normalizeSloc(move.from)])))
+    const seen = new Map(Object.entries(planned).map(([serial, from]) => [normalizeSerial(serial), normalizeSloc(from)]))
+    return now.size === seen.size && [...now].every(([serial, from]) => from && seen.get(serial) === from)
   }
 
   /**
    * Saves the record in `kif-<yyyy-mm>` after every SAP document and once more at the end, then adds the search lines.
    * When SAP throws midway, what was posted is still saved and indexed, the rest is `interrupted`, and the error goes on.
    */
-  async function moveToKif(user, serials, document, onProgress) {
+  async function moveToKif(user, serials, document, planned, onProgress) {
     const report = (step, done, total) => { try { onProgress?.({ done, total, step }) } catch { /* the screen is gone */ } }
     const at = now()
     const by = lower(user.email)
     report('lookup', 0, serials.length)
     const { rows, outcomes, transfers } = await kifPlan(user.team, serials)
+    if (!samePlan(transfers, planned)) throw kifChanged()
     report('lookup', serials.length, serials.length)
     const rowOf = new Map(rows.map(row => [row.serial, row]))
     const results = Object.fromEntries(serials.map(serial => {

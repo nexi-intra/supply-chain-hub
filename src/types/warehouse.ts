@@ -1444,7 +1444,11 @@ export interface SoftwareloadBridge {
   abandon(request: { taskId: string; reason: string }): Promise<SoftwareloadFinishResult>
   /** The serials of `document` (a material document) when given, else `serials`. */
   kifPreview(request: { serials?: string[]; document?: string }): Promise<SoftwareloadKifPreview>
-  kifMove(request: { serials: string[]; document?: string }): Promise<SoftwareloadKifMoveResult>
+  /**
+   * `planned` is the from-location of every serial the confirmed preview moves to D005. When SAP now has a different
+   * plan, nothing moves and SOFTWARELOAD_KIF_CHANGED is thrown, so the preview must be shown again.
+   */
+  kifMove(request: { serials: string[]; document?: string; planned: Record<string, string> }): Promise<SoftwareloadKifMoveResult>
   /** Every event for the serial in TCD and TRR, newest first; `unreadable` counts index files that could not be read. */
   search(request: { serial: string }): Promise<{ lines: SoftwareloadIndexLine[]; unreadable: number }>
   /** Managers only (MANAGER_ONLY otherwise): the team's finished tasks started in the period (`YYYY-MM-DD`). */

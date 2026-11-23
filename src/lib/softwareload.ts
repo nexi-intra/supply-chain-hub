@@ -127,8 +127,8 @@ export interface KifMovePlan {
   count: number
   /** "Trin i SAP": one line per transfer, from → D005 and its number of terminals. */
   steps: { key: string; from: string; to: string; count: number }[]
-  /** What "Flyt" sends: the serials and the document of the preview the user saw, copied when the dialog opened. */
-  request: { serials: string[]; document?: string }
+  /** What "Flyt" sends: the serials, the document and the from-location of every move of the preview the user saw, copied when the dialog opened. */
+  request: { serials: string[]; document?: string; planned: Record<string, string> }
 }
 
 /** The confirmation of a move into KIF, made once from the preview so the dialog and "Flyt" use the same plan. */
@@ -138,7 +138,11 @@ export function kifMovePlan(preview: Pick<SoftwareloadKifPreview, 'serials' | 'o
     title: count === 1 ? t('Flyt 1 terminal til D005 i SAP?', 'Move 1 terminal to D005 in SAP?') : t(`Flyt ${count} terminaler til D005 i SAP?`, `Move ${count} terminals to D005 in SAP?`),
     count,
     steps: preview.transfers.map(item => ({ key: `${item.wave}-${item.from}-${item.to}`, from: item.from, to: item.to, count: item.serials.length })),
-    request: { serials: [...preview.serials], ...(document ? { document } : {}) },
+    request: {
+      serials: [...preview.serials],
+      ...(document ? { document } : {}),
+      planned: Object.fromEntries(preview.transfers.flatMap(item => item.serials.map(serial => [serial, item.from]))),
+    },
   }
 }
 

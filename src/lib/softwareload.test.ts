@@ -99,10 +99,11 @@ describe('kifMovePlan', () => {
     ])
   })
 
-  it('confirms exactly the serials and the document of the preview the user saw', () => {
-    expect(kifMovePlan(preview, '').request).toEqual({ serials: ['A', 'B', 'C', 'D', 'E'] })
+  it('confirms exactly the serials, the document and the from-locations of the preview the user saw', () => {
+    const planned = { A: 'D001', B: 'D001', E: 'D003' }
+    expect(kifMovePlan(preview, '').request).toEqual({ serials: ['A', 'B', 'C', 'D', 'E'], planned })
     const plan = kifMovePlan(preview, '4905204948 2026')
-    expect(plan.request).toEqual({ serials: ['A', 'B', 'C', 'D', 'E'], document: '4905204948 2026' })
+    expect(plan.request).toEqual({ serials: ['A', 'B', 'C', 'D', 'E'], document: '4905204948 2026', planned })
     // A copy: changing the preview afterwards does not change what is confirmed.
     preview.serials.push('F')
     expect(plan.request.serials).toEqual(['A', 'B', 'C', 'D', 'E'])

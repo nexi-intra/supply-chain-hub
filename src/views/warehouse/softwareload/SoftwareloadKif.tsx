@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/warehouse/ui'
 import { isDeliberateConfirm, kifMovePlan, previewGroups, sapRunErrorMessage, targetLabel, type KifMovePlan } from '@/lib/softwareload'
-import { errorMessage } from '@/lib/warehouse/errors'
+import { errorCode, errorMessage } from '@/lib/warehouse/errors'
 import { t } from '@/lib/warehouse/text'
 import { cn } from '@/lib/utils'
 import type { SoftwareloadKifMoveResult, SoftwareloadKifPreview, WarehouseUser } from '@/types/warehouse'
@@ -67,11 +67,16 @@ export function SoftwareloadKif({ user, writeEnabled, active, onBusy }: { user: 
     resetProgress()
     setMoving(true)
     try {
-      // Exactly what the dialog showed: the serials and the document copied when it opened.
+      // Exactly what the dialog showed: the serials, the document and the from-locations copied when it opened.
       setResult(await window.electronWarehouse!.softwareload.kifMove(plan.request))
       setPreview(null)
     } catch (error) {
       setFailed(sapRunErrorMessage(error))
+      // SAP has the terminals elsewhere than the confirmed plan: nothing moved, and the new plan is shown to be checked again.
+      if (errorCode(error) === 'SOFTWARELOAD_KIF_CHANGED') {
+        const request = plan.request.document ? { document: plan.request.document } : { serials: plan.request.serials }
+        setPreview(await window.electronWarehouse!.softwareload.kifPreview(request).catch(() => null))
+      }
     } finally {
       inFlight.current = false
       setMoving(false)
