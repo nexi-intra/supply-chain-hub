@@ -4,7 +4,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { createStore } = require('../store.cjs')
-const { createRoles } = require('./roles.cjs')
+const { createRoles, createRoleCache } = require('./roles.cjs')
 
 const MONA = { email: 'mona@example.test', fullName: 'Mona', role: 'manager', team: 'TCD' }
 const ANNA = { email: 'anna@example.test', fullName: 'Anna', role: 'user', team: 'TCD' }
@@ -132,4 +132,95 @@ test('when M: is down, a role read fails as a storage error instead of "not a Pl
   fs.rmSync(root, { recursive: true, force: true })
   store.invalidate()
   await assert.rejects(roles.isLocationAdmin(ANNA), { code: 'STORAGE_UNAVAILABLE' })
+})
+
+// The role cache in front of roleOf (register.cjs): 30 s fresh, then served while it is read again, but never past a hard
+// limit; a removed status manager or admin must not keep the rights while the roles file cannot be read.
+function cacheSetup() {
+  const clock = { now: 1000 }
+  const source = { role: 'admin', fail: false, hang: false, reads: 0 }
+  const roleOf = async () => {
+    source.reads++
+    if (source.hang) await new Promise(() => {})
+    if (source.fail) throw Object.assign(new Error('EBUSY'), { code: 'STORAGE_UNAVAILABLE' })
+    return source.role
+  }
+  const cache = createRoleCache({ roleOf, ttlMs: 30000, maxAgeMs: 60000, now: () => clock.now })
+  return { clock, source, cache }
+}
+const settle = () => new Promise(resolve => setImmediate(resolve))
+
+test('role cache: a fresh entry is served without reading the roles file again', async () => {
+  const { clock, source, cache } = cacheSetup()
+  assert.equal(await cache.roleOf(ANNA), 'admin')
+  clock.now += 29000
+  source.role = 'user'
+  assert.equal(await cache.roleOf(ANNA), 'admin')
+  assert.equal(source.reads, 1)
+})
+
+test('role cache: a stale entry is served at once, and a slow M: does not hold the call up', async () => {
+  const { clock, source, cache } = cacheSetup()
+  await cache.roleOf(ANNA)
+  clock.now += 31000
+  source.hang = true
+  const answer = await Promise.race([cache.roleOf(ANNA), new Promise(resolve => setTimeout(() => resolve('blocked'), 200))])
+  assert.equal(answer, 'admin')
+  assert.equal(source.reads, 2, 'read again in the background')
+})
+
+test('role cache: a failed refresh within the hard limit keeps the old role', async () => {
+  const { clock, source, cache } = cacheSetup()
+  await cache.roleOf(ANNA)
+  clock.now += 31000
+  source.fail = true
+  assert.equal(await cache.roleOf(ANNA), 'admin')
+  await settle()
+  clock.now += 20000
+  assert.equal(await cache.roleOf(ANNA), 'admin', 'still within 60 s of the last good read')
+})
+
+test('role cache: after the hard limit a failed read gives the role "user"', async () => {
+  const { clock, source, cache } = cacheSetup()
+  source.role = 'status-manager'
+  await cache.roleOf(ANNA)
+  clock.now += 31000
+  source.fail = true
+  assert.equal(await cache.roleOf(ANNA), 'status-manager')
+  await settle()
+  clock.now += 30000
+  assert.equal(await cache.roleOf(ANNA), 'user', 'the failed refresh did not renew the old role')
+  assert.equal(await cache.roleOf(ANNA), 'user', 'and it is not served again on the next call')
+  source.fail = false
+  assert.equal(await cache.roleOf(ANNA), 'status-manager', 'a good read is used again')
+})
+
+test('role cache: after the hard limit the call waits for the fresh read', async () => {
+  const { clock, source, cache } = cacheSetup()
+  await cache.roleOf(ANNA)
+  clock.now += 60000
+  source.role = 'user'
+  assert.equal(await cache.roleOf(ANNA), 'user')
+  assert.equal(source.reads, 2)
+})
+
+test('role cache: a successful refresh updates the role, and a role change through this Hub drops the cache', async () => {
+  const { clock, source, cache } = cacheSetup()
+  await cache.roleOf(ANNA)
+  clock.now += 31000
+  source.role = 'user'
+  assert.equal(await cache.roleOf(ANNA), 'admin', 'the stale value while it is read again')
+  await settle()
+  assert.equal(await cache.roleOf(ANNA), 'user')
+  source.role = 'status-manager'
+  cache.drop()
+  assert.equal(await cache.roleOf(ANNA), 'status-manager')
+  assert.equal(await cache.roleOf({ ...ANNA, team: 'TRR' }), 'status-manager', 'per team')
+  assert.equal(source.reads, 4)
+})
+
+test('role cache: the first read fails closed', async () => {
+  const { source, cache } = cacheSetup()
+  source.fail = true
+  assert.equal(await cache.roleOf(ANNA), 'user')
 })

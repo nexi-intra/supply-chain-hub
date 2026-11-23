@@ -479,3 +479,31 @@ test('the CountPoint role of a user is read once per 30 s, and again at once aft
     fs.promises.readFile = realReadFile
   }
 })
+
+test('a status manager removed on another PC does not keep the rights while the roles file cannot be read', async () => {
+  const realNow = Date.now
+  const realReadFile = fs.promises.readFile
+  let clock = realNow()
+  let busy = false
+  Date.now = () => clock
+  fs.promises.readFile = (file, ...rest) => {
+    if (busy && path.basename(String(file)).startsWith('roller')) return Promise.reject(Object.assign(new Error('busy'), { code: 'EBUSY' }))
+    return realReadFile(file, ...rest)
+  }
+  try {
+    const { call } = setup()
+    await call('mona', 'roles:set-role', { email: 'anna@nexi.test', role: 'status-manager' })
+    assert.equal((await call('anna', 'me')).role, 'manager')
+    busy = true
+    clock += 31000
+    assert.equal((await call('anna', 'me')).role, 'manager', 'within the hard limit the old role is used while it is read again')
+    await new Promise(resolve => setTimeout(resolve, 1000))
+    clock += 30000
+    assert.equal((await call('anna', 'me')).role, 'user', 'past the hard limit a failed read falls back to a plain user')
+    busy = false
+    assert.equal((await call('anna', 'me')).role, 'manager', 'a good read gives the role back')
+  } finally {
+    Date.now = realNow
+    fs.promises.readFile = realReadFile
+  }
+})

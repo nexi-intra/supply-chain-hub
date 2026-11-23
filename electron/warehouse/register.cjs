@@ -17,7 +17,7 @@ const { TEAMS, isAllowedTeam } = require('./teams.cjs')
 const { createStore, keyToFilename, parseFileContents } = require('../store.cjs')
 const { createCountRepository } = require('./countRepository.cjs')
 const { createCountService } = require('./countService.cjs')
-const { createRoles } = require('./roles.cjs')
+const { createRoles, createRoleCache } = require('./roles.cjs')
 const { createSapCheckService } = require('./sapCheckService.cjs')
 const { createTimeclockService } = require('./timeclockService.cjs')
 const { createSoftwareloadService } = require('./softwareload/softwareloadService.cjs')
@@ -122,9 +122,9 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   const learningFetcher = withLearning(fetcher, catalog)
 
   const countRepo = createCountRepository({ storeFor })
-  // Every call looks up the person's name; the team's user list changes rarely. As the role below: an older list is used
-  // at once while it is read again in the background, so a slow M: never holds a call (or the next action's write-ahead)
-  // up; only the very first read waits.
+  // Every call looks up the person's name; the team's user list changes rarely. An older list is used at once while it
+  // is read again in the background, so a slow M: never holds a call (or the next action's write-ahead) up; only the
+  // very first read waits. It is not a rights check, so unlike the role below it has no hard age limit.
   const usersCache = new Map()
   function readUsers(team) {
     const entry = usersCache.get(team) || {}
@@ -179,33 +179,11 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
     .filter(([, user]) => user && (!user.status || user.status === 'approved'))
     .map(([key, user]) => ({ email: String(user.email || key).trim().toLowerCase(), fullName: user.fullName || user.email || key, role: user.role === 'manager' || user.role === 'admin' || user.isManager ? 'manager' : 'user' }))
   const roles = createRoles({ storeFor, listTeamUsers })
-  // Every call (also each scan) asks for the CountPoint role; it is kept 30 s like the user list. An older answer is
-  // used at once while it is read again in the background; a role change through this Hub drops the cache.
-  const roleCache = new Map()
-  let roleGeneration = 0
-  function readRole(key, user) {
-    const entry = roleCache.get(key) || {}
-    if (entry.pending) return entry.pending
-    const generation = roleGeneration
-    const pending = roles.roleOf(user).then(value => {
-      if (generation === roleGeneration) roleCache.set(key, { at: Date.now(), value })
-      return value
-    }, error => {
-      const current = roleCache.get(key)
-      if (current?.pending === pending) delete current.pending
-      throw error
-    })
-    roleCache.set(key, { ...entry, pending })
-    return pending
-  }
-  async function cachedRoleOf(user) {
-    const key = `${user.team}:${String(user.email || '').trim().toLowerCase()}`
-    const hit = roleCache.get(key)
-    if (hit?.value === undefined) return readRole(key, user)
-    if (Date.now() - hit.at >= USERS_TTL_MS) readRole(key, user).catch(() => {})
-    return hit.value
-  }
-  const dropRoles = () => { roleGeneration++; roleCache.clear() }
+  // The CountPoint role is cached 30 s like the user list, but fails closed: never older than 60 s (roles.cjs).
+  // Date.now is read per call, so tests can move the clock.
+  const roleCache = createRoleCache({ roleOf: user => roles.roleOf(user), now: () => Date.now() })
+  const cachedRoleOf = user => roleCache.roleOf(user)
+  const dropRoles = () => roleCache.drop()
   const piDocs = createPiDocService({ counts, repo: countRepo, roles, system: config.sapSystem, writeEnabled: WRITE_SYSTEMS.includes(config.sapSystem), writer: createPiDocWriter({ bridge: sap, runScript, clipboard, system: config.sapSystem }) })
   const sapViewer = createSapViewer({ bridge: sap, runScript })
   // Placeringer: one store per hub in <team>/lagerstyring/placeringer; the placement sheet is only read by the import.

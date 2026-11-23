@@ -124,4 +124,47 @@ function createRoles({ storeFor, listTeamUsers, now = Date.now }) {
   return { roleOf, list, setRole, setAdmin, isLocationAdmin, setLocationAdmin }
 }
 
-module.exports = { createRoles }
+const ROLE_TTL_MS = 30000
+
+/**
+ * Every call (also each scan) asks for the CountPoint role, so it is cached per team and person. Within `ttlMs` the
+ * cached role is used; after that it is still used at once while it is read again in the background, so a slow M: never
+ * holds a call up. Rights fail closed: an entry older than `maxAgeMs` (counted from the last good read, a failed read
+ * does not renew it) is never used, the call waits for a fresh read and is a plain 'user' when that read fails.
+ */
+function createRoleCache({ roleOf, ttlMs = ROLE_TTL_MS, maxAgeMs = 2 * ttlMs, now = Date.now }) {
+  const cache = new Map()
+  let generation = 0
+
+  function read(key, user) {
+    const entry = cache.get(key) || {}
+    if (entry.pending) return entry.pending
+    const started = generation
+    const pending = Promise.resolve().then(() => roleOf(user)).then(value => {
+      if (started === generation) cache.set(key, { at: now(), value })
+      return value
+    }, error => {
+      const current = cache.get(key)
+      if (current?.pending === pending) delete current.pending
+      throw error
+    })
+    cache.set(key, { ...entry, pending })
+    return pending
+  }
+
+  async function cachedRoleOf(user) {
+    const key = `${user.team}:${lower(user.email)}`
+    const hit = cache.get(key)
+    const age = hit?.value === undefined ? Infinity : now() - hit.at
+    if (age >= maxAgeMs) return read(key, user).catch(() => 'user')
+    if (age >= ttlMs) read(key, user).catch(() => {})
+    return hit.value
+  }
+
+  /** A role change through this Hub: every role is read again at once. */
+  const drop = () => { generation++; cache.clear() }
+
+  return { roleOf: cachedRoleOf, drop }
+}
+
+module.exports = { createRoles, createRoleCache }
