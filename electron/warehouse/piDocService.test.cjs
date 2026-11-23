@@ -78,7 +78,7 @@ test('the admin enters the count: serials per material in ZMS_COUNT_SERIAL, quan
   }
   const serials = { 'INT1-0': ['S1', 'S2'], R5: ['A1'], R6: [] }
   // Only the list of the day may go into SAP; the serials found in the count may be days old.
-  const counts = { countDoc: async () => ({ rows }), copySerials: async (user, id, { material, forDoc }) => ({ serials: forDoc === true ? serials[material] : ['STALE'] }) }
+  const counts = { countDoc: async () => ({ fetchedAt: Date.now(), rows }), copySerials: async (user, id, { material, forDoc }) => ({ serials: forDoc === true ? serials[material] : ['STALE'] }) }
   const service = createPiDocService({ counts, repo, roles: { roleOf: async user => (user.email === 'anna@x' ? 'admin' : 'manager') }, writer, system: 'QS4' })
 
   await assert.rejects(service.count(MONA, 'c1', 'D1'), { code: 'PIDOC_FORBIDDEN' }, 'the manager does not count')
@@ -102,8 +102,59 @@ test('the admin enters the count: serials per material in ZMS_COUNT_SERIAL, quan
 test('quantities need the SAP numbers of the day', async () => {
   let stored = { D2: { id: 'D2', docNo: '105000911', year: '2026', status: 'printed', sloc: 'D000', stockType: 'unrestricted', createdBy: { email: 'mona@x' }, lines: [{ material: 'R1', transaction: 'MI04' }] } }
   const repo = { getPiDocs: async () => structuredClone(stored), changePiDocs: async (team, id, change) => { stored = change(structuredClone(stored)).all } }
-  const service = createPiDocService({ counts: { countDoc: async () => ({ rows: [row('R1', 'accessory', { docQty: null })] }) }, repo, roles: { roleOf: async () => 'admin' }, writer: {}, system: 'QS4' })
+  const service = createPiDocService({ counts: { countDoc: async () => ({ fetchedAt: Date.now(), rows: [row('R1', 'accessory', { docQty: null })] }) }, repo, roles: { roleOf: async () => 'admin' }, writer: {}, system: 'QS4' })
   await assert.rejects(service.count(ANNA, 'c1', 'D2'), { code: 'PIDOC_NO_QTY' })
+})
+
+/** A document for R1 made Monday 23.11.2026 from the SAP figures of the day; `at(day, hour)` is local time. */
+function staleSetup({ fetchedAt, docFetchedAt }) {
+  const at = (day, hour) => new Date(2026, 10, day, hour).getTime()
+  const state = { clock: at(23, 8), countDoc: { fetchedAt: fetchedAt(at), rows: [row('R1', 'accessory', { docQty: 97 })] } }
+  const doc = { id: 'D9', docNo: '105000920', year: '2026', status: 'printed', sloc: 'D000', stockType: 'unrestricted', createdBy: { email: 'mona@x', at: at(23, 8) }, lines: [{ material: 'R1', transaction: 'MI04' }] }
+  let stored = { D9: docFetchedAt === undefined ? doc : { ...doc, docFetchedAt: docFetchedAt(at) } }
+  const entered = []
+  const repo = { getPiDocs: async () => structuredClone(stored), changePiDocs: async (team, id, change) => { stored = change(structuredClone(stored)).all } }
+  const writer = { enterCounts: async request => { entered.push(request); return { message: 'ok' } } }
+  const service = createPiDocService({ counts: { countDoc: async () => state.countDoc }, repo, roles: { roleOf: async user => (user.email === 'anna@x' ? 'admin' : 'manager') }, writer, system: 'QS4', now: () => state.clock })
+  return { at, state, service, entered, stored: () => stored }
+}
+
+test('a new document remembers when the SAP figures of the day it was made from were fetched', async () => {
+  const at = (day, hour) => new Date(2026, 10, day, hour).getTime()
+  let stored = {}
+  const repo = { getPiDocs: async () => structuredClone(stored), changePiDocs: async (team, id, change) => { stored = change(structuredClone(stored)).all } }
+  const writer = { createDocument: async () => ({ docs: [{ docNo: '105000921', materials: ['R1'] }], missing: [] }) }
+  const service = createPiDocService({ counts: { countDoc: async () => ({ fetchedAt: at(23, 7), rows: ROWS }) }, repo, roles: { roleOf: async () => 'manager' }, writer, system: 'QS4', now: () => at(23, 8), newReference: () => 'CPREF1' })
+  await service.create(MONA, 'c1', { materials: ['R1'], sloc: 'D000', stockType: 'unrestricted' })
+  assert.equal(stored['105000921'].docFetchedAt, at(23, 7))
+})
+
+test('"Læg antal på" refuses SAP figures of the day from an earlier day', async () => {
+  const { at, state, service, entered, stored } = staleSetup({ fetchedAt: at => at(23, 7), docFetchedAt: at => at(23, 7) })
+  state.clock = at(25, 9)
+  await assert.rejects(service.count(ANNA, 'c1', 'D9'), { code: 'PIDOC_DOC_STALE', message: 'PIDOC_DOC_STALE: Hent dagens SAP-tal igen, før antallet lægges på. Tallene er fra 23.11.2026 07:00.' })
+  assert.deepEqual(entered, [], 'nothing goes into SAP')
+  assert.equal(stored().D9.status, 'printed')
+})
+
+test('"Læg antal på" refuses SAP figures of the day older than the ones the document was made from', async () => {
+  const { at, state, service, entered } = staleSetup({ fetchedAt: at => at(25, 7), docFetchedAt: at => at(25, 9) })
+  state.clock = at(25, 10)
+  await assert.rejects(service.count(ANNA, 'c1', 'D9'), { code: 'PIDOC_DOC_STALE', message: 'PIDOC_DOC_STALE: Hent dagens SAP-tal igen, før antallet lægges på. Tallene er fra 25.11.2026 07:00.' })
+  state.countDoc = { ...state.countDoc, fetchedAt: null }
+  await assert.rejects(service.count(ANNA, 'c1', 'D9'), { code: 'PIDOC_DOC_STALE' }, 'no SAP figures of the day at all')
+  assert.deepEqual(entered, [])
+})
+
+test('a document from an older client (no docFetchedAt) is counted when the SAP figures are from today', async () => {
+  const { at, state, service, entered, stored } = staleSetup({ fetchedAt: at => at(25, 8) })
+  state.clock = at(25, 9)
+  await service.count(ANNA, 'c1', 'D9')
+  assert.deepEqual(entered, [{ docNo: '105000920', year: '2026', entries: [{ material: 'R1', qty: 97 }] }])
+  assert.equal(stored().D9.status, 'counted')
+  const other = staleSetup({ fetchedAt: at => at(25, 8) })
+  other.state.clock = at(26, 9)
+  await assert.rejects(other.service.count(ANNA, 'c1', 'D9'), { code: 'PIDOC_DOC_STALE' }, 'yesterday is still refused')
 })
 
 test('the manager posts counted documents; only what MI22 confirms is posted, and the materials become "Bogført i SAP"', async () => {

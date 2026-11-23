@@ -7,6 +7,7 @@ const path = require('node:path')
 const { createStore, whenWritesSettled } = require('../store.cjs')
 const { createCountRepository } = require('./countRepository.cjs')
 const { createCountService } = require('./countService.cjs')
+const { createPiDocService } = require('./piDocService.cjs')
 
 const stock = (material, sloc, unrestricted, blocked = 0, valueUnrestricted = 0, valueBlocked = 0) => ({ material, description: `${material} tekst`, plant: 'D301', sloc, unrestricted, blocked, valueUnrestricted, valueBlocked })
 const serial = (serialNo, material, sloc, stockType = 'unrestricted') => ({ serial: serialNo, material, sloc, plant: 'D301', description: material, userStatus: '', stockType })
@@ -885,6 +886,57 @@ test('count document: SAP stock of the day + the approved difference; fetched by
   assert.equal((await ada.countDoc(ADA, id)).canFetch, true, 'an Optælling admin may fetch the SAP figures of the day')
   ctx.tick(60_000)
   assert.equal((await ada.fetchDocStock(ADA, id)).fetchedBy.name, 'Ada')
+})
+
+test('"Læg antal på" two days later needs the SAP figures of the day again, and enters SAP today + the approved difference', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const mona = ctx.service('pc3')
+  const ADA = { email: 'ada@example.test', fullName: 'Ada', role: 'user', team: 'TCD', countAdmin: true }
+  const ada = ctx.service('pc4')
+  const { id } = await newCount(ctx, anna)
+  await anna.saveLine(ANNA, id, { place: 'A1.1', material: 'R162-0717', qty: 97 })
+  await anna.flush(ANNA, id)
+  ctx.tick(2000)
+  await mona.setApproval(MONA, id, { material: 'R162-0717', status: 'approved' })
+  const entered = []
+  const writer = {
+    createDocument: async () => ({ docs: [{ docNo: '105000930', materials: ['R162-0717'] }], missing: [] }),
+    printDocument: async () => ({ message: 'ok' }),
+    enterCounts: async request => { entered.push(request); return { message: 'ok' } },
+  }
+  const piDocsOf = counts => createPiDocService({ counts, repo: ctx.repo, roles: { roleOf: async user => (user.countAdmin ? 'admin' : user.role) }, writer, system: 'QS4', now: () => ctx.clock.now })
+
+  // Monday: SAP 100, approved difference -3, the document is made and printed.
+  await mona.fetchDocStock(MONA, id)
+  await piDocsOf(mona).create(MONA, id, { materials: ['R162-0717'], sloc: 'D000', stockType: 'unrestricted' })
+  await piDocsOf(mona).print(MONA, id, '105000930')
+  // 20 pcs are issued in SAP; Wednesday the admin enters the count.
+  ctx.sap.mb52[2] = stock('R162-0717', 'D000', 80, 0, 400)
+  ctx.tick(2 * 86_400_000)
+  await assert.rejects(piDocsOf(ada).count(ADA, id, '105000930'), { code: 'PIDOC_DOC_STALE' })
+  assert.deepEqual(entered, [], 'not 97 into MI04')
+  await ada.fetchDocStock(ADA, id)
+  await piDocsOf(ada).count(ADA, id, '105000930')
+  assert.deepEqual(entered, [{ docNo: '105000930', year: String(new Date(1_000_000).getFullYear()), entries: [{ material: 'R162-0717', qty: 77 }] }], 'SAP today 80 + difference -3')
+})
+
+test('the SAP figures of the day can be fetched after the status is locked; nothing else in the count changes', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const mona = ctx.service('pc3')
+  const { id } = await newCount(ctx, anna)
+  await anna.saveLine(ANNA, id, { place: 'A1.1', material: 'R162-0717', qty: 97 })
+  await anna.flush(ANNA, id)
+  ctx.tick(2000)
+  await mona.setApproval(MONA, id, { material: 'R162-0717', status: 'approved' })
+  await ctx.repo.updateStatus('TCD', 'st0open1', { state: 'locked', lockedAt: 2, lockedBy: { email: 'mona@example.test', name: 'Mona' } }, { action: 'locked', by: { email: 'mona@example.test', name: 'Mona' } })
+  ctx.tick(5000)
+  assert.equal((await mona.countDoc(MONA, id)).canFetch, true)
+  const doc = await mona.fetchDocStock(MONA, id)
+  assert.deepEqual([doc.fetchedAt, doc.rows.find(item => item.material === 'R162-0717').docQty], [ctx.clock.now, 97])
+  await assert.rejects(mona.setApproval(MONA, id, { material: 'R162-0717', status: 'reset' }), { code: 'STATUS_LOCKED' })
+  await assert.rejects(ctx.service('pc2').fetchDocStock(BO, id), { code: 'COUNT_OWNER_ONLY' })
 })
 
 test('count document for serials: SAP\'s serials of the day minus the ones missing at approval – also for an older approval', async () => {

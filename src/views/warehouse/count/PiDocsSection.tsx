@@ -2,6 +2,7 @@ import { CheckCircle, FilePlus, ListChecks, Printer, Trash, Warning } from '@pho
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { formatDateTime, formatNumber } from '@/lib/warehouse/format'
+import { cn } from '@/lib/utils'
 import type { PiDoc, PiDocList, PiDocStatus } from '@/types/warehouse'
 import { t } from '@/lib/warehouse/text'
 
@@ -20,6 +21,8 @@ interface PiDocsSectionProps {
   list: PiDocList
   selected: { materials: string[]; sloc: string; stockType: string } | null
   busy: string | null
+  /** When the SAP figures of the day were fetched; "Læg antal på" needs them from today. */
+  figuresAt: number | null
   onCreate: () => void
   onPrint: (doc: PiDoc) => void
   onCount: (doc: PiDoc) => void
@@ -41,7 +44,8 @@ const busyTexts = (): Record<string, string> => ({
 const amount = (doc: PiDoc) => (doc.differences || []).reduce((sum, item) => sum + item.amount * Math.sign(item.diff || 0), 0)
 
 /** The SAP documents of the count and the step each one waits for. */
-export function PiDocsSection({ list, selected, busy, onCreate, onPrint, onCount, onPost, onDelete, qtyOf }: PiDocsSectionProps) {
+export function PiDocsSection({ list, selected, busy, figuresAt, onCreate, onPrint, onCount, onPost, onDelete, qtyOf }: PiDocsSectionProps) {
+  const figuresToday = figuresAt !== null && new Date(figuresAt).toDateString() === new Date().toDateString()
   const busyDoc = list.docs.find(doc => doc.id === busy || `delete:${doc.id}` === busy)
   const BUSY_TEXT = busyTexts()
   const busyText = busy === 'create' ? BUSY_TEXT.create : busy === 'post' ? BUSY_TEXT.post : busy?.startsWith('delete:') ? BUSY_TEXT.delete : busyDoc?.next ? BUSY_TEXT[busyDoc.next] : null
@@ -94,7 +98,14 @@ export function PiDocsSection({ list, selected, busy, onCreate, onPrint, onCount
               {doc.next === 'print' && doc.canNext
                 ? <Button size="sm" variant="outline" disabled={busy !== null} loading={busy === doc.id} onClick={() => onPrint(doc)}><Printer size={16} /> Print</Button>
                 : doc.next === 'count' && doc.canNext
-                  ? <Button size="sm" variant="outline" disabled={busy !== null} loading={busy === doc.id} onClick={() => onCount(doc)}><ListChecks size={16} /> {t('Læg antal på', 'Enter quantity')}</Button>
+                  ? (
+                    <span className="flex items-center gap-2">
+                      <span className={cn('text-xs', figuresToday ? 'text-muted-foreground' : 'text-amber-700 dark:text-amber-300')}>
+                        {figuresAt === null ? t('Dagens SAP-tal er ikke hentet', "Today's SAP figures are not fetched") : t(`SAP-tal fra ${formatDateTime(figuresAt)}`, `SAP figures from ${formatDateTime(figuresAt)}`)}
+                      </span>
+                      <Button size="sm" variant="outline" disabled={busy !== null} loading={busy === doc.id} onClick={() => onCount(doc)}><ListChecks size={16} /> {t('Læg antal på', 'Enter quantity')}</Button>
+                    </span>
+                  )
                   : doc.next === 'post' && doc.canNext
                     ? <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => onPost([doc])}><CheckCircle size={16} /> {t('Bogfør', 'Post')}</Button>
                     : doc.next && <span className="text-xs text-muted-foreground">{waitingFor()[doc.next]}</span>}

@@ -14,6 +14,21 @@ function codeError(code, message) {
 const lower = value => String(value || '').trim().toLowerCase()
 const by = (user, at) => ({ email: lower(user.email), name: user.fullName || user.email, at })
 const defaultReference = () => `CP${crypto.randomBytes(6).toString('hex').toUpperCase()}`
+const pad = value => String(value).padStart(2, '0')
+// Same as formatDateTime in the count screens (src/lib/warehouse/format.ts).
+const dateTime = ms => { const date = new Date(ms); return `${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}` }
+
+/**
+ * The quantities entered come from the SAP figures of the day; old ones would post SAP's movements since then as a
+ * difference. They must be from today (local date) and not older than the ones the document was made from
+ * (`docFetchedAt`; documents of older clients do not have it).
+ */
+function staleFigures({ fetchedAt, docFetchedAt, at }) {
+  if (!fetchedAt) return 'Hent dagens SAP-tal, før antallet lægges på.'
+  const fromToday = new Date(fetchedAt).toDateString() === new Date(at).toDateString()
+  const olderThanDoc = typeof docFetchedAt === 'number' && fetchedAt < docFetchedAt
+  return fromToday && !olderThanDoc ? null : `Hent dagens SAP-tal igen, før antallet lægges på. Tallene er fra ${dateTime(fetchedAt)}.`
+}
 
 function createPiDocService({ counts, repo, roles, writer, system, writeEnabled = true, now = Date.now, newReference = defaultReference }) {
   /** Documents that count: everything except stale reservations of a crashed app. */
@@ -21,7 +36,7 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
 
   async function context(user, id) {
     const [doc, all, role] = await Promise.all([counts.countDoc(user, id), repo.getPiDocs(user.team, id), roles.roleOf(user)])
-    return { rows: doc.rows, docs: live(all, now()), role }
+    return { rows: doc.rows, fetchedAt: doc.fetchedAt || null, docs: live(all, now()), role }
   }
 
   function view(user, role, doc) {
@@ -41,7 +56,7 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
   }
 
   async function create(user, id, { materials, sloc, stockType } = {}) {
-    const { rows, docs, role } = await context(user, id)
+    const { rows, fetchedAt, docs, role } = await context(user, id)
     const reason = refusal({ action: 'create', role })
     if (reason) throw codeError('PIDOC_FORBIDDEN', reason)
     const plan = planDocument({ rows, docs, materials, sloc, stockType })
@@ -65,7 +80,7 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
       for (const created of result.docs) {
         all[created.docNo] = {
           id: created.docNo, docNo: created.docNo, year, system, reference, status: 'created', sloc: plan.sloc, stockType: plan.stockType, kind: plan.kind, transaction: plan.transaction,
-          lines: plan.lines.filter(line => created.materials.includes(line.material)), createdBy: by(user, at),
+          lines: plan.lines.filter(line => created.materials.includes(line.material)), createdBy: by(user, at), docFetchedAt: fetchedAt,
         }
       }
       return { all }
@@ -93,12 +108,15 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
    * The admin step: the serial list of the day (SAP's serials minus the ones missing at approval) goes through
    * ZMS_COUNT_SERIAL one material at a time, quantities through MI04
    * ("Antal til dokument"). Every material entered is remembered, so a later failure can be retried without repeating it.
+   * The quantities are worked out again from the SAP figures of the day on every call, so these must be fresh (staleFigures).
    */
   async function count(user, id, docId) {
-    const { rows, docs, role } = await context(user, id)
+    const { rows, fetchedAt, docs, role } = await context(user, id)
     const doc = docs.find(item => item.id === docId)
     const reason = refusal({ action: 'count', role, email: user.email, doc })
     if (reason) throw codeError('PIDOC_FORBIDDEN', reason)
+    const stale = staleFigures({ fetchedAt, docFetchedAt: doc.docFetchedAt, at: now() })
+    if (stale) throw codeError('PIDOC_DOC_STALE', stale)
     const done = { ...(doc.entered || {}) }
     const remember = async (material, value) => {
       done[material] = { ...value, by: lower(user.email), at: now() }

@@ -462,6 +462,8 @@ export interface PiDoc {
   transaction?: 'MI04' | 'ZMS_COUNT_SERIAL'
   lines: { material: string; description: string; kind: Kind; serialManaged: boolean; transaction: 'MI04' | 'ZMS_COUNT_SERIAL' }[]
   createdBy: { email: string; name: string; at: number }
+  /** When the SAP figures of the day the document was made from were fetched; missing on documents of older clients. */
+  docFetchedAt?: number | null
   printedBy?: { email: string; name: string; at: number; message: string }
   countedBy?: { email: string; name: string; at: number }
   postedBy?: { email: string; name: string; at: number }

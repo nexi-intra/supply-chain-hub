@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { SapActionButton } from '@/components/warehouse/SapActionButton'
-import { errorMessage } from '@/lib/warehouse/errors'
+import { errorCode, errorMessage } from '@/lib/warehouse/errors'
 import { fetchSteps, formatDateTime, formatNumber } from '@/lib/warehouse/format'
 import { cn } from '@/lib/utils'
 import type { CountDoc, CountDocRow, FetchStep, PiDoc, PiDocList } from '@/types/warehouse'
@@ -146,7 +146,8 @@ export function DocPanel({ id, open, state }: PanelProps) {
       setPiList(await window.electronWarehouse!.piDocs.count({ id, docId: item.id }))
       toast.success(t(`Antal er lagt på SAP-dokument ${item.docNo}`, `Quantity entered on SAP document ${item.docNo}`), { description: t('Klar til bogføring (manager).', 'Ready for posting (manager).') })
     } catch (error) {
-      toast.error(errorMessage(error), { duration: 20000 })
+      const refetch = errorCode(error) === 'PIDOC_DOC_STALE' && doc?.canFetch ? { action: { label: t('Hent dagens SAP-tal', "Fetch today's SAP figures"), onClick: () => void fetchToday() } } : {}
+      toast.error(errorMessage(error), { duration: 20000, ...refetch })
       await load()
     } finally {
       setBusy(null)
@@ -193,7 +194,7 @@ export function DocPanel({ id, open, state }: PanelProps) {
         </div>
         {doc.fetchedAt !== null && !step && new Date(doc.fetchedAt).toDateString() !== new Date().toDateString() && (
           <p className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200">
-            <Warning size={16} /> {t(`SAP-tallene er fra ${formatDateTime(doc.fetchedAt)}, ikke i dag. Hent dagens SAP-tal, før dokumentet laves.`, `The SAP figures are from ${formatDateTime(doc.fetchedAt)}, not today. Fetch today's SAP figures before the document is made.`)}
+            <Warning size={16} /> {t(`SAP-tallene er fra ${formatDateTime(doc.fetchedAt)}, ikke i dag. Hent dagens SAP-tal, før dokumentet laves eller antallet lægges på.`, `The SAP figures are from ${formatDateTime(doc.fetchedAt)}, not today. Fetch today's SAP figures before the document is made or the quantity is entered.`)}
           </p>
         )}
         {needsSerials > 0 && (
@@ -211,7 +212,7 @@ export function DocPanel({ id, open, state }: PanelProps) {
             <Warning size={16} /> {formatNumber(doc.missingApproval)} {doc.missingApproval === 1 ? t('materiale mangler godkendelse og får intet antal.', 'material needs approval and gets no quantity.') : t('materialer mangler godkendelse og får intet antal.', 'materials need approval and get no quantity.')}
           </p>
         )}
-        {piList && <PiDocsSection list={piList} selected={selection} busy={busy} onCreate={() => void createDoc()} onPrint={item => void printDoc(item)} onCount={item => void countDoc(item)} onPost={items => void postDocs(items)} onDelete={item => void deleteDoc(item)} qtyOf={qtyOf} />}
+        {piList && <PiDocsSection list={piList} selected={selection} busy={busy} figuresAt={doc.fetchedAt} onCreate={() => void createDoc()} onPrint={item => void printDoc(item)} onCount={item => void countDoc(item)} onPost={items => void postDocs(items)} onDelete={item => void deleteDoc(item)} qtyOf={qtyOf} />}
         <div className="flex flex-wrap items-center gap-4">
           <Input value={query} onChange={event => setQuery(event.target.value)} placeholder={t('Søg materiale, tekst eller sloc', 'Search material, text or sloc')} className="max-w-xs" />
           <label className="flex items-center gap-2 text-sm"><Checkbox checked={onlyDiff} onCheckedChange={value => setOnlyDiff(value === true)} /> {t('Kun med difference', 'Only with a difference')}</label>

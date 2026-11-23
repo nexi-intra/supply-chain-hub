@@ -1380,13 +1380,16 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const { doc, result } = await docOf(state)
     // The serial lists stay in the main process (copySerials / SAP entry); the screen only needs the numbers.
     const rows = result.rows.map(({ docSerials, ...row }) => row)
-    return { fetchedAt: doc?.fetchedAt || null, fetchedBy: doc?.by || null, canFetch: canFetchDoc(user, rights) && !rights.locked, ...result, rows }
+    return { fetchedAt: doc?.fetchedAt || null, fetchedBy: doc?.by || null, canFetch: canFetchDoc(user, rights), ...result, rows }
   }
 
+  /**
+   * Also after the status is locked: the SAP figures of the day only feed the count document ("Læg antal på" refuses
+   * old ones), they change nothing in the count itself.
+   */
   async function fetchDocStock(user, id) {
     const state = await load(user, id)
     const rights = await access(user, state)
-    if (rights.locked) throw lockedError()
     if (!canFetchDoc(user, rights)) throw codeError('COUNT_OWNER_ONLY', 'Kun den ansvarlige, en admin eller en manager kan hente dagens SAP-tal')
     const fetched = await fetcher.fetchPlant({ onProgress: step => emit('sap:fetch-progress', { step }) })
     const snapshot = buildSnapshot({ team: state.team, scope: state.snapshot.scope, mb52: fetched.mb52, serials: fetched.serials || [], rulesByTeam: await rulesByTeam(state.team), exclusions: state.snapshot.excluded.manual, fetchedAt: fetched.fetchedAt, fetchedBy: lower(user.email) })
