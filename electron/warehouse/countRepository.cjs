@@ -105,8 +105,10 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId }) 
   /**
    * All changed fields in one locked write of the meta file, and the index entry in parallel with it. The entry only
    * takes the changed fields, merged under the index's lock: another PC changing other fields meanwhile is kept.
+   * A `check` sees the stored meta under its lock: it throws to refuse (nothing is written) or returns more changes;
+   * the index entry is then written after the meta.
    */
-  async function updateMeta(team, id, changes) {
+  async function updateMeta(team, id, changes, { check } = {}) {
     const fields = Object.entries(changes)
     if (fields.some(([field]) => ['id', 'team', 'owner', 'createdAt'].includes(field))) throw codeError('COUNT_INVALID')
     if (!fields.length) return undefined
@@ -115,21 +117,25 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId }) 
     const current = await target.getAsync(metaKey, { skipCache: true })
     if (!current) throw codeError('COUNT_NOT_FOUND')
     const listed = Object.keys(indexEntry({})).filter(field => field in changes)
-    const [meta] = await Promise.all([
-      target.mutateAsync(metaKey, stored => {
-        if (!stored) throw codeError('COUNT_NOT_FOUND')
-        return { ...stored, ...changes }
-      }),
-      listed.length ? target.mutateAsync(INDEX_KEY, index => {
-        const next = index && typeof index === 'object' ? index : {}
-        const entry = next[id]
-        if (entry?.deleted) return next
-        const merged = entry ? { ...entry } : indexEntry(current)
-        for (const field of listed) merged[field] = indexEntry(changes)[field]
-        next[id] = merged
-        return next
-      }) : null,
-    ])
+    const writeMeta = () => target.mutateAsync(metaKey, stored => {
+      if (!stored) throw codeError('COUNT_NOT_FOUND')
+      return { ...stored, ...changes, ...(check ? check(stored) : null) }
+    })
+    const writeIndex = () => (listed.length ? target.mutateAsync(INDEX_KEY, index => {
+      const next = index && typeof index === 'object' ? index : {}
+      const entry = next[id]
+      if (entry?.deleted) return next
+      const merged = entry ? { ...entry } : indexEntry(current)
+      for (const field of listed) merged[field] = indexEntry(changes)[field]
+      next[id] = merged
+      return next
+    }) : null)
+    if (check) {
+      const meta = await writeMeta()
+      await writeIndex()
+      return meta
+    }
+    const [meta] = await Promise.all([writeMeta(), writeIndex()])
     return meta
   }
 

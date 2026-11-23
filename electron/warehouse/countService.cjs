@@ -1159,10 +1159,12 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const state = await sapAction(user, id)
     if (state.meta.status !== 'open') throw codeError('COUNT_CLOSED', 'Genåbn optællingen først')
     const fetched = await fetcher.fetchPlant({ onProgress: step => emit('sap:fetch-progress', { step }) })
+    // The SAP export takes minutes: the differences are shown against what the count holds now (another PC may have fetched meanwhile).
+    await refresh(state, true)
     const snapshot = buildSnapshot({ team: state.team, scope: state.snapshot.scope, mb52: fetched.mb52, serials: fetched.serials, rulesByTeam: await rulesByTeam(state.team), exclusions: state.snapshot.excluded.manual, fetchedAt: fetched.fetchedAt, fetchedBy: lower(user.email) })
     const token = crypto.randomBytes(16).toString('hex')
     for (const [key, value] of pending) if (value.countId === state.id || now() - value.at > PENDING_TTL_MS) pending.delete(key)
-    pending.set(token, { at: now(), email: lower(user.email), team: state.team, countId: state.id, snapshot })
+    pending.set(token, { at: now(), email: lower(user.email), team: state.team, countId: state.id, snapshot, basedOn: state.meta.fetchedAt })
     const approvals = await repo.getApprovals(state.team, state.id).catch(() => ({}))
     const diff = diffSnapshots(state.snapshot, snapshot)
     for (const change of diff.changes) if (['approved', 'posted'].includes(approvals[change.material]?.status)) change.frozen = true
@@ -1172,13 +1174,25 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   async function applyRefetch(user, id, { token } = {}) {
     const state = await sapAction(user, id)
     const entry = pending.get(token)
-    if (!entry || entry.countId !== state.id || entry.email !== lower(user.email)) throw codeError('PREVIEW_EXPIRED', 'Hent data fra SAP igen')
-    // The snapshot (with its backup) and the meta are different files: all written at the same time.
-    const [, meta] = await Promise.all([
-      repo.replaceSnapshot(state.team, state.id, entry.snapshot),
-      repo.updateMeta(state.team, state.id, { fetchedAt: entry.snapshot.fetchedAt, snapshotVersion: (state.meta.snapshotVersion || 1) + 1 }),
-    ])
+    if (!entry || entry.countId !== state.id || entry.email !== lower(user.email) || !entry.snapshot) throw codeError('PREVIEW_EXPIRED', 'Hent data fra SAP igen')
+    if (state.meta.status !== 'open') throw codeError('COUNT_CLOSED', 'Genåbn optællingen først')
+    // Checked under the meta's lock, so a preview made before another PC's "Hent SAP igen" never puts older figures back.
+    // The meta is written before the snapshot: a refused apply writes nothing, and other PCs wait for the snapshot.
+    const meta = await repo.updateMeta(state.team, state.id, { fetchedAt: entry.snapshot.fetchedAt }, {
+      check: stored => {
+        if (stored.status !== 'open') throw codeError('COUNT_CLOSED', 'Genåbn optællingen først')
+        // This preview's own meta is already written (the snapshot write failed): only the snapshot is left.
+        if (entry.metaWritten && stored.fetchedAt === entry.snapshot.fetchedAt) return {}
+        if (stored.fetchedAt !== entry.basedOn || !(entry.snapshot.fetchedAt > stored.fetchedAt)) throw codeError('REFETCH_OUTDATED', 'En anden har hentet SAP igen imens. Hent igen for at se forskellene.')
+        return { snapshotVersion: (stored.snapshotVersion || 1) + 1 }
+      },
+    }).catch(error => {
+      if (error.code === 'REFETCH_OUTDATED') pending.delete(token)
+      throw error
+    })
+    entry.metaWritten = true
     state.meta = meta
+    await repo.replaceSnapshot(state.team, state.id, entry.snapshot)
     pending.delete(token)
     installSnapshot(state, entry.snapshot)
     if (localCache) localCache.save(state.team, state.id, 'expected', entry.snapshot).catch(() => {})

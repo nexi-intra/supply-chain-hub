@@ -1193,9 +1193,69 @@ test('the owner can fetch SAP again, see the differences and apply them', async 
   await assert.rejects(ctx.service('pc2').previewRefetch(BO, id), { code: 'COUNT_OWNER_ONLY' }, 'an ordinary user may not')
   assert.equal((await ada.openCount(ADA, id)).me.canFetchSap, true)
   assert.equal((await anna.openCount(ANNA, id)).me.canFetchSap, true)
+  ctx.tick(1000)
   const byAdmin = await ada.previewRefetch(ADA, id)
   await assert.rejects(anna.applyRefetch(ANNA, id, { token: byAdmin.token }), { code: 'PREVIEW_EXPIRED' }, 'only the one who fetched applies it')
   assert.equal((await ada.applyRefetch(ADA, id, { token: byAdmin.token })).snapshotVersion, 3, 'an Optælling admin may fetch SAP again')
+})
+
+test('"Hent SAP igen" is refused when someone else fetched SAP again after the preview, so older figures never replace newer ones', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const mona = ctx.service('pc3')
+  const { id } = await newCount(ctx, anna)
+  const same = await anna.previewRefetch(ANNA, id)
+  await assert.rejects(anna.applyRefetch(ANNA, id, { token: same.token }), { code: 'REFETCH_OUTDATED' }, 'figures that are not newer than the stored ones')
+
+  ctx.tick(1000)
+  const older = await anna.previewRefetch(ANNA, id)
+  ctx.sap.mb52 = [stock('INT4300-4921-0', 'D000', 3, 0, 3000), stock('R162-0717', 'D000', 100, 0, 500)]
+  ctx.tick(1000)
+  const newer = await mona.previewRefetch(MONA, id)
+  const applied = await mona.applyRefetch(MONA, id, { token: newer.token })
+  await assert.rejects(anna.applyRefetch(ANNA, id, { token: older.token }), error => error.code === 'REFETCH_OUTDATED' && error.message === 'En anden har hentet SAP igen imens. Hent igen for at se forskellene.')
+  const meta = await ctx.repo.getMeta('TCD', id)
+  assert.deepEqual([meta.fetchedAt, meta.snapshotVersion], [applied.fetchedAt, 2])
+  assert.equal((await ctx.repo.getSnapshot('TCD', id)).fetchedAt, applied.fetchedAt, 'the newer SAP figures stay')
+  assert.equal((await ctx.repo.listCounts('TCD'))[0].fetchedAt, applied.fetchedAt, 'the count list too')
+  await assert.rejects(anna.applyRefetch(ANNA, id, { token: older.token }), { code: 'PREVIEW_EXPIRED' }, 'the outdated preview is gone')
+
+  ctx.tick(1000)
+  const again = await anna.previewRefetch(ANNA, id)
+  assert.equal((await anna.applyRefetch(ANNA, id, { token: again.token })).snapshotVersion, 3, 'a new preview compares with the newer figures and applies')
+})
+
+test('"Hent SAP igen" is refused on a count closed after the preview', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const { id } = await newCount(ctx, anna)
+  ctx.tick(1000)
+  const preview = await anna.previewRefetch(ANNA, id)
+  await ctx.service('pc5').closeCount(ANNA, id)
+  await assert.rejects(anna.applyRefetch(ANNA, id, { token: preview.token }), { code: 'COUNT_CLOSED' })
+  const meta = await ctx.repo.getMeta('TCD', id)
+  assert.deepEqual([meta.status, meta.snapshotVersion], ['closed', 1])
+  assert.equal((await ctx.repo.getSnapshot('TCD', id)).fetchedAt, meta.fetchedAt, 'the snapshot is untouched')
+
+  await ctx.service('pc5').reopenCount(ANNA, id)
+  assert.equal((await anna.applyRefetch(ANNA, id, { token: preview.token })).snapshotVersion, 2, 'reopened, the same preview applies')
+})
+
+test('"Hent SAP igen" that stopped after the meta was written can be tried again with the same preview', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const { id } = await newCount(ctx, anna)
+  const real = createCountRepository({ storeFor: ctx.storeFor, now: () => ctx.clock.now })
+  let fail = true
+  const repo = { ...real, replaceSnapshot: async (...args) => { if (fail) { fail = false; throw Object.assign(new Error('KV_LOCK_BUSY'), { code: 'KV_LOCK_BUSY' }) } return real.replaceSnapshot(...args) } }
+  const svc = createCountService({ repo, storeFor: ctx.storeFor, fetcher: ctx.fetcher, journalsDir: path.join(ctx.root, 'local-retry'), deviceId: 'retry', now: () => ctx.clock.now, journalOptions: { autoFlush: false } })
+  ctx.sap.mb52 = [stock('INT4300-4921-0', 'D000', 3, 0, 3000), stock('R162-0717', 'D000', 100, 0, 500)]
+  ctx.tick(1000)
+  const preview = await svc.previewRefetch(ANNA, id)
+  await assert.rejects(svc.applyRefetch(ANNA, id, { token: preview.token }), { code: 'KV_LOCK_BUSY' })
+  const meta = await svc.applyRefetch(ANNA, id, { token: preview.token })
+  assert.deepEqual([meta.fetchedAt, meta.snapshotVersion], [ctx.clock.now, 2], 'counted once')
+  assert.equal((await ctx.repo.getSnapshot('TCD', id)).fetchedAt, ctx.clock.now)
 })
 
 test('after "Hent SAP igen" on one PC, another PC with the count open shows the new SAP figures without a restart', async () => {
@@ -1293,6 +1353,8 @@ test('a slow read of the snapshot never puts the old SAP figures back over this 
   const real = createCountRepository({ storeFor: ctx.storeFor, now: () => ctx.clock.now })
   let gate = null
   let reached = null
+  let writeGate = null
+  let writing = null
   const repo = {
     ...real,
     getSnapshot: async (team, countId, options) => {
@@ -1300,14 +1362,23 @@ test('a slow read of the snapshot never puts the old SAP figures back over this 
       if (options?.fresh && gate) { reached(); await gate }
       return value
     },
+    replaceSnapshot: async (...args) => {
+      if (writeGate) { writing(); await writeGate }
+      return real.replaceSnapshot(...args)
+    },
   }
   const mona = createCountService({ repo, storeFor: ctx.storeFor, fetcher: ctx.fetcher, journalsDir: path.join(ctx.root, 'local-slow'), deviceId: 'slow', now: () => ctx.clock.now, journalOptions: { autoFlush: false } })
   await mona.getState(MONA, id)
   ctx.sap.mb52 = [stock('INT4300-4921-0', 'D000', 3, 0, 3000), stock('R162-0717', 'D000', 100, 0, 500)]
   ctx.tick(1000)
   const preview = await mona.previewRefetch(MONA, id)
-  // The meta (a small file) is on M: before the snapshot: the next poll starts reading the snapshot, which is still the old one.
-  await ctx.repo.updateMeta('TCD', id, { fetchedAt: ctx.clock.now, snapshotVersion: 2 })
+  // "Hent SAP igen" writes the meta (under its lock) before the snapshot: the next poll starts reading the snapshot, which is still the old one.
+  let releaseWrite
+  writeGate = new Promise(resolve => { releaseWrite = resolve })
+  const atWrite = new Promise(resolve => { writing = resolve })
+  const applying = mona.applyRefetch(MONA, id, { token: preview.token })
+  await atWrite
+  writeGate = null
   let release
   gate = new Promise(resolve => { release = resolve })
   const atRead = new Promise(resolve => { reached = resolve })
@@ -1315,7 +1386,8 @@ test('a slow read of the snapshot never puts the old SAP figures back over this 
   const polling = mona.getState(MONA, id)
   await atRead
   gate = null
-  await mona.applyRefetch(MONA, id, { token: preview.token })
+  releaseWrite()
+  await applying
   release()
   await polling
   // At once (before the next refresh): an approval made now freezes the rows of this state.
