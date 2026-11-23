@@ -376,19 +376,20 @@ test('a leftover journal with keys the next action does not lock is finished on 
   assert.ok(state.meta.applied.includes('shelf-1'))
 })
 
-test('an older Hub that wrote another file after a drop behind the pallets: the pallets prove the action landed, it is not applied twice', async t => {
+test('an older Hub that made the same change after a drop before the pallets landed: the journal is given up, the replay counts again', async t => {
   const { repo, store } = await seeded()
-  dropAt(t, 'history-2026-10.json')
+  dropAt(t, 'pallets.json')
   await assert.rejects(takeTen(repo, 'take-1'), { code: 'EIO' })
   t.mock.restoreAll()
-  await oldHub(store, 'old-1', stock => { stock['E9 H5|R162-0717'] = { id: 'E9 H5|R162-0717', location: 'E9 H5', material: 'R162-0717', quantity: 5 } }, 'stock')
-  assert.deepEqual(await takeTen(repo, 'take-1'), { duplicate: true })
-  const state = await repo.read('TCD')
-  assert.deepEqual([state.pallets.p1.quantity, state.stock['E9 H5|R162-0717'].quantity], [90, 5])
-  assert.deepEqual((await repo.history('TCD', { type: 'take' })).map(event => event.actionId), ['take-1'], 'the log line is finished')
-  assert.deepEqual(state.meta.applied.slice(-2), ['old-1', 'take-1'])
+  const warn = t.mock.method(console, 'warn', () => {})
+  // Another person takes the same 10 from the same pallet on a 1.6.7 Hub: the pallets now look as the journal left them.
+  await oldHub(store, 'old-1', pallets => { pallets.p1.quantity -= 10 })
+  const replayed = await takeTen(repo, 'take-1')
+  assert.notDeepEqual(replayed, { duplicate: true }, 'equal pallets prove nothing: the take is not taken as landed')
+  assert.equal((await repo.read('TCD')).pallets.p1.quantity, 80, 'both takes count')
+  assert.equal(warn.mock.callCount(), 1, 'the journal is given up, and that is logged')
+  assert.deepEqual((await repo.history('TCD', { type: 'take' })).map(event => event.actionId), ['take-1'], 'one line for the replayed take')
 })
-
 test('a finished journal stays on M: and costs no extra transaction or write, also for an action that locks other files', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'locations-repo-'))
   const store = createStore(root)

@@ -164,10 +164,10 @@ const isDone = (journal, meta) => {
  * - Its action ids are all in meta: everything reached M: (meta is written last). Nothing to do.
  * - meta is as before or after the transaction: nobody acted since (every action writes meta). Every file still as
  *   before is written; a file changed since is never overwritten – the journal is given up (the draft is just skipped).
- * - meta was changed by somebody else (a 1.6.6/1.6.7 Hub acted since): only proof that the files landed counts – the
- *   last file renamed as the transaction left it, or a log line of the action (the log is written after the files).
- *   Then the log and meta are finished (both only added to); the files are left as they are. Without proof the
- *   journal is given up and the outbox replays the action.
+ * - meta was changed by somebody else (a 1.6.6/1.6.7 Hub acted since): only a log line of the action proves that its
+ *   files landed (the log is written after them; a file's content proves nothing, as the older Hub may have made the
+ *   same change). Then the log and meta are finished (both only added to); the files are left as they are. Without
+ *   proof the journal is given up and the outbox replays the action.
  */
 function finishPlan(journal, read, { keepApplied }) {
   const meta = read(META)
@@ -193,13 +193,9 @@ function finishPlan(journal, read, { keepApplied }) {
         writes.push([key, value])
       } else writes.push([key, entry.value])
     }
-  } else {
-    // The files are renamed in order, so the last one as the transaction left it proves they all landed.
-    const last = Object.keys(journal.keys || {}).at(-1)
-    const landed = last !== undefined && fingerprint(json(read(last))) === journal.keys[last].post
-    if (!landed && !history.some(({ now, ops }) => historySeen(now, ops))) {
-      return { outcome: 'abandoned', reason: 'en anden Hub har skrevet siden, og intet viser at handlingen nåede M:', writes: [] }
-    }
+  } else if (!history.some(({ now, ops }) => historySeen(now, ops))) {
+    // Only a log line proves it: an older Hub's own action can leave a file exactly as this transaction would have.
+    return { outcome: 'abandoned', reason: 'en anden Hub har skrevet siden, og intet viser at handlingen nåede M:', writes: [] }
   }
   for (const { key, ops, now } of history) {
     const merged = mergeHistory(now, ops)
