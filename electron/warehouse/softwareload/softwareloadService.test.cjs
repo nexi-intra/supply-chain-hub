@@ -117,16 +117,20 @@ function setup({ timeclockRunning = null, sap = { writeEnabled: false }, matdocs
   // pending task until the test opens it, as a slow M:.
   const faults = { venter: 0, kif: 0, versioner: 0 }
   const gates = {}
+  const hurdle = async key => {
+    const kind = Object.keys(faults).find(prefix => key === prefix || key.startsWith(`${prefix}-`))
+    if (kind && gates[kind]) await gates[kind].promise
+    if (kind && faults[kind] > 0) {
+      faults[kind]--
+      throw Object.assign(new Error('M: svarer ikke'), { code: 'STORAGE_UNAVAILABLE' })
+    }
+  }
   const faulty = store => new Proxy(store, {
-    get: (target, name) => (name !== 'mutateAsync' ? target[name] : async (key, change) => {
-      const kind = Object.keys(faults).find(prefix => key === prefix || key.startsWith(`${prefix}-`))
-      if (kind && gates[kind]) await gates[kind].promise
-      if (kind && faults[kind] > 0) {
-        faults[kind]--
-        throw Object.assign(new Error('M: svarer ikke'), { code: 'STORAGE_UNAVAILABLE' })
-      }
-      return target.mutateAsync(key, change)
-    }),
+    get: (target, name) => {
+      if (name === 'mutateAsync') return async (key, change) => { await hurdle(key); return target.mutateAsync(key, change) }
+      if (name === 'withLockedKeysAsync') return async (keys, change) => { for (const key of keys) await hurdle(key); return target.withLockedKeysAsync(keys, change) }
+      return target[name]
+    },
   })
   const journalDir = path.join(root, 'journal')
   // The shared search index records the files a search reads; a key in `unreadableIndex` fails like a broken file.
@@ -553,14 +557,62 @@ test('a finish that stops before the task waits for SAP takes its mark off, and 
   assert.deepEqual(await svc.scan(ANNA, { serial: 'B', taskId: 't1' }), { serial: 'B', count: 2 }, 'the task goes on')
 
   // A PC that stopped between the mark and the hand-over leaves the mark; finish and cancel wait for it to run out.
-  await ctx.storeFor('TCD').mutateAsync(runningKeyOf(ANNA), task => ({ ...task, finishing: { at: ctx.clock.now, runId: 'gone' } }))
+  await svc.pause(ANNA)
+  const markedAt = ctx.clock.now
+  await ctx.storeFor('TCD').mutateAsync(runningKeyOf(ANNA), task => ({ ...task, finishing: { at: markedAt, runId: 'gone' } }))
+  ctx.timeclock.running = { taskName: 'Pakning' }
+  ctx.stops.length = 0
+  await assert.rejects(svc.resume(ANNA), { code: 'SOFTWARELOAD_BUSY', message: /Venter på SAP/ })
+  assert.deepEqual([ctx.stops, ctx.timeclock.running], [[], { taskName: 'Pakning' }], 'a refused resume leaves Stempelkort running')
   await assert.rejects(svc.scan(ANNA, { serial: 'C', taskId: 't1' }), { code: 'SOFTWARELOAD_BUSY' })
   await assert.rejects(svc.cancel(ANNA), { code: 'SOFTWARELOAD_BUSY' })
   await assert.rejects(svc.finish(ANNA, await confirmed(ctx, ANNA)), { code: 'SOFTWARELOAD_BUSY' })
   ctx.tick(CLAIM_MS)
+  ctx.faults.venter = 1
+  await assert.rejects(svc.finish(ANNA, await confirmed(ctx, ANNA)), { code: 'STORAGE_UNAVAILABLE' })
+  assert.deepEqual((await savedRunning(ctx, ANNA)).finishing, { at: markedAt, runId: 'gone' }, 'a failed finish gives back the mark it found, never clears it')
+  ctx.tick(10 * MIN)
   const result = await svc.finish(ANNA, await confirmed(ctx, ANNA))
   assert.deepEqual([result.state, Object.keys(result.results).sort()], ['faerdig', ['A', 'B']])
-  assert.equal('finishing' in (await ctx.finished('2026-11')).t1, false)
+  const task = (await ctx.finished('2026-11')).t1
+  assert.deepEqual([task.endedAt, task.workedMs, 'finishing' in task], [markedAt, markedAt - task.startedAt, false], 'the time stopped when the first finish marked the task')
+})
+
+test('a running file left next to a task already handed over to SAP is retired, and the task is never moved again', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
+  sap.throwWhen = kind => kind === 'lookup'
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, TASK, ['A'])
+  const before = await savedRunning(ctx, ANNA)
+  await assert.rejects(svc.finish(ANNA, await confirmed(ctx, ANNA)), { code: 'SAP_NOT_READY' })
+  // The PC crashed after writing venter-t1 and before deleting the running file.
+  const leaveBehind = () => ctx.storeFor('TCD').setAsync(runningKeyOf(ANNA), { ...before, finishing: { at: ctx.clock.now, runId: 'crashed' } })
+  await leaveBehind()
+  ctx.tick(CLAIM_MS)
+  sap.throwWhen = null
+  sap.calls.length = 0
+  const finishAgain = { taskId: 't1', choice: { type: 'sw+key', kif: true, target: 'D006', version: 'v2.1.3' } }
+  await assert.rejects(svc.finish(ANNA, finishAgain), { code: 'SOFTWARELOAD_ALREADY_FINISHED', message: 'Opgaven er allerede afsluttet. Se Venter på SAP eller statistikken' })
+  assert.deepEqual(sap.calls, [])
+  assert.equal(await savedRunning(ctx, ANNA), undefined, 'the leftover running file is gone')
+  assert.equal((await ctx.storeFor('TCD').getAsync('venter-t1', { skipCache: true })).claim, undefined, 'the pending task is untouched')
+
+  await leaveBehind()
+  const status = await svc.status(ANNA)
+  assert.deepEqual([status.running, status.pending.map(task => task.id)], [null, ['t1']], 'the screen shows it waiting for SAP, not running')
+  assert.equal(await savedRunning(ctx, ANNA), undefined)
+
+  // Continued and finished from Venter på SAP; a leftover after that is retired too, and the documents stay.
+  const done = await svc.continueFinish(ANNA, { taskId: 't1' })
+  assert.deepEqual(transfers(sap), [['D005', ['A']], ['D006', ['A']]])
+  await leaveBehind()
+  sap.calls.length = 0
+  await assert.rejects(svc.finish(ANNA, finishAgain), { code: 'SOFTWARELOAD_ALREADY_FINISHED' })
+  assert.deepEqual(sap.calls, [], 'never D006 to D005 and back again')
+  assert.equal(await savedRunning(ctx, ANNA), undefined)
+  assert.equal(await ctx.storeFor('TCD').getAsync('venter-t1', { skipCache: true }), undefined, 'no new pending task')
+  assert.deepEqual((await ctx.finished('2026-11')).t1.results.A.steps.map(step => step.doc), done.results.A.steps.map(step => step.doc))
+  assert.deepEqual((await allIndexLines(ctx)).map(line => line.docs), [[doc(1), doc(2)]])
 })
 
 test('finish in KIF moves via D005 and records every document per serial', async () => {

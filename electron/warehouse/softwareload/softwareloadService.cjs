@@ -52,7 +52,8 @@ const CHOICE_KEYS = ['type', 'kif', 'target', 'version']
 const choiceOf = task => Object.fromEntries(CHOICE_KEYS.map(key => [key, task[key]]))
 const sameChoice = (a, b) => Boolean(a && b) && CHOICE_KEYS.every(key => a[key] === b[key])
 const changedMeanwhile = () => codeError('SOFTWARELOAD_CHANGED', 'Opgaven er rettet imens. Se oversigten igen')
-const beingFinished = () => codeError('SOFTWARELOAD_BUSY', 'Opgaven er ved at blive afsluttet. Er afslutningen gået i stå, så afslut opgaven igen')
+const beingFinished = () => codeError('SOFTWARELOAD_BUSY', 'Opgaven er ved at blive afsluttet. Vent til flytningen er færdig, eller se under "Venter på SAP"')
+const alreadyFinished = () => codeError('SOFTWARELOAD_ALREADY_FINISHED', 'Opgaven er allerede afsluttet. Se Venter på SAP eller statistikken')
 const upper = value => String(value ?? '').trim().toUpperCase()
 const pad = number => String(number).padStart(2, '0')
 /** The local month of a moment (the PCs run Danish time). */
@@ -289,8 +290,27 @@ function createSoftwareloadService({
   async function status(user) {
     // SAP documents this PC could not save on M: earlier go there first; a drive still away leaves them for later.
     await mergeJournal(user).catch(() => {})
-    const [running, pending] = await Promise.all([readRunning(user), pendingTasks(user)])
+    const [found, pending] = await Promise.all([readRunning(user), pendingTasks(user)])
+    // A running file left behind by a finish that handed the task over is never shown as running again.
+    const leftBehind = found && (found.finishing || pending.some(task => task.id === found.id)) && await wasHandedOver(user, found).catch(() => false)
+    if (leftBehind) await retireRunning(user, found.id).catch(() => {})
+    const running = leftBehind ? null : found
     return { running: view(running), pending, isManager: isManager(user), writeEnabled: Boolean(sap?.writeEnabled) }
+  }
+
+  /** Whether a running task was handed over to SAP already: it waits as `venter-<id>` or is in its owner's month file. */
+  async function wasHandedOver(user, task) {
+    const store = storeFor(user.team)
+    const [pending, month] = await Promise.all([store.getAsync(pendingKey(task.id), { skipCache: true }), store.getAsync(finishedKey(task), { skipCache: true })])
+    return Boolean(pending || month?.tasks?.[task.id])
+  }
+
+  /** Deletes the person's running file under its lock, only while it still holds task `id`. */
+  function retireRunning(user, id) {
+    const key = runningKey(user.email)
+    return storeFor(user.team).withLockedKeysAsync([key], transaction => {
+      if (transaction.get(key)?.id === id) transaction.delete(key)
+    })
   }
 
   async function rememberVersion(user, version) {
@@ -421,6 +441,7 @@ function createSoftwareloadService({
   async function resume(user) {
     const current = await readRunning(user, { skipCache: true })
     if (!current) throw notRunning()
+    if (current.finishing) throw beingFinished()
     if (!isPaused(current)) throw codeError('SOFTWARELOAD_NOT_PAUSED', 'Opgaven holder ikke pause')
     const stoppedTimeclock = await stopTimeclock(user, 'fortsæt så softwareload-opgaven')
     return { ...await changePause(user, false), ...(stoppedTimeclock ? { stoppedTimeclock } : {}) }
@@ -747,14 +768,15 @@ function createSoftwareloadService({
   }
 
   /**
-   * Takes a finish's marker off the running task when the finish stopped before the task waited for SAP, so the user
-   * can go on scanning. Best effort: a marker left behind no longer stops finish or cancel after CLAIM_MS.
+   * Gives the running task back the marker it had before this finish (`runId`) marked it, when the finish stopped before
+   * the task was handed over. Only this finish's own marker is touched. Best effort: a marker left behind no longer stops
+   * finish or cancel after CLAIM_MS.
    */
-  async function clearFinishing(user, runId) {
+  async function restoreFinishing(user, runId, previous) {
     try {
       await storeFor(user.team).mutateAsync(runningKey(user.email), current => {
         if (current?.finishing?.runId !== runId) return undefined
-        return withoutFinishing(current)
+        return previous ? { ...current, finishing: previous } : withoutFinishing(current)
       })
     } catch { /* see above */ }
   }
@@ -764,6 +786,8 @@ function createSoftwareloadService({
    * `taskId` and `choice` are what the preview showed and the user confirmed: a task edited since is refused with
    * SOFTWARELOAD_CHANGED, so SAP never moves with choices nobody saw. Under the same lock the task is marked
    * `finishing`, so an edit or scan from another PC cannot land in it and get lost when the running file is deleted.
+   * A task already handed over (pending or finished) is never handed over again: its running file is a leftover and
+   * goes, and the finish is refused with SOFTWARELOAD_ALREADY_FINISHED.
    */
   async function finish(user, { taskId: confirmedId, choice: confirmed, onProgress } = {}) {
     requireWrite()
@@ -774,32 +798,42 @@ function createSoftwareloadService({
     try {
       const store = storeFor(user.team)
       const runId = newRunId()
+      const found = await readRunning(user, { skipCache: true })
+      if (found && await wasHandedOver(user, found)) {
+        await retireRunning(user, found.id).catch(() => { /* status retires it later */ })
+        throw alreadyFinished()
+      }
       let ended = null
+      let previous = null
       await store.mutateAsync(runningKey(user.email), current => {
         if (!current) throw notRunning()
         if (finishingNow(current)) throw codeError('SOFTWARELOAD_BUSY', 'Opgaven er allerede ved at blive afsluttet')
         if (current.id !== confirmedId || !sameChoice(choiceOf(current), confirmed)) throw changedMeanwhile()
+        previous = current.finishing ?? null
         const task = withoutFinishing(current)
-        const endedAt = now()
+        // After a finish that stopped once marked, the time stopped then: the time it hung does not count.
+        const endedAt = previous?.endedAt ?? previous?.at ?? now()
         const pauses = task.pauses.map(pause => (pause.to == null ? { ...pause, to: endedAt } : pause))
         const paused = pausedMs(pauses, endedAt)
         ended = { ...task, pauses, endedAt, pausedMs: paused, workedMs: endedAt - task.startedAt - paused, state: 'mangler-sap' }
-        return { ...task, finishing: { at: endedAt, runId } }
+        return { ...task, finishing: { at: now(), endedAt, runId } }
       })
+      let handedOver = false
       try {
-        if (inFlight.has(ended.id)) throw alreadyMoving()
-        inFlight.add(taskId = ended.id)
-        // After a crash between these two writes both files exist; the pending one wins, so saved steps are never lost.
-        await store.mutateAsync(pendingKey(ended.id), current => {
-          const task = current ?? ended
-          requireFreeClaim(task, runId)
-          return { ...task, claim: claimOf(user, runId) }
+        // Under the locks of the pending file and the month file, so a continue that completes the task meanwhile is seen.
+        handedOver = await store.withLockedKeysAsync([pendingKey(ended.id), finishedKey(ended)], transaction => {
+          if (transaction.get(pendingKey(ended.id)) || transaction.get(finishedKey(ended))?.tasks?.[ended.id]) return true
+          transaction.set(pendingKey(ended.id), { ...ended, claim: claimOf(user, runId) })
+          return false
         })
       } catch (error) {
-        await clearFinishing(user, runId)
+        await restoreFinishing(user, runId, previous)
         throw error
       }
-      await store.deleteAsync(runningKey(user.email))
+      // The task is handed over now (or was already); the running file is a leftover, and status retires it if this fails.
+      await retireRunning(user, ended.id).catch(() => {})
+      if (handedOver) throw alreadyFinished()
+      inFlight.add(taskId = ended.id)
       return await execute(user, ended.id, runId, onProgress)
     } finally {
       finishing.delete(email)

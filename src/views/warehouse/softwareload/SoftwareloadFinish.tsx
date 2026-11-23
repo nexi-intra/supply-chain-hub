@@ -46,7 +46,7 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
   const [confirming, setConfirming] = useState(false)
   const [moving, setMoving] = useState(false)
   const [result, setResult] = useState<SoftwareloadFinishResult | null>(null)
-  const [finishError, setFinishError] = useState<{ text: string; stillRunning: boolean } | null>(null)
+  const [finishError, setFinishError] = useState<{ text: string; stillRunning: boolean; alreadyFinished: boolean } | null>(null)
   const [progress, resetProgress] = useSoftwareloadProgress(user.email)
   const inFlight = useRef(false)
   useReportBusy(onBusy, 'finish', moving)
@@ -85,7 +85,7 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
       }
       // Some refusals come before the time stops; anything later leaves the task waiting for SAP. The status tells which.
       const now = await window.electronWarehouse!.softwareload.status().catch(() => null)
-      setFinishError({ text: sapRunErrorMessage(error), stillRunning: now?.running?.id === task?.id })
+      setFinishError({ text: sapRunErrorMessage(error), stillRunning: now?.running?.id === task?.id, alreadyFinished: errorCode(error) === 'SOFTWARELOAD_ALREADY_FINISHED' })
     } finally {
       inFlight.current = false
       setMoving(false)
@@ -119,7 +119,9 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
     return (
       <Card className="gap-4 px-6 py-8">
         <ErrorLine text={finishError.text} />
-        <p className="text-sm text-muted-foreground">{finishError.stillRunning
+        <p className="text-sm text-muted-foreground">{finishError.alreadyFinished
+          ? t('Opgaven blev overdraget til SAP tidligere og flyttes ikke igen. Den står under Venter på SAP eller i statistikken.', 'The task was handed over to SAP earlier and is not moved again. It is under Waiting for SAP or in the statistics.')
+          : finishError.stillRunning
           ? t('Opgaven kører stadig. Intet er flyttet.', 'The task is still running. Nothing was moved.')
           : t('Tiden er stoppet, og opgaven venter på SAP. Det der allerede er flyttet, er gemt. Fortsæt under Venter på SAP, når SAP er klar.', 'The time is stopped and the task waits for SAP. What was already moved is saved. Continue under Waiting for SAP when SAP is ready.')}</p>
         <div className="flex flex-wrap gap-2">
