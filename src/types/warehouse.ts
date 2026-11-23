@@ -566,6 +566,10 @@ export interface Approval {
   at?: number
   postedBy?: Person
   postedAt?: number
+  /** Set when a manager undid a wrong "Bogført i SAP" mark (the approval is then back to approved). */
+  unpostedBy?: Person
+  unpostedAt?: number
+  unpostReason?: string
   /** Set when a counter sent the material to approval. */
   diff?: number
   sapQty?: number
@@ -1115,6 +1119,8 @@ export interface WarehouseBridge {
     refetchPreview(id: string): Promise<{ token: string; diff: { changes: { material: string; sloc: string; before: Record<StockType, number>; after: Record<StockType, number>; frozen?: boolean }[]; serials: { added: number; removed: number } } }>
     refetchApply(request: { id: string; token: string }): Promise<CountMeta>
     approval(request: { id: string; material: string; status: 'approved' | 'returned' | 'posted' | 'reset'; comment?: string }): Promise<Approval>
+    /** Managers only: undoes a wrong manual "Bogført i SAP" mark (back to approved). Refused while an SAP document holds the material. */
+    unpost(request: { id: string; material: string; reason: string }): Promise<Approval>
     lockMaterial(request: { id: string; material: string }): Promise<MaterialLock>
     requestMaterial(request: { id: string; material: string }): Promise<MaterialLock>
     answerMaterialRequest(request: { id: string; material: string; email: string; allow: boolean }): Promise<MaterialLock>

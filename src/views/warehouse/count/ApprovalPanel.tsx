@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { ArrowUUpLeft, CheckCircle, Checks, Stamp } from '@phosphor-icons/react'
+import { ArrowCounterClockwise, ArrowUUpLeft, CheckCircle, Checks, Stamp } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -80,6 +80,15 @@ export function ApprovalPanel({ id, state, optimistic, person }: PanelProps) {
     save({ [material]: value }, () => window.electronWarehouse!.counts.approval({ id, material, status, comment }), status === 'approved')
   }
 
+  /** Undoes a wrong manual "Bogført i SAP" mark; the backend refuses while an SAP document holds the material. */
+  const unpost = (material: string) => {
+    if (saving.has(material)) return
+    const reason = (window.prompt(t(`Hvorfor fortrydes Bogført i SAP for ${material}? Gør det kun, hvis differencen ikke er bogført i SAP.`, `Why is Posted in SAP undone for ${material}? Only do it if the difference has not been posted in SAP.`)) || '').trim()
+    if (!reason) return
+    const value: Approval = { ...state.approvals[material], status: 'approved', unpostedBy: person, unpostedAt: Date.now(), unpostReason: reason.slice(0, 300) }
+    save({ [material]: value }, () => window.electronWarehouse!.counts.unpost({ id, material, reason }), false)
+  }
+
   const approveClean = () => {
     const clean = materials.filter(item => !state.rows.some(row => row.material === item.material && row.diff !== 0) && !['approved', 'posted'].includes(state.approvals[item.material]?.status || '') && !saving.has(item.material))
     const at = Date.now()
@@ -130,8 +139,9 @@ export function ApprovalPanel({ id, state, optimistic, person }: PanelProps) {
                       {approval?.by && approval.status !== 'open' && <div className="mt-0.5 text-xs text-muted-foreground">{approval.status === 'submitted' ? t('Sendt af ', 'Sent by ') : ''}{approval.by.name} · {formatDateTime(approval.at)}</div>}
                       {approval?.status === 'submitted' && typeof approval.diff === 'number' && <div className={cn('text-xs font-medium', approval.diff === 0 ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300')}>{approval.diff === 0 ? t('Uden difference', 'No difference') : t(`Med difference ${approval.diff > 0 ? '+' : ''}${formatNumber(approval.diff)}`, `With difference ${approval.diff > 0 ? '+' : ''}${formatNumber(approval.diff)}`)}</div>}
                       {approval?.status === 'posted' && approval.postedBy && <div className="text-xs text-muted-foreground">{t('Bogført', 'Posted')}: {approval.postedBy.name} · {formatDateTime(approval.postedAt)}</div>}
+                      {approval?.status === 'approved' && approval.unpostedBy && <div className="text-xs text-muted-foreground">{t('Bogført fortrudt', 'Posting undone')}: {approval.unpostedBy.name} · {formatDateTime(approval.unpostedAt)} · {approval.unpostReason}</div>}
                       {approval?.comment && <div className="text-xs text-muted-foreground">{approval.comment}</div>}
-                      {item.countedAfter !== 0 && <div className="text-xs font-medium text-amber-700 dark:text-amber-300">{item.countedAfter > 0 ? '+' : ''}{formatNumber(item.countedAfter)} {t('talt efter godkendelse – Nulstil for at tage dem med', 'counted after approval – Reset to include them')}</div>}
+                      {item.countedAfter !== 0 && <div className="text-xs font-medium text-amber-700 dark:text-amber-300">{item.countedAfter > 0 ? '+' : ''}{formatNumber(item.countedAfter)} {approval?.status === 'posted' ? t('talt efter bogføring, indgår ikke', 'counted after posting, not included') : t('talt efter godkendelse – Nulstil for at tage dem med', 'counted after approval – Reset to include them')}</div>}
                     </td>
                     {canEdit && (
                       <td className="px-3 py-1.5">
@@ -139,7 +149,8 @@ export function ApprovalPanel({ id, state, optimistic, person }: PanelProps) {
                           {(!approval || ['open', 'returned', 'submitted'].includes(approval.status)) && <Button size="sm" disabled={saving.has(item.material)} onClick={() => set(item.material, 'approved')}><CheckCircle size={16} /> {t('Godkend', 'Approve')}</Button>}
                           {approval?.status === 'approved' && <Button size="sm" variant="secondary" disabled={saving.has(item.material)} onClick={() => set(item.material, 'posted')}><Stamp size={16} /> {t('Bogført i SAP', 'Posted in SAP')}</Button>}
                           {approval?.status !== 'returned' && approval?.status !== 'posted' && <Button size="sm" variant="ghost" disabled={saving.has(item.material)} onClick={() => set(item.material, 'returned')}><ArrowUUpLeft size={16} /> {t('Tilbage', 'Send back')}</Button>}
-                          {approval && approval.status !== 'open' && <Button size="sm" variant="ghost" disabled={saving.has(item.material)} onClick={() => set(item.material, 'reset')}>{t('Nulstil', 'Reset')}</Button>}
+                          {approval && approval.status !== 'open' && approval.status !== 'posted' && <Button size="sm" variant="ghost" disabled={saving.has(item.material)} onClick={() => set(item.material, 'reset')}>{t('Nulstil', 'Reset')}</Button>}
+                          {approval?.status === 'posted' && <Button size="sm" variant="ghost" disabled={saving.has(item.material)} onClick={() => unpost(item.material)}><ArrowCounterClockwise size={16} /> {t('Fortryd bogført', 'Undo posted')}</Button>}
                         </div>
                       </td>
                     )}

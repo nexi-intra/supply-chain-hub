@@ -1169,6 +1169,10 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   }
 
   // ---------- Approval (managers) ----------
+  const postedError = code => codeError('COUNT_MATERIAL_POSTED', `${code} er bogført i SAP og kan ikke ændres. Lav en ny optælling, hvis der skal rettes mere.`)
+  /** The SAP count document (not deleted) that holds the material, if any. */
+  const activePiDoc = (docs, code) => Object.values(docs).find(doc => doc.status !== 'deleted' && doc.lines?.some(line => line.material === code))
+
   async function setApproval(user, id, { material, status, comment = '' } = {}) {
     const state = status === 'approved' ? await refresh(await load(user, id), true) : await load(user, id)
     if (!isManager(user)) throw codeError('MANAGER_ONLY', 'Kun managers kan godkende')
@@ -1177,12 +1181,13 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     if (!['approved', 'returned', 'posted', 'reset'].includes(status)) throw codeError('APPROVAL_INVALID')
     const approvals = await repo.getApprovals(state.team, state.id)
     const current = approvals[code]
+    // Posted is final: a reset would let numbers counted afterwards be posted in SAP a second time.
+    if (current?.status === 'posted') throw postedError(code)
     if (status === 'posted' && current?.status !== 'approved') throw codeError('APPROVAL_INVALID', 'Materialet skal godkendes før det markeres som bogført')
     if (status === 'returned' && !clean(comment, 300)) throw codeError('APPROVAL_INVALID', 'Skriv hvorfor materialet sendes tilbage')
     if (status === 'returned' || status === 'reset') {
       // The numbers on an SAP count document must not change underneath it: delete the document first.
-      const docs = Object.values(await repo.getPiDocs(state.team, state.id).catch(() => ({})))
-      const active = docs.find(doc => doc.status !== 'deleted' && doc.lines?.some(line => line.material === code))
+      const active = activePiDoc(await repo.getPiDocs(state.team, state.id).catch(() => ({})), code)
       if (active) throw codeError('PIDOC_ACTIVE', active.status === 'posted' ? `${code} er bogført i SAP (${active.docNo})` : `${code} har SAP-dokument ${active.docNo || ''} – slet det først`)
     }
     const by = me(user)
@@ -1245,6 +1250,31 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       }
       return { all, result: { posted, skipped } }
     })
+  }
+
+  /**
+   * Undoes a wrong manual "Bogført i SAP" mark: back to approved with the frozen numbers, with who, when and why on the
+   * approval. Never while an SAP count document (not deleted) holds the material: then the document is what posts it.
+   */
+  async function undoPosted(user, id, { material, reason } = {}) {
+    const state = await load(user, id)
+    if (!isManager(user)) throw codeError('MANAGER_ONLY', 'Kun managers kan fortryde Bogført i SAP')
+    await assertStatusOpen(state.team, state.meta)
+    const code = normalizeMaterial(material)
+    const text = clean(reason, 300)
+    if (!text) throw codeError('UNPOST_REASON', 'Skriv hvorfor Bogført i SAP fortrydes')
+    // Read without a fallback: when the documents cannot be read, nothing is undone.
+    const active = activePiDoc(await repo.getPiDocs(state.team, state.id), code)
+    if (active) throw codeError('UNPOST_PIDOC', `${code} ligger på SAP-dokument${active.docNo ? ` ${active.docNo}` : ''}, så Bogført i SAP kan ikke fortrydes`)
+    const by = me(user)
+    const at = now()
+    const undone = await repo.changeApprovals(state.team, state.id, all => {
+      if (all[code]?.status !== 'posted') return { all, result: null }
+      all[code] = { ...all[code], status: 'approved', unpostedBy: by, unpostedAt: at, unpostReason: text }
+      return { all, result: all[code] }
+    })
+    if (!undone) throw codeError('APPROVAL_INVALID', `${code} er ikke markeret som bogført i SAP`)
+    return undone
   }
 
   // ---------- Storage rules (managers) and placements ----------
@@ -1461,7 +1491,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     lockMaterial: changes(lockMaterial), requestMaterial: changes(requestMaterial), answerMaterialRequest: changes(answerMaterialRequest), releaseMaterial: changes(releaseMaterial), submitMaterial: changes(submitMaterial),
     requestJoin: changes(requestJoin), decideMember: changes(decideMember), claimArea: changes(claimArea), releaseArea: changes(releaseArea),
     closeCount: changes(closeCount), reopenCount: changes(reopenCount), deleteCount: changes(deleteCount), previewRefetch, applyRefetch,
-    setApproval: changes(setApproval), approveAllWithoutDifference: changes(approveAllWithoutDifference), markPosted: changes(markPosted),
+    setApproval: changes(setApproval), approveAllWithoutDifference: changes(approveAllWithoutDifference), markPosted: changes(markPosted), undoPosted: changes(undoPosted),
     getRules, setRule, serialRules, setSerialRule, copySerials, countDoc, fetchDocStock, savePlacement: changes(savePlacement, 'team'), reportData, readCount, flush, closeAll, notifications,
   }
 }

@@ -106,7 +106,7 @@ export function OverviewPanel({ id, open, state }: PanelProps) {
                     <td className="px-3 py-1.5 text-right tabular-nums">{formatMoney(row.valueDiff)}</td>
                     <td className="space-x-1 px-3 py-1.5 text-right">
                       {row.misplaced && <Badge variant="outline" className="border-amber-500 text-amber-700 dark:text-amber-300">{t('Flyt', 'Move')} → {row.suggestions[0] || '?'}</Badge>}
-                      {row.frozenAt !== undefined && <FrozenBadge row={row} />}
+                      {row.frozenAt !== undefined && <FrozenBadge row={row} posted={state.approvals[row.material]?.status === 'posted'} />}
                       {row.sapMismatch && <SapMismatchBadge sapQty={row.sapQty} sapSerials={row.sapSerials} sloc={row.sloc} />}
                       {row.serialManaged && row.countedSerials > 0 && <CopySerialsButton id={id} row={row} long={Boolean(open.serialRules?.[row.material]?.[row.stockType])} />}
                     </td>
@@ -152,18 +152,24 @@ export function CopySerialsButton({ id, row, long, forDoc = false }: { id: strin
   return <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" aria-label={label} title={label} loading={copying} onClick={() => copy()}><Copy size={14} /> {t('Kopiér', 'Copy')}</Button>
 }
 
-function FrozenBadge({ row }: { row: ResultRow }) {
+function FrozenBadge({ row, posted }: { row: ResultRow; posted: boolean }) {
   const after = row.countedAfter || 0
+  const sign = after > 0 ? '+' : ''
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <Badge variant="outline" className="cursor-help border-emerald-500 text-emerald-700 dark:text-emerald-300">
-          {t('Godkendt', 'Approved')}{after !== 0 && t(` · ${after > 0 ? '+' : ''}${formatNumber(after)} efter godkendelse`, ` · ${after > 0 ? '+' : ''}${formatNumber(after)} after approval`)}
+          {posted ? t('Bogført i SAP', 'Posted in SAP') : t('Godkendt', 'Approved')}
+          {after !== 0 && (posted
+            ? t(` · ${sign}${formatNumber(after)} talt efter bogføring, indgår ikke`, ` · ${sign}${formatNumber(after)} counted after posting, not included`)
+            : t(` · ${sign}${formatNumber(after)} efter godkendelse`, ` · ${sign}${formatNumber(after)} after approval`))}
         </Badge>
       </TooltipTrigger>
       <TooltipContent className="max-w-sm">
         {t(`SAP, talt og difference er låst fra godkendelsen ${formatDateTime(row.frozenAt!)}, så nye SAP-tal ikke ændrer dem.`, `SAP, counted and difference are locked from the approval ${formatDateTime(row.frozenAt!)}, so new SAP figures do not change them.`)}
-        {after !== 0 && t(` Der er talt ${formatNumber(after)} stk. efter godkendelsen – de indgår ikke i differencen. Nulstil godkendelsen for at bruge de nye tal.`, ` ${formatNumber(after)} pcs were counted after the approval – they are not in the difference. Reset the approval to use the new figures.`)}
+        {after !== 0 && (posted
+          ? t(` Der er talt ${formatNumber(after)} stk. efter godkendelsen. Materialet er bogført i SAP, så de indgår ikke. Lav en ny optælling, hvis der skal rettes mere.`, ` ${formatNumber(after)} pcs were counted after the approval. The material is posted in SAP, so they are not included. Make a new count if more needs correcting.`)
+          : t(` Der er talt ${formatNumber(after)} stk. efter godkendelsen – de indgår ikke i differencen. Nulstil godkendelsen for at bruge de nye tal.`, ` ${formatNumber(after)} pcs were counted after the approval – they are not in the difference. Reset the approval to use the new figures.`))}
       </TooltipContent>
     </Tooltip>
   )

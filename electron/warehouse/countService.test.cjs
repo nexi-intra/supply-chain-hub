@@ -695,6 +695,14 @@ test('approval freezes a material: fetching SAP again or counting afterwards doe
   await assert.rejects(anna.saveLine(ANNA, id, { place: 'A1.2', material: 'R162-0717', qty: 5 }), { code: 'MATERIAL_APPROVED' }, 'an approved material is not counted any more')
   assert.equal((await mona.setApproval(MONA, id, { material: 'R162-0717', status: 'posted' })).frozen[0].diff, -3, 'posting keeps the frozen numbers')
 
+  // A posted material is final: the counted-after numbers never go into a second correction in SAP.
+  const postedMessage = 'R162-0717 er bogført i SAP og kan ikke ændres. Lav en ny optælling, hvis der skal rettes mere.'
+  for (const status of ['reset', 'returned', 'approved']) {
+    await assert.rejects(mona.setApproval(MONA, id, { material: 'R162-0717', status, comment: 'Tæl igen' }), { code: 'COUNT_MATERIAL_POSTED', message: postedMessage }, `${status} is refused on a posted material`)
+  }
+  assert.equal((await ctx.repo.getApprovals('TCD', id))['R162-0717'].status, 'posted')
+
+  await mona.undoPosted(MONA, id, { material: 'R162-0717', reason: 'Trykket ved en fejl' })
   await ctx.repo.changePiDocs('TCD', id, all => ({ all: { ...all, D1: { id: 'D1', docNo: '105000903', status: 'printed', lines: [{ material: 'R162-0717' }] } } }))
   await assert.rejects(mona.setApproval(MONA, id, { material: 'R162-0717', status: 'reset' }), { code: 'PIDOC_ACTIVE' }, 'an SAP document locks the approval')
   await ctx.repo.changePiDocs('TCD', id, all => ({ all: { ...all, D1: { ...all.D1, status: 'deleted' } } }))
@@ -704,6 +712,38 @@ test('approval freezes a material: fetching SAP again or counting afterwards doe
   ctx.tick(2000)
   state = await anna.getState(ANNA, id)
   assert.deepEqual([row(state).sapQty, row(state).counted, row(state).diff, row(state).frozenAt], [130, 102, -28, undefined], 'reset shows the live numbers again')
+})
+
+test('a wrong "Bogført i SAP" mark is undone only by a manager, with a reason and without an SAP document', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const mona = ctx.service('pc3')
+  const ADA = { email: 'ada@example.test', fullName: 'Ada', role: 'user', team: 'TCD', countAdmin: true }
+  const { id } = await newCount(ctx, anna)
+  await anna.saveLine(ANNA, id, { place: 'A1.1', material: 'R162-0717', qty: 97 })
+  await anna.flush(ANNA, id)
+  ctx.tick(2000)
+  await mona.setApproval(MONA, id, { material: 'R162-0717', status: 'approved' })
+  await assert.rejects(mona.undoPosted(MONA, id, { material: 'R162-0717', reason: 'Fejl' }), { code: 'APPROVAL_INVALID' }, 'only a posted material can be undone')
+  await mona.setApproval(MONA, id, { material: 'R162-0717', status: 'posted' })
+  ctx.tick(1000)
+
+  await assert.rejects(anna.undoPosted(ANNA, id, { material: 'R162-0717', reason: 'Fejl' }), { code: 'MANAGER_ONLY' })
+  await assert.rejects(ctx.service('pc4').undoPosted(ADA, id, { material: 'R162-0717', reason: 'Fejl' }), { code: 'MANAGER_ONLY' }, 'an Optælling admin cannot post, so cannot undo it either')
+  for (const reason of [undefined, '', '   ']) await assert.rejects(mona.undoPosted(MONA, id, { material: 'R162-0717', reason }), { code: 'UNPOST_REASON' })
+
+  for (const status of ['creating', 'created', 'printed', 'counted', 'posted']) {
+    await ctx.repo.changePiDocs('TCD', id, all => ({ all: { ...all, D1: { id: 'D1', docNo: '105000903', status, lines: [{ material: 'R162-0717' }] } } }))
+    await assert.rejects(mona.undoPosted(MONA, id, { material: 'R162-0717', reason: 'Fejl' }), { code: 'UNPOST_PIDOC' }, `a ${status} SAP document holds the material`)
+  }
+  assert.equal((await ctx.repo.getApprovals('TCD', id))['R162-0717'].status, 'posted', 'nothing changed while refused')
+  await ctx.repo.changePiDocs('TCD', id, all => ({ all: { ...all, D1: { ...all.D1, status: 'deleted' }, D2: { id: 'D2', docNo: '105000904', status: 'posted', lines: [{ material: 'INT4300-4921-0' }] } } }))
+
+  const undone = await mona.undoPosted(MONA, id, { material: 'r162-0717', reason: '  Trykket ved en fejl  ' })
+  assert.deepEqual([undone.status, undone.unpostedBy, undone.unpostedAt, undone.unpostReason, undone.frozen[0].diff, undone.postedBy.name], ['approved', { email: 'mona@example.test', name: 'Mona' }, ctx.clock.now, 'Trykket ved en fejl', -3, 'Mona'], 'back to approved with the frozen numbers; who posted is kept')
+  assert.deepEqual((await ctx.repo.getApprovals('TCD', id))['R162-0717'], undone)
+
+  assert.equal((await mona.setApproval(MONA, id, { material: 'R162-0717', status: 'reset' })).status, 'open', 'reset is allowed again')
 })
 
 test('a material is locked to its counter: others ask to count along; sending to approval needs the difference accepted', async () => {

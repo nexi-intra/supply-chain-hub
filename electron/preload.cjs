@@ -109,6 +109,7 @@ contextBridge.exposeInMainWorld('electronWarehouse', {
     refetchPreview: id => warehouse('counts:refetch-preview', { id }),
     refetchApply: request => warehouse('counts:refetch-apply', request),
     approval: request => warehouse('counts:approval', request),
+    unpost: request => warehouse('counts:unpost', request),
     lockMaterial: request => warehouse('counts:material-lock', request),
     requestMaterial: request => warehouse('counts:material-request', request),
     answerMaterialRequest: request => warehouse('counts:material-answer', request),

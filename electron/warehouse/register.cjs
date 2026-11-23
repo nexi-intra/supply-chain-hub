@@ -312,6 +312,7 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   handle('counts:refetch-preview', (user, p) => counts.previewRefetch(user, p.id))
   handle('counts:refetch-apply', (user, p) => counts.applyRefetch(user, p.id, { token: p.token }))
   handle('counts:approval', noticing((user, p) => counts.setApproval(user, p.id, { material: p.material, status: p.status, comment: p.comment })))
+  handle('counts:unpost', noticing((user, p) => counts.undoPosted(user, p.id, { material: p.material, reason: p.reason })))
   handle('counts:approve-clean', noticing((user, p) => counts.approveAllWithoutDifference(user, p.id)))
   handle('counts:material-lock', (user, p) => counts.lockMaterial(user, p.id, { material: p.material }))
   handle('counts:material-request', (user, p) => counts.requestMaterial(user, p.id, { material: p.material }))
