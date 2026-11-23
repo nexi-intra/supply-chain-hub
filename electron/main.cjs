@@ -828,7 +828,7 @@ function createWindow() {
   })
   win.on('closed', () => diagnostics.write('info', 'window closed'))
   guardCloseWhileSaving(win, {
-    // Placeringer's actions are on this PC's disk already (outbox); the window waits for them to reach M: as well.
+    // Placeringer: only an action not yet written to this PC's disk (outbox) holds the window; what is written is replayed.
     hasPendingWrites: () => mainActivity.isBusy(isQuitWriteChannel) || hasWritesInFlight() || Boolean(warehouse?.hasPendingWrites()),
     whenSaved: () => {
       diagnostics.write('info', 'lukning venter: gemninger er stadig på vej til drevet')

@@ -28,7 +28,7 @@ function codeError(code) {
   return Object.assign(new Error(code), { code })
 }
 
-function createOutbox({ dir, run, isStorageError, isBusyError = () => false, now = Date.now, random = Math.random, setTimer = setTimeout, clearTimer = clearTimeout, onQueued = () => {}, onFailed = () => {}, pauseMs = PAUSE_MS, busyPauseMs = BUSY_PAUSE_MS, busyJitterMs = BUSY_JITTER_MS, rename = fs.promises.rename, saveRetryMs = SAVE_RETRY_MS }) {
+function createOutbox({ dir, run, isStorageError, isBusyError = () => false, now = Date.now, random = Math.random, setTimer = setTimeout, clearTimer = clearTimeout, onQueued = () => {}, onFailed = () => {}, pauseMs = PAUSE_MS, busyPauseMs = BUSY_PAUSE_MS, busyJitterMs = BUSY_JITTER_MS, rename = fs.promises.rename, openFile = fs.promises.open, saveRetryMs = SAVE_RETRY_MS }) {
   const file = path.join(dir, FILE)
   let state = load()
   let draining = null
@@ -44,7 +44,8 @@ function createOutbox({ dir, run, isStorageError, isBusyError = () => false, now
   const ahead = new Map()
   // Actions whose submit() waits for the answer (the person sees it): not "waiting for M:", and an error is not kept.
   const waiting = new Map()
-  const settledWaiters = new Set()
+  // whenWritten() calls waiting for every write-ahead to be on disk.
+  const writtenWaiters = new Set()
 
   function load() {
     try {
@@ -59,25 +60,28 @@ function createOutbox({ dir, run, isStorageError, isBusyError = () => false, now
   async function writeFile(json) {
     await fs.promises.mkdir(dir, { recursive: true })
     const temp = `${file}.${process.pid}.${++temps}.tmp`
-    // On the disk before the rename, so a power cut never leaves an empty or half file behind.
-    const handle = await fs.promises.open(temp, 'w')
     try {
-      await handle.writeFile(json, 'utf8')
-      await handle.sync()
-    } finally {
-      await handle.close()
-    }
-    for (let attempt = 1; ; attempt++) {
+      // On the disk before the rename, so a power cut never leaves an empty or half file behind.
+      const handle = await openFile(temp, 'w')
       try {
-        await rename(temp, file)
-        return
-      } catch (error) {
-        if (!RETRIED_CODES.has(error?.code) || attempt >= SAVE_ATTEMPTS) {
-          await fs.promises.unlink(temp).catch(() => {})
-          throw error
-        }
-        await new Promise(resolve => setTimeout(resolve, saveRetryMs))
+        await handle.writeFile(json, 'utf8')
+        await handle.sync()
+      } finally {
+        await handle.close()
       }
+      for (let attempt = 1; ; attempt++) {
+        try {
+          await rename(temp, file)
+          return
+        } catch (error) {
+          if (!RETRIED_CODES.has(error?.code) || attempt >= SAVE_ATTEMPTS) throw error
+          await new Promise(resolve => setTimeout(resolve, saveRetryMs))
+        }
+      }
+    } catch (error) {
+      // Whatever failed (write, fsync or rename), no temp file is left behind.
+      await fs.promises.unlink(temp).catch(() => {})
+      throw error
     }
   }
 
@@ -100,7 +104,6 @@ function createOutbox({ dir, run, isStorageError, isBusyError = () => false, now
   const queued = id => state.queue.some(action => action.id === id)
   function dequeue(id) {
     state.queue = state.queue.filter(action => action.id !== id)
-    if (!state.queue.length) for (const done of [...settledWaiters]) done()
   }
   function markApplied(id) {
     state.applied = [...state.applied, id].slice(-KEEP_APPLIED)
@@ -118,9 +121,13 @@ function createOutbox({ dir, run, isStorageError, isBusyError = () => false, now
   function writeAhead(entry) {
     state.queue.push(entry)
     const pending = {}
+    const written = () => {
+      ahead.delete(entry.id)
+      if (!ahead.size) for (const done of [...writtenWaiters]) done()
+    }
     pending.promise = new Promise((resolve, reject) => {
-      pending.resolve = () => { ahead.delete(entry.id); resolve() }
-      pending.reject = error => { ahead.delete(entry.id); reject(error) }
+      pending.resolve = () => { written(); resolve() }
+      pending.reject = error => { written(); reject(error) }
     })
     ahead.set(entry.id, pending)
     save({
@@ -259,20 +266,26 @@ function createOutbox({ dir, run, isStorageError, isBusyError = () => false, now
     return persist()
   }
 
-  /** Resolves true when nothing is left in the queue (and the file says so), false after `timeoutMs`. */
-  function whenSettled(timeoutMs) {
+  /**
+   * Resolves true when every action handed in is on this PC's disk (written ahead, and the saves so far are done), false
+   * after `timeoutMs`. What is on disk is safe: it is replayed at the next start, so a close need not wait for M:.
+   */
+  function whenWritten(timeoutMs) {
     return new Promise(resolve => {
       let timer = null
+      let done = false
       const finish = value => {
-        settledWaiters.delete(check)
+        if (done) return
+        done = true
+        writtenWaiters.delete(check)
         if (timer) clearTimeout(timer)
         resolve(value)
       }
-      const check = () => { settledWaiters.delete(check); saving.then(() => finish(true)) }
-      if (!state.queue.length) { check(); return }
-      settledWaiters.add(check)
+      const check = () => { writtenWaiters.delete(check); saving.then(() => finish(true)) }
       timer = setTimeout(() => finish(false), Math.max(0, timeoutMs))
       timer.unref?.()
+      if (!ahead.size) check()
+      else writtenWaiters.add(check)
     })
   }
 
@@ -288,9 +301,11 @@ function createOutbox({ dir, run, isStorageError, isBusyError = () => false, now
     flush,
     // Kept here for M: (shown as "venter på M:"), not the ones running right now with a person waiting for them.
     pending: () => state.queue.filter(action => !waiting.has(action.id)).length,
-    // Everything not yet on M:, also what is running right now.
+    // Everything not yet on M:, also what is running right now (diagnostics).
     unsettled: () => state.queue.length,
-    whenSettled,
+    // Handed in but not yet on this PC's disk: the only actions a close has to wait for.
+    unwritten: () => ahead.size,
+    whenWritten,
     failures,
     acknowledge,
     close,

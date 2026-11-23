@@ -387,18 +387,40 @@ test('a rename refused for a moment (EPERM) is tried again; a lasting one refuse
   assert.deepEqual(sap.applied, ['a1', 'a3'], 'the refused action is never replayed')
 })
 
-test('whenSettled waits until nothing is left in the outbox, or gives up after its time', async () => {
+test('only an action not yet on the disk of this PC holds a close: whenWritten waits for the write-ahead, not for M:', async () => {
   const { sap, make } = setup()
-  const outbox = make()
-  assert.equal(await outbox.whenSettled(1000), true, 'nothing to wait for')
-  await outbox.submit({ id: 'a1', method: 'take', user: ANNA, request: {} })
-  assert.equal(await outbox.whenSettled(20), false, 'M: is down')
+  let release = null
+  const rename = async (from, to) => { if (release === null) { await new Promise(resolve => { release = resolve }) } return fs.promises.rename(from, to) }
+  const outbox = make({ rename })
+  assert.equal(await outbox.whenWritten(1000), true, 'nothing to wait for')
+  const submitted = outbox.submit({ id: 'a1', method: 'take', user: ANNA, request: {} })
+  await until(() => release !== null)
+  assert.equal(outbox.unwritten(), 1, 'on its way to the disk')
+  assert.equal(await outbox.whenWritten(20), false)
+  const written = outbox.whenWritten(5000)
+  release()
+  assert.equal(await written, true)
+  assert.deepEqual(await submitted, { queued: true }, 'M: is down: kept here')
+  assert.equal(outbox.unwritten(), 0)
+  assert.equal(outbox.unsettled(), 1, 'still waiting for M:, but safe on disk')
+  assert.equal(await outbox.whenWritten(1000), true, 'closing does not wait for M:')
   sap.up = true
-  const settled = outbox.whenSettled(5000)
   await outbox.flush()
-  assert.equal(await settled, true)
+  assert.equal(outbox.unsettled(), 0)
 })
 
+test('a write that fails before the rename (fsync) leaves no temp file and refuses the action', async () => {
+  const { dir, sap, make } = setup()
+  sap.up = true
+  const openFile = async (file, flags) => {
+    const handle = await fs.promises.open(file, flags)
+    return { writeFile: (...args) => handle.writeFile(...args), close: () => handle.close(), sync: async () => { throw Object.assign(new Error('EIO: i/o error, fsync'), { code: 'EIO' }) } }
+  }
+  const outbox = make({ openFile })
+  await assert.rejects(outbox.submit({ id: 'a1', method: 'take', user: ANNA, request: {} }), { code: 'OUTBOX_SAVE_FAILED' })
+  assert.equal(sap.runs, 0)
+  assert.deepEqual(fs.readdirSync(dir).filter(name => name.endsWith('.tmp')), [])
+})
 test('an outbox file from 1.6.7 (without anything new) is read and replayed', async () => {
   const { dir, sap, make } = setup()
   fs.writeFileSync(path.join(dir, 'locations-outbox.json'), JSON.stringify({ queue: [{ id: 'old-1', method: 'take', user: ANNA, request: { pallet: 'p1' }, label: 'Tag', at: 1 }], applied: ['old-0'], failures: [] }))

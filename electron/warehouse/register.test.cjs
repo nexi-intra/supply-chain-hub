@@ -7,7 +7,7 @@ const { registerWarehouse } = require('./register.cjs')
 const { createStore } = require('../store.cjs')
 const { createArrivalOrder } = require('../ipcArrivals.cjs')
 
-function setup({ clipboard = { readText: () => '', writeText: () => {} }, env = {}, root = null, arrivals } = {}) {
+function setup({ clipboard = { readText: () => '', writeText: () => {} }, env = {}, root = null, arrivals, outboxOptions, teamUsers } = {}) {
   if (!root) {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'warehouse-register-'))
     for (const team of ['TCD', 'TRR', 'PIM']) fs.mkdirSync(path.join(root, team))
@@ -25,7 +25,7 @@ function setup({ clipboard = { readText: () => '', writeText: () => {} }, env = 
     ipcMain,
     // `delay`: this call's user lookup is slow (read from M:).
     currentActor: async event => { if (event.delay) await new Promise(resolve => setTimeout(resolve, event.delay)); return actors[event.who] },
-    teamUsers: async () => users,
+    teamUsers: teamUsers || (async () => users),
     teamDir: team => path.join(root, team),
     platformRoot: () => root,
     userDataDir: path.join(root, '_user'),
@@ -35,6 +35,7 @@ function setup({ clipboard = { readText: () => '', writeText: () => {} }, env = 
     isPackaged: false,
     env: { TCD_HUB_SAP_FIXTURES_DIR: path.join(__dirname, 'fixtures', 'sap'), ...env },
     ...(arrivals ? { arrivals } : {}),
+    ...(outboxOptions ? { outboxOptions } : {}),
   })
   const call = (who, channel, payload) => handlers.get(`warehouse:${channel}`)({ who, sender: { id: 1 } }, payload)
   // As main.cjs: every call is numbered the moment it arrives, before its user is looked up.
@@ -183,8 +184,8 @@ test('a daily action that finds M: busy (KV_LOCK_BUSY) is kept on this PC instea
   registered.locations.take = async () => { throw Object.assign(new Error('KV_LOCK_BUSY: Lageret er optaget af en anden klient. Prøv igen.'), { code: 'KV_LOCK_BUSY' }) }
   assert.deepEqual(await call('anna', 'locations:take', { actionId: 'busy-1', pallet: pallet.id, quantity: 30 }), { queued: true })
   assert.deepEqual(await call('anna', 'locations:pending'), { pending: 1, failures: [] }, 'queued, not a failure')
-  assert.equal(registered.hasPendingWrites(), true, 'closing the window waits for it (or Luk alligevel)')
-  assert.equal(await registered.whenWritesSettled(20), false)
+  assert.equal(registered.hasPendingWrites(), false, 'safe on this PC: closing the window does not wait for M:')
+  assert.equal(await registered.whenWritesSettled(20), true)
   assert.deepEqual(broadcasts.filter(([channel]) => channel === 'warehouse:locations:queued').map(([, payload]) => payload), [{ team: 'TCD' }], 'the windows show the waiting banner at once')
   registered.locations.take = take
   registered.closeAll()
@@ -222,6 +223,52 @@ test('Placeringer actions sent at once run in the order the window sent them, al
   assert.deepEqual(ran, ['t1', 't2'], 'take part, then the rest')
   assert.equal(registered.hasPendingWrites(), false)
   registered.closeAll()
+})
+test('a put-away on a place made just before it waits for that place, also when it was kept while M: was busy and is replayed', async () => {
+  const { call, send, registered } = setup({ arrivals: createArrivalOrder(), outboxOptions: { busyPauseMs: 200, busyJitterMs: 0 } })
+  await call('mona', 'locations:create-location', { name: 'A2.4', type: 'Palle', purpose: 'reserve', capacity: 1 })
+  const { created: [pallet] } = await call('anna', 'locations:put-away', { pallets: [{ location: 'A2.4', material: 'R162-0717', quantity: 100 }] })
+  const take = registered.locations.take
+  registered.locations.take = async () => { registered.locations.take = take; throw Object.assign(new Error('KV_LOCK_BUSY'), { code: 'KV_LOCK_BUSY' }) }
+  const create = registered.locations.createLocation
+  registered.locations.createLocation = async (user, request) => { await new Promise(resolve => setTimeout(resolve, 800)); return create(user, request) }
+  const [taken, made] = await Promise.all([
+    send('anna', 'locations:take', { actionId: 't1', pallet: pallet.id, quantity: 30 }),
+    send('mona', 'locations:create-location', { name: 'G1', type: 'Gulv', purpose: 'reserve' }),
+    send('anna', 'locations:put-away', { actionId: 'p1', pallets: [{ location: 'G1', material: 'R162-0717', quantity: 10 }] }),
+  ])
+  assert.deepEqual(taken, { queued: true })
+  assert.equal(made.location.name, 'G1')
+  for (let waited = 0; (await call('anna', 'locations:pending')).pending && waited < 5000; waited += 20) await new Promise(resolve => setTimeout(resolve, 20))
+  assert.deepEqual(await call('anna', 'locations:pending'), { pending: 0, failures: [] }, 'the put-away was not replayed before G1 existed')
+  assert.equal((await call('anna', 'locations:location-card', { location: 'G1' })).pallets.length, 1)
+  assert.equal((await call('anna', 'locations:pallet-card', { pallet: pallet.id })).pallet.quantity, 70)
+  registered.closeAll()
+})
+
+test('the team user list is used at once when it is older than 30 s and read again in the background', async () => {
+  const realNow = Date.now
+  let clock = realNow()
+  Date.now = () => clock
+  try {
+    const users = { 'anna@nexi.test': { email: 'anna@nexi.test', fullName: 'Anna Holm', role: 'user', status: 'approved' } }
+    let reads = 0
+    let hang = false
+    const teamUsers = async () => { reads++; if (hang) await new Promise(() => {}); return users }
+    const { call } = setup({ teamUsers })
+    assert.equal((await call('anna', 'me')).fullName, 'Anna Holm', 'the first read waits: nothing is known yet')
+    clock += 31000
+    hang = true
+    const before = reads
+    const answer = await Promise.race([call('anna', 'me'), new Promise(resolve => setTimeout(() => resolve('blocked'), 1000))])
+    assert.notEqual(answer, 'blocked', 'a slow M: does not hold the call up')
+    assert.equal(answer.fullName, 'Anna Holm')
+    assert.equal(reads, before + 1, 'read again in the background')
+    await call('anna', 'me')
+    assert.equal(reads, before + 1, 'one read at a time')
+  } finally {
+    Date.now = realNow
+  }
 })
 test('a pallet edit keeps what the dialog showed (expected) through the local queue, so a stale edit is refused', async () => {
   const { call } = setup()

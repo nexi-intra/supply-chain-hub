@@ -76,8 +76,9 @@ function loadDeviceId(dir) {
  * @param {(teamId: string) => string} deps.teamDir the registered folder of a team in the platform root
  * @param {() => string} deps.platformRoot
  * @param {ReturnType<import('../ipcArrivals.cjs')['createArrivalOrder']>} [deps.arrivals] the order IPC calls arrived in (main.cjs)
+ * @param {object} [deps.outboxOptions] timing of the local queue (tests)
  */
-function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platformRoot, userDataDir, electron, broadcast, isPackaged, configDirs = [], scriptsDir = __dirname, env = process.env, preparedFiles = null, arrivals = null }) {
+function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platformRoot, userDataDir, electron, broadcast, isPackaged, configDirs = [], scriptsDir = __dirname, env = process.env, preparedFiles = null, arrivals = null, outboxOptions = {} }) {
   const { clipboard, dialog, shell, BrowserWindow } = electron
   const config = resolveWarehouseConfig({ env, configDirs })
   const localDir = path.join(userDataDir, 'warehouse')
@@ -119,14 +120,30 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   const learningFetcher = withLearning(fetcher, catalog)
 
   const countRepo = createCountRepository({ storeFor })
-  // Every call looks up the person's name; the team's user list changes rarely.
+  // Every call looks up the person's name; the team's user list changes rarely. As the role below: an older list is used
+  // at once while it is read again in the background, so a slow M: never holds a call (or the next action's write-ahead)
+  // up; only the very first read waits.
   const usersCache = new Map()
+  function readUsers(team) {
+    const entry = usersCache.get(team) || {}
+    if (entry.pending) return entry.pending
+    const pending = Promise.resolve().then(() => teamUsers(team)).then(found => {
+      const value = found || {}
+      usersCache.set(team, { at: Date.now(), value })
+      return value
+    }, error => {
+      const current = usersCache.get(team)
+      if (current?.pending === pending) delete current.pending
+      throw error
+    })
+    usersCache.set(team, { ...entry, pending })
+    return pending
+  }
   const cachedUsers = async team => {
     const hit = usersCache.get(team)
-    if (hit && Date.now() - hit.at < USERS_TTL_MS) return hit.value
-    const value = (await teamUsers(team)) || {}
-    usersCache.set(team, { at: Date.now(), value })
-    return value
+    if (hit?.value === undefined) return readUsers(team)
+    if (Date.now() - hit.at >= USERS_TTL_MS) readUsers(team).catch(() => {})
+    return hit.value
   }
   const counts = createCountService({
     repo: countRepo,
@@ -435,10 +452,13 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   }
   // The window sends every action at once; here they keep the order they arrived in on this PC. The daily ones are
   // written to the outbox in that order (so they survive a close or a crash at once) and run one at a time there; the
-  // others (places, racks) run one at a time after what came before them, and a daily action waits for an earlier one
-  // of those before it runs (a pallet put on a place just made).
+  // others (places, racks) run one at a time after every action that came before them, and a daily action waits for
+  // the place/rack writes that came before it (a pallet put on a place just made), also when it is replayed later.
+  // Each waits only for what arrived before it, so two writes can never wait for each other.
+  const noop = () => {}
   let lastDaily = Promise.resolve()
   let lastOther = Promise.resolve()
+  // Kept until the run has waited for it: an action kept while M: was busy or down is replayed after it as well.
   const runsAfter = new Map()
   // The daily actions survive M: being down: kept on this PC and replayed in order when it is back.
   // A replayed action that is no longer possible is kept in the outbox file until a window of the same team has shown it.
@@ -446,7 +466,10 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
     dir: localDir,
     run: async action => {
       const earlier = runsAfter.get(action.id)
-      if (earlier) { runsAfter.delete(action.id); await earlier }
+      if (earlier) {
+        await earlier
+        if (runsAfter.get(action.id) === earlier) runsAfter.delete(action.id)
+      }
       return runLocations(action)
     },
     isStorageError: error => error?.code === 'STORAGE_UNAVAILABLE' || STORAGE_ERRORS.has(error?.code),
@@ -455,6 +478,7 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
     // The windows on this PC show the "venter på M:" banner at once instead of at their next 15 s check.
     onQueued: action => emit('locations:queued', { team: action.user?.team }),
     onFailed: failed => emit('locations:sync-failed', { teams: [...new Set(failed.map(item => item.team))] }),
+    ...outboxOptions,
   })
   const flushOutbox = async () => {
     if (outbox.pending()) await outbox.flush().catch(() => {})
@@ -468,7 +492,7 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
       await arrivals?.turn(event)
       if (!QUEUED_METHODS.has(method)) {
         const running = Promise.all([lastDaily, lastOther]).then(() => runLocations({ method, user, request: p }))
-        lastOther = running.then(() => {}, () => {})
+        lastOther = running.then(noop, noop)
         arrivals?.leave(event)
         return running
       }
@@ -477,16 +501,21 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
       const request = { ...rest, actionId: typeof rest.actionId === 'string' && rest.actionId ? rest.actionId.slice(0, 100) : crypto.randomUUID() }
       const earlier = lastOther
       runsAfter.set(request.actionId, earlier)
+      const forget = () => { if (runsAfter.get(request.actionId) === earlier) runsAfter.delete(request.actionId) }
       // In the outbox (and on its way to the disk) when submit returns, so the next action may go on.
       const submitted = outbox.submit({ id: request.actionId, method, user, request, label: typeof label === 'string' ? label.slice(0, 200) : '' })
-      lastDaily = submitted.then(() => {}, () => {})
+      lastDaily = Promise.all([lastDaily, submitted]).then(noop, noop)
       arrivals?.leave(event)
+      let outcome
       try {
-        const outcome = await submitted
-        return outcome.queued ? { queued: true } : outcome.duplicate ? { duplicate: true } : outcome.result
-      } finally {
-        if (runsAfter.get(request.actionId) === earlier) runsAfter.delete(request.actionId)
+        outcome = await submitted
+      } catch (error) {
+        // Not written ahead, or refused: it never runs again.
+        forget()
+        throw error
       }
+      if (outcome.duplicate) forget()
+      return outcome.queued ? { queued: true } : outcome.duplicate ? { duplicate: true } : outcome.result
     })
   }
   const ownTeam = user => item => item.team === user.team
@@ -519,9 +548,10 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   const assistant = { answer: async request => (await locationsAssistant.answer(request)) || stockAssistant.answer(request) }
   return {
     channels, counts, locations, assistant,
-    // For the close guard: Placeringer actions not yet on M: (running now, or kept here while M: is down or busy).
-    hasPendingWrites: () => outbox.unsettled() > 0,
-    whenWritesSettled: timeoutMs => outbox.whenSettled(timeoutMs),
+    // For the close guard: Placeringer actions not yet on this PC's disk. One written ahead is safe and replayed at the
+    // next start, so closing never waits for M: (an action still in its IPC call is waited for by main.cjs).
+    hasPendingWrites: () => outbox.unwritten() > 0,
+    whenWritesSettled: timeoutMs => outbox.whenWritten(timeoutMs),
     closeAll: () => { clearInterval(outboxTimer); return Promise.all([outbox.close(), counts.closeAll()]).then(([, closed]) => closed) },
   }
 }
