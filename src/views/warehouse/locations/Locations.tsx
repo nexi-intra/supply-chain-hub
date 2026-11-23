@@ -63,7 +63,7 @@ export function Locations({ user, initial }: { user: WarehouseUser; initial: Loc
       if (!result.failures.length) return
       for (const failure of result.failures) {
         const who = failure.email === user.email ? '' : ` (${failure.name || failure.email})`
-        toast.error(t(`En handling gemt på denne PC kunne ikke gennemføres${who}`, `An action saved on this PC could not be completed${who}`), { description: `${failure.label || failure.method}: ${errorMessage(new Error(failure.code))}`, duration: Infinity })
+        toast.error(t(`En handling gemt på denne PC kunne ikke gennemføres${who}`, `An action saved on this PC could not be completed${who}`), { id: `locations-sync-failed-${failure.id}`, description: `${failure.label || failure.method}: ${errorMessage(new Error(failure.code))}`, duration: Infinity })
       }
       void bridge.acknowledgeFailures(result.failures.map(failure => failure.id)).catch(() => {})
     }).catch(() => {})

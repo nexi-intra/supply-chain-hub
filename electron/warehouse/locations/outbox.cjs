@@ -27,6 +27,8 @@ function createOutbox({ dir, run, isStorageError, isBusyError = () => false, now
   let downUntil = 0
   // The one retry scheduled after a busy share; a new pause replaces it.
   let retry = null
+  // Set by close(): a flush still running then must not schedule a new retry.
+  let closed = false
   // What happened to an action replayed while its own submit() waits on the flush.
   const outcomes = new Map()
 
@@ -64,7 +66,12 @@ function createOutbox({ dir, run, isStorageError, isBusyError = () => false, now
     const pause = busyPauseMs + Math.floor(random() * busyJitterMs)
     wentDown(pause)
     cancelRetry()
-    const timer = setTimer(() => { if (retry === timer) retry = null; flush().catch(() => {}) }, pause)
+    if (closed) return
+    const timer = setTimer(() => {
+      if (retry === timer) retry = null
+      if (closed) return
+      flush().catch(() => {})
+    }, pause)
     timer?.unref?.()
     retry = timer
   }
@@ -165,7 +172,12 @@ function createOutbox({ dir, run, isStorageError, isBusyError = () => false, now
     save()
   }
 
-  return { submit, flush, pending: () => state.queue.length, failures, acknowledge, close: cancelRetry }
+  function close() {
+    closed = true
+    cancelRetry()
+  }
+
+  return { submit, flush, pending: () => state.queue.length, failures, acknowledge, close }
 }
 
 module.exports = { createOutbox, QUEUED_METHODS }

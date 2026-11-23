@@ -265,3 +265,18 @@ test('every action that ends up queued is announced, so the window shows the wai
   await outbox.submit({ id: 'a4', method: 'take', user: ANNA, request: {} })
   assert.deepEqual(queuedEvents, ['a1', 'a2', 'a3'], 'not when the action was done')
 })
+test('after close a busy replay schedules no new retry, and an old retry does nothing', async () => {
+  const { sap, live, fire, make } = setup({ random: () => 0 })
+  sap.up = true
+  sap.busy = 1
+  const outbox = make()
+  await outbox.submit({ id: 'a1', method: 'take', user: ANNA, request: {} })
+  const old = live()[0]
+  outbox.close()
+  sap.busy = 1
+  assert.deepEqual(await outbox.flush(), { done: 0, failed: [] }, 'a flush still running when the Hub closes')
+  assert.deepEqual(live(), [], 'no retry after close')
+  const runs = sap.runs
+  await fire(old)
+  assert.equal(sap.runs, runs, 'a retry that fires after close does not touch M:')
+})
