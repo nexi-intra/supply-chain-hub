@@ -4,14 +4,15 @@
 // time and moves the terminals in SAP; until every move is saved the task waits as `venter-<id>` and can be continued
 // by its owner or a manager, or given up by a manager. "Flyt ind i KIF" moves terminals to D005 ahead of time without
 // a task. Every move lands in a search index shared by TRR and TCD. A manager can delete a finished task or a KIF move
-// (e.g. test data) from the app's records; SAP is never touched. No Electron imports: register.cjs wires it to IPC,
-// tests drive it.
+// (e.g. test data) from the app's records; SAP is never touched. The statistics and the comments that explain a period
+// are for managers only. No Electron imports: register.cjs wires it to IPC, tests drive it.
 const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
 const { normalizeSerial } = require('../core/countState.cjs')
 const { normalizeMatdoc } = require('../core/sapParsers.cjs')
 const { monthsBetween } = require('../core/period.cjs')
+const { MATERIAL_PATTERN } = require('../core/snapshot.cjs')
 const { KIF, BLOCKED_SLOC, USED_FAILED_SLOC, normalizeSloc, planMoves } = require('./core/planMoves.cjs')
 const { bisect } = require('./core/bisect.cjs')
 const { isSoftwareloadTarget } = require('./core/targets.cjs')
@@ -22,6 +23,9 @@ const VERSION_MAX = 60
 const VERSIONS_KEPT = 50
 const NOTE_MAX = 200
 const VERSIONS_KEY = 'versioner'
+/** The team's comments on periods of the statistics: `{ comments, history, deleted }` by comment id. */
+const COMMENTS_KEY = 'kommentarer'
+const COMMENT_MAX = 1000
 const PENDING_PREFIX = 'venter-'
 const FINISHED_PREFIX = 'opgaver-'
 const INDEX_PREFIX = 'serier-'
@@ -57,7 +61,7 @@ const choiceOf = task => Object.fromEntries(CHOICE_KEYS.map(key => [key, task[ke
 const sameChoice = (a, b) => Boolean(a && b) && CHOICE_KEYS.every(key => a[key] === b[key])
 const changedMeanwhile = () => codeError('SOFTWARELOAD_CHANGED', 'Opgaven er rettet imens. Se oversigten igen')
 const beingFinished = () => codeError('SOFTWARELOAD_BUSY', 'Opgaven er ved at blive afsluttet. Vent til flytningen er færdig, eller se under "Venter på SAP"')
-const alreadyFinished = () => codeError('SOFTWARELOAD_ALREADY_FINISHED', 'Opgaven er allerede afsluttet. Se Venter på SAP eller statistikken')
+const alreadyFinished = () => codeError('SOFTWARELOAD_ALREADY_FINISHED', 'Opgaven er allerede afsluttet. Se Venter på SAP eller søg på et af serienumrene')
 const upper = value => String(value ?? '').trim().toUpperCase()
 const pad = number => String(number).padStart(2, '0')
 /** The local month of a moment (the PCs run Danish time). */
@@ -79,7 +83,15 @@ const kifKey = at => `${KIF_PREFIX}${monthOf(at)}`
 const deletedKey = at => `${DELETED_PREFIX}${monthOf(at)}`
 const notFound = () => codeError('SOFTWARELOAD_NOT_FOUND', 'Opgaven eller flytningen findes ikke (længere)')
 const notFinished = () => codeError('SOFTWARELOAD_NOT_FINISHED', 'Opgaven er ikke afsluttet. En opgave, der kører eller venter på SAP, kan ikke slettes')
-const managerOnly = () => codeError('MANAGER_ONLY', 'Kun en manager kan slette')
+const managerOnly = (message = 'Kun en manager kan slette') => codeError('MANAGER_ONLY', message)
+const statisticsForManagers = () => managerOnly('Statistikken er kun for managere')
+const commentsForManagers = () => managerOnly('Kun en manager kan skrive kommentarer')
+const commentNotFound = () => codeError('SOFTWARELOAD_NOT_FOUND', 'Kommentaren findes ikke (længere)')
+/** The comment's text: line breaks are kept (at most one empty line in a row); other control characters and runs of spaces become one space. */
+const commentText = value => String(value ?? '').replace(/\r\n?/g, '\n').split('\n')
+  .map(line => line.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim()).join('\n').replace(/\n{3,}/g, '\n\n').trim()
+/** An own field of a saved object, so an id such as `__proto__` never finds anything. */
+const own = (object, key) => (object && Object.hasOwn(object, key) ? object[key] : null)
 const serialsOf = list => [...new Set((Array.isArray(list) ? list : []).map(normalizeSerial).filter(Boolean))]
 const chunks = (list, size) => Array.from({ length: Math.ceil(list.length / size) }, (_, index) => list.slice(index * size, (index + 1) * size))
 const lastTo = steps => steps.filter(step => step.to).at(-1)?.to ?? null
@@ -1087,12 +1099,12 @@ function createSoftwareloadService({
     })
   }
 
-  /** Finished tasks started (local day) in the period: the person's own, or the whole team's for a manager. */
+  /** Finished tasks of the whole team started (local day) in the period; the statistics are for managers only. */
   async function tasks(user, { from, to } = {}) {
+    if (!isManager(user)) throw statisticsForManagers()
     const months = new Set(monthsBetween(from, to, 'SOFTWARELOAD_INVALID'))
-    const prefix = isManager(user) ? FINISHED_PREFIX : `${FINISHED_PREFIX}${writerOf(user.email)}-`
     const store = storeFor(user.team)
-    const keys = (await store.keysAsync()).filter(key => key.startsWith(prefix) && months.has(key.slice(-7)))
+    const keys = (await store.keysAsync()).filter(key => key.startsWith(FINISHED_PREFIX) && months.has(key.slice(-7)))
     const files = await Promise.all(keys.map(key => store.getAsync(key).catch(() => null)))
     const inPeriod = task => dayOf(task.startedAt) >= from && dayOf(task.startedAt) <= to
     return files.flatMap(file => Object.values(file?.tasks || {}))
@@ -1228,10 +1240,90 @@ function createSoftwareloadService({
     return { ok: true }
   }
 
+  /**
+   * A comment's fields from the screen: a period checked like the statistics' (at most a year), an optional material
+   * (in capitals, as SAP writes it) and version (cleaned as at start), and a text of at most COMMENT_MAX characters.
+   * Without a material or a version the comment concerns the whole period.
+   */
+  function commentFields(input) {
+    const from = String(input?.from ?? '')
+    const to = String(input?.to ?? '')
+    monthsBetween(from, to, 'SOFTWARELOAD_INVALID')
+    const material = upper(input?.material)
+    if (material && !MATERIAL_PATTERN.test(material)) throw codeError('SOFTWARELOAD_INVALID', 'Ugyldigt materialenummer')
+    const version = clean(input?.version, VERSION_MAX)
+    const text = commentText(input?.text)
+    if (!text) throw codeError('SOFTWARELOAD_INVALID', 'Skriv kommentaren')
+    if (text.length > COMMENT_MAX) throw codeError('SOFTWARELOAD_INVALID', `Skriv højst ${COMMENT_MAX} tegn`)
+    return { from, to, ...(material ? { material } : {}), ...(version ? { version } : {}), text }
+  }
+
+  const commentIdOf = value => {
+    const id = String(value ?? '')
+    if (!TASK_ID_PATTERN.test(id)) throw commentNotFound()
+    return id
+  }
+
+  /** The team's comments whose period overlaps the chosen one, by start date; for managers, like the statistics. */
+  async function comments(user, { from, to } = {}) {
+    if (!isManager(user)) throw statisticsForManagers()
+    monthsBetween(from, to, 'SOFTWARELOAD_INVALID')
+    const file = await storeFor(user.team).getAsync(COMMENTS_KEY)
+    return Object.values(file?.comments || {})
+      .filter(comment => comment.from <= to && comment.to >= from)
+      .sort((a, b) => a.from.localeCompare(b.from) || a.at - b.at)
+  }
+
+  /** A manager explains the numbers of a period, e.g. that new software for a material took longer to load. */
+  async function addComment(user, input = {}) {
+    if (!isManager(user)) throw commentsForManagers()
+    const comment = { id: newId(), ...commentFields(input), by: me(user), at: now() }
+    await storeFor(user.team).mutateAsync(COMMENTS_KEY, file => ({ ...file, comments: { ...file?.comments, [comment.id]: comment } }))
+    return comment
+  }
+
+  /** A manager rewrites a comment: it keeps who wrote it and when, gets who edited it and when, and the earlier wording goes to `history`. */
+  async function updateComment(user, { id, ...input } = {}) {
+    if (!isManager(user)) throw commentsForManagers()
+    const key = commentIdOf(id)
+    const fields = commentFields(input)
+    let next = null
+    await storeFor(user.team).mutateAsync(COMMENTS_KEY, file => {
+      const current = own(file?.comments, key)
+      if (!current) throw commentNotFound()
+      next = { id: key, ...fields, by: current.by, at: current.at, editedBy: me(user), editedAt: now() }
+      return { ...file, comments: { ...file.comments, [key]: next }, history: { ...file.history, [key]: [...(own(file.history, key) || []), current] } }
+    })
+    return next
+  }
+
+  /** A manager deletes a comment: it stays under `deleted` with who and when, and the deletion is logged like a task's. */
+  async function deleteComment(user, { id } = {}) {
+    if (!isManager(user)) throw commentsForManagers()
+    const key = commentIdOf(id)
+    const at = now()
+    const by = me(user)
+    await storeFor(user.team).withLockedKeysAsync([COMMENTS_KEY, deletedKey(at)], transaction => {
+      const file = transaction.get(COMMENTS_KEY)
+      const comment = own(file?.comments, key)
+      if (!comment) {
+        // A second click finds it deleted already.
+        if (own(file?.deleted, key)) return
+        throw commentNotFound()
+      }
+      const kept = { ...file.comments }
+      delete kept[key]
+      transaction.set(COMMENTS_KEY, { ...file, comments: kept, deleted: { ...file.deleted, [key]: { ...comment, deletedBy: by, deletedAt: at } } })
+      logDeletion(transaction, { kind: 'comment', id: key, by: by.email, at })
+    })
+    return { ok: true }
+  }
+
   return {
     status, start, edit, scan, unscan, markFailed, unmarkFailed,
     pause: user => changePause(user, true), resume, pauseIfRunning,
     cancel, versions, preview, finish, continueFinish, abandon, kifPreview, kifMove, search, tasks, deleteTask, deleteKifMove, isManager,
+    comments, addComment, updateComment, deleteComment,
   }
 }
 

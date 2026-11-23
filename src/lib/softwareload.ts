@@ -1,4 +1,4 @@
-import type { SoftwareloadOutcome, SoftwareloadResult, SoftwareloadTask, SoftwareloadType } from '@/types/warehouse'
+import type { SoftwareloadComment, SoftwareloadOutcome, SoftwareloadResult, SoftwareloadTask, SoftwareloadType } from '@/types/warehouse'
 import { errorCode, errorMessage } from './warehouse/errors'
 import { t } from './warehouse/text'
 
@@ -148,4 +148,84 @@ export function summarizeTasks(tasks: SoftwareloadTask[]): SoftwareloadSummaryRo
   return [...rows.values()]
     .map(row => ({ ...row, perHour: row.workedMs > 0 ? Math.round(row.moved / (row.workedMs / 3_600_000) * 10) / 10 : 0 }))
     .sort((a, b) => a.name.localeCompare(b.name, 'da') || TYPE_ORDER.indexOf(a.type) - TYPE_ORDER.indexOf(b.type))
+}
+
+export interface SoftwareloadMaterialRow {
+  /** In capitals; empty for terminals SAP gave no material (e.g. a task without moves). */
+  material: string
+  /** Tasks with at least one terminal of the material. */
+  tasks: number
+  moved: number
+  failed: number
+  /** The task's worked time shared out on its materials by their number of terminals. */
+  workedMs: number
+  perHour: number
+}
+
+const materialOf = (task: SoftwareloadTask, serial: string) => (task.results[serial]?.material ?? '').trim().toUpperCase()
+
+/**
+ * One row per material, sorted by material. A task can hold several materials, so its time is shared out on them by
+ * the number of terminals (failed ones too, as they took time); the pace counts the terminals not marked as failed.
+ */
+export function summarizeByMaterial(tasks: SoftwareloadTask[]): SoftwareloadMaterialRow[] {
+  const rows = new Map<string, SoftwareloadMaterialRow>()
+  for (const task of tasks) {
+    const serials = Object.keys(task.terminals)
+    for (const material of new Set(serials.map(serial => materialOf(task, serial)))) {
+      const own = serials.filter(serial => materialOf(task, serial) === material)
+      const failed = own.filter(serial => task.terminals[serial].failed).length
+      const row = rows.get(material) ?? { material, tasks: 0, moved: 0, failed: 0, workedMs: 0, perHour: 0 }
+      row.tasks += 1
+      row.moved += own.length - failed
+      row.failed += failed
+      row.workedMs += task.workedMs * (own.length / serials.length)
+      rows.set(material, row)
+    }
+  }
+  return [...rows.values()]
+    .map(row => ({ ...row, perHour: row.workedMs > 0 ? Math.round(row.moved / (row.workedMs / 3_600_000) * 10) / 10 : 0 }))
+    .sort((a, b) => a.material.localeCompare(b.material, 'da', { numeric: true }))
+}
+
+/**
+ * The part of a task that concerns one material: only its terminals, with the task's time shared out like in
+ * summarizeByMaterial; null when the task has none of the material.
+ */
+export function taskForMaterial(task: SoftwareloadTask, material: string): SoftwareloadTask | null {
+  const serials = Object.keys(task.terminals)
+  const own = serials.filter(serial => materialOf(task, serial) === asMaterial(material))
+  if (!own.length) return null
+  if (own.length === serials.length) return task
+  const pick = <T,>(record: Record<string, T>) => Object.fromEntries(Object.entries(record).filter(([serial]) => own.includes(serial)))
+  return { ...task, terminals: pick(task.terminals), results: pick(task.results), workedMs: task.workedMs * (own.length / serials.length) }
+}
+
+/** What a list of comments is matched against: '' or nothing matches every comment, a list the values shown in the numbers. */
+export type CommentFilter = string | readonly string[] | undefined
+
+const fits = (value: string | undefined, filter: CommentFilter, normalize: (text: string) => string) => {
+  if (!value) return true
+  if (typeof filter === 'string') return !filter || normalize(filter) === normalize(value)
+  return !filter || filter.some(item => normalize(item) === normalize(value))
+}
+const asMaterial = (text: string) => text.trim().toUpperCase()
+const asVersion = (text: string) => text.trim()
+
+/**
+ * The comments that fit the filters: a comment without a material (or version) fits any; one with a material fits the
+ * chosen one, or, given a list, when the material is among the numbers shown. The order is kept.
+ */
+export function commentsFor(comments: SoftwareloadComment[], { material, version }: { material?: CommentFilter; version?: CommentFilter }): SoftwareloadComment[] {
+  return comments.filter(comment => fits(comment.material, material, asMaterial) && fits(comment.version, version, asVersion))
+}
+
+const pad = (value: number) => String(value).padStart(2, '0')
+const localDay = (ms: number) => { const date = new Date(ms); return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` }
+
+/** The comments that concern a task: it started (local day) in their period and has their material and version. */
+export function commentsOnTask(comments: SoftwareloadComment[], task: SoftwareloadTask): SoftwareloadComment[] {
+  const day = localDay(task.startedAt)
+  const materials = [...new Set(Object.keys(task.terminals).concat(Object.keys(task.results)).map(serial => materialOf(task, serial)).filter(Boolean))]
+  return commentsFor(comments, { material: materials, version: task.version }).filter(comment => comment.from <= day && comment.to >= day)
 }

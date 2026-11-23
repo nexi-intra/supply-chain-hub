@@ -92,7 +92,8 @@ export function Softwareload({ user, onOpenTimeclock, onBusyChange }: { user: Wa
           { value: 'pending', label: t('Venter på SAP', 'Waiting for SAP'), badge: pendingCount ? <Badge variant="destructive">{pendingCount}</Badge> : undefined, hidden: !pendingCount && tab !== 'pending' },
           { value: 'kif', label: t('Flyt ind i KIF', 'Move into KIF') },
           { value: 'search', label: t('Søg serienummer', 'Search serial number') },
-          { value: 'stats', label: t('Statistik', 'Statistics') },
+          // The statistics and their comments are for managers; the main process refuses anyone else.
+          { value: 'stats', label: t('Statistik', 'Statistics'), hidden: !status?.isManager },
         ]}
       />
       {failed && <ErrorLine text={failed} />}
@@ -126,7 +127,7 @@ export function Softwareload({ user, onOpenTimeclock, onBusyChange }: { user: Wa
       {status && <div hidden={tab !== 'pending'}><SoftwareloadPending user={user} status={status} reload={load} onBusy={reportBusy} /></div>}
       <div hidden={tab !== 'kif'}><SoftwareloadKif user={user} writeEnabled={status?.writeEnabled ?? false} active={tab === 'kif'} onBusy={reportBusy} /></div>
       {tab === 'search' && <SoftwareloadSearch isManager={status?.isManager ?? false} team={user.team} />}
-      {tab === 'stats' && <SoftwareloadStats isManager={status?.isManager ?? false} />}
+      {tab === 'stats' && status?.isManager && <SoftwareloadStats />}
     </div>
   )
 }

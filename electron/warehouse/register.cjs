@@ -415,6 +415,10 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   handle('softwareload:kif-move', (user, p) => softwareload.kifMove(user, { serials: p.serials, document: p.document }, { onProgress: softwareloadProgress(user) }))
   handle('softwareload:search', (user, p) => softwareload.search(user, { serial: p.serial }))
   handle('softwareload:tasks', (user, p) => softwareload.tasks(user, { from: p.from, to: p.to }))
+  handle('softwareload:comments', (user, p) => softwareload.comments(user, { from: p.from, to: p.to }))
+  handle('softwareload:add-comment', (user, p) => softwareload.addComment(user, { from: p.from, to: p.to, material: p.material, version: p.version, text: p.text }))
+  handle('softwareload:update-comment', (user, p) => softwareload.updateComment(user, { id: p.id, from: p.from, to: p.to, material: p.material, version: p.version, text: p.text }))
+  handle('softwareload:delete-comment', (user, p) => softwareload.deleteComment(user, { id: p.id }))
   // Managers delete test data and the like from the app's records; SAP is never touched.
   handle('softwareload:delete-task', (user, p) => softwareload.deleteTask(user, { taskId: p.taskId }))
   handle('softwareload:delete-kif', (user, p) => softwareload.deleteKifMove(user, { id: p.id }))

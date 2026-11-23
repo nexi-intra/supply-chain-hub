@@ -1363,6 +1363,25 @@ export interface SoftwareloadTask {
 export type SoftwareloadChoice = { type: SoftwareloadType; kif: boolean; target: string; version: string }
 export interface SoftwareloadEdit { at: number; by: string; from: SoftwareloadChoice; to: SoftwareloadChoice }
 
+/**
+ * A manager's comment on a period of the statistics (`YYYY-MM-DD`, both days included), per team. Without `material`
+ * or `version` it concerns the whole period. `by` and `at` stay when it is edited.
+ */
+export interface SoftwareloadComment {
+  id: string
+  from: string
+  to: string
+  material?: string
+  version?: string
+  text: string
+  by: Person
+  at: number
+  editedBy?: Person
+  editedAt?: number
+}
+
+export type SoftwareloadCommentInput = { from: string; to: string; material?: string; version?: string; text: string }
+
 export type SoftwareloadProgressStep = 'lookup' | 'transfer' | 'block'
 
 /** Broadcast to every window; a window shows only its own user's (`email`). */
@@ -1404,8 +1423,16 @@ export interface SoftwareloadBridge {
   kifMove(request: { serials: string[]; document?: string }): Promise<SoftwareloadKifMoveResult>
   /** Every event for the serial in TCD and TRR, newest first; `unreadable` counts index files that could not be read. */
   search(request: { serial: string }): Promise<{ lines: SoftwareloadIndexLine[]; unreadable: number }>
-  /** Finished tasks started in the period (`YYYY-MM-DD`): the own, or the hub's for a manager. */
+  /** Managers only (MANAGER_ONLY otherwise): the team's finished tasks started in the period (`YYYY-MM-DD`). */
   tasks(request: { from: string; to: string }): Promise<SoftwareloadTask[]>
+  /** Managers only: the team's comments whose period overlaps the given one, by start date. */
+  comments(request: { from: string; to: string }): Promise<SoftwareloadComment[]>
+  /** Managers only; an empty text, a bad period or an invalid material is refused with SOFTWARELOAD_INVALID. */
+  addComment(request: SoftwareloadCommentInput): Promise<SoftwareloadComment>
+  /** Managers only; an unknown or deleted comment is refused with SOFTWARELOAD_NOT_FOUND. */
+  updateComment(request: SoftwareloadCommentInput & { id: string }): Promise<SoftwareloadComment>
+  /** Managers only; who deleted it and when is kept. */
+  deleteComment(request: { id: string }): Promise<{ ok: true }>
   /**
    * Managers only: deletes a finished task of the own team from the statistics and the search (SAP is not changed).
    * A running or pending task is refused with SOFTWARELOAD_NOT_FINISHED, an unknown one with SOFTWARELOAD_NOT_FOUND.

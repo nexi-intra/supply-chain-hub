@@ -146,10 +146,11 @@ export function WriteDisabledLine() {
 }
 
 /**
- * A manager confirms deleting a task or a KIF move: `what` says what goes, and the dialog adds that SAP stays as it is.
- * It stays open while `onDelete` runs; `onDelete` closes it when the deletion is done.
+ * A manager confirms deleting a task, a KIF move or a comment: `what` says what goes, and for a task or a move
+ * (`aboutSap`) the dialog adds that SAP stays as it is. It stays open while `onDelete` runs; `onDelete` closes it when
+ * the deletion is done.
  */
-export function DeleteDialog({ title, what, onCancel, onDelete }: { title: string; what: string; onCancel: () => void; onDelete: () => Promise<void> }) {
+export function DeleteDialog({ title, what, onCancel, onDelete, aboutSap = true }: { title: string; what: string; onCancel: () => void; onDelete: () => Promise<void>; aboutSap?: boolean }) {
   const [deleting, setDeleting] = useState(false)
   const remove = async () => {
     setDeleting(true)
@@ -164,7 +165,7 @@ export function DeleteDialog({ title, what, onCancel, onDelete }: { title: strin
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
-          <AlertDialogDescription>{what} {t('SAP ændres ikke. Flytningerne og materialedokumenterne ligger stadig i SAP.', 'SAP is not changed. The moves and the material documents are still in SAP.')}</AlertDialogDescription>
+          <AlertDialogDescription>{what}{aboutSap && ` ${t('SAP ændres ikke. Flytningerne og materialedokumenterne ligger stadig i SAP.', 'SAP is not changed. The moves and the material documents are still in SAP.')}`}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={deleting}>{t('Annullér', 'Cancel')}</AlertDialogCancel>

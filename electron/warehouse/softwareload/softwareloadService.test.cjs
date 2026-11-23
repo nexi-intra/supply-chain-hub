@@ -609,7 +609,7 @@ test('a running file left next to a task already handed over to SAP is retired, 
   sap.throwWhen = null
   sap.calls.length = 0
   const finishAgain = { taskId: 't1', choice: { type: 'sw+key', kif: true, target: 'D006', version: 'v2.1.3' } }
-  await assert.rejects(svc.finish(ANNA, finishAgain), { code: 'SOFTWARELOAD_ALREADY_FINISHED', message: 'Opgaven er allerede afsluttet. Se Venter på SAP eller statistikken' })
+  await assert.rejects(svc.finish(ANNA, finishAgain), { code: 'SOFTWARELOAD_ALREADY_FINISHED', message: 'Opgaven er allerede afsluttet. Se Venter på SAP eller søg på et af serienumrene' })
   assert.deepEqual(sap.calls, [])
   assert.equal(await savedRunning(ctx, ANNA), undefined, 'the leftover running file is gone')
   assert.equal((await ctx.storeFor('TCD').getAsync('venter-t1', { skipCache: true })).claim, undefined, 'the pending task is untouched')
@@ -1495,7 +1495,7 @@ test('search returns every event for a serial, newest first, across months and y
   assert.deepEqual([partly.lines.map(line => line.at), partly.unreadable], [[later, finished], 1], 'an unreadable file is reported, the rest is shown')
 })
 
-test('tasks: an employee gets own tasks, a manager all in the period', async () => {
+test('tasks: a manager gets the whole team\'s tasks in the period', async () => {
   const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' }, B: { material: 'M-R', sloc: 'D000' }, C: { material: 'M-R', sloc: 'D000' } })
   const ctx = setup({ sap })
   const svc = ctx.service()
@@ -1513,17 +1513,15 @@ test('tasks: an employee gets own tasks, a manager all in the period', async () 
 
   const ids = async (user, period) => (await svc.tasks(user, period)).map(task => task.id)
   const november = { from: '2026-11-01', to: '2026-11-30' }
-  assert.deepEqual(await ids(ANNA, november), ['t2'], 'a task started 31 October belongs to October; a running one is not listed')
-  assert.deepEqual(await ids(BO, november), ['t3'])
-  assert.deepEqual(await ids(MONA, november), ['t3', 't2'], 'newest first')
+  assert.deepEqual(await ids(MONA, november), ['t3', 't2'], 'newest first; a task started 31 October belongs to October and a running one is not listed')
   assert.deepEqual(await ids(MONA, { from: '2026-10-31', to: '2026-11-18' }), ['t2', 't1'])
   assert.deepEqual(await ids(TOM, november), [], 'another team\'s manager sees only their own team')
-  const [task] = await svc.tasks(ANNA, november)
+  const task = (await svc.tasks(MONA, november)).find(item => item.id === 't2')
   assert.deepEqual([task.state, task.email, task.workedMs, task.results.B.outcome], ['faerdig', 'anna@example.test', 30 * MIN, 'to-target'])
 
   await assert.rejects(svc.tasks(MONA, { from: '2026-11-30', to: '2026-11-01' }), { code: 'SOFTWARELOAD_INVALID' })
   await assert.rejects(svc.tasks(MONA, { from: '2025-11-01', to: '2026-11-30' }), { code: 'SOFTWARELOAD_INVALID' })
-  await assert.rejects(svc.tasks(ANNA, { from: '18-11-2026', to: '2026-11-30' }), { code: 'SOFTWARELOAD_INVALID' })
+  await assert.rejects(svc.tasks(MONA, { from: '18-11-2026', to: '2026-11-30' }), { code: 'SOFTWARELOAD_INVALID' })
 })
 
 const NOVEMBER = { from: '2026-11-01', to: '2026-11-30' }
@@ -1549,7 +1547,6 @@ test('a manager deletes a finished task: it leaves the task list, the statistics
 
   assert.deepEqual(await svc.deleteTask(MONA, { taskId: 't1' }), { ok: true })
   assert.deepEqual((await svc.tasks(MONA, NOVEMBER)).map(task => task.id), ['t2'], 'gone from the list and so from the statistics')
-  assert.deepEqual(await svc.tasks(ANNA, NOVEMBER), [])
   assert.deepEqual((await svc.search(MONA, { serial: 'A' })).lines.map(line => [line.kind, line.name]), [['kif', 'Bo']], 'the KIF move of the same serial stays')
   assert.deepEqual((await svc.search(MONA, { serial: 'B' })).lines, [])
   assert.deepEqual((await allIndexLines(ctx)).map(line => [line.serial, line.kind, line.taskId]), [['A', 'kif', undefined], ['C', 'load', 't2']])
@@ -1601,7 +1598,7 @@ test('an employee cannot delete', async () => {
     await assert.rejects(svc.deleteTask(user, { taskId: 't1' }), { code: 'MANAGER_ONLY' }, user.email)
     await assert.rejects(svc.deleteKifMove(user, { id: 't2' }), { code: 'MANAGER_ONLY' }, user.email)
   }
-  assert.deepEqual((await svc.tasks(ANNA, NOVEMBER)).map(task => task.id), ['t1'])
+  assert.deepEqual((await svc.tasks(MONA, NOVEMBER)).map(task => task.id), ['t1'])
   assert.deepEqual((await allIndexLines(ctx)).map(line => [line.serial, line.kind]), [['A', 'load'], ['B', 'kif']])
   assert.equal(await ctx.storeFor('TCD').getAsync('slettet-2026-11'), undefined)
 })
@@ -1752,4 +1749,105 @@ test('a delete passes over an unreadable month file, and fails only when the id 
   await assert.rejects(svc.deleteTask(MONA, { taskId: 'nope' }), { message: 'Filen kan ikke læses' })
   ctx.unreadableTeam.clear()
   await assert.rejects(svc.deleteTask(MONA, { taskId: 'nope' }), { code: 'SOFTWARELOAD_NOT_FOUND' })
+})
+
+const COMMENT = { from: '2026-11-01', to: '2026-11-30', material: ' m-r ', version: ' v2.1.3 ', text: 'Ny software til M-R tog længere tid at loade' }
+const savedComments = ctx => ctx.storeFor('TCD').getAsync('kommentarer', { skipCache: true })
+
+test('a manager adds, edits and deletes a period comment and the history is kept', async () => {
+  const ctx = setup()
+  const svc = ctx.service()
+  const MAJA = { email: 'Maja@example.test', fullName: 'Maja', role: 'creator', team: 'TCD' }
+  const mona = { email: 'mona@example.test', name: 'Mona' }
+  const maja = { email: 'maja@example.test', name: 'Maja' }
+
+  const added = await svc.addComment(MONA, COMMENT)
+  assert.deepEqual(added, { id: 't1', from: '2026-11-01', to: '2026-11-30', material: 'M-R', version: 'v2.1.3', text: 'Ny software til M-R tog længere tid at loade', by: mona, at: ctx.clock.now })
+  const whole = await svc.addComment(MONA, { from: '2026-11-10', to: '2026-11-12', material: '', version: ' ', text: 'Lageroptælling\r\n\r\n\r\nalle var væk  ' })
+  assert.deepEqual(whole, { id: 't2', from: '2026-11-10', to: '2026-11-12', text: 'Lageroptælling\n\nalle var væk', by: mona, at: ctx.clock.now }, 'no material or version: it concerns the whole period')
+  assert.deepEqual(await svc.comments(MONA, NOVEMBER), [added, whole])
+
+  ctx.tick(MIN)
+  const edited = await svc.updateComment(MAJA, { id: 't1', from: '2026-11-01', to: '2026-11-15', material: '', version: 'v2.1.3', text: 'Rettet: kun første halvdel' })
+  assert.deepEqual(edited, { id: 't1', from: '2026-11-01', to: '2026-11-15', version: 'v2.1.3', text: 'Rettet: kun første halvdel', by: mona, at: added.at, editedBy: maja, editedAt: ctx.clock.now })
+  assert.deepEqual((await savedComments(ctx)).history.t1, [added], 'the earlier wording is kept')
+  assert.deepEqual(await svc.comments(MONA, NOVEMBER), [edited, whole])
+
+  ctx.tick(MIN)
+  const at = ctx.clock.now
+  assert.deepEqual(await svc.deleteComment(MONA, { id: 't1' }), { ok: true })
+  assert.deepEqual(await svc.comments(MONA, NOVEMBER), [whole])
+  const file = await savedComments(ctx)
+  assert.deepEqual(Object.keys(file.comments), ['t2'])
+  assert.deepEqual(file.deleted.t1, { ...edited, deletedBy: mona, deletedAt: at }, 'a deleted comment is kept with who and when')
+  assert.deepEqual(file.history.t1, [added])
+  const log = { entries: [{ kind: 'comment', id: 't1', by: 'mona@example.test', at }] }
+  assert.deepEqual(await ctx.storeFor('TCD').getAsync('slettet-2026-11', { skipCache: true }), log)
+
+  assert.deepEqual(await svc.deleteComment(MONA, { id: 't1' }), { ok: true }, 'a second click finds it deleted')
+  assert.deepEqual(await ctx.storeFor('TCD').getAsync('slettet-2026-11', { skipCache: true }), log, 'and logs nothing more')
+  await assert.rejects(svc.updateComment(MONA, { ...COMMENT, id: 't1' }), { code: 'SOFTWARELOAD_NOT_FOUND' }, 'a deleted comment cannot be edited')
+  await assert.rejects(svc.deleteComment(MONA, { id: 'nope' }), { code: 'SOFTWARELOAD_NOT_FOUND' })
+  await assert.rejects(svc.updateComment(MONA, { ...COMMENT, id: 'nope' }), { code: 'SOFTWARELOAD_NOT_FOUND' })
+  assert.deepEqual(await svc.comments(TOM, NOVEMBER), [], 'comments belong to the team')
+  await assert.rejects(svc.deleteComment(TOM, { id: 't2' }), { code: 'SOFTWARELOAD_NOT_FOUND' })
+  await assert.rejects(svc.updateComment(TOM, { ...COMMENT, id: 't2' }), { code: 'SOFTWARELOAD_NOT_FOUND' })
+})
+
+test('comments are returned when they overlap the period', async () => {
+  const ctx = setup()
+  const svc = ctx.service()
+  const add = (from, to) => svc.addComment(MONA, { from, to, text: `${from} til ${to}` })
+  await add('2026-10-20', '2026-11-05')
+  await add('2026-11-10', '2026-11-10')
+  await add('2026-12-01', '2026-12-31')
+  await add('2026-10-01', '2026-10-31')
+  const ids = async period => (await svc.comments(MONA, period)).map(comment => comment.id)
+  assert.deepEqual(await ids(NOVEMBER), ['t1', 't2'], 'by start date')
+  assert.deepEqual(await ids({ from: '2026-11-05', to: '2026-11-05' }), ['t1'], 'the last day counts')
+  assert.deepEqual(await ids({ from: '2026-11-06', to: '2026-11-09' }), [])
+  assert.deepEqual(await ids({ from: '2026-10-31', to: '2026-12-01' }), ['t4', 't1', 't2', 't3'])
+  assert.deepEqual(await ids({ from: '2025-01-01', to: '2025-12-31' }), [])
+  await assert.rejects(svc.comments(MONA, { from: '2026-11-30', to: '2026-11-01' }), { code: 'SOFTWARELOAD_INVALID' })
+  await assert.rejects(svc.comments(MONA, { from: '2025-11-01', to: '2026-11-30' }), { code: 'SOFTWARELOAD_INVALID' })
+})
+
+test('an employee cannot read the statistics or write comments', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
+  const ctx = setup({ sap })
+  const svc = ctx.service()
+  assert.equal(await finishedTask(ctx, svc, ANNA, ['A']), 't1')
+  const added = await svc.addComment(MONA, COMMENT)
+  const STATUS_MANAGER = { ...BO, role: 'manager', statusManager: true }
+  for (const user of [ANNA, STATUS_MANAGER]) {
+    await assert.rejects(svc.tasks(user, NOVEMBER), { code: 'MANAGER_ONLY' }, user.email)
+    await assert.rejects(svc.comments(user, NOVEMBER), { code: 'MANAGER_ONLY' }, user.email)
+    await assert.rejects(svc.addComment(user, COMMENT), { code: 'MANAGER_ONLY' }, user.email)
+    await assert.rejects(svc.updateComment(user, { ...COMMENT, id: added.id, text: 'Min version' }), { code: 'MANAGER_ONLY' }, user.email)
+    await assert.rejects(svc.deleteComment(user, { id: added.id }), { code: 'MANAGER_ONLY' }, user.email)
+  }
+  assert.deepEqual(await svc.comments(MONA, NOVEMBER), [added])
+  assert.deepEqual((await svc.search(ANNA, { serial: 'A' })).lines.map(line => line.taskId), ['t1'], 'the search stays open to everyone')
+})
+
+test('a comment with an empty text, a reversed period or an invalid material is refused', async () => {
+  const ctx = setup()
+  const svc = ctx.service()
+  const refused = [
+    { ...COMMENT, text: '   ' },
+    { ...COMMENT, text: undefined },
+    { ...COMMENT, text: 'x'.repeat(1001) },
+    { ...COMMENT, from: '2026-11-30', to: '2026-11-01' },
+    { ...COMMENT, from: '01-11-2026' },
+    { ...COMMENT, from: '2025-11-01' },
+    { ...COMMENT, material: 'M R' },
+    { ...COMMENT, material: '-MR' },
+  ]
+  for (const input of refused) await assert.rejects(svc.addComment(MONA, input), { code: 'SOFTWARELOAD_INVALID' }, JSON.stringify(input).slice(0, 80))
+  assert.equal(await savedComments(ctx), undefined)
+
+  const added = await svc.addComment(MONA, { ...COMMENT, text: 'x'.repeat(1000), version: 'v2\n  1' })
+  assert.equal(added.version, 'v2 1', 'the version is cleaned like at start')
+  for (const input of refused) await assert.rejects(svc.updateComment(MONA, { ...input, id: added.id }), { code: 'SOFTWARELOAD_INVALID' })
+  assert.deepEqual(await svc.comments(MONA, NOVEMBER), [added], 'a refused edit changes nothing')
 })

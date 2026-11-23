@@ -156,8 +156,8 @@ const MESSAGES: Record<string, string> = {
   SOFTWARELOAD_SAP_LANGUAGE: 'Appen kan kun læse SAP\'s svar på engelsk. Log på SAP på engelsk (EN), og prøv igen.',
   SOFTWARELOAD_SAVE_FAILED: 'SAP har flyttet, men det kunne ikke gemmes på M:. Det er gemt på denne PC og kommer med senere.',
   SOFTWARELOAD_CHANGED: 'Opgaven er rettet imens. Se oversigten igen.',
-  SOFTWARELOAD_ALREADY_FINISHED: 'Opgaven er allerede afsluttet. Se Venter på SAP eller statistikken.',
-  SOFTWARELOAD_NOT_FOUND: 'Opgaven eller flytningen findes ikke (længere).',
+  SOFTWARELOAD_ALREADY_FINISHED: 'Opgaven er allerede afsluttet. Se Venter på SAP eller søg på et af serienumrene.',
+  SOFTWARELOAD_NOT_FOUND: 'Opgaven, flytningen eller kommentaren findes ikke (længere).',
   SOFTWARELOAD_NOT_FINISHED: 'Opgaven er ikke afsluttet. En opgave, der kører eller venter på SAP, kan ikke slettes.',
   UNEXPECTED_ERROR: 'Der skete en uventet fejl. Prøv igen.',
 }
@@ -330,8 +330,8 @@ const MESSAGES_EN: Record<string, string> = {
   SOFTWARELOAD_SAP_LANGUAGE: "The app can only read SAP's answers in English. Log on to SAP in English (EN) and try again.",
   SOFTWARELOAD_SAVE_FAILED: 'SAP made the move, but it could not be saved on M:. It is kept on this PC and saved later.',
   SOFTWARELOAD_CHANGED: 'The task was edited meanwhile. Check the overview again.',
-  SOFTWARELOAD_ALREADY_FINISHED: 'The task is already finished. Check Waiting for SAP or the statistics.',
-  SOFTWARELOAD_NOT_FOUND: 'The task or the move does not exist (any more).',
+  SOFTWARELOAD_ALREADY_FINISHED: 'The task is already finished. Check Waiting for SAP or search one of its serial numbers.',
+  SOFTWARELOAD_NOT_FOUND: 'The task, the move or the comment does not exist (any more).',
   SOFTWARELOAD_NOT_FINISHED: 'The task is not finished. A task that is running or waiting for SAP cannot be deleted.',
   UNEXPECTED_ERROR: 'Something unexpected went wrong. Try again.',
 }

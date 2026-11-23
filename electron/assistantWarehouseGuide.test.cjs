@@ -112,7 +112,6 @@ const SOFTWARELOAD_QUESTIONS = [
   ['softwareload-finish', { da: ['hvordan afslutter jeg softwareload og flytter i SAP?', 'Afslut og flyt i SAP'], en: ['how do I finish and move the terminals in SAP?', 'Finish and move in SAP'], fi: ['miten päätän tehtävän ja siirrän päätteet SAPissa?', 'Päätä ja siirrä SAPissa'], sv: ['hur avslutar jag och flyttar terminalerna i SAP?', 'Avsluta och flytta i SAP'] }],
   ['softwareload-kif', { da: ['hvordan flytter jeg terminaler ind i KIF?', 'Flyt ind i KIF'], en: ['how do I move terminals into KIF?', 'Move into KIF'], fi: ['miten siirrän päätteet KIF:iin?', 'Siirrä KIF:iin'], sv: ['hur flyttar jag terminaler in i KIF?', 'Flytta in i KIF'] }],
   ['softwareload-search', { da: ['hvordan søger jeg på et serienummer i softwareload?', 'Søg på et serienummer'], en: ['how do I search a serial number in softwareload?', 'Search a serial number'], fi: ['miten haen sarjanumerolla softwareloadissa?', 'Hae sarjanumerolla'], sv: ['hur söker jag på ett serienummer i softwareload?', 'Sök på ett serienummer'] }],
-  ['softwareload-stats', { da: ['hvordan ser jeg statistik for softwareload?', 'Se softwareload-statistik'], en: ['how do I see the softwareload statistics?', 'See softwareload statistics'], fi: ['miten näen softwareload-tilastot?', 'Katso softwareload-tilastot'], sv: ['hur ser jag statistik för softwareload?', 'Visa softwareload-statistik'] }],
 ]
 
 test('the guide answers how-to questions about Softwareload in four languages', () => {
@@ -144,18 +143,40 @@ test('a manager is told how to delete a softwareload task or KIF move, in four l
   assert.doesNotMatch(ask({ q: 'hvordan sletter jeg en softwareload-opgave?', lang: 'da' }, { role: 'user' }).text, /^Arbejdsværktøjer - Slet en opgave/, 'an employee is not told how to delete')
 })
 
-test('"where can I see" questions about Softwareload get the search and the statistics directly, also for an employee', () => {
+test('"where can I see who loaded a terminal" gets the search directly, also for an employee', () => {
   const WHERE = [
     ['hvor kan jeg se hvem der har loadet en terminal?', 'da', 'Søg på et serienummer'], ['where can I see who loaded a terminal?', 'en', 'Search a serial number'],
     ['mistä näen kuka latasi päätteen?', 'fi', 'Hae sarjanumerolla'], ['var ser jag vem som laddade en terminal?', 'sv', 'Sök på ett serienummer'],
-    ['hvor kan jeg se softwareload-statistik?', 'da', 'Se softwareload-statistik'], ['where can I see the softwareload statistics?', 'en', 'See softwareload statistics'],
-    ['mistä näen softwareload-tilastot?', 'fi', 'Katso softwareload-tilastot'], ['var ser jag softwareload-statistik?', 'sv', 'Visa softwareload-statistik'],
   ]
   for (const [question, language, title] of WHERE) {
     const answer = ask({ q: question, lang: language }, { role: 'user' })
     assert.equal(answer.mode, 'app-guide', `${language}: ${question} -> ${answer.text.slice(0, 80)}`)
     assert.match(answer.text, starts(language, title), `${language}: ${question} -> ${answer.text.slice(0, 80)}`)
   }
+})
+
+test('the softwareload statistics and the comments on a period are explained to managers only, in four languages', () => {
+  const MANAGERS = [
+    ['hvordan ser jeg statistik for softwareload?', 'da', 'Se softwareload-statistik'], ['how do I see the softwareload statistics?', 'en', 'See softwareload statistics'],
+    ['miten näen softwareload-tilastot?', 'fi', 'Katso softwareload-tilastot'], ['hur ser jag statistik för softwareload?', 'sv', 'Visa softwareload-statistik'],
+    ['hvor kan jeg se softwareload-statistik?', 'da', 'Se softwareload-statistik'], ['where can I see the softwareload statistics?', 'en', 'See softwareload statistics'],
+    ['mistä näen softwareload-tilastot?', 'fi', 'Katso softwareload-tilastot'], ['var ser jag softwareload-statistik?', 'sv', 'Visa softwareload-statistik'],
+    ['hvordan tilføjer jeg en kommentar til en periode i softwareload?', 'da', 'Tilføj en kommentar til en periode'], ['how do I add a comment on a period in softwareload?', 'en', 'Add a comment on a period'],
+    ['miten lisään kommentin jaksolle softwareloadissa?', 'fi', 'Lisää kommentti jaksolle'], ['hur lägger jag till en kommentar till en period i softwareload?', 'sv', 'Lägg till en kommentar till en period'],
+    ['hvordan skriver jeg en kommentar i statistikken?', 'da', 'Tilføj en kommentar til en periode'], ['how do I explain the numbers in the softwareload statistics?', 'en', 'Add a comment on a period'],
+  ]
+  for (const [question, language, title] of MANAGERS) {
+    const answer = ask({ q: question, lang: language }, { role: 'manager' })
+    assert.equal(answer.mode, 'app-guide', `${language}: ${question} -> ${answer.text.slice(0, 80)}`)
+    assert.match(answer.text, starts(language, title), `${language}: ${question} -> ${answer.text.slice(0, 80)}`)
+    if (language !== 'da') assert.doesNotMatch(answer.text, DANISH_GUIDE, language)
+    assert.doesNotMatch(String(ask({ q: question, lang: language }, { role: 'user' }).text), starts(language, title), `an employee is not handed it: ${language}: ${question}`)
+  }
+  const comment = ask({ q: 'hvordan tilføjer jeg en kommentar til en periode i softwareload?', lang: 'da' }, { role: 'manager' }).text
+  assert.match(comment, /"Tilføj kommentar"/)
+  assert.match(comment, /Uden dem gælder den hele perioden/)
+  assert.match(ask({ q: 'how do I add a comment on a period in softwareload?', lang: 'en' }, { role: 'manager' }).text, /"Add comment"/)
+  assert.match(ask({ q: 'hvordan ser jeg statistik for softwareload?', lang: 'da' }, { role: 'manager' }).text, /Kun managere \(ikke status managere\) ser statistikken/)
 })
 
 test('the Softwareload guide states the facts of the tool: Stempelkort stops, -0 to D000 and -R to D002, KIF via D005, "Venter på SAP"', () => {

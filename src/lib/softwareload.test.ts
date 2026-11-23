@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { finishTitle, outcomeLabel, previewGroups, sapRunErrorMessage, SOFTWARELOAD_TARGETS, summarizeTasks, targetLabel, TYPE_LABELS } from './softwareload'
+import { commentsFor, commentsOnTask, finishTitle, outcomeLabel, previewGroups, sapRunErrorMessage, SOFTWARELOAD_TARGETS, summarizeByMaterial, summarizeTasks, targetLabel, taskForMaterial, TYPE_LABELS } from './softwareload'
 import { setWarehouseLanguage } from './warehouse/text'
-import type { SoftwareloadOutcome, SoftwareloadResult, SoftwareloadTask } from '@/types/warehouse'
+import type { SoftwareloadComment, SoftwareloadOutcome, SoftwareloadResult, SoftwareloadTask } from '@/types/warehouse'
 
 const HOUR = 3_600_000
 const result = (outcome: SoftwareloadOutcome): SoftwareloadResult => ({ material: 'M-0', from: 'D001', outcome, steps: [] })
@@ -101,5 +101,60 @@ describe('summarizeTasks', () => {
   it('summarizeTasks: zero worked time gives pace 0, not Infinity', () => {
     const [row] = summarizeTasks([task({ workedMs: 0, terminals: terminals('a', 4), results: results('a', 4, 'to-target') })])
     expect(row).toMatchObject({ moved: 4, workedMs: 0, perHour: 0 })
+  })
+})
+
+describe('summarizeByMaterial', () => {
+  const ofMaterial = (prefix: string, count: number, material: string): SoftwareloadTask['results'] =>
+    Object.fromEntries(Array.from({ length: count }, (_, i) => [`${prefix}${i}`, { ...result('to-target'), material }]))
+
+  it('summarizeByMaterial splits time by terminal count', () => {
+    const summary = summarizeByMaterial([
+      task({ id: 'a', workedMs: HOUR, terminals: { ...terminals('n', 6), ...terminals('r', 1), ...terminals('rf', 1, true) },
+        results: { ...ofMaterial('n', 6, 'M-0'), ...ofMaterial('r', 1, 'M-R'), ...ofMaterial('rf', 1, 'm-r') } }),
+      task({ id: 'b', workedMs: HOUR, terminals: terminals('s', 4), results: ofMaterial('s', 4, 'M-R') }),
+      task({ id: 'c', workedMs: HOUR / 2, terminals: terminals('u', 2), results: {} }),
+    ])
+    expect(summary.map(row => [row.material, row.tasks, row.moved, row.failed, row.workedMs, row.perHour])).toEqual([
+      ['', 1, 2, 0, HOUR / 2, 4],
+      ['M-0', 1, 6, 0, 0.75 * HOUR, 8],
+      ['M-R', 2, 5, 1, 1.25 * HOUR, 4],
+    ])
+  })
+
+  it('taskForMaterial keeps only the material\'s terminals and their share of the time', () => {
+    const mixed = task({ workedMs: HOUR, terminals: terminals('n', 3), results: { ...ofMaterial('n', 1, 'M-0'), n1: { ...result('to-target'), material: 'M-R' }, n2: { ...result('to-target'), material: 'M-R' } } })
+    const part = taskForMaterial(mixed, 'm-r')!
+    expect([Object.keys(part.terminals), Object.keys(part.results), part.workedMs]).toEqual([['n1', 'n2'], ['n1', 'n2'], (2 / 3) * HOUR])
+    expect(taskForMaterial(mixed, 'M-X')).toBeNull()
+  })
+})
+
+describe('commentsFor', () => {
+  const by = { email: 'mona@example.test', name: 'Mona' }
+  const comment = (id: string, fields: Partial<SoftwareloadComment>): SoftwareloadComment => ({ id, from: '2026-11-01', to: '2026-11-30', text: id, by, at: 0, ...fields })
+  const both = comment('both', { material: 'M-R', version: 'v2' })
+  const material = comment('material', { material: 'M-R' })
+  const version = comment('version', { version: 'v1' })
+  const whole = comment('whole', {})
+  const all = [both, material, version, whole]
+  const ids = (list: SoftwareloadComment[]) => list.map(item => item.id)
+
+  it('commentsFor matches material and version, and empty fields match everything', () => {
+    expect(ids(commentsFor(all, {}))).toEqual(['both', 'material', 'version', 'whole'])
+    expect(ids(commentsFor(all, { material: '', version: '' }))).toEqual(['both', 'material', 'version', 'whole'])
+    expect(ids(commentsFor(all, { material: 'm-r' }))).toEqual(['both', 'material', 'version', 'whole'])
+    expect(ids(commentsFor(all, { material: 'M-0' }))).toEqual(['version', 'whole'])
+    expect(ids(commentsFor(all, { version: 'v1' }))).toEqual(['material', 'version', 'whole'])
+    expect(ids(commentsFor(all, { material: 'M-R', version: 'v2' }))).toEqual(['both', 'material', 'whole'])
+    // Without a chosen material, a comment on one counts when that material is in the numbers shown.
+    expect(ids(commentsFor(all, { material: ['M-0', 'M-R'], version: ['v1'] }))).toEqual(['material', 'version', 'whole'])
+    expect(ids(commentsFor(all, { material: [] }))).toEqual(['version', 'whole'])
+  })
+
+  it('commentsOnTask marks a task started in the period with its material and version', () => {
+    const loaded = task({ startedAt: new Date(2026, 10, 18, 7).getTime(), version: 'v2', results: { a: { ...result('to-target'), material: 'M-R' } } })
+    expect(ids(commentsOnTask([...all, comment('december', { from: '2026-12-01', to: '2026-12-31' })], loaded))).toEqual(['both', 'material', 'whole'])
+    expect(ids(commentsOnTask([comment('day', { from: '2026-11-18', to: '2026-11-18' })], loaded))).toEqual(['day'])
   })
 })

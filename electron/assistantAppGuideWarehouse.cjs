@@ -8,7 +8,7 @@ const WAREHOUSE_MODULE = {
   view: 'warehouse',
   title: 'Arbejdsværktøjer',
   inOverview: false,
-  summary: 'Arbejdsværktøjer findes kun i TCD- og TRR-hubben (hed før Lagerstyring). Det er en lille hub med værktøjer: Stempelkort (stempl ind og ud på dine opgaver med start, pause og stop; kun managere ser tiderne), Placeringer (hvor pallerne står, sæt på plads, tag den ældste først og fyld pluk-pladser op), Optælling (kvartalets statusoptælling af terminaler og tilbehør i plant D301 med scanning af serienumre, godkendelse, SAP-optællingsdokumenter, endelige rapporter og et arkiv over afholdte statusser) og Softwareload (scan de terminaler, du loader, på en opgave med ur, og appen flytter dem i SAP, når opgaven afsluttes; søg på et serienummer og se statistik).',
+  summary: 'Arbejdsværktøjer findes kun i TCD- og TRR-hubben (hed før Lagerstyring). Det er en lille hub med værktøjer: Stempelkort (stempl ind og ud på dine opgaver med start, pause og stop; kun managere ser tiderne), Placeringer (hvor pallerne står, sæt på plads, tag den ældste først og fyld pluk-pladser op), Optælling (kvartalets statusoptælling af terminaler og tilbehør i plant D301 med scanning af serienumre, godkendelse, SAP-optællingsdokumenter, endelige rapporter og et arkiv over afholdte statusser) og Softwareload (scan de terminaler, du loader, på en opgave med ur, og appen flytter dem i SAP, når opgaven afsluttes; søg på et serienummer, og managere ser statistik).',
   where: 'Åbn feltet "Arbejdsværktøjer" på forsiden (kun i TCD- og TRR-hubben) og vælg "Stempelkort", "Placeringer", "Optælling" eller "Softwareload".',
   keywords: ['arbejdsvaerktoejer', 'softwareload', 'keyload', 'arbejdsvaerktoej', 'work tools', 'tyokalut', 'tyoekalut', 'arbetsverktyg', 'stempelkort', 'stemple ind', 'stempl ind', 'time card', 'timecard', 'leimauskortti', 'staempelkort', 'lagerstyring', 'lagerstyringen', 'placeringer', 'placeringerne', 'placeringsark', 'sijainnit', 'sijoitustaulukko', 'placeringar', 'warehouse management', 'optaelling', 'optaellingen', 'optaellinger', 'statusoptaelling', 'lageroptaelling', 'stock count', 'stock counts', 'stocktake', 'stock taking', 'inventory count', 'varastonhallinta', 'inventointi', 'inventoinnin', 'varaston laskenta', 'lagerstyrning', 'inventering', 'inventeringen', 'lagerinventering', 'reol', 'reoler', 'reolen', 'hylde', 'hylder', 'rack', 'racks', 'shelf', 'shelves', 'hylly', 'hyllyt', 'hyllykkoe', 'hylla', 'hyllor'],
   tasks: [
@@ -365,14 +365,29 @@ const WAREHOUSE_MODULE = {
     {
       id: 'softwareload-stats',
       title: 'Se softwareload-statistik',
+      requires: MANAGER,
       direct: true,
       keywords: ['softwareload', 'softwareload statistik', 'statistik for softwareload', 'statistik over softwareload', 'statistik i softwareload', 'terminaler i timen', 'terminaler pr time', 'loadet pr time', 'softwareload statistics', 'statistics for softwareload', 'terminals per hour', 'softwareload tilastot', 'softwareload tilastoja', 'softwareloadin tilastot', 'paeaetettae tunnissa', 'paeaetteitae tunnissa', 'terminaler per timme', 'terminaler i timmen', 'statistik foer softwareload'],
       steps: [
-        'Åbn "Arbejdsværktøjer" > "Softwareload" og vælg fanen "Statistik".',
-        'Vælg periode (i dag, denne uge, denne måned, sidste måned eller selv valgt) og eventuelt person, type og softwareversion.',
-        'Se antal opgaver, loadet, fejlede og terminaler i timen, en tabel pr. person og type og listen over opgaverne med tider.',
+        'Åbn "Arbejdsværktøjer" > "Softwareload" og vælg fanen "Statistik" (kun managere).',
+        'Vælg periode (i dag, denne uge, denne måned, sidste måned eller selv valgt) og eventuelt person, type, softwareversion og materiale.',
+        'Se kommentarerne til perioden øverst, antal opgaver, loadet, fejlede og terminaler i timen, en tabel pr. person og type, en tabel pr. materiale og listen over opgaverne med tider.',
       ],
-      notes: 'Managere ser hele teamets opgaver, og medarbejdere ser kun deres egne. Tempoet tæller terminaler pr. arbejdstime. Kun dem, der er markeret som fejlet, tæller ikke med. Dem SAP afviste, vises også for sig.',
+      notes: 'Kun managere (ikke status managere) ser statistikken, og de ser hele teamets opgaver. Tempoet tæller terminaler pr. arbejdstime. Kun dem, der er markeret som fejlet, tæller ikke med. Dem SAP afviste, vises også for sig. Har en opgave flere materialer, fordeles tiden på dem efter antal terminaler.',
+    },
+    {
+      id: 'softwareload-comment',
+      title: 'Tilføj en kommentar til en periode',
+      requires: MANAGER,
+      preferred: true,
+      keywords: ['kommentar til en periode', 'kommentar til perioden', 'kommentar til statistikken', 'kommentar i statistikken', 'kommentere statistikken', 'kommenter statistikken', 'kommentarer i statistikken', 'softwareload kommentar', 'kommentar i softwareload', 'kommentar til softwareload', 'forklar tallene', 'forklare tallene', 'comment on a period', 'comment to a period', 'comment on the period', 'comment on the statistics', 'comment in the statistics', 'comment to the statistics', 'comments in the statistics', 'softwareload comment', 'explain the numbers', 'kommentti jaksolle', 'kommentin jaksolle', 'kommentoi jaksoa', 'kommentti tilastoihin', 'kommentin tilastoihin', 'kommentit tilastoissa', 'selitae luvut', 'selittaeae luvut', 'kommentar till en period', 'kommentar till perioden', 'kommentar i statistiken', 'kommentar till statistiken', 'kommentarer i statistiken', 'foerklara siffrorna'],
+      steps: [
+        'Åbn "Arbejdsværktøjer" > "Softwareload", vælg fanen "Statistik" og vælg den periode, kommentaren handler om.',
+        'Klik "Tilføj kommentar". Perioden er den valgte måned. Vælg en anden måned under "Hel måned", eller vælg "Egne datoer" med fra og til.',
+        'Skriv et materialenummer og en softwareversion, hvis kommentaren kun handler om dem. Uden dem gælder den hele perioden.',
+        'Skriv kommentaren, fx at ny software til et materiale tog længere tid at loade, og klik "Gem kommentaren".',
+      ],
+      notes: 'Kommentarer, der rammer perioden og passer til filtrene, står over tallene, og de opgaver og materialer, de handler om, får en lille taleboble. Klik "Ret" eller "Slet" ved en kommentar for at rette eller slette den. Kun managere kan skrive, rette og slette kommentarer, og de gælder for teamet. Hvem der skrev, rettede og slettede og hvornår, bliver gemt.',
     },
     {
       id: 'softwareload-delete',
