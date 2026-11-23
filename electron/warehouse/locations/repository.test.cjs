@@ -150,6 +150,18 @@ test('undo restores the state, marks the events and logs the undo', async () => 
   assert.deepEqual(await repo.undo('TCD', { tx: put.tx, at: put.at, by: MONA, actionId: 'undo-1' }), { duplicate: true }, 'the same undo action is applied once')
 })
 
+test('an undo sees the places used since in the months it locks, also when the caller gave none', async () => {
+  const { repo, clock } = setup()
+  await repo.transact('TCD', tx => { tx.locations['A2.4'] = place('A2.4'); tx.locations['B1.1'] = place('B1.1'); tx.pallets.P = { id: 'P', location: 'A2.4', material: 'R162-0717', quantity: 5 } })
+  clock.now += 60000
+  await repo.transact('TCD', tx => { tx.pallets.P.location = 'B1.1'; tx.event({ type: 'move', by: ANNA, pallet: 'P', from: 'A2.4', to: 'B1.1' }) })
+  const [move] = await repo.history('TCD', { type: 'move' })
+  clock.now += 60000
+  await repo.transact('TCD', tx => { tx.pallets.L = { id: 'L', location: 'A2.4', material: 'R162-0717', quantity: 1 }; tx.event({ type: 'putaway', by: ANNA, pallet: 'L', location: 'A2.4' }) })
+  await assert.rejects(repo.undo('TCD', { tx: move.tx, at: move.at, by: MONA }), error => error.code === 'UNDO_CONFLICT' && error.conflict.id === 'A2.4' && error.conflict.reason === 'full')
+  assert.equal((await repo.read('TCD')).pallets.P.location, 'B1.1')
+})
+
 test('undo is refused when something changed since, when already undone, for import and for old events', async () => {
   const { repo } = setup()
   await repo.transact('TCD', tx => { tx.locations['A2.4'] = place('A2.4') })

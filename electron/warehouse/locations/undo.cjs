@@ -29,10 +29,11 @@ function changeOf(before, after) {
  * Whether `change` can be undone in `state`, without building the new state (the log asks this for every line):
  * everything the action left must still be as it left it; a pallet put back needs its place, and never a pick place
  * (pick places hold no pallets); a shelf line put back needs a lagerhylde; a place the undo removes must have no other
- * pallet or shelf line on it. A pallet put back on a place it had left needs room there and a place that takes pallets:
- * the conflict then says why (`reason`: full, reserved, station or inactive).
+ * pallet or shelf line on it. A pallet put back on a place it had left, which a later action used (`options.used`, see
+ * placesUsedSince), needs room there and a place that takes pallets: the conflict then says why (`reason`: full,
+ * reserved, station or inactive). Without `options.used` no place is checked for that.
  */
-function undoCheck(change, state) {
+function undoCheck(change, state, options = {}) {
   for (const [key, kind] of KINDS) {
     for (const [id, after] of Object.entries(change.after[key] || {})) {
       if (!same(state[key]?.[id], after)) return { ok: false, conflict: { kind, id } }
@@ -47,9 +48,11 @@ function undoCheck(change, state) {
     const place = placeAfter(pallet.location)
     if (!place || place.purpose === 'pick' || isShelf(place)) return { ok: false, conflict: { kind: 'location', id: pallet.location } }
   }
-  // A pallet the undo puts (back) on a place must fit there as a put-away or move would (roomIn): room for it next to
-  // what stands there now, and a place that takes pallets. A place the undo itself brings back is as it was then.
-  const arriving = Object.entries(beforePallets).filter(([id, pallet]) => pallet && change.after.pallets?.[id]?.location !== pallet.location).map(([, pallet]) => pallet.location)
+  // A pallet the undo puts (back) on a place it had left must fit there as a put-away or move would (roomIn), but only
+  // where a later action used the place (`used`: changed it or brought a pallet onto it). Pallets stay on a place an
+  // admin deactivates, reserves or cuts the capacity of, so a place that was so already takes its pallet back.
+  const used = options.used
+  const arriving = used ? Object.entries(beforePallets).filter(([id, pallet]) => pallet && change.after.pallets?.[id]?.location !== pallet.location && used.has(pallet.location)).map(([, pallet]) => pallet.location) : []
   if (arriving.length) {
     const count = {}
     for (const [id, pallet] of Object.entries(state.pallets || {})) if (!Object.hasOwn(beforePallets, id)) count[pallet.location] = (count[pallet.location] || 0) + 1
@@ -87,8 +90,8 @@ function undoCheck(change, state) {
 }
 
 /** The state after undoing `change`, or the first thing that is no longer as the action left it (see undoCheck). */
-function undoPlan(change, state) {
-  const check = undoCheck(change, state)
+function undoPlan(change, state, options = {}) {
+  const check = undoCheck(change, state, options)
   if (!check.ok) return check
   const next = { locations: { ...(state.locations || {}) }, pallets: { ...(state.pallets || {}) }, ...(state.stock || change.before.stock ? { stock: { ...(state.stock || {}) } } : {}) }
   for (const [key] of KINDS) {
@@ -119,4 +122,25 @@ function drawingBlock(change, state) {
   return null
 }
 
-module.exports = { changeOf, undoCheck, undoPlan, drawingBlock }
+/**
+ * The places a recorded change used: those whose record it changed (`changed`), and those it brought a pallet onto
+ * (`arrived`). A place in either may no longer take back a pallet an earlier action took away from it.
+ */
+function placesUsedBy(change) {
+  const changed = Object.keys(change?.after?.locations || {})
+  const arrived = Object.entries(change?.after?.pallets || {}).filter(([id, after]) => after && change.before?.pallets?.[id]?.location !== after.location).map(([, after]) => after.location)
+  return { changed, arrived }
+}
+
+/** The places used (see placesUsedBy) by actions after `origin` ({ tx, at }), undos included. */
+function placesUsedSince(events, origin) {
+  const used = new Set()
+  for (const event of events) {
+    if (!event.change || event.tx === origin.tx || !(event.at >= origin.at)) continue
+    const { changed, arrived } = placesUsedBy(event.change)
+    for (const id of [...changed, ...arrived]) used.add(id)
+  }
+  return used
+}
+
+module.exports = { changeOf, undoCheck, undoPlan, drawingBlock, placesUsedBy, placesUsedSince }

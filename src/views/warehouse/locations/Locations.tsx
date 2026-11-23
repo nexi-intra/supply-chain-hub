@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { isAnyModalOpen } from '@/lib/modalStack'
 import { errorMessage } from '@/lib/warehouse/errors'
 import type { LocationsTarget } from '@/lib/warehouse/locations'
-import { startLocationsRead } from '@/lib/warehouse/locationActions'
+import { replayFailureText, startLocationsRead } from '@/lib/warehouse/locationActions'
 import { t } from '@/lib/warehouse/text'
 import type { LocationList, WarehouseUser } from '@/types/warehouse'
 import { Admin } from './Admin'
@@ -63,7 +63,7 @@ export function Locations({ user, initial }: { user: WarehouseUser; initial: Loc
       if (!result.failures.length) return
       for (const failure of result.failures) {
         const who = failure.email === user.email ? '' : ` (${failure.name || failure.email})`
-        toast.error(t(`En handling gemt på denne PC kunne ikke gennemføres${who}`, `An action saved on this PC could not be completed${who}`), { id: `locations-sync-failed-${failure.id}`, description: `${failure.label || failure.method}: ${errorMessage(new Error(failure.code))}`, duration: Infinity })
+        toast.error(t(`En handling gemt på denne PC kunne ikke gennemføres${who}`, `An action saved on this PC could not be completed${who}`), { id: `locations-sync-failed-${failure.id}`, description: `${failure.label || failure.method}: ${replayFailureText(failure.code)}`, duration: Infinity })
       }
       void bridge.acknowledgeFailures(result.failures.map(failure => failure.id)).catch(() => {})
     }).catch(() => {})

@@ -482,7 +482,7 @@ test('a move back to a place that was used again is refused, naming who used it;
   assert.deepEqual(Object.values(state.pallets).map(pallet => [pallet.id, pallet.location]), [['P', 'A2.4']])
 })
 
-test('an undo onto a place made reserved, a station or inactive since names who changed the place, or says what the place is', async () => {
+test('an undo onto a place made reserved, a station or inactive since names who changed the place; a place that was so already takes it back', async () => {
   const { pc1, clock, seed } = setup()
   await seed([place('A2.4'), place('A2.5'), place('A2.6'), place('A3.1', { active: false }), place('B1.1', { type: 'Gulv', capacity: 0 })], ['A2.4', 'A2.5', 'A2.6', 'A3.1'].map(location => ({ id: `p-${location}`, location, material: 'R162-0717', quantity: 10, receivedAt: 1 })))
   for (const location of ['A2.4', 'A2.5', 'A2.6', 'A3.1']) await pc1.service.move(BO, { actionId: `move-${location}`, pallet: `p-${location}`, to: 'B1.1' })
@@ -492,11 +492,52 @@ test('an undo onto a place made reserved, a station or inactive since names who 
   await pc1.service.editLocation(ADA, { location: 'A2.6', changes: { purpose: 'station', fixedMaterials: ['R162-0717'] } })
   const changed = clock.now
   const moves = (await pc1.service.log(ADA, { type: 'move' })).events
-  const reason = location => moves.find(event => event.from === location).reason
-  for (const location of ['A2.4', 'A2.5', 'A2.6']) assert.equal(reason(location), `Kan ikke fortrydes. Ada rettede placeringen ${location} kl. ${hhmm(changed)}. Fortryd den først.`)
-  // A3.1 was deactivated already when the pallet left it: nobody to name, so the place is.
-  assert.equal(reason('A3.1'), 'Kan ikke fortrydes. A3.1 er deaktiveret.')
-  await assert.rejects(pc1.service.undo(ADA, { eventId: moves.find(event => event.from === 'A3.1').id }), { code: 'UNDO_CONFLICT', message: 'Kan ikke fortrydes. A3.1 er deaktiveret.' })
+  const line = location => moves.find(event => event.from === location)
+  for (const location of ['A2.4', 'A2.5', 'A2.6']) {
+    const said = `Kan ikke fortrydes. Ada rettede placeringen ${location} kl. ${hhmm(changed)}. Fortryd den først.`
+    assert.deepEqual([line(location).canUndo, line(location).reason], [false, said])
+    await assert.rejects(pc1.service.undo(ADA, { eventId: line(location).id }), { code: 'UNDO_CONFLICT', message: said })
+  }
+  // A3.1 was deactivated already when the pallet left it: nothing has used it since, so the pallet goes back.
+  assert.equal(line('A3.1').canUndo, true)
+  assert.deepEqual(await pc1.service.undo(ADA, { eventId: line('A3.1').id, actionId: 'u1' }), { undone: 1 })
+  assert.equal((await pc1.repo.read('TCD')).pallets['p-A3.1'].location, 'A3.1')
+})
+
+test('a whole take from a place that was already deactivated can be undone: the pallet comes back with its serials and date', async () => {
+  const { pc1, clock, seed } = setup()
+  await seed([place('A3.1')], [{ id: 'P', location: 'A3.1', material: 'R162-0717', quantity: 10, receivedAt: 7, serials: ['S1', 'S2'], document: '5000032337 2026 0001' }])
+  await pc1.service.setActive(ADA, { location: 'A3.1', active: false })
+  const kept = (await pc1.repo.read('TCD')).pallets.P
+  clock.now += 60000
+  await pc1.service.take(BO, { actionId: 'bo-take', pallet: 'P' })
+  const take = (await pc1.service.log(ADA, { type: 'take' })).events[0]
+  assert.equal(take.canUndo, true)
+  await pc1.service.undo(ADA, { eventId: take.id, actionId: 'u1' })
+  assert.deepEqual((await pc1.repo.read('TCD')).pallets.P, kept)
+})
+
+test('a take from a place over its capacity since the capacity was cut can be undone', async () => {
+  const { pc1, clock, seed } = setup()
+  await seed([place('S0', { type: 'Bord', capacity: 2 })], [{ id: 'p1', location: 'S0', material: 'R162-0717', quantity: 10, receivedAt: 1 }, { id: 'p2', location: 'S0', material: 'R162-0717', quantity: 10, receivedAt: 2 }])
+  await pc1.service.editLocation(ADA, { location: 'S0', changes: { capacity: 1 } })
+  clock.now += 60000
+  await pc1.service.take(BO, { actionId: 'bo-take', pallet: 'p1' })
+  const take = (await pc1.service.log(ADA, { type: 'take' })).events[0]
+  assert.equal(take.canUndo, true)
+  await pc1.service.undo(ADA, { eventId: take.id, actionId: 'u1' })
+  assert.deepEqual(Object.keys((await pc1.repo.read('TCD')).pallets).sort(), ['p1', 'p2'])
+})
+
+test('an admin rename of a place over its capacity can be undone: both pallets go back with the old name', async () => {
+  const { pc1, seed } = setup()
+  await seed([place('A1.1')], [{ id: 'p1', location: 'A1.1', material: 'R162-0717', quantity: 10, receivedAt: 1 }, { id: 'p2', location: 'A1.1', material: 'R162-0717', quantity: 10, receivedAt: 2 }])
+  await pc1.service.editLocation(ADA, { location: 'A1.1', changes: { name: 'A1.9' } })
+  const rename = (await pc1.service.log(ADA, { type: 'location' })).events[0]
+  assert.equal(rename.canUndo, true)
+  await pc1.service.undo(ADA, { eventId: rename.id, actionId: 'u1' })
+  const state = await pc1.repo.read('TCD')
+  assert.deepEqual([Object.keys(state.locations), state.pallets.p1.location, state.pallets.p2.location], [['A1.1'], 'A1.1', 'A1.1'])
 })
 
 test('a plain user cannot undo (LOCATIONS_MANAGER_ONLY) and sees canUndo false', async () => {

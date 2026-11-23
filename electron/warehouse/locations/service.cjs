@@ -5,7 +5,7 @@ const { normalizeMatdoc } = require('../core/sapParsers.cjs')
 const { locationKey, areaFromName, PURPOSES, DRAWN_PURPOSES, TYPES, isShelf, palletLimit, shelfOf } = require('./model.cjs')
 const shelves = require('./shelves.cjs')
 const rules = require('./rules.cjs')
-const { undoCheck, drawingBlock } = require('./undo.cjs')
+const { undoCheck, drawingBlock, placesUsedBy, placesUsedSince } = require('./undo.cjs')
 const { readSheet, planImport } = require('./sheetImport.cjs')
 const path = require('node:path')
 
@@ -862,8 +862,11 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
   const changesOf = events => new Map(events.filter(event => event.change).map(event => [event.tx, event.change]))
   const PLACE_REASONS = { full: 'er fuld', reserved: 'er reserveret', station: 'er en arbejdsstation', inactive: 'er deaktiveret' }
   /** Whether a change made a place unfit for a pallet put back (`reason`): a pallet came onto it, or the place was changed. */
-  const usedPlace = (change, { id, reason }) => Boolean(change) && (Object.hasOwn(change.after.locations || {}, id)
-    || (reason === 'full' && Object.entries(change.after.pallets || {}).some(([pallet, after]) => after?.location === id && change.before.pallets?.[pallet]?.location !== id)))
+  const usedPlace = (change, { id, reason }) => {
+    if (!change) return false
+    const { changed, arrived } = placesUsedBy(change)
+    return changed.includes(id) || (reason === 'full' && arrived.includes(id))
+  }
   /**
    * The latest later event that touched what blocks the undo, as a sentence. An undo is never named (it cannot be undone),
    * nor an action that changed nothing (a take of some pieces from a pallet with an unknown quantity): it hides nothing.
@@ -922,6 +925,22 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
     const groups = new Map()
     for (const event of all) if (event.tx) groups.set(event.tx, [...(groups.get(event.tx) || []), event])
     const verdicts = new Map()
+    // Which actions used each place (placesUsedBy), built once on the first verdict that asks: an undo needs room only
+    // where a later action used the place.
+    let uses = null
+    const usedIndex = () => {
+      if (uses) return uses
+      uses = new Map()
+      for (const event of all) {
+        if (!event.change) continue
+        const { changed, arrived } = placesUsedBy(event.change)
+        for (const id of new Set([...changed, ...arrived])) {
+          if (!uses.has(id)) uses.set(id, [])
+          uses.get(id).push({ tx: event.tx, at: event.at })
+        }
+      }
+      return uses
+    }
     const verdict = event => {
       if (!event.tx) return { canUndo: false, reason: 'Fra før loggen kunne fortryde' }
       if (verdicts.has(event.tx)) return verdicts.get(event.tx)
@@ -932,10 +951,11 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
       else if (group.some(item => item.undoneAt)) result = { canUndo: false, reason: 'Allerede fortrudt' }
       else if (!change) result = { canUndo: false, reason: group.some(item => (item.type === 'take' || item.type === 'refill') && item.pallet) ? 'Pallens antal er ukendt, så der er intet at fortryde' : 'Fra før loggen kunne fortryde' }
       else {
-        const check = undoCheck(change, state)
+        const origin = group[group.length - 1]
+        const check = undoCheck(change, state, { used: { has: id => (usedIndex().get(id) || []).some(use => use.tx !== origin.tx && use.at >= origin.at) } })
         const drawn = check.ok && drawingBlock(change, state)
         if (drawn) result = { canUndo: false, reason: drawn }
-        else result = check.ok ? { canUndo: true, effect: effectOf(change, state) } : { canUndo: false, reason: blocker(all, group[group.length - 1], check.conflict, changes) }
+        else result = check.ok ? { canUndo: true, effect: effectOf(change, state) } : { canUndo: false, reason: blocker(all, origin, check.conflict, changes) }
       }
       verdicts.set(event.tx, result)
       return result
@@ -947,10 +967,15 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
 
   async function undo(user, { eventId, at, actionId } = {}) {
     const team = await requireAdmin(user)
-    // The event is looked up under the repository's lock: with M: down that fails as a storage error, so it is queued.
-    // Its time (from the log line) picks the month file, so only that one is locked.
+    // The places later actions used (an undo needs room only there): from the log, read before; the repository adds what
+    // it sees under its lock. The event itself is looked up under the repository's lock: with M: down that fails as a
+    // storage error, so it is queued. Its time (from the log line) picks the month file, so only that one is locked.
+    const read = await repo.history(team, { months: 4 })
+    const found = read.find(item => item.id === eventId)
+    const group = found?.tx ? read.filter(item => item.tx === found.tx) : []
+    const used = group.length ? placesUsedSince(read, group[group.length - 1]) : new Set()
     try {
-      return await repo.undo(team, { eventId, ...(Number.isFinite(at) ? { at } : {}), by: by(user), actionId })
+      return await repo.undo(team, { eventId, ...(Number.isFinite(at) ? { at } : {}), by: by(user), actionId, used })
     } catch (error) {
       if (error.code !== 'UNDO_CONFLICT') throw error
       const all = await repo.history(team, { months: 4 })

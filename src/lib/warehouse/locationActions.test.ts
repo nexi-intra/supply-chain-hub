@@ -6,7 +6,7 @@ vi.mock('sonner', () => ({ toast }))
 
 import { pendingWriteCount } from '@/lib/pendingWrites'
 import {
-  addToStock, countedInCard, isPlaceHidden, locationActionsInFlight, matdocOf, movedInList, moveTargetCheck, palletEdit, predictedRack, sendLocationAction, startLocationsRead,
+  addToStock, countedInCard, isPlaceHidden, locationActionsInFlight, matdocOf, movedInList, moveTargetCheck, palletEdit, predictedRack, replayFailureText, sendLocationAction, startLocationsRead,
   takeFromCard, takeFromCardShelf, withPutAway, withStockQuantity,
 } from './locationActions'
 import { errorCode } from './errors'
@@ -65,6 +65,13 @@ describe('sendLocationAction', () => {
     toast.error.mockClear()
     await sendLocationAction(() => Promise.reject(new Error('STOCK_TOO_LOW: Der er kun 5')), { rollback, offer, settled: () => {} })
     expect(toast.error).toHaveBeenCalledWith('Der er kun 5')
+  })
+
+  it('a refused count replayed from this PC says to count again, without "gem alligevel" (there is no button there)', () => {
+    expect(replayFailureText('STOCK_CHANGED')).toBe('Antallet var ændret, da handlingen blev sendt. Tæl igen.')
+    expect(replayFailureText('PALLET_GONE')).toBe('Pallen er ikke der længere – en anden har taget eller flyttet den.')
+    setWarehouseLanguage('en')
+    expect(replayFailureText('STOCK_CHANGED')).toBe('The quantity had changed when the action was sent. Count again.')
   })
 
   it('hands every action to the Hub at once, without waiting for the one before (the Hub keeps the order and the outbox)', async () => {

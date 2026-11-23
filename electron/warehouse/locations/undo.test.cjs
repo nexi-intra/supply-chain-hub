@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { changeOf, undoPlan } = require('./undo.cjs')
+const { changeOf, undoPlan, placesUsedSince } = require('./undo.cjs')
 
 const place = (name, extra = {}) => ({ id: name, name, area: name.replace(/[\d. ].*$/, ''), type: 'Palle', purpose: 'reserve', capacity: 1, fixedMaterials: [], active: true, note: '', ...extra })
 const pallet = (id, location, extra = {}) => ({ id, location, material: 'R162-0717', quantity: 100, receivedAt: 1, document: null, serials: [], sloc: 'D000', tags: [], note: '', createdAt: 1, ...extra })
@@ -15,7 +15,7 @@ test('changeOf keeps only what differs, with null for what did not exist', () =>
 })
 
 test('undoPlan puts everything back as it was before when nothing changed since', () => {
-  const start = state([place('A1.1', { capacity: 2 }), place('A1.2')], [pallet('p1', 'A1.1'), pallet('p2', 'A1.1')])
+  const start = state([place('A1.1'), place('A1.2')], [pallet('p1', 'A1.1'), pallet('p2', 'A1.1')])
   // take 10 of p1, take the whole p2, move p1 to A1.2: each as its own action
   for (const step of [
     s => { s.pallets.p1.quantity = 90 },
@@ -59,13 +59,13 @@ test('undoing a rename brings the old id back and its pallets with it', () => {
   assert.equal(plan.state.pallets.p1.location, 'A1.1')
 })
 
-test('a pallet used up on a pick place comes back on undo while its place is free; not when another pallet has taken it', () => {
+test('a pallet used up on a pick place comes back on undo while its place is free; not when another pallet has taken it since', () => {
   const start = state([place('A1.1'), place('H1', { purpose: 'pick', fixedMaterials: ['R162-0717'] })], [pallet('p1', 'A1.1')])
   const after = state(Object.values(start.locations))
-  assert.deepEqual(undoPlan(changeOf(start, after), after).state, start)
+  assert.deepEqual(undoPlan(changeOf(start, after), after, { used: new Set() }).state, start)
   const later = clone(after)
-  later.pallets.p5 = pallet('p5', 'A1.1') // A1.1 (capacity 1) is now taken by another pallet
-  assert.deepEqual(undoPlan(changeOf(start, after), later), { ok: false, conflict: { kind: 'location', id: 'A1.1', reason: 'full' } })
+  later.pallets.p5 = pallet('p5', 'A1.1') // A later action put p5 on A1.1 (capacity 1)
+  assert.deepEqual(undoPlan(changeOf(start, after), later, { used: new Set(['A1.1']) }), { ok: false, conflict: { kind: 'location', id: 'A1.1', reason: 'full' } })
 })
 
 test('a move back to a place that was used again is refused when the place is full, with room it goes back', () => {
@@ -75,12 +75,13 @@ test('a move back to a place that was used again is refused when the place is fu
   const change = changeOf(start, after)
   const reused = clone(after)
   reused.pallets.L = pallet('L', 'A2.4')
-  assert.deepEqual(undoPlan(change, reused), { ok: false, conflict: { kind: 'location', id: 'A2.4', reason: 'full' } })
+  const used = new Set(['A2.4'])
+  assert.deepEqual(undoPlan(change, reused, { used }), { ok: false, conflict: { kind: 'location', id: 'A2.4', reason: 'full' } })
   // A place for two (S0) with one new pallet, and a floor with any number, still have room.
   for (const extra of [{ type: 'Bord', capacity: 2 }, { type: 'Gulv', capacity: 0 }]) {
     const roomy = clone(reused)
     roomy.locations['A2.4'] = place('A2.4', extra)
-    const plan = undoPlan(change, roomy)
+    const plan = undoPlan(change, roomy, { used })
     assert.equal(plan.ok, true, extra.type)
     assert.deepEqual([plan.state.pallets.P.location, plan.state.pallets.L.location], ['A2.4', 'A2.4'])
   }
@@ -95,9 +96,51 @@ test('a pallet is never put back on a place that has become reserved, a station 
     for (const [extra, reason] of [[{ purpose: 'reserved' }, 'reserved'], [{ purpose: 'station', fixedMaterials: ['R162-0717'] }, 'station'], [{ active: false }, 'inactive']]) {
       const later = clone(after)
       later.locations['A2.4'] = place('A2.4', extra)
-      assert.deepEqual(undoPlan(change, later), { ok: false, conflict: { kind: 'location', id: 'A2.4', reason } }, reason)
+      assert.deepEqual(undoPlan(change, later, { used: new Set(['A2.4']) }), { ok: false, conflict: { kind: 'location', id: 'A2.4', reason } }, reason)
     }
   }
+})
+
+test('a place that was already deactivated, reserved, a station or over its capacity takes its pallet back: nothing used it since', () => {
+  // Pallets stay on a place an admin deactivates, reserves or cuts the capacity of; taking or moving them away is the way out.
+  for (const extra of [{ active: false }, { purpose: 'reserved' }, { purpose: 'station', fixedMaterials: ['R162-0717'] }, {}]) {
+    const start = state([place('A2.4', extra), place('B1.1')], [pallet('P', 'A2.4'), pallet('Q', 'A2.4')])
+    for (const after of [state(Object.values(start.locations), [pallet('Q', 'A2.4')]), state(Object.values(start.locations), [pallet('P', 'B1.1'), pallet('Q', 'A2.4')])]) {
+      const plan = undoPlan(changeOf(start, after), after, { used: new Set(['B1.1']) })
+      assert.equal(plan.ok, true, JSON.stringify(extra))
+      assert.deepEqual(plan.state, start)
+    }
+  }
+})
+
+test('undoing a rename of an overfull place brings both pallets back with it', () => {
+  const start = state([place('A1.1')], [pallet('p1', 'A1.1'), pallet('p2', 'A1.1')])
+  const after = state([place('A1.9', { name: 'A1.9' })], [pallet('p1', 'A1.9'), pallet('p2', 'A1.9')])
+  const plan = undoPlan(changeOf(start, after), after, { used: new Set() })
+  assert.equal(plan.ok, true)
+  assert.deepEqual(plan.state, start)
+})
+
+test('without the places used since, no place is checked for room (as before)', () => {
+  const start = state([place('A2.4'), place('B1.1')], [pallet('P', 'A2.4')])
+  const after = state(Object.values(start.locations), [pallet('P', 'B1.1')])
+  const reused = clone(after)
+  reused.pallets.L = pallet('L', 'A2.4')
+  assert.equal(undoPlan(changeOf(start, after), reused).ok, true)
+})
+
+test('the places used by later actions: a place changed or a pallet brought onto it, also by an undo; the action itself and earlier ones are not', () => {
+  const at = 1000
+  const origin = { tx: 't0', at }
+  const events = [
+    { tx: 't4', at: at + 4, type: 'undo', change: { before: { pallets: { X: null }, locations: {} }, after: { pallets: { X: pallet('X', 'U1') }, locations: {} } } },
+    { tx: 't3', at: at + 3, type: 'location', change: { before: { pallets: {}, locations: { R1: place('R1') } }, after: { pallets: {}, locations: { R1: place('R1', { active: false }) } } } },
+    { tx: 't2', at: at + 2, type: 'take', change: { before: { pallets: { Y: pallet('Y', 'T1') }, locations: {} }, after: { pallets: { Y: pallet('Y', 'T1', { quantity: 5 }) }, locations: {} } } },
+    { tx: 't1', at: at + 1, type: 'move', change: { before: { pallets: { Z: pallet('Z', 'M0') }, locations: {} }, after: { pallets: { Z: pallet('Z', 'M1') }, locations: {} } } },
+    { tx: 't0', at, type: 'move', change: { before: { pallets: { P: pallet('P', 'O0') }, locations: {} }, after: { pallets: { P: pallet('P', 'O1') }, locations: {} } } },
+    { tx: 'old', at: at - 1, type: 'putaway', change: { before: { pallets: { E: null }, locations: {} }, after: { pallets: { E: pallet('E', 'E1') }, locations: {} } } },
+  ]
+  assert.deepEqual([...placesUsedSince(events, origin)].sort(), ['M1', 'R1', 'U1'])
 })
 
 test('a pallet that stays on its place does not need room there: an edit on a full or deactivated place can be undone', () => {

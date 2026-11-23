@@ -3,7 +3,7 @@
 // Each transaction records its change (the pallets and places before and after) on its first history event, so the
 // action can be undone later – one action at a time, and only while nothing it touched has changed since.
 const { KEYS, STATE_KEYS, LAYOUT_KEYS } = require('./model.cjs')
-const { changeOf, undoPlan, drawingBlock } = require('./undo.cjs')
+const { changeOf, undoPlan, drawingBlock, placesUsedSince } = require('./undo.cjs')
 const { JOURNAL_KEY, createStage, finishLeftover, commitStage } = require('./txJournal.cjs')
 
 const EMPTY = { locations: {}, pallets: {}, stock: {}, tags: [], meta: {} }
@@ -176,7 +176,7 @@ function createLocationRepository({ storeFor, now = Date.now, newId }) {
    * Throws UNDO_NOT_FOUND, UNDO_NOT_POSSIBLE (no change recorded, an import, a drawing publish or an undo), UNDO_ALREADY or UNDO_CONFLICT
    * (with `conflict: { kind, id }`: what was changed since). The original events are marked; the undo is its own event.
    */
-  async function undo(team, { eventId, tx: wantedTx, at, by, actionId }) {
+  async function undo(team, { eventId, tx: wantedTx, at, by, actionId, used = new Set() }) {
     const store = storeFor(team)
     const undoneAt = now()
     const currentKey = monthKey(undoneAt)
@@ -199,7 +199,10 @@ function createLocationRepository({ storeFor, now = Date.now, newId }) {
       const change = events.find(event => event.change)?.change
       if (!change || events.some(event => event.type === 'import' || event.type === 'undo' || event.type === 'layout')) throw codeError('UNDO_NOT_POSSIBLE', 'Handlingen kan ikke fortrydes')
       if (events.some(event => event.undoneAt)) throw codeError('UNDO_ALREADY', 'Handlingen er allerede fortrudt')
-      const plan = undoPlan(change, placesOf(before))
+      // The places later actions used: those given (read from the log before), and those in the months locked here.
+      const lockedEvents = [...new Set([...months, currentKey])].flatMap(key => locked.get(key) || [])
+      const seen = placesUsedSince(lockedEvents, { tx, at: Math.min(...events.map(event => event.at)) })
+      const plan = undoPlan(change, placesOf(before), { used: { has: id => used.has(id) || seen.has(id) } })
       if (!plan.ok) throw codeError('UNDO_CONFLICT', 'Noget er ændret siden', { conflict: plan.conflict, tx })
       const drawn = drawingBlock(change, before)
       if (drawn) throw codeError('UNDO_NOT_POSSIBLE', drawn)

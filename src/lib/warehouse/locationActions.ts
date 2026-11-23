@@ -93,6 +93,15 @@ export function sendLocationAction<T>(write: () => Promise<T>, options: Location
   })
 }
 
+/**
+ * Why an action kept on this PC (M: down) was refused when it was sent later. Only the code comes back; a refused count
+ * has no "Gem alligevel" button there, so its text only says to count again.
+ */
+export function replayFailureText(code: string): string {
+  if (code === 'STOCK_CHANGED') return t('Antallet var ændret, da handlingen blev sendt. Tæl igen.', 'The quantity had changed when the action was sent. Count again.')
+  return errorMessage(new Error(code))
+}
+
 /** A 49/50 number as the backend stores it ("5000032337 2026 0001"), or null when it is not one. Mirrors normalizeMatdoc. */
 export function matdocOf(value: string): string | null {
   const text = String(value ?? '').trim().replace(/\s+/g, ' ')
