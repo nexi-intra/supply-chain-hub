@@ -1178,6 +1178,54 @@ test('the SAP figures of the day can be fetched after the status is locked; noth
   await assert.rejects(ctx.service('pc2').fetchDocStock(BO, id), { code: 'COUNT_OWNER_ONLY' })
 })
 
+test('after the status is locked the SAP documents are still made, counted, posted and deleted, and posting marks "Bogført i SAP"', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const mona = ctx.service('pc3')
+  const ADA = { email: 'ada@example.test', fullName: 'Ada', role: 'user', team: 'TCD', countAdmin: true }
+  const ada = ctx.service('pc4')
+  const { id } = await newCount(ctx, anna)
+  await anna.saveLine(ANNA, id, { place: 'A1.1', material: 'R162-0717', qty: 97 })
+  await anna.scan(ANNA, id, { serial: 'U1', place: 'A1.1' })
+  await anna.flush(ANNA, id)
+  ctx.tick(2000)
+  await mona.setApproval(MONA, id, { material: 'R162-0717', status: 'approved' })
+  await mona.setApproval(MONA, id, { material: 'INT4300-4921-0-R', status: 'approved' })
+  await ctx.repo.updateStatus('TCD', 'st0open1', { state: 'locked', lockedAt: 2, lockedBy: { email: 'mona@example.test', name: 'Mona' } }, { action: 'locked', by: { email: 'mona@example.test', name: 'Mona' } })
+  ctx.tick(5000)
+  const before = await mona.statusArchive(MONA, 'st0open1')
+  assert.equal(before.lines.find(line => line.material === 'R162-0717').approval.status, 'approved')
+
+  const sap = []
+  const writer = {
+    createDocument: async ({ materials }) => { sap.push('create'); return { docs: [{ docNo: materials[0] === 'R162-0717' ? '105000950' : '105000951', materials }], missing: [] } },
+    printDocument: async () => { sap.push('print'); return { message: 'ok' } },
+    enterCounts: async () => { sap.push('count'); return { message: 'ok' } },
+    postDocuments: async ({ docNos }) => { sap.push('post'); return { posted: docNos, open: [], materialDocs: { 105000950: '4905204900' }, differences: [{ docNo: '105000950', material: 'R162-0717', book: 100, counted: 97, diff: -3, amount: 15 }] } },
+    deleteDocument: async () => { sap.push('delete'); return { deleted: true, message: 'deleted' } },
+  }
+  const piDocsOf = counts => createPiDocService({ counts, repo: ctx.repo, roles: { roleOf: async user => (user.countAdmin ? 'admin' : user.role) }, writer, system: 'QS4', now: () => ctx.clock.now })
+  await mona.fetchDocStock(MONA, id)
+  await piDocsOf(mona).create(MONA, id, { materials: ['R162-0717'], sloc: 'D000', stockType: 'unrestricted' })
+  await piDocsOf(mona).print(MONA, id, '105000950')
+  await piDocsOf(ada).count(ADA, id, '105000950')
+  const posted = await piDocsOf(mona).post(MONA, id, ['105000950'])
+  assert.deepEqual([posted.posted, posted.marked], [['105000950'], { posted: ['R162-0717'], skipped: [] }])
+  assert.equal((await ctx.repo.getApprovals('TCD', id))['R162-0717'].status, 'posted', 'marked although the status is locked')
+  assert.equal((await mona.statusArchive(MONA, 'st0open1')).lines.find(line => line.material === 'R162-0717').approval.status, 'posted', 'the archive shows the posting')
+
+  await piDocsOf(mona).create(MONA, id, { materials: ['INT4300-4921-0-R'], sloc: 'D000', stockType: 'unrestricted' })
+  await piDocsOf(mona).remove(MONA, id, '105000951')
+  assert.deepEqual(sap, ['create', 'print', 'count', 'post', 'create', 'delete'])
+
+  const locked = { code: 'STATUS_LOCKED' }
+  await assert.rejects(anna.scan(ANNA, id, { serial: 'N1', place: 'A1.1' }), locked)
+  await assert.rejects(mona.setApproval(MONA, id, { material: 'INT4300-4921-0-R', status: 'reset' }), locked)
+  await assert.rejects(mona.setApproval(MONA, id, { material: 'INT4300-4921-0-R', status: 'returned' }), locked)
+  await assert.rejects(mona.undoPosted(MONA, id, { material: 'R162-0717', reason: 'Fejl' }), locked)
+  await assert.rejects(mona.approveAllWithoutDifference(MONA, id), locked)
+})
+
 test('count document for serials: SAP\'s serials of the day minus the ones missing at approval – also for an older approval', async () => {
   const ctx = setup()
   const anna = ctx.service('pc1')

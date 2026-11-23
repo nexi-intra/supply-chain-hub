@@ -266,6 +266,27 @@ test('the manager posts counted documents; only what MI22 confirms is posted, an
   assert.deepEqual([stored.D2.status, stored.D2.materialDoc, stored.D2.differences[0].diff, stored.D2.postedBy.email], ['posted', '4905204847', -3, 'mona@x'])
   assert.equal(stored.D1.status, 'counted', 'not confirmed by MI22: stays ready to post')
   assert.deepEqual(approvals, [['R1', 'R2']], 'every material of the posted documents is marked in one write')
+  assert.deepEqual(result.marked, { posted: ['R1', 'R2'], skipped: [] })
+})
+
+test('posting says which materials were marked "Bogført i SAP" and which were not', async () => {
+  const counted = (id, docNo, materials) => ({ id, docNo, year: '2026', status: 'counted', sloc: 'D000', stockType: 'unrestricted', createdBy: { email: 'mona@x' }, lines: materials.map(material => ({ material })) })
+  const make = markPosted => {
+    let stored = { D1: counted('D1', '105000898', ['R1', 'R2']) }
+    const repo = { getPiDocs: async () => structuredClone(stored), changePiDocs: async (team, id, change) => { stored = change(structuredClone(stored)).all } }
+    const writer = { postDocuments: async request => ({ posted: request.docNos, open: [], materialDocs: {}, differences: [] }) }
+    return { service: createPiDocService({ counts: { countDoc: async () => ({ rows: [] }), markPosted }, repo, roles: { roleOf: async () => 'manager' }, writer, system: 'QS4' }), stored: () => stored }
+  }
+  const partly = make(async () => ({ posted: ['R1'], skipped: ['R2'], serialLines: [] }))
+  assert.deepEqual((await partly.service.post(MONA, 'c1', ['D1'])).marked, { posted: ['R1'], skipped: ['R2'] })
+
+  const failing = make(async () => { throw Object.assign(new Error('x'), { code: 'KV_LOCK_BUSY' }) })
+  const result = await failing.service.post(MONA, 'c1', ['D1'])
+  assert.deepEqual([result.posted, result.marked], [['105000898'], { posted: [], skipped: ['R1', 'R2'], failed: true }], 'the document is posted, but nothing was marked')
+  assert.equal(failing.stored().D1.status, 'posted')
+
+  const nothing = createPiDocService({ counts: { countDoc: async () => ({ rows: [] }), markPosted: async () => assert.fail('nothing was posted') }, repo: { getPiDocs: async () => ({ D1: counted('D1', '105000899', ['R1']) }), changePiDocs: async () => {} }, roles: { roleOf: async () => 'manager' }, writer: { postDocuments: async () => ({ posted: [], open: ['105000899'], materialDocs: {}, differences: [] }) }, system: 'QS4' })
+  assert.deepEqual((await nothing.post(MONA, 'c1', ['D1'])).marked, { posted: [], skipped: [] }, 'SAP posted nothing: nothing to mark')
 })
 
 test('a document holding a material approved with quantity lines is posted only when a manager confirms it with a reason (corrected in MI05); the others still are', async () => {

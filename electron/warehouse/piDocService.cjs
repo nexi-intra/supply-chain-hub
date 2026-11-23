@@ -189,6 +189,8 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
    * A document holding a material approved with quantity lines is refused (PIDOC_SERIAL_LINES) unless it is on
    * `confirmSerialLines.docIds` with a reason: the manager has corrected the count in SAP with MI05. The confirmation is
    * logged on the document.
+   * `marked` tells which materials became "Bogført i SAP" and which were skipped (not approved, or `failed`: the mark
+   * could not be written), so the screen only says "markeret" for those that were.
    */
   async function post(user, id, docIds = [], { confirmSerialLines = null } = {}) {
     const { rows, docs, role } = await context(user, id)
@@ -212,18 +214,21 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
     const postedMaterials = chosen.filter(item => result.posted.includes(item.docNo)).flatMap(doc => doc.lines.map(line => line.material))
     const confirmedMaterials = new Set(flagged.flatMap(doc => doc.lines.map(line => line.material)))
     // The documents and the approvals are different files: both are written at the same time. The approvals are one
-    // write for every material of the posted documents ("Bogført i SAP"), not one write per material.
+    // write for every material of the posted documents ("Bogført i SAP"), not one write per material. Also after the
+    // status is locked: posting is the follow-up of the approval. Which materials were marked is returned for the screen.
     const markPosted = async () => {
-      if (!postedMaterials.length) return
+      if (!postedMaterials.length) return { posted: [], skipped: [] }
       try {
         const marked = await counts.markPosted(user, id, postedMaterials)
         for (const material of marked.skipped) console.error('CountPoint: could not mark as posted', material, 'APPROVAL_INVALID')
         for (const material of marked.serialLines || []) if (!confirmedMaterials.has(material)) console.error('CountPoint: posted although approved with quantity lines', material, 'APPROVED_WITH_SERIAL_LINES')
+        return { posted: marked.posted, skipped: marked.skipped }
       } catch (error) {
         console.error('CountPoint: could not mark as posted', postedMaterials.join(', '), error.code || error.message)
+        return { posted: [], skipped: [...new Set(postedMaterials)], failed: true }
       }
     }
-    await Promise.all([
+    const [, marked] = await Promise.all([
       repo.changePiDocs(user.team, id, all => {
         for (const doc of chosen) {
           // Who confirmed it, when and why: also when SAP did not post it this time.
@@ -236,7 +241,7 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
       }),
       markPosted(),
     ])
-    return { ...(await list(user, id)), posted: result.posted, open: result.open }
+    return { ...(await list(user, id)), posted: result.posted, open: result.open, marked }
   }
 
   /** MI02 for a wrong document (created or printed); it frees the materials for a new document. */

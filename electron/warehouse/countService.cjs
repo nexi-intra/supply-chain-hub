@@ -1298,15 +1298,16 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   /**
    * "Bogført i SAP" for the materials of posted SAP documents, in one write. Only approved materials change. SAP did post
    * them, so one approved with quantity lines is marked too, and returned in `serialLines` for the warning.
+   * Also after the status is locked: the SAP documents are the follow-up of the approval, and this only moves a material
+   * from approved to posted (no numbers change). The archive of the status is read again.
    */
   async function markPosted(user, id, materials = []) {
     const state = await refresh(await load(user, id), true)
     if (!isManager(user)) throw codeError('MANAGER_ONLY', 'Kun managers kan godkende')
-    await assertStatusOpen(state.team, state.meta)
     const codes = [...new Set(materials.map(normalizeMaterial))]
     const by = me(user)
     const at = now()
-    return repo.changeApprovals(state.team, state.id, all => {
+    const result = await repo.changeApprovals(state.team, state.id, all => {
       const posted = []
       const skipped = []
       const serialLines = []
@@ -1319,6 +1320,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       }
       return { all, result: { posted, skipped, serialLines } }
     })
+    if (result.posted.length && state.meta.statusId) for (const key of archives.keys()) if (key.startsWith(`${state.team}:${state.meta.statusId}:`)) archives.delete(key)
+    return result
   }
 
   /**

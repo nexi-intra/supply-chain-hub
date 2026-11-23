@@ -104,7 +104,7 @@ function LockDialog({ status, onClose, onLocked }: { status: CountStatus; onClos
         <DialogHeader>
           <DialogTitle>{t(`Godkend og lås "${status.name}"`, `Approve and lock "${status.name}"`)}</DialogTitle>
           <DialogDescription>
-            {t('Der dannes en endelig statusrapport og en rapport pr. optælling. Bagefter kan intet i statussen ændres, før en manager låser den op med en begrundelse.', 'A final status report and a report per count are made. Afterwards nothing in the status can be changed until a manager unlocks it with a reason.')}
+            {t('Der dannes en endelig statusrapport og en rapport pr. optælling. Tal og godkendelser kan ikke ændres. SAP-dokumenterne kan stadig laves og bogføres.', 'A final status report and a report per count are made. Figures and approvals cannot be changed. The SAP documents can still be made and posted.')}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
