@@ -1126,7 +1126,7 @@ test('kif move moves terminals from several storage locations, one transfer per 
 test('a material document without year is looked up with the current year, then the previous year', async () => {
   const sap = fakeSap({ A: { material: 'M-0', sloc: 'D000' } })
   const asked = []
-  const matdocs = async ({ team, document }) => {
+  const matdocs = async ({ document }) => {
     asked.push(document)
     return { document, transaction: 'ZMS_REP', rows: document === '4905204948 2025' ? [{ serial: 'a', material: 'M-0' }] : [] }
   }
