@@ -805,9 +805,14 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
     }
     return event.location === id || event.from === id || event.to === id || Boolean(event.change?.after?.locations && Object.hasOwn(event.change.after.locations, id))
   }
-  /** The latest later event that touched what blocks the undo, as a sentence; an undo is never named (it cannot be undone). */
-  function blocker(events, origin, conflict) {
-    const later = events.find(event => event.at >= origin.at && event.tx !== origin.tx && event.type !== 'undo' && !event.undoneAt && touches(event, conflict))
+  /** The change each transaction recorded, by tx id. */
+  const changesOf = events => new Map(events.filter(event => event.change).map(event => [event.tx, event.change]))
+  /**
+   * The latest later event that touched what blocks the undo, as a sentence. An undo is never named (it cannot be undone),
+   * nor an action that changed nothing (a take of some pieces from a pallet with an unknown quantity): it hides nothing.
+   */
+  function blocker(events, origin, conflict, changes = changesOf(events)) {
+    const later = events.find(event => event.at >= origin.at && event.tx !== origin.tx && event.type !== 'undo' && !event.undoneAt && !(event.tx && !changes.has(event.tx)) && touches(event, conflict))
     return later ? `Kan ikke fortrydes – ${later.by?.name || 'en anden'} ${said(later)} kl. ${clock(later.at)} – fortryd den først` : 'Kan ikke fortrydes – noget er ændret siden'
   }
 
@@ -853,7 +858,7 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
     const matches = event => !q
       || [event.material, event.location, event.from, event.to, event.pallet].some(value => value && String(value).toUpperCase().startsWith(locationKey(q)))
       || (digits.length >= 4 && pallets(event).some(pallet => String(pallet.document || '').replace(/\s+/g, '').startsWith(digits)))
-    const changes = new Map(all.filter(event => event.change).map(event => [event.tx, event.change]))
+    const changes = changesOf(all)
     const groups = new Map()
     for (const event of all) if (event.tx) groups.set(event.tx, [...(groups.get(event.tx) || []), event])
     const verdicts = new Map()
@@ -870,7 +875,7 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
         const check = undoCheck(change, state)
         const drawn = check.ok && drawingBlock(change, state)
         if (drawn) result = { canUndo: false, reason: drawn }
-        else result = check.ok ? { canUndo: true, effect: effectOf(change, state) } : { canUndo: false, reason: blocker(all, group[group.length - 1], check.conflict) }
+        else result = check.ok ? { canUndo: true, effect: effectOf(change, state) } : { canUndo: false, reason: blocker(all, group[group.length - 1], check.conflict, changes) }
       }
       verdicts.set(event.tx, result)
       return result

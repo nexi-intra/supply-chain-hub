@@ -122,6 +122,20 @@ test('a pallet with an unknown quantity stays on its place after a take or refil
   assert.deepEqual([line.canUndo, line.reason], [false, 'Pallens antal er ukendt, så der er intet at fortryde'], 'nothing was changed, and the log says why')
 })
 
+test('a take of some pieces from a pallet with an unknown quantity is never named as what blocks an undo', async () => {
+  const { clock, pc1, seed } = setup()
+  const TOM = { email: 'tom@x.test', fullName: 'Tom', role: 'user', team: 'TCD' }
+  await seed([place('A2.4')])
+  const { created: [pallet] } = await pc1.service.putAway(ANNA, { actionId: 'a1', pallets: [{ location: 'A2.4', material: 'R162-0717' }] })
+  clock.now += 60000
+  await pc1.service.editPallet(TOM, { actionId: 'a2', pallet: pallet.id, changes: { note: 'Bøjet hjørne' } })
+  clock.now += 60000
+  await pc1.service.take(BO, { actionId: 'a3', pallet: pallet.id, quantity: 5 })
+  const put = (await pc1.service.log(ADA, {})).events.find(event => event.type === 'putaway')
+  assert.match(put.reason, /Tom rettede pallen.*fortryd den først/)
+  await assert.rejects(pc1.service.undo(ADA, { eventId: put.id }), error => error.code === 'UNDO_CONFLICT' && /Tom rettede pallen.*fortryd den først/.test(error.message))
+})
+
 test('two people take the same pallet: the first wins, the second gets PALLET_GONE and nothing is counted twice', async () => {
   const { pc1, pc2, seed } = setup()
   await seed([place('A2.1')], [{ id: 'p1', location: 'A2.1', material: 'R162-0717', quantity: 100, receivedAt: 1 }])

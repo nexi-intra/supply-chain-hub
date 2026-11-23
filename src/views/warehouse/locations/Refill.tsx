@@ -138,9 +138,11 @@ export function Refill({ id, version, onDone }: { id?: string; version: number; 
                 )}
                 {card.reserve.length > 0 && (
                   <>
-                    <div className="flex items-center gap-2">
-                      <Input inputMode="numeric" value={quantity} onChange={event => setQuantity(event.target.value.replace(/\D/g, ''))} placeholder={t('Hele pallen', 'Whole pallet')} className="w-36" aria-label={t('Antal taget fra pallen', 'Quantity taken from the pallet')} />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Input inputMode="numeric" value={quantity} onChange={event => setQuantity(event.target.value.replace(/\D/g, ''))} placeholder={t('Hele pallen', 'Whole pallet')} className="w-36"
+                        aria-label={card.reserve[0].quantity === null ? t('stk. taget (pallen bliver stående)', 'pcs taken (the pallet stays)') : t('Antal taget fra pallen', 'Quantity taken from the pallet')} />
                       <span className="text-xs text-muted-foreground">{t('Tomt felt = hele pallen er brugt', 'Empty = the whole pallet was used')}</span>
+                      {card.reserve.some(pallet => pallet.quantity === null) && <span className="text-xs text-muted-foreground">{t('Ved antal ukendt: stk. taget (pallen bliver stående)', 'Quantity unknown: pcs taken (the pallet stays)')}</span>}
                     </div>
                     <div className="divide-y rounded-md border">
                       {card.reserve.map((pallet, index) => (
