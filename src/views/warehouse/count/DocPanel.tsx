@@ -279,7 +279,7 @@ const serialMismatch = (row: CountDocRow) => row.serialManaged && row.docQty !==
 
 function DocQty({ row, fetched }: { row: CountDocRow; fetched: boolean }) {
   if (!row.approved) return <Badge variant="outline" className="border-amber-500 text-amber-700 dark:text-amber-300">{t('Mangler godkendelse', 'Needs approval')}</Badge>
-  if (row.serialLinesAtApproval) return <span role="alert" className="inline-block max-w-56 text-left text-xs font-medium text-destructive">{t('Godkendt med tællelinjer med antal. Nulstil materialet, slet linjen og godkend igen.', 'Approved with count lines with a quantity. Reset the material, delete the line and approve again.')}</span>
+  if (row.serialLinesAtApproval) return <span role="alert" className="inline-block max-w-56 text-left text-xs font-medium text-destructive">{row.status === 'posted' ? t('Godkendt med tællelinjer med antal. Tjek det bogførte antal i SAP.', 'Approved with count lines with a quantity. Check the posted quantity in SAP.') : t('Godkendt med tællelinjer med antal. Nulstil materialet, slet linjen og godkend igen.', 'Approved with count lines with a quantity. Reset the material, delete the line and approve again.')}</span>
   if (row.needsSerials) return <span className="text-xs text-amber-700 dark:text-amber-300">{t('Hent igen (serienumre)', 'Fetch again (serial numbers)')}</span>
   if (!fetched || row.docQty === null) return <span className="text-xs text-muted-foreground">{t('Hent dagens SAP-tal', "Fetch today's SAP figures")}</span>
   if (row.docQty < 0) {

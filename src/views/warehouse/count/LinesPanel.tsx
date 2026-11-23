@@ -41,7 +41,11 @@ export function LinesPanel({ id, open, state, reloadOpen, optimistic, person }: 
   /** What a quantity line on a serial-managed material must say: approved with it (the frozen figures hold it), approved, or not yet. */
   const serialNoteOf = (material: string) => {
     if (!serialMaterials.has(material)) return null
-    if (isApproved(state, material) && state.approvedWithSerialLines?.includes(material)) return t('Godkendt med tællelinjer med antal. Nulstil materialet, slet linjen og godkend igen.', 'Approved with count lines with a quantity. Reset the material, delete the line and approve again.')
+    if (isApproved(state, material) && state.approvedWithSerialLines?.includes(material)) {
+      return state.approvals[material]?.status === 'posted'
+        ? t('Godkendt med tællelinjer med antal. Tjek det bogførte antal i SAP.', 'Approved with count lines with a quantity. Check the posted quantity in SAP.')
+        : t('Godkendt med tællelinjer med antal. Nulstil materialet, slet linjen og godkend igen.', 'Approved with count lines with a quantity. Reset the material, delete the line and approve again.')
+    }
     if (isApproved(state, material)) return t('Materialet har serienumre. Slet linjen.', 'The material has serial numbers. Delete the line.')
     return t('Materialet har serienumre. Slet linjen, før materialet kan godkendes.', 'The material has serial numbers. Delete the line before the material can be approved.')
   }

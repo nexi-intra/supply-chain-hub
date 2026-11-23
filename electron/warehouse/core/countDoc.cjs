@@ -70,8 +70,10 @@ const approvedWithLinesText = material => `${material} er godkendt med tællelin
 function linesAtApproval({ approvals = {}, events = [], serialManaged }) {
   const result = new Set()
   const relevant = events.filter(event => LINE_EVENTS.has(event.type))
+  // Most approvals never had a line: only materials named in some line event are replayed.
+  const named = new Set(relevant.filter(event => event.type === 'line').map(event => String(event.material || '').toUpperCase()))
   for (const [material, approval] of Object.entries(approvals)) {
-    if (!['approved', 'posted'].includes(approval?.status) || typeof approval.at !== 'number' || !serialManaged(material)) continue
+    if (!named.has(material) || !['approved', 'posted'].includes(approval?.status) || typeof approval.at !== 'number' || !serialManaged(material)) continue
     const lines = new Map()
     for (const event of activeEvents(relevant.filter(item => item.at <= approval.at))) {
       if (typeof event.lineId !== 'string') continue

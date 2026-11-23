@@ -932,8 +932,12 @@ test('a material approved with a quantity line (older client) gets no document q
   const piDocsOf = counts => createPiDocService({ counts, repo: ctx.repo, roles: { roleOf: async user => (user.countAdmin ? 'admin' : user.role) }, writer, system: 'QS4', now: () => ctx.clock.now })
   await assert.rejects(piDocsOf(mona).create(MONA, id, { materials: [terminal.material], sloc: 'D000', stockType: 'unrestricted' }), refused)
   await assert.rejects(mona.setApproval(MONA, id, { material: terminal.material, status: 'posted' }), refused)
-  assert.deepEqual(await mona.markPosted(MONA, id, [terminal.material]), { posted: [], skipped: [], serialLines: [terminal.material] })
-  assert.equal((await ctx.repo.getApprovals('TCD', id))[terminal.material].status, 'approved')
+  // SAP posted a document for it anyway (made before this rule): marked as posted, and reported for the warning.
+  const before = (await ctx.repo.getApprovals('TCD', id))[terminal.material]
+  assert.deepEqual(await mona.markPosted(MONA, id, [terminal.material]), { posted: [terminal.material], skipped: [], serialLines: [terminal.material] })
+  assert.equal((await ctx.repo.getApprovals('TCD', id))[terminal.material].status, 'posted')
+  assert.deepEqual((await mona.getState(MONA, id)).approvedWithSerialLines, [terminal.material], 'still flagged once posted')
+  await ctx.repo.setApproval('TCD', id, terminal.material, before)
 
   // A document made before this rule: "Læg antal på" enters nothing.
   await ctx.repo.changePiDocs('TCD', id, all => ({ all: { ...all, D1: { id: 'D1', docNo: '105000939', year: '2026', status: 'printed', sloc: 'D000', stockType: 'unrestricted', kind: 'new', transaction: 'ZMS_COUNT_SERIAL', createdBy: { email: MONA.email }, docFetchedAt: doc.fetchedAt, lines: [{ material: terminal.material, transaction: 'ZMS_COUNT_SERIAL' }] } } }))

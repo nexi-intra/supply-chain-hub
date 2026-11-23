@@ -1262,8 +1262,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   }
 
   /**
-   * "Bogført i SAP" for the materials of posted SAP documents, in one write. Only approved materials change; one approved
-   * with quantity lines (APPROVED_WITH_SERIAL_LINES) is left approved and returned in `serialLines`.
+   * "Bogført i SAP" for the materials of posted SAP documents, in one write. Only approved materials change. SAP did post
+   * them, so one approved with quantity lines is marked too, and returned in `serialLines` for the warning.
    */
   async function markPosted(user, id, materials = []) {
     const state = await refresh(await load(user, id), true)
@@ -1279,7 +1279,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       const withLines = approvedWithLines(state, all)
       for (const code of codes) {
         if (all[code]?.status !== 'approved') { skipped.push(code); continue }
-        if (withLines.has(code)) { serialLines.push(code); continue }
+        if (withLines.has(code)) serialLines.push(code)
         all[code] = { ...all[code], status: 'posted', postedBy: by, postedAt: at }
         posted.push(code)
       }

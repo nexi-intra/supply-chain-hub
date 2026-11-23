@@ -165,7 +165,7 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
    * MI20 list and the material document, and their materials are marked "Bogført i SAP" in CountPoint.
    */
   async function post(user, id, docIds = []) {
-    const { docs, role } = await context(user, id)
+    const { rows, docs, role } = await context(user, id)
     const chosen = [...new Set(docIds)].map(docId => docs.find(item => item.id === docId))
     for (const doc of chosen) {
       const reason = refusal({ action: 'post', role, email: user.email, doc })
@@ -173,6 +173,9 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
     }
     if (!chosen.length) throw codeError('PIDOC_INVALID', 'Vælg mindst ét dokument')
     if (new Set(chosen.map(doc => doc.year)).size > 1) throw codeError('PIDOC_INVALID', 'Dokumenterne skal være fra samme år')
+    // Counted before this rule (or by an older client): MI20 would post a quantity the manager never approved.
+    const flagged = chosen.some(doc => doc.lines.some(line => rows.some(item => item.material === line.material && item.sloc === doc.sloc && item.stockType === doc.stockType && item.serialLinesAtApproval)))
+    if (flagged) throw codeError('APPROVED_WITH_SERIAL_LINES', 'Dokumentet kan ikke bogføres, fordi et materiale blev godkendt med tællelinjer med antal. Ret antallet i SAP med MI05, eller slet dokumentet i SAP.')
     const result = await writer.postDocuments({ docNos: chosen.map(doc => doc.docNo), year: chosen[0].year })
     const at = now()
     const postedMaterials = chosen.filter(item => result.posted.includes(item.docNo)).flatMap(doc => doc.lines.map(line => line.material))
@@ -183,7 +186,7 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
       try {
         const marked = await counts.markPosted(user, id, postedMaterials)
         for (const material of marked.skipped) console.error('CountPoint: could not mark as posted', material, 'APPROVAL_INVALID')
-        for (const material of marked.serialLines || []) console.error('CountPoint: could not mark as posted', material, 'APPROVED_WITH_SERIAL_LINES')
+        for (const material of marked.serialLines || []) console.error('CountPoint: posted although approved with quantity lines', material, 'APPROVED_WITH_SERIAL_LINES')
       } catch (error) {
         console.error('CountPoint: could not mark as posted', postedMaterials.join(', '), error.code || error.message)
       }
