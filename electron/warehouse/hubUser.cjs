@@ -24,4 +24,18 @@ function warehouseUser(actor, users) {
   return { email, fullName, role: actor.role, team, ...(otherTeams.length ? { otherTeams } : {}) }
 }
 
-module.exports = { warehouseUser }
+/**
+ * main.cjs' `teamUsers` for the warehouse: every warehouse call reads the open team's users, so the store is made with
+ * `createDir: false` (no mkdirSync on M: on the main thread; the list is only read, so no folder is ever made).
+ * `openStore(directory, options)` is main.cjs' createSharedStore; `publicUsers` strips secrets.
+ */
+function createTeamUsersReader({ openStore, teamDir, publicUsers }) {
+  const stores = new Map()
+  return async team => {
+    const directory = teamDir(team)
+    if (!stores.has(directory)) stores.set(directory, openStore(directory, { createDir: false }))
+    return publicUsers(await stores.get(directory).getAsync('users')) || {}
+  }
+}
+
+module.exports = { warehouseUser, createTeamUsersReader }

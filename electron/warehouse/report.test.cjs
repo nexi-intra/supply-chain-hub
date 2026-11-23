@@ -172,3 +172,17 @@ test('reports are Danish unless English is asked for', async () => {
   const workbook = require('./report.cjs').buildWorkbook({ ...reportData(), language: 'sv' })
   assert.deepEqual(workbook.worksheets.map(sheet => sheet.name).slice(0, 2), ['Resumé', 'Differencer'])
 })
+
+test('a report with a name already taken gets " (2)", without synchronous file calls (the folder is on M:)', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'countpoint-report-name-'))
+  const existsSync = t.mock.method(fs, 'existsSync')
+  const date = new Date(2026, 9, 16, 9, 5)
+  const first = await writeReport(reportData(), dir, date)
+  const firstSize = fs.statSync(first).size
+  const [second, third] = await Promise.all([writeReport(reportData(), dir, date), writeReport(reportData(), dir, date)])
+  assert.deepEqual([second, third].map(file => path.basename(file)).sort(), [path.basename(first).replace(/\.xlsx$/, ' (2).xlsx'), path.basename(first).replace(/\.xlsx$/, ' (3).xlsx')])
+  assert.equal(fs.statSync(first).size, firstSize, 'the first report is kept')
+  for (const file of [second, third]) assert.ok(fs.statSync(file).size > 0)
+  assert.deepEqual(fs.readdirSync(dir).filter(name => !name.endsWith('.xlsx')), [], 'no temp files left')
+  assert.equal(existsSync.mock.callCount(), 0)
+})

@@ -14,29 +14,32 @@ function createStoreOpener({ createStore, preparedFiles = null, now = () => Date
   const opening = new Map()
   const failedAt = new Map()
   const handles = new Map()
+  // Raised by forget(): an attempt started before it is neither joined nor remembered when it fails.
+  let generation = 0
 
   /** The store of `dir`, made on first use; rejects STORAGE_UNAVAILABLE while the folder cannot be made. */
   function open(dir) {
     const store = stores.get(dir)
     if (store) return Promise.resolve(store)
-    if (opening.has(dir)) return opening.get(dir)
+    const current = opening.get(dir)
+    if (current && current.generation === generation) return current.pending
     const failed = failedAt.get(dir)
     if (failed !== undefined && now() - failed < retryMs) return Promise.reject(storageUnavailable())
+    const started = generation
     const pending = Promise.resolve()
       .then(() => fs.promises.mkdir(dir, { recursive: true }))
       .then(() => {
-        const made = createStore(dir, { preparedFiles, createDir: false })
-        stores.set(dir, made)
+        if (!stores.has(dir)) stores.set(dir, createStore(dir, { preparedFiles, createDir: false }))
         failedAt.delete(dir)
-        return made
+        return stores.get(dir)
       })
       .catch(error => {
-        failedAt.set(dir, now())
+        if (started === generation) failedAt.set(dir, now())
         console.error('Lagerstyring: storage unavailable', dir, error?.code)
         throw storageUnavailable()
       })
-      .finally(() => opening.delete(dir))
-    opening.set(dir, pending)
+      .finally(() => { if (opening.get(dir)?.pending === pending) opening.delete(dir) })
+    opening.set(dir, { pending, generation: started })
     return pending
   }
 
@@ -67,8 +70,8 @@ function createStoreOpener({ createStore, preparedFiles = null, now = () => Date
     handle,
     /** The store of `dir` if it is open already; never opens or makes anything. */
     opened: dir => stores.get(dir),
-    /** M: is back: folders that failed just now may be tried again at once. */
-    forget: () => failedAt.clear(),
+    /** M: is back: folders that failed just now, or are being tried right now, may be tried again at once. */
+    forget: () => { generation++; failedAt.clear() },
   }
 }
 

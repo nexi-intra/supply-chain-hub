@@ -44,3 +44,11 @@ test('the fake drafter for E2E writes the draft as JSON', async () => {
   const [name] = fs.readdirSync(dir)
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8')).subject, 'S')
 })
+
+test('the attachment is checked without a synchronous file call (it lies on M:)', async t => {
+  const existsSync = t.mock.method(fs, 'existsSync')
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'countpoint-fake-outlook-'))
+  await createFakeDrafter(dir).draft({ subject: 'S', html: '', attachment: attachment() })
+  await assert.rejects(createFakeDrafter(dir).draft({ subject: 'S', html: '', attachment: 'C:\\nope\\x.xlsx' }), { code: 'OUTLOOK_FAILED' })
+  assert.equal(existsSync.mock.callCount(), 0)
+})

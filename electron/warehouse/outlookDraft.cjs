@@ -16,13 +16,20 @@ const oneLine = value => String(value || '').replace(/[\r\n]+/g, ' ').trim()
 
 function checkDraft({ to = '', cc = '', subject, html, attachment }) {
   if (!subject || typeof html !== 'string') throw codeError('OUTLOOK_FAILED', 'Mailen mangler emne eller tekst')
-  if (attachment && (!path.isAbsolute(attachment) || path.extname(attachment).toLowerCase() !== '.xlsx' || !fs.existsSync(attachment))) throw codeError('OUTLOOK_FAILED', 'Excel-filen blev ikke fundet')
+  if (attachment && (!path.isAbsolute(attachment) || path.extname(attachment).toLowerCase() !== '.xlsx')) throw codeError('OUTLOOK_FAILED', 'Excel-filen blev ikke fundet')
   return { to: oneLine(to), cc: oneLine(cc), subject: oneLine(subject), html, attachment: attachment || '' }
+}
+
+// The attachment lies on M:, so it is looked for without blocking the main thread.
+async function checkDraftAsync(input) {
+  const mail = checkDraft(input)
+  if (mail.attachment && !(await fs.promises.access(mail.attachment).then(() => true, () => false))) throw codeError('OUTLOOK_FAILED', 'Excel-filen blev ikke fundet')
+  return mail
 }
 
 function createOutlookDrafter({ scriptPath, cscriptPath = defaultCscriptPath(), execFile = childProcess.execFile, tempRoot = os.tmpdir(), timeoutMs = 60000 }) {
   async function draft(input) {
-    const mail = checkDraft(input)
+    const mail = await checkDraftAsync(input)
     const dir = await fs.promises.mkdtemp(path.join(tempRoot, 'countpoint-mail-'))
     try {
       await Promise.all([
@@ -54,7 +61,7 @@ function createOutlookDrafter({ scriptPath, cscriptPath = defaultCscriptPath(), 
 function createFakeDrafter(dir) {
   return {
     async draft(input) {
-      const mail = checkDraft(input)
+      const mail = await checkDraftAsync(input)
       await fs.promises.mkdir(dir, { recursive: true })
       await fs.promises.writeFile(path.join(dir, `draft-${Date.now()}.json`), JSON.stringify(mail, null, 2), 'utf8')
       return { ok: true }

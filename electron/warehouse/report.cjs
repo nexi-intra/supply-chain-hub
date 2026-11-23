@@ -232,11 +232,26 @@ async function writeReport(data, dir, date = new Date()) {
 
 async function writeWorkbook(workbook, dir, name) {
   await fs.promises.mkdir(dir, { recursive: true })
-  let target = path.join(dir, name)
-  for (let attempt = 2; fs.existsSync(target); attempt++) target = path.join(dir, name.replace(/\.xlsx$/, ` (${attempt}).xlsx`))
+  // The name is taken by creating the file ('wx'), never by asking first: no synchronous call on M:, and two reports
+  // written at once never get the same name.
+  let target
+  for (let attempt = 1; !target; attempt++) {
+    const candidate = path.join(dir, attempt === 1 ? name : name.replace(/\.xlsx$/, ` (${attempt}).xlsx`))
+    try {
+      await (await fs.promises.open(candidate, 'wx')).close()
+      target = candidate
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error
+    }
+  }
   const temp = `${target}.${process.pid}.tmp`
-  await workbook.xlsx.writeFile(temp)
-  await fs.promises.rename(temp, target)
+  try {
+    await workbook.xlsx.writeFile(temp)
+    await fs.promises.rename(temp, target)
+  } catch (error) {
+    await Promise.all([fs.promises.rm(temp, { force: true }), fs.promises.rm(target, { force: true })]).catch(() => {})
+    throw error
+  }
   return target
 }
 

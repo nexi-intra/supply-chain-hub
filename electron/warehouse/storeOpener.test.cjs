@@ -110,3 +110,28 @@ test('handles are kept per folder', () => {
   assert.equal(opener.handle('C:\\x\\a'), opener.handle('C:\\x\\a'))
   assert.notEqual(opener.handle('C:\\x\\a'), opener.handle('C:\\x\\b'))
 })
+
+test('forget() during an open: a later open does not join the old attempt, and the old failure is not remembered', async t => {
+  quiet(t)
+  const dir = path.join(tempRoot(), 'flaky')
+  const realMkdir = fs.promises.mkdir
+  const held = []
+  t.mock.method(fs.promises, 'mkdir', (...args) => new Promise((resolve, reject) => held.push({ ok: () => realMkdir(...args).then(resolve, reject), fail: () => reject(Object.assign(new Error('gone'), { code: 'ETIMEDOUT' })) })))
+  const settle = () => new Promise(resolve => setImmediate(resolve))
+  const opener = createStoreOpener({ createStore, now: () => 0 })
+  const first = opener.open(dir)
+  await settle()
+  opener.forget()
+  const second = opener.open(dir)
+  await settle()
+  assert.equal(held.length, 2, 'the open after forget() is a new attempt')
+  held[0].fail()
+  await assert.rejects(first, { code: 'STORAGE_UNAVAILABLE' })
+  const third = opener.open(dir)
+  await settle()
+  assert.equal(held.length, 2, 'joins the attempt after forget(), which the old failure neither ended nor blocked')
+  held[1].ok()
+  const store = await second
+  assert.ok(store)
+  assert.equal(await third, store)
+})

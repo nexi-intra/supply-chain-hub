@@ -102,6 +102,7 @@ const { buildEvidencePrompt } = require('./assistantPrompt.cjs')
 const { detectQuestionLanguage } = require('./assistantContext.cjs')
 const { buildUnansweredLogEntry } = require('./assistantUnansweredLog.cjs')
 const { registerWarehouse } = require('./warehouse/register.cjs')
+const { createTeamUsersReader } = require('./warehouse/hubUser.cjs')
 const { createDiagnosticsLog, installMainDiagnostics, createCrashRecovery } = require('./diagnostics.cjs')
 if (!app.isPackaged && process.env.TCD_HUB_USER_DATA_DIR) app.setPath('userData', process.env.TCD_HUB_USER_DATA_DIR)
 // Persistent log + local crash dumps in %APPDATA%\tcd-hub: "the app just closed" used to leave no trace at all.
@@ -1030,17 +1031,13 @@ app.whenReady().then(() => {
   ipcMain.handle('links:open', async (event, linkId) => links.open((await sharedActor(event)), linkId))
   // Warehouse Management (Optælling) for TCD and TRR: the open hub is the team, data in "<team>\lagerstyring".
   const warehouseTeamDir = team => registeredWarehouseTeamDir(platformRoot, registry.listTeams(platformRoot), team).directory
-  const warehouseUserStores = new Map()
   warehouse = registerWarehouse({
     ipcMain,
     arrivals: ipcArrivals,
     preparedFiles,
     currentActor: event => authService.currentAsync(event.sender.id),
-    teamUsers: async team => {
-      const directory = warehouseTeamDir(team)
-      if (!warehouseUserStores.has(directory)) warehouseUserStores.set(directory, createSharedStore(directory))
-      return publicUsers(await warehouseUserStores.get(directory).getAsync('users')) || {}
-    },
+    // Read on every warehouse call: only read, never a folder made (no mkdirSync on M: on the main thread).
+    teamUsers: createTeamUsersReader({ openStore: createSharedStore, teamDir: warehouseTeamDir, publicUsers }),
     teamDir: warehouseTeamDir,
     // Started on the local fallback folder, M: is away for the whole run: Placeringer's queue waits for the next start.
     storageConnected: () => !storageStartedDisconnected && storageConnected,
