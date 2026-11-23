@@ -1042,14 +1042,24 @@ test('"Hent dagens SAP-tal" refuses figures without a line for an approved mater
   // SAP of the day lists neither the approved R162-0717 (SAP 100 at approval) nor the not yet approved terminals.
   ctx.sap.mb52 = [stock('INT4300-4921-0-R', 'D000', 1)]
   ctx.tick(60_000)
+  const exportedAt = ctx.clock.now
+  const exports = ctx.fetcher.calls
   await assert.rejects(mona.fetchDocStock(MONA, id), error => error.code === 'DOC_STOCK_MISSING' && /: R162-0717 D000$/.test(error.message))
   assert.equal((await mona.countDoc(MONA, id)).fetchedAt, null, 'nothing is saved')
   for (const confirmMissing of [true, 'R162-0717 D000', ['R162-0717 D003']]) {
     await assert.rejects(mona.fetchDocStock(MONA, id, { confirmMissing }), { code: 'DOC_STOCK_MISSING' }, 'only a list holding what is missing confirms')
   }
 
+  // Confirming saves the lines of the refused export (kept in main): SAP is not exported a second time.
+  const beforeAgain = ctx.fetcher.calls
+  await assert.rejects(mona.fetchDocStock(MONA, id), { code: 'DOC_STOCK_MISSING' })
+  assert.equal(ctx.fetcher.calls, beforeAgain + 1, '"Hent dagens SAP-tal" again (nothing confirmed) exports anew')
+  const callsBefore = ctx.fetcher.calls
+  ctx.tick(5000)
   const doc = await mona.fetchDocStock(MONA, id, { confirmMissing: ['R162-0717 D000'] })
-  assert.deepEqual([doc.fetchedAt, row(doc).sapToday, row(doc).docQty], [ctx.clock.now, 0, -3])
+  assert.equal(ctx.fetcher.calls, callsBefore, 'no second SAP export')
+  assert.ok(callsBefore > exports)
+  assert.deepEqual([doc.fetchedAt, row(doc).sapToday, row(doc).docQty], [exportedAt, 0, -3])
 
   // The next fetch also misses INT4300-4921-0-R in MB52 (approved meanwhile; IQ09 still lists U1, which is SAP i dag 0
   // all the same): confirming only what was shown before is not enough.
@@ -1058,7 +1068,12 @@ test('"Hent dagens SAP-tal" refuses figures without a line for an approved mater
   ctx.tick(60_000)
   await assert.rejects(mona.fetchDocStock(MONA, id, { confirmMissing: ['R162-0717 D000'] }), error => error.code === 'DOC_STOCK_MISSING' && /: INT4300-4921-0-R D000, R162-0717 D000$/.test(error.message))
   assert.equal((await mona.countDoc(MONA, id)).fetchedAt, doc.fetchedAt, 'nothing is saved')
+  // Newer figures were saved meanwhile (another PC): the kept, older export never replaces them; SAP is exported anew.
+  ctx.tick(1000)
+  await ctx.repo.setCountDoc('TCD', id, { ...(await ctx.repo.getCountDoc('TCD', id)), fetchedAt: ctx.clock.now })
+  const beforeNewer = ctx.fetcher.calls
   assert.equal((await mona.fetchDocStock(MONA, id, { confirmMissing: ['R162-0717 D000', 'INT4300-4921-0-R D000'] })).fetchedAt, ctx.clock.now)
+  assert.equal(ctx.fetcher.calls, beforeNewer + 1)
 
   // A material with no SAP stock at approval may be missing today.
   await ctx.repo.setApproval('TCD', id, 'R162-0717', { ...(await ctx.repo.getApprovals('TCD', id))['R162-0717'], frozen: [{ sloc: 'D000', stockType: 'unrestricted', sapQty: 0, counted: 0, diff: 0, valueDiff: 0 }] })

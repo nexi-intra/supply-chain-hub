@@ -1418,15 +1418,28 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
    * old ones), they change nothing in the count itself.
    * Refused (DOC_STOCK_MISSING) when the new figures have no line for an approved material where SAP had stock at
    * approval: a failed or empty export would otherwise become "SAP i dag 0". `confirmMissing` is the list the user was
-   * shown ("<material> <sloc>[ blocked]"); the figures are saved only when everything missing now is on it.
+   * shown ("<material> <sloc>[ blocked]"); the figures are saved only when everything missing now is on it. The lines of
+   * a refused export are kept here (as previewRefetch does), so confirming saves them without exporting SAP again; a
+   * fetch without a confirmed list always exports anew.
    */
   async function fetchDocStock(user, id, { confirmMissing = [] } = {}) {
     const state = await load(user, id)
     const rights = await access(user, state)
     if (!canFetchDoc(user, rights)) throw codeError('COUNT_OWNER_ONLY', 'Kun den ansvarlige, en admin eller en manager kan hente dagens SAP-tal')
-    const fetched = await fetcher.fetchPlant({ onProgress: step => emit('sap:fetch-progress', { step }) })
-    const snapshot = buildSnapshot({ team: state.team, scope: state.snapshot.scope, mb52: fetched.mb52, serials: fetched.serials || [], rulesByTeam: await rulesByTeam(state.team), exclusions: state.snapshot.excluded.manual, fetchedAt: fetched.fetchedAt, fetchedBy: lower(user.email) })
-    const lines = docLinesFromSnapshot(snapshot)
+    const email = lower(user.email)
+    const keptOf = value => value.docStock && value.countId === state.id && value.email === email
+    const kept = Array.isArray(confirmMissing) && confirmMissing.length ? [...pending].find(([, value]) => keptOf(value) && now() - value.at <= PENDING_TTL_MS) : null
+    for (const [key, value] of pending) if (keptOf(value) || now() - value.at > PENDING_TTL_MS) pending.delete(key)
+    // Someone saved newer figures meanwhile: those are never replaced by the older export.
+    const newer = kept && ((await repo.getCountDoc(state.team, state.id).catch(() => null))?.fetchedAt || 0) > kept[1].fetchedAt
+    let fetchedAt, lines
+    if (kept && !newer) ({ fetchedAt, lines } = kept[1])
+    else {
+      const fetched = await fetcher.fetchPlant({ onProgress: step => emit('sap:fetch-progress', { step }) })
+      const snapshot = buildSnapshot({ team: state.team, scope: state.snapshot.scope, mb52: fetched.mb52, serials: fetched.serials || [], rulesByTeam: await rulesByTeam(state.team), exclusions: state.snapshot.excluded.manual, fetchedAt: fetched.fetchedAt, fetchedBy: email })
+      fetchedAt = fetched.fetchedAt
+      lines = docLinesFromSnapshot(snapshot)
+    }
     // A line with only serials (qty 0 in MB52) is "SAP i dag 0" too.
     const today = new Set(lines.filter(line => line.qty > 0).map(line => `${line.material}|${line.sloc}|${line.stockType}`))
     const approvals = await repo.getApprovals(state.team, state.id)
@@ -1437,8 +1450,11 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
         if (row.sapQty > 0 && !today.has(`${material}|${row.sloc}|${row.stockType}`)) missing.push(`${material} ${row.sloc}${row.stockType === 'blocked' ? ' blocked' : ''}`)
       }
     }
-    if (!confirmedAll(missing, confirmMissing)) throw codeError('DOC_STOCK_MISSING', `Dagens SAP-tal har ingen linje for godkendte materialer, som SAP havde på lager ved godkendelsen. Tallene er ikke gemt. Gælder: ${missing.sort().join(', ')}`)
-    await repo.setCountDoc(state.team, state.id, { fetchedAt: fetched.fetchedAt, by: me(user), withSerials: true, lines })
+    if (!confirmedAll(missing, confirmMissing)) {
+      pending.set(crypto.randomBytes(16).toString('hex'), { at: kept && !newer ? kept[1].at : now(), email, team: state.team, countId: state.id, docStock: true, fetchedAt, lines })
+      throw codeError('DOC_STOCK_MISSING', `Dagens SAP-tal har ingen linje for godkendte materialer, som SAP havde på lager ved godkendelsen. Tallene er ikke gemt. Gælder: ${missing.sort().join(', ')}`)
+    }
+    await repo.setCountDoc(state.team, state.id, { fetchedAt, by: me(user), withSerials: true, lines })
     return countDoc(user, id)
   }
 
