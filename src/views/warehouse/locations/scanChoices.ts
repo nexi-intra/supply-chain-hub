@@ -90,3 +90,12 @@ export function savedOf(saved: SavedLines, document: string, count: number): num
 export function enterSaves({ repeat, freshSelection }: { repeat: boolean; freshSelection: boolean }): boolean {
   return !repeat && !freshSelection
 }
+/**
+ * The buttons when a refused put comes back into an empty form: those of the refused number (with what is saved now),
+ * never those of another number, whose line indexes would point at other materials.
+ */
+export function restoredLines<T extends { document: string; saved: number[] }>(current: T | null, refused: T | null, saved: number[]): T | null {
+  if (!refused) return null
+  if (current?.document === refused.document) return current
+  return { ...refused, saved }
+}

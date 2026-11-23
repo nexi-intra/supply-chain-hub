@@ -13,7 +13,7 @@ import { isShelfPlace, locationKeyOf, materialLabel, newActionId, singleFlight }
 import { t } from '@/lib/warehouse/text'
 import type { DocumentLookup, LocationCard, MaterialCard } from '@/types/warehouse'
 import { MaterialPicker } from './MaterialPicker'
-import { enterSaves, markSaved, nextUnsaved, savedOf, unmarkSaved, type SavedLines } from './scanChoices'
+import { enterSaves, markSaved, nextUnsaved, restoredLines, savedOf, unmarkSaved, type SavedLines } from './scanChoices'
 
 /** The materials of a 49/50 number with several, and which of them are put on a shelf already. */
 type DocumentLines = { document: string; materials: DocumentLookup['materials']; saved: number[] }
@@ -148,7 +148,8 @@ export function ShelfPut({ shelf: initial, version, onDone }: { shelf?: string; 
         }
         if (!materialRef.current && !quantityRef.current) {
           setQuery(typed); setMaterial(code); setQuantity(String(count)); setDocument(doc); setFresh(false)
-          if (docLines) { setLines(value => value ?? { ...docLines, saved: savedLines.current[docLines.document] || [] }); setLine(docLine) }
+          setLines(value => restoredLines(value, docLines, docLines ? savedLines.current[docLines.document] || [] : []))
+          setLine(docLines ? docLine : null)
         }
       },
       settled: onDone,

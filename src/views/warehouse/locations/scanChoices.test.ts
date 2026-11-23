@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { LocationSearch } from '@/types/warehouse'
-import { enterChoice, enterOnSearch, enterSaves, markSaved, nextUnsaved, openWhenReady, savedOf, unmarkSaved, youngerThanOldest } from './scanChoices'
+import { enterChoice, enterOnSearch, enterSaves, markSaved, nextUnsaved, openWhenReady, restoredLines, savedOf, unmarkSaved, youngerThanOldest } from './scanChoices'
 
 const list = (...codes: string[]) => codes.map(material => ({ material, description: '' }))
 
@@ -125,5 +125,23 @@ describe('enterSaves (Læg på hylde, Enter in the quantity field)', () => {
   it('ignores a held Enter, and Enter on a line preselected after a save until the user has touched the form', () => {
     expect(enterSaves({ repeat: true, freshSelection: false })).toBe(false)
     expect(enterSaves({ repeat: false, freshSelection: true })).toBe(false)
+  })
+})
+describe('restoredLines (Læg på hylde, a refused put comes back into an empty form)', () => {
+  const x = { document: 'X', materials: ['A', 'B'], saved: [1] }
+  const y = { document: 'Y', materials: ['C', 'D', 'E'], saved: [0] }
+
+  it('keeps the buttons when they already belong to the refused number', () => {
+    const current = { ...x, saved: [] }
+    expect(restoredLines(current, x, [])).toBe(current)
+  })
+
+  it('replaces the buttons of another number with those of the refused one', () => {
+    expect(restoredLines(y, x, [1])).toEqual({ document: 'X', materials: ['A', 'B'], saved: [1] })
+    expect(restoredLines(null, x, [])).toEqual({ document: 'X', materials: ['A', 'B'], saved: [] })
+  })
+
+  it('shows no buttons when the refused put had none', () => {
+    expect(restoredLines(y, null, [])).toBeNull()
   })
 })
