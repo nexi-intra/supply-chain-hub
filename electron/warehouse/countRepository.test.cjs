@@ -120,6 +120,7 @@ test('a reservation left by a crash after its meta was written is kept as a real
   const crashed = { id: 'crashed2abc', name: 'Hel', scope: SNAPSHOT.scope, status: 'open', owner: { email: 'bo@example.test', name: 'Bo' }, createdAt: 1000, fetchedAt: 900, statusId: 'status1', creating: true }
   await storeFor('TCD').updateAsync('counts-index', { op: 'setField', field: crashed.id, value: crashed })
   await storeFor('TCD').setAsync('count-crashed2abc-meta', { ...crashed, team: 'TCD', creating: undefined })
+  await storeFor('TCD').setAsync('count-crashed2abc-expected', SNAPSHOT)
   tick(10 * 60 * 1000 + 1)
   await assert.rejects(repo.createCount('TCD', { name: 'Anna D000', snapshot: SNAPSHOT, owner: OWNER, statusId: 'status1' }), error => error.code === 'SCOPE_TAKEN' && /"Hel" af Bo/.test(error.message))
   const [entry] = await repo.listCounts('TCD')
@@ -146,6 +147,25 @@ test('the meta of a new count is written last, so a PC that opens it meanwhile f
   const repo = createCountRepository({ storeFor: () => watched, now: () => 1000, newId: () => 'ordered1abc' })
   await repo.createCount('TCD', { name: 'Anna D000', snapshot: SNAPSHOT, owner: OWNER, statusId: 'status1' })
   assert.deepEqual(before, ['count-ordered1abc-expected.json', 'count-ordered1abc-members.json', 'count-ordered1abc-placements.json'])
+})
+
+test('a new count keeps its files when its reservation cannot be given back, and is kept as a count later', async () => {
+  const { dataDir } = setup()
+  const real = createStore(path.join(dataDir, 'TCD'))
+  let indexDown = false
+  const down = {
+    ...real,
+    setAsync: async (key, value) => { const result = await real.setAsync(key, value); if (key.endsWith('-meta')) indexDown = true; return result },
+    mutateAsync: async (key, change) => { if (indexDown && key === 'counts-index') throw Object.assign(new Error('KV_LOCK_BUSY'), { code: 'KV_LOCK_BUSY' }); return real.mutateAsync(key, change) },
+  }
+  const repo = createCountRepository({ storeFor: () => down, now: () => 1000, newId: () => 'stuck1abc', wait: async () => {} })
+  await assert.rejects(repo.createCount('TCD', { name: 'Anna D000', snapshot: SNAPSHOT, owner: OWNER, statusId: 'status1' }), { code: 'KV_LOCK_BUSY' })
+  const files = fs.readdirSync(path.join(dataDir, 'TCD')).filter(name => name.startsWith('count-stuck1abc-')).sort()
+  assert.deepEqual(files, ['count-stuck1abc-expected.json', 'count-stuck1abc-members.json', 'count-stuck1abc-meta.json', 'count-stuck1abc-placements.json'], 'nothing is removed while the index still holds the reservation')
+
+  const later = createCountRepository({ storeFor: () => createStore(path.join(dataDir, 'TCD')), now: () => 1000 + 10 * 60 * 1000 + 1 })
+  await assert.rejects(later.createCount('TCD', { name: 'Bo D000', snapshot: SNAPSHOT, owner: { email: 'bo@example.test', name: 'Bo' }, statusId: 'status1' }), error => error.code === 'SCOPE_TAKEN' && /"Anna D000"/.test(error.message))
+  assert.deepEqual((await later.listCounts('TCD')).map(entry => [entry.id, 'creating' in entry]), [['stuck1abc', false]], 'the whole count is kept')
 })
 
 test('two PCs changing different fields of the same count at once both reach the count list', async () => {

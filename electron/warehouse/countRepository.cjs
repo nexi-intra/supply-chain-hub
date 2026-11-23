@@ -51,15 +51,15 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId, wa
   }
 
   /**
-   * Reservations left by a crash (`creating` older than 10 min), with whether their meta exists. The meta is written last,
-   * so with it the count is whole (only the mark was not cleared); without it, the count was never finished. Looked up
+   * Reservations left by a crash (`creating` older than 10 min), with whether their meta and snapshot exist. The meta is
+   * written last, so with both the count is whole (only the mark was not cleared); otherwise it was never finished. Looked up
    * before the index's lock (file checks), settled inside it with settleStale.
    */
   async function staleReservations(target, statusId) {
     const index = (await target.getAsync(INDEX_KEY)) || {}
     const at = now()
     const stale = Object.values(index).filter(entry => entry && isCountId(entry.id) && !entry.deleted && staleCreating(entry, at) && (statusId === undefined || entry.statusId === statusId))
-    const whole = await Promise.all(stale.map(entry => target.statAsync(key(entry.id, 'meta')).then(Boolean, () => null)))
+    const whole = await Promise.all(stale.map(entry => Promise.all(['meta', 'expected'].map(part => target.statAsync(key(entry.id, part)))).then(found => found.every(Boolean), () => null)))
     return new Map(stale.map((entry, position) => [entry.id, whole[position]]))
   }
 
@@ -113,14 +113,24 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId, wa
       return next
     })
     if (refused) throw refused
-    const giveBack = () => Promise.allSettled([
-      target.mutateAsync(INDEX_KEY, index => {
-        if (!index?.[id]?.creating) return undefined
-        delete index[id]
-        return index
-      }),
-      removeCountFiles(team, [id]),
-    ])
+    // The files go only once the reservation is out of the index: if that write fails, the count keeps its files, and the
+    // reservation is settled later (kept as a whole count, or removed).
+    const giveBack = async () => {
+      let released = false
+      try {
+        await target.mutateAsync(INDEX_KEY, index => {
+          const entry = index?.[id]
+          // Without the mark, the count was created after all (the write that failed had gone through): it keeps its files.
+          released = !entry || Boolean(entry.deleted) || entry.creating === true
+          if (!entry?.creating) return undefined
+          delete index[id]
+          return index
+        })
+      } catch {
+        released = false
+      }
+      if (released) await removeCountFiles(team, [id]).catch(() => {})
+    }
     const written = await Promise.allSettled([
       target.setAsync(key(id, 'expected'), snapshot),
       target.setAsync(key(id, 'placements'), placements),
@@ -211,8 +221,9 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId, wa
   /**
    * All changed fields in one locked write of the meta file, and the index entry in parallel with it. The entry only
    * takes the changed fields, merged under the index's lock: another PC changing other fields meanwhile is kept.
-   * A `check` sees the stored meta under its lock: it throws to refuse (nothing is written) or returns more changes;
-   * the index entry is then written after the meta.
+   * A `check` sees the stored meta under its lock: it throws to refuse (nothing is written) or returns more changes.
+   * The index entry is then written after the meta, and `{ meta, indexWritten }` is returned at once: `indexWritten`
+   * settles when the entry is written (a failure is only logged).
    */
   async function updateMeta(team, id, changes, { check } = {}) {
     const fields = Object.entries(changes)
@@ -238,9 +249,10 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId, wa
     })
     if (check) {
       const meta = await writeMeta()
-      // The meta is committed; the index only repeats the changed fields for the list, so failing there does not undo it.
-      if (listed.length) await writeIndex().catch(error => console.error('CountPoint: count list not updated', error.code || error.message))
-      return meta
+      // The meta is committed; the index only repeats the changed fields for the list, so failing there does not undo it,
+      // and the caller need not wait for it before its next write.
+      const indexWritten = listed.length ? writeIndex().then(() => {}, error => console.error('CountPoint: count list not updated', error.code || error.message)) : Promise.resolve()
+      return { meta, indexWritten }
     }
     const [meta] = await Promise.all([writeMeta(), listed.length ? writeIndex() : null])
     return meta

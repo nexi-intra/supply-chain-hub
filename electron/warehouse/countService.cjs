@@ -1191,7 +1191,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     if (state.meta.status !== 'open') throw codeError('COUNT_CLOSED', 'Genåbn optællingen først')
     // Checked under the meta's lock, so a preview made before another PC's "Hent SAP igen" never puts older figures back.
     // The meta is written before the snapshot: a refused apply writes nothing, and other PCs wait for the snapshot.
-    const meta = await repo.updateMeta(state.team, state.id, { fetchedAt: entry.snapshot.fetchedAt }, {
+    const { meta, indexWritten } = await repo.updateMeta(state.team, state.id, { fetchedAt: entry.snapshot.fetchedAt }, {
       check: stored => {
         if (stored.status !== 'open') throw codeError('COUNT_CLOSED', 'Genåbn optællingen først')
         // This preview's own meta is already written (the snapshot write failed): only the snapshot is left.
@@ -1206,7 +1206,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       throw error
     })
     state.meta = meta
-    await repo.replaceSnapshot(state.team, state.id, entry.snapshot)
+    // The count list's copy of fetchedAt (never failing) is written while the snapshot is.
+    await Promise.all([repo.replaceSnapshot(state.team, state.id, entry.snapshot), indexWritten])
     pending.delete(token)
     installSnapshot(state, entry.snapshot)
     if (localCache) localCache.save(state.team, state.id, 'expected', entry.snapshot).catch(() => {})
