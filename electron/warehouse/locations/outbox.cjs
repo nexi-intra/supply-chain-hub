@@ -3,7 +3,8 @@
 // pallet was taken by someone else) is kept as a failure until a window has shown it, never retried. Every action id
 // is applied at most once. After a storage error new actions are only queued for a while, so the Hub does not keep
 // hanging on a dead share; the timer's flush is the retry. A busy share (the store gave up on its locks before
-// writing anything) is handled the same way with a short pause, since it is usually over in seconds.
+// writing anything) is handled the same way with a short random pause, since it is usually over in seconds, and the
+// outbox itself tries again when that pause is over, so PCs that collided once do not collide again in step.
 const fs = require('node:fs')
 const path = require('node:path')
 
@@ -19,11 +20,13 @@ function codeError(code) {
   return Object.assign(new Error(code), { code })
 }
 
-function createOutbox({ dir, run, isStorageError, isBusyError = () => false, now = Date.now, random = Math.random, onFailed = () => {}, pauseMs = PAUSE_MS, busyPauseMs = BUSY_PAUSE_MS, busyJitterMs = BUSY_JITTER_MS }) {
+function createOutbox({ dir, run, isStorageError, isBusyError = () => false, now = Date.now, random = Math.random, setTimer = setTimeout, clearTimer = clearTimeout, onQueued = () => {}, onFailed = () => {}, pauseMs = PAUSE_MS, busyPauseMs = BUSY_PAUSE_MS, busyJitterMs = BUSY_JITTER_MS }) {
   const file = path.join(dir, FILE)
   let state = load()
   let flushing = null
   let downUntil = 0
+  // The one retry scheduled after a busy share; a new pause replaces it.
+  let retry = null
   // What happened to an action replayed while its own submit() waits on the flush.
   const outcomes = new Map()
 
@@ -52,13 +55,33 @@ function createOutbox({ dir, run, isStorageError, isBusyError = () => false, now
     save()
   }
   const wentDown = (ms = pauseMs) => { downUntil = now() + ms }
+  function cancelRetry() {
+    if (retry) clearTimer(retry)
+    retry = null
+  }
   // Many PCs replay at once when M: is back; the random part keeps them from all trying again in the same instant.
-  const wasBusy = () => wentDown(busyPauseMs + Math.floor(random() * busyJitterMs))
+  function wasBusy() {
+    const pause = busyPauseMs + Math.floor(random() * busyJitterMs)
+    wentDown(pause)
+    cancelRetry()
+    const timer = setTimer(() => { if (retry === timer) retry = null; flush().catch(() => {}) }, pause)
+    timer?.unref?.()
+    retry = timer
+  }
   /** True when the action is kept for a retry: M: is down or busy. */
   function pausedBy(error) {
-    if (isStorageError(error)) { wentDown(); return true }
+    // Down: the 30 s timer is the retry; a short one would only hit the dead share sooner.
+    if (isStorageError(error)) { cancelRetry(); wentDown(); return true }
     if (isBusyError(error)) { wasBusy(); return true }
     return false
+  }
+  function keep(entry) {
+    state.queue.push(entry)
+    save()
+  }
+  function announce(entry) {
+    try { onQueued(entry) } catch {}
+    return { queued: true }
   }
 
   /** Replays the queue in order; stops at the first storage or busy error so the order is kept. */
@@ -76,6 +99,7 @@ function createOutbox({ dir, run, isStorageError, isBusyError = () => false, now
           outcomes.set(action.id, { result: await run(action) })
           markApplied(action.id)
           downUntil = 0
+          cancelRetry()
           done++
         } catch (error) {
           if (pausedBy(error)) break
@@ -103,18 +127,16 @@ function createOutbox({ dir, run, isStorageError, isBusyError = () => false, now
     const entry = { id: action.id, method: action.method, user: action.user, request: action.request, label: action.label || '', at: now() }
     if (now() < downUntil) {
       // M: failed or was busy a moment ago: keep the action here and let a retry find out when it can be reached.
-      state.queue.push(entry)
-      save()
-      return { queued: true }
+      keep(entry)
+      return announce(entry)
     }
     if (state.queue.length || flushing) {
       // Behind the queue, so a take never overtakes the put-away it depends on.
-      state.queue.push(entry)
-      save()
+      keep(entry)
       await flush()
       const outcome = outcomes.get(entry.id)
       outcomes.delete(entry.id)
-      if (!outcome) return { queued: true }
+      if (!outcome) return announce(entry)
       if (outcome.error) {
         // The person is waiting and sees the error, so it is not kept as a failure to report later.
         state.failures = state.failures.filter(item => item.id !== entry.id)
@@ -130,9 +152,8 @@ function createOutbox({ dir, run, isStorageError, isBusyError = () => false, now
       return { queued: false, result }
     } catch (error) {
       if (!pausedBy(error)) throw error
-      state.queue.push(entry)
-      save()
-      return { queued: true }
+      keep(entry)
+      return announce(entry)
     }
   }
 
@@ -144,7 +165,7 @@ function createOutbox({ dir, run, isStorageError, isBusyError = () => false, now
     save()
   }
 
-  return { submit, flush, pending: () => state.queue.length, failures, acknowledge }
+  return { submit, flush, pending: () => state.queue.length, failures, acknowledge, close: cancelRetry }
 }
 
 module.exports = { createOutbox, QUEUED_METHODS }

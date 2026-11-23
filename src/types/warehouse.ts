@@ -1079,6 +1079,8 @@ export interface LocationsBridge {
   openLayoutVersion(request: { version: number; takeOver?: boolean }): Promise<{ draft: LayoutDraft }>
   onChanged(listener: (payload: { team: TeamId }) => void): () => void
   onSyncFailed(listener: (payload: { teams: TeamId[] }) => void): () => void
+  /** An action of `team` was kept on this PC (M: down or busy): the waiting count changed. */
+  onQueued(listener: (payload: { team: TeamId }) => void): () => void
   /** The steps of previewImport: sheet, check, mb52, mm60, plan, done. */
   onImportProgress(listener: (payload: { step: ImportStep }) => void): () => void
 }

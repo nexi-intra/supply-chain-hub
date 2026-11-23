@@ -25,7 +25,14 @@ function setup({ random } = {}) {
     sap.applied.push(action.id)
     return { ok: action.id }
   }
-  return { dir, sap, clock, failedEvents, make: () => createOutbox({ dir, run, isStorageError, isBusyError, random, now: () => clock.now, onFailed: failed => failedEvents.push(...failed.map(item => item.id)) }) }
+  // Fake timers: `live()` are the retries still scheduled; a test fires one by calling its `fn`.
+  const timers = []
+  const setTimer = (fn, ms) => { const timer = { fn, ms, cleared: false }; timers.push(timer); return timer }
+  const clearTimer = timer => { timer.cleared = true }
+  const live = () => timers.filter(timer => !timer.cleared && !timer.fired)
+  const fire = async timer => { timer.fired = true; timer.fn(); await new Promise(resolve => setImmediate(resolve)) }
+  const queuedEvents = []
+  return { dir, sap, clock, failedEvents, queuedEvents, live, fire, make: () => createOutbox({ dir, run, isStorageError, isBusyError, random, now: () => clock.now, setTimer, clearTimer, onQueued: action => queuedEvents.push(action.id), onFailed: failed => failedEvents.push(...failed.map(item => item.id)) }) }
 }
 
 test('only the daily actions can be queued', () => {
@@ -205,4 +212,56 @@ test('the busy pause draws its random part from Math.random by default', async t
   assert.equal(sap.runs, runs, '5 s plus a quarter of the 5 s random part')
   clock.now += 1
   assert.deepEqual(await outbox.submit({ id: 'a3', method: 'take', user: ANNA, request: {} }), { queued: false, result: { ok: 'a3' } })
+})
+test('a busy M: schedules one retry at the random pause, not at the 30 s timer, and the retry replays the queue', async () => {
+  const { sap, live, fire, make } = setup({ random: () => 0.5 })
+  sap.up = true
+  sap.busy = 2
+  const outbox = make()
+  assert.deepEqual(await outbox.submit({ id: 'a1', method: 'take', user: ANNA, request: {} }), { queued: true })
+  assert.deepEqual(live().map(timer => timer.ms), [7500], 'one retry at 5 s plus the random part')
+  assert.deepEqual(await outbox.flush(), { done: 0, failed: [] }, 'busy again (e.g. the 30 s timer)')
+  assert.deepEqual(live().map(timer => timer.ms), [7500], 'still only one retry pending')
+  await fire(live()[0])
+  assert.deepEqual(sap.applied, ['a1'], 'the retry itself applied the action')
+  assert.equal(outbox.pending(), 0)
+  assert.deepEqual(live(), [], 'nothing left scheduled')
+})
+
+test('a scheduled busy retry is dropped when a flush succeeds first, when M: goes down and when the outbox is closed', async () => {
+  const { sap, live, make } = setup({ random: () => 0 })
+  sap.up = true
+  sap.busy = 1
+  const outbox = make()
+  await outbox.submit({ id: 'a1', method: 'take', user: ANNA, request: {} })
+  assert.equal(live().length, 1)
+  assert.deepEqual(await outbox.flush(), { done: 1, failed: [] })
+  assert.deepEqual(live(), [], 'cleared by the successful flush')
+  sap.busy = 1
+  await outbox.submit({ id: 'a2', method: 'take', user: ANNA, request: {} })
+  assert.equal(live().length, 1)
+  sap.up = false
+  await outbox.flush()
+  assert.deepEqual(live(), [], 'M: down: the 30 s timer is the retry, not a short one')
+  sap.up = true
+  sap.busy = 1
+  await outbox.flush()
+  assert.equal(live().length, 1)
+  outbox.close()
+  assert.deepEqual(live(), [], 'cleared on close')
+})
+
+test('every action that ends up queued is announced, so the window shows the waiting banner at once', async () => {
+  const { sap, clock, queuedEvents, make } = setup()
+  const outbox = make()
+  await outbox.submit({ id: 'a1', method: 'take', user: ANNA, request: {} })
+  await outbox.submit({ id: 'a2', method: 'take', user: ANNA, request: {} })
+  sap.up = true
+  clock.now += 31000
+  sap.busy = 1
+  await outbox.submit({ id: 'a3', method: 'take', user: ANNA, request: {} })
+  assert.deepEqual(queuedEvents, ['a1', 'a2', 'a3'], 'M: down, inside the pause, and behind a busy queue')
+  await outbox.flush()
+  await outbox.submit({ id: 'a4', method: 'take', user: ANNA, request: {} })
+  assert.deepEqual(queuedEvents, ['a1', 'a2', 'a3'], 'not when the action was done')
 })

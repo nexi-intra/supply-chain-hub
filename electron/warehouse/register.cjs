@@ -440,6 +440,8 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
     isStorageError: error => error?.code === 'STORAGE_UNAVAILABLE' || STORAGE_ERRORS.has(error?.code),
     // The store gives up on its locks before it writes anything, so the action is tried again a little later.
     isBusyError: error => error?.code === 'KV_LOCK_BUSY',
+    // The windows on this PC show the "venter på M:" banner at once instead of at their next 15 s check.
+    onQueued: action => emit('locations:queued', { team: action.user?.team }),
     onFailed: failed => emit('locations:sync-failed', { teams: [...new Set(failed.map(item => item.team))] }),
   })
   const flushOutbox = async () => {
@@ -486,7 +488,7 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   const locationsAssistant = createLocationsAssistant({ userFor: serviceUser, service: locations })
   // Placeringer first ("hvor står R162-0717?"); questions about Optælling are left to it.
   const assistant = { answer: async request => (await locationsAssistant.answer(request)) || stockAssistant.answer(request) }
-  return { channels, counts, locations, assistant, closeAll: () => { clearInterval(outboxTimer); return counts.closeAll() } }
+  return { channels, counts, locations, assistant, closeAll: () => { clearInterval(outboxTimer); outbox.close(); return counts.closeAll() } }
 }
 
 module.exports = { registerWarehouse, DATA_FOLDER, SHARED_FOLDER }

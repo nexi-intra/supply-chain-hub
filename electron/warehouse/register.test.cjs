@@ -164,7 +164,7 @@ test('daily Placeringer actions go through the local queue: the same action id i
 })
 
 test('a daily action that finds M: busy (KV_LOCK_BUSY) is kept on this PC instead of refused, and applied once when replayed', async () => {
-  const { root, call, registered } = setup()
+  const { root, call, registered, broadcasts } = setup()
   await call('mona', 'locations:create-location', { name: 'A2.4', type: 'Palle', purpose: 'reserve', capacity: 1 })
   const { created: [pallet] } = await call('anna', 'locations:put-away', { pallets: [{ location: 'A2.4', material: 'R162-0717', quantity: 100 }] })
   const take = registered.locations.take
@@ -172,6 +172,7 @@ test('a daily action that finds M: busy (KV_LOCK_BUSY) is kept on this PC instea
   registered.locations.take = async () => { throw Object.assign(new Error('KV_LOCK_BUSY: Lageret er optaget af en anden klient. Prøv igen.'), { code: 'KV_LOCK_BUSY' }) }
   assert.deepEqual(await call('anna', 'locations:take', { actionId: 'busy-1', pallet: pallet.id, quantity: 30 }), { queued: true })
   assert.deepEqual(await call('anna', 'locations:pending'), { pending: 1, failures: [] }, 'queued, not a failure')
+  assert.deepEqual(broadcasts.filter(([channel]) => channel === 'warehouse:locations:queued').map(([, payload]) => payload), [{ team: 'TCD' }], 'the windows show the waiting banner at once')
   registered.locations.take = take
   registered.closeAll()
   // Started again on the same PC: the queue is replayed at once.

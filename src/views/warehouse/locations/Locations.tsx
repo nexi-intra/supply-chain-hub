@@ -80,7 +80,9 @@ export function Locations({ user, initial }: { user: WarehouseUser; initial: Loc
     document.addEventListener('visibilitychange', onVisible)
     const offChanged = bridge.onChanged(payload => { if (payload.team === user.team) { setVersion(value => value + 1); checkPending() } })
     const offFailed = bridge.onSyncFailed(payload => { if (payload.teams.includes(user.team)) checkPending() })
-    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', onVisible); offChanged(); offFailed() }
+    // An action kept on this PC: the waiting banner shows at once, so nobody repeats it thinking it was lost.
+    const offQueued = bridge.onQueued(payload => { if (payload.team === user.team) checkPending() })
+    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', onVisible); offChanged(); offFailed(); offQueued() }
   }, [user.team, user.email])
 
   useEffect(() => {

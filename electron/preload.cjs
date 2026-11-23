@@ -247,6 +247,7 @@ contextBridge.exposeInMainWorld('electronWarehouse', {
     openLayoutVersion: request => warehouse('locations:layout-open-version', request),
     onChanged: warehouseEvents('locations:changed'),
     onSyncFailed: warehouseEvents('locations:sync-failed'),
+    onQueued: warehouseEvents('locations:queued'),
     onImportProgress: warehouseEvents('locations:import-progress'),
   },
 })
