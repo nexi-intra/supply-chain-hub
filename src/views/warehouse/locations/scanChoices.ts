@@ -58,3 +58,12 @@ export function youngerThanOldest(reserve: { id: string; receivedAt: number }[],
   const oldest = reserve[0]
   return Boolean(oldest && oldest.id !== pallet.id && oldest.receivedAt < pallet.receivedAt)
 }
+/** A 49/50 number with several materials: the one to choose after `after` (or first) that is not saved yet, null when all are done. */
+export function nextUnsaved(count: number, saved: number[], after: number | null): number | null {
+  const start = after === null ? 0 : after + 1
+  for (let step = 0; step < count; step += 1) {
+    const index = (start + step) % count
+    if (!saved.includes(index)) return index
+  }
+  return null
+}

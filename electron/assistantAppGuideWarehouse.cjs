@@ -266,7 +266,7 @@ const WAREHOUSE_MODULE = {
       steps: [
         'Åbn "Arbejdsværktøjer" > "Placeringer" og klik "Læg på hylde".',
         'Scan eller skriv hylden, fx "E9 H5" (reol E9, hylde 5).',
-        'Vælg materialet (forslag med beskrivelse mens du skriver) og skriv antallet – eller scan 49/50-nummeret og klik "Hent fra SAP". Står materialet der i forvejen, lægges antallet til. Klik "Gem".',
+        'Vælg materialet (forslag med beskrivelse mens du skriver) og skriv antallet – eller scan 49/50-nummeret og klik "Hent fra SAP". Står materialet der i forvejen, lægges antallet til. Klik "Gem". Har nummeret flere materialer, står de som knapper med antal: gem dem et ad gangen, så vælges det næste af sig selv.',
       ],
       notes: 'En hylde holder materiale og antal – ingen alder eller FIFO. Tag fra en hylde under "Tag", og flyt mellem hylder under "Flyt" eller på hyldens kort.',
     },

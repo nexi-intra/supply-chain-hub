@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { LocationSearch } from '@/types/warehouse'
-import { enterChoice, enterOnSearch, openWhenReady, youngerThanOldest } from './scanChoices'
+import { enterChoice, enterOnSearch, nextUnsaved, openWhenReady, youngerThanOldest } from './scanChoices'
 
 const list = (...codes: string[]) => codes.map(material => ({ material, description: '' }))
 
@@ -73,5 +73,22 @@ describe('youngerThanOldest (Tag and Fyld op ask before a younger pallet)', () =
     expect(youngerThanOldest(reserve, reserve[0])).toBe(false)
     expect(youngerThanOldest(reserve, reserve[2])).toBe(false)
     expect(youngerThanOldest([], reserve[1])).toBe(false)
+  })
+})
+describe('nextUnsaved (Læg på hylde with a 49/50 number of several materials)', () => {
+  it('starts with the first material that is not saved yet', () => {
+    expect(nextUnsaved(3, [], null)).toBe(0)
+    expect(nextUnsaved(3, [0], null)).toBe(1)
+  })
+
+  it('after a save, preselects the next one not saved, going round to the start', () => {
+    expect(nextUnsaved(3, [0], 0)).toBe(1)
+    expect(nextUnsaved(3, [0, 1], 1)).toBe(2)
+    expect(nextUnsaved(3, [1, 2], 2)).toBe(0)
+  })
+
+  it('is null when all are done', () => {
+    expect(nextUnsaved(3, [0, 1, 2], 2)).toBeNull()
+    expect(nextUnsaved(0, [], null)).toBeNull()
   })
 })
