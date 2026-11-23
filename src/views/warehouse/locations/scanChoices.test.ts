@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { enterChoice } from './scanChoices'
+import type { LocationSearch } from '@/types/warehouse'
+import { enterChoice, enterOnSearch, openWhenReady } from './scanChoices'
 
 const list = (...codes: string[]) => codes.map(material => ({ material, description: '' }))
 
@@ -28,5 +29,36 @@ describe('enterChoice (MaterialPicker Enter)', () => {
   it('takes the typed value in capitals when nothing fits, and nothing for an empty field', () => {
     expect(enterChoice({ value: ' r162-0999 ', suggestions: [], suggestionsFor: null, active: 0, open: false, moved: false })).toBe('R162-0999')
     expect(enterChoice({ value: '  ', suggestions: list('R162-0717'), suggestionsFor: 'R162', active: 0, open: true, moved: false })).toBeNull()
+  })
+})
+
+const found = (part: Partial<LocationSearch>): LocationSearch => ({ materials: [], locations: [], pallets: [], racks: [], ...part })
+const oneMaterial = found({ materials: [{ material: 'R162-0717', description: '' }] })
+const oneRack = found({ racks: ['E9'] })
+const twoMaterials = found({ materials: [{ material: 'R162-0717', description: '' }, { material: 'R162-0800', description: '' }] })
+
+describe('enterOnSearch and openWhenReady (front-page search Enter)', () => {
+  it('opens the single hit at once when the result belongs to the text', () => {
+    expect(enterOnSearch({ query: 'R162-0717', found: oneMaterial }, 'R162-0717')).toEqual({ open: { kind: 'material', id: 'R162-0717' }, waitFor: null })
+  })
+
+  it('opens nothing when the result for the text has several hits or none', () => {
+    expect(enterOnSearch({ query: 'R162', found: twoMaterials }, 'R162')).toEqual({ open: null, waitFor: null })
+    expect(enterOnSearch({ query: 'X', found: found({}) }, 'X')).toEqual({ open: null, waitFor: null })
+  })
+
+  it('never opens the hit of the previous text: it waits for the result of this one', () => {
+    expect(enterOnSearch({ query: 'E9', found: oneRack }, 'R162-0717')).toEqual({ open: null, waitFor: 'R162-0717' })
+    expect(enterOnSearch(null, 'R162-0717')).toEqual({ open: null, waitFor: 'R162-0717' })
+  })
+
+  it('opens when the right result comes, only with exactly one hit', () => {
+    expect(openWhenReady('R162-0717', { query: 'R162-0717', found: oneMaterial })).toEqual({ open: { kind: 'material', id: 'R162-0717' }, waitFor: null })
+    expect(openWhenReady('R162', { query: 'R162', found: twoMaterials })).toEqual({ open: null, waitFor: null })
+  })
+
+  it('keeps waiting while an older result comes, and does nothing when no Enter is waiting', () => {
+    expect(openWhenReady('R162-0717', { query: 'E9', found: oneRack })).toEqual({ open: null, waitFor: 'R162-0717' })
+    expect(openWhenReady(null, { query: 'E9', found: oneRack })).toEqual({ open: null, waitFor: null })
   })
 })
