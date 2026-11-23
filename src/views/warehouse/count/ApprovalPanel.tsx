@@ -67,7 +67,7 @@ export function ApprovalPanel({ id, state, optimistic, person }: PanelProps) {
   const needle = query.trim().toUpperCase()
   const visible = materials.filter(item => (!needle || item.material.includes(needle) || item.description.toUpperCase().includes(needle)) && (!onlyOpen || !['approved', 'posted'].includes(state.approvals[item.material]?.status || '')))
 
-  /** Shown at once; saved in the background (a write to M: takes 15–90 s) and taken back if the drive refuses it. */
+  /** Shown at once; saved in the background (a write to M: takes 15–90 s) and taken back if the drive refuses it. Resolves to whether it was saved. */
   const save = (approvals: Record<string, Approval>, write: () => Promise<unknown>, releaseLocks: boolean, retry?: (confirmed: string[]) => void) => {
     const changed = Object.keys(approvals)
     setSaving(current => new Set([...current, ...changed]))
@@ -80,7 +80,7 @@ export function ApprovalPanel({ id, state, optimistic, person }: PanelProps) {
       setFoundElsewhere({ serials: errorMaterials(error), retry })
       return true
     }
-    void optimistic(patch, write, { onError }).finally(() => setSaving(current => new Set([...current].filter(material => !changed.includes(material)))))
+    return optimistic(patch, write, { onError }).finally(() => setSaving(current => new Set([...current].filter(material => !changed.includes(material)))))
   }
 
   const set = (material: string, status: 'approved' | 'returned' | 'posted' | 'reset', confirmFoundElsewhere?: string[]) => {
@@ -112,8 +112,11 @@ export function ApprovalPanel({ id, state, optimistic, person }: PanelProps) {
   const approveClean = (confirmFoundElsewhere?: string[]) => {
     const clean = materials.filter(item => item.serialLines === 0 && !state.rows.some(row => row.material === item.material && row.diff !== 0) && !['approved', 'posted'].includes(state.approvals[item.material]?.status || '') && !saving.has(item.material))
     const at = Date.now()
-    save(Object.fromEntries(clean.map(item => [item.material, { status: 'approved', comment: t('Ingen difference', 'No difference'), by: person, at, unposts: state.approvals[item.material]?.unposts } satisfies Approval])), () => window.electronWarehouse!.counts.approveClean(id, confirmFoundElsewhere ? { confirmFoundElsewhere } : undefined), false, confirmed => approveClean(confirmed))
-    toast.success(t(`${formatNumber(clean.length)} materialer uden difference er godkendt`, `${formatNumber(clean.length)} materials without a difference are approved`))
+    let approved = clean.length
+    const write = async () => { approved = (await window.electronWarehouse!.counts.approveClean(id, confirmFoundElsewhere ? { confirmFoundElsewhere } : undefined)).approved }
+    // Told only once the drive has taken it: a refusal (also APPROVAL_FOUND_ELSEWHERE, whose confirm comes back here) approved nothing.
+    void save(Object.fromEntries(clean.map(item => [item.material, { status: 'approved', comment: t('Ingen difference', 'No difference'), by: person, at, unposts: state.approvals[item.material]?.unposts } satisfies Approval])), write, false, confirmed => approveClean(confirmed))
+      .then(saved => { if (saved) toast.success(t(`${formatNumber(approved)} materialer uden difference er godkendt`, `${formatNumber(approved)} materials without a difference are approved`)) })
   }
 
   return (

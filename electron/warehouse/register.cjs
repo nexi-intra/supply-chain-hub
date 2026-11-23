@@ -46,9 +46,17 @@ function codeError(code) {
   return Object.assign(new Error(code), { code })
 }
 
-/** A confirmed list from the window (DOC_STOCK_MISSING, PIDOC_ZERO_CONFIRM, APPROVAL_FOUND_ELSEWHERE): strings only, bounded. */
+/** A confirmed list from the window (DOC_STOCK_MISSING, PIDOC_ZERO_CONFIRM): strings only, bounded. */
 function confirmedList(value) {
   return Array.isArray(value) ? value.filter(item => typeof item === 'string' && item.length <= 80).slice(0, 2000) : []
+}
+
+/**
+ * The serials confirmed for APPROVAL_FOUND_ELSEWHERE: a material can miss thousands, and a list cut short would be refused
+ * again every time. Bounded by what a serial can be (at most 40 characters) and 20000 of them.
+ */
+function confirmedSerials(value) {
+  return Array.isArray(value) ? value.filter(item => typeof item === 'string' && item.length <= 40).slice(0, 20000) : []
 }
 
 function isUnder(file, root) {
@@ -354,9 +362,9 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   handle('counts:delete', noticing((user, p) => counts.deleteCount(user, p.id)))
   handle('counts:refetch-preview', (user, p) => counts.previewRefetch(user, p.id))
   handle('counts:refetch-apply', (user, p) => counts.applyRefetch(user, p.id, { token: p.token }))
-  handle('counts:approval', noticing((user, p) => counts.setApproval(user, p.id, { material: p.material, status: p.status, comment: p.comment, confirmFoundElsewhere: confirmedList(p.confirmFoundElsewhere) })))
+  handle('counts:approval', noticing((user, p) => counts.setApproval(user, p.id, { material: p.material, status: p.status, comment: p.comment, confirmFoundElsewhere: confirmedSerials(p.confirmFoundElsewhere) })))
   handle('counts:unpost', noticing((user, p) => counts.undoPosted(user, p.id, { material: p.material, reason: p.reason })))
-  handle('counts:approve-clean', noticing((user, p) => counts.approveAllWithoutDifference(user, p.id, { confirmFoundElsewhere: confirmedList(p.confirmFoundElsewhere) })))
+  handle('counts:approve-clean', noticing((user, p) => counts.approveAllWithoutDifference(user, p.id, { confirmFoundElsewhere: confirmedSerials(p.confirmFoundElsewhere) })))
   handle('counts:material-lock', (user, p) => counts.lockMaterial(user, p.id, { material: p.material }))
   handle('counts:material-request', (user, p) => counts.requestMaterial(user, p.id, { material: p.material }))
   handle('counts:material-answer', (user, p) => counts.answerMaterialRequest(user, p.id, { material: p.material, email: p.email, allow: p.allow === true }))
@@ -614,4 +622,4 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   }
 }
 
-module.exports = { registerWarehouse, DATA_FOLDER, SHARED_FOLDER }
+module.exports = { registerWarehouse, confirmedSerials, DATA_FOLDER, SHARED_FOLDER }

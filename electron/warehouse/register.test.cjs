@@ -3,7 +3,8 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { registerWarehouse } = require('./register.cjs')
+const { registerWarehouse, confirmedSerials } = require('./register.cjs')
+const { confirmedAll } = require('./core/countDoc.cjs')
 const { createStore } = require('../store.cjs')
 const { createArrivalOrder } = require('../ipcArrivals.cjs')
 
@@ -766,4 +767,13 @@ test('a team folder that cannot be made is tried once per back-off, not on every
   assert.equal(mkdir.mock.calls.filter(c => c.arguments[0] === dataDir).length, 2)
   assert.ok(fs.statSync(dataDir).isDirectory())
   await registered.closeAll()
+})
+
+test('a confirmed list of more than 2000 serials found in another count reaches the approval whole, so it can be confirmed', () => {
+  const warned = Array.from({ length: 2500 }, (_, index) => `SN${String(index).padStart(6, '0')}`)
+  const passed = confirmedSerials([...warned, 'X'.repeat(41), 42, null])
+  assert.equal(passed.length, 2500, 'every serial, nothing that cannot be a serial')
+  assert.equal(confirmedAll(warned, passed), true)
+  assert.equal(confirmedSerials(Array.from({ length: 20001 }, (_, index) => `S${index}`)).length, 20000, 'still bounded')
+  assert.deepEqual(confirmedSerials('SN1'), [])
 })
