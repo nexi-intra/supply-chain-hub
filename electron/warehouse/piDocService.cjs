@@ -187,7 +187,7 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
     if (new Set(chosen.map(doc => doc.year)).size > 1) throw codeError('PIDOC_INVALID', 'Dokumenterne skal være fra samme år')
     // Counted before this rule (or by an older client): MI20 would post a quantity the manager never approved.
     const flagged = chosen.some(doc => doc.lines.some(line => rows.some(item => item.material === line.material && item.sloc === doc.sloc && item.stockType === doc.stockType && item.serialLinesAtApproval)))
-    if (flagged) throw codeError('PIDOC_SERIAL_LINES', 'Dokumentet kan ikke bogføres, fordi et materiale blev godkendt med tællelinjer med antal. Ret antallet i SAP med MI05, eller slet dokumentet i SAP.')
+    if (flagged) throw codeError('PIDOC_SERIAL_LINES', 'Dokumentet kan ikke bogføres, fordi et materiale blev godkendt med tællelinjer med antal. Slet dokumentet i SAP med hånden, nulstil materialet, slet linjen og godkend igen.')
     const result = await writer.postDocuments({ docNos: chosen.map(doc => doc.docNo), year: chosen[0].year })
     const at = now()
     const postedMaterials = chosen.filter(item => result.posted.includes(item.docNo)).flatMap(doc => doc.lines.map(line => line.material))

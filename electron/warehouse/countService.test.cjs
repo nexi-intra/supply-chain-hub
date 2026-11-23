@@ -705,7 +705,7 @@ test('approval freezes a material: fetching SAP again or counting afterwards doe
 
   await mona.undoPosted(MONA, id, { material: 'R162-0717', reason: 'Trykket ved en fejl' })
   await ctx.repo.changePiDocs('TCD', id, all => ({ all: { ...all, D1: { id: 'D1', docNo: '105000903', status: 'printed', lines: [{ material: 'R162-0717' }] } } }))
-  await assert.rejects(mona.setApproval(MONA, id, { material: 'R162-0717', status: 'reset' }), { code: 'PIDOC_ACTIVE' }, 'an SAP document locks the approval')
+  await assert.rejects(mona.setApproval(MONA, id, { material: 'R162-0717', status: 'reset' }), { code: 'PIDOC_ACTIVE', message: 'R162-0717 har SAP-dokument 105000903. Slet det først.' }, 'an SAP document locks the approval')
   await ctx.repo.changePiDocs('TCD', id, all => ({ all: { ...all, D1: { ...all.D1, status: 'deleted' } } }))
 
   await mona.setApproval(MONA, id, { material: 'R162-0717', status: 'reset' })
@@ -943,6 +943,8 @@ test('a material approved with a quantity line (older client) gets no document q
   await ctx.repo.changePiDocs('TCD', id, all => ({ all: { ...all, D1: { id: 'D1', docNo: '105000939', year: '2026', status: 'printed', sloc: 'D000', stockType: 'unrestricted', kind: 'new', transaction: 'ZMS_COUNT_SERIAL', createdBy: { email: MONA.email }, docFetchedAt: doc.fetchedAt, lines: [{ material: terminal.material, transaction: 'ZMS_COUNT_SERIAL' }] } } }))
   await assert.rejects(piDocsOf(ada).count(ADA, id, 'D1'), refused)
   assert.deepEqual(entered, [])
+  // "Nulstil" while the document holds it tells the whole way out, not only "slet det først".
+  await assert.rejects(mona.setApproval(MONA, id, { material: terminal.material, status: 'reset' }), { code: 'PIDOC_ACTIVE', message: `${terminal.material} er godkendt med tællelinjer med antal og har SAP-dokument 105000939. Slet SAP-dokumentet, nulstil materialet, slet linjen og godkend igen.` })
   await ctx.repo.changePiDocs('TCD', id, all => ({ all: { ...all, D1: { ...all.D1, status: 'deleted' } } }))
 
   // Deleting the line does not hide it: the frozen numbers still hold it.

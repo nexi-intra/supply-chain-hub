@@ -235,7 +235,7 @@ test('a document holding a material approved with quantity lines is never posted
   const rows = [row('INT1-0', 'new', { serialLinesAtApproval: true }), row('INT1-0', 'new', { sloc: 'D004' }), row('R1', 'accessory')]
   const counts = { countDoc: async () => ({ rows }), markPosted: async (user, id, materials) => ({ posted: materials, skipped: [], serialLines: [] }) }
   const service = createPiDocService({ counts, repo, roles: { roleOf: async () => 'manager' }, writer, system: 'QS4' })
-  await assert.rejects(service.post(MONA, 'c1', ['D2', 'D1']), { code: 'PIDOC_SERIAL_LINES', message: 'PIDOC_SERIAL_LINES: Dokumentet kan ikke bogføres, fordi et materiale blev godkendt med tællelinjer med antal. Ret antallet i SAP med MI05, eller slet dokumentet i SAP.' })
+  await assert.rejects(service.post(MONA, 'c1', ['D2', 'D1']), { code: 'PIDOC_SERIAL_LINES', message: 'PIDOC_SERIAL_LINES: Dokumentet kan ikke bogføres, fordi et materiale blev godkendt med tællelinjer med antal. Slet dokumentet i SAP med hånden, nulstil materialet, slet linjen og godkend igen.' })
   assert.deepEqual(posted, [], 'MI20 is never started')
   assert.equal(stored.D1.status, 'counted')
   await service.post(MONA, 'c1', ['D2'])

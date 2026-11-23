@@ -1202,7 +1202,12 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       // The numbers on an SAP count document must not change underneath it: delete the document first.
       const active = activePiDoc(await repo.getPiDocs(state.team, state.id).catch(() => ({})), code)
       if (active?.status === 'posted') throw postedError(code)
-      if (active) throw codeError('PIDOC_ACTIVE', `${code} har SAP-dokument ${active.docNo || ''} – slet det først`)
+      if (active) {
+        // Approved with quantity lines: a reset alone does not do; the whole way out is told at once.
+        const withLines = approvedWithLines(state, { [code]: (await repo.getApprovals(state.team, state.id).catch(() => ({})))[code] }).has(code)
+        if (withLines) throw codeError('PIDOC_ACTIVE', `${code} er godkendt med tællelinjer med antal og har SAP-dokument ${active.docNo || ''}. Slet SAP-dokumentet, nulstil materialet, slet linjen og godkend igen.`)
+        throw codeError('PIDOC_ACTIVE', `${code} har SAP-dokument ${active.docNo || ''}. Slet det først.`)
+      }
     }
     const by = me(user)
     const at = now()
