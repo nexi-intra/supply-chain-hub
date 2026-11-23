@@ -301,7 +301,8 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
     try {
       return await repo.transact(team, { actionId, writes: ['pallets'] }, tx => {
         const pallet = palletIn(tx, id)
-        if (shown.some(([field, value]) => JSON.stringify(pallet[field] ?? null) !== JSON.stringify(value ?? null))) throw codeError('PALLET_CHANGED')
+        const stale = shown.filter(([field, value]) => JSON.stringify(pallet[field] ?? null) !== JSON.stringify(value ?? null)).map(([field]) => field)
+        if (stale.length) throw Object.assign(codeError('PALLET_CHANGED'), { fields: stale })
         const diff = {}
         for (const [field, value] of Object.entries(clean)) {
           if (JSON.stringify(pallet[field] ?? null) === JSON.stringify(value ?? null)) continue
@@ -314,10 +315,17 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
       })
     } catch (error) {
       if (error.code !== 'PALLET_CHANGED') throw error
-      // Who changed it: the latest action in the log that changed the pallet, as an undo names the one that blocks it.
+      // Who changed it: the latest action in the log that changed one of the refused fields of the pallet; else the latest
+      // that changed the pallet at all, as an undo names the one that blocks it. The whole log is read, not only the
+      // pallet's events: a transaction's change is kept on its first event, which can be about another pallet.
       const events = await repo.history(team, { months: 2 }).catch(() => [])
       const changed = changesOf(events)
-      const latest = events.find(event => !(event.tx && !changed.has(event.tx)) && touches(event, { kind: 'pallet', id }))
+      const fieldChanged = event => {
+        const change = event.tx && changed.get(event.tx)
+        return Boolean(change) && (error.fields || []).some(field => JSON.stringify(change.before.pallets?.[id]?.[field] ?? null) !== JSON.stringify(change.after.pallets?.[id]?.[field] ?? null))
+      }
+      const mine = events.filter(event => !(event.tx && !changed.has(event.tx)) && touches(event, { kind: 'pallet', id }))
+      const latest = mine.find(fieldChanged) || mine[0]
       throw codeError('PALLET_CHANGED', latest?.by?.name ? `Pallen er ændret af ${latest.by.name} imens. Se den igen.` : 'Pallen er ændret imens. Se den igen.')
     }
   }

@@ -6,6 +6,7 @@ const path = require('node:path')
 const { createStore } = require('../../store.cjs')
 const { createLocationRepository } = require('./repository.cjs')
 const { createLocationService } = require('./service.cjs')
+const { createOutbox } = require('./outbox.cjs')
 
 const ANNA = { email: 'anna@x.test', fullName: 'Anna', role: 'user', team: 'TCD' }
 const BO = { email: 'bo@x.test', fullName: 'Bo', role: 'user', team: 'TCD' }
@@ -224,6 +225,40 @@ test('editPallet refuses with PALLET_CHANGED, naming who changed it, when a fiel
   // What the dialog showed is still there: the edit goes through.
   await pc1.service.editPallet(BO, { pallet: 'p1', changes: { quantity: 65 }, expected: { quantity: 70 } })
   assert.equal((await pc1.repo.read('TCD')).pallets.p1.quantity, 65)
+})
+
+test('PALLET_CHANGED names who changed the refused field, not whoever touched the pallet last', async () => {
+  const { pc1, pc2, seed } = setup()
+  const LIS = { email: 'lis@x.test', fullName: 'Lis', role: 'user', team: 'TCD' }
+  const KIM = { email: 'kim@x.test', fullName: 'Kim', role: 'user', team: 'TCD' }
+  await seed([place('A2.4'), place('A2.5')], [{ id: 'p1', location: 'A2.4', material: 'R162-0717', quantity: 100, receivedAt: 1 }])
+  await pc2.service.take(LIS, { pallet: 'p1', quantity: 30 })
+  await pc2.service.move(KIM, { pallet: 'p1', to: 'A2.5' })
+  await assert.rejects(pc1.service.editPallet(BO, { pallet: 'p1', changes: { quantity: 90 }, expected: { quantity: 100 } }), { code: 'PALLET_CHANGED', message: 'Pallen er ændret af Lis imens. Se den igen.' })
+})
+
+test('a pallet edit queued while M: is down keeps expected and is refused with PALLET_CHANGED when replayed after a take', async () => {
+  const { pc1, pc2, seed } = setup()
+  const LIS = { email: 'lis@x.test', fullName: 'Lis', role: 'user', team: 'TCD' }
+  await seed([place('A2.4')], [{ id: 'p1', location: 'A2.4', material: 'R162-0717', quantity: 100, receivedAt: 1 }])
+  let mDown = true
+  const outbox = createOutbox({
+    dir: fs.mkdtempSync(path.join(os.tmpdir(), 'locations-outbox-')),
+    run: async action => { if (mDown) throw Object.assign(new Error('STORAGE_UNAVAILABLE'), { code: 'STORAGE_UNAVAILABLE' }); return pc1.service[action.method](action.user, action.request) },
+    isStorageError: error => error?.code === 'STORAGE_UNAVAILABLE',
+    pauseMs: 0,
+  })
+  const request = { actionId: 'bo-edit', pallet: 'p1', changes: { quantity: 90 }, expected: { quantity: 100 } }
+  assert.deepEqual(await outbox.submit({ id: 'bo-edit', method: 'editPallet', user: BO, request }), { queued: true })
+  await pc2.service.take(LIS, { pallet: 'p1', quantity: 30 })
+  mDown = false
+  const { done, failed } = await outbox.flush()
+  assert.equal(done, 0)
+  assert.equal(failed[0].code, 'PALLET_CHANGED')
+  const [failure] = outbox.failures()
+  assert.equal(failure.code, 'PALLET_CHANGED')
+  assert.deepEqual(failure.request.expected, { quantity: 100 })
+  assert.equal((await pc1.repo.read('TCD')).pallets.p1.quantity, 70)
 })
 
 test('editPallet without expected (an older Hub sending every field) works as before', async () => {
