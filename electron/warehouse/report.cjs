@@ -1,6 +1,7 @@
 // The count report as a simple Excel workbook (exceljs). Cells hold plain text, numbers and dates only:
 // no formulas, so nothing a counter typed can ever run as one.
 const fs = require('node:fs')
+const crypto = require('node:crypto')
 const path = require('node:path')
 const ExcelJS = require('exceljs')
 const { scopeStockTypes } = require('./core/scopes.cjs')
@@ -232,27 +233,34 @@ async function writeReport(data, dir, date = new Date()) {
 
 async function writeWorkbook(workbook, dir, name) {
   await fs.promises.mkdir(dir, { recursive: true })
-  // The name is taken by creating the file ('wx'), never by asking first: no synchronous call on M:, and two reports
-  // written at once never get the same name.
-  let target
-  for (let attempt = 1; !target; attempt++) {
-    const candidate = path.join(dir, attempt === 1 ? name : name.replace(/\.xlsx$/, ` (${attempt}).xlsx`))
-    try {
-      await (await fs.promises.open(candidate, 'wx')).close()
-      target = candidate
-    } catch (error) {
-      if (error?.code !== 'EEXIST') throw error
-    }
-  }
-  const temp = `${target}.${process.pid}.tmp`
+  // Written to a unique temp file first; only then is the name taken by creating it ('wx', never asking first: no
+  // synchronous call on M:, and two reports written at once never get the same name) and the file moved onto it at
+  // once. A failed write therefore never leaves an empty .xlsx in "rapporter".
+  const temp = path.join(dir, `.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`)
   try {
     await workbook.xlsx.writeFile(temp)
-    await fs.promises.rename(temp, target)
+    for (let attempt = 1; ; attempt++) {
+      const candidate = path.join(dir, attempt === 1 ? name : name.replace(/\.xlsx$/, ` (${attempt}).xlsx`))
+      let reserved
+      try {
+        reserved = await fs.promises.open(candidate, 'wx')
+      } catch (error) {
+        if (error?.code === 'EEXIST') continue
+        throw error
+      }
+      try {
+        await reserved.close()
+        await fs.promises.rename(temp, candidate)
+        return candidate
+      } catch (error) {
+        await fs.promises.rm(candidate, { force: true }).catch(() => {})
+        throw error
+      }
+    }
   } catch (error) {
-    await Promise.all([fs.promises.rm(temp, { force: true }), fs.promises.rm(target, { force: true })]).catch(() => {})
+    await fs.promises.rm(temp, { force: true }).catch(() => {})
     throw error
   }
-  return target
 }
 
 function stockTotals(aggregate) {
