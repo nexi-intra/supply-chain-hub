@@ -194,6 +194,39 @@ const MESSAGES: Record<string, string> = {
   SOFTWARELOAD_ALREADY_FINISHED: 'Opgaven er allerede afsluttet. Se Venter på SAP eller søg på et af serienumrene.',
   SOFTWARELOAD_NOT_FOUND: 'Opgaven, flytningen eller kommentaren findes ikke (længere).',
   SOFTWARELOAD_NOT_FINISHED: 'Opgaven er ikke afsluttet. En opgave, der kører eller venter på SAP, kan ikke slettes.',
+  // Login and the Hub's own checks before a warehouse call
+  AUTH_FORBIDDEN: 'Du har ikke adgang til at gøre det.',
+  AUTH_UNTRUSTED_WINDOW: 'Handlingen blev afvist, fordi den ikke kom fra Hubbens eget vindue.',
+  AUTH_CREDENTIALS: 'Forkert email/brugernavn eller adgangskode.',
+  AUTH_PENDING: 'Din konto afventer godkendelse af en manager.',
+  AUTH_REJECTED: 'Din anmodning om adgang er blevet afvist. Kontakt en manager.',
+  // Optælling, also when the backend sends no detail
+  COUNT_INVALID: 'Optællingens oplysninger er ikke gyldige. Tjek navnet (højst 80 tegn).',
+  PLACEMENT_INVALID: 'Skriv et navn til placeringen (højst 60 tegn).',
+  MEMBER_NOT_FOUND: 'Deltageren er ikke (længere) med i optællingen.',
+  CLAIM_INVALID: 'Skriv navnet på området.',
+  CLAIM_TAKEN: 'En anden tæller allerede området.',
+  APPROVAL_INVALID: 'Godkendelsen er ikke gyldig. Se materialet igen.',
+  JOURNAL_CLOSED: 'Optællingen blev lukket på denne PC imens. Åbn den igen, og prøv igen.',
+  LINE_INVALID: 'Tællelinjen er ikke gyldig.',
+  SCOPE_INVALID: 'Vælg mindst én storage location og én lagertype.',
+  IMPORT_INVALID: 'Importen er ikke gyldig. Tjek placeringen og materialedokumentet.',
+  IMPORT_TOO_LARGE: 'Importen er for stor.',
+  IMPORT_EMPTY: 'Der er ingen serienumre at importere.',
+  IMPORT_FILE_TYPE: 'Vælg en Excel-, CSV- eller tekstfil.',
+  IMPORT_FILE_TOO_LARGE: 'Filen er for stor.',
+  MATDOC_INVALID: 'Skriv materialedokumentet som fx "4900229137" eller "4900229137 2026 01".',
+  PLACEMENTS_FORMAT: 'Placeringsarket har ikke de forventede kolonner.',
+  REPORT_OPEN_FAILED: 'Rapporten kunne ikke åbnes.',
+  PIDOC_EMPTY: 'Vælg mindst ét materiale.',
+  PIDOC_INVALID: 'Udvalget kan ikke bruges til et SAP-dokument.',
+  PIDOC_NOT_APPROVED: 'Kun godkendte materialer kan komme på et SAP-dokument.',
+  SAP_FORMAT: 'SAP-eksporten har ikke det forventede format. Prøv igen.',
+  SAP_SCRIPT_NOT_ALLOWED: 'Appen må ikke køre det SAP-script. Intet er ændret i SAP.',
+  SAP_SHOW_INVALID: 'Dokumentet kan ikke vises i SAP.',
+  SAP_SHOW_FAILED: 'SAP kunne ikke vise dokumentet. Tjek, at du er logget på SAP og har færre end 6 vinduer åbne.',
+  // Placeringer: a transaction left by an earlier action is finished first
+  TX_JOURNAL_KEYS: 'En tidligere handling er ikke gjort færdig på M:. Prøv igen om et øjeblik.',
   UNEXPECTED_ERROR: 'Der skete en uventet fejl. Prøv igen.',
 }
 
@@ -211,6 +244,47 @@ const EN_IN_HUB: Record<string, (hub: string) => string> = {
   TIMECLOCK_SOFTWARELOAD_ELSEWHERE: hub => `Softwareload is running in ${hub}. Stop it there first.`,
 }
 
+const someone = (name: string) => (name === 'En anden' ? 'Someone else' : name)
+const PLACE_REASONS_EN: Record<string, string> = { 'er fuld': 'is full', 'er reserveret': 'is reserved', 'er en arbejdsstation': 'is a work station', 'er deaktiveret': 'is deactivated' }
+const UNDONE_BY = /^Kan ikke fortrydes\. (.+?) (?:satte|tog|fyldte|flyttede|skiftede|rettede|fortrød|lagde)\b.* kl\. (.+)\. Fortryd den først\.$/
+const PALLETS_EN = (what: string) => (what === 'en palle' || what === '1 palle' ? 'There is 1 pallet' : `There are ${what.replace('paller', 'pallets')}`)
+
+// The person, place or number named in the backend's Danish detail, put into an English sentence (the detail itself is
+// Danish). A detail in another form gets the code's own English text.
+const EN_FROM_DETAIL: Record<string, Array<[RegExp, (...parts: string[]) => string]>> = {
+  CLAIM_TAKEN: [[/^(.+) tæller allerede område (.+)$/, (name, area) => `${someone(name)} is already counting area ${area}.`]],
+  APPROVAL_INVALID: [
+    [/^Skriv hvorfor materialet sendes tilbage$/, () => 'Say why the material is sent back.'],
+    [/^Materialet skal godkendes før det markeres som bogført$/, () => 'The material must be approved before it is marked as posted.'],
+    [/^(\S+) er ikke markeret som bogført i SAP$/, material => `${material} is not marked as posted in SAP.`],
+    [/^(\S+) er ikke godkendt$/, material => `${material} is not approved.`],
+  ],
+  PIDOC_NOT_APPROVED: [[/^(\S+) er ikke godkendt$/, material => `${material} is not approved.`]],
+  IMPORT_TOO_LARGE: [[/^Højst (\d+) serienumre ad gangen$/, max => `At most ${max} serial numbers at a time.`]],
+  LOCATION_FULL: [[/^(.+) er fuld$/, place => `${place} is full.`]],
+  LOCATION_INACTIVE: [[/^(.+) er deaktiveret$/, place => `${place} is deactivated.`]],
+  LOCATION_NOT_FOUND: [[/^Placeringen (.+) findes ikke$/, place => `The location ${place} does not exist.`]],
+  MATERIAL_MISMATCH: [[/^(\S+) hører ikke til pluk-pladsen (.+)$/, (material, place) => `${material} does not belong to the pick place ${place}.`]],
+  STOCK_TOO_LOW: [[/^Der er kun (\d+) stk\. (\S+) på (.+)$/, (quantity, material, place) => `There are only ${quantity} pcs of ${material} on ${place}.`]],
+  LOCATION_NOT_EMPTY: [
+    [/^Der står (en palle|\d+ paller?) på (.+) – bekræft at (den|de) bliver pluk-pallen$/, (what, place, it) => `${PALLETS_EN(what)} on ${place}. Confirm that ${it === 'den' ? 'it becomes' : 'they become'} the pick pallet.`],
+    [/^Der står (\d+) materialer? på (.+) – tøm hylden først$/, (n, place) => `${n === '1' ? 'There is 1 material' : `There are ${n} materials`} on ${place}. Empty the shelf first.`],
+    [/^Der står (\d+ paller?) på (.+) – flyt (den|dem) først$/, (what, place, it) => `${PALLETS_EN(what)} on ${place}. Move ${it === 'den' ? 'it' : 'them'} first.`],
+  ],
+  UNDO_CONFLICT: [
+    [UNDONE_BY, (name, at) => `Cannot be undone. ${someone(name)} made a later change at ${at}. Undo that first.`],
+    [/^Kan ikke fortrydes\. (.+) (er fuld|er reserveret|er en arbejdsstation|er deaktiveret)\.$/, (place, reason) => `Cannot be undone. ${place} ${PLACE_REASONS_EN[reason]}.`],
+  ],
+}
+
+function englishFromDetail(code: string, detail: string): string | null {
+  for (const [pattern, english] of EN_FROM_DETAIL[code] || []) {
+    const match = pattern.exec(detail)
+    if (match) return english(...match.slice(1))
+  }
+  return null
+}
+
 export function errorMessage(error: unknown, fallback?: string): string {
   const code = errorCode(error)
   if (currentWarehouseLanguage() === 'en') {
@@ -218,6 +292,8 @@ export function errorMessage(error: unknown, fallback?: string): string {
     if (code && detail && EN_WITH_DETAIL[code]) return `${EN_WITH_DETAIL[code]}: ${detail}`
     const hub = code && EN_IN_HUB[code] ? /\b(TCD|TRR)\b/.exec(detail || '')?.[1] : undefined
     if (code && hub) return EN_IN_HUB[code](hub)
+    const english = code && detail ? englishFromDetail(code, detail) : null
+    if (english) return english
     return (code && MESSAGES_EN[code]) || fallback || MESSAGES_EN.UNEXPECTED_ERROR
   }
   return errorDetail(error) || (code && MESSAGES[code]) || fallback || MESSAGES.UNEXPECTED_ERROR
@@ -410,6 +486,28 @@ const MESSAGES_EN: Record<string, string> = {
   SOFTWARELOAD_ALREADY_FINISHED: 'The task is already finished. Check Waiting for SAP or search one of its serial numbers.',
   SOFTWARELOAD_NOT_FOUND: 'The task, the move or the comment does not exist (any more).',
   SOFTWARELOAD_NOT_FINISHED: 'The task is not finished. A task that is running or waiting for SAP cannot be deleted.',
+  // Login and the Hub's own checks before a warehouse call
+  AUTH_FORBIDDEN: 'You do not have access to do that.',
+  AUTH_UNTRUSTED_WINDOW: "The action was refused because it did not come from the Hub's own window.",
+  AUTH_CREDENTIALS: 'Incorrect email/username or password.',
+  AUTH_PENDING: 'Your account is awaiting approval from a manager.',
+  AUTH_REJECTED: 'Your access request has been rejected. Contact a manager.',
+  // Stock count
+  COUNT_INVALID: 'The details of the count are not valid. Check the name (at most 80 characters).',
+  PLACEMENT_INVALID: 'Type a name for the location (at most 60 characters).',
+  MEMBER_NOT_FOUND: 'The participant is not part of the count (any more).',
+  CLAIM_INVALID: 'Type the name of the area.',
+  CLAIM_TAKEN: 'Someone else is already counting the area.',
+  APPROVAL_INVALID: 'The approval is not valid. Look at the material again.',
+  JOURNAL_CLOSED: 'The count was closed on this PC meanwhile. Open it again and try again.',
+  IMPORT_INVALID: 'The import is not valid. Check the location and the material document.',
+  IMPORT_FILE_TYPE: 'Choose an Excel, CSV or text file.',
+  IMPORT_FILE_TOO_LARGE: 'The file is too large.',
+  PLACEMENTS_FORMAT: 'The placement sheet does not have the expected columns.',
+  SAP_FORMAT: 'The SAP export does not have the expected format. Try again.',
+  SAP_SCRIPT_NOT_ALLOWED: 'The app may not run that SAP script. Nothing was changed in SAP.',
+  // Locations: a transaction left by an earlier action is finished first
+  TX_JOURNAL_KEYS: 'An earlier action is not finished on M:. Try again in a moment.',
   UNEXPECTED_ERROR: 'Something unexpected went wrong. Try again.',
 }
 
