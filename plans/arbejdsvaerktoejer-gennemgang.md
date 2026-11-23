@@ -155,7 +155,7 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
 
 ## Fase 2: Vigtige fejl i Optælling
 
-- [ ] **2.1 ZMS_COUNT_SERIAL tjekker ikke, at SAP's talte antal passer med de sendte serienumre (count.md I10)**
+- [x] **2.1 ZMS_COUNT_SERIAL tjekker ikke, at SAP's talte antal passer med de sendte serienumre (count.md I10)**
   - **Hvad sker der i dag:** Efter "Update Count" tjekker scriptet kun, at posten er markeret som talt. Hvis brugeren slettede rækker i tabellen, eller SAP tabte nogle, opdager ingen, at det talte antal er et andet end listen.
   - **Hvorfor det betyder noget:** Et forkert tal går videre til bogføring i MI20, uden at nogen ser det.
   - **Hvad skal ændres:**
@@ -165,7 +165,7 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
   - **Risiko ved ændringen:** Lav.
   - **Hvor:** `electron/warehouse/sap/pidoc-serials.vbs:244-245`; `electron/warehouse/sapPiDocs.cjs:72`; `electron/warehouse/piDocService.cjs:117-118`; sammenlign `sap/pidoc-count.vbs:212`
 
-- [ ] **2.2 PI-dokumentscripts læser engelske SAP-tekster, men tjekker ikke logon-sproget (count.md I8)**
+- [x] **2.2 PI-dokumentscripts læser engelske SAP-tekster, men tjekker ikke logon-sproget (count.md I8)**
   - **Hvad sker der i dag:** Med dansk logon opretter MI31 dokumentet, men vinduets titel indeholder ikke "Created", så scriptet melder "ikke oprettet", og reservationen slettes (et løst dokument i SAP, se 2.4). I MI20 og MI22 fejler læsningen med `SAP_FORMAT`, efter at brugeren har bogført.
   - **Hvorfor det betyder noget:** SAP er ændret, men CountPoint siger, at det fejlede.
   - **Hvad skal ændres:**
@@ -174,7 +174,7 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
   - **Risiko ved ændringen:** Lav.
   - **Hvor:** `electron/warehouse/sap/pidoc-create.vbs:251`; `electron/warehouse/core/sapParsers.cjs:200-238`; `electron/warehouse/sapPiDocs.cjs:151-152`, `:169-170`; sammenlign `sap/sl-transfer.vbs:342` og `sap/sl-block.vbs:282`
 
-- [ ] **2.3 SAP-dokumentflowet kører videre efter låsning, men kan ikke markere "Bogført" eller hente dagens tal (count.md I9)**
+- [x] **2.3 SAP-dokumentflowet kører videre efter låsning, men kan ikke markere "Bogført" eller hente dagens tal (count.md I9)**
   - **Hvad sker der i dag:** Tjeklisten godtager "Godkendt" som klar, så statussen låses som regel, før dokumenterne er bogført. Bagefter kan managere stadig oprette, udskrive, tælle og bogføre i SAP, men "Hent dagens SAP-tal" er væk (så 1.4 ikke kan undgås), og når MI20 bogfører, fejler markeringen "Bogført" i stilhed. Materialerne bliver stående som "Godkendt", mens skærmen siger "Materialerne er markeret Bogført i SAP".
   - **Hvorfor det betyder noget:** Arkiv og rapporter viser aldrig bogføringen, og beskeden på skærmen er forkert.
   - **Hvad skal ændres:** Vælg én regel, og brug den begge steder. Anbefalet:
@@ -185,7 +185,7 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
   - **Risiko ved ændringen:** Lav.
   - **Hvor:** `electron/warehouse/piDocService.cjs:158-166`; `electron/warehouse/countService.cjs:1231-1234`, `:1339`, `:1345`; `src/views/warehouse/StatusChecklist.tsx:107`
 
-- [ ] **2.4 Når SAP er ændret, men resultatet ikke kan gemmes, er CountPoint ude af trit med SAP uden vej tilbage (count.md I6)**
+- [x] **2.4 Når SAP er ændret, men resultatet ikke kan gemmes, er CountPoint ude af trit med SAP uden vej tilbage (count.md I6)**
   - **Hvad sker der i dag:** Brugeren trykker F8, MI31 opretter dokumenterne, men opslaget i MI22 fejler. CountPoint sletter sin reservation og siger "Oprettelsen i MI31 fejlede", mens SAP har aktive dokumenter med CountPoints reference, som appen ikke kan slette. Fejler den sidste skrivning til M: efter en bogføring, står dokumentet som "Antal lagt på" for altid.
   - **Hvorfor det betyder noget:** Managere ser en tilstand, der modsiger SAP, og må rydde op i SAP med hånden.
   - **Hvad skal ændres:**
@@ -195,7 +195,7 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
   - **Risiko ved ændringen:** Middel, fordi den nye tilstand `unknown` skal håndteres af `planDocument` (som optaget) og af skærmen.
   - **Hvor:** `electron/warehouse/piDocService.cjs:43-75`, `:97-141`, `:144-180`; `electron/warehouse/sap/pidoc-create.vbs:250-268`; `electron/warehouse/sapPiDocs.cjs:124-128`
 
-- [ ] **2.5 "Intet er gemt" vises efter en timeout, selvom SAP måske har bogført (count.md I7)**
+- [x] **2.5 "Intet er gemt" vises efter en timeout, selvom SAP måske har bogført (count.md I7)**
   - **Hvad sker der i dag:** I MI20 trykker brugeren "Post Difference" og Gem, men går derefter tilbage til startskærmen eller til en anden transaktion i stedet for at blive på listen. Scriptet ser aldrig listen igen og giver op efter 15 minutter med "intet er gemt. Prøv igen", selvom dokumenterne er bogført.
   - **Hvorfor det betyder noget:** Brugeren kan komme til at bogføre igen med hånden eller tro, at lageret ikke er rettet.
   - **Hvad skal ændres:**
@@ -206,7 +206,7 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
   - **Risiko ved ændringen:** Lav.
   - **Hvor:** `electron/warehouse/sapPiDocs.cjs:26-33`; `electron/warehouse/sap/pidoc-post.vbs:214-229`, `:230-244`
 
-- [ ] **2.6 Et serienummer fundet i en anden optælling i samme status står stadig som manglende (count.md I5)**
+- [x] **2.6 Et serienummer fundet i en anden optælling i samme status står stadig som manglende (count.md I5)**
   - **Hvad sker der i dag:** Optælling A (D000-terminaler) scanner serienummer X, som i SAP står på D006, og registrerer det som "Anden storage location". Optælling B (D006, samme status) får det aldrig at vide: X står som "Mangler", fryses som manglende ved godkendelsen og udelades af B's optællingsdokument. Medmindre nogen flytter det i SAP først, afskriver B en vare, som A har fundet.
   - **Hvorfor det betyder noget:** Fundet lager bliver afskrevet, og den der godkender B, kan ikke se hvorfor.
   - **Hvad skal ændres:**
@@ -217,7 +217,7 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
   - **Risiko ved ændringen:** Middel, fordi andre optællingers journaler skal læses, så det skal kun læse og være cachet.
   - **Hvor:** `electron/warehouse/core/countState.cjs:36-44`; `electron/warehouse/countService.cjs:392-406`; `electron/warehouse/core/countDoc.cjs:47-61`
 
-- [ ] **2.7 Sletning af en optælling eller status sletter det eneste spor af dens SAP-dokumenter (count.md I12)**
+- [x] **2.7 Sletning af en optælling eller status sletter det eneste spor af dens SAP-dokumenter (count.md I12)**
   - **Hvad sker der i dag:** En optælling med oprettede, talte eller bogførte SAP-dokumenter kan slettes af ejeren eller en manager, og en låst status kan slettes med alle sine optællinger. Dialogerne siger, at Excel-rapporterne bliver liggende, men de indeholder ikke SAP-dokument- eller materialedokumentnumre, og arkivet forsvinder også.
   - **Hvorfor det betyder noget:** Sporet af, hvad CountPoint har bogført i PS4, går tabt, og et aktivt dokument i SAP kan ikke længere findes fra appen.
   - **Hvad skal ændres:**
@@ -228,7 +228,7 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
   - **Risiko ved ændringen:** Lav.
   - **Hvor:** `electron/warehouse/countService.cjs:1394-1440`; `electron/warehouse/countRepository.cjs:91-97`; `electron/warehouse/report.cjs`; `src/views/warehouse/count/DeleteCountDialog.tsx:31`; `src/views/warehouse/StatusChecklist.tsx` (slettedialogen)
 
-- [ ] **2.8 "Anden placering" på et allerede talt sted erstatter linjen i stilhed, mens "Tilføj tællelinje" lægger til (count.md I4)**
+- [x] **2.8 "Anden placering" på et allerede talt sted erstatter linjen i stilhed, mens "Tilføj tællelinje" lægger til (count.md I4)**
   - **Hvad sker der i dag:** Anna tæller 10 på "Reol 3". Bo finder senere en kasse mere på Reol 3, vælger "Anden placering", skriver "Reol 3" og 6. Linjen siger nu 6, Annas 10 er væk, og beskeden siger bare "Gemt: 6 × … på Reol 3".
   - **Hvorfor det betyder noget:** Talt antal forsvinder uden varsel, og samme handling betyder noget forskelligt på to skærme.
   - **Hvad skal ændres:**
@@ -237,7 +237,7 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
   - **Risiko ved ændringen:** Lav, kun skærmen ændres.
   - **Hvor:** `src/views/warehouse/count/LinesPanel.tsx:205-221` og `:336-361`
 
-- [ ] **2.9 "Hent SAP igen" kan erstatte nyere SAP-tal med ældre (count.md I2)**
+- [x] **2.9 "Hent SAP igen" kan erstatte nyere SAP-tal med ældre (count.md I2)**
   - **Hvad sker der i dag:** Admin A åbner dialogen kl. 10:00 og går til kaffe. Ejer B henter SAP igen kl. 10:15. Kl. 10:25 trykker A "Tag de nye tal i brug", og optællingen går tilbage til tallene fra 10:00 på alle PC'er.
   - **Hvorfor det betyder noget:** Differencer bliver regnet mod ældre lager, uden at nogen opdager det.
   - **Hvad skal ændres:**
@@ -247,7 +247,7 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
   - **Risiko ved ændringen:** Lav.
   - **Hvor:** `electron/warehouse/countService.cjs:1140-1170`
 
-- [ ] **2.10 To PC'er kan oprette overlappende optællinger i samme status (count.md I1)**
+- [x] **2.10 To PC'er kan oprette overlappende optællinger i samme status (count.md I1)**
   - **Hvad sker der i dag:** Tjekket af, om området er ledigt, læser indekset, derefter skrives fire filer (15-90 s hver), og først til sidst tilføjes posten i indekset. To personer, der begge trykker "Opret optælling" for D000-terminaler inden for det vindue, får begge en optælling.
   - **Hvorfor det betyder noget:** To optællinger dækker samme lager, og statusrapporten lægger begge differencer sammen, så de tælles dobbelt.
   - **Hvad skal ændres:**
@@ -258,7 +258,7 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
   - **Risiko ved ændringen:** Middel, fordi rækkefølgen af skrivninger ændres, men eksisterende tests plus én ny test for kapløbet dækker det.
   - **Hvor:** `electron/warehouse/countService.cjs:121-126`, `:276-289`; `electron/warehouse/countRepository.cjs:39-56`
 
-- [ ] **2.11 Afslut og godkend tjekker kun denne PC's synkronisering (count.md I11)**
+- [x] **2.11 Afslut og godkend tjekker kun denne PC's synkronisering (count.md I11)**
   - **Hvad sker der i dag:** En hjælpers PC mister M: i en time og har 40 scanninger liggende lokalt, men "40 venter" vises kun på den PC. Ejeren lukker optællingen, og manageren godkender med -40. Når PC'en kommer tilbage, lander scanningerne i den lukkede optælling som "+40 talt efter godkendelse".
   - **Hvorfor det betyder noget:** Godkendelsen bygger på ufuldstændige tal, og ingen kunne se risikoen ved lukningen.
   - **Hvad skal ændres:**
@@ -267,7 +267,7 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
   - **Risiko ved ændringen:** Lav, det er et ekstra felt i journalfilerne, som kun læses.
   - **Hvor:** `electron/warehouse/countService.cjs:1036-1060`, `:1096-1101`, `:1118-1132`; `electron/warehouse/journal.cjs`
 
-- [ ] **2.12 Materialelåse udløber aldrig, og managere og admins kan ikke frigive dem fra skærmen (count.md I3)**
+- [x] **2.12 Materialelåse udløber aldrig, og managere og admins kan ikke frigive dem fra skærmen (count.md I3)**
   - **Hvad sker der i dag:** Kim låser R162-0717 fredag og går på ferie. Mandag kan ingen gemme tællelinjer for materialet, ejeren er også væk, og manageren ser ingen "Frigiv"-knap, selvom backend tillader det.
   - **Hvorfor det betyder noget:** Optællingen står stille for materialet, til den rette person dukker op.
   - **Hvad skal ændres:**
@@ -280,14 +280,14 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
 
 ## Fase 3: Vigtige fejl i Placeringer
 
-- [ ] **3.1 Materialevælgeren: Enter tager et gammelt markeret forslag i stedet for det scannede nummer (locations.md I8)**
+- [x] **3.1 Materialevælgeren: Enter tager et gammelt markeret forslag i stedet for det scannede nummer (locations.md I8)**
   - **Hvad sker der i dag:** Brugeren har skrevet "R162", listen er åben, og R162-0717 er markeret. Så scannes R162-0999 med Enter, men listen hører stadig til "R162", så R162-0717 vælges, og i "Læg på hylde" lægges antallet på hylden som R162-0717.
   - **Hvorfor det betyder noget:** Forkert materiale på en hylde er også forkert i Tag og på materialekortet.
   - **Hvad skal ændres:** Husk, hvilken tekst forslagene hører til. Brug kun det markerede forslag, når brugeren har flyttet med piletasterne, eller forslagene hører til den aktuelle tekst. Ellers vælges den skrevne værdi.
   - **Risiko ved ændringen:** Lav.
   - **Hvor:** `src/views/warehouse/locations/MaterialPicker.tsx:31-41` og `:52-58`
 
-- [ ] **3.2 Søgning på forsiden: Enter åbner hittet fra den forrige søgning eller intet (locations.md I7)**
+- [x] **3.2 Søgning på forsiden: Enter åbner hittet fra den forrige søgning eller intet (locations.md I7)**
   - **Hvad sker der i dag:** En scanner sender koden og Enter på få millisekunder, mens søgningen venter 200 ms og derefter på svar. Når Enter kommer, er resultatet stadig det fra den forrige tekst, og havde det ét hit, åbnes det forkerte kort.
   - **Hvorfor det betyder noget:** Brugeren kan tage eller flytte den forkerte palle fra det kort.
   - **Hvad skal ændres:**
@@ -296,7 +296,7 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
   - **Risiko ved ændringen:** Lav.
   - **Hvor:** `src/views/warehouse/locations/SearchResults.tsx:18-37`
 
-- [ ] **3.3 Samme 49/50-nummer og serienumre kan sættes på plads to gange uden advarsel (locations.md I10)**
+- [x] **3.3 Samme 49/50-nummer og serienumre kan sættes på plads to gange uden advarsel (locations.md I10)**
   - **Hvad sker der i dag:** To personer modtager samme følgeseddel, eller én gemmer, får en tilbagerulning (3.7) og gemmer igen, efter at den første faktisk landede. Hver gemning får et nyt handlings-id, så intet stopper en ekstra palle med samme dokument og samme serienumre.
   - **Hvorfor det betyder noget:** Dobbelte paller giver lager, der ikke findes, og FIFO peger på en palle, der ikke er der.
   - **Hvad skal ændres:**
@@ -306,7 +306,7 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
   - **Risiko ved ændringen:** Lav, for delleverancer med samme 49/50-nummer virker stadig, fordi dokumentet kun giver en advarsel.
   - **Hvor:** `electron/warehouse/locations/service.cjs:109-140`; `src/views/warehouse/locations/PutAway.tsx:124-137`; `electron/warehouse/locations/rules.cjs:86-87`
 
-- [ ] **3.4 "Ret antal" på hylder og pallens antal overskriver blindt ud fra en gammel skærm (locations.md I2)**
+- [x] **3.4 "Ret antal" på hylder og pallens antal overskriver blindt ud fra en gammel skærm (locations.md I2)**
   - **Hvad sker der i dag:** Mia åbner "Ret antal" på E9 H5 / R162-0717, som viser 40, og begynder at tælle. Imens tager Ole 10. Mia skriver 40, backend sætter 40, og Oles tag er slettet.
   - **Hvorfor det betyder noget:** En optælling skal gøre lageret rigtigt, men her kan den gøre det forkert igen i stilhed.
   - **Hvad skal ændres:**
@@ -317,7 +317,7 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
   - **Risiko ved ændringen:** Lav, det er en ny valgfri parameter.
   - **Hvor:** `src/views/warehouse/locations/ShelfLines.tsx:73-80`; `electron/warehouse/locations/service.cjs:261-277`; `PalletCard.tsx` (EditDialog)
 
-- [ ] **3.5 Fortryd kan sætte en palle tilbage på en plads, der nu er fuld, reserveret eller deaktiveret (locations.md I1)**
+- [x] **3.5 Fortryd kan sætte en palle tilbage på en plads, der nu er fuld, reserveret eller deaktiveret (locations.md I1)**
   - **Hvad sker der i dag:** Kl. 9:00 flytter Bo palle P fra A2.4 til B1.1. Kl. 9:20 sætter Lis en ny palle på A2.4, som kun har plads til én. Kl. 10:00 fortryder manageren Bos flytning, og P kommer tilbage på A2.4, så der står to paller på en plads til én.
   - **Hvorfor det betyder noget:** Listen viser en overfyldt plads, næste indsættelse afvises med "A2.4 er fuld", og pallen kan stå uden for FIFO.
   - **Hvad skal ændres:**
@@ -327,7 +327,7 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
   - **Risiko ved ændringen:** Lav, den afviser kun flere fortrydelser.
   - **Hvor:** `electron/warehouse/locations/undo.cjs:34-53`; `repository.cjs:122-150`; `service.cjs:858-865`
 
-- [ ] **3.6 Paller på deaktiverede, reserverede eller station-pladser kan ikke findes på materiale eller tages (locations.md I3)**
+- [x] **3.6 Paller på deaktiverede, reserverede eller station-pladser kan ikke findes på materiale eller tages (locations.md I3)**
   - **Hvad sker der i dag:** En admin deaktiverer A3.1 for reparation, og pallerne bliver stående som tilsigtet. Derefter viser materialekortet og "Hvor henter jeg?" dem ikke, "På lager" tæller dem ikke med, og Tag og Flyt på materiale finder dem ikke, selvom admin-dialogen lover, at de "kan flyttes eller tages bagefter".
   - **Hvorfor det betyder noget:** Varer ser udsolgte ud, mens de står på gulvet.
   - **Hvad skal ændres:**
@@ -338,7 +338,7 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
   - **Risiko ved ændringen:** Lav, FIFO-rækkefølgen og forslagene er uændrede.
   - **Hvor:** `electron/warehouse/locations/rules.cjs:36-42`; `service.cjs:382-400`; `src/views/warehouse/locations/TakePallet.tsx`; `MovePallet.tsx:82-85`; `PalletCard.tsx:66`; `Admin.tsx:101-102` og `:365-367`
 
-- [ ] **3.7 Sæt palle på plads tjekker først pladsen på M: 15-40 s senere og afviser hele partiet (locations.md I6)**
+- [x] **3.7 Sæt palle på plads tjekker først pladsen på M: 15-40 s senere og afviser hele partiet (locations.md I6)**
   - **Hvad sker der i dag:** En person registrerer 6 paller fra én levering og skriver A2.4 for én af dem, som er fuld, deaktiveret eller en lagerhylde. Formularen ryddes, og der står "6 paller er sat på plads", men 30 s senere kommer alle 6 tilbage med "A2.4 er fuld", mens personen er gået videre. Uden en udgivet tegning er der slet ingen pladsliste på skærmen.
   - **Hvorfor det betyder noget:** En person, der er gået, ser måske aldrig tilbagerulningen og efterlader 6 paller uregistreret.
   - **Hvad skal ændres:**
@@ -349,14 +349,14 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
   - **Risiko ved ændringen:** Lav for tjekket på skærmen, men det delvise parti kræver omhu med fortryd-øjebliksbilledet.
   - **Hvor:** `src/views/warehouse/locations/PutAway.tsx:73-101` og `:138-166`; `electron/warehouse/locations/service.cjs:109-140`
 
-- [ ] **3.8 Fyld pluk-plads op advarer ikke, når en yngre palle bruges (locations.md I11)**
+- [x] **3.8 Fyld pluk-plads op advarer ikke, når en yngre palle bruges (locations.md I11)**
   - **Hvad sker der i dag:** I Tag spørger appen, om man vil tage alligevel, hvis man vælger en anden palle end den ældste. I Fyld op har hver palle sin egen knap, intet spørger, og den første er kun mærket "Forslag".
   - **Hvorfor det betyder noget:** FIFO brydes i det flow, der bruger flest paller, og de to skærme opfører sig forskelligt.
   - **Hvad skal ændres:** Genbrug bekræftelsen fra Tag i Refill (samme tekst og en knap "Fyld op alligevel"), når den valgte palle er modtaget senere end den ældste reservepalle.
   - **Risiko ved ændringen:** Lav.
   - **Hvor:** `src/views/warehouse/locations/Refill.tsx:62-72` og `:143-155`; `TakePallet.tsx:51-54` og `:117-124`
 
-- [ ] **3.9 "Scanninger gemmes lokalt" vises, selvom intet er gemt lokalt (locations.md I12 og shared.md M1)**
+- [x] **3.9 "Scanninger gemmes lokalt" vises, selvom intet er gemt lokalt (locations.md I12 og shared.md M1)**
   - **Hvad sker der i dag:** M: er nede. En admin opretter en reol eller deaktiverer pladser, skærmen viser det med det samme og ruller så tilbage med "Kan ikke nå lagerstyrings-data på M:. Scanninger gemmes lokalt og sendes, når forbindelsen er tilbage.", men intet blev gemt. Ifølge shared.md M1 kommer samme tekst også i Softwareload, Stempelkort og rollekortet og ved enhver "fil ikke fundet"-fejl, fx når en SAP-eksport mangler sin fil i den lokale temp-mappe.
   - **Hvorfor det betyder noget:** Brugeren får et forkert løfte om data og bliver sendt til at tjekke M:, når problemet er SAP.
   - **Hvad skal ændres:**
@@ -366,7 +366,7 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
   - **Risiko ved ændringen:** Lav, det er mest tekst.
   - **Hvor:** `src/lib/warehouse/errors.ts:31` og `:189`; `electron/warehouse/register.cjs:39-52`, `:451-460`, `:468-482`
 
-- [ ] **3.10 Læg på hylde: et 49/50-nummer med flere materialer giver altid kun det første (locations.md I9)**
+- [x] **3.10 Læg på hylde: et 49/50-nummer med flere materialer giver altid kun det første (locations.md I9)**
   - **Hvad sker der i dag:** Skærmen siger, at nummeret har 3 materialer, og at det første er valgt. De to andre og deres antal fra SAP smides væk, og scanner man igen, får man det første igen, mens Sæt palle på plads håndterer samme dokument korrekt.
   - **Hvorfor det betyder noget:** Det giver ekstra tastning og tælling ved hylden med antal skrevet i hånden i stedet for SAP's.
   - **Hvad skal ændres:**
@@ -403,7 +403,7 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
 
 Rapporten fandt ingen kritiske fejl her. Den fandt ingen vej, hvor en terminal flyttes to gange, eller hvor en KIF-opgave flytter uden om D005.
 
-- [ ] **4.1 "Flyt til D005" flytter i SAP med ét klik uden bekræftelse (timeclock-softwareload.md I6)**
+- [x] **4.1 "Flyt til D005" flytter i SAP med ét klik uden bekræftelse (timeclock-softwareload.md I6)**
   - **Hvad sker der i dag:** KIF-forhåndsvisningen har en stor primær knap "Flyt til D005", som starter flytningen i SAP med det samme, mens afslutning af en opgave altid spørger først. Det er allerede sket i PS4 den 23.11: Jacob trykkede ved en fejl på NXC600007637/38/39 (dokument 4900245235) og måtte selv flytte dem tilbage med en opgave.
   - **Hvorfor det betyder noget:** En forkert flytning i produktionssystemet er allerede sket, og oprydningen forurener statistikken.
   - **Hvad skal ændres:**
@@ -412,7 +412,7 @@ Rapporten fandt ingen kritiske fejl her. Den fandt ingen vej, hvor en terminal f
   - **Risiko ved ændringen:** Ingen for data, det koster ét ekstra klik.
   - **Hvor:** `src/views/warehouse/softwareload/SoftwareloadKif.tsx:126`; sammenlign `SoftwareloadFinish.tsx:167-186`
 
-- [ ] **4.2 Stempelkort sætter Softwareload-opgaven på pause uden at sige det, og scanninger lander stadig (timeclock-softwareload.md I3)**
+- [x] **4.2 Stempelkort sætter Softwareload-opgaven på pause uden at sige det, og scanninger lander stadig (timeclock-softwareload.md I3)**
   - **Hvad sker der i dag:** En medarbejder har en Softwareload-opgave i gang og starter Stempelkort på "Pakning" i 10 minutter, så opgaven sættes på pause uden besked. Tilbage i Softwareload virker scanning stadig, og de scanner 60 terminaler den næste time uden at opdage pausen. Fejler pausen (M: er langsom), kører begge ure, og tiden tælles to gange.
   - **Hvorfor det betyder noget:** Tempotallene bliver forkerte i netop de sammenligninger, statistikken er til for, og i fejltilfældet tælles tiden dobbelt.
   - **Hvad skal ændres:**
@@ -423,7 +423,7 @@ Rapporten fandt ingen kritiske fejl her. Den fandt ingen vej, hvor en terminal f
   - **Risiko ved ændringen:** Lav, det er kun skærm og returværdier.
   - **Hvor:** `electron/warehouse/register.cjs:375-385`; `electron/warehouse/softwareload/softwareloadService.cjs:477-489`; `src/views/warehouse/timeclock/Timeclock.tsx:112-121`; `src/views/warehouse/softwareload/SoftwareloadTask.tsx:454`
 
-- [ ] **4.3 Stempelkort og Softwareload ser kun hinanden i den aktive hub, så tid kan tælles to gange (timeclock-softwareload.md I4) (usikkert)**
+- [x] **4.3 Stempelkort og Softwareload ser kun hinanden i den aktive hub, så tid kan tælles to gange (timeclock-softwareload.md I4) (usikkert)**
   Usikkert hvor ofte, fordi det ikke er undersøgt, hvor mange der har adgang til begge hubs.
   - **Hvad sker der i dag:** En person med adgang til både TCD og TRR starter Stempelkort i TCD, skifter Hub til TRR og starter en Softwareload-opgave. Stop af Stempelkort leder i TRR, finder intet, og fejlen ignoreres, så begge ure kører.
   - **Hvorfor det betyder noget:** Tiden tælles dobbelt uden advarsel, og to ure viser begge "I gang".
@@ -433,7 +433,7 @@ Rapporten fandt ingen kritiske fejl her. Den fandt ingen vej, hvor en terminal f
   - **Risiko ved ændringen:** Middel, fordi en ekstra mappe på M: læses ved hver start, og der må ikke oprettes mapper for teams, personen ikke hører til.
   - **Hvor:** `electron/warehouse/register.cjs:201` og `:206`; `electron/warehouse/hubUser.cjs:13`; `softwareloadService.cjs:353-361` og `:477-489`
 
-- [ ] **4.4 En glemt Softwareload-opgave tæller hele natten eller weekenden, og ingen kan rette det (timeclock-softwareload.md I1)**
+- [x] **4.4 En glemt Softwareload-opgave tæller hele natten eller weekenden, og ingen kan rette det (timeclock-softwareload.md I1)**
   - **Hvad sker der i dag:** En medarbejder starter en opgave fredag kl. 13, scanner 40 terminaler og går hjem uden at trykke "Afslut opgave". Mandag kl. 7 afsluttes den med omkring 66 timer, så tempoet for personen, typen og materialerne falder til under 1 terminal i timen. En manager kan kun slette hele opgaven, hvilket også fjerner terminalerne fra statistik og søgning.
   - **Hvorfor det betyder noget:** Én glemt opgave ødelægger periodens tempo, og manageren må vælge mellem et forkert tal og at slette rigtig historik.
   - **Hvad skal ændres:**
@@ -443,7 +443,7 @@ Rapporten fandt ingen kritiske fejl her. Den fandt ingen vej, hvor en terminal f
   - **Risiko ved ændringen:** Lav, for sluttiden fryses allerede i afslutningsmarkøren, så den rettede værdi følger med, hvis afslutningen genoptages.
   - **Hvor:** `electron/warehouse/softwareload/softwareloadService.cjs:850-853`; `electron/warehouse/timeclockService.cjs:85-99`; `src/views/warehouse/softwareload/SoftwareloadStats.tsx`
 
-- [ ] **4.5 Tiden kan ikke stoppes, når SAP ikke er tilgængelig (timeclock-softwareload.md I2)**
+- [x] **4.5 Tiden kan ikke stoppes, når SAP ikke er tilgængelig (timeclock-softwareload.md I2)**
   - **Hvad sker der i dag:** "Afslut opgave" slår først alle serienumre op i SAP, og knappen "Afslut og flyt i SAP" vises først, når SAP har svaret. Kl. 15:55 har SAP logget medarbejderen ud, de vil hjem, men uret kører, til de logger ind igen. De eneste udveje er Pause eller Annullér, og Annullér smider tid og scanninger væk.
   - **Hvorfor det betyder noget:** Tiden bliver forkert, og brugeren må vælge mellem at miste scanninger og lade uret køre.
   - **Hvad skal ændres:**
@@ -454,7 +454,7 @@ Rapporten fandt ingen kritiske fejl her. Den fandt ingen vej, hvor en terminal f
   - **Risiko ved ændringen:** Middel, fordi brugeren flytter uden at have set SAP's plan, hvilket kan løses med en forhåndsvisning (`planMoves`) i fanen Venter før "Fortsæt i SAP".
   - **Hvor:** `src/views/warehouse/softwareload/SoftwareloadFinish.tsx:54-63` og `:159-164`; `electron/warehouse/softwareload/softwareloadService.cjs:527-533` og `:827-829`
 
-- [ ] **4.6 Opgavelisten i Statistik viser et andet "flyttet"-tal end oversigten over den (timeclock-softwareload.md I5)**
+- [x] **4.6 Opgavelisten i Statistik viser et andet "flyttet"-tal end oversigten over den (timeclock-softwareload.md I5)**
   - **Hvad sker der i dag:** En opgave uden for KIF har 10 terminaler, hvoraf 3 allerede stod på målet. "Pr. person og type" viser "Loadet 10", men samme opgave i "Opgaver" viser "7/10". En opgave med 2 fejlede -R-terminaler viser "8/10 (2 fejlet)", som om der mangler flere.
   - **Hvorfor det betyder noget:** Managere ser to tal for det samme og tror, at terminaler mangler, eller at SAP fejlede.
   - **Hvad skal ændres:**
@@ -468,7 +468,7 @@ Rapporten fandt ingen kritiske fejl her. Den fandt ingen vej, hvor en terminal f
 
 ## Fase 5: Vigtige fejl i det fælles
 
-- [ ] **5.1 Kopiér-knapper siger "kopieret", selvom Windows afviste udklipsholderen (shared.md I1)**
+- [x] **5.1 Kopiér-knapper siger "kopieret", selvom Windows afviste udklipsholderen (shared.md I1)**
   - **Hvad sker der i dag:** På fanen "Til optællingsdokument" klikker en person "Antal" for R162-0717 D004 (42). Udklipsholderen er låst et øjeblik af et andet program, og beskeden siger "42 kopieret", men udklipsholderen har stadig forrige rækkes "37", som sættes ind i MI04 i PS4. Det samme gælder serienummerlisterne "Kopiér" og "Lange".
   - **Hvorfor det betyder noget:** En forkert værdi tastet i PS4 er en forkert SAP-optælling, der kan blive bogført, og beskeden siger, at det er sikkert.
   - **Hvad skal ændres:**
@@ -478,7 +478,7 @@ Rapporten fandt ingen kritiske fejl her. Den fandt ingen vej, hvor en terminal f
   - **Risiko ved ændringen:** Lav, det er én ekstra læsning af udklipsholderen pr. kopi (millisekunder).
   - **Hvor:** `electron/warehouse/register.cjs:278-282` og `:347-351`; `src/views/warehouse/count/DocPanel.tsx:299-309`; `src/views/warehouse/count/OverviewPanel.tsx:129-140`; `src/components/warehouse/TableSelection.tsx:68-70`; `electron/warehouse/clipboardText.cjs:8-11`
 
-- [ ] **5.2 Skrivescripts er ikke låst til det SAP-system, installationen er sat op til (shared.md I3)**
+- [x] **5.2 Skrivescripts er ikke låst til det SAP-system, installationen er sat op til (shared.md I3)**
   - **Hvad sker der i dag:** Kørslen godtager et skrivescript, hvis systemet er PS4 eller QS4, uanset hvad installationen er sat op til. Kommentaren om, at scripts "tjekker det igen", passer ikke, for ingen af dem gør det. Fordi listerne nu er ens, er spærrene for skrivning altid åbne, og der er ingen hurtig måde at slå PS4-skrivning fra uden en ny udgivelse.
   - **Hvorfor det betyder noget:** PS4 er produktion, og det eneste, der står mellem en QS4-testinstallation og PS4, er, at alle kald sender det rigtige system.
   - **Hvad skal ændres:**
@@ -511,7 +511,7 @@ Rapporten fandt ingen kritiske fejl her. Den fandt ingen vej, hvor en terminal f
   - **Risiko ved ændringen:** Middel for VBS-ændringerne, som skal køres i QS4, og lav for ændringen i JavaScript.
   - **Hvor:** `electron/warehouse/sapPiDocs.cjs:43-54`, `:58-89`, `:139-156`, `:158-197`; `electron/warehouse/sap/pidoc-post.vbs:84-99`, `:193`, `:254`; `electron/warehouse/sapBridge.cjs:1-3` og `:60-65`
 
-- [ ] **5.5 SAP-indikatoren siger, at man altid selv trykker F8, Gem eller Post, men Softwareload bogfører selv i PS4 (shared.md I10)**
+- [x] **5.5 SAP-indikatoren siger, at man altid selv trykker F8, Gem eller Post, men Softwareload bogfører selv i PS4 (shared.md I10)**
   - **Hvad sker der i dag:** SAP-pillen vises i Optælling, Placeringer og Softwareload og siger altid, at man selv trykker F8, Gem eller Post. I Softwareload trykker "Afslut og flyt i SAP" og "Flyt til D005" selv på Transfer og Post (MIGO 343/344) i PS4, og alle tilstandstekster nævner Optælling, også i de andre værktøjer.
   - **Hvorfor det betyder noget:** En Softwareload-bruger tror, at intet bogføres, før de selv trykker, hvilket er det modsatte af virkeligheden i produktion.
   - **Hvad skal ændres:**
@@ -521,7 +521,7 @@ Rapporten fandt ingen kritiske fejl her. Den fandt ingen vej, hvor en terminal f
   - **Risiko ved ændringen:** Ingen, det er tekster.
   - **Hvor:** `src/components/warehouse/SapIndicator.tsx:31` og `:68`; `src/lib/warehouse/sapStatus.ts:13-21`; `src/views/warehouse/Warehouse.tsx:75`
 
-- [ ] **5.6 Rollecachen fejler åben, så en fjernet status manager eller admin beholder sine rettigheder (shared.md I5)**
+- [x] **5.6 Rollecachen fejler åben, så en fjernet status manager eller admin beholder sine rettigheder (shared.md I5)**
   - **Hvad sker der i dag:** Hver handling bruger en rolle, der kan være 30 sekunder gammel, og derefter returneres den gamle værdi stadig, mens en ny læsning kører i baggrunden. Fejler læsningen (rollefilen er optaget eller ulæselig), beholdes den gamle værdi for altid. En manager fjerner Bob som status manager på PC A, men på PC B kan Bob stadig godkende materialer, bestemme deltagere og starte trin på PI-dokumenter.
   - **Hvorfor det betyder noget:** Rettigheder skal falde tilbage til "ingen adgang" ved fejl, ikke til den gamle adgang.
   - **Hvad skal ændres:**
@@ -531,7 +531,7 @@ Rapporten fandt ingen kritiske fejl her. Den fandt ingen vej, hvor en terminal f
   - **Risiko ved ændringen:** Lav, men en status manager kan kortvarigt blive behandlet som almindelig bruger under et langt udfald på M:.
   - **Hvor:** `electron/warehouse/register.cjs:160-185` og `:240-247`; `electron/warehouse/roles.cjs:42-44`; `electron/warehouse/piDocService.cjs:23`
 
-- [ ] **5.7 Hubert skjuler "Læg antal på" for admins og status manager-opgaver for status managere (shared.md I9)**
+- [x] **5.7 Hubert skjuler "Læg antal på" for admins og status manager-opgaver for status managere (shared.md I9)**
   - **Hvad sker der i dag:** Guideopgaver, der kræver manager, vises kun for Hub-managere, og Optællings egne roller ignoreres. En admin, som er den eneste, der må lægge antal på, spørger Hubert "hvordan lægger jeg antal på SAP-dokumentet?" og får svaret "Tæl et materiale og send det til godkendelse". En status manager, der spørger, hvordan man starter en status, får "Opret en optælling".
   - **Hvorfor det betyder noget:** Hubert sender netop de personer, der udfører trinene, til de forkerte instruktioner.
   - **Hvad skal ændres:**
@@ -541,7 +541,7 @@ Rapporten fandt ingen kritiske fejl her. Den fandt ingen vej, hvor en terminal f
   - **Risiko ved ændringen:** Lav til middel, fordi den fælles guide ændres, så de nye rolletyper skal begrænses til lagermodulet.
   - **Hvor:** `electron/assistantAppGuideWarehouse.cjs:45-49`, `:105-109`, `:119-123`, `:145-149`, `:179-183`; `electron/assistantAppGuide.cjs:1059` og `:1148-1152`; `electron/assistantContext.cjs:495`, `:500`, `:762`
 
-- [ ] **5.8 Fejlkoder når skærmen uden dansk eller engelsk tekst (shared.md I6 og locations.md M6)**
+- [x] **5.8 Fejlkoder når skærmen uden dansk eller engelsk tekst (shared.md I6 og locations.md M6)**
   - **Hvad sker der i dag:** Koder uden tekst ender som "Der skete en uventet fejl". En engelsktalende TRR-kollega prøver at tage området "Reol 4", som Anna tæller, og skærmen siger "Something unexpected went wrong. Try again." i stedet for, at Anna allerede tæller det. I Placeringer får engelske brugere fx "The location is full." uden at kunne se, hvilken af 6 pladser det gælder (locations.md M6).
   - **Hvorfor det betyder noget:** Helt normale situationer ligner nedbrud, så folk prøver igen eller ringer efter hjælp.
   - **Hvad skal ændres:**
@@ -552,7 +552,7 @@ Rapporten fandt ingen kritiske fejl her. Den fandt ingen vej, hvor en terminal f
   - **Risiko ved ændringen:** Ingen, det er tekster og en test.
   - **Hvor:** `src/lib/warehouse/errors.ts:25-162`, `:173-181`, `:182-337`; kastestederne står i shared.md I6
 
-- [ ] **5.9 Synkrone filkald på M: i hovedprocessen fryser hele appen, når drevet er langsomt (shared.md I7)**
+- [x] **5.9 Synkrone filkald på M: i hovedprocessen fryser hele appen, når drevet er langsomt (shared.md I7)**
   - **Hvad sker der i dag:** Første kald pr. mappe opretter mappen på M: på en måde, der blokerer hele appen. Fejler det, huskes intet, så hvert senere kald prøver igen, for en almindelig bruger også SAP-indikatorens tjek hvert 5. sekund. Hænger M: lige efter start, fryser Hub-vinduet ved hvert tjek i Optælling, Placeringer og Softwareload, i alle åbne vinduer.
   - **Hvorfor det betyder noget:** Hele appen fryser, ikke kun lagerværktøjet.
   - **Hvad skal ændres:**
@@ -562,7 +562,7 @@ Rapporten fandt ingen kritiske fejl her. Den fandt ingen vej, hvor en terminal f
   - **Risiko ved ændringen:** Lav, for `openStore` bliver asynkron, og alle, der kalder den, er allerede asynkrone.
   - **Hvor:** `electron/warehouse/register.cjs:93-104`, `:133`, `:194`, `:229-234`; `electron/store.cjs:191`; `electron/warehouse/core/placements.cjs:19-25`
 
-- [ ] **5.10 Værktøjssiden læser alle optællingers filer på M: for at vise én linje (shared.md I8)**
+- [x] **5.10 Værktøjssiden læser alle optællingers filer på M: for at vise én linje (shared.md I8)**
   - **Hvad sker der i dag:** Når "Arbejdsværktøjer" åbnes, læses oversigt og deltagere for hver optælling, teamet nogensinde har lavet, kun for at skrive "Igangværende: <status> · NN %" på Optællings flise. Med 4 statusser og omkring 15 optællinger hver er det omkring 120 krypterede filer, før Stempelkorts egne læsninger kommer til.
   - **Hvorfor det betyder noget:** Den side, alle åbner hver morgen for at stemple ind, betaler for en pyntelinje, og listen vokser hvert kvartal.
   - **Hvad skal ændres:** Tilføj `statuses:active-progress`, der kun læser den aktive status (`repo.getActiveStatus(team)`) og oversigterne for dens optællinger (`statusCounts(team, id)`), eller gem fremskridtet på status-posten, når en oversigt skrives. Kald den fra `WarehouseHome`.
