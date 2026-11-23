@@ -178,6 +178,8 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
         const serials = serialLists.get(line.material)
         if (!serials.length) { quantities.push({ material: line.material, qty: 0 }); continue }
         const result = await writer.enterSerials({ docNo: doc.docNo, year: doc.year, material: line.material, serials })
+        // SAP's own count must be the list sent; anything else would go on to MI20 unnoticed.
+        if (result.counted !== serials.length) throw codeError('PIDOC_NOT_COUNTED', `SAP har talt ${result.counted} på ${line.material}, men der blev sendt ${serials.length} serienumre. Tjek dokumentet i SAP (MI03)`)
         await remember(line.material, { serials: result.serials, qty: result.counted })
       } else {
         const row = rowOf(line.material)

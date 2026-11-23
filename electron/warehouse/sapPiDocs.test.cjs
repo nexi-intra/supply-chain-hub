@@ -93,6 +93,29 @@ test('serials: ZMS_COUNT_SERIAL per material; Check errors come back per serial 
   await assert.rejects(writer.enterSerials({ docNo: '105000893', year: '2026', material: 'INT1-0', serials: [] }), { code: 'PIDOC_INVALID' })
 })
 
+test('serials: SAP\'s counted quantity is read as a SAP number; a count that differs from the serials sent stops', async () => {
+  let next
+  const runScript = async () => JSON.stringify(next)
+  const writer = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
+  const many = Array.from({ length: 1234 }, (_, index) => `S${index}`)
+  next = { ok: true, message: '', newSerials: 0, counted: '1.234', serials: '1234' }
+  assert.equal((await writer.enterSerials({ docNo: '105000893', year: '2026', material: 'INT1-0', serials: many })).counted, 1234, '"1.234" is 1234, not 1.234')
+  next = { ok: true, message: '', newSerials: 0, counted: '12,000', serials: '12' }
+  assert.equal((await writer.enterSerials({ docNo: '105000893', year: '2026', material: 'INT1-0', serials: many.slice(0, 12) })).counted, 12, '"12,000" is 12')
+  next = { ok: false, error: 'not-counted: 11' }
+  await assert.rejects(writer.enterSerials({ docNo: '105000893', year: '2026', material: 'INT1-0', serials: many.slice(0, 12) }), error => error.code === 'PIDOC_NOT_COUNTED' && error.counted === 11 && /11/.test(error.message) && /12 serienumre/.test(error.message))
+  next = { ok: false, error: 'not-counted' }
+  await assert.rejects(writer.enterSerials({ docNo: '105000893', year: '2026', material: 'INT1-0', serials: ['S1'] }), { code: 'PIDOC_NOT_COUNTED', message: 'PIDOC_NOT_COUNTED: INT1-0 står ikke som talt i SAP' })
+})
+
+test('pidoc-serials.vbs compares SAP\'s counted quantity with the serials sent, like pidoc-count.vbs', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'sap', 'pidoc-serials.vbs'), 'utf8')
+  const marked = source.indexOf('If list.GetCellValue(row, "XZAEL") <> "X" Then Finish False, "not-counted", ""')
+  const compared = source.indexOf('If CDbl(list.GetCellValue(row, "MENGE")) <> count Then Finish False, "not-counted: " & list.GetCellValue(row, "MENGE"), ""')
+  const done = source.indexOf('Finish True, message,')
+  assert.ok(marked > 0 && compared > marked && done > compared)
+})
+
 test('quantities: MI04 for the whole document; 0 is allowed (Zero Count)', async () => {
   const calls = []
   const runScript = async (name, args) => { calls.push({ name, args, file: fs.readFileSync(path.join(args[3], args[4]), 'utf8') }); return '{"ok":true,"message":"Count entered for phys. inv. doc. 105000894","items":2}' }

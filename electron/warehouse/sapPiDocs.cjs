@@ -4,7 +4,7 @@
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { parseMi31Log, parseMi22, parseMi20 } = require('./core/sapParsers.cjs')
+const { parseSapNumber, parseMi31Log, parseMi22, parseMi20 } = require('./core/sapParsers.cjs')
 const { putOnClipboard, CLIPBOARD_REFUSED } = require('./clipboardText.cjs')
 
 const TEST_TIMEOUT_MS = 3 * 60 * 1000
@@ -69,8 +69,12 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, tempRoot = os
       }
       if (result?.error === 'cancelled') throw writeError('PIDOC_CANCELLED', 'SAP-vinduet blev lukket uden Update Count – intet er opdateret')
       if (result?.error === 'not-counted') throw writeError('PIDOC_NOT_COUNTED', `${material} står ikke som talt i SAP`)
+      if (/^not-counted: /.test(result?.error || '')) {
+        const counted = parseSapNumber(result.error.slice('not-counted: '.length))
+        throw writeError('PIDOC_NOT_COUNTED', `SAP har talt ${Number.isNaN(counted) ? result.error.slice('not-counted: '.length) : counted} på ${material}, men der blev sendt ${list.length} serienumre. Tjek dokumentet i SAP (MI03)`, { counted })
+      }
       if (!result?.ok) throw scriptFailure(result, 'ZMS_COUNT_SERIAL')
-      return { counted: Number(result.counted) || 0, serials: Number(result.serials) || 0, newSerials: Number(result.newSerials) || 0 }
+      return { counted: parseSapNumber(result.counted) || 0, serials: Number(result.serials) || 0, newSerials: Number(result.newSerials) || 0 }
     })
   }
 

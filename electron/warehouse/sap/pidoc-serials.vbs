@@ -249,4 +249,6 @@ For i = 0 To list.RowCount - 1
 Next
 If row < 0 Then Finish False, "verify-failed", ""
 If list.GetCellValue(row, "XZAEL") <> "X" Then Finish False, "not-counted", ""
+' The quantity SAP counted must be the number of serials sent (rows deleted in the grid, or dropped by SAP, would differ).
+If CDbl(list.GetCellValue(row, "MENGE")) <> count Then Finish False, "not-counted: " & list.GetCellValue(row, "MENGE"), ""
 Finish True, message, ",""newSerials"":" & newSerials & ",""counted"":" & JsonText(list.GetCellValue(row, "MENGE")) & ",""serials"":" & JsonText(list.GetCellValue(row, "SERNR_COUNT"))

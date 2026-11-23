@@ -216,6 +216,30 @@ test('quantities need the SAP numbers of the day', async () => {
   await assert.rejects(service.count(ANNA, 'c1', 'D2'), { code: 'PIDOC_NO_QTY' })
 })
 
+/** A printed document with two serial materials; `enterSerials` answers what the test sets. */
+function serialSetup(enterSerials) {
+  let stored = { D6: { id: 'D6', docNo: '105000915', year: '2026', status: 'printed', sloc: 'D000', stockType: 'unrestricted', createdBy: { email: 'mona@x' }, lines: [{ material: 'INT1-0', transaction: 'ZMS_COUNT_SERIAL' }, { material: 'INT2-0', transaction: 'ZMS_COUNT_SERIAL' }] } }
+  const calls = []
+  const rows = [row('INT1-0', 'new', { docQty: 2, sapToday: 2 }), row('INT2-0', 'new', { docQty: 1, sapToday: 1 })]
+  const serials = { 'INT1-0': ['S1', 'S2'], 'INT2-0': ['S3'] }
+  const repo = { getPiDocs: async () => structuredClone(stored), changePiDocs: async (team, id, change) => { stored = change(structuredClone(stored)).all } }
+  const writer = {
+    enterSerials: async request => { calls.push(['serials', request.material]); return enterSerials(request) },
+    enterCounts: async request => { calls.push(['counts', request]); return { message: 'ok' } },
+  }
+  const counts = { countDoc: async () => ({ fetchedAt: Date.now(), rows }), copySerials: async (user, id, { material }) => ({ serials: serials[material] }) }
+  const service = createPiDocService({ counts, repo, roles: { roleOf: async () => 'admin' }, writer, system: 'QS4' })
+  return { service, calls, stored: () => stored }
+}
+
+test('SAP counting another quantity than the serials sent stops the count; the material is not remembered as entered', async () => {
+  const { service, calls, stored } = serialSetup(request => ({ counted: request.serials.length - 1, serials: request.serials.length - 1, newSerials: 0 }))
+  await assert.rejects(service.count(ANNA, 'c1', 'D6'), error => error.code === 'PIDOC_NOT_COUNTED' && /INT1-0/.test(error.message) && /\b1\b/.test(error.message) && /\b2 serienumre/.test(error.message))
+  assert.deepEqual(calls, [['serials', 'INT1-0']], 'nothing more goes into SAP')
+  assert.equal(stored().D6.status, 'printed')
+  assert.equal(stored().D6.entered, undefined, 'a retry does not skip it')
+})
+
 /** A document for R1 made Monday 23.11.2026 from the SAP figures of the day; `at(day, hour)` is local time. */
 function staleSetup({ fetchedAt, docFetchedAt }) {
   const at = (day, hour) => new Date(2026, 10, day, hour).getTime()
