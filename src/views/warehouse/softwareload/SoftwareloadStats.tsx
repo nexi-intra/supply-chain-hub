@@ -61,6 +61,7 @@ export function SoftwareloadStats() {
   const { from, to } = period === 'custom' ? custom : periodRange(period, new Date())
   const [tasks, setTasks] = useState<SoftwareloadTask[] | null>(null)
   const [comments, setComments] = useState<SoftwareloadComment[]>([])
+  const [commentsFailed, setCommentsFailed] = useState<string | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
   const [person, setPerson] = useState('')
   const [type, setType] = useState('')
@@ -71,20 +72,33 @@ export function SoftwareloadStats() {
   const [deletingComment, setDeletingComment] = useState<SoftwareloadComment | null>(null)
   const language = currentWarehouseLanguage()
 
-  // Only the newest request may fill the screen: a slow answer for an earlier period must not replace a newer one.
+  // Only the newest request may fill the screen: a slow answer for an earlier period must not replace a newer one. The
+  // comments are read apart, so a comment file that cannot be read never hides the numbers.
   const latest = useRef(0)
   const load = useCallback(async () => {
     const request = ++latest.current
-    try {
-      const bridge = window.electronWarehouse!.softwareload
-      const [nextTasks, nextComments] = await Promise.all([bridge.tasks({ from, to }), bridge.comments({ from, to })])
-      if (request !== latest.current) return
-      setTasks(nextTasks)
-      setComments(nextComments)
-      setFailed(null)
-    } catch (error) {
-      if (request === latest.current) setFailed(errorMessage(error))
+    const bridge = window.electronWarehouse!.softwareload
+    const readTasks = async () => {
+      try {
+        const next = await bridge.tasks({ from, to })
+        if (request !== latest.current) return
+        setTasks(next)
+        setFailed(null)
+      } catch (error) {
+        if (request === latest.current) setFailed(errorMessage(error))
+      }
     }
+    const readComments = async () => {
+      try {
+        const next = await bridge.comments({ from, to })
+        if (request !== latest.current) return
+        setComments(next)
+        setCommentsFailed(null)
+      } catch (error) {
+        if (request === latest.current) setCommentsFailed(errorMessage(error))
+      }
+    }
+    await Promise.all([readTasks(), readComments()])
   }, [from, to])
 
   useEffect(() => {
@@ -180,7 +194,7 @@ export function SoftwareloadStats() {
 
       {tasks && (
         <>
-          <CommentList comments={shown} onAdd={() => setWriting('new')} onEdit={setWriting} onDelete={setDeletingComment} />
+          <CommentList comments={shown} failed={commentsFailed} onAdd={() => setWriting('new')} onEdit={setWriting} onDelete={setDeletingComment} />
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Figure label={t('Opgaver', 'Tasks')} value={String(filtered.length)} />
@@ -194,7 +208,7 @@ export function SoftwareloadStats() {
           ) : (
             <>
               <SummaryTable rows={rows} />
-              <MaterialTable rows={materialRows} comments={shown} />
+              <MaterialTable rows={materialRows} tasks={filtered} comments={shown} />
               <TaskList tasks={filtered} comments={shown} onDelete={task => setDeleting(all.find(item => item.id === task.id) ?? task)} />
             </>
           )}
@@ -238,14 +252,15 @@ export function SoftwareloadStats() {
 }
 
 /** The managers' comments on the period that fit the filters, above the numbers they explain. */
-function CommentList({ comments, onAdd, onEdit, onDelete }: { comments: SoftwareloadComment[]; onAdd: () => void; onEdit: (comment: SoftwareloadComment) => void; onDelete: (comment: SoftwareloadComment) => void }) {
+function CommentList({ comments, failed, onAdd, onEdit, onDelete }: { comments: SoftwareloadComment[]; failed: string | null; onAdd: () => void; onEdit: (comment: SoftwareloadComment) => void; onDelete: (comment: SoftwareloadComment) => void }) {
   return (
     <Card className="gap-0 overflow-hidden p-0">
       <div className="flex flex-wrap items-center gap-2 border-b px-5 py-3">
         <h2 className="text-sm font-semibold">{t('Kommentarer', 'Comments')} ({comments.length})</h2>
         <Button size="sm" variant="outline" className="ml-auto" onClick={onAdd}><Plus size={16} /> {t('Tilføj kommentar', 'Add comment')}</Button>
       </div>
-      {comments.length === 0 ? (
+      {failed && <ErrorLine text={t(`Kommentarerne kunne ikke læses: ${failed}`, `The comments could not be read: ${failed}`)} className="mx-5 my-3" />}
+      {comments.length === 0 ? (!failed &&
         <p className="px-5 py-3 text-sm text-muted-foreground">{t('Ingen kommentarer til perioden. Skriv en, hvis tallene skal forklares, fx at ny software til et materiale tog længere tid at loade.', 'No comments on the period. Write one if the numbers need explaining, e.g. that new software for a material took longer to load.')}</p>
       ) : (
         <ul className="divide-y">
@@ -371,8 +386,8 @@ function CommentMarker({ comments }: { comments: SoftwareloadComment[] }) {
   if (!comments.length) return null
   const title = commentTitle(comments)
   return (
-    <span title={title} aria-label={t(`${comments.length} kommentar(er): ${title}`, `${comments.length} comment(s): ${title}`)} className="ml-1.5 inline-flex align-middle text-primary">
-      <ChatCircleText size={15} weight="fill" />
+    <span role="img" title={title} aria-label={t(`${comments.length} kommentar(er): ${title}`, `${comments.length} comment(s): ${title}`)} className="ml-1.5 inline-flex align-middle text-primary">
+      <ChatCircleText size={15} weight="fill" aria-hidden />
     </span>
   )
 }
@@ -428,8 +443,11 @@ function SummaryTable({ rows }: { rows: ReturnType<typeof summarizeTasks> }) {
 }
 
 /** Terminals, failed ones and pace per material; a task's time is shared out on its materials by their number of terminals. */
-function MaterialTable({ rows, comments }: { rows: ReturnType<typeof summarizeByMaterial>; comments: SoftwareloadComment[] }) {
+function MaterialTable({ rows, tasks, comments }: { rows: ReturnType<typeof summarizeByMaterial>; tasks: SoftwareloadTask[]; comments: SoftwareloadComment[] }) {
   const language = currentWarehouseLanguage()
+  // A comment on a material and a version marks the row only when a shown task loaded that material with that version.
+  const concerns = (comment: SoftwareloadComment, material: string) => comment.material === material
+    && (!comment.version || tasks.some(task => task.version === comment.version && taskForMaterial(task, material)))
   return (
     <Card className="gap-0 overflow-hidden p-0">
       <h2 className="border-b px-5 py-3 text-sm font-semibold">{t('Pr. materiale', 'Per material')}</h2>
@@ -450,7 +468,7 @@ function MaterialTable({ rows, comments }: { rows: ReturnType<typeof summarizeBy
               <tr key={row.material || '-'}>
                 <td className="px-4 py-2">
                   {row.material || <span className="text-muted-foreground">{t('Ukendt', 'Unknown')}</span>}
-                  {row.material && <CommentMarker comments={comments.filter(comment => comment.material === row.material)} />}
+                  {row.material && <CommentMarker comments={comments.filter(comment => concerns(comment, row.material))} />}
                 </td>
                 <td className="px-4 py-2 text-right tabular-nums">{row.tasks}</td>
                 <td className="px-4 py-2 text-right tabular-nums">{row.moved}</td>

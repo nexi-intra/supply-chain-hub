@@ -76,6 +76,11 @@ export function Softwareload({ user, onOpenTimeclock, onBusyChange }: { user: Wa
 
   const pendingCount = status?.pending.length ?? 0
 
+  // Statistik is for managers only: a role taken away while it is open leads back to the own task.
+  useEffect(() => {
+    if (tab === 'stats' && status && !status.isManager) setTab('task')
+  }, [tab, status])
+
   const choose = (next: Tab) => {
     setTab(next)
     if (next === 'task' || next === 'pending') void load()

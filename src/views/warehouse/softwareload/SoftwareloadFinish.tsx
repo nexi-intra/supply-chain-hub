@@ -120,7 +120,7 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
       <Card className="gap-4 px-6 py-8">
         <ErrorLine text={finishError.text} />
         <p className="text-sm text-muted-foreground">{finishError.alreadyFinished
-          ? t('Opgaven blev overdraget til SAP tidligere og flyttes ikke igen. Den står under Venter på SAP eller i statistikken.', 'The task was handed over to SAP earlier and is not moved again. It is under Waiting for SAP or in the statistics.')
+          ? t('Opgaven blev overdraget til SAP tidligere og flyttes ikke igen. Den står under Venter på SAP, eller du kan finde den under Søg serienummer.', 'The task was handed over to SAP earlier and is not moved again. It is under Waiting for SAP, or you can find it under Search serial number.')
           : finishError.stillRunning
           ? t('Opgaven kører stadig. Intet er flyttet.', 'The task is still running. Nothing was moved.')
           : t('Tiden er stoppet, og opgaven venter på SAP. Det der allerede er flyttet, er gemt. Fortsæt under Venter på SAP, når SAP er klar.', 'The time is stopped and the task waits for SAP. What was already moved is saved. Continue under Waiting for SAP when SAP is ready.')}</p>
