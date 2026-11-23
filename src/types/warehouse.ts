@@ -559,6 +559,15 @@ export interface Claim {
 
 export type ApprovalStatus = 'approved' | 'returned' | 'posted' | 'submitted' | 'open'
 
+/** A manager undid a wrong "Bogført i SAP" mark: who, when, why and the post that was undone. */
+export interface Unpost {
+  by: Person
+  at: number
+  reason: string
+  postedBy: Person | null
+  postedAt: number | null
+}
+
 export interface Approval {
   status: ApprovalStatus
   comment?: string
@@ -566,10 +575,8 @@ export interface Approval {
   at?: number
   postedBy?: Person
   postedAt?: number
-  /** Set when a manager undid a wrong "Bogført i SAP" mark (the approval is then back to approved). */
-  unpostedBy?: Person
-  unpostedAt?: number
-  unpostReason?: string
+  /** Every undone "Bogført i SAP" mark, oldest first; kept through reset, sending back and approving again. */
+  unposts?: Unpost[]
   /** Set when a counter sent the material to approval. */
   diff?: number
   sapQty?: number

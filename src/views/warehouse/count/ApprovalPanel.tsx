@@ -8,7 +8,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { formatDateTime, formatMoney, formatNumber, kindLabel } from '@/lib/warehouse/format'
 import { cn } from '@/lib/utils'
-import type { Approval, Kind } from '@/types/warehouse'
+import type { Approval, Kind, Unpost } from '@/types/warehouse'
 import type { PanelProps } from './CountView'
 import { withApprovals } from './optimisticState'
 import { t } from '@/lib/warehouse/text'
@@ -74,9 +74,10 @@ export function ApprovalPanel({ id, state, optimistic, person }: PanelProps) {
     }
     const at = Date.now()
     const current = state.approvals[material]
-    const value: Approval = status === 'reset' ? { status: 'open', by: person, at }
+    const log = current?.unposts?.length ? { unposts: current.unposts } : {}
+    const value: Approval = status === 'reset' ? { status: 'open', by: person, at, ...log }
       : status === 'posted' ? { ...current, status: 'posted', postedBy: person, postedAt: at }
-      : { status, comment: comment.trim().slice(0, 300), by: person, at }
+      : { status, comment: comment.trim().slice(0, 300), by: person, at, ...log }
     save({ [material]: value }, () => window.electronWarehouse!.counts.approval({ id, material, status, comment }), status === 'approved')
   }
 
@@ -85,14 +86,15 @@ export function ApprovalPanel({ id, state, optimistic, person }: PanelProps) {
     if (saving.has(material)) return
     const reason = (window.prompt(t(`Hvorfor fortrydes Bogført i SAP for ${material}? Gør det kun, hvis differencen ikke er bogført i SAP.`, `Why is Posted in SAP undone for ${material}? Only do it if the difference has not been posted in SAP.`)) || '').trim()
     if (!reason) return
-    const value: Approval = { ...state.approvals[material], status: 'approved', unpostedBy: person, unpostedAt: Date.now(), unpostReason: reason.slice(0, 300) }
+    const { postedBy = null, postedAt = null, ...rest } = state.approvals[material] || { status: 'posted' }
+    const value: Approval = { ...rest, status: 'approved', unposts: [...(rest.unposts || []), { by: person, at: Date.now(), reason: reason.slice(0, 300), postedBy, postedAt }] }
     save({ [material]: value }, () => window.electronWarehouse!.counts.unpost({ id, material, reason }), false)
   }
 
   const approveClean = () => {
     const clean = materials.filter(item => !state.rows.some(row => row.material === item.material && row.diff !== 0) && !['approved', 'posted'].includes(state.approvals[item.material]?.status || '') && !saving.has(item.material))
     const at = Date.now()
-    save(Object.fromEntries(clean.map(item => [item.material, { status: 'approved', comment: t('Ingen difference', 'No difference'), by: person, at } satisfies Approval])), () => window.electronWarehouse!.counts.approveClean(id), false)
+    save(Object.fromEntries(clean.map(item => [item.material, { status: 'approved', comment: t('Ingen difference', 'No difference'), by: person, at, unposts: state.approvals[item.material]?.unposts } satisfies Approval])), () => window.electronWarehouse!.counts.approveClean(id), false)
     toast.success(t(`${formatNumber(clean.length)} materialer uden difference er godkendt`, `${formatNumber(clean.length)} materials without a difference are approved`))
   }
 
@@ -139,7 +141,7 @@ export function ApprovalPanel({ id, state, optimistic, person }: PanelProps) {
                       {approval?.by && approval.status !== 'open' && <div className="mt-0.5 text-xs text-muted-foreground">{approval.status === 'submitted' ? t('Sendt af ', 'Sent by ') : ''}{approval.by.name} · {formatDateTime(approval.at)}</div>}
                       {approval?.status === 'submitted' && typeof approval.diff === 'number' && <div className={cn('text-xs font-medium', approval.diff === 0 ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300')}>{approval.diff === 0 ? t('Uden difference', 'No difference') : t(`Med difference ${approval.diff > 0 ? '+' : ''}${formatNumber(approval.diff)}`, `With difference ${approval.diff > 0 ? '+' : ''}${formatNumber(approval.diff)}`)}</div>}
                       {approval?.status === 'posted' && approval.postedBy && <div className="text-xs text-muted-foreground">{t('Bogført', 'Posted')}: {approval.postedBy.name} · {formatDateTime(approval.postedAt)}</div>}
-                      {approval?.status === 'approved' && approval.unpostedBy && <div className="text-xs text-muted-foreground">{t('Bogført fortrudt', 'Posting undone')}: {approval.unpostedBy.name} · {formatDateTime(approval.unpostedAt)} · {approval.unpostReason}</div>}
+                      {approval?.unposts?.length ? <UnpostNote entry={approval.unposts[approval.unposts.length - 1]} count={approval.unposts.length} /> : null}
                       {approval?.comment && <div className="text-xs text-muted-foreground">{approval.comment}</div>}
                       {item.countedAfter !== 0 && <div className="text-xs font-medium text-amber-700 dark:text-amber-300">{item.countedAfter > 0 ? '+' : ''}{formatNumber(item.countedAfter)} {approval?.status === 'posted' ? t('talt efter bogføring, indgår ikke', 'counted after posting, not included') : t('talt efter godkendelse – Nulstil for at tage dem med', 'counted after approval – Reset to include them')}</div>}
                     </td>
@@ -163,5 +165,14 @@ export function ApprovalPanel({ id, state, optimistic, person }: PanelProps) {
         </div>
       </CardContent>
     </Card>
+  )
+}
+
+/** The latest undone "Bogført i SAP" mark; the count says how many there have been. */
+function UnpostNote({ entry, count }: { entry: Unpost; count: number }) {
+  return (
+    <div className="text-xs text-muted-foreground">
+      {count > 1 ? t(`Bogført fortrudt (${formatNumber(count)} gange, senest)`, `Posting undone (${formatNumber(count)} times, latest)`) : t('Bogført fortrudt', 'Posting undone')}: {entry.by.name} · {formatDateTime(entry.at)} · {entry.reason}
+    </div>
   )
 }

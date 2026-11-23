@@ -739,11 +739,60 @@ test('a wrong "Bogført i SAP" mark is undone only by a manager, with a reason a
   assert.equal((await ctx.repo.getApprovals('TCD', id))['R162-0717'].status, 'posted', 'nothing changed while refused')
   await ctx.repo.changePiDocs('TCD', id, all => ({ all: { ...all, D1: { ...all.D1, status: 'deleted' }, D2: { id: 'D2', docNo: '105000904', status: 'posted', lines: [{ material: 'INT4300-4921-0' }] } } }))
 
+  const posted = (await ctx.repo.getApprovals('TCD', id))['R162-0717']
   const undone = await mona.undoPosted(MONA, id, { material: 'r162-0717', reason: '  Trykket ved en fejl  ' })
-  assert.deepEqual([undone.status, undone.unpostedBy, undone.unpostedAt, undone.unpostReason, undone.frozen[0].diff, undone.postedBy.name], ['approved', { email: 'mona@example.test', name: 'Mona' }, ctx.clock.now, 'Trykket ved en fejl', -3, 'Mona'], 'back to approved with the frozen numbers; who posted is kept')
+  const firstUndo = { by: { email: 'mona@example.test', name: 'Mona' }, at: ctx.clock.now, reason: 'Trykket ved en fejl', postedBy: posted.postedBy, postedAt: posted.postedAt }
+  assert.deepEqual([undone.status, undone.frozen[0].diff, undone.by.name, undone.unposts], ['approved', -3, 'Mona', [firstUndo]], 'back to approved with the frozen numbers; the undo and who posted are logged')
+  assert.deepEqual([undone.postedBy, undone.postedAt, undone.unpostedBy, undone.unpostedAt, undone.unpostReason], [undefined, undefined, undefined, undefined, undefined], 'only the log holds the undone post')
   assert.deepEqual((await ctx.repo.getApprovals('TCD', id))['R162-0717'], undone)
 
-  assert.equal((await mona.setApproval(MONA, id, { material: 'R162-0717', status: 'reset' })).status, 'open', 'reset is allowed again')
+  // The log follows the material through reset, approval, a second undo and sending back.
+  ctx.tick(1000)
+  const reset = await mona.setApproval(MONA, id, { material: 'R162-0717', status: 'reset' })
+  assert.deepEqual([reset.status, reset.unposts], ['open', [firstUndo]], 'reset is allowed again and keeps the log')
+  assert.deepEqual((await mona.setApproval(MONA, id, { material: 'R162-0717', status: 'approved' })).unposts, [firstUndo])
+  await mona.setApproval(MONA, id, { material: 'R162-0717', status: 'posted' })
+  ctx.tick(1000)
+  const second = await mona.undoPosted(MONA, id, { material: 'R162-0717', reason: 'Igen forkert' })
+  assert.deepEqual(second.unposts.map(entry => entry.reason), ['Trykket ved en fejl', 'Igen forkert'], 'a second undo is added, not overwriting the first')
+  const returned = await mona.setApproval(MONA, id, { material: 'R162-0717', status: 'returned', comment: 'Tæl igen' })
+  assert.deepEqual(returned.unposts, second.unposts)
+  assert.deepEqual((await ctx.repo.getApprovals('TCD', id))['R162-0717'].unposts, second.unposts)
+
+  // A counter sending it to approval and "Godkend alle uden difference" keep the log too.
+  await anna.saveLine(ANNA, id, { place: 'A1.2', material: 'R162-0717', qty: 3 })
+  await anna.flush(ANNA, id)
+  ctx.tick(2000)
+  assert.deepEqual((await anna.submitMaterial(ANNA, id, { material: 'R162-0717' })).unposts, second.unposts)
+  await mona.approveAllWithoutDifference(MONA, id)
+  const cleanApproved = (await ctx.repo.getApprovals('TCD', id))['R162-0717']
+  assert.deepEqual([cleanApproved.status, cleanApproved.comment, cleanApproved.unposts], ['approved', 'Ingen difference', second.unposts])
+})
+
+test('a "Bogført i SAP" made on another PC after this PC read the approvals still refuses a reset (checked under the lock)', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const mona = ctx.service('pc3')
+  const { id } = await newCount(ctx, anna)
+  await anna.saveLine(ANNA, id, { place: 'A1.1', material: 'R162-0717', qty: 97 })
+  await anna.flush(ANNA, id)
+  ctx.tick(2000)
+  await mona.setApproval(MONA, id, { material: 'R162-0717', status: 'approved' })
+  // PC 2 has a cached read from before PC 1's post reached the drive.
+  const repo = createCountRepository({ storeFor: ctx.storeFor, now: () => ctx.clock.now })
+  const stale = await repo.getApprovals('TCD', id)
+  const pc2 = createCountService({
+    repo: { ...repo, getApprovals: async () => structuredClone(stale) },
+    storeFor: ctx.storeFor, fetcher: ctx.fetcher, journalsDir: path.join(ctx.root, 'local-pc2'), deviceId: 'pc2',
+    now: () => ctx.clock.now, newId: () => crypto.randomUUID(), journalOptions: { autoFlush: false },
+  })
+  await mona.setApproval(MONA, id, { material: 'R162-0717', status: 'posted' })
+
+  for (const status of ['reset', 'returned', 'approved']) {
+    await assert.rejects(pc2.setApproval(MONA, id, { material: 'R162-0717', status, comment: 'Tæl igen' }), { code: 'COUNT_MATERIAL_POSTED' }, `${status} sees the post under the lock`)
+  }
+  const stored = (await ctx.repo.getApprovals('TCD', id))['R162-0717']
+  assert.deepEqual([stored.status, stored.postedBy.name], ['posted', 'Mona'], 'the post is not overwritten')
 })
 
 test('a material is locked to its counter: others ask to count along; sending to approval needs the difference accepted', async () => {

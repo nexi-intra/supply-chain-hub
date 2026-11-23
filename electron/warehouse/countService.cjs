@@ -1048,12 +1048,17 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const diff = sum('diff')
     if (diff !== 0 && acceptDiff !== true) throw codeError('SUBMIT_HAS_DIFF', `Der er en difference på ${diff > 0 ? '+' : ''}${diff} stk. på ${code}`)
     const value = { status: 'submitted', by: me(user), at: now(), sapQty: sum('sapQty'), counted: sum('counted'), diff, comment: clean(comment, 300) }
-    // Two different files, so the approval and the released lock are written at the same time.
-    await Promise.all([
-      repo.setApproval(state.team, state.id, code, value),
+    // Two different files, so the approval and the released lock are written at the same time. The approval is checked
+    // again under its lock (approved or posted on another PC meanwhile) and keeps the log of undone "Bogført i SAP" marks.
+    const [submitted] = await Promise.all([
+      repo.changeApprovals(state.team, state.id, all => {
+        if (isApprovedStatus(all[code])) throw codeError('MATERIAL_APPROVED', `${code} er allerede godkendt`)
+        all[code] = all[code]?.unposts?.length ? { ...value, unposts: all[code].unposts } : value
+        return { all, result: all[code] }
+      }),
       repo.changeMaterialLocks(state.team, state.id, all => { delete all[code]; return { all, result: null } }).catch(() => {}),
     ])
-    return value
+    return submitted
   }
 
   // ---------- Notifications for the Hub's bell (and Windows) ----------
@@ -1179,11 +1184,6 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     await assertStatusOpen(state.team, state.meta)
     const code = normalizeMaterial(material)
     if (!['approved', 'returned', 'posted', 'reset'].includes(status)) throw codeError('APPROVAL_INVALID')
-    const approvals = await repo.getApprovals(state.team, state.id)
-    const current = approvals[code]
-    // Posted is final: a reset would let numbers counted afterwards be posted in SAP a second time.
-    if (current?.status === 'posted') throw postedError(code)
-    if (status === 'posted' && current?.status !== 'approved') throw codeError('APPROVAL_INVALID', 'Materialet skal godkendes før det markeres som bogført')
     if (status === 'returned' && !clean(comment, 300)) throw codeError('APPROVAL_INVALID', 'Skriv hvorfor materialet sendes tilbage')
     if (status === 'returned' || status === 'reset') {
       // The numbers on an SAP count document must not change underneath it: delete the document first.
@@ -1191,15 +1191,26 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       if (active) throw codeError('PIDOC_ACTIVE', active.status === 'posted' ? `${code} er bogført i SAP (${active.docNo})` : `${code} har SAP-dokument ${active.docNo || ''} – slet det først`)
     }
     const by = me(user)
-    const value = status === 'reset' ? { status: 'open', by, at: now() }
-      : status === 'posted' ? { ...current, status: 'posted', postedBy: by, postedAt: now() }
-      : status === 'approved' ? { status, comment: clean(comment, 300), by, at: now(), frozen: freezeRows(state.aggregate.rows, code, state.aggregate.serials.missing) }
-      // Who sent it to approval is told that it came back (the Hub's notifications).
-      : status === 'returned' ? { status, comment: clean(comment, 300), by, at: now(), submittedBy: current?.status === 'submitted' ? current.by : current?.submittedBy || null }
-      : { status, comment: clean(comment, 300), by, at: now() }
+    const at = now()
+    const frozen = status === 'approved' ? freezeRows(state.aggregate.rows, code, state.aggregate.serials.missing) : null
+    // Checked and written under the lock: a "Bogført i SAP" from another PC that a cached read has not seen yet is never overwritten.
+    const write = repo.changeApprovals(state.team, state.id, all => {
+      const current = all[code]
+      // Posted is final: a reset would let numbers counted afterwards be posted in SAP a second time.
+      if (current?.status === 'posted') throw postedError(code)
+      if (status === 'posted' && current?.status !== 'approved') throw codeError('APPROVAL_INVALID', 'Materialet skal godkendes før det markeres som bogført')
+      // The log of undone "Bogført i SAP" marks follows the material.
+      const log = current?.unposts?.length ? { unposts: current.unposts } : {}
+      all[code] = status === 'reset' ? { status: 'open', by, at, ...log }
+        : status === 'posted' ? { ...current, status: 'posted', postedBy: by, postedAt: at }
+        : status === 'approved' ? { status, comment: clean(comment, 300), by, at, frozen, ...log }
+        // Who sent it to approval is told that it came back (the Hub's notifications).
+        : { status, comment: clean(comment, 300), by, at, submittedBy: current?.status === 'submitted' ? current.by : current?.submittedBy || null, ...log }
+      return { all, result: all[code] }
+    })
     // Approval and material locks are different files: an approved material's lock is released in the same round.
-    await Promise.all([
-      repo.setApproval(state.team, state.id, code, value),
+    const [value] = await Promise.all([
+      write,
       status === 'approved' ? repo.changeMaterialLocks(state.team, state.id, all => { delete all[code]; return { all, result: null } }).catch(() => {}) : null,
     ])
     return value
@@ -1224,7 +1235,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       let count = 0
       for (const material of candidates) {
         if (['approved', 'posted'].includes(all[material]?.status)) continue
-        all[material] = { status: 'approved', comment: 'Ingen difference', by, at, frozen: freezeRows(state.aggregate.rows, material, state.aggregate.serials.missing) }
+        all[material] = { status: 'approved', comment: 'Ingen difference', by, at, frozen: freezeRows(state.aggregate.rows, material, state.aggregate.serials.missing), ...(all[material]?.unposts?.length ? { unposts: all[material].unposts } : {}) }
         count += 1
       }
       return { all, result: count }
@@ -1253,8 +1264,9 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   }
 
   /**
-   * Undoes a wrong manual "Bogført i SAP" mark: back to approved with the frozen numbers, with who, when and why on the
-   * approval. Never while an SAP count document (not deleted) holds the material: then the document is what posts it.
+   * Undoes a wrong manual "Bogført i SAP" mark: back to approved with the frozen numbers. Who, when, why and the undone
+   * post are added to the approval's `unposts` log. Never while an SAP count document (not deleted) holds the material:
+   * then the document is what posts it.
    */
   async function undoPosted(user, id, { material, reason } = {}) {
     const state = await load(user, id)
@@ -1270,7 +1282,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const at = now()
     const undone = await repo.changeApprovals(state.team, state.id, all => {
       if (all[code]?.status !== 'posted') return { all, result: null }
-      all[code] = { ...all[code], status: 'approved', unpostedBy: by, unpostedAt: at, unpostReason: text }
+      const { postedBy = null, postedAt = null, ...rest } = all[code]
+      all[code] = { ...rest, status: 'approved', unposts: [...(rest.unposts || []), { by, at, reason: text, postedBy, postedAt }] }
       return { all, result: all[code] }
     })
     if (!undone) throw codeError('APPROVAL_INVALID', `${code} er ikke markeret som bogført i SAP`)
