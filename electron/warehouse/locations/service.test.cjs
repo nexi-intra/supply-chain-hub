@@ -369,6 +369,36 @@ test('cards show descriptions, FIFO, pick places and history', async () => {
   await assert.rejects(pc1.service.palletCard(ANNA, { pallet: 'nope' }), { code: 'PALLET_GONE' })
 })
 
+test('pallets on deactivated, reserved and station places are on the material card with their reason, counted in stock, not in FIFO, and can be taken', async () => {
+  const { pc1, seed } = setup()
+  await seed([
+    place('A1.1'), place('A1.2', { active: false }), place('A1.3', { purpose: 'reserved' }), place('A1.5'),
+    place('I8', { purpose: 'station', type: 'Bord', fixedMaterials: ['R162-0717'] }), place('I9', { purpose: 'station', type: 'Bord', fixedMaterials: ['R162-0717'], active: false }),
+    place('H26', { purpose: 'pick', type: 'Hylde', fixedMaterials: ['R162-0717'] }),
+  ], [
+    { id: 'p1', location: 'A1.1', material: 'R162-0717', quantity: 10, receivedAt: day(2026, 5, 1) },
+    { id: 'p2', location: 'A1.2', material: 'R162-0717', quantity: 5, receivedAt: day(2026, 1, 1) },
+    { id: 'p3', location: 'A1.3', material: 'R162-0717', quantity: null, receivedAt: day(2026, 2, 1) },
+    { id: 'p4', location: 'I8', material: 'R162-0717', quantity: 7, receivedAt: day(2026, 3, 1) },
+    { id: 'p5', location: 'A1.5', material: 'R162-0717', quantity: 20, receivedAt: day(2026, 6, 1) },
+    { id: 'p6', location: 'I9', material: 'R162-0717', quantity: 1, receivedAt: day(2026, 4, 1) },
+    { id: 'other', location: 'A1.3', material: 'R133-0032', quantity: 3, receivedAt: day(2026, 1, 1) },
+  ])
+  const card = await pc1.service.materialCard(ANNA, { material: 'R162-0717' })
+  assert.deepEqual(card.reserve.map(pallet => pallet.id), ['p1', 'p5'], 'FIFO is only the active reserve places, as before')
+  assert.deepEqual(card.elsewhere.map(pallet => [pallet.id, pallet.reason]), [['p2', 'deaktiveret'], ['p3', 'reserveret'], ['p4', 'arbejdsstation'], ['p6', 'deaktiveret']], 'oldest first, each with its reason')
+  assert.equal(card.elsewhere[0].ageDays, 292)
+  assert.equal(card.total, 10 + 20 + 5 + 7 + 1, 'På lager counts them (an unknown quantity adds nothing)')
+  assert.equal((await pc1.service.suggest(ANNA, { material: 'R162-0717' })).slots.some(slot => ['A1.2', 'A1.3', 'I8', 'I9'].includes(slot.location)), false, 'suggestions unchanged')
+
+  assert.equal((await pc1.service.take(ANNA, { pallet: 'p2' })).pallet, null, 'Tag takes a pallet on a deactivated place')
+  assert.equal((await pc1.service.take(ANNA, { pallet: 'p3', quantity: 2 })).pallet.quantity, null, 'and part of one with an unknown quantity on a reserved place')
+  assert.equal((await pc1.service.take(ANNA, { pallet: 'p4', quantity: 3 })).pallet.quantity, 4, 'and part of one on a station')
+  const after = await pc1.service.materialCard(ANNA, { material: 'R162-0717' })
+  assert.deepEqual(after.elsewhere.map(pallet => [pallet.id, pallet.quantity]), [['p3', null], ['p4', 4], ['p6', 1]])
+  assert.deepEqual(after.reserve.map(pallet => pallet.id), ['p1', 'p5'])
+})
+
 test('a replayed action id is applied once, also from another PC: a partial take is not counted twice', async () => {
   const { pc1, pc2, seed } = setup()
   await seed([place('A2.1')], [{ id: 'p1', location: 'A2.1', material: 'R162-0717', quantity: 100, receivedAt: 1 }])

@@ -863,17 +863,20 @@ export interface LocationSearch {
   /** Rack names starting with the query ("E9"). */
   racks: string[]
 }
+export type ElsewhereReason = 'deaktiveret' | 'reserveret' | 'arbejdsstation'
 export interface MaterialCard {
   material: string
   description: string
   stations: Location[]
   pickPlaces: Location[]
   reserve: (Pallet & { ageDays: number })[]
+  /** Pallets on a deactivated, reserved or station place, oldest first: they can be moved or taken, but are not in FIFO. */
+  elsewhere: (Pallet & { ageDays: number; reason: ElsewhereReason })[]
   /** The material's lines on shelves, largest first. */
   shelves: { location: string; name: string; quantity: number }[]
   /** The shelf to refill a pick place from when there is no reserve pallet. */
   refillShelf: string | null
-  /** Reserve pallets and shelves together. */
+  /** All pallets (reserve and elsewhere) and shelves together; a pallet with an unknown quantity adds nothing. */
   total: number
   history: LocationEvent[]
 }

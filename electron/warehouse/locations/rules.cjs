@@ -43,6 +43,20 @@ function fifo(state, material, { now = Date.now() } = {}) {
 
 const aisleOf = name => (name.includes('.') ? name.slice(0, name.lastIndexOf('.')) : null)
 
+/**
+ * Pallets of a material that stay on a place FIFO leaves out: deactivated, reserved or a station. Oldest first, each with
+ * its reason; they can be moved or taken, but never come first in FIFO.
+ */
+function elsewhere(state, material, { now = Date.now() } = {}) {
+  const reasonOf = location => (!location ? null : location.active === false ? 'deaktiveret' : location.purpose === 'reserved' ? 'reserveret' : location.purpose === 'station' ? 'arbejdsstation' : null)
+  return Object.values(state.pallets || {})
+    .filter(pallet => pallet.material === material)
+    .map(pallet => ({ pallet, reason: reasonOf(state.locations?.[pallet.location]) }))
+    .filter(item => item.reason)
+    .sort((a, b) => (a.pallet.receivedAt || 0) - (b.pallet.receivedAt || 0) || (a.pallet.createdAt || 0) - (b.pallet.createdAt || 0))
+    .map(({ pallet, reason }) => ({ ...pallet, ageDays: Math.floor((now - (pallet.receivedAt || now)) / DAY_MS), reason }))
+}
+
 /** Free reserve places for a new pallet: its fixed place, then the aisles it already stands in, then its area, then the rest. */
 function suggestSlots(state, material, { limit = 8 } = {}) {
   const occupied = occupancy(state)
@@ -89,4 +103,4 @@ function search(state, texts, query) {
   return { materials, locations, pallets: found, racks }
 }
 
-module.exports = { occupancy, areaSummary, fifo, suggestSlots, pickPlaces, stations, refillSuggestion, search }
+module.exports = { occupancy, areaSummary, fifo, elsewhere, suggestSlots, pickPlaces, stations, refillSuggestion, search }

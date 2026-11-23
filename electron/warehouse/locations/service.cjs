@@ -496,16 +496,20 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
     const [state, texts, history] = await Promise.all([repo.read(team), describe([code]), repo.history(team, { material: code })])
     if (!texts[code]) lookUpTexts([code])
     const reserve = rules.fifo(state, code, { now: now() })
+    const other = rules.elsewhere(state, code, { now: now() })
     const onShelves = shelves.stockOf(state, code).map(line => ({ location: line.location, name: state.locations[line.location]?.name || line.location, quantity: line.quantity }))
+    const pieces = pallets => pallets.reduce((sum, pallet) => sum + (pallet.quantity || 0), 0)
     return {
       material: code,
       description: texts[code] || '',
       stations: rules.stations(state, code),
       pickPlaces: rules.pickPlaces(state, code),
       reserve,
+      // On a deactivated, reserved or station place: shown below the reserve pallets, never first in FIFO.
+      elsewhere: other,
       shelves: onShelves,
       refillShelf: shelves.shelfForRefill(state, code)?.location || null,
-      total: reserve.reduce((sum, pallet) => sum + (pallet.quantity || 0), 0) + onShelves.reduce((sum, line) => sum + line.quantity, 0),
+      total: pieces(reserve) + pieces(other) + onShelves.reduce((sum, line) => sum + line.quantity, 0),
       history: history.slice(0, 50).map(publicEvent),
     }
   }

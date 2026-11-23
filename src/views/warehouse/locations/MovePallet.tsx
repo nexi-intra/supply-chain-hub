@@ -9,9 +9,12 @@ import { cn } from '@/lib/utils'
 import { errorCode, errorMessage } from '@/lib/warehouse/errors'
 import { formatNumber } from '@/lib/warehouse/format'
 import { movedInList, moveTargetCheck, sendLocationAction, startLocationsRead } from '@/lib/warehouse/locationActions'
-import { formatAge, isShelfPlace, locationKeyOf, materialLabel, newActionId, reasonLabel, shownQuantity, singleFlight } from '@/lib/warehouse/locations'
+import { elsewhereReasonLabel, formatAge, isShelfPlace, locationKeyOf, materialLabel, newActionId, reasonLabel, shownQuantity, singleFlight } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
-import type { LocationList, PalletView, SlotSuggestion, StockLineView } from '@/types/warehouse'
+import type { ElsewhereReason, LocationList, PalletView, SlotSuggestion, StockLineView } from '@/types/warehouse'
+
+/** A pallet to choose; one found by material outside FIFO says why (deactivated, reserved or station place). */
+type Candidate = PalletView & { reason?: ElsewhereReason }
 
 /**
  * "Flyt": move pallets around the warehouse – find what to move (a place, a material or a 49/50 number), pick the
@@ -20,7 +23,7 @@ import type { LocationList, PalletView, SlotSuggestion, StockLineView } from '@/
  */
 export function MovePallet({ pallet: initialPallet, version, onDone }: { pallet?: string; version: number; onDone: () => void }) {
   const [query, setQuery] = useState('')
-  const [candidates, setCandidates] = useState<PalletView[] | null>(null)
+  const [candidates, setCandidates] = useState<Candidate[] | null>(null)
   const [pallet, setPallet] = useState<PalletView | null>(null)
   const [target, setTarget] = useState('')
   const [slots, setSlots] = useState<SlotSuggestion[]>([])
@@ -56,7 +59,7 @@ export function MovePallet({ pallet: initialPallet, version, onDone }: { pallet?
     bridge.palletCard({ pallet: initialPallet }).then(card => choose(card.pallet)).catch(error => toast.error(errorMessage(error)))
   }, [initialPallet]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  /** A place gives its pallets, a material its pallets oldest first, anything else the search's pallets (49/50 number, serial). */
+  /** A place gives its pallets, a material its reserve pallets oldest first and then those outside FIFO, anything else the search's pallets (49/50 number, serial). */
   async function find(text: string) {
     const value = text.trim()
     if (!value) return
@@ -77,11 +80,11 @@ export function MovePallet({ pallet: initialPallet, version, onDone }: { pallet?
         if (card.stock.length === 1) setLine(card.stock[0])
         return
       }
-      let list: PalletView[]
+      let list: Candidate[]
       if (place) list = (await bridge.locationCard({ location: place.id })).pallets
       else if (material) {
         const card = await bridge.materialCard({ material: material.material })
-        list = card.reserve.map(item => ({ ...item, description: card.description }))
+        list = [...card.reserve, ...card.elsewhere].map(item => ({ ...item, description: card.description }))
       } else list = found.pallets
       setCandidates(list)
       setPallet(null)
@@ -183,6 +186,7 @@ export function MovePallet({ pallet: initialPallet, version, onDone }: { pallet?
                 <button key={item.id} type="button" role="radio" aria-checked={pallet?.id === item.id} onClick={() => choose(item)}
                   className={cn('flex w-full flex-wrap items-center gap-3 px-3 py-2.5 text-left text-sm', pallet?.id === item.id ? 'bg-primary/10' : 'hover:bg-secondary')}>
                   <span className="w-20 font-mono font-semibold">{item.location}</span>
+                  {item.reason && <Badge variant="secondary">{elsewhereReasonLabel(item.reason)}</Badge>}
                   <span className="min-w-0 flex-1 truncate">{materialLabel(item.material, item.description)}</span>
                   <span className="text-muted-foreground">{item.quantity === null ? '' : `${formatNumber(item.quantity)} · `}{formatAge(item.ageDays)}</span>
                   <span className="font-mono text-xs text-muted-foreground">{item.sloc}</span>

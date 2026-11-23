@@ -153,32 +153,32 @@ export function placedSummary(found: PlacedFound | null, now = Date.now()): stri
   return parts.join(' ')
 }
 
+const findPallet = (card: MaterialCard, pallet: string) => [...card.reserve, ...card.elsewhere].find(item => item.id === pallet)
+/** The card's two pallet lists with `pallet` given `quantity`, or left out when it is 'gone' (ids are unique, so one list changes). */
+function palletLists(card: MaterialCard, pallet: string, quantity: number | null | 'gone'): Pick<MaterialCard, 'reserve' | 'elsewhere'> {
+  const change = <T extends { id: string; quantity: number | null }>(items: T[]): T[] => (quantity === 'gone' ? items.filter(item => item.id !== pallet) : items.map(item => (item.id === pallet ? { ...item, quantity } : item)))
+  return { reserve: change(card.reserve), elsewhere: change(card.elsewhere) }
+}
+
 /**
- * A material card after taking all (`quantity` left out or at least what is there) or part of one of its pallets. A
- * pallet with an unknown quantity stays after a part (still unknown, and it never counted in the total). Mirrors takeFrom.
+ * A material card after taking all (`quantity` left out or at least what is there) or part of one of its pallets (a
+ * reserve pallet or one outside FIFO). A pallet with an unknown quantity stays after a part (still unknown, and it never
+ * counted in the total). Mirrors takeFrom.
  */
 export function takeFromCard(card: MaterialCard, pallet: string, quantity?: number): MaterialCard {
-  const found = card.reserve.find(item => item.id === pallet)
+  const found = findPallet(card, pallet)
   if (!found) return card
   if (quantity !== undefined && found.quantity === null) return card
   const whole = quantity === undefined || (found.quantity !== null && quantity >= found.quantity)
   const taken = whole ? (found.quantity ?? 0) : quantity
-  return {
-    ...card,
-    reserve: whole ? card.reserve.filter(item => item.id !== pallet) : card.reserve.map(item => (item.id === pallet ? { ...item, quantity: (item.quantity ?? 0) - taken } : item)),
-    total: Math.max(0, card.total - taken),
-  }
+  return { ...card, ...palletLists(card, pallet, whole ? 'gone' : (found.quantity ?? 0) - taken), total: Math.max(0, card.total - taken) }
 }
 
 /** A material card after a pallet with an unknown quantity was counted: it has the quantity, and the total counts it. */
 export function countedInCard(card: MaterialCard, pallet: string, quantity: number): MaterialCard {
-  const found = card.reserve.find(item => item.id === pallet)
+  const found = findPallet(card, pallet)
   if (!found) return card
-  return {
-    ...card,
-    reserve: card.reserve.map(item => (item.id === pallet ? { ...item, quantity } : item)),
-    total: card.total - (found.quantity ?? 0) + quantity,
-  }
+  return { ...card, ...palletLists(card, pallet, quantity), total: card.total - (found.quantity ?? 0) + quantity }
 }
 
 /**

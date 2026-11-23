@@ -1,4 +1,4 @@
-import type { Deferred, Location, LocationEvent, LocationInput, UndoEffect, LocationPurpose, LocationType, SlotSuggestion } from '@/types/warehouse'
+import type { Deferred, ElsewhereReason, Location, LocationEvent, LocationInput, UndoEffect, LocationPurpose, LocationType, SlotSuggestion } from '@/types/warehouse'
 import { formatNumber } from './format'
 import { t, warehouseLocale } from './text'
 
@@ -186,6 +186,27 @@ export function reasonLabel(reason: SlotSuggestion['reason']): string {
   if (reason === 'fixed') return t('Fast plads', 'Fixed place')
   if (reason === 'near') return t('Nær samme materiale', 'Near the same material')
   return t('Ledig', 'Free')
+}
+
+/** Why a pallet is outside FIFO: the place it stands on. */
+export function elsewhereReasonLabel(reason: ElsewhereReason): string {
+  if (reason === 'deaktiveret') return t('Deaktiveret plads', 'Deactivated place')
+  if (reason === 'reserveret') return t('Reserveret plads', 'Reserved place')
+  return t('Arbejdsstation', 'Work station')
+}
+
+/** Under "Andre paller": what they are and what can be done with them. */
+export const elsewhereNote = () => t('De står på en deaktiveret eller reserveret plads eller på en arbejdsstation. De kan flyttes eller tages, men kommer aldrig først i FIFO.', 'They are on a deactivated or reserved place or on a work station. They can be moved or taken, but never come first in FIFO.')
+
+const palletsWithoutQuantity = (n: number) => t(n === 1 ? '1 palle uden antal' : `${n} paller uden antal`, n === 1 ? '1 pallet without a quantity' : `${n} pallets without a quantity`)
+
+/** "På lager": the counted pieces, with "≥" and the pallets without a quantity when some have none. */
+export function stockText(card: { total: number; reserve: { quantity: number | null }[]; elsewhere: { quantity: number | null }[] }): { amount: string; unknown: string | null } {
+  const unknown = [...card.reserve, ...card.elsewhere].filter(pallet => pallet.quantity === null).length
+  const pieces = t(`${formatNumber(card.total)} stk.`, `${formatNumber(card.total)} pcs`)
+  if (!unknown) return { amount: pieces, unknown: null }
+  if (!card.total) return { amount: palletsWithoutQuantity(unknown), unknown: null }
+  return { amount: `≥ ${pieces}`, unknown: `+ ${palletsWithoutQuantity(unknown)}` }
 }
 
 /** The toast for an action kept on this PC while M: is down or busy. */

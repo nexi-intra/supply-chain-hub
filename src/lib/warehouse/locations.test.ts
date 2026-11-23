@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Location, LocationEvent } from '@/types/warehouse'
-import { describeEvent, describeUndoEffect, formatAge, isDeferred, linkedChanges, linkedPurposes, locationKeyOf, materialLabel, palletLimitOf, shownQuantity, singleFlight, storedCapacityOf, targetFromItem } from './locations'
+import { describeEvent, describeUndoEffect, elsewhereReasonLabel, formatAge, stockText, isDeferred, linkedChanges, linkedPurposes, locationKeyOf, materialLabel, palletLimitOf, shownQuantity, singleFlight, storedCapacityOf, targetFromItem } from './locations'
 import { setWarehouseLanguage } from './text'
 
 afterEach(() => setWarehouseLanguage('da'))
@@ -31,6 +31,23 @@ describe('Placeringer helpers', () => {
     expect(targetFromItem('log:A1.1')).toEqual({ kind: 'log', id: 'A1.1' })
     expect(targetFromItem('')).toEqual({ kind: 'home' })
     expect(targetFromItem('nonsense:1')).toEqual({ kind: 'home' })
+  })
+
+  it('stockText says "≥ N stk." and how many pallets have no quantity when some are unknown', () => {
+    const pallet = (quantity: number | null) => ({ quantity })
+    expect(stockText({ total: 160, reserve: [pallet(100)], elsewhere: [pallet(60)] })).toEqual({ amount: '160 stk.', unknown: null })
+    expect(stockText({ total: 1600, reserve: [pallet(1600), pallet(null)], elsewhere: [pallet(null)] })).toEqual({ amount: '≥ 1.600 stk.', unknown: '+ 2 paller uden antal' })
+    expect(stockText({ total: 5, reserve: [], elsewhere: [pallet(5), pallet(null)] })).toEqual({ amount: '≥ 5 stk.', unknown: '+ 1 palle uden antal' })
+    expect(stockText({ total: 0, reserve: [pallet(null)], elsewhere: [] }), 'nothing counted: no "≥ 0"').toEqual({ amount: '1 palle uden antal', unknown: null })
+    expect(stockText({ total: 0, reserve: [], elsewhere: [] })).toEqual({ amount: '0 stk.', unknown: null })
+    setWarehouseLanguage('en')
+    expect(stockText({ total: 1600, reserve: [pallet(null)], elsewhere: [pallet(null)] })).toEqual({ amount: '≥ 1,600 pcs', unknown: '+ 2 pallets without a quantity' })
+  })
+
+  it('elsewhereReasonLabel names why a pallet is outside FIFO in Danish and English', () => {
+    expect(['deaktiveret', 'reserveret', 'arbejdsstation'].map(reason => elsewhereReasonLabel(reason as 'deaktiveret'))).toEqual(['Deaktiveret plads', 'Reserveret plads', 'Arbejdsstation'])
+    setWarehouseLanguage('en')
+    expect(elsewhereReasonLabel('reserveret')).toBe('Reserved place')
   })
 
   it('locationKeyOf writes a place like the backend: case and spaces do not matter', () => {

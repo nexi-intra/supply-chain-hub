@@ -7,14 +7,14 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { formatNumber } from '@/lib/warehouse/format'
-import { formatAge, formatDate, type LocationsTarget } from '@/lib/warehouse/locations'
+import { elsewhereNote, elsewhereReasonLabel, formatAge, formatDate, type LocationsTarget } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
 import type { MaterialCard } from '@/types/warehouse'
 import { MaterialPicker } from './MaterialPicker'
 
 /**
  * "Hvor henter jeg?": type (or scan) a material number – suggestions with SAP's description appear as you type – and
- * see where to fetch it: its pick place(s), and the reserve pallets oldest first.
+ * see where to fetch it: its pick place(s), the reserve pallets oldest first, and below them the pallets outside FIFO.
  */
 export function FetchGuide({ material: initial, version, onOpen }: { material?: string; version: number; onOpen: (target: LocationsTarget) => void }) {
   const [query, setQuery] = useState(initial || '')
@@ -100,7 +100,25 @@ export function FetchGuide({ material: initial, version, onOpen }: { material?: 
               {card.reserve.length > 6 && <p className="text-xs text-muted-foreground">{t(`og ${card.reserve.length - 6} paller mere`, `and ${card.reserve.length - 6} more pallets`)}</p>}
             </div>
 
-            {(card.reserve.length > 0 || card.shelves.length > 0) && (
+            {card.elsewhere.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium">{t('Andre paller (ikke i FIFO)', 'Other pallets (not in FIFO)')}</p>
+                <p className="text-xs text-muted-foreground">{elsewhereNote()}</p>
+                <div className="divide-y rounded-md border">
+                  {card.elsewhere.slice(0, 6).map(pallet => (
+                    <button key={pallet.id} type="button" onClick={() => onOpen({ kind: 'pallet', id: pallet.id })} className="flex w-full flex-wrap items-center gap-3 px-3 py-2 text-left text-sm hover:bg-secondary">
+                      <span className="w-20 font-mono font-semibold">{pallet.location}</span>
+                      <Badge variant="secondary">{elsewhereReasonLabel(pallet.reason)}</Badge>
+                      <span className="text-muted-foreground">{formatDate(pallet.receivedAt)} · {formatAge(pallet.ageDays)}</span>
+                      <span>{pallet.quantity === null ? '' : t(`${formatNumber(pallet.quantity)} stk.`, `${formatNumber(pallet.quantity)} pcs`)}</span>
+                    </button>
+                  ))}
+                </div>
+                {card.elsewhere.length > 6 && <p className="text-xs text-muted-foreground">{t(`og ${card.elsewhere.length - 6} paller mere`, `and ${card.elsewhere.length - 6} more pallets`)}</p>}
+              </div>
+            )}
+
+            {(card.reserve.length > 0 || card.elsewhere.length > 0 || card.shelves.length > 0) && (
               <div className="flex justify-end">
                 <Button variant="outline" onClick={() => onOpen({ kind: 'take', id: card.material })}><HandGrabbing size={16} /> {t('Tag', 'Take')}</Button>
               </div>

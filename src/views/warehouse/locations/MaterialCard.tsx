@@ -7,12 +7,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { formatNumber } from '@/lib/warehouse/format'
-import { formatAge, formatDate, type LocationsTarget } from '@/lib/warehouse/locations'
+import { elsewhereNote, elsewhereReasonLabel, formatAge, formatDate, stockText, type LocationsTarget } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
 import type { MaterialCard as MaterialCardData } from '@/types/warehouse'
 import { HistoryList } from './HistoryList'
 
-/** Everything about one material: station, pick places with status, reserve pallets oldest first, total. */
+/** Everything about one material: station, pick places with status, reserve pallets oldest first, pallets outside FIFO, total. */
 export function MaterialCard({ material, version, onOpen }: { material: string; version: number; onOpen: (target: LocationsTarget) => void }) {
   const [card, setCard] = useState<MaterialCardData | null>(null)
   useEffect(() => {
@@ -22,6 +22,7 @@ export function MaterialCard({ material, version, onOpen }: { material: string; 
   }, [material, version])
 
   if (!card) return <Skeleton className="h-80 rounded-xl" />
+  const stock = stockText(card)
   const place = (id: string) => <button type="button" className="font-mono font-semibold hover:underline" onClick={() => onOpen({ kind: 'location', id })}>{id}</button>
 
   return (
@@ -31,7 +32,7 @@ export function MaterialCard({ material, version, onOpen }: { material: string; 
           <h1 className="font-mono text-2xl font-semibold tracking-tight">{card.material}</h1>
           <p className="text-muted-foreground">{card.description || t('Ingen beskrivelse fra SAP endnu', 'No description from SAP yet')}</p>
         </div>
-        <Button onClick={() => onOpen({ kind: 'take', id: card.material })} disabled={!card.reserve.length && !card.shelves.length}><HandGrabbing size={16} /> {t('Tag', 'Take')}</Button>
+        <Button onClick={() => onOpen({ kind: 'take', id: card.material })} disabled={!card.reserve.length && !card.elsewhere.length && !card.shelves.length}><HandGrabbing size={16} /> {t('Tag', 'Take')}</Button>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
@@ -53,8 +54,11 @@ export function MaterialCard({ material, version, onOpen }: { material: string; 
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm">{t('På lager', 'In stock')}</CardTitle></CardHeader>
           <CardContent className="text-sm">
-            <p className="text-2xl font-semibold">{formatNumber(card.total)}</p>
-            <p className="text-xs text-muted-foreground">{t(`på ${card.reserve.length} reservepaller og ${card.shelves.length} hylder`, `on ${card.reserve.length} reserve pallets and ${card.shelves.length} shelves`)}</p>
+            <p className="text-2xl font-semibold">{stock.amount}</p>
+            {stock.unknown && <p className="text-sm text-muted-foreground">{stock.unknown}</p>}
+            <p className="text-xs text-muted-foreground">{card.elsewhere.length
+              ? t(`på ${card.reserve.length} reservepaller, ${card.elsewhere.length} andre paller og ${card.shelves.length} hylder`, `on ${card.reserve.length} reserve pallets, ${card.elsewhere.length} other pallets and ${card.shelves.length} shelves`)
+              : t(`på ${card.reserve.length} reservepaller og ${card.shelves.length} hylder`, `on ${card.reserve.length} reserve pallets and ${card.shelves.length} shelves`)}</p>
           </CardContent>
         </Card>
       </div>
@@ -76,6 +80,27 @@ export function MaterialCard({ material, version, onOpen }: { material: string; 
           </div>
         </CardContent>
       </Card>
+
+      {card.elsewhere.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">{t('Andre paller (ikke i FIFO)', 'Other pallets (not in FIFO)')}</CardTitle>
+            <p className="text-sm text-muted-foreground">{elsewhereNote()}</p>
+          </CardHeader>
+          <CardContent className="divide-y">
+            {card.elsewhere.map(pallet => (
+              <button key={pallet.id} type="button" onClick={() => onOpen({ kind: 'pallet', id: pallet.id })} className="flex w-full flex-wrap items-center gap-3 px-1 py-2 text-left text-sm hover:bg-secondary">
+                <span className="w-20 font-mono font-semibold">{pallet.location}</span>
+                <Badge variant="secondary">{elsewhereReasonLabel(pallet.reason)}</Badge>
+                <span className="text-muted-foreground">{formatDate(pallet.receivedAt)} · {formatAge(pallet.ageDays)}</span>
+                <span>{pallet.quantity === null ? '' : formatNumber(pallet.quantity)}</span>
+                <span className="font-mono text-xs text-muted-foreground">{pallet.sloc}</span>
+                {pallet.tags.map(tag => <Badge key={tag} variant="outline">{tag}</Badge>)}
+              </button>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       {card.shelves.length > 0 && (
         <Card>

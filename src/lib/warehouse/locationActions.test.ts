@@ -164,7 +164,22 @@ describe('optimistic changes', () => {
       { id: 'p2', location: 'A1.2', material: 'R162-0717', quantity: null, receivedAt: 2, document: null, serials: [], sloc: 'D000', tags: [], note: '', createdAt: 2, createdBy: { email: '', name: '' }, ageDays: 2 },
     ],
     shelves: [{ location: 'E9 H1', name: 'E9 H1', quantity: 60 }],
+    elsewhere: [],
   }
+  const withElsewhere: MaterialCard = {
+    ...card, total: 170,
+    elsewhere: [
+      { id: 'p3', location: 'A3.1', material: 'R162-0717', quantity: 10, receivedAt: 0, document: null, serials: [], sloc: 'D000', tags: [], note: '', createdAt: 0, createdBy: { email: '', name: '' }, ageDays: 4, reason: 'deaktiveret' },
+      { id: 'p4', location: 'I8', material: 'R162-0717', quantity: null, receivedAt: 3, document: null, serials: [], sloc: 'D000', tags: [], note: '', createdAt: 3, createdBy: { email: '', name: '' }, ageDays: 1, reason: 'arbejdsstation' },
+    ],
+  }
+
+  it('takeFromCard and countedInCard also find a pallet outside FIFO, and leave the reserve list as it is', () => {
+    expect(takeFromCard(withElsewhere, 'p3', 4)).toMatchObject({ total: 166, reserve: card.reserve, elsewhere: [{ id: 'p3', quantity: 6 }, { id: 'p4' }] })
+    expect(takeFromCard(withElsewhere, 'p3')).toMatchObject({ total: 160, reserve: card.reserve, elsewhere: [{ id: 'p4' }] })
+    expect(takeFromCard(withElsewhere, 'p4', 2)).toMatchObject({ total: 170, elsewhere: [{ id: 'p3' }, { id: 'p4', quantity: null }] })
+    expect(countedInCard(withElsewhere, 'p4', 30)).toMatchObject({ total: 200, reserve: card.reserve, elsewhere: [{ id: 'p3' }, { id: 'p4', quantity: 30 }] })
+  })
 
   it('takeFromCard takes part of a pallet, or all of it (also with a quantity at least what is there)', () => {
     expect(takeFromCard(card, 'p1', 30)).toMatchObject({ total: 130, reserve: [{ id: 'p1', quantity: 70 }, { id: 'p2' }] })
