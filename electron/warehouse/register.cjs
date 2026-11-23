@@ -43,6 +43,11 @@ function codeError(code) {
   return Object.assign(new Error(code), { code })
 }
 
+/** A confirmed list from the window (DOC_STOCK_MISSING, PIDOC_ZERO_CONFIRM): strings only, bounded. */
+function confirmedList(value) {
+  return Array.isArray(value) ? value.filter(item => typeof item === 'string' && item.length <= 80).slice(0, 2000) : []
+}
+
 /** IPC errors carry "CODE" or "CODE: Danish detail"; internal details (paths, stacks) never reach the window. */
 function toIpcError(error) {
   const code = typeof error?.code === 'string' && CODE.test(error.code) ? error.code : STORAGE_ERRORS.has(error?.code) ? 'STORAGE_UNAVAILABLE' : 'UNEXPECTED_ERROR'
@@ -344,11 +349,11 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   })
   handle('placements:save', (user, p) => counts.savePlacement(user, { name: p.name, area: p.area, type: p.type }))
   handle('counts:doc', (user, p) => counts.countDoc(user, p.id))
-  handle('counts:doc-fetch', (user, p) => counts.fetchDocStock(user, p.id, { confirmMissing: p.confirmMissing === true }))
+  handle('counts:doc-fetch', (user, p) => counts.fetchDocStock(user, p.id, { confirmMissing: confirmedList(p.confirmMissing) }))
   handle('pidocs:list', (user, p) => piDocs.list(user, p.id))
   handle('pidocs:create', (user, p) => piDocs.create(user, p.id, { materials: Array.isArray(p.materials) ? p.materials : [], sloc: p.sloc, stockType: p.stockType }))
   handle('pidocs:print', (user, p) => piDocs.print(user, p.id, p.docId))
-  handle('pidocs:count', (user, p) => piDocs.count(user, p.id, p.docId, { confirmZero: p.confirmZero === true }))
+  handle('pidocs:count', (user, p) => piDocs.count(user, p.id, p.docId, { confirmZero: confirmedList(p.confirmZero) }))
   handle('pidocs:post', (user, p) => piDocs.post(user, p.id, Array.isArray(p.docIds) ? p.docIds : []))
   handle('pidocs:delete', (user, p) => piDocs.remove(user, p.id, p.docId))
   handle('roles:me', async user => ({ role: await roles.roleOf(user), locationAdmin: await roles.isLocationAdmin(user) }))

@@ -52,7 +52,7 @@ export function DocPanel({ id, open, state }: PanelProps) {
 
   useEffect(() => { void load() }, [load, approvalsKey])
 
-  const fetchToday = async (confirmMissing = false) => {
+  const fetchToday = async (confirmMissing: string[] = []) => {
     setConfirmation(null)
     setStep('check')
     const unsubscribe = window.electronWarehouse!.sap.onFetchProgress(progress => setStep(progress.step))
@@ -149,11 +149,11 @@ export function DocPanel({ id, open, state }: PanelProps) {
     }
   }
 
-  const countDoc = async (item: PiDoc, confirmZero = false) => {
+  const countDoc = async (item: PiDoc, confirmZero: string[] = []) => {
     setConfirmation(null)
     setBusy(item.id)
     try {
-      setPiList(await window.electronWarehouse!.piDocs.count({ id, docId: item.id, ...(confirmZero ? { confirmZero: true } : {}) }))
+      setPiList(await window.electronWarehouse!.piDocs.count({ id, docId: item.id, ...(confirmZero.length ? { confirmZero } : {}) }))
       toast.success(t(`Antal er lagt på SAP-dokument ${item.docNo}`, `Quantity entered on SAP document ${item.docNo}`), { description: t('Klar til bogføring (manager).', 'Ready for posting (manager).') })
     } catch (error) {
       if (errorCode(error) === 'PIDOC_ZERO_CONFIRM') {
@@ -285,7 +285,7 @@ export function DocPanel({ id, open, state }: PanelProps) {
           <ConfirmDialog
             confirmation={confirmation}
             onCancel={() => setConfirmation(null)}
-            onConfirm={() => void (confirmation.kind === 'missing' ? fetchToday(true) : countDoc(confirmation.item, true))}
+            onConfirm={() => void (confirmation.kind === 'missing' ? fetchToday(confirmation.materials) : countDoc(confirmation.item, confirmation.materials))}
           />
         )}
       </CardContent>
@@ -314,7 +314,7 @@ function ConfirmDialog({ confirmation, onCancel, onConfirm }: { confirmation: Co
           : <p role="alert" className="text-sm text-destructive">{confirmation.message}</p>}
         <DialogFooter>
           <Button variant="ghost" onClick={onCancel}>{t('Annullér', 'Cancel')}</Button>
-          <SapActionButton variant="destructive" onAction={onConfirm}>
+          <SapActionButton variant="destructive" onAction={onConfirm} disabled={!confirmation.materials.length}>
             {missing ? t('Gem tallene alligevel', 'Save the figures anyway') : t('Læg 0 på alligevel', 'Enter 0 anyway')}
           </SapActionButton>
         </DialogFooter>

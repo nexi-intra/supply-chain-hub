@@ -8,7 +8,7 @@ const { storageRulesFor, suggestRulesFromStock, KINDS } = require('./core/classi
 const { buildSnapshot, indexSnapshot, summarizeSnapshot, normalizeMaterial, normalizeScope, MATERIAL_PATTERN } = require('./core/snapshot.cjs')
 const { scopeStockTypes, scopeKinds, scopeOverlap, describeOverlap, TERMINAL_KINDS, ACCESSORY_KINDS } = require('./core/scopes.cjs')
 const { normalizeSerial, matchSerial, activeEvents, aggregateCount, applyApprovals, freezeRows, buildCountLists, computeProgress } = require('./core/countState.cjs')
-const { docLinesFromSnapshot, missingAtApproval, linesAtApproval, approvedWithLinesText, buildCountDoc } = require('./core/countDoc.cjs')
+const { docLinesFromSnapshot, missingAtApproval, linesAtApproval, approvedWithLinesText, buildCountDoc, confirmedAll } = require('./core/countDoc.cjs')
 const { normalizeMatdoc } = require('./core/sapParsers.cjs')
 const { differenceTotals, archiveLines } = require('./core/archive.cjs')
 const { createJournal, readAllJournals } = require('./journal.cjs')
@@ -1412,27 +1412,27 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
    * Also after the status is locked: the SAP figures of the day only feed the count document ("Læg antal på" refuses
    * old ones), they change nothing in the count itself.
    * Refused (DOC_STOCK_MISSING) when the new figures have no line for an approved material where SAP had stock at
-   * approval: a failed or empty export would otherwise become "SAP i dag 0". `confirmMissing: true` saves them anyway.
+   * approval: a failed or empty export would otherwise become "SAP i dag 0". `confirmMissing` is the list the user was
+   * shown ("<material> <sloc>[ blocked]"); the figures are saved only when everything missing now is on it.
    */
-  async function fetchDocStock(user, id, { confirmMissing = false } = {}) {
+  async function fetchDocStock(user, id, { confirmMissing = [] } = {}) {
     const state = await load(user, id)
     const rights = await access(user, state)
     if (!canFetchDoc(user, rights)) throw codeError('COUNT_OWNER_ONLY', 'Kun den ansvarlige, en admin eller en manager kan hente dagens SAP-tal')
     const fetched = await fetcher.fetchPlant({ onProgress: step => emit('sap:fetch-progress', { step }) })
     const snapshot = buildSnapshot({ team: state.team, scope: state.snapshot.scope, mb52: fetched.mb52, serials: fetched.serials || [], rulesByTeam: await rulesByTeam(state.team), exclusions: state.snapshot.excluded.manual, fetchedAt: fetched.fetchedAt, fetchedBy: lower(user.email) })
     const lines = docLinesFromSnapshot(snapshot)
-    if (confirmMissing !== true) {
-      const today = new Set(lines.map(line => `${line.material}|${line.sloc}|${line.stockType}`))
-      const approvals = await repo.getApprovals(state.team, state.id)
-      const missing = []
-      for (const [material, approval] of Object.entries(approvals)) {
-        if (approval?.status !== 'approved' || !Array.isArray(approval.frozen)) continue
-        for (const row of approval.frozen) {
-          if (row.sapQty > 0 && !today.has(`${material}|${row.sloc}|${row.stockType}`)) missing.push(`${material} ${row.sloc}${row.stockType === 'blocked' ? ' blocked' : ''}`)
-        }
+    // A line with only serials (qty 0 in MB52) is "SAP i dag 0" too.
+    const today = new Set(lines.filter(line => line.qty > 0).map(line => `${line.material}|${line.sloc}|${line.stockType}`))
+    const approvals = await repo.getApprovals(state.team, state.id)
+    const missing = []
+    for (const [material, approval] of Object.entries(approvals)) {
+      if (approval?.status !== 'approved' || !Array.isArray(approval.frozen)) continue
+      for (const row of approval.frozen) {
+        if (row.sapQty > 0 && !today.has(`${material}|${row.sloc}|${row.stockType}`)) missing.push(`${material} ${row.sloc}${row.stockType === 'blocked' ? ' blocked' : ''}`)
       }
-      if (missing.length) throw codeError('DOC_STOCK_MISSING', `Dagens SAP-tal har ingen linje for godkendte materialer, som SAP havde på lager ved godkendelsen. Tallene er ikke gemt. Gælder: ${missing.sort().join(', ')}`)
     }
+    if (!confirmedAll(missing, confirmMissing)) throw codeError('DOC_STOCK_MISSING', `Dagens SAP-tal har ingen linje for godkendte materialer, som SAP havde på lager ved godkendelsen. Tallene er ikke gemt. Gælder: ${missing.sort().join(', ')}`)
     await repo.setCountDoc(state.team, state.id, { fetchedAt: fetched.fetchedAt, by: me(user), withSerials: true, lines })
     return countDoc(user, id)
   }

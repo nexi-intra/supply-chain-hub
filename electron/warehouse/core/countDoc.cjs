@@ -142,4 +142,13 @@ function buildCountDoc({ rows, approvals = {}, doc = null, missingOf = () => [],
   return { rows: result, missingApproval: missing.size, withSerials }
 }
 
-module.exports = { docLinesFromSnapshot, missingAtApproval, linesAtApproval, approvedWithLinesText, buildCountDoc }
+/**
+ * A confirmation covers only what the user was shown: true when every item of `current` is on the confirmed list
+ * (anything that is not an array of strings confirms nothing).
+ */
+function confirmedAll(current, confirmed) {
+  const list = new Set(Array.isArray(confirmed) ? confirmed.filter(item => typeof item === 'string') : [])
+  return current.every(item => list.has(item))
+}
+
+module.exports = { docLinesFromSnapshot, missingAtApproval, linesAtApproval, approvedWithLinesText, buildCountDoc, confirmedAll }

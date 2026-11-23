@@ -115,13 +115,25 @@ test('an empty serial list with SAP stock today is never a silent Zero Count: re
   const service = createPiDocService({ counts, repo, roles: { roleOf: async () => 'admin' }, writer, system: 'QS4' })
 
   await assert.rejects(service.count(ANNA, 'c1', 'D4'), error => error.code === 'PIDOC_ZERO_CONFIRM' && /: INT2-0$/.test(error.message))
-  await assert.rejects(service.count(ANNA, 'c1', 'D4', { confirmZero: 'yes' }), { code: 'PIDOC_ZERO_CONFIRM' }, 'only true confirms')
+  for (const confirmZero of [true, 'INT2-0', ['INT3-0']]) {
+    await assert.rejects(service.count(ANNA, 'c1', 'D4', { confirmZero }), { code: 'PIDOC_ZERO_CONFIRM' }, 'only a list holding the empty materials confirms')
+  }
   assert.deepEqual(calls, [], 'nothing went into SAP, not even the material with serials')
   assert.equal(stored.D4.status, 'printed')
 
-  await service.count(ANNA, 'c1', 'D4', { confirmZero: true })
+  await service.count(ANNA, 'c1', 'D4', { confirmZero: ['INT2-0'] })
   assert.deepEqual(calls, [['serials', { docNo: '105000913', year: '2026', material: 'INT1-0', serials: ['S1'] }], ['counts', { docNo: '105000913', year: '2026', entries: [{ material: 'INT2-0', qty: 0 }, { material: 'INT3-0', qty: 0 }] }]])
   assert.equal(stored.D4.status, 'counted')
+
+  // Someone fetched again between the dialog and the click: INT4-0 is empty now too, and was never shown.
+  calls.length = 0
+  stored.D6 = { ...stored.D4, id: 'D6', docNo: '105000915', status: 'printed', entered: undefined, countedBy: undefined, lines: [{ material: 'INT2-0', transaction: 'ZMS_COUNT_SERIAL' }, { material: 'INT4-0', transaction: 'ZMS_COUNT_SERIAL' }] }
+  rows.push(row('INT4-0', 'new', { docQty: 0, sapToday: 3 }))
+  serials['INT4-0'] = []
+  await assert.rejects(service.count(ANNA, 'c1', 'D6', { confirmZero: ['INT2-0'] }), error => error.code === 'PIDOC_ZERO_CONFIRM' && /: INT2-0, INT4-0$/.test(error.message))
+  assert.deepEqual(calls, [])
+  await service.count(ANNA, 'c1', 'D6', { confirmZero: ['INT4-0', 'INT2-0'] })
+  assert.deepEqual(calls, [['counts', { docNo: '105000915', year: '2026', entries: [{ material: 'INT2-0', qty: 0 }, { material: 'INT4-0', qty: 0 }] }]])
 })
 
 test('the Zero Count check comes after the stale-figures and quantity-line checks', async () => {
@@ -130,7 +142,7 @@ test('the Zero Count check comes after the stale-figures and quantity-line check
   const repo = { getPiDocs: async () => structuredClone(stored), changePiDocs: async (team, id, change) => { stored = change(structuredClone(stored)).all } }
   const counts = { countDoc: async () => state, copySerials: async () => { throw Object.assign(new Error('x'), { code: 'APPROVED_WITH_SERIAL_LINES' }) } }
   const service = createPiDocService({ counts, repo, roles: { roleOf: async () => 'admin' }, writer: {}, system: 'QS4' })
-  await assert.rejects(service.count(ANNA, 'c1', 'D5', { confirmZero: true }), { code: 'PIDOC_DOC_STALE' })
+  await assert.rejects(service.count(ANNA, 'c1', 'D5', { confirmZero: ['INT2-0'] }), { code: 'PIDOC_DOC_STALE' })
   state.fetchedAt = Date.now()
   state.rows = [row('INT2-0', 'new', { docQty: null, sapToday: 5, serialLinesAtApproval: true })]
   await assert.rejects(service.count(ANNA, 'c1', 'D5'), { code: 'APPROVED_WITH_SERIAL_LINES' })

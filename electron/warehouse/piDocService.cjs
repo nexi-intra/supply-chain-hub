@@ -2,7 +2,7 @@
 // core/piDocs.cjs. While SAP waits for the user's F8 the materials are reserved ('creating') so nobody creates them twice.
 const crypto = require('node:crypto')
 const { planDocument, refusal, NEXT } = require('./core/piDocs.cjs')
-const { approvedWithLinesText } = require('./core/countDoc.cjs')
+const { approvedWithLinesText, confirmedAll } = require('./core/countDoc.cjs')
 
 const RESERVATION_MS = 20 * 60 * 1000
 
@@ -111,9 +111,10 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
    * ("Antal til dokument"). Every material entered is remembered, so a later failure can be retried without repeating it.
    * The quantities are worked out again from the SAP figures of the day on every call, so these must be fresh (staleFigures).
    * An empty serial list is a Zero Count in MI04, which posts the whole book stock as a loss: unless SAP has none today
-   * either, it needs `confirmZero: true` (PIDOC_ZERO_CONFIRM), checked before anything goes into SAP.
+   * either, the material must be on `confirmZero` (the list the user was shown), else PIDOC_ZERO_CONFIRM. Checked
+   * before anything goes into SAP.
    */
-  async function count(user, id, docId, { confirmZero = false } = {}) {
+  async function count(user, id, docId, { confirmZero = [] } = {}) {
     const { rows, fetchedAt, docs, role } = await context(user, id)
     const doc = docs.find(item => item.id === docId)
     const reason = refusal({ action: 'count', role, email: user.email, doc })
@@ -142,7 +143,7 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
       serialLists.set(line.material, serials)
     }
     const zero = [...serialLists].filter(([material, serials]) => !serials.length && rowOf(material)?.sapToday !== 0).map(([material]) => material)
-    if (zero.length && confirmZero !== true) throw codeError('PIDOC_ZERO_CONFIRM', `Serienummerlisten er tom, men SAP har lager i dag. Antallet bliver 0, og hele lageret bogføres som tab. Gælder: ${zero.join(', ')}`)
+    if (!confirmedAll(zero, confirmZero)) throw codeError('PIDOC_ZERO_CONFIRM', `Serienummerlisten er tom, men SAP har lager i dag. Antallet bliver 0, og hele lageret bogføres som tab. Gælder: ${zero.join(', ')}`)
     for (const line of pending) {
       if (line.transaction === 'ZMS_COUNT_SERIAL') {
         const serials = serialLists.get(line.material)

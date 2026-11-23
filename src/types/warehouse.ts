@@ -1142,8 +1142,8 @@ export interface WarehouseBridge {
     approveClean(id: string): Promise<{ approved: number }>
     copySerials(request: { id: string; material: string; sloc: string; stockType: StockType; forDoc?: boolean }): Promise<CopySerialsResult>
     doc(id: string): Promise<CountDoc>
-    /** Refused with DOC_STOCK_MISSING when an approved material with SAP stock at approval has no line today; `confirmMissing` saves anyway. */
-    fetchDoc(id: string, options?: { confirmMissing?: boolean }): Promise<CountDoc>
+    /** Refused with DOC_STOCK_MISSING when an approved material with SAP stock at approval has no line today; saved only when every missing line is on `confirmMissing` (the list shown). */
+    fetchDoc(id: string, options?: { confirmMissing?: string[] }): Promise<CountDoc>
     flush(id: string): Promise<{ ok: boolean; pending: number }>
     report(id: string, language?: 'da' | 'en'): Promise<{ file: string; name: string }>
     openReport(file: string): Promise<{ ok: true }>
@@ -1172,8 +1172,8 @@ export interface WarehouseBridge {
     list(id: string): Promise<PiDocList>
     create(request: { id: string; materials: string[]; sloc: string; stockType: StockType }): Promise<PiDocList & { created: string[]; missing: string[] }>
     print(request: { id: string; docId: string }): Promise<PiDocList>
-    /** Refused with PIDOC_ZERO_CONFIRM when an empty serial list would be a Zero Count while SAP has stock today; `confirmZero` enters it anyway. */
-    count(request: { id: string; docId: string; confirmZero?: boolean }): Promise<PiDocList>
+    /** Refused with PIDOC_ZERO_CONFIRM when an empty serial list would be a Zero Count while SAP has stock today; entered only when every such material is on `confirmZero` (the list shown). */
+    count(request: { id: string; docId: string; confirmZero?: string[] }): Promise<PiDocList>
     post(request: { id: string; docIds: string[] }): Promise<PiDocList & { posted: string[]; open: string[] }>
     remove(request: { id: string; docId: string }): Promise<PiDocList>
   }

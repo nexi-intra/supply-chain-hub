@@ -9,7 +9,7 @@ Option Explicit
 On Error Resume Next
 
 Const PLANT = "D301"
-Dim report, outDir, outFile, stockType, app, conn, s, base, i, before, beforeIds, fso, rows, grid, msgType, msgText
+Dim report, outDir, outFile, stockType, app, conn, s, base, i, before, beforeIds, fso, rows, grid, msgType, msgText, msgId, msgNumber
 
 Function JsonText(value)
   Dim t
@@ -116,16 +116,26 @@ Sub SetFields(names, value)
   Next
 End Sub
 
-' SAP's status bar after F8 (as matdoc.vbs reads it); both stay empty when it cannot be read.
+' SAP's status bar after F8 (as matdoc.vbs reads it), with the message class and number; all stay empty when they
+' cannot be read.
 Sub ReadStatusBar()
   On Error Resume Next
   Err.Clear
   msgType = ""
   msgText = ""
+  msgId = ""
+  msgNumber = ""
   msgType = CStr(s.findById("wnd[0]/sbar").MessageType)
   msgText = CStr(s.findById("wnd[0]/sbar").Text)
+  msgId = UCase(Trim(CStr(s.findById("wnd[0]/sbar").MessageId)))
+  msgNumber = Trim(CStr(s.findById("wnd[0]/sbar").MessageNumber))
   Err.Clear
 End Sub
+
+' IH 047 "No objects selected": IQ09 found nothing, whatever type the GUI gives the message.
+Function NothingSelected()
+  NothingSelected = (msgId = "IH" And Right("000" & msgNumber, 3) = "047")
+End Function
 
 report = LCase(WScript.Arguments(0))
 outDir = WScript.Arguments(1)
@@ -227,9 +237,10 @@ Else
   WaitIdle
   Set grid = FindGridIn(s.findById("wnd[0]/usr"))
   If grid Is Nothing Then
-    ' No list: an error or access message fails; otherwise IQ09 found no serials (sapFetch.cjs checks that against MB52).
+    ' No list: an error or access message fails, except IH 047 (nothing selected); otherwise IQ09 found no serials
+    ' (sapFetch.cjs checks that against MB52).
     ReadStatusBar
-    If msgType = "E" Or msgType = "A" Then Finish False, "sap: " & msgText
+    If (msgType = "E" Or msgType = "A") And Not NothingSelected() Then Finish False, "sap: " & msgText
     rows = 0
     Finish True, ""
   End If
