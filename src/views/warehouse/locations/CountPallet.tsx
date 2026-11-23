@@ -25,7 +25,7 @@ export function CountPallet({ pallet, onCounted, onDone }: { pallet: Reserve; on
     setOpen(false)
     setCount('')
     void sendLocationAction(() => window.electronWarehouse!.locations.editPallet({
-      actionId: newActionId(), label: t(`Tæl pallen med ${pallet.material} på ${pallet.location}`, `Count the pallet with ${pallet.material} on ${pallet.location}`), pallet: pallet.id, changes: { quantity },
+      actionId: newActionId(), label: t(`Tæl pallen med ${pallet.material} på ${pallet.location}`, `Count the pallet with ${pallet.material} on ${pallet.location}`), pallet: pallet.id, changes: { quantity }, expected: { quantity: pallet.quantity },
     }), {
       success: t(`Pallen på ${pallet.location} har nu ${formatNumber(quantity)} stk.`, `The pallet on ${pallet.location} now has ${formatNumber(quantity)} pcs`),
       settled: onDone,

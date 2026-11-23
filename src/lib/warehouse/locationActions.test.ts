@@ -6,7 +6,7 @@ vi.mock('sonner', () => ({ toast }))
 
 import { pendingWriteCount } from '@/lib/pendingWrites'
 import {
-  addToStock, countedInCard, isPlaceHidden, locationActionsInFlight, matdocOf, movedInList, moveTargetCheck, predictedRack, sendLocationAction, startLocationsRead,
+  addToStock, countedInCard, isPlaceHidden, locationActionsInFlight, matdocOf, movedInList, moveTargetCheck, palletEdit, predictedRack, sendLocationAction, startLocationsRead,
   takeFromCard, takeFromCardShelf, withPutAway, withStockQuantity,
 } from './locationActions'
 import { setWarehouseLanguage } from './text'
@@ -131,6 +131,15 @@ describe('optimistic changes', () => {
   it('countedInCard gives a pallet with an unknown quantity its count and adds it to the total', () => {
     expect(countedInCard(card, 'p2', 40)).toMatchObject({ total: 200, reserve: [{ id: 'p1', quantity: 100 }, { id: 'p2', quantity: 40 }] })
     expect(countedInCard(card, 'gone', 40)).toBe(card)
+  })
+
+  it('palletEdit sends only the changed fields, each with the value the dialog showed (expected)', () => {
+    const [shown] = card.reserve
+    expect(palletEdit(shown, { material: 'R162-0717', quantity: 100, receivedAt: 1, document: null, serials: [], tags: [], note: 'Hjørne skadet' }))
+      .toEqual({ changes: { note: 'Hjørne skadet' }, expected: { note: '' } })
+    expect(palletEdit(shown, { quantity: 90, tags: ['Brandskab'], document: null })).toEqual({ changes: { quantity: 90, tags: ['Brandskab'] }, expected: { quantity: 100, tags: [] } })
+    expect(palletEdit(card.reserve[1], { quantity: 40 })).toEqual({ changes: { quantity: 40 }, expected: { quantity: null } })
+    expect(palletEdit(shown, { quantity: 100 })).toEqual({ changes: {}, expected: {} })
   })
 
   it('takeFromCardShelf lowers the line and drops it at 0', () => {

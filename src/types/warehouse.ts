@@ -1028,7 +1028,8 @@ export interface LocationsBridge {
   refill(request: WithActionId<{ location: string; pallet?: string; shelf?: string; material?: string; quantity?: number }>): Promise<{ pallet?: Pallet | null; line?: StockLine | null } | Deferred>
   move(request: WithActionId<{ pallet: string; to: string }>): Promise<{ pallet: Pallet | null } | Deferred>
   changeSloc(request: WithActionId<{ pallet: string; sloc: string }>): Promise<{ pallet: Pallet } | Deferred>
-  editPallet(request: WithActionId<{ pallet: string; changes: Partial<Omit<Pallet, 'id' | 'location' | 'createdAt' | 'createdBy'>> }>): Promise<{ pallet: Pallet } | Deferred>
+  /** `expected`: what the person saw of each changed field; the edit is refused (PALLET_CHANGED) when the pallet no longer has it. */
+  editPallet(request: WithActionId<{ pallet: string; changes: Partial<Omit<Pallet, 'id' | 'location' | 'createdAt' | 'createdBy'>>; expected?: Partial<Omit<Pallet, 'id' | 'location' | 'createdAt' | 'createdBy'>> }>): Promise<{ pallet: Pallet } | Deferred>
   search(request: { query: string }): Promise<LocationSearch>
   materialCard(request: { material: string }): Promise<MaterialCard>
   locationCard(request: { location: string }): Promise<LocationCard>

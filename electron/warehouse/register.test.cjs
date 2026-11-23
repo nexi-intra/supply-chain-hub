@@ -161,6 +161,15 @@ test('daily Placeringer actions go through the local queue: the same action id i
   assert.deepEqual(await call('anna', 'locations:pending'), { pending: 0, failures: [] })
 })
 
+test('a pallet edit keeps what the dialog showed (expected) through the local queue, so a stale edit is refused', async () => {
+  const { call } = setup()
+  await call('mona', 'locations:create-location', { name: 'A2.4', type: 'Palle', purpose: 'reserve', capacity: 1 })
+  const { created: [pallet] } = await call('anna', 'locations:put-away', { pallets: [{ location: 'A2.4', material: 'R162-0717', quantity: 100 }] })
+  await call('mona', 'locations:take', { pallet: pallet.id, quantity: 30 })
+  await assert.rejects(call('anna', 'locations:edit-pallet', { actionId: 'edit-1', pallet: pallet.id, changes: { quantity: 90 }, expected: { quantity: 100 } }), /PALLET_CHANGED/)
+  assert.deepEqual(await call('anna', 'locations:pending'), { pending: 0, failures: [] })
+})
+
 test('Hubert answers Placeringer questions first and still answers Optælling questions', async () => {
   const { call, registered } = setup()
   await call('mona', 'locations:create-location', { name: 'A2.1', type: 'Palle', purpose: 'reserve', capacity: 1 })

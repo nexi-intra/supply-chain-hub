@@ -289,21 +289,37 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
     tags: tagsOf,
     note: value => String(value || '').trim().slice(0, 500),
   }
-  async function editPallet(user, { pallet: id, changes, actionId } = {}) {
+  /**
+   * Only the fields in `changes` are written. `expected` (optional; an older Hub sends every field without it) holds what
+   * the dialog showed for each changed field: when the pallet no longer has that, someone changed it meanwhile and the
+   * edit is refused, so a stale value is never written back over their change.
+   */
+  async function editPallet(user, { pallet: id, changes, expected, actionId } = {}) {
     const team = teamOf(user)
     const clean = Object.fromEntries(Object.entries(changes || {}).filter(([field]) => Object.hasOwn(EDITABLE, field)).map(([field, value]) => [field, EDITABLE[field](value)]))
-    return repo.transact(team, { actionId, writes: ['pallets'] }, tx => {
-      const pallet = palletIn(tx, id)
-      const diff = {}
-      for (const [field, value] of Object.entries(clean)) {
-        if (JSON.stringify(pallet[field] ?? null) === JSON.stringify(value ?? null)) continue
-        diff[field] = [pallet[field] ?? null, value]
-        pallet[field] = value
-      }
-      if (Object.keys(diff).length) tx.event({ type: 'edit-pallet', by: by(user), pallet: pallet.id, location: pallet.location, material: pallet.material, changes: diff })
-      goLive(tx)
-      return { pallet }
-    })
+    const shown = expected && typeof expected === 'object' ? Object.entries(expected).filter(([field]) => Object.hasOwn(EDITABLE, field)) : []
+    try {
+      return await repo.transact(team, { actionId, writes: ['pallets'] }, tx => {
+        const pallet = palletIn(tx, id)
+        if (shown.some(([field, value]) => JSON.stringify(pallet[field] ?? null) !== JSON.stringify(value ?? null))) throw codeError('PALLET_CHANGED')
+        const diff = {}
+        for (const [field, value] of Object.entries(clean)) {
+          if (JSON.stringify(pallet[field] ?? null) === JSON.stringify(value ?? null)) continue
+          diff[field] = [pallet[field] ?? null, value]
+          pallet[field] = value
+        }
+        if (Object.keys(diff).length) tx.event({ type: 'edit-pallet', by: by(user), pallet: pallet.id, location: pallet.location, material: pallet.material, changes: diff })
+        goLive(tx)
+        return { pallet }
+      })
+    } catch (error) {
+      if (error.code !== 'PALLET_CHANGED') throw error
+      // Who changed it: the latest action in the log that changed the pallet, as an undo names the one that blocks it.
+      const events = await repo.history(team, { months: 2 }).catch(() => [])
+      const changed = changesOf(events)
+      const latest = events.find(event => !(event.tx && !changed.has(event.tx)) && touches(event, { kind: 'pallet', id }))
+      throw codeError('PALLET_CHANGED', latest?.by?.name ? `Pallen er ændret af ${latest.by.name} imens. Se den igen.` : 'Pallen er ændret imens. Se den igen.')
+    }
   }
 
   // A material typed by hand gets SAP's text in the background (MM60), so it is never shown as a bare number for long.

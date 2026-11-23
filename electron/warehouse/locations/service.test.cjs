@@ -192,6 +192,51 @@ test('editPallet records every changed field before/after in the history', async
   await assert.rejects(pc1.service.editPallet(ANNA, { pallet: 'p1', changes: { quantity: -3 } }), { code: 'QUANTITY_INVALID' })
 })
 
+test('editPallet: a note edited on a card opened before someone else took from the pallet keeps their take', async () => {
+  const { pc1, pc2, seed } = setup()
+  const LIS = { email: 'lis@x.test', fullName: 'Lis', role: 'user', team: 'TCD' }
+  await seed([place('A2.4')], [{ id: 'p1', location: 'A2.4', material: 'R162-0717', quantity: 100, receivedAt: 1 }])
+  // Bo's card shows 100; Lis takes 30 on her PC; Bo then saves only a new note.
+  await pc2.service.take(LIS, { pallet: 'p1', quantity: 30, actionId: 'lis-take' })
+  await pc1.service.editPallet(BO, { pallet: 'p1', changes: { note: 'Hjørne skadet' }, expected: { note: '' }, actionId: 'bo-edit' })
+  const state = await pc1.repo.read('TCD')
+  assert.equal(state.pallets.p1.quantity, 70)
+  assert.equal(state.pallets.p1.note, 'Hjørne skadet')
+  const [event] = await pc1.repo.history('TCD', { pallet: 'p1' })
+  assert.deepEqual(event.changes, { note: ['', 'Hjørne skadet'] })
+})
+
+test('editPallet refuses with PALLET_CHANGED, naming who changed it, when a field is no longer what the dialog showed', async () => {
+  const { pc1, pc2, seed } = setup()
+  const LIS = { email: 'lis@x.test', fullName: 'Lis', role: 'user', team: 'TCD' }
+  await seed([place('A2.4'), place('A2.5')], [{ id: 'p1', location: 'A2.4', material: 'R162-0717', quantity: 100, receivedAt: 1 }, { id: 'p2', location: 'A2.5', material: 'R162-0717', quantity: 5, receivedAt: 1 }])
+  await pc2.service.take(LIS, { pallet: 'p1', quantity: 30, actionId: 'lis-take' })
+  await assert.rejects(pc1.service.editPallet(BO, { pallet: 'p1', changes: { quantity: 90 }, expected: { quantity: 100 }, actionId: 'bo-edit' }), { code: 'PALLET_CHANGED', message: 'Pallen er ændret af Lis imens. Se den igen.' })
+  await assert.rejects(pc1.service.editPallet(BO, { pallet: 'p1', changes: { material: 'X1' }, expected: { material: 'R162-0718' } }), { code: 'PALLET_CHANGED' })
+  // Any field it names is checked; with no one in the log to name, the text says so without a name.
+  await assert.rejects(pc1.service.editPallet(BO, { pallet: 'p2', changes: { note: 'Ny' }, expected: { note: 'Gammel' } }), { code: 'PALLET_CHANGED', message: 'Pallen er ændret imens. Se den igen.' })
+  const state = await pc1.repo.read('TCD')
+  assert.equal(state.pallets.p1.quantity, 70)
+  assert.equal(state.pallets.p1.material, 'R162-0717')
+  assert.equal(state.pallets.p2.note, '')
+  assert.equal(state.meta.applied.includes('bo-edit'), false, 'a refused edit is not recorded as applied')
+  assert.deepEqual((await pc1.repo.history('TCD', { pallet: 'p1' })).map(event => event.type), ['take'])
+  // What the dialog showed is still there: the edit goes through.
+  await pc1.service.editPallet(BO, { pallet: 'p1', changes: { quantity: 65 }, expected: { quantity: 70 } })
+  assert.equal((await pc1.repo.read('TCD')).pallets.p1.quantity, 65)
+})
+
+test('editPallet without expected (an older Hub sending every field) works as before', async () => {
+  const { pc1, pc2, seed } = setup()
+  const LIS = { email: 'lis@x.test', fullName: 'Lis', role: 'user', team: 'TCD' }
+  await seed([place('A2.4')], [{ id: 'p1', location: 'A2.4', material: 'R162-0717', quantity: 100, receivedAt: 1 }])
+  await pc2.service.take(LIS, { pallet: 'p1', quantity: 30 })
+  await pc1.service.editPallet(BO, { pallet: 'p1', changes: { material: 'R162-0717', quantity: 100, receivedAt: 1, document: null, serials: [], tags: [], note: 'Hjørne skadet' } })
+  const state = await pc1.repo.read('TCD')
+  assert.equal(state.pallets.p1.quantity, 100)
+  assert.equal(state.pallets.p1.note, 'Hjørne skadet')
+})
+
 test('the first daily action after an import sets meta.liveAt', async () => {
   const { pc1, seed, clock } = setup()
   await seed([place('A2.1')])

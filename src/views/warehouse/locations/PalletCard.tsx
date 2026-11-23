@@ -12,7 +12,7 @@ import { Textarea } from '@/components/warehouse/ui'
 import { cn } from '@/lib/utils'
 import { errorCode, errorMessage } from '@/lib/warehouse/errors'
 import { formatNumber } from '@/lib/warehouse/format'
-import { matdocOf, moveTargetCheck, sendLocationAction, startLocationsRead } from '@/lib/warehouse/locationActions'
+import { matdocOf, moveTargetCheck, palletEdit, sendLocationAction, startLocationsRead } from '@/lib/warehouse/locationActions'
 import { formatAge, formatDate, locationKeyOf, materialLabel, newActionId, reasonLabel, type LocationsTarget } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
 import type { LocationList, PalletCard as PalletCardData, PalletView, SlotSuggestion } from '@/types/warehouse'
@@ -104,7 +104,9 @@ type Listed = LocationList['locations'][number]
 const dayOf = (ms: number) => { const date = new Date(ms); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}` }
 const serialsFrom = (text: string) => [...new Set(text.split(/[\s,;]+/).map(serial => serial.trim().toUpperCase()).filter(Boolean))]
 
-function EditDialog({ pallet, tags, onClose, onSend }: { pallet: PalletView; tags: string[]; onClose: () => void; onSend: Send<Partial<PalletView>> }) {
+function EditDialog({ pallet: current, tags, onClose, onSend }: { pallet: PalletView; tags: string[]; onClose: () => void; onSend: Send<Partial<PalletView>> }) {
+  // The pallet as the dialog was opened: a re-read of the card meanwhile must not make an untouched field look changed.
+  const [pallet] = useState(current)
   const [material, setMaterial] = useState(pallet.material)
   const [quantity, setQuantity] = useState(pallet.quantity === null ? '' : String(pallet.quantity))
   const [date, setDate] = useState(dayOf(pallet.receivedAt))
@@ -117,14 +119,15 @@ function EditDialog({ pallet, tags, onClose, onSend }: { pallet: PalletView; tag
   const documentInvalid = Boolean(document.trim()) && !matdoc
   const code = material.trim().toUpperCase()
   const changes = { material: code, quantity: quantity.trim() === '' ? null : Number(quantity), receivedAt: date === dayOf(pallet.receivedAt) ? pallet.receivedAt : new Date(`${date}T12:00:00`).getTime(), document: matdoc, serials: serialsFrom(serials), tags: [...new Set(chosen)], note: note.trim().slice(0, 500) }
-  const changed = (Object.keys(changes) as (keyof typeof changes)[]).filter(field => JSON.stringify(pallet[field] ?? null) !== JSON.stringify(changes[field] ?? null))
+  // Only what was changed is sent, with what the dialog showed: someone else's take meanwhile is never written back over.
+  const edit = palletEdit(pallet, changes)
   function save() {
     // Nothing changed: nothing to write on M:.
-    if (!changed.length) { onClose(); return }
-    const patch: Partial<PalletView> = { ...changes, ...(code !== pallet.material ? { description: '' } : {}), ...(changes.receivedAt !== pallet.receivedAt ? { ageDays: Math.max(0, Math.floor((Date.now() - changes.receivedAt) / DAY_MS)) } : {}) }
+    if (!Object.keys(edit.changes).length) { onClose(); return }
+    const patch: Partial<PalletView> = { ...edit.changes, ...(edit.changes.material !== undefined ? { description: '' } : {}), ...(edit.changes.receivedAt !== undefined ? { ageDays: Math.max(0, Math.floor((Date.now() - changes.receivedAt) / DAY_MS)) } : {}) }
     onSend(patch, () => window.electronWarehouse!.locations.editPallet({
       actionId: newActionId(), label: t(`Ret pallen med ${pallet.material} på ${pallet.location}`, `Edit the pallet with ${pallet.material} on ${pallet.location}`), pallet: pallet.id,
-      changes: { material: code, quantity: changes.quantity, receivedAt: changes.receivedAt, document: changes.document, serials: changes.serials, tags: chosen, note },
+      changes: edit.changes, expected: edit.expected,
     }))
   }
   return (

@@ -118,6 +118,18 @@ export function countedInCard(card: MaterialCard, pallet: string, quantity: numb
   }
 }
 
+/**
+ * A pallet edit as it is sent: only the fields that differ from the pallet as shown (compared as editPallet does), and
+ * for each the value shown (`expected`), so M: refuses the edit when someone else changed one of them meanwhile.
+ */
+export function palletEdit<T extends object>(shown: T, next: Partial<T>): { changes: Partial<T>; expected: Partial<T> } {
+  const fields = (Object.keys(next) as (keyof T)[]).filter(field => JSON.stringify(shown[field] ?? null) !== JSON.stringify(next[field] ?? null))
+  return {
+    changes: Object.fromEntries(fields.map(field => [field, next[field]])) as Partial<T>,
+    expected: Object.fromEntries(fields.map(field => [field, shown[field] ?? null])) as Partial<T>,
+  }
+}
+
 /** A material card after taking `quantity` (all when left out) from one of its shelves; the line goes at 0. */
 export function takeFromCardShelf(card: MaterialCard, location: string, quantity?: number): MaterialCard {
   const found = card.shelves.find(item => item.location === location)
