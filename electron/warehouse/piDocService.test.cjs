@@ -445,16 +445,18 @@ function journalFolder(t) {
  * fail (reads still work); `state.failAfterSap` sets it as soon as SAP has answered, like a drive that fails right after.
  */
 function flow(t, { docs = {}, rows = ROWS } = {}) {
-  const state = { stored: structuredClone(docs), down: false, failAfterSap: false, clock: new Date(2026, 10, 23, 9).getTime(), marked: [], calls: [] }
+  const state = { stored: structuredClone(docs), down: false, failAfterSap: false, clock: new Date(2026, 10, 23, 9).getTime(), marked: [], calls: [], writes: [], deleted: new Set() }
   let counter = 0
   const repo = {
     getPiDocs: async () => structuredClone(state.stored),
     changePiDocs: async (team, id, change) => {
       if (state.down) throw Object.assign(new Error('EIO: M: is away'), { code: 'STORAGE_UNAVAILABLE' })
+      state.writes.push(id)
       const { all, result } = change(structuredClone(state.stored))
       if (all !== undefined) state.stored = all
       return result
     },
+    isDeleted: async (team, id) => state.deleted.has(id),
   }
   const sap = {
     create: async () => ({ docs: [{ docNo: '105000900', materials: ['R1', 'R2'] }], missing: [] }),
@@ -548,11 +550,10 @@ test('what SAP did while M: fails is kept on this PC and written to M: on the ne
   await assert.rejects(service.create(MONA, 'c1', CREATE), error => error.code === 'PIDOC_SAVE_FAILED' && /105000900/.test(error.message))
   assert.equal(state.stored.CPREF1.status, 'creating', 'M: still has the reservation only')
   assert.equal(journal().length, 1)
-  // M: still away: the journal is kept, also for another count's documents.
+  // M: still away: the journal is kept.
   await service.list(MONA, 'c1')
+  assert.equal(journal().length, 1)
   heal()
-  await service.list(MONA, 'c2')
-  assert.equal(journal().length, 1, 'only merged into its own count')
   await service.list(MONA, 'c1')
   assert.deepEqual([state.stored.CPREF1, state.stored['105000900'].status, state.stored['105000900'].reference], [undefined, 'created', 'CPREF1'])
   assert.deepEqual(journal(), [])
@@ -641,4 +642,37 @@ test('an unknown count or posting is resolved by a manager to counted or posted 
   sap.counts = async () => ({ message: 'ok' })
   await service.count(ANNA, 'c1', '105000901')
   assert.equal(state.stored['105000901'].status, 'counted', 'the admin can enter it again')
+})
+test('a SAP result in the journal is not lost when the document was marked unknown meanwhile; the mark goes and the journal is logged', async t => {
+  const { state, service, journal, heal } = flow(t, { docs: { 105000901: sapDoc('105000901', 'printed') }, rows: COUNT_ROWS })
+  state.failAfterSap = true
+  await assert.rejects(service.count(ANNA, 'c1', '105000901'), { code: 'PIDOC_SAVE_FAILED' })
+  heal()
+  // Meanwhile the same document was marked unknown on M: (another attempt, another PC).
+  state.stored['105000901'].sapUnknown = { step: 'count', status: 'printed', by: { email: 'bo@x', name: 'Bo', at: 1 }, detail: 'verify-failed' }
+  await service.list(MONA, 'c1')
+  const doc = state.stored['105000901']
+  assert.deepEqual([doc.status, doc.sapUnknown, doc.countedBy.email], ['counted', undefined, 'anna@x'])
+  assert.deepEqual(doc.sapResolutions.map(item => [item.step, item.outcome, item.reason, item.resolvedBy.email, item.by.email]), [['count', 'saved', 'løst af journalen', 'anna@x', 'bo@x']])
+  assert.deepEqual(journal(), [])
+})
+
+test('looking at any count\'s documents writes every journalled count of the team to M:, never a deleted count or another team\'s', async t => {
+  const { state, service, journal, heal } = flow(t)
+  state.failAfterSap = true
+  await assert.rejects(service.create(MONA, 'c1', CREATE), { code: 'PIDOC_SAVE_FAILED' })
+  heal()
+  state.writes.length = 0
+  await service.list({ ...MONA, team: 'TRR' }, 'c2')
+  state.deleted.add('c1')
+  await service.list(MONA, 'c2')
+  assert.deepEqual([state.writes, journal().length], [[], 1], 'kept for its own team, and while its count is deleted')
+  state.deleted.delete('c1')
+  await service.list(MONA, 'c2')
+  assert.deepEqual(state.writes, ['c1'])
+  assert.equal(state.stored['105000900'].status, 'created')
+  assert.deepEqual(journal(), [])
+  state.writes.length = 0
+  await service.list(MONA, 'c2')
+  assert.deepEqual(state.writes, [], 'an empty journal writes nothing')
 })

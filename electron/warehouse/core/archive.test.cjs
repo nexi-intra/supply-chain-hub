@@ -28,3 +28,9 @@ test('archive lines: counted lines with approval and the SAP document; deleted d
   assert.deepEqual([lines[0].approval.status, lines[0].approval.by, lines[0].countName], ['posted', 'Mona', 'Tilbehør'])
   assert.equal(lines[1].doc, null, 'a deleted document is not shown')
 })
+
+test('a document SAP may or may not have is archived as unknown', () => {
+  const rows = [{ material: 'R1', description: '', kind: 'accessory', sloc: 'D000', stockType: 'unrestricted', sapQty: 5, counted: 4, diff: -1 }]
+  const docs = [{ docNo: '105000894', year: '2026', status: 'counted', sloc: 'D000', stockType: 'unrestricted', lines: [{ material: 'R1' }], sapUnknown: { step: 'post', status: 'counted' } }]
+  assert.equal(archiveLines({ count: { id: 'c1', name: 'Tilbehør' }, rows, docs })[0].doc.status, 'unknown')
+})

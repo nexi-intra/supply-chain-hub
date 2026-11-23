@@ -155,7 +155,8 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, tempRoot = os
       try {
         result = await run(dir, 'create', request, 'mi22.txt', (waitSeconds + 120) * 1000)
       } catch (error) {
-        if (error?.code === 'SAP_TIMEOUT') throw unknownState('pidoc-create', error.code)
+        // Killed at the time limit, or the script broke after the hand-over: the user may have pressed F8.
+        if (error?.code === 'SAP_TIMEOUT' || error?.code === 'SAP_SCRIPT_FAILED') throw unknownState('pidoc-create', error.code)
         throw error
       }
       if (!result?.ok && !beforeF8(result?.error)) throw unknownState('pidoc-create', result?.error || 'no-answer')
@@ -195,8 +196,15 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, tempRoot = os
       // without a session for MI22) leaves the user's posting unknown.
       if (!result?.ok && (result?.timedOut || result?.error === 'closed-unknown' || result?.screens)) throw unknownState('pidoc-post', result?.error)
       if (!result?.ok) throw scriptFailure(result, 'Bogføringen i MI20')
-      const differences = parseMi20(await fs.promises.readFile(path.join(dir, 'mi20.txt'), 'utf8')).filter(item => list.includes(item.docNo))
-      const status = parseMi22(await fs.promises.readFile(path.join(dir, 'mi22.txt'), 'utf8')).filter(doc => list.includes(doc.docNo))
+      // The user has posted by now: lists that cannot be read leave the posting unknown, never "intet er gemt".
+      let differences
+      let status
+      try {
+        differences = parseMi20(await fs.promises.readFile(path.join(dir, 'mi20.txt'), 'utf8')).filter(item => list.includes(item.docNo))
+        status = parseMi22(await fs.promises.readFile(path.join(dir, 'mi22.txt'), 'utf8')).filter(doc => list.includes(doc.docNo))
+      } catch (error) {
+        throw unknownState('pidoc-post', error?.code || error?.message)
+      }
       const materialDocs = {}
       for (const match of String(result.screens || '').matchAll(/doc\.\s*(\d{9,10})\s+posted with m\.\s*doc\.\s*(\d+)/gi)) materialDocs[match[1]] = match[2]
       const posted = list.filter(docNo => status.some(doc => doc.docNo === docNo) && status.filter(doc => doc.docNo === docNo).every(doc => !/active/i.test(doc.status)))

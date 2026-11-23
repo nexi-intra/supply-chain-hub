@@ -209,3 +209,14 @@ test('a report that fails while it is written or moved into place leaves no .xls
   const file = await writeReport(reportData(), dir, date)
   assert.deepEqual(fs.readdirSync(dir), [path.basename(file)])
 })
+test('a document SAP may or may not have is in the SAP documents sheet as unknown, also without a number (its reference)', () => {
+  const data = reportData()
+  data.piDocs.push(
+    { id: 'CPREF2', reference: 'CPREF2', status: 'created', year: '2026', sloc: 'D000', stockType: 'unrestricted', lines: [{ material: 'R162-0717' }], createdBy: { name: 'Mona', at: 8 }, sapUnknown: { step: 'create', status: 'created' } },
+    { id: '105000992', docNo: '105000992', reference: 'CPREF3', status: 'counted', year: '2026', sloc: 'D000', stockType: 'unrestricted', lines: [{ material: 'R162-0717' }], createdBy: { name: 'Mona', at: 9 }, sapUnknown: { step: 'post', status: 'counted' } },
+  )
+  const workbook = require('./report.cjs').buildWorkbook(data)
+  const rows = []
+  workbook.getWorksheet('SAP-dokumenter').eachRow(row => rows.push(row.values.slice(1)))
+  assert.deepEqual(rows.slice(1).map(row => `${row[0]}:${row[2]}`), ['105000990:Bogført', '105000991:Udskrevet', '105000991:Udskrevet', 'CPREF2:Ukendt i SAP', '105000992:Ukendt i SAP'])
+})

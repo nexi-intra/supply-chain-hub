@@ -72,6 +72,37 @@ test('any failure after the user\'s F8 in MI31 is unknown: SAP may have created 
   await assert.rejects(setup({ list: 'not a MI22 list' }).writer.createDocument(REQUEST), unknown)
 })
 
+test('a create script that breaks after the hand-over to F8 is unknown; one that breaks in the test run is passed on', async t => {
+  t.mock.method(console, 'error', () => {})
+  const writer = failAt => createPiDocWriter({
+    bridge: { exclusive: job => job() },
+    runScript: async (name, args) => {
+      if (args[1] === failAt) throw Object.assign(new Error('SAP_SCRIPT_FAILED'), { code: 'SAP_SCRIPT_FAILED' })
+      fs.writeFileSync(path.join(args[5], args[6]), fixture('mi31-test.txt'))
+      return '{"ok":true}'
+    },
+    clipboard: { writeText: () => {}, readText: () => 'R133-0032\r\nR133-0033' }, system: 'QS4', waitSeconds: 600,
+  })
+  await assert.rejects(writer('create').createDocument(REQUEST), { code: 'PIDOC_UNKNOWN', detail: 'SAP_SCRIPT_FAILED' })
+  await assert.rejects(writer('test').createDocument(REQUEST), { code: 'SAP_SCRIPT_FAILED' })
+})
+
+test('posting: MI20 or MI22 lists that cannot be read after the user posted are unknown, never "intet er gemt"', async t => {
+  t.mock.method(console, 'error', () => {})
+  const unknown = { code: 'PIDOC_UNKNOWN', message: 'PIDOC_UNKNOWN: Optælling ved ikke, om SAP har gemt. Tjek dokumentet i SAP (MI03).' }
+  const posting = files => createPiDocWriter({
+    bridge: { exclusive: job => job() },
+    runScript: async (name, args) => {
+      for (const [index, text] of Object.entries(files)) fs.writeFileSync(path.join(args[2], args[Number(index)]), text)
+      return '{"ok":true,"screens":"x"}'
+    },
+    clipboard: null, system: 'QS4', waitSeconds: 300,
+  })
+  await assert.rejects(posting({ 3: 'not a MI20 list', 4: MI22 }).postDocuments({ docNos: ['105000900'], year: '2026' }), unknown)
+  await assert.rejects(posting({ 3: fixture('mi20-list.txt'), 4: 'not a MI22 list' }).postDocuments({ docNos: ['105000900'], year: '2026' }), unknown)
+  await assert.rejects(posting({}).postDocuments({ docNos: ['105000900'], year: '2026' }), unknown, 'no lists at all')
+})
+
 test('a material SAP skipped after F8 is reported as missing', async () => {
   const list = MI22.split('\r\n').slice(0, 5).join('\r\n')
   const result = await setup({ list }).writer.createDocument(REQUEST)

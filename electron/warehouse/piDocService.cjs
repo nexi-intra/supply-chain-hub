@@ -27,7 +27,8 @@ const clean = (value, max) => String(value ?? '').replace(/\s+/g, ' ').trim().sl
  * - created: the documents MI31 made replace the reservation.
  * - unknown-create: the reservation becomes a kept entry SAP may have created (when it is still the reservation).
  * - unknown: the step on an existing document may have happened (when it still has the status it had).
- * - step: fields of a step on one document, `from` the statuses it may have (null: any); `entered` adds materials entered.
+ * - step: fields of a step on one document, `from` the stored statuses it may have (null: any); `entered` adds materials
+ *   entered. A step that moves the status settles an unknown mark made at that status (logged in `sapResolutions`).
  */
 function applyChanges(all, changes) {
   for (const change of changes) {
@@ -40,8 +41,16 @@ function applyChanges(all, changes) {
     } else if (change.kind === 'unknown') {
       if (current && current.status === change.sapUnknown.status) all[change.docId] = { ...current, sapUnknown: change.sapUnknown }
     } else if (change.kind === 'step') {
-      if (!current || (change.from && !change.from.includes(statusOf(current)))) continue
-      all[change.docId] = { ...current, ...change.set, ...(change.entered ? { entered: { ...(current.entered || {}), ...change.entered } } : {}) }
+      // The stored status decides, not the unknown mark: SAP's real answer replaces a mark made since (another try, another PC).
+      if (!current || (change.from && !change.from.includes(current.status))) continue
+      const settles = Boolean(change.set?.status) && current.sapUnknown && current.sapUnknown.status === current.status
+      const { sapUnknown, ...rest } = current
+      all[change.docId] = {
+        ...(settles ? rest : current),
+        ...change.set,
+        ...(change.entered ? { entered: { ...(current.entered || {}), ...change.entered } } : {}),
+        ...(settles ? { sapResolutions: [...(current.sapResolutions || []), { ...sapUnknown, outcome: 'saved', docNo: current.docNo || null, reason: 'løst af journalen', resolvedBy: change.by || null }] } : {}),
+      }
     }
   }
   return all
@@ -97,16 +106,29 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
     return true
   }
 
-  /** Merges what this PC's journal holds for the count into M:, in one write. A deleted count's entries are kept. */
-  async function mergeJournal(user, id) {
-    const entries = (await journal.list()).filter(({ entry }) => entry?.team === user.team && entry.countId === id && Array.isArray(entry.changes))
+  /**
+   * Merges what this PC's journal holds into M:, one write per count: for `id` only, or (`id` null) for every count of
+   * the user's team. A deleted count's entries are kept; a count M: refuses does not hold up the others.
+   */
+  async function mergeJournal(user, id = null) {
+    const entries = (await journal.list()).filter(({ entry }) => entry?.team === user.team && typeof entry.countId === 'string' && (id === null || entry.countId === id) && Array.isArray(entry.changes))
     if (!entries.length) return
-    if (repo.isDeleted && await repo.isDeleted(user.team, id)) return
-    await repo.changePiDocs(user.team, id, all => {
-      for (const { entry } of entries) applyChanges(all, entry.changes)
-      return { all }
-    })
-    for (const { name } of entries) await journal.remove(name)
+    const byCount = new Map()
+    for (const item of entries) byCount.set(item.entry.countId, [...(byCount.get(item.entry.countId) || []), item])
+    let failure = null
+    for (const [countId, items] of byCount) {
+      try {
+        if (repo.isDeleted && await repo.isDeleted(user.team, countId)) continue
+        await repo.changePiDocs(user.team, countId, all => {
+          for (const { entry } of items) applyChanges(all, entry.changes)
+          return { all }
+        })
+        for (const { name } of items) await journal.remove(name)
+      } catch (error) {
+        failure = failure || error
+      }
+    }
+    if (failure) throw failure
   }
 
   /** The documents SAP may have changed in `step` without the app knowing: kept as unknown, never lost to M: failing. */
@@ -136,6 +158,8 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
   }
 
   async function list(user, id) {
+    // Every count of the team, not only this one: a journalled result must not wait for its own count to be opened.
+    await mergeJournal(user).catch(error => console.error('CountPoint: PI document journal not merged yet', error?.code || error?.message))
     const { docs, role } = await context(user, id)
     return {
       system,
@@ -225,7 +249,7 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
     if (reason) throw codeError('PIDOC_FORBIDDEN', reason)
     const result = await writer.printDocument({ docNo: doc.docNo, year: doc.year, sloc: doc.sloc })
     const at = now()
-    const change = { kind: 'step', docId, from: ['created'], set: { status: 'printed', printedBy: { ...by(user, at), message: result.message } } }
+    const change = { kind: 'step', docId, from: ['created'], by: by(user, at), set: { status: 'printed', printedBy: { ...by(user, at), message: result.message } } }
     if (!(await persist(user, id, [change], all => { if (statusOf(all[docId]) !== 'created') throw changed() }))) throw saveFailed(`udskriften af ${doc.docNo}`)
     return list(user, id)
   }
@@ -308,7 +332,7 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
       for (const entry of quantities) done[entry.material] = { qty: entry.qty, by: lower(user.email), at: enteredAt }
     }
     const at = now()
-    const change = { kind: 'step', docId, from: ['printed'], set: { status: 'counted', countedBy: by(user, at) }, entered: done }
+    const change = { kind: 'step', docId, from: ['printed'], by: by(user, at), set: { status: 'counted', countedBy: by(user, at) }, entered: done }
     if (!(await persist(user, id, [change], isPrinted))) throw saveFailed(`antallet på ${doc.docNo}`)
     return list(user, id)
   }
@@ -371,7 +395,7 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
     const changes = chosen.flatMap(doc => [
       ...(confirmed.has(doc.id) ? [{ kind: 'step', docId: doc.id, from: null, set: { serialLinesConfirmedBy: by(user, at), serialLinesConfirmedAt: at, serialLinesReason: confirmReason } }] : []),
       ...(result.posted.includes(doc.docNo) ? [{
-        kind: 'step', docId: doc.id, from: ['counted'],
+        kind: 'step', docId: doc.id, from: ['counted'], by: by(user, at),
         set: { status: 'posted', postedBy: by(user, at), materialDoc: result.materialDocs[doc.docNo] || null, differences: result.differences.filter(item => item.docNo === doc.docNo).map(({ material, book, counted, diff, amount }) => ({ material, book, counted, diff, amount })) },
       }] : unknown.includes(doc.docNo) ? [{ kind: 'unknown', docId: doc.id, sapUnknown: { step: 'post', status: 'counted', by: by(user, at), detail: 'not-listed-in-mi22' } }] : []),
     ])
@@ -388,7 +412,7 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
     if (reason) throw codeError('PIDOC_FORBIDDEN', reason)
     const result = await writer.deleteDocument({ docNo: doc.docNo, year: doc.year, reference: doc.reference })
     const at = now()
-    const change = { kind: 'step', docId, from: null, set: { status: 'deleted', deletedBy: { ...by(user, at), message: result.message } } }
+    const change = { kind: 'step', docId, from: null, by: by(user, at), set: { status: 'deleted', deletedBy: { ...by(user, at), message: result.message } } }
     if (!(await persist(user, id, [change]))) throw saveFailed(`sletningen af ${doc.docNo}`)
     return list(user, id)
   }

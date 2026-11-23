@@ -138,16 +138,17 @@ function moveRowsOf(aggregate, text) {
 
 /**
  * The SAP documents of a count, one row per material: the trail of what was posted in SAP (with the differences of MI20
- * and the material document). A reservation without a number yet is left out.
+ * and the material document). A reservation without a number yet is left out; one SAP may have (unknown) is kept under
+ * its reference.
  */
 function docRowsOf(docs, text) {
   return (Array.isArray(docs) ? docs : [])
-    .filter(doc => doc && doc.docNo)
-    .sort((a, b) => (a.createdBy?.at || 0) - (b.createdBy?.at || 0) || String(a.docNo).localeCompare(String(b.docNo)))
+    .filter(doc => doc && (doc.docNo || doc.sapUnknown))
+    .sort((a, b) => (a.createdBy?.at || 0) - (b.createdBy?.at || 0) || String(a.docNo || a.reference).localeCompare(String(b.docNo || b.reference)))
     .flatMap(doc => (doc.lines || []).map(line => {
       const posted = doc.status === 'posted' ? (doc.differences || []).find(item => item.material === line.material) : null
       return [
-        String(doc.docNo), doc.year ? String(doc.year) : '', text.docStatus[statusOf(doc)] || doc.status || '', doc.sloc || '', STOCK_LABELS[doc.stockType] || '', line.material,
+        String(doc.docNo || doc.reference || ''), doc.year ? String(doc.year) : '', text.docStatus[statusOf(doc)] || doc.status || '', doc.sloc || '', STOCK_LABELS[doc.stockType] || '', line.material,
         posted ? posted.book : null, posted ? posted.counted : null, posted ? posted.diff : null, posted ? posted.amount : null,
         doc.materialDoc || '', personName(doc.createdBy), doc.status === 'posted' ? personName(doc.postedBy) : '', doc.status === 'posted' ? asDate(doc.postedBy?.at) : null,
       ]

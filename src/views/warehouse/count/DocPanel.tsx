@@ -476,6 +476,11 @@ function ResolveDialog({ item, onCancel, onResolve }: { item: PiDoc; onCancel: (
         {outcome === 'saved' && (
           <Input value={docNo} maxLength={10} inputMode="numeric" onChange={event => setDocNo(event.target.value)} placeholder={t('SAP-dokumentnummer', 'SAP document number')} aria-label={t('SAP-dokumentnummer', 'SAP document number')} aria-invalid={docNo.trim() !== '' && !validNo} />
         )}
+        {outcome === 'saved' && !item.docNo && (
+          <p className="flex items-center gap-2 text-sm text-amber-800 dark:text-amber-200">
+            <Warning size={16} /> {t('Appen kan kun tage ét dokument pr. reference. Har MI31 lavet flere, så tjek dem i SAP.', 'The app can only take one document per reference. If MI31 made more, check them in SAP.')}
+          </p>
+        )}
         <Input value={reason} maxLength={300} onChange={event => setReason(event.target.value)} placeholder={t('Hvad viser SAP?', 'What does SAP show?')} aria-label={t('Begrundelse', 'Reason')} />
         <DialogFooter>
           <Button variant="ghost" onClick={onCancel}>{t('Annullér', 'Cancel')}</Button>

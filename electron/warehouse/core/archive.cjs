@@ -1,5 +1,6 @@
 // The archive of a locked status: every counted line with its SAP documents, and the difference where over and under
 // both count as difference (|over| + |under|), as a share of the SAP stock. Pure functions.
+const { statusOf } = require('./piDocs.cjs')
 
 const round2 = value => Math.round(value * 100) / 100
 const lineKey = (material, sloc, stockType) => `${material}|${sloc}|${stockType}`
@@ -62,7 +63,7 @@ function archiveLines({ count, rows, approvals = {}, docs = [] }) {
         valueDiff: row.valueDiff ?? null,
         approval: approval ? { status: approval.status, by: approval.by?.name || null, at: approval.at || null } : null,
         doc: doc ? {
-          docNo: doc.docNo || null, year: doc.year || null, status: doc.status, system: doc.system || null,
+          docNo: doc.docNo || null, year: doc.year || null, status: statusOf(doc), system: doc.system || null,
           materialDoc: doc.materialDoc || null, materialYear: doc.materialDoc ? String(doc.postedBy?.at ? new Date(doc.postedBy.at).getFullYear() : doc.year) : null,
         } : null,
       }

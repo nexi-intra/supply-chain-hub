@@ -840,6 +840,8 @@ test('approval freezes a material: fetching SAP again or counting afterwards doe
   await mona.undoPosted(MONA, id, { material: 'R162-0717', reason: 'Trykket ved en fejl' })
   await ctx.repo.changePiDocs('TCD', id, all => ({ all: { ...all, D1: { id: 'D1', docNo: '105000903', status: 'printed', lines: [{ material: 'R162-0717' }] } } }))
   await assert.rejects(mona.setApproval(MONA, id, { material: 'R162-0717', status: 'reset' }), { code: 'PIDOC_ACTIVE', message: 'R162-0717 har SAP-dokument 105000903. Slet det først.' }, 'an SAP document locks the approval')
+  await ctx.repo.changePiDocs('TCD', id, all => ({ all: { ...all, D1: { id: 'CPREF4', reference: 'CPREF4', status: 'created', lines: [{ material: 'R162-0717' }], sapUnknown: { step: 'create', status: 'created' } } } }))
+  await assert.rejects(mona.setApproval(MONA, id, { material: 'R162-0717', status: 'reset' }), { code: 'PIDOC_ACTIVE', message: 'R162-0717 har et ukendt dokument (reference CPREF4), som en manager skal afklare. Afklar det først.' }, 'a document SAP may have locks it too')
   await ctx.repo.changePiDocs('TCD', id, all => ({ all: { ...all, D1: { ...all.D1, status: 'deleted' } } }))
 
   await mona.setApproval(MONA, id, { material: 'R162-0717', status: 'reset' })
@@ -1582,6 +1584,9 @@ test('a count with an SAP document not posted yet cannot be deleted; posted ones
   }
   await setDocs([{ id: 'CPREF1', reference: 'CPREF1', status: 'creating', startedAt: ctx.clock.now, sloc: 'D000', stockType: 'unrestricted', lines: [{ material: 'R162-0717' }] }])
   await assert.rejects(mona.deleteCount(MONA, id), error => error.code === 'COUNT_PIDOCS_ACTIVE' && /under oprettelse$/.test(error.message))
+  // SAP may have it (unknown): named by its reference, never as an empty number.
+  await setDocs([{ id: 'CPREF4', reference: 'CPREF4', status: 'created', year: '2026', sloc: 'D000', stockType: 'unrestricted', lines: [{ material: 'R162-0717' }], sapUnknown: { step: 'create', status: 'created' } }])
+  await assert.rejects(mona.deleteCount(MONA, id), error => error.code === 'COUNT_PIDOCS_ACTIVE' && error.message === 'Slet SAP-dokumenterne først. Disse SAP-dokumenter er ikke bogført: et ukendt dokument (reference CPREF4), som en manager skal afklare')
   assert.equal((await ctx.repo.listCounts('TCD')).length, 1, 'nothing deleted')
 
   // A reservation left by a crash (older than 20 minutes) and a deleted document do not stop it.

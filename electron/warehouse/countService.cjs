@@ -11,7 +11,9 @@ const { normalizeSerial, matchSerial, activeEvents, aggregateCount, registeredSe
 const { docLinesFromSnapshot, missingAtApproval, linesAtApproval, approvedWithLinesText, buildCountDoc, confirmedAll } = require('./core/countDoc.cjs')
 const { normalizeMatdoc } = require('./core/sapParsers.cjs')
 const { differenceTotals, archiveLines } = require('./core/archive.cjs')
-const { ACTIVE: ACTIVE_PIDOC, RESERVATION_MS } = require('./core/piDocs.cjs')
+const { ACTIVE: ACTIVE_PIDOC, RESERVATION_MS, statusOf } = require('./core/piDocs.cjs')
+/** A PI document SAP may or may not have: named by its reference, never by an empty number. */
+const unknownDocText = doc => `et ukendt dokument (reference ${doc.reference || doc.id}), som en manager skal afklare`
 const { createJournal, readJournals, unsentWriters, KEEPALIVE_MS } = require('./journal.cjs')
 
 const CLAIM_IDLE_MS = 30 * 60 * 1000
@@ -1447,8 +1449,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       if (active) {
         // Approved with quantity lines: a reset alone does not do; the whole way out is told at once.
         const withLines = approvedWithLines(state, { [code]: (await repo.getApprovals(state.team, state.id).catch(() => ({})))[code] }).has(code)
-        if (withLines) throw codeError('PIDOC_ACTIVE', `${code} er godkendt med tællelinjer med antal og har SAP-dokument ${active.docNo || ''}. Slet SAP-dokumentet, nulstil materialet, slet linjen og godkend igen.`)
-        throw codeError('PIDOC_ACTIVE', `${code} har SAP-dokument ${active.docNo || ''}. Slet det først.`)
+        if (withLines) throw codeError('PIDOC_ACTIVE', statusOf(active) === 'unknown' ? `${code} er godkendt med tællelinjer med antal og har ${unknownDocText(active)}. Afklar det, nulstil materialet, slet linjen og godkend igen.` : `${code} er godkendt med tællelinjer med antal og har SAP-dokument ${active.docNo || ''}. Slet SAP-dokumentet, nulstil materialet, slet linjen og godkend igen.`)
+        throw codeError('PIDOC_ACTIVE', statusOf(active) === 'unknown' ? `${code} har ${unknownDocText(active)}. Afklar det først.` : `${code} har SAP-dokument ${active.docNo || ''}. Slet det først.`)
       }
     }
     const by = me(user)
@@ -1794,7 +1796,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       for (const doc of Object.values(all[index] || {})) {
         if (!doc || typeof doc !== 'object') continue
         const open = doc.status === 'creating' ? at - (doc.startedAt || 0) < RESERVATION_MS : ACTIVE_PIDOC.has(doc.status)
-        if (open) active.push(`${doc.docNo || 'et dokument under oprettelse'}${counts.length > 1 && entry.name ? ` (${entry.name})` : ''}`)
+        if (open) active.push(`${statusOf(doc) === 'unknown' ? unknownDocText(doc) : doc.docNo || 'et dokument under oprettelse'}${counts.length > 1 && entry.name ? ` (${entry.name})` : ''}`)
         else if (doc.status === 'posted' && doc.docNo) (posted[entry.id] ||= []).push({ docNo: doc.docNo, year: doc.year || null, materialDoc: doc.materialDoc || null })
       }
     })
