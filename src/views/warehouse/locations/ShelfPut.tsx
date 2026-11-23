@@ -13,7 +13,7 @@ import { isShelfPlace, locationKeyOf, materialLabel, newActionId, singleFlight }
 import { t } from '@/lib/warehouse/text'
 import type { DocumentLookup, LocationCard, MaterialCard } from '@/types/warehouse'
 import { MaterialPicker } from './MaterialPicker'
-import { nextUnsaved } from './scanChoices'
+import { enterSaves, markSaved, nextUnsaved, savedOf, unmarkSaved, type SavedLines } from './scanChoices'
 
 /** The materials of a 49/50 number with several, and which of them are put on a shelf already. */
 type DocumentLines = { document: string; materials: DocumentLookup['materials']; saved: number[] }
@@ -34,6 +34,13 @@ export function ShelfPut({ shelf: initial, version, onDone }: { shelf?: string; 
   const [document, setDocument] = useState('')
   const [lines, setLines] = useState<DocumentLines | null>(null)
   const [line, setLine] = useState<number | null>(null)
+  // Per 49/50 number, what is put on a shelf: every save and every refusal updates it, so an older refusal never
+  // opens a line that was saved after it.
+  const savedLines = useRef<SavedLines>({})
+  // The next line chosen by itself after a save: Enter does not save it until the user has touched the form.
+  const [freshSelection, setFreshState] = useState(false)
+  const freshRef = useRef(false)
+  const setFresh = (value: boolean) => { freshRef.current = value; setFreshState(value) }
   const [looking, setLooking] = useState(false)
   const [saved, setSaved] = useState<string | null>(null)
   // What is typed now: a refused put comes back only into an empty form.
@@ -82,7 +89,9 @@ export function ShelfPut({ shelf: initial, version, onDone }: { shelf?: string; 
       const found = await bridge.lookupDocument({ document: document.trim() })
       if (!found.materials.length) { toast.warning(t('Ingen materialer på 49/50-nummeret', 'No materials on the 49/50 number')); return }
       // Scanning the same number again keeps what is already put on a shelf.
-      const saved = lines?.document === found.document ? lines.saved : []
+      const saved = savedOf(savedLines.current, found.document, found.materials.length)
+      savedLines.current = { ...savedLines.current, [found.document]: saved }
+      setFresh(false)
       setDocument(found.document)
       setLines(found.materials.length > 1 ? { document: found.document, materials: found.materials, saved } : null)
       chooseLine(found.materials, nextUnsaved(found.materials.length, saved, null) ?? 0)
@@ -110,11 +119,13 @@ export function ShelfPut({ shelf: initial, version, onDone }: { shelf?: string; 
     setPlace(value => (value?.location.id === stockLine.location ? { ...value, stock: addToStock(value.stock, stockLine, count) } : value))
     // The same shelf often gets several materials: it stays, the rest is cleared for the next. A 49/50 number with
     // several materials stays with the next one not saved yet chosen, until all are done.
-    const savedNow = docLines ? (docLine === null ? docLines.saved : [...docLines.saved, docLine]) : []
+    if (docLines && docLine !== null) savedLines.current = markSaved(savedLines.current, docLines.document, docLine)
+    const savedNow = docLines ? savedLines.current[docLines.document] || [] : []
     const next = docLines ? nextUnsaved(docLines.materials.length, savedNow, docLine) : null
     if (docLines && next !== null) {
       setLines({ ...docLines, saved: savedNow })
       chooseLine(docLines.materials, next)
+      setFresh(true)
     } else {
       setQuery('')
       setMaterial(null)
@@ -122,17 +133,22 @@ export function ShelfPut({ shelf: initial, version, onDone }: { shelf?: string; 
       setDocument('')
       setLines(null)
       setLine(null)
+      setFresh(false)
     }
     void sendLocationAction(() => bridge.shelfPut({ actionId: newActionId(), label: t(`Læg ${code} på ${shelfCard.location.name}`, `Put ${code} on ${shelfCard.location.name}`), location: shelfCard.location.id, material: code, quantity: count }), {
       success: t(`Lagt på ${shelfCard.location.name}: ${formatNumber(count)} stk. ${code}`, `Put on ${shelfCard.location.name}: ${formatNumber(count)} pcs ${code}`),
       rollback: () => {
         setSaved(value => (value === text ? null : value))
         setPlace(value => (value?.location.id === stockLine.location ? { ...value, stock: addToStock(value.stock, stockLine, -count) } : value))
-        // The material of the number is not put on a shelf after all: its button is open again.
-        if (docLines && docLine !== null) setLines(value => (value?.document === docLines.document ? { ...value, saved: value.saved.filter(index => index !== docLine) } : value))
+        // The material of the number is not put on a shelf after all: only its own button is open again.
+        if (docLines && docLine !== null) {
+          savedLines.current = unmarkSaved(savedLines.current, docLines.document, docLine)
+          const open = savedLines.current[docLines.document] || []
+          setLines(value => (value?.document === docLines.document ? { ...value, saved: open } : value))
+        }
         if (!materialRef.current && !quantityRef.current) {
-          setQuery(typed); setMaterial(code); setQuantity(String(count)); setDocument(doc)
-          if (docLines) { setLines(value => value ?? docLines); setLine(docLine) }
+          setQuery(typed); setMaterial(code); setQuantity(String(count)); setDocument(doc); setFresh(false)
+          if (docLines) { setLines(value => value ?? { ...docLines, saved: savedLines.current[docLines.document] || [] }); setLine(docLine) }
         }
       },
       settled: onDone,
@@ -156,7 +172,7 @@ export function ShelfPut({ shelf: initial, version, onDone }: { shelf?: string; 
         <CardContent className="grid gap-4 py-4">
           <div className="grid gap-1.5">
             <Label htmlFor="shelf-name">{t('Hylde', 'Shelf')}</Label>
-            <Input id="shelf-name" autoFocus value={shelf} onChange={event => setShelf(event.target.value.toUpperCase())} placeholder="E9 H5" className="h-11 w-56 font-mono" />
+            <Input id="shelf-name" autoFocus value={shelf} onChange={event => { setFresh(false); setShelf(event.target.value.toUpperCase()) }} placeholder="E9 H5" className="h-11 w-56 font-mono" />
             {placeError && <p className="flex items-center gap-1.5 text-sm text-destructive"><Warning size={14} /> {placeError}</p>}
             {place && !placeError && <p className="text-xs text-muted-foreground">{place.stock.length ? t(`På hylden: ${place.stock.map(line => `${line.material} ${formatNumber(line.quantity)}`).join(', ')}`, `On the shelf: ${place.stock.map(line => `${line.material} ${formatNumber(line.quantity)}`).join(', ')}`) : t('Hylden er tom.', 'The shelf is empty.')}</p>}
           </div>
@@ -164,7 +180,7 @@ export function ShelfPut({ shelf: initial, version, onDone }: { shelf?: string; 
           <div className="grid gap-1.5">
             <Label htmlFor="shelf-document">{t('49/50-nummer (valgfrit)', '49/50 number (optional)')}</Label>
             <div className="flex gap-2">
-              <Input id="shelf-document" value={document} onChange={event => { setDocument(event.target.value); if (lines && event.target.value.trim() !== lines.document) { setLines(null); setLine(null) } }} onKeyDown={event => { if (event.key === 'Enter') void lookup() }} placeholder={t('Scan eller skriv, fx 5000032337 eller 5000032337 2026 0001', 'Scan or type, e.g. 5000032337 or 5000032337 2026 0001')} />
+              <Input id="shelf-document" value={document} onChange={event => { setFresh(false); setDocument(event.target.value); if (lines && event.target.value.trim() !== lines.document) { setLines(null); setLine(null) } }} onKeyDown={event => { if (event.key === 'Enter') void lookup() }} placeholder={t('Scan eller skriv, fx 5000032337 eller 5000032337 2026 0001', 'Scan or type, e.g. 5000032337 or 5000032337 2026 0001')} />
               <Button variant="outline" onClick={() => lookup()} loading={looking} disabled={!document.trim()}><Barcode size={16} /> {t('Hent fra SAP', 'Get from SAP')}</Button>
             </div>
             {lines && (
@@ -172,7 +188,7 @@ export function ShelfPut({ shelf: initial, version, onDone }: { shelf?: string; 
                 {lines.materials.map((item, index) => {
                   const done = lines.saved.includes(index)
                   return (
-                    <button key={index} type="button" disabled={done} aria-pressed={line === index} onClick={() => chooseLine(lines.materials, index)}
+                    <button key={index} type="button" disabled={done} aria-pressed={line === index} onClick={() => { setFresh(false); chooseLine(lines.materials, index) }}
                       className={cn('inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs', line === index ? 'border-primary bg-primary text-primary-foreground' : done ? 'text-muted-foreground' : 'hover:bg-secondary')}>
                       {done && <CheckCircle size={12} weight="fill" className="text-emerald-600" />}
                       <span className="font-mono font-semibold">{item.material}</span> · {t(`${formatNumber(item.quantity)} stk.`, `${formatNumber(item.quantity)} pcs`)}
@@ -186,13 +202,13 @@ export function ShelfPut({ shelf: initial, version, onDone }: { shelf?: string; 
           <div className="grid gap-1.5">
             <span className="text-sm font-medium">{t('Materiale', 'Material')}</span>
             <MaterialPicker value={query} chosen={material} listId="shelf-suggestions" label={t('Materiale', 'Material')} placeholder="R162-0717"
-              onValueChange={value => { setQuery(value); setMaterial(null); setLine(null) }} onChoose={code => { setQuery(code); setMaterial(code); setLine(index => (index !== null && lines?.materials[index]?.material === code ? index : null)) }} />
+              onValueChange={value => { setFresh(false); setQuery(value); setMaterial(null); setLine(null) }} onChoose={code => { setFresh(false); setQuery(code); setMaterial(code); setLine(index => (index !== null && lines?.materials[index]?.material === code ? index : null)) }} />
             {card && <p className="text-xs text-muted-foreground">{materialLabel(card.material, card.description)}</p>}
             {card && card.shelves.length > 0 && (
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-xs text-muted-foreground">{t('Står allerede på', 'Already on')}</span>
                 {card.shelves.map(item => (
-                  <button key={item.location} type="button" onClick={() => setShelf(item.name)}
+                  <button key={item.location} type="button" onClick={() => { setFresh(false); setShelf(item.name) }}
                     className={cn('rounded-md border px-2.5 py-1 text-xs', locationKeyOf(shelf) === item.location ? 'border-primary bg-primary text-primary-foreground' : 'hover:bg-secondary')}>
                     <span className="font-mono font-semibold">{item.name}</span> · {t(`${formatNumber(item.quantity)} stk.`, `${formatNumber(item.quantity)} pcs`)}
                   </button>
@@ -204,13 +220,15 @@ export function ShelfPut({ shelf: initial, version, onDone }: { shelf?: string; 
           <div className="grid gap-1.5">
             <Label htmlFor="shelf-amount">{t('Antal', 'Quantity')}</Label>
             <div className="flex flex-wrap items-center gap-3">
-              <Input id="shelf-amount" inputMode="numeric" value={quantity} onChange={event => setQuantity(event.target.value.replace(/\D/g, ''))} onKeyDown={event => { if (event.key === 'Enter') void save() }} className="w-32" />
+              <Input id="shelf-amount" inputMode="numeric" value={quantity} onChange={event => { setFresh(false); setQuantity(event.target.value.replace(/\D/g, '')) }}
+                onKeyDown={event => { if (event.key === 'Enter' && enterSaves({ repeat: event.repeat, freshSelection: freshRef.current })) void save() }} className="w-32" />
               {existing && amount >= 1 && (
                 <span className="inline-flex items-center gap-1.5 text-sm">
                   {t(`${formatNumber(existing.quantity)} stk.`, `${formatNumber(existing.quantity)} pcs`)} <ArrowRight size={14} /> <strong>{t(`${formatNumber(existing.quantity + amount)} stk.`, `${formatNumber(existing.quantity + amount)} pcs`)}</strong>
                 </span>
               )}
             </div>
+            {freshSelection && line !== null && <p className="text-xs text-muted-foreground">{t('Næste materiale på nummeret er valgt med antallet fra SAP. Ret antallet, eller klik Gem.', 'The next material on the number is chosen with the quantity from SAP. Correct the quantity or click Save.')}</p>}
           </div>
 
           <div className="flex justify-end">

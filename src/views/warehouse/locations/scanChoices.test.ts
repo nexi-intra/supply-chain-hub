@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { LocationSearch } from '@/types/warehouse'
-import { enterChoice, enterOnSearch, nextUnsaved, openWhenReady, youngerThanOldest } from './scanChoices'
+import { enterChoice, enterOnSearch, enterSaves, markSaved, nextUnsaved, openWhenReady, savedOf, unmarkSaved, youngerThanOldest } from './scanChoices'
 
 const list = (...codes: string[]) => codes.map(material => ({ material, description: '' }))
 
@@ -90,5 +90,40 @@ describe('nextUnsaved (Læg på hylde with a 49/50 number of several materials)'
   it('is null when all are done', () => {
     expect(nextUnsaved(3, [0, 1, 2], 2)).toBeNull()
     expect(nextUnsaved(0, [], null)).toBeNull()
+  })
+})
+describe('saved lines of a 49/50 number (Læg på hylde, refused puts)', () => {
+  it('an earlier refused put opens only its own line: a later saved line stays saved', () => {
+    let saved = markSaved({}, '5000032337', 0)
+    saved = markSaved(saved, '5000032337', 1)
+    saved = unmarkSaved(saved, '5000032337', 0)
+    expect(savedOf(saved, '5000032337', 2)).toEqual([1])
+    expect(nextUnsaved(2, savedOf(saved, '5000032337', 2), null)).toBe(0)
+  })
+
+  it('keeps each number apart and marks a line only once', () => {
+    let saved = markSaved({}, 'A', 0)
+    saved = markSaved(saved, 'A', 0)
+    saved = markSaved(saved, 'B', 2)
+    expect(savedOf(saved, 'A', 3)).toEqual([0])
+    expect(savedOf(saved, 'B', 3)).toEqual([2])
+    expect(savedOf(saved, 'C', 3)).toEqual([])
+    expect(unmarkSaved(saved, 'C', 1)).toEqual({ ...saved, C: [] })
+  })
+
+  it('a number that is all done starts over when it is scanned again', () => {
+    const saved = markSaved(markSaved({}, 'A', 0), 'A', 1)
+    expect(savedOf(saved, 'A', 2)).toEqual([])
+  })
+})
+
+describe('enterSaves (Læg på hylde, Enter in the quantity field)', () => {
+  it('saves on a plain Enter after the user has worked in the form', () => {
+    expect(enterSaves({ repeat: false, freshSelection: false })).toBe(true)
+  })
+
+  it('ignores a held Enter, and Enter on a line preselected after a save until the user has touched the form', () => {
+    expect(enterSaves({ repeat: true, freshSelection: false })).toBe(false)
+    expect(enterSaves({ repeat: false, freshSelection: true })).toBe(false)
   })
 })

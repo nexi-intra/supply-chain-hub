@@ -67,3 +67,26 @@ export function nextUnsaved(count: number, saved: number[], after: number | null
   }
   return null
 }
+/** Per 49/50 number, the indexes of its materials put on a shelf on this screen. */
+export type SavedLines = Record<string, number[]>
+
+export function markSaved(saved: SavedLines, document: string, index: number): SavedLines {
+  const done = saved[document] || []
+  return done.includes(index) ? saved : { ...saved, [document]: [...done, index] }
+}
+
+/** A refused put: only its own line is open again, whatever was saved after it stays saved. */
+export function unmarkSaved(saved: SavedLines, document: string, index: number): SavedLines {
+  return { ...saved, [document]: (saved[document] || []).filter(item => item !== index) }
+}
+
+/** The saved lines of a number with `count` materials; one that is all done starts over when it is scanned again. */
+export function savedOf(saved: SavedLines, document: string, count: number): number[] {
+  const done = saved[document] || []
+  return done.length >= count ? [] : done
+}
+
+/** Enter in the quantity field saves, but not a held key, nor a line preselected after a save the user has not touched. */
+export function enterSaves({ repeat, freshSelection }: { repeat: boolean; freshSelection: boolean }): boolean {
+  return !repeat && !freshSelection
+}
