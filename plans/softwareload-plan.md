@@ -580,3 +580,30 @@ Beskrivelser er aflæst i SAP (QS4, MB52 F4-hjælp på Storage Location, plant D
 - [x] **Step 2: Kør den og se den fejle, ret `SCRIPT_WRITE_SYSTEMS`, og kør igen.** Forventet: PASS.
 - [x] **Step 3: Kør den fulde suite** (tsc, node-tests og vitest).
 - [x] **Step 4: Commit** med `feat(softwareload): PS4 slået til efter QS4-godkendelse`.
+
+## Fase 7: Ret en kørende opgave (Jacobs ønske 23.11)
+
+### Task 14: Ret type, KIF, mål og version mens opgaven kører
+
+Jacob: hvis opgaven er oprettet forkert, skal man kunne rette den. Besluttet: alle fire valg (type, I KIF, mål-lokation, softwareversion) kan rettes, mens opgaven kører og før "Afslut". Intet er flyttet i SAP på det tidspunkt.
+
+*(Mine beslutninger:)*
+- Kun ejeren kan rette sin egen kørende opgave (opgaven er én persons). En opgave, der venter på SAP, kan ikke rettes, fordi flytningen er i gang.
+- Samme regler som ved start: typen fra listen, målet fra de 7 lokationer, versionen ikke tom og højst 60 tegn og huskes som forslag.
+- Hver rettelse gemmes på opgaven som `edits: [{ at, by, from: {type,kif,target,version}, to: {...} }]`, så historikken viser, at opgaven blev rettet.
+- Afslutning, søgning og statistik bruger de rettede værdier.
+- Rettes I KIF fra til fra, gælder KIF-reglen for hele opgaven ved afslutning (alt via D005).
+
+**Files:**
+- Modify: `electron/warehouse/softwareload/softwareloadService.cjs` (ny `edit(user, { type, kif, target, version })` returnerer `TaskView`; genbrug `choice()`; `SOFTWARELOAD_NOT_RUNNING` uden kørende opgave; ingen ændring giver ingen skrivning)
+- Modify: `electron/warehouse/register.cjs` (`softwareload:edit`), `electron/preload.cjs`, `src/types/warehouse.ts`
+- Modify: `src/views/warehouse/softwareload/SoftwareloadTask.tsx` (knappen "Ret opgave" på den kørende opgave åbner en dialog med de samme felter som start, udfyldt med de nuværende valg)
+- Modify: Hubert-guiden på fire sprog (en kort opgave "ret en kørende opgave") og changelog 1.6.8
+- Test: `softwareloadService.test.cjs`:
+  - 'edit changes type, KIF, target and version of the running task and keeps the history'
+  - 'edit refuses a target outside the list and an empty version'
+  - 'edit without a running task is refused, and a pending task cannot be edited'
+  - 'finish uses the edited target and KIF'
+  - `register.test.cjs` (kanalen findes)
+
+- [ ] Tests først, se dem fejle, implementér, se dem bestå, tsc, vitest, commit `feat(softwareload): ret en kørende opgave`
