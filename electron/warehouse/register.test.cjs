@@ -507,3 +507,72 @@ test('a status manager removed on another PC does not keep the rights while the 
     fs.promises.readFile = realReadFile
   }
 })
+
+// M: not answering: a read of the roles file hangs until the test lets it through (store read slots are shared).
+function hangingRoles() {
+  const realNow = Date.now
+  const realReadFile = fs.promises.readFile
+  const held = []
+  const state = { clock: realNow(), hang: false }
+  Date.now = () => state.clock
+  fs.promises.readFile = (file, ...rest) => {
+    if (state.hang && path.basename(String(file)).startsWith('roller')) return new Promise(resolve => held.push(resolve)).then(() => realReadFile(file, ...rest))
+    return realReadFile(file, ...rest)
+  }
+  state.restore = async () => {
+    Date.now = realNow
+    fs.promises.readFile = realReadFile
+    for (const release of held) release()
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  return state
+}
+const within = (promise, ms) => Promise.race([promise, new Promise(resolve => setTimeout(() => resolve('blocked'), ms))])
+
+test('a plain user past the role limit is not held up by a hanging roles read: a put-away is kept on this PC at once', async () => {
+  const m = hangingRoles()
+  try {
+    let connected = true
+    const { call, registered } = setup({ storageConnected: () => connected })
+    await call('mona', 'locations:create-location', { name: 'A2.4', type: 'Palle', purpose: 'reserve', capacity: 2 })
+    assert.equal((await call('anna', 'me')).role, 'user')
+    m.clock += 61000
+    m.hang = true
+    connected = false
+    const answer = await within(call('anna', 'locations:put-away', { actionId: 'hang-1', pallets: [{ location: 'A2.4', material: 'R162-0717', quantity: 5 }] }), 1000)
+    assert.deepEqual(answer, { queued: true })
+    assert.deepEqual(await within(call('anna', 'locations:pending'), 1000), { pending: 1, failures: [] })
+    await registered.closeAll()
+  } finally {
+    await m.restore()
+  }
+})
+
+test('a status manager past the role limit with a hanging roles read is a plain user after the read limit', async () => {
+  const m = hangingRoles()
+  try {
+    const { call } = setup()
+    await call('mona', 'roles:set-role', { email: 'anna@nexi.test', role: 'status-manager' })
+    assert.equal((await call('anna', 'me')).role, 'manager')
+    m.clock += 61000
+    m.hang = true
+    const startedAt = performance.now()
+    assert.equal((await within(call('anna', 'me'), 1500)).role, 'user')
+    assert.ok(performance.now() - startedAt < 1500, 'answered within the read limit')
+  } finally {
+    await m.restore()
+  }
+})
+
+test('a status manager past the role limit keeps the role when M: answers in time', async () => {
+  const m = hangingRoles()
+  try {
+    const { call } = setup()
+    await call('mona', 'roles:set-role', { email: 'anna@nexi.test', role: 'status-manager' })
+    assert.equal((await call('anna', 'me')).role, 'manager')
+    m.clock += 61000
+    assert.equal((await call('anna', 'me')).role, 'manager')
+  } finally {
+    await m.restore()
+  }
+})

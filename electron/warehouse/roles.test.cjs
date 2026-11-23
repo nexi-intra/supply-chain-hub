@@ -141,11 +141,12 @@ function cacheSetup() {
   const source = { role: 'admin', fail: false, hang: false, reads: 0 }
   const roleOf = async () => {
     source.reads++
-    if (source.hang) await new Promise(() => {})
+    // A hanging read (M: not answering) until the test releases it.
+    if (source.hang) await new Promise(resolve => { source.release = resolve })
     if (source.fail) throw Object.assign(new Error('EBUSY'), { code: 'STORAGE_UNAVAILABLE' })
     return source.role
   }
-  const cache = createRoleCache({ roleOf, ttlMs: 30000, maxAgeMs: 60000, now: () => clock.now })
+  const cache = createRoleCache({ roleOf, ttlMs: 30000, maxAgeMs: 60000, readLimitMs: 50, now: () => clock.now })
   return { clock, source, cache }
 }
 const settle = () => new Promise(resolve => setImmediate(resolve))
@@ -217,6 +218,47 @@ test('role cache: a successful refresh updates the role, and a role change throu
   assert.equal(await cache.roleOf(ANNA), 'status-manager')
   assert.equal(await cache.roleOf({ ...ANNA, team: 'TRR' }), 'status-manager', 'per team')
   assert.equal(source.reads, 4)
+})
+
+const within = (promise, ms) => Promise.race([promise, new Promise(resolve => setTimeout(() => resolve('blocked'), ms))])
+
+test('role cache: a plain user is never held up by a hanging M:, also past the hard limit', async () => {
+  const { clock, source, cache } = cacheSetup()
+  source.role = 'user'
+  await cache.roleOf(ANNA)
+  clock.now += 61000
+  source.hang = true
+  source.role = 'admin'
+  assert.equal(await within(cache.roleOf(ANNA), 20), 'user', 'answered at once, not after the read limit')
+  assert.equal(source.reads, 2, 'read again in the background')
+  source.release()
+  await settle()
+  assert.equal(await cache.roleOf(ANNA), 'admin', 'the background read is used once it lands')
+})
+
+test('role cache: a privileged role past the hard limit waits only the read limit for a hanging M:, then is "user"', async () => {
+  const { clock, source, cache } = cacheSetup()
+  source.role = 'status-manager'
+  await cache.roleOf(ANNA)
+  clock.now += 61000
+  source.hang = true
+  const startedAt = Date.now()
+  assert.equal(await within(cache.roleOf(ANNA), 1000), 'user')
+  assert.ok(Date.now() - startedAt < 500, 'answered after the read limit')
+  assert.equal(await within(cache.roleOf(ANNA), 20), 'user', 'while the same read still hangs, later calls do not wait again')
+  assert.equal(source.reads, 2, 'one read at a time')
+  source.release()
+  await settle()
+  assert.equal(await cache.roleOf(ANNA), 'status-manager', 'the read that finished in the background updates the cache')
+})
+
+test('role cache: a privileged role past the hard limit is kept when M: answers within the read limit', async () => {
+  const { clock, source, cache } = cacheSetup()
+  source.role = 'status-manager'
+  await cache.roleOf(ANNA)
+  clock.now += 61000
+  assert.equal(await cache.roleOf(ANNA), 'status-manager')
+  assert.equal(source.reads, 2)
 })
 
 test('role cache: the first read fails closed', async () => {

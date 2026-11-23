@@ -125,14 +125,17 @@ function createRoles({ storeFor, listTeamUsers, now = Date.now }) {
 }
 
 const ROLE_TTL_MS = 30000
+const ROLE_READ_LIMIT_MS = 1000
 
 /**
  * Every call (also each scan) asks for the CountPoint role, so it is cached per team and person. Within `ttlMs` the
  * cached role is used; after that it is still used at once while it is read again in the background, so a slow M: never
- * holds a call up. Rights fail closed: an entry older than `maxAgeMs` (counted from the last good read, a failed read
- * does not renew it) is never used, the call waits for a fresh read and is a plain 'user' when that read fails.
+ * holds a call up. Rights fail closed: a role above 'user' older than `maxAgeMs` (counted from the last good read, a
+ * failed read does not renew it) is not trusted; the call waits at most `readLimitMs` for a fresh read and is a plain
+ * 'user' when it fails or is slower, while the read finishes in the background. A cached 'user' can only give too few
+ * rights, so it is always used at once. The very first read is waited for (the team user list is too, register.cjs).
  */
-function createRoleCache({ roleOf, ttlMs = ROLE_TTL_MS, maxAgeMs = 2 * ttlMs, now = Date.now }) {
+function createRoleCache({ roleOf, ttlMs = ROLE_TTL_MS, maxAgeMs = 2 * ttlMs, readLimitMs = ROLE_READ_LIMIT_MS, now = Date.now }) {
   const cache = new Map()
   let generation = 0
 
@@ -145,20 +148,39 @@ function createRoleCache({ roleOf, ttlMs = ROLE_TTL_MS, maxAgeMs = 2 * ttlMs, no
       return value
     }, error => {
       const current = cache.get(key)
-      if (current?.pending === pending) delete current.pending
+      if (current?.pending === pending) { delete current.pending; delete current.slow }
       throw error
     })
     cache.set(key, { ...entry, pending })
     return pending
   }
 
+  /** The fresh role, or 'user' when the read fails or takes longer than the limit (it keeps running). */
+  function limited(key, pending) {
+    let timer
+    const limit = new Promise(resolve => {
+      timer = setTimeout(() => {
+        // Later calls do not wait again on a read that already missed the limit.
+        const current = cache.get(key)
+        if (current?.pending === pending) current.slow = true
+        resolve('user')
+      }, readLimitMs)
+      timer.unref?.()
+    })
+    return Promise.race([pending.catch(() => 'user'), limit]).finally(() => clearTimeout(timer))
+  }
+
   async function cachedRoleOf(user) {
     const key = `${user.team}:${lower(user.email)}`
     const hit = cache.get(key)
-    const age = hit?.value === undefined ? Infinity : now() - hit.at
-    if (age >= maxAgeMs) return read(key, user).catch(() => 'user')
-    if (age >= ttlMs) read(key, user).catch(() => {})
-    return hit.value
+    if (hit?.value === undefined) return read(key, user).catch(() => 'user')
+    const age = now() - hit.at
+    if (age < ttlMs) return hit.value
+    const pending = read(key, user)
+    pending.catch(() => {})
+    if (hit.value === 'user' || age < maxAgeMs) return hit.value
+    if (cache.get(key)?.slow) return 'user'
+    return limited(key, pending)
   }
 
   /** A role change through this Hub: every role is read again at once. */
