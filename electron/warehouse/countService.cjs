@@ -1188,7 +1188,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     if (status === 'returned' || status === 'reset') {
       // The numbers on an SAP count document must not change underneath it: delete the document first.
       const active = activePiDoc(await repo.getPiDocs(state.team, state.id).catch(() => ({})), code)
-      if (active) throw codeError('PIDOC_ACTIVE', active.status === 'posted' ? `${code} er bogført i SAP (${active.docNo})` : `${code} har SAP-dokument ${active.docNo || ''} – slet det først`)
+      if (active?.status === 'posted') throw postedError(code)
+      if (active) throw codeError('PIDOC_ACTIVE', `${code} har SAP-dokument ${active.docNo || ''} – slet det først`)
     }
     const by = me(user)
     const at = now()

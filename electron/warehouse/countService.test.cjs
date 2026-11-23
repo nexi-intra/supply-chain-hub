@@ -769,6 +769,23 @@ test('a wrong "Bogført i SAP" mark is undone only by a manager, with a reason a
   assert.deepEqual([cleanApproved.status, cleanApproved.comment, cleanApproved.unposts], ['approved', 'Ingen difference', second.unposts])
 })
 
+test('a material posted through an SAP document gets the posted message on reset and send back', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const mona = ctx.service('pc3')
+  const { id } = await newCount(ctx, anna)
+  await anna.saveLine(ANNA, id, { place: 'A1.1', material: 'R162-0717', qty: 97 })
+  await anna.flush(ANNA, id)
+  ctx.tick(2000)
+  await mona.setApproval(MONA, id, { material: 'R162-0717', status: 'approved' })
+  // The document is posted in SAP; the approval may still say approved (marking it posted is a separate write).
+  await ctx.repo.changePiDocs('TCD', id, all => ({ all: { ...all, D1: { id: 'D1', docNo: '105000903', status: 'posted', lines: [{ material: 'R162-0717' }] } } }))
+  for (const status of ['reset', 'returned']) {
+    await assert.rejects(mona.setApproval(MONA, id, { material: 'R162-0717', status, comment: 'Tæl igen' }), { code: 'COUNT_MATERIAL_POSTED', message: 'R162-0717 er bogført i SAP og kan ikke ændres. Lav en ny optælling, hvis der skal rettes mere.' }, status)
+  }
+  assert.equal((await ctx.repo.getApprovals('TCD', id))['R162-0717'].status, 'approved')
+})
+
 test('a "Bogført i SAP" made on another PC after this PC read the approvals still refuses a reset (checked under the lock)', async () => {
   const ctx = setup()
   const anna = ctx.service('pc1')
