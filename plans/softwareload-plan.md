@@ -17,7 +17,7 @@
 
 **Spec:** [softwareload-design.md](./softwareload-design.md)
 
-Status 20.11.2026: Fase 1 til 5 og opgave 9b er færdige, reviewet og røgtestet i QS4. Fase 6 (QS4 fra ende til anden med Jacob, derefter PS4) mangler.
+Status 23.11.2026: Alle faser er færdige. Fuld test mod QS4 23.11 (34 tjek, 0 fejl), PS4 slået til samme dag efter Jacobs godkendelse. Brugerfladen er endnu ikke klikket igennem i appen.
 
 Start med **Fase 1**. Den er ren logik uden SAP og uden UI, og den låser reglerne fast.
 
@@ -560,15 +560,15 @@ Beskrivelser er aflæst i SAP (QS4, MB52 F4-hjælp på Storage Location, plant D
 
 **Ingen kodeændring.** Sæt `sapSystem` til QS4 i dev-konfigurationen og brug små antal serienumre (højst 3) på INT4100-7883-0 (ONHA på D000). Alt rulles tilbage bagefter.
 
-- [ ] **Step 1: KIF-opgave med mål D006.** Brug to OK-terminaler og én fejlet -0. Forventet:
+- [x] **Step 1: KIF-opgave med mål D006.** Brug to OK-terminaler og én fejlet -0. Forventet:
   - de to går D000 til D005 til D006
   - den fejlede går D000 til D005 til D000 og 344
   - dokumentnumrene står i resultatet og i søgningen
-- [ ] **Step 2: Gruppefejl.** Tilføj et serienummer i blocked stock (efter 344 i Step 1) til en ny opgave. Forventet: outcome `blocked-stock`, og resten flyttes.
-- [ ] **Step 3: Afbrydelse.** Luk QS4 midt i wave 2. Forventet: opgaven står under "Venter på SAP". Efter login fortsætter "Fortsæt i SAP" uden dobbelte D005-trin.
-- [ ] **Step 4: Flyt ind i KIF** med et materialedokument fra Step 1.
-- [ ] **Step 5: Rul tilbage.** Brug 343 og flyt til D000. Bekræft i ZMS_PREP, at alle står på D000 som ONHA uden blocked.
-- [ ] **Step 6: Jacob godkender flowet.** Ingen PS4 før det.
+- [x] **Step 2: Gruppefejl.** Tilføj et serienummer i blocked stock (efter 344 i Step 1) til en ny opgave. Forventet: outcome `blocked-stock`, og resten flyttes.
+- [x] **Step 3: Afbrydelse.** Luk QS4 midt i wave 2. Forventet: opgaven står under "Venter på SAP". Efter login fortsætter "Fortsæt i SAP" uden dobbelte D005-trin.
+- [x] **Step 4: Flyt ind i KIF** med et materialedokument fra Step 1.
+- [x] **Step 5: Rul tilbage.** Brug 343 og flyt til D000. Bekræft i ZMS_PREP, at alle står på D000 som ONHA uden blocked.
+- [x] **Step 6: Jacob godkender flowet.** Ingen PS4 før det.
 
 ### Task 13: Slå PS4 til
 
@@ -576,7 +576,7 @@ Beskrivelser er aflæst i SAP (QS4, MB52 F4-hjælp på Storage Location, plant D
 - Modify: `electron/warehouse/sapBridge.cjs` med `SCRIPT_WRITE_SYSTEMS` `['PS4', 'QS4']` for `sl-transfer` og `sl-block`, og en kommentar med datoen for godkendelsen, som for `WRITE_SYSTEMS`.
 - Test: `electron/warehouse/sapBridge.test.cjs`
 
-- [ ] **Step 1: Ret testen** fra Task 3 så PS4 nu er tilladt for `sl-transfer`.
-- [ ] **Step 2: Kør den og se den fejle, ret `SCRIPT_WRITE_SYSTEMS`, og kør igen.** Forventet: PASS.
-- [ ] **Step 3: Kør den fulde suite** (tsc, node-tests og vitest).
-- [ ] **Step 4: Commit** med `feat(softwareload): PS4 slået til efter QS4-godkendelse`.
+- [x] **Step 1: Ret testen** fra Task 3 så PS4 nu er tilladt for `sl-transfer`.
+- [x] **Step 2: Kør den og se den fejle, ret `SCRIPT_WRITE_SYSTEMS`, og kør igen.** Forventet: PASS.
+- [x] **Step 3: Kør den fulde suite** (tsc, node-tests og vitest).
+- [x] **Step 4: Commit** med `feat(softwareload): PS4 slået til efter QS4-godkendelse`.

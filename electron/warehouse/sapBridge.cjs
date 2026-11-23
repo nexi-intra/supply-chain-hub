@@ -11,8 +11,9 @@ const SCRIPTS = Object.freeze({ status: 'status.vbs', export: 'export.vbs', matd
 const WRITE_SCRIPTS = Object.freeze({ 'pidoc-create': 'pidoc-create.vbs', 'pidoc-print': 'pidoc-print.vbs', 'pidoc-serials': 'pidoc-serials.vbs', 'pidoc-count': 'pidoc-count.vbs', 'pidoc-post': 'pidoc-post.vbs', 'pidoc-delete': 'pidoc-delete.vbs', 'sl-transfer': 'sl-transfer.vbs', 'sl-block': 'sl-block.vbs' })
 // PS4 enabled 2026-10-20 after the full flow was verified in QS4.
 const WRITE_SYSTEMS = Object.freeze(['PS4', 'QS4'])
-// Write scripts with their own, narrower list of systems (instead of WRITE_SYSTEMS). Softwareload: QS4 only until verified.
-const SCRIPT_WRITE_SYSTEMS = Object.freeze({ 'sl-transfer': Object.freeze(['QS4']), 'sl-block': Object.freeze(['QS4']) })
+// Write scripts with their own list of systems (instead of WRITE_SYSTEMS). Softwareload: PS4 enabled 2026-11-23 after
+// the full flow (KIF from several locations, failed -0/-R, resume after a lost answer, abandon) was verified in QS4.
+const SCRIPT_WRITE_SYSTEMS = Object.freeze({ 'sl-transfer': Object.freeze(['PS4', 'QS4']), 'sl-block': Object.freeze(['PS4', 'QS4']) })
 const SOFTWARELOAD_WRITE_SYSTEMS = SCRIPT_WRITE_SYSTEMS['sl-transfer']
 const SAFE_ARGUMENT = /^[A-Za-z0-9 _.:\\/-]{0,260}$/
 

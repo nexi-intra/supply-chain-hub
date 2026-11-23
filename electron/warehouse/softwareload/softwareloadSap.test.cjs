@@ -151,7 +151,8 @@ test('a SAP logon in another language than English is refused with a clear messa
 })
 
 test('writing is refused when the system is not enabled', async () => {
-  const { sap, scriptCalls } = makeSap({ system: 'PS4', handle: () => '{"ok":true,"doc":"1"}' })
+  assert.equal(makeSap({ system: 'PS4', handle: () => '{"ok":true}' }).sap.writeEnabled, true)
+  const { sap, scriptCalls } = makeSap({ system: 'XS4', handle: () => '{"ok":true,"doc":"1"}' })
   assert.equal(sap.writeEnabled, false)
   await assert.rejects(sap.transfer({ team: 'TRR', serials: ['S1'], from: 'D000', to: 'D005' }), { code: 'SOFTWARELOAD_WRITE_DISABLED' })
   await assert.rejects(sap.block({ material: 'INT4100-7883-0', serials: ['S1'] }), { code: 'SOFTWARELOAD_WRITE_DISABLED' })
