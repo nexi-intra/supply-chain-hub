@@ -20,6 +20,7 @@ const LOCK_IDLE_MS = 60 * 60 * 1000
 // The heartbeat of an open count (KEEPALIVE_MS) is checked every minute, also off screen; the margin absorbs timer drift.
 const KEEPALIVE_TICK_MS = 60 * 1000
 const KEEPALIVE_MARGIN_MS = 30 * 1000
+const KEEPALIVE_CHECK_MS = 10 * 1000
 const CLAIM_TOUCH_MS = 2 * 60 * 1000
 const PENDING_TTL_MS = 30 * 60 * 1000
 const IMPORT_MAX = 20000
@@ -382,23 +383,32 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   /** From the timer: the count may have been deleted on another PC meanwhile, so that is checked before writing. */
   async function keepAliveOffScreen(state) {
     if (!keepAliveDue(state)) return
-    if (await repo.isDeleted(state.team, state.id).catch(() => false)) {
+    // A hanging M: skips this round after 10 s; the next round asks again.
+    let timer
+    const timedOut = new Promise(resolve => { timer = startTimer(() => resolve('timeout'), KEEPALIVE_CHECK_MS) })
+    const deleted = await Promise.race([repo.isDeleted(state.team, state.id).catch(() => false), timedOut]).finally(() => clearTimer(timer))
+    if (deleted === 'timeout') return
+    if (deleted) {
       await forget(state.team, state.id)
       return
     }
     if (!keepAliveStopped && keepAliveDue(state)) sendKeepAlive(state)
   }
 
-  // Also when the count is not on screen (nothing calls refresh then). The next round is set when this one is done.
+  // Also when the count is not on screen (nothing calls refresh then). The next round is set at once, so a hanging check
+  // never stops the rounds; a count whose check is still on its way is left out of the next one.
   let keepAliveTimer = null
   let keepAliveStopped = false
   function startKeepAlive() {
     if (keepAliveTimer || keepAliveStopped) return
     keepAliveTimer = startTimer(() => {
-      Promise.all([...opened.values()].map(keepAliveOffScreen)).catch(() => {}).finally(() => {
-        keepAliveTimer = null
-        if (opened.size) startKeepAlive()
-      })
+      keepAliveTimer = null
+      for (const state of opened.values()) {
+        if (state.keepAliveChecking) continue
+        state.keepAliveChecking = true
+        keepAliveOffScreen(state).catch(() => {}).finally(() => { state.keepAliveChecking = false })
+      }
+      if (opened.size) startKeepAlive()
     }, KEEPALIVE_TICK_MS)
   }
 

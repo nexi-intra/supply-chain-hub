@@ -1161,7 +1161,37 @@ test('the heartbeat timer does not write to a count deleted on another PC, and f
   assert.ok(await waitFor(() => pc.reads.includes('isDeleted')), 'the timer asks first')
   await new Promise(resolve => setTimeout(resolve, 50))
   assert.equal(await lastHeartbeat(ctx, id), null, 'no chunk is written again')
+  pc.fire(60_000)
   assert.equal(pc.armed(60_000), 0, 'nothing is left open to send for')
+})
+
+test('a hanging M: skips one heartbeat round, and the next round still sends', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const { id } = await newCount(ctx, anna)
+  const pc = countingService(ctx, 'pc2')
+  await pc.svc.requestJoin(BO, id)
+  await anna.decideMember(ANNA, id, { email: BO.email, approve: true })
+  await pc.svc.scan(BO, id, { serial: 'N1', place: 'A1.1' })
+  await pc.svc.flush(BO, id)
+  const sentAt = ctx.clock.now
+
+  ctx.tick(6 * 60 * 1000)
+  pc.reads.length = 0
+  pc.hold()
+  pc.fire(60_000)
+  assert.ok(await waitFor(() => pc.reads.includes('isDeleted')), 'the check hangs on the drive')
+  assert.equal(pc.armed(60_000), 1, 'the next round is set at once')
+  pc.fire(10_000)
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.equal(await lastHeartbeat(ctx, id), sentAt, 'nothing sent without knowing the count is still there')
+
+  pc.unhold()
+  ctx.tick(60 * 1000)
+  const next = ctx.clock.now
+  pc.fire(60_000)
+  assert.ok(await waitFor(async () => (await lastHeartbeat(ctx, id)) === next), 'the next round sends')
+  pc.release()
 })
 
 test('after closing, approval judges each PC at the close: in sync then is no warning, behind then still is', async () => {
