@@ -606,7 +606,7 @@ Jacob: hvis opgaven er oprettet forkert, skal man kunne rette den. Besluttet: al
   - 'finish uses the edited target and KIF'
   - `register.test.cjs` (kanalen findes)
 
-- [ ] Tests først, se dem fejle, implementér, se dem bestå, tsc, vitest, commit `feat(softwareload): ret en kørende opgave`
+- [x] Tests først, se dem fejle, implementér, se dem bestå, tsc, vitest, commit `feat(softwareload): ret en kørende opgave`
 
 ### Task 15: Slet afsluttede opgaver og KIF-flytninger (Jacobs ønske 23.11)
 
@@ -624,4 +624,4 @@ Jacob: testdata må ikke påvirke statistikken i drift, og man skal kunne slette
 - Modify: Hubert-guiden (fire sprog) og changelog 1.6.8
 - Test: 'a manager deletes a finished task: it leaves the task list, the statistics and the search', 'a manager deletes a KIF move and its search lines', 'an employee cannot delete', 'a running or pending task cannot be deleted', 'deletion is logged'
 
-- [ ] Tests først, se dem fejle, implementér, se dem bestå, tsc, vitest, commit `feat(softwareload): slet afsluttede opgaver og KIF-flytninger`
+- [x] Tests først, se dem fejle, implementér, se dem bestå, tsc, vitest, commit `feat(softwareload): slet afsluttede opgaver og KIF-flytninger`
