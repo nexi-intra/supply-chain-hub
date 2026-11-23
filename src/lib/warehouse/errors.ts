@@ -260,7 +260,7 @@ const MESSAGES_EN: Record<string, string> = {
   PIDOC_CHECK_ERRORS: "SAP's Check found errors in the serial numbers – nothing was updated.",
   PIDOC_NOT_COUNTED: 'SAP does not show the document as counted.',
   PIDOC_NO_QTY: "Fetch today's SAP figures before entering the quantity.",
-  PIDOC_DOC_STALE: "Fetch today's SAP figures again before entering the quantity. The figures are too old.",
+  PIDOC_DOC_STALE: "Fetch today's SAP figures before entering the quantity.",
   DOC_NOT_FETCHED: "Fetch today's SAP figures first – the serial numbers for the document come from there.",
   PIDOC_CHANGED: 'The document has changed meanwhile. Try again.',
   PIDOC_NOT_DELETED: 'The document was not deleted in SAP.',
