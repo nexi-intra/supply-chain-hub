@@ -25,6 +25,16 @@ function fetchError(code, message, extra = {}) {
   return Object.assign(new Error(message), { code }, extra)
 }
 
+/** The export file SAP wrote; SAP saying "ok" without the file (saved under another name) is a failed export. */
+async function readExport(file) {
+  try {
+    return await fs.promises.readFile(file, 'utf8')
+  } catch (error) {
+    if (error?.code === 'ENOENT') throw fetchError('SAP_EXPORT_FAILED', 'SAP gemte ikke eksportfilen. Prøv igen.')
+    throw error
+  }
+}
+
 function lastJsonLine(output) {
   try {
     return JSON.parse(String(output).trim().split(/\r?\n/).pop())
@@ -41,7 +51,7 @@ function createSapFetcher({ bridge, runScript, tempRoot = os.tmpdir(), expected 
     const result = lastJsonLine(await runScript('export', args, { timeoutMs: EXPORT_TIMEOUT_MS }))
     if (!result?.ok) throw fetchError('SAP_EXPORT_FAILED', `SAP-eksport (${definition.step}) fejlede: ${String(result?.error || 'ukendt fejl').slice(0, 200)}`)
     if (result.rows === 0) return ''
-    return fs.promises.readFile(path.join(dir, definition.file), 'utf8')
+    return readExport(path.join(dir, definition.file))
   }
 
   async function run(onProgress, exports = EXPORTS) {
@@ -109,7 +119,7 @@ function createSapFetcher({ bridge, runScript, tempRoot = os.tmpdir(), expected 
           const result = lastJsonLine(await runScript('matdoc', [mode, dir, 'matdoc.txt', attempt], { timeoutMs: EXPORT_TIMEOUT_MS }))
           if (result?.error && /^no-access-/.test(result.error)) throw fetchError('SAP_NO_ACCESS', `Du har ikke adgang til ${transaction} i SAP`)
           if (!result?.ok) throw fetchError('SAP_EXPORT_FAILED', `Opslaget af materialedokumentet fejlede: ${String(result?.error || 'ukendt fejl').slice(0, 200)}`)
-          const rows = result.rows === 0 ? [] : parseMatdoc(await fs.promises.readFile(path.join(dir, 'matdoc.txt'), 'utf8'))
+          const rows = result.rows === 0 ? [] : parseMatdoc(await readExport(path.join(dir, 'matdoc.txt')))
           if (rows.length) { found = { document: attempt, rows, transaction }; break }
         }
         return found
@@ -144,7 +154,7 @@ function createSapFetcher({ bridge, runScript, tempRoot = os.tmpdir(), expected 
           const result = lastJsonLine(await runScript('longserno', [dir, 'longserno.txt', 'in.txt', code], { timeoutMs: EXPORT_TIMEOUT_MS }))
           if (result?.error && /^no-access-/.test(result.error)) throw fetchError('SAP_NO_ACCESS', 'Du har ikke adgang til SQ01-forespørgslen ZMS_LONG_SERNO i SAP')
           if (!result?.ok) throw fetchError('SAP_EXPORT_FAILED', `Opslaget af lange serienumre fejlede: ${String(result?.error || 'ukendt fejl').slice(0, 200)}`)
-          if (result.rows > 0) rows.push(...parseLongSerno(await fs.promises.readFile(path.join(dir, 'longserno.txt'), 'utf8')))
+          if (result.rows > 0) rows.push(...parseLongSerno(await readExport(path.join(dir, 'longserno.txt'))))
         }
         const asked = new Set(wanted)
         return rows.filter(row => row.long && asked.has(row.serial) && (!row.material || row.material === code))
@@ -164,7 +174,7 @@ function createSapFetcher({ bridge, runScript, tempRoot = os.tmpdir(), expected 
         const result = lastJsonLine(await runScript('stockcheck', [dir, 'stockcheck.txt'], { timeoutMs: EXPORT_TIMEOUT_MS }))
         if (result?.error && /^no-access-/.test(result.error)) throw fetchError('SAP_NO_ACCESS', 'Du har ikke adgang til ZMS_STOCK_SER_CHK2 i SAP')
         if (!result?.ok) throw fetchError('SAP_EXPORT_FAILED', `ZMS_STOCK_SER_CHK2 fejlede: ${String(result?.error || 'ukendt fejl').slice(0, 200)}`)
-        return result.rows === 0 ? [] : parseStockCheck(await fs.promises.readFile(path.join(dir, 'stockcheck.txt'), 'utf8'))
+        return result.rows === 0 ? [] : parseStockCheck(await readExport(path.join(dir, 'stockcheck.txt')))
       } finally {
         await fs.promises.rm(dir, { recursive: true, force: true })
       }
@@ -195,7 +205,7 @@ function createSapFetcher({ bridge, runScript, tempRoot = os.tmpdir(), expected 
           const result = lastJsonLine(await runScript('mm60', [dir, 'mm60.txt', 'in.txt', ...(useClipboard ? [] : [chunk[0]])], { timeoutMs: EXPORT_TIMEOUT_MS }))
           if (result?.error && /^no-access-/.test(result.error)) throw fetchError('SAP_NO_ACCESS', 'Du har ikke adgang til MM60 i SAP')
           if (!result?.ok) throw fetchError('SAP_EXPORT_FAILED', `MM60 fejlede: ${String(result?.error || 'ukendt fejl').slice(0, 1000)}`)
-          if (result.rows !== 0) rows.push(...parseMm60(await fs.promises.readFile(path.join(dir, 'mm60.txt'), 'utf8')))
+          if (result.rows !== 0) rows.push(...parseMm60(await readExport(path.join(dir, 'mm60.txt'))))
         }
         const asked = new Set(wanted)
         return rows.filter(row => asked.has(row.material))

@@ -85,7 +85,7 @@ export function ScanPanel({ id, open, state, refresh, optimistic, person }: Pane
           setSession(current => [entry, ...current].slice(0, 200))
         } catch (error) {
           playTone('error')
-          toast.error(scanErrorMessage(error))
+          toast.error(scanErrorMessage(error, next))
         }
       }
     } finally {

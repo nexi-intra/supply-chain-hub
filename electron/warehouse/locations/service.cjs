@@ -18,6 +18,9 @@ function codeError(code, message) {
 }
 
 // `isLocationAdmin(user)`: a real Hub manager or a Placerings admin (roles.isLocationAdmin) – Optælling's roles give no rights here.
+// Why a pallet cannot be put back on a place by an undo (the English texts mirror them, src/lib/warehouse/errorDetailsEn.json).
+const PLACE_REASONS = { full: 'er fuld', reserved: 'er reserveret', station: 'er en arbejdsstation', inactive: 'er deaktiveret' }
+
 function createLocationService({ repo, catalog, fetcher, sheetSource, isLocationAdmin = async user => user.role === 'creator' || (user.role === 'manager' && !user.statusManager), now = Date.now, newId }) {
   const by = user => ({ email: lower(user.email), name: user.fullName || user.email })
 
@@ -918,7 +921,6 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
   }
   /** The change each transaction recorded, by tx id. */
   const changesOf = events => new Map(events.filter(event => event.change).map(event => [event.tx, event.change]))
-  const PLACE_REASONS = { full: 'er fuld', reserved: 'er reserveret', station: 'er en arbejdsstation', inactive: 'er deaktiveret' }
   /** Whether a change made a place unfit for a pallet put back (`reason`): a pallet came onto it, or the place was changed. */
   const usedPlace = (change, { id, reason }) => {
     if (!change) return false
@@ -1051,4 +1053,4 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
   return { teamOf, requireAdmin, log, undo, createRack, addShelf, deleteLocations, setActiveMany, shelfPut, shelfTake, shelfMove, shelfSet, rackCard, mapContents, ensureShelves, createLocation, createSeries, editLocation, setActive, setTags, previewImport, applyImport, list, stamp, putAway, take, refill, move, changeSloc, editPallet, overview, lookupDocument, suggest, search, materialCard, locationCard, palletCard }
 }
 
-module.exports = { createLocationService, codeError }
+module.exports = { createLocationService, codeError, PLACE_REASONS }

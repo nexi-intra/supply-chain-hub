@@ -232,7 +232,11 @@ async function writeReport(data, dir, date = new Date()) {
 }
 
 async function writeWorkbook(workbook, dir, name) {
-  await fs.promises.mkdir(dir, { recursive: true })
+  // A lost drive fails a recursive mkdir with ENOENT on "\\?", not on the folder: it is M: being away (as storeOpener).
+  await fs.promises.mkdir(dir, { recursive: true }).catch(error => {
+    console.error('Lagerstyring: report folder unavailable', dir, error?.code)
+    throw Object.assign(new Error('STORAGE_UNAVAILABLE'), { code: 'STORAGE_UNAVAILABLE' })
+  })
   // Written to a unique temp file first; only then is the name taken by creating it ('wx', never asking first: no
   // synchronous call on M:, and two reports written at once never get the same name) and the file moved onto it at
   // once. A failed write therefore never leaves an empty .xlsx in "rapporter".

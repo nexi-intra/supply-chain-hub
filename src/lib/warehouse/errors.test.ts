@@ -46,15 +46,15 @@ describe('errorMessage', () => {
     expect(errorMessage(new Error('Error: SAP_TIMEOUT'))).toMatch(/SAP/)
   })
 
-  it('only a scan in Optælling says scans are saved locally when M: is away', () => {
+  it('a scan refused because M: is away names the serial and says it was not saved (it is dropped from the queue)', () => {
     const away = new Error("Error invoking remote method 'warehouse:counts:scan': Error: STORAGE_UNAVAILABLE")
     expect(errorMessage(away)).not.toMatch(/lokalt/)
-    expect(scanErrorMessage(away)).toBe('Kan ikke nå data på M: lige nu. Scanninger gemmes lokalt og sendes, når forbindelsen er tilbage.')
-    expect(scanErrorMessage(new Error('Error: COUNT_CLOSED: Optællingen er afsluttet'))).toBe('Optællingen er afsluttet')
+    expect(scanErrorMessage(away, 'NCC202796019')).toBe('Scanningen af NCC202796019 er ikke gemt, fordi data på M: ikke kan nås lige nu. Scan den igen om lidt.')
+    expect(scanErrorMessage(new Error('Error: COUNT_CLOSED: Optællingen er afsluttet'), 'NCC202796019')).toBe('Optællingen er afsluttet')
     setWarehouseLanguage('en')
     try {
       expect(errorMessage(away)).toBe('The data on M: cannot be reached right now. Try again shortly.')
-      expect(scanErrorMessage(away)).toBe('The data on M: cannot be reached right now. Scans are saved locally and sent when the connection is back.')
+      expect(scanErrorMessage(away, 'NCC202796019')).toBe('The scan of NCC202796019 was not saved because the data on M: cannot be reached right now. Scan it again shortly.')
     } finally {
       setWarehouseLanguage('da')
     }

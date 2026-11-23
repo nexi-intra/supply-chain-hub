@@ -1,4 +1,5 @@
 // Errors from the main process arrive as "Error invoking remote method '…': Error: CODE" or "…: Error: CODE: Danish detail".
+import DETAILS_EN from './errorDetailsEn.json'
 import { currentWarehouseLanguage } from './text'
 
 const CODE_PATTERN = /\b([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)(?=$|: )/g
@@ -245,43 +246,15 @@ const EN_IN_HUB: Record<string, (hub: string) => string> = {
   TIMECLOCK_SOFTWARELOAD_ELSEWHERE: hub => `Softwareload is running in ${hub}. Stop it there first.`,
 }
 
-const someone = (name: string) => (name === 'En anden' ? 'Someone else' : name)
-const PLACE_REASONS_EN: Record<string, string> = { 'er fuld': 'is full', 'er reserveret': 'is reserved', 'er en arbejdsstation': 'is a work station', 'er deaktiveret': 'is deactivated' }
-const UNDONE_BY = /^Kan ikke fortrydes\. (.+?) (?:satte|tog|fyldte|flyttede|skiftede|rettede|fortrød|lagde)\b.* kl\. (.+)\. Fortryd den først\.$/
-const PALLETS_EN = (what: string) => (what === 'en palle' || what === '1 palle' ? 'There is 1 pallet' : `There are ${what.replace('paller', 'pallets')}`)
-
 // The person, place or number named in the backend's Danish detail, put into an English sentence (the detail itself is
-// Danish). A detail in another form gets the code's own English text.
-const EN_FROM_DETAIL: Record<string, Array<[RegExp, (...parts: string[]) => string]>> = {
-  CLAIM_TAKEN: [[/^(.+) tæller allerede område (.+)$/, (name, area) => `${someone(name)} is already counting area ${area}.`]],
-  APPROVAL_INVALID: [
-    [/^Skriv hvorfor materialet sendes tilbage$/, () => 'Say why the material is sent back.'],
-    [/^Materialet skal godkendes før det markeres som bogført$/, () => 'The material must be approved before it is marked as posted.'],
-    [/^(\S+) er ikke markeret som bogført i SAP$/, material => `${material} is not marked as posted in SAP.`],
-    [/^(\S+) er ikke godkendt$/, material => `${material} is not approved.`],
-  ],
-  PIDOC_NOT_APPROVED: [[/^(\S+) er ikke godkendt$/, material => `${material} is not approved.`]],
-  IMPORT_TOO_LARGE: [[/^Højst (\d+) serienumre ad gangen$/, max => `At most ${max} serial numbers at a time.`]],
-  LOCATION_FULL: [[/^(.+) er fuld$/, place => `${place} is full.`]],
-  LOCATION_INACTIVE: [[/^(.+) er deaktiveret$/, place => `${place} is deactivated.`]],
-  LOCATION_NOT_FOUND: [[/^Placeringen (.+) findes ikke$/, place => `The location ${place} does not exist.`]],
-  MATERIAL_MISMATCH: [[/^(\S+) hører ikke til pluk-pladsen (.+)$/, (material, place) => `${material} does not belong to the pick place ${place}.`]],
-  STOCK_TOO_LOW: [[/^Der er kun (\d+) stk\. (\S+) på (.+)$/, (quantity, material, place) => `There are only ${quantity} pcs of ${material} on ${place}.`]],
-  LOCATION_NOT_EMPTY: [
-    [/^Der står (en palle|\d+ paller?) på (.+) – bekræft at (den|de) bliver pluk-pallen$/, (what, place, it) => `${PALLETS_EN(what)} on ${place}. Confirm that ${it === 'den' ? 'it becomes' : 'they become'} the pick pallet.`],
-    [/^Der står (\d+) materialer? på (.+) – tøm hylden først$/, (n, place) => `${n === '1' ? 'There is 1 material' : `There are ${n} materials`} on ${place}. Empty the shelf first.`],
-    [/^Der står (\d+ paller?) på (.+) – flyt (den|dem) først$/, (what, place, it) => `${PALLETS_EN(what)} on ${place}. Move ${it === 'den' ? 'it' : 'them'} first.`],
-  ],
-  UNDO_CONFLICT: [
-    [UNDONE_BY, (name, at) => `Cannot be undone. ${someone(name)} made a later change at ${at}. Undo that first.`],
-    [/^Kan ikke fortrydes\. (.+) (er fuld|er reserveret|er en arbejdsstation|er deaktiveret)\.$/, (place, reason) => `Cannot be undone. ${place} ${PLACE_REASONS_EN[reason]}.`],
-  ],
-}
+// Danish). The patterns are shared with electron/warehouse/errorDetailsEn.test.cjs, which runs them on the details the
+// services really produce. A detail in another form gets the code's own English text.
+const EN_FROM_DETAIL: Record<string, string[][]> = DETAILS_EN
 
 function englishFromDetail(code: string, detail: string): string | null {
-  for (const [pattern, english] of EN_FROM_DETAIL[code] || []) {
-    const match = pattern.exec(detail)
-    if (match) return english(...match.slice(1))
+  for (const [pattern, text] of EN_FROM_DETAIL[code] || []) {
+    const regex = new RegExp(pattern)
+    if (regex.test(detail)) return detail.replace(regex, text)
   }
   return null
 }
@@ -300,12 +273,15 @@ export function errorMessage(error: unknown, fallback?: string): string {
   return errorDetail(error) || (code && MESSAGES[code]) || fallback || MESSAGES.UNEXPECTED_ERROR
 }
 
-/** A scan in Optælling while M: is away: there the scans are kept on this PC (the journal) and sent later. */
-export function scanErrorMessage(error: unknown): string {
+/**
+ * A scan in Optælling refused because M: is away. Every such refusal comes before the scan is written to this PC's
+ * journal, and the scan queue drops the serial, so the person is told to scan that serial again.
+ */
+export function scanErrorMessage(error: unknown, serial: string): string {
   if (errorCode(error) !== 'STORAGE_UNAVAILABLE') return errorMessage(error)
   return currentWarehouseLanguage() === 'en'
-    ? 'The data on M: cannot be reached right now. Scans are saved locally and sent when the connection is back.'
-    : 'Kan ikke nå data på M: lige nu. Scanninger gemmes lokalt og sendes, når forbindelsen er tilbage.'
+    ? `The scan of ${serial} was not saved because the data on M: cannot be reached right now. Scan it again shortly.`
+    : `Scanningen af ${serial} er ikke gemt, fordi data på M: ikke kan nås lige nu. Scan den igen om lidt.`
 }
 
 const MESSAGES_EN: Record<string, string> = {

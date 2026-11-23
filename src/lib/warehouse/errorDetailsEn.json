@@ -1,0 +1,48 @@
+{
+  "CLAIM_TAKEN": [
+    ["^(.+) tæller allerede område (.+)$", "$1 is already counting area $2."]
+  ],
+  "APPROVAL_INVALID": [
+    ["^Skriv hvorfor materialet sendes tilbage$", "Say why the material is sent back."],
+    ["^Materialet skal godkendes før det markeres som bogført$", "The material must be approved before it is marked as posted."],
+    ["^(\\S+) er ikke markeret som bogført i SAP$", "$1 is not marked as posted in SAP."],
+    ["^(\\S+) er ikke godkendt$", "$1 is not approved."]
+  ],
+  "PIDOC_NOT_APPROVED": [
+    ["^(\\S+) er ikke godkendt$", "$1 is not approved."]
+  ],
+  "IMPORT_TOO_LARGE": [
+    ["^Højst (\\d+) serienumre ad gangen$", "At most $1 serial numbers at a time."]
+  ],
+  "LOCATION_FULL": [
+    ["^(.+) er fuld$", "$1 is full."]
+  ],
+  "LOCATION_INACTIVE": [
+    ["^(.+) er deaktiveret$", "$1 is deactivated."]
+  ],
+  "LOCATION_NOT_FOUND": [
+    ["^Placeringen (.+) findes ikke$", "The location $1 does not exist."]
+  ],
+  "MATERIAL_MISMATCH": [
+    ["^(\\S+) hører ikke til pluk-pladsen (.+)$", "$1 does not belong to the pick place $2."]
+  ],
+  "STOCK_TOO_LOW": [
+    ["^Der er kun (\\d+) stk\\. (\\S+) på (.+)$", "There are only $1 pcs of $2 on $3."]
+  ],
+  "LOCATION_NOT_EMPTY": [
+    ["^Der står en palle på (.+) – bekræft at den bliver pluk-pallen$", "There is 1 pallet on $1. Confirm that it becomes the pick pallet."],
+    ["^Der står (\\d+) paller på (.+) – bekræft at de bliver pluk-pallen$", "There are $1 pallets on $2. Confirm that they become the pick pallet."],
+    ["^Der står 1 materiale på (.+) – tøm hylden først$", "There is 1 material on $1. Empty the shelf first."],
+    ["^Der står (\\d+) materialer på (.+) – tøm hylden først$", "There are $1 materials on $2. Empty the shelf first."],
+    ["^Der står 1 palle på (.+) – flyt den først$", "There is 1 pallet on $1. Move it first."],
+    ["^Der står (\\d+) paller på (.+) – flyt dem først$", "There are $1 pallets on $2. Move them first."]
+  ],
+  "UNDO_CONFLICT": [
+    ["^Kan ikke fortrydes\\. En anden (?:satte|tog|fyldte|flyttede|skiftede|rettede|fortrød|lagde)(?= ).* kl\\. (.+)\\. Fortryd den først\\.$", "Cannot be undone. Someone else made a later change at $1. Undo that first."],
+    ["^Kan ikke fortrydes\\. (.+?) (?:satte|tog|fyldte|flyttede|skiftede|rettede|fortrød|lagde)(?= ).* kl\\. (.+)\\. Fortryd den først\\.$", "Cannot be undone. $1 made a later change at $2. Undo that first."],
+    ["^Kan ikke fortrydes\\. (.+) er fuld\\.$", "Cannot be undone. $1 is full."],
+    ["^Kan ikke fortrydes\\. (.+) er reserveret\\.$", "Cannot be undone. $1 is reserved."],
+    ["^Kan ikke fortrydes\\. (.+) er en arbejdsstation\\.$", "Cannot be undone. $1 is a work station."],
+    ["^Kan ikke fortrydes\\. (.+) er deaktiveret\\.$", "Cannot be undone. $1 is deactivated."]
+  ]
+}

@@ -106,6 +106,20 @@ test('the window gets only our own codes: Node\'s ERR_* is unexpected, and a mis
   await assert.rejects(failing(Object.assign(new Error('LOCATION_FULL: A1.1 er fuld'), { code: 'LOCATION_FULL' })), /^Error: LOCATION_FULL: A1\.1 er fuld$/)
 })
 
+test('a report written while M: is lost is STORAGE_UNAVAILABLE, also when mkdir names no path on the drive (\\\\?)', async t => {
+  t.mock.method(console, 'error', () => {})
+  const { call } = setup()
+  await call('mona', 'statuses:start', { year: 2026, quarter: 4 })
+  const preview = await call('anna', 'counts:preview', { scope: { type: 'slocs', slocs: ['D000'] } })
+  const { id } = await call('anna', 'counts:create', { token: preview.token, name: 'D000' })
+  const mkdir = fs.promises.mkdir
+  t.mock.method(fs.promises, 'mkdir', async (dir, options) => {
+    if (path.basename(String(dir)) === 'rapporter') throw Object.assign(new Error("ENOENT: no such file or directory, mkdir '\\\\?'"), { code: 'ENOENT', path: '\\\\?' })
+    return mkdir.call(fs.promises, dir, options)
+  })
+  await assert.rejects(call('anna', 'counts:report', { id }), /^Error: STORAGE_UNAVAILABLE$/)
+})
+
 test('copying answers only when the text is on the (async, Electron 44) clipboard', async () => {
   const clipboard = { current: '' }
   clipboard.readText = async () => clipboard.current

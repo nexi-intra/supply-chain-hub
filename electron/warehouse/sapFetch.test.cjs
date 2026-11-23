@@ -109,6 +109,21 @@ test('an empty unrestricted IQ09 is refused while MB52 has INT materials in unre
   assert.equal(result.serials.some(row => row.stockType === 'unrestricted'), false)
 })
 
+test('SAP answering ok without saving the export file is SAP_EXPORT_FAILED, never a missing-file error', async () => {
+  const runScript = async name => (name === 'status' ? READY : '{"ok":true,"rows":3}')
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'countpoint-nofile-test-'))
+  let held = ''
+  const clipboard = { writeText: async text => { held = text }, readText: async () => held }
+  const fetcher = createSapFetcher({ bridge: createSapBridge({ runScript }), runScript, tempRoot, clipboard })
+  const notSaved = error => error.code === 'SAP_EXPORT_FAILED' && error.message === 'SAP gemte ikke eksportfilen. Prøv igen.'
+  await assert.rejects(fetcher.fetchPlant(), notSaved)
+  await assert.rejects(fetcher.fetchMatdoc({ document: '4900229137 2026', team: 'TCD' }), notSaved)
+  await assert.rejects(fetcher.fetchLongSerials({ material: 'INT4300-4921-0', serials: ['N1'] }), notSaved)
+  await assert.rejects(fetcher.fetchStockCheck(), notSaved)
+  await assert.rejects(fetcher.fetchMaterialTexts({ materials: ['R162-0717'], useClipboard: false }), notSaved)
+  assert.deepEqual(fs.readdirSync(tempRoot), [])
+})
+
 test('ZMS_STOCK_SER_CHK2 runs in its own script and is parsed; no access gives a clear error', async () => {
   const calls = []
   let answer = null
