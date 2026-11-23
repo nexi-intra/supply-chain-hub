@@ -1010,7 +1010,7 @@ test('a material approved with a quantity line (older client) gets no document q
   await assert.rejects(mona.setApproval(MONA, id, { material: terminal.material, status: 'posted' }), refused)
   // SAP posted a document for it anyway (made before this rule): marked as posted, and reported for the warning.
   const before = (await ctx.repo.getApprovals('TCD', id))[terminal.material]
-  assert.deepEqual(await mona.markPosted(MONA, id, [terminal.material]), { posted: [terminal.material], skipped: [], serialLines: [terminal.material] })
+  assert.deepEqual(await mona.markPosted(MONA, id, [terminal.material]), { posted: [terminal.material], skipped: [], serialLines: [terminal.material], already: [] })
   assert.equal((await ctx.repo.getApprovals('TCD', id))[terminal.material].status, 'posted')
   assert.deepEqual((await mona.getState(MONA, id)).approvedWithSerialLines, [terminal.material], 'still flagged once posted')
   await ctx.repo.setApproval('TCD', id, terminal.material, before)
@@ -1193,8 +1193,11 @@ test('after the status is locked the SAP documents are still made, counted, post
   await mona.setApproval(MONA, id, { material: 'INT4300-4921-0-R', status: 'approved' })
   await ctx.repo.updateStatus('TCD', 'st0open1', { state: 'locked', lockedAt: 2, lockedBy: { email: 'mona@example.test', name: 'Mona' } }, { action: 'locked', by: { email: 'mona@example.test', name: 'Mona' } })
   ctx.tick(5000)
-  const before = await mona.statusArchive(MONA, 'st0open1')
+  // Another PC looks at the archive: read once while nothing changes, read again after the posting.
+  const viewer = ctx.service('pc5')
+  const before = await viewer.statusArchive(MONA, 'st0open1')
   assert.equal(before.lines.find(line => line.material === 'R162-0717').approval.status, 'approved')
+  assert.equal(await viewer.statusArchive(MONA, 'st0open1'), before, 'cached while nothing changes')
 
   const sap = []
   const writer = {
@@ -1212,11 +1215,16 @@ test('after the status is locked the SAP documents are still made, counted, post
   const posted = await piDocsOf(mona).post(MONA, id, ['105000950'])
   assert.deepEqual([posted.posted, posted.marked], [['105000950'], { posted: ['R162-0717'], skipped: [] }])
   assert.equal((await ctx.repo.getApprovals('TCD', id))['R162-0717'].status, 'posted', 'marked although the status is locked')
-  assert.equal((await mona.statusArchive(MONA, 'st0open1')).lines.find(line => line.material === 'R162-0717').approval.status, 'posted', 'the archive shows the posting')
+  assert.equal((await viewer.statusArchive(MONA, 'st0open1')).lines.find(line => line.material === 'R162-0717').approval.status, 'posted', 'the archive on another PC shows the posting')
+
+  // The same material on a second document (blocked stock): already "Bogført i SAP", never reported as not approved.
+  await ctx.repo.changePiDocs('TCD', id, all => ({ all: { ...all, 105000952: { id: '105000952', docNo: '105000952', year: '1970', status: 'counted', sloc: 'D000', stockType: 'blocked', kind: 'accessory', transaction: 'MI04', createdBy: { email: 'mona@example.test' }, lines: [{ material: 'R162-0717', transaction: 'MI04' }] } } }))
+  const second = await piDocsOf(mona).post(MONA, id, ['105000952'])
+  assert.deepEqual([second.posted, second.marked], [['105000952'], { posted: ['R162-0717'], skipped: [] }])
 
   await piDocsOf(mona).create(MONA, id, { materials: ['INT4300-4921-0-R'], sloc: 'D000', stockType: 'unrestricted' })
   await piDocsOf(mona).remove(MONA, id, '105000951')
-  assert.deepEqual(sap, ['create', 'print', 'count', 'post', 'create', 'delete'])
+  assert.deepEqual(sap, ['create', 'print', 'count', 'post', 'post', 'create', 'delete'])
 
   const locked = { code: 'STATUS_LOCKED' }
   await assert.rejects(anna.scan(ANNA, id, { serial: 'N1', place: 'A1.1' }), locked)
@@ -1962,10 +1970,14 @@ test('posted SAP documents mark all their approved materials "Bogført i SAP" in
   await mona.setApproval(MONA, id, { material: 'INT4300-4921-0', status: 'approved' })
   await assert.rejects(anna.markPosted(ANNA, id, ['R162-0717']), { code: 'MANAGER_ONLY' })
   const watched = watchWrites(ctx.storeFor('TCD'), { watch: key => key.endsWith('-approvals') })
-  assert.deepEqual(await mona.markPosted(MONA, id, ['r162-0717', 'INT4300-4921-0', 'INT4300-4921-0-R']), { posted: ['R162-0717', 'INT4300-4921-0'], skipped: ['INT4300-4921-0-R'], serialLines: [] })
+  assert.deepEqual(await mona.markPosted(MONA, id, ['r162-0717', 'INT4300-4921-0', 'INT4300-4921-0-R']), { posted: ['R162-0717', 'INT4300-4921-0'], skipped: ['INT4300-4921-0-R'], serialLines: [], already: [] })
   assert.equal(watched.writes.length, 1)
   const approvals = await ctx.repo.getApprovals('TCD', id)
   assert.deepEqual([approvals['R162-0717'].status, approvals['R162-0717'].postedBy.name, approvals['INT4300-4921-0-R']], ['posted', 'Mona', undefined])
+  // A second document of the same material: already posted, not skipped, and the first mark is kept.
+  ctx.tick(1000)
+  assert.deepEqual(await mona.markPosted(MONA, id, ['R162-0717']), { posted: [], skipped: [], serialLines: [], already: ['R162-0717'] })
+  assert.equal((await ctx.repo.getApprovals('TCD', id))['R162-0717'].postedAt, approvals['R162-0717'].postedAt)
 })
 
 test('deleting a status marks all its counts deleted in one write of the index', async () => {

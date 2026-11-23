@@ -202,15 +202,17 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
 
   /**
    * A locked status as an archive: every counted line with approval and SAP documents, and the difference (|over| + |under|)
-   * per count and in total. Cached until the status is unlocked and locked again.
+   * per count and in total. Cached until the status is unlocked and locked again, or the approvals or SAP documents of a
+   * count change (posting after locking, also on another PC): their file stamps are part of the key.
    */
   async function statusArchive(user, statusId) {
     const team = teamOf(user)
     const status = await repo.getStatus(team, statusId)
     if (status.state !== 'locked') throw codeError('STATUS_NOT_LOCKED', 'Arkivet viser kun låste statusser')
-    const cacheKey = `${team}:${statusId}:${status.lockedAt}`
-    if (archives.has(cacheKey)) return archives.get(cacheKey)
     const entries = (await statusCounts(team, statusId)).filter(entry => !entry.creating)
+    const prefix = `${team}:${statusId}:`
+    const cacheKey = `${prefix}${status.lockedAt}:${await repo.followUpStamp(team, entries.map(entry => entry.id))}`
+    if (archives.has(cacheKey)) return archives.get(cacheKey)
     const read = await Promise.all(entries.map(entry => reportData(user, entry.id)))
     const counts = []
     const lines = []
@@ -221,6 +223,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       lines.push(...own)
     })
     const result = { statusId, totals: differenceTotals(lines), counts, lines }
+    // Only the newest archive of a status is kept.
+    for (const key of archives.keys()) if (key.startsWith(prefix)) archives.delete(key)
     archives.set(cacheKey, result)
     return result
   }
@@ -1298,9 +1302,10 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
 
   /**
    * "Bogført i SAP" for the materials of posted SAP documents, in one write. Only approved materials change. SAP did post
-   * them, so one approved with quantity lines is marked too, and returned in `serialLines` for the warning.
+   * them, so one approved with quantity lines is marked too, and returned in `serialLines` for the warning. A material
+   * already posted (by another document of it, another sloc or stock type) is kept as it is and returned in `already`.
    * Also after the status is locked: the SAP documents are the follow-up of the approval, and this only moves a material
-   * from approved to posted (no numbers change). The archive of the status is read again.
+   * from approved to posted (no numbers change).
    */
   async function markPosted(user, id, materials = []) {
     const state = await refresh(await load(user, id), true)
@@ -1308,21 +1313,21 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const codes = [...new Set(materials.map(normalizeMaterial))]
     const by = me(user)
     const at = now()
-    const result = await repo.changeApprovals(state.team, state.id, all => {
+    return repo.changeApprovals(state.team, state.id, all => {
       const posted = []
       const skipped = []
       const serialLines = []
+      const already = []
       const withLines = approvedWithLines(state, all)
       for (const code of codes) {
+        if (all[code]?.status === 'posted') { already.push(code); continue }
         if (all[code]?.status !== 'approved') { skipped.push(code); continue }
         if (withLines.has(code)) serialLines.push(code)
         all[code] = { ...all[code], status: 'posted', postedBy: by, postedAt: at }
         posted.push(code)
       }
-      return { all, result: { posted, skipped, serialLines } }
+      return { all, result: { posted, skipped, serialLines, already } }
     })
-    if (result.posted.length && state.meta.statusId) for (const key of archives.keys()) if (key.startsWith(`${state.team}:${state.meta.statusId}:`)) archives.delete(key)
-    return result
   }
 
   /**

@@ -446,6 +446,15 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId, wa
     getPiDocs: (team, id) => getObject(team, id, 'sap-dokumenter'),
     /** compare-and-set on all SAP documents of a count (keyed by CountPoint id): `change(all)` returns { all, result }. */
     changePiDocs: (team, id, change) => changeKey(team, key(id, 'sap-dokumenter'), change),
+    /**
+     * What can still change in a locked status (approvals and SAP documents of its counts) as one cheap stamp of the
+     * files' time and size, for the archive cache. A file that cannot be stat'ed gives a stamp that never matches again.
+     */
+    followUpStamp: async (team, ids) => {
+      const target = store(team)
+      const stats = await Promise.all(ids.flatMap(id => ['approvals', 'sap-dokumenter'].map(part => target.statAsync(key(id, part)).then(stat => (stat ? `${stat.mtimeMs}/${stat.size}` : '-'), () => `?${Math.random()}`))))
+      return stats.join(',')
+    },
     getSummary: (team, id) => store(team).getAsync(key(id, 'summary')),
     setSummary: (team, id, value) => store(team).setAsync(key(id, 'summary'), value),
     getCountDoc: (team, id) => store(team).getAsync(key(id, 'doc')).then(value => value || null),

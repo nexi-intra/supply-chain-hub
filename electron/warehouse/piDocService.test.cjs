@@ -53,6 +53,22 @@ test('a failed or cancelled SAP step frees the materials again', async () => {
   assert.deepEqual(empty.stored(), {})
 })
 
+test('a document is not created in SAP for a count deleted meanwhile', async () => {
+  let stored = {}
+  let deleted = false
+  const created = []
+  const repo = {
+    getPiDocs: async () => structuredClone(stored),
+    // The count is deleted on another PC right after the reservation is written.
+    changePiDocs: async (team, id, change) => { stored = change(structuredClone(stored)).all; deleted = true },
+    isDeleted: async () => deleted,
+  }
+  const writer = { createDocument: async request => { created.push(request); return { docs: [{ docNo: '105000905', materials: ['R1'] }], missing: [] } } }
+  const service = createPiDocService({ counts: { countDoc: async () => ({ rows: ROWS }) }, repo, roles: { roleOf: async () => 'manager' }, writer, system: 'QS4' })
+  await assert.rejects(service.create(MONA, 'c1', { materials: ['R1'], sloc: 'D000', stockType: 'unrestricted' }), { code: 'COUNT_DELETED' })
+  assert.deepEqual(created, [], 'SAP is never asked')
+})
+
 test('a stale reservation (crashed app) does not block the material forever', async () => {
   const { service, stored, tick } = setup({ createResult: { docs: [{ docNo: '105000903', materials: ['R1'] }], missing: [] } })
   await service.create(MONA, 'c1', { materials: ['R1'], sloc: 'D000', stockType: 'unrestricted' }).catch(() => {})
@@ -279,6 +295,8 @@ test('posting says which materials were marked "Bogført i SAP" and which were n
   }
   const partly = make(async () => ({ posted: ['R1'], skipped: ['R2'], serialLines: [] }))
   assert.deepEqual((await partly.service.post(MONA, 'c1', ['D1'])).marked, { posted: ['R1'], skipped: ['R2'] })
+  const before = make(async () => ({ posted: ['R1'], skipped: [], serialLines: [], already: ['R2'] }))
+  assert.deepEqual((await before.service.post(MONA, 'c1', ['D1'])).marked, { posted: ['R1', 'R2'], skipped: [] }, 'marked by an earlier document: marked, not skipped')
 
   const failing = make(async () => { throw Object.assign(new Error('x'), { code: 'KV_LOCK_BUSY' }) })
   const result = await failing.service.post(MONA, 'c1', ['D1'])

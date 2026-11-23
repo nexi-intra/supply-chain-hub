@@ -65,6 +65,10 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
       planDocument({ rows, docs: live(all, startedAt), materials, sloc, stockType })
       return { all: { ...all, [reference]: { id: reference, reference, status: 'creating', startedAt, sloc: plan.sloc, stockType: plan.stockType, kind: plan.kind, lines: plan.lines, createdBy: by(user, startedAt) } } }
     })
+    // Deleted meanwhile (the delete reads the documents before its tombstone): a document made now could not be found
+    // from the app. The reservation is left: the count's files are being removed.
+    const deleted = repo.isDeleted ? await repo.isDeleted(user.team, id).catch(() => false) : false
+    if (deleted) throw codeError('COUNT_DELETED', 'Optællingen er slettet')
     let result
     try {
       result = await writer.createDocument({ sloc: plan.sloc, stockType: plan.stockType, reference, materials: plan.lines.map(line => line.material) })
@@ -220,7 +224,8 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
         const marked = await counts.markPosted(user, id, postedMaterials)
         for (const material of marked.skipped) console.error('CountPoint: could not mark as posted', material, 'APPROVAL_INVALID')
         for (const material of marked.serialLines || []) if (!confirmedMaterials.has(material)) console.error('CountPoint: posted although approved with quantity lines', material, 'APPROVED_WITH_SERIAL_LINES')
-        return { posted: marked.posted, skipped: marked.skipped }
+        // Marked by an earlier document of the same material (another sloc or stock type): marked, not skipped.
+        return { posted: [...marked.posted, ...(marked.already || [])], skipped: marked.skipped }
       } catch (error) {
         console.error('CountPoint: could not mark as posted', postedMaterials.join(', '), error.code || error.message)
         return { posted: [], skipped: [...new Set(postedMaterials)], failed: true }
