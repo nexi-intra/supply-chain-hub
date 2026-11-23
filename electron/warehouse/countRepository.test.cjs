@@ -68,6 +68,7 @@ test('creating a count writes meta, snapshot, owner membership and the index', a
   const list = await repo.listCounts('TCD')
   assert.equal(list.length, 1)
   assert.equal(list[0].name, 'Status D000')
+  assert.equal('creating' in list[0], false, 'the reservation mark is gone once the files are written')
   assert.deepEqual(await repo.listCounts('TRR'), [], 'teams never see each other')
   assert.ok(fs.existsSync(path.join(dataDir, 'TCD')))
   assert.equal(fs.existsSync(path.join(dataDir, 'TRR', 'counts-index.json')), false)
@@ -77,6 +78,62 @@ test('a count needs a name of reasonable length', async () => {
   const { repo } = setup()
   await assert.rejects(repo.createCount('TCD', { name: '  ', snapshot: SNAPSHOT, owner: OWNER }), { code: 'COUNT_INVALID' })
   await assert.rejects(repo.createCount('TCD', { name: 'x'.repeat(81), snapshot: SNAPSHOT, owner: OWNER }), { code: 'COUNT_INVALID' })
+})
+
+test('two PCs creating a count for the same area of a status at the same time: exactly one gets it', async () => {
+  const { repo, dataDir } = setup()
+  const other = createCountRepository({ storeFor: () => createStore(path.join(dataDir, 'TCD')), now: () => 1000, newId: () => 'othercount1' })
+  const BO = { email: 'bo@example.test', name: 'Bo' }
+  const results = await Promise.allSettled([
+    repo.createCount('TCD', { name: 'Anna D000', snapshot: SNAPSHOT, owner: OWNER, statusId: 'status1' }),
+    other.createCount('TCD', { name: 'Bo D000', snapshot: SNAPSHOT, owner: BO, statusId: 'status1' }),
+  ])
+  assert.deepEqual(results.map(result => result.status).sort(), ['fulfilled', 'rejected'])
+  const refused = results.find(result => result.status === 'rejected').reason
+  assert.equal(refused.code, 'SCOPE_TAKEN')
+  assert.match(refused.message, /tælles allerede i "(Anna|Bo) D000"/)
+  const winner = results.find(result => result.status === 'fulfilled').value
+  const list = await other.listCounts('TCD')
+  assert.deepEqual(list.map(entry => [entry.id, entry.creating]), [[winner.id, undefined]])
+  assert.equal(fs.readdirSync(path.join(dataDir, 'TCD')).some(name => name.startsWith('count-') && !name.startsWith(`count-${winner.id}-`)), false, 'the refused count wrote no files')
+  const elsewhere = await repo.createCount('TCD', { name: 'Næste status', snapshot: SNAPSHOT, owner: OWNER, statusId: 'status2' })
+  assert.equal((await repo.listCounts('TCD')).length, 2, 'another status may count the same area')
+  assert.ok(elsewhere.id)
+})
+
+test('a count being created holds its area; a reservation left by a crash is ignored after 10 minutes and removed', async () => {
+  const { repo, storeFor, tick } = setup()
+  const crashed = { id: 'crashed1abc', name: 'Hængt', scope: SNAPSHOT.scope, status: 'open', owner: { email: 'bo@example.test', name: 'Bo' }, createdAt: 1000, fetchedAt: 900, statusId: 'status1', creating: true }
+  await storeFor('TCD').updateAsync('counts-index', { op: 'setField', field: crashed.id, value: crashed })
+  assert.deepEqual((await repo.listCounts('TCD')).map(entry => entry.id), [crashed.id], 'shown while it is being created')
+  await assert.rejects(repo.createCount('TCD', { name: 'Anna D000', snapshot: SNAPSHOT, owner: OWNER, statusId: 'status1' }), { code: 'SCOPE_TAKEN' })
+
+  tick(10 * 60 * 1000 + 1)
+  assert.deepEqual(await repo.listCounts('TCD'), [], 'hidden after 10 minutes')
+  const meta = await repo.createCount('TCD', { name: 'Anna D000', snapshot: SNAPSHOT, owner: OWNER, statusId: 'status1' })
+  assert.deepEqual((await repo.listCounts('TCD')).map(entry => entry.id), [meta.id])
+  assert.equal(await repo.isDeleted('TCD', crashed.id), true, 'older clients, which do not know the mark, stop seeing it too')
+})
+
+test('a count whose files cannot be written gives its area back', async () => {
+  const { repo, dataDir } = setup()
+  const real = createStore(path.join(dataDir, 'TCD'))
+  const failing = { ...real, setAsync: async (key, value) => { if (key.endsWith('-expected')) throw Object.assign(new Error('STORAGE_UNAVAILABLE'), { code: 'STORAGE_UNAVAILABLE' }); return real.setAsync(key, value) } }
+  const broken = createCountRepository({ storeFor: () => failing, now: () => 1000, newId: () => 'brokencount1' })
+  await assert.rejects(broken.createCount('TCD', { name: 'Anna D000', snapshot: SNAPSHOT, owner: OWNER, statusId: 'status1' }), { code: 'STORAGE_UNAVAILABLE' })
+  assert.deepEqual(await repo.listCounts('TCD'), [])
+  assert.equal(fs.readdirSync(path.join(dataDir, 'TCD')).some(name => name.startsWith('count-brokencount1-')), false)
+  assert.ok(await repo.createCount('TCD', { name: 'Anna D000', snapshot: SNAPSHOT, owner: OWNER, statusId: 'status1' }))
+})
+
+test('the meta of a new count is written last, so a PC that opens it meanwhile finds all its files or none', async () => {
+  const { dataDir } = setup()
+  const real = createStore(path.join(dataDir, 'TCD'))
+  let before = null
+  const watched = { ...real, setAsync: async (key, value) => { if (key.endsWith('-meta')) before = fs.readdirSync(path.join(dataDir, 'TCD')).filter(name => name.startsWith('count-')).sort(); return real.setAsync(key, value) } }
+  const repo = createCountRepository({ storeFor: () => watched, now: () => 1000, newId: () => 'ordered1abc' })
+  await repo.createCount('TCD', { name: 'Anna D000', snapshot: SNAPSHOT, owner: OWNER, statusId: 'status1' })
+  assert.deepEqual(before, ['count-ordered1abc-expected.json', 'count-ordered1abc-members.json', 'count-ordered1abc-placements.json'])
 })
 
 test('two PCs changing different fields of the same count at once both reach the count list', async () => {

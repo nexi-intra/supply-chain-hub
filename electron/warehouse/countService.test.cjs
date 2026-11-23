@@ -511,6 +511,20 @@ test('counts in a status may not overlap; the stock type splits a location in tw
   assert.ok((await create(anna, ANNA, { type: 'slocs', slocs: ['D000'], stockTypes: ['blocked'] }, 'D000 spærret 2')).id, 'a deleted count frees its part')
 })
 
+test('a count still being created holds its area in the status but is not shown as a count yet', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const mona = ctx.service('pc3')
+  const creating = { id: 'creating1abc', name: 'D000 på vej', scope: { type: 'slocs', slocs: ['D000'], materials: [] }, status: 'open', owner: { email: 'bo@example.test', name: 'Bo' }, createdAt: ctx.clock.now, fetchedAt: ctx.clock.now, statusId: 'st0open1', creating: true }
+  await ctx.storeFor('TCD').updateAsync('counts-index', { op: 'setField', field: creating.id, value: creating })
+  assert.deepEqual(await anna.listCounts(ANNA), [])
+  const { active } = await anna.statusOverview(ANNA)
+  assert.deepEqual([active.counts.length, active.taken.map(item => item.name)], [0, ['D000 på vej']])
+  await assert.rejects(anna.preview(ANNA, { scope: { type: 'slocs', slocs: ['D000'] } }), { code: 'SCOPE_TAKEN' })
+  const checklist = await mona.statusChecklist(MONA, 'st0open1')
+  assert.deepEqual([checklist.ready, checklist.counts.map(item => [item.name, item.open])], [false, [['D000 på vej', true]]], 'the status cannot be locked meanwhile')
+})
+
 test('the status overview sums the progress and value differences of its counts', async () => {
   const ctx = setup()
   const anna = ctx.service('pc1')

@@ -76,11 +76,17 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   // Closed counts do not change until reopened, so their card details are read once.
   const closedDetails = new Map()
   async function listCounts(user) {
+    return (await countCards(user)).filter(entry => !entry.creating)
+  }
+
+  /** Every count of the team, also those still being created (they hold their area, but are not opened yet). */
+  async function countCards(user) {
     const team = teamOf(user)
     const counts = await repo.listCounts(team)
     const email = lower(user.email)
     const byRole = takesPartByRole(user)
     return Promise.all(counts.map(async entry => {
+      if (entry.creating) return entry
       const cacheKey = `${team}:${entry.id}:${email}`
       const mayDecide = { canDecideMembers: byRole || lower(entry.owner?.email) === email }
       if (entry.status === 'closed' && closedDetails.has(cacheKey)) return { ...entry, ...closedDetails.get(cacheKey), ...mayDecide }
@@ -101,12 +107,13 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
 
   async function statusOverview(user) {
     const team = teamOf(user)
-    const [statuses, counts] = await Promise.all([repo.listStatuses(team), listCounts(user)])
+    const [statuses, all] = await Promise.all([repo.listStatuses(team), countCards(user)])
+    const counts = all.filter(item => !item.creating)
     const withCounts = statuses.map(status => {
       const own = counts.filter(item => item.statusId === status.id)
       const progress = statusProgress(own)
       if (status.state !== 'open') return { ...status, counts: own, progress }
-      const taken = own.map(item => ({ countId: item.id, name: item.name, ownerName: item.owner.name, type: item.scope.type, slocs: item.scope.slocs, materials: item.scope.materials, stockTypes: scopeStockTypes(item.scope), kinds: scopeKinds(item.scope) }))
+      const taken = all.filter(item => item.statusId === status.id).map(item => ({ countId: item.id, name: item.name, ownerName: item.owner.name, type: item.scope.type, slocs: item.scope.slocs, materials: item.scope.materials, stockTypes: scopeStockTypes(item.scope), kinds: scopeKinds(item.scope) }))
       return { ...status, counts: own, progress, taken }
     })
     return { active: withCounts.find(status => status.state === 'open') || null, statuses: withCounts, unassigned: counts.filter(item => !item.statusId), canManage: isManager(user) }
@@ -142,9 +149,11 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const team = teamOf(user)
     const status = known || await repo.getStatus(team, statusId)
     const entries = await statusCounts(team, statusId)
-    const datas = await Promise.all(entries.map(entry => reportData(user, entry.id)))
+    // A count still being created has no files to read yet: it is open, so the status cannot be locked meanwhile.
+    const datas = await Promise.all(entries.map(entry => (entry.creating ? null : reportData(user, entry.id))))
     const items = entries.map((entry, index) => {
       const data = datas[index]
+      if (!data) return { id: entry.id, name: entry.name, owner: entry.owner, open: true, materials: 0, pending: [] }
       const materials = new Map()
       for (const row of data.aggregate.rows) if (row.sapQty > 0 || row.counted > 0) materials.set(row.material, row.description)
       const pending = [...materials]
@@ -198,7 +207,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     if (status.state !== 'locked') throw codeError('STATUS_NOT_LOCKED', 'Arkivet viser kun låste statusser')
     const cacheKey = `${team}:${statusId}:${status.lockedAt}`
     if (archives.has(cacheKey)) return archives.get(cacheKey)
-    const entries = await statusCounts(team, statusId)
+    const entries = (await statusCounts(team, statusId)).filter(entry => !entry.creating)
     const read = await Promise.all(entries.map(entry => Promise.all([reportData(user, entry.id), repo.getPiDocs(team, entry.id).catch(() => ({}))])))
     const counts = []
     const lines = []
@@ -280,10 +289,10 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const entry = pending.get(token)
     if (!entry || entry.email !== lower(user.email) || entry.team !== team) throw codeError('PREVIEW_EXPIRED', 'Hent data fra SAP igen')
     const status = await requireActiveStatus(team)
-    await assertScopeFree(team, status.id, entry.snapshot.scope)
     const index = indexSnapshot(entry.snapshot)
     const inScope = new Set(entry.snapshot.stock.filter(line => line.inScope).map(line => entry.snapshot.materials[line.m].material))
     const placements = entry.placements.filter(item => inScope.has(item.material) && !index.materials.get(item.material)?.serialManaged)
+    // The repository checks the area again under the index's lock (SCOPE_TAKEN), as it reserves it.
     const meta = await repo.createCount(team, { name, snapshot: entry.snapshot, placements, owner: me(user), statusId: status.id })
     pending.delete(token)
     return meta
