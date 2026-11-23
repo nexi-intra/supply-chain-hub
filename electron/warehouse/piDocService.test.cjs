@@ -253,22 +253,33 @@ test('the manager posts counted documents; only what MI22 confirms is posted, an
   assert.deepEqual(approvals, [['R1', 'R2']], 'every material of the posted documents is marked in one write')
 })
 
-test('a document holding a material approved with quantity lines is never posted; the others still are', async () => {
-  let stored = {
-    D1: { id: 'D1', docNo: '105000895', year: '2026', status: 'counted', sloc: 'D000', stockType: 'unrestricted', createdBy: { email: 'mona@x' }, lines: [{ material: 'INT1-0' }] },
-    D2: { id: 'D2', docNo: '105000896', year: '2026', status: 'counted', sloc: 'D000', stockType: 'unrestricted', createdBy: { email: 'mona@x' }, lines: [{ material: 'R1' }] },
-  }
+test('a document holding a material approved with quantity lines is posted only when a manager confirms it with a reason (corrected in MI05); the others still are', async () => {
+  const counted = (id, docNo, material) => ({ id, docNo, year: '2026', status: 'counted', sloc: 'D000', stockType: 'unrestricted', createdBy: { email: 'mona@x' }, lines: [{ material }] })
+  let stored = { D1: counted('D1', '105000895', 'INT1-0'), D2: counted('D2', '105000896', 'R1'), D3: counted('D3', '105000897', 'INT2-0') }
   const posted = []
+  const marked = []
   const repo = { getPiDocs: async () => structuredClone(stored), changePiDocs: async (team, id, change) => { stored = change(structuredClone(stored)).all } }
   const writer = { postDocuments: async request => { posted.push(request.docNos); return { posted: request.docNos, open: [], materialDocs: {}, differences: [] } } }
-  const rows = [row('INT1-0', 'new', { serialLinesAtApproval: true }), row('INT1-0', 'new', { sloc: 'D004' }), row('R1', 'accessory')]
-  const counts = { countDoc: async () => ({ rows }), markPosted: async (user, id, materials) => ({ posted: materials, skipped: [], serialLines: [] }) }
-  const service = createPiDocService({ counts, repo, roles: { roleOf: async () => 'manager' }, writer, system: 'QS4' })
-  await assert.rejects(service.post(MONA, 'c1', ['D2', 'D1']), { code: 'PIDOC_SERIAL_LINES', message: 'PIDOC_SERIAL_LINES: Dokumentet kan ikke bogføres, fordi et materiale blev godkendt med tællelinjer med antal. Slet dokumentet i SAP med hånden, nulstil materialet, slet linjen og godkend igen.' })
+  const rows = [row('INT1-0', 'new', { serialLinesAtApproval: true }), row('INT1-0', 'new', { sloc: 'D004' }), row('R1', 'accessory'), row('INT2-0', 'new', { serialLinesAtApproval: true })]
+  const counts = { countDoc: async () => ({ rows }), markPosted: async (user, id, materials) => { marked.push(...materials); return { posted: materials, skipped: [], serialLines: materials.filter(material => material.startsWith('INT')) } } }
+  const service = createPiDocService({ counts, repo, roles: { roleOf: async user => (user.email === 'anna@x' ? 'admin' : 'manager') }, writer, system: 'QS4', now: () => 5000 })
+  const text = 'Dokumentet kan ikke bogføres, fordi et materiale blev godkendt med tællelinjer med antal. Ret antallet i SAP med MI05. Bagefter kan en manager bogføre dokumentet her med en begrundelse.'
+  await assert.rejects(service.post(MONA, 'c1', ['D2', 'D1']), { code: 'PIDOC_SERIAL_LINES', message: `PIDOC_SERIAL_LINES: ${text} Gælder: 105000895` })
+  const confirm = { docIds: ['D1'], reason: 'Rettet til 2 i MI05' }
+  await assert.rejects(service.post(ANNA, 'c1', ['D2', 'D1'], { confirmSerialLines: confirm }), { code: 'PIDOC_FORBIDDEN' }, 'not a manager')
+  for (const reason of ['', '   ', undefined]) {
+    await assert.rejects(service.post(MONA, 'c1', ['D2', 'D1'], { confirmSerialLines: { docIds: ['D1'], reason } }), { code: 'PIDOC_INVALID' }, 'a reason is required')
+  }
+  await assert.rejects(service.post(MONA, 'c1', ['D1', 'D3'], { confirmSerialLines: confirm }), { code: 'PIDOC_SERIAL_LINES', message: `PIDOC_SERIAL_LINES: ${text} Gælder: 105000897` }, 'only the listed documents')
   assert.deepEqual(posted, [], 'MI20 is never started')
-  assert.equal(stored.D1.status, 'counted')
-  await service.post(MONA, 'c1', ['D2'])
-  assert.deepEqual(posted, [['105000896']])
+  assert.deepEqual([stored.D1.status, stored.D1.serialLinesReason], ['counted', undefined])
+
+  await service.post(MONA, 'c1', ['D2', 'D1'], { confirmSerialLines: confirm })
+  assert.deepEqual(posted, [['105000896', '105000895']])
+  assert.deepEqual([stored.D1.status, stored.D1.serialLinesConfirmedBy, stored.D1.serialLinesConfirmedAt, stored.D1.serialLinesReason], ['posted', { email: 'mona@x', name: 'Mona', at: 5000 }, 5000, 'Rettet til 2 i MI05'])
+  assert.equal(stored.D2.serialLinesReason, undefined, 'logged on the confirmed document only')
+  assert.deepEqual(marked.sort(), ['INT1-0', 'R1'], 'its materials are marked "Bogført i SAP"')
+  assert.equal(stored.D3.status, 'counted')
 })
 
 test('a wrong document is deleted by a manager (created or printed only) and frees its materials', async () => {

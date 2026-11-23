@@ -380,7 +380,9 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   handle('pidocs:create', (user, p) => piDocs.create(user, p.id, { materials: Array.isArray(p.materials) ? p.materials : [], sloc: p.sloc, stockType: p.stockType }))
   handle('pidocs:print', (user, p) => piDocs.print(user, p.id, p.docId))
   handle('pidocs:count', (user, p) => piDocs.count(user, p.id, p.docId, { confirmZero: confirmedList(p.confirmZero), confirmMissing: confirmedList(p.confirmMissing) }))
-  handle('pidocs:post', (user, p) => piDocs.post(user, p.id, Array.isArray(p.docIds) ? p.docIds : []))
+  handle('pidocs:post', (user, p) => piDocs.post(user, p.id, Array.isArray(p.docIds) ? p.docIds : [], {
+    confirmSerialLines: p.confirmSerialLines && typeof p.confirmSerialLines === 'object' ? { docIds: confirmedList(p.confirmSerialLines.docIds), reason: typeof p.confirmSerialLines.reason === 'string' ? p.confirmSerialLines.reason.slice(0, 300) : '' } : null,
+  }))
   handle('pidocs:delete', (user, p) => piDocs.remove(user, p.id, p.docId))
   handle('roles:me', async user => ({ role: await roles.roleOf(user), locationAdmin: await roles.isLocationAdmin(user) }))
   handle('roles:list', user => roles.list(user))

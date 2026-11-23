@@ -1178,7 +1178,8 @@ export interface WarehouseBridge {
     print(request: { id: string; docId: string }): Promise<PiDocList>
     /** Refused with PIDOC_ZERO_CONFIRM when an empty serial list would be a Zero Count while SAP has stock today; entered only when every such material is on `confirmZero` (the list shown). Refused with PIDOC_MISSING_CONFIRM when the day figures lack an approved quantity material SAP had at approval; entered only when every such one is on `confirmMissing`. */
     count(request: { id: string; docId: string; confirmZero?: string[]; confirmMissing?: string[] }): Promise<PiDocList>
-    post(request: { id: string; docIds: string[] }): Promise<PiDocList & { posted: string[]; open: string[] }>
+    /** Refused with PIDOC_SERIAL_LINES when a document holds a material approved with quantity lines; posted only when it is on `confirmSerialLines.docIds` with a reason (counted again in SAP with MI05, managers only). */
+    post(request: { id: string; docIds: string[]; confirmSerialLines?: { docIds: string[]; reason: string } }): Promise<PiDocList & { posted: string[]; open: string[] }>
     remove(request: { id: string; docId: string }): Promise<PiDocList>
   }
   sapCheck: {

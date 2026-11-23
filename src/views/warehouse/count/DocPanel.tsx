@@ -25,6 +25,10 @@ const MAX_LINES = 20
 // A count refused for a confirmation keeps the ones given before it, so confirming the next one does not undo them.
 type CountConfirmed = { confirmZero?: string[]; confirmMissing?: string[] }
 type Confirmation = { kind: 'missing'; materials: string[]; message: string } | { kind: 'zero' | 'count-missing'; materials: string[]; message: string; item: PiDoc; confirmed: CountConfirmed }
+/** Documents refused with PIDOC_SERIAL_LINES that a manager may post anyway (corrected in SAP with MI05). */
+type SerialConfirm = { items: PiDoc[]; flagged: PiDoc[] }
+// The roles that may post (electron/warehouse/core/piDocs.cjs MANAGER_ROLES).
+const MANAGER_ROLES = new Set(['manager', 'status-manager'])
 
 export function DocPanel({ id, open, state }: PanelProps) {
   const [doc, setDoc] = useState<CountDoc | null>(null)
@@ -36,6 +40,7 @@ export function DocPanel({ id, open, state }: PanelProps) {
   const [chosen, setChosen] = useState<string[]>([])
   const [busy, setBusy] = useState<string | null>(null)
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null)
+  const [serialConfirm, setSerialConfirm] = useState<SerialConfirm | null>(null)
   const approvalsKey = JSON.stringify(state.approvals)
 
   const load = useCallback(async () => {
@@ -136,14 +141,21 @@ export function DocPanel({ id, open, state }: PanelProps) {
     }
   }
 
-  const postDocs = async (items: PiDoc[]) => {
+  const postDocs = async (items: PiDoc[], confirmSerialLines?: { docIds: string[]; reason: string }) => {
+    setSerialConfirm(null)
     setBusy('post')
     try {
-      const result = await window.electronWarehouse!.piDocs.post({ id, docIds: items.map(item => item.id) })
+      const result = await window.electronWarehouse!.piDocs.post({ id, docIds: items.map(item => item.id), ...(confirmSerialLines ? { confirmSerialLines } : {}) })
       setPiList(result)
       if (result.posted.length) toast.success(result.posted.length === 1 ? t(`SAP-dokument ${result.posted[0]} er bogført`, `SAP document ${result.posted[0]} is posted`) : t(`${result.posted.length} SAP-dokumenter er bogført`, `${result.posted.length} SAP documents are posted`), { description: t('Materialerne er markeret "Bogført i SAP".', 'The materials are marked "Posted in SAP".') })
       if (result.open.length) toast.warning(t(`Ikke bogført: ${result.open.join(', ')}`, `Not posted: ${result.open.join(', ')}`), { description: t('SAP viser dem stadig som aktive. Bogfør dem igen.', 'SAP still shows them as active. Post them again.'), duration: 20000 })
     } catch (error) {
+      const flagged = errorCode(error) === 'PIDOC_SERIAL_LINES' ? items.filter(item => item.docNo && errorMaterials(error).includes(item.docNo)) : []
+      // Counted again in SAP with MI05: a manager may post it here anyway, with a reason.
+      if (flagged.length && MANAGER_ROLES.has(piList?.role || '')) {
+        setSerialConfirm({ items, flagged })
+        return
+      }
       toast.error(errorMessage(error), { duration: 20000 })
       await load()
     } finally {
@@ -292,6 +304,13 @@ export function DocPanel({ id, open, state }: PanelProps) {
               : countDoc(confirmation.item, { ...confirmation.confirmed, [confirmation.kind === 'zero' ? 'confirmZero' : 'confirmMissing']: confirmation.materials }))}
           />
         )}
+        {serialConfirm && (
+          <SerialLinesDialog
+            flagged={serialConfirm.flagged}
+            onCancel={() => setSerialConfirm(null)}
+            onConfirm={reason => void postDocs(serialConfirm.items, { docIds: serialConfirm.flagged.map(item => item.id), reason })}
+          />
+        )}
       </CardContent>
     </Card>
   )
@@ -330,6 +349,31 @@ function ConfirmDialog({ confirmation, onCancel, onConfirm }: { confirmation: Co
           <Button variant="ghost" onClick={onCancel}>{t('Annullér', 'Cancel')}</Button>
           <SapActionButton variant="destructive" onAction={onConfirm} disabled={!confirmation.materials.length}>
             {action}
+          </SapActionButton>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/** A document whose material was approved with quantity lines: posted only after the count is corrected in SAP (MI05), with a reason. */
+function SerialLinesDialog({ flagged, onCancel, onConfirm }: { flagged: PiDoc[]; onCancel: () => void; onConfirm: (reason: string) => void }) {
+  const [reason, setReason] = useState('')
+  return (
+    <Dialog open onOpenChange={value => { if (!value) onCancel() }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t('Bogfør alligevel?', 'Post anyway?')}</DialogTitle>
+          <DialogDescription>
+            {t('Et materiale på disse SAP-dokumenter blev godkendt med tællelinjer med antal. Bogfør kun, hvis antallet er rettet i SAP med MI05. Skriv hvad der er rettet.', 'A material on these SAP documents was approved with count lines with a quantity. Only post if the count has been corrected in SAP with MI05. Write what was corrected.')}
+          </DialogDescription>
+        </DialogHeader>
+        <ul className="rounded-md border px-3 py-2 font-mono text-sm">{flagged.map(item => <li key={item.id}>{item.docNo}</li>)}</ul>
+        <Input value={reason} maxLength={300} onChange={event => setReason(event.target.value)} placeholder={t('Begrundelse', 'Reason')} aria-label={t('Begrundelse', 'Reason')} />
+        <DialogFooter>
+          <Button variant="ghost" onClick={onCancel}>{t('Annullér', 'Cancel')}</Button>
+          <SapActionButton variant="destructive" onAction={() => onConfirm(reason.trim())} disabled={!reason.trim()}>
+            {t('Bogfør alligevel', 'Post anyway')}
           </SapActionButton>
         </DialogFooter>
       </DialogContent>
