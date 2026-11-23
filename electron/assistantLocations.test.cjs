@@ -18,13 +18,14 @@ const LOG = [
 ]
 const TEXTS = { 'R162-0717': 'Ethernet Cable RJ45 2m', 'R133-0032': 'Move3500 12V DC car charger' }
 
-function fakes({ team = 'TCD' } = {}) {
+function fakes({ team = 'TCD', cards = {} } = {}) {
   const calls = []
   const write = name => async () => { calls.push([name]); throw new Error('Hubert must not write') }
   const reserve = [pallet('p1', 'A2.1', 'R162-0717', 701, 1120), pallet('p2', 'A2.4', 'R162-0717', 690, 50)]
   const service = {
     async materialCard(user, { material }) {
       calls.push(['materialCard', material])
+      if (cards[material]) return cards[material]
       if (material !== 'R162-0717') return { material, description: TEXTS[material] || '', stations: [], pickPlaces: [], reserve: [], total: 0, history: [] }
       return { material, description: TEXTS[material], stations: [place('I8', 'station', [material])], pickPlaces: [{ ...place('H26', 'pick', [material]), state: 'empty', stateAt: NOW - DAY }], reserve, shelves: [{ location: 'E9 H5', name: 'E9 H5', quantity: 40 }, { location: 'E9 H2', name: 'E9 H2', quantity: 10 }], refillShelf: 'E9 H5', total: 1220, history: [] }
     },
@@ -103,6 +104,28 @@ test('"hvor henter jeg R162-0717?" gives station, pick place with status and res
   const english = await ask(assistant, 'where is R162-0717?', 'en')
   assert.match(english.text, /Pick place: H26$/m)
   assert.match(english.text, /701 days/)
+})
+
+test('"hvor henter jeg …?" names the pallets outside FIFO that "Samlet" counts, in four languages, also when there is no reserve pallet', async () => {
+  const outside = (id, location, days, quantity, reason) => ({ ...pallet(id, location, 'R133-0032', days, quantity), reason })
+  const base = { material: 'R133-0032', description: TEXTS['R133-0032'], stations: [], pickPlaces: [], shelves: [], refillShelf: null, history: [] }
+  const elsewhere = [outside('e1', 'A3.1', 30, 5, 'deaktiveret'), outside('e2', 'B1.1', 20, null, 'reserveret'), outside('e3', 'I8', 10, 2, 'arbejdsstation')]
+  const both = fakes({ cards: { 'R133-0032': { ...base, reserve: [{ ...pallet('p9', 'A1.1', 'R133-0032', 40, 10) }], elsewhere, total: 17 } } }).assistant
+  const text = (await ask(both, 'hvor henter jeg R133-0032?')).text
+  assert.match(text, /^Reservepaller, ældste først: A1\.1/m)
+  assert.match(text, /^Andre paller \(ikke i FIFO\): A3\.1 \(deaktiveret, 5 stk\.\), B1\.1 \(reserveret\), I8 \(arbejdsstation, 2 stk\.\)$/m)
+  assert.ok(text.indexOf('A1.1') < text.indexOf('A3.1'), 'below the reserve pallets')
+  assert.match(text, /^Samlet: 17 stk\.$/m)
+  assert.match((await ask(both, 'where is R133-0032?', 'en')).text, /^Other pallets \(not in FIFO\): A3\.1 \(deactivated, 5 pcs\), B1\.1 \(reserved\), I8 \(work station, 2 pcs\)$/m)
+  assert.match((await ask(both, 'missä R133-0032 on?', 'fi')).text, /^Muut lavat \(ei FIFO:ssa\): A3\.1 \(pois käytöstä, 5 kpl\), B1\.1 \(varattu\), I8 \(työpiste, 2 kpl\)$/m)
+  assert.match((await ask(both, 'var står R133-0032?', 'sv')).text, /^Andra pallar \(inte i FIFO\): A3\.1 \(inaktiverad, 5 st\.\), B1\.1 \(reserverad\), I8 \(arbetsstation, 2 st\.\)$/m)
+
+  const only = fakes({ cards: { 'R133-0032': { ...base, reserve: [], elsewhere: [elsewhere[0]], total: 5 } } }).assistant
+  const onlyText = (await ask(only, 'hvor henter jeg R133-0032?')).text
+  assert.doesNotMatch(onlyText, /^Der står ingen reservepaller med R133-0032\.$/m)
+  assert.match(onlyText, /ingen reservepaller med R133-0032 i FIFO, men der står paller på andre pladser/)
+  assert.match(onlyText, /^Andre paller \(ikke i FIFO\): A3\.1 \(deaktiveret, 5 stk\.\)$/m)
+  assert.match(onlyText, /^Samlet: 5 stk\.$/m)
 })
 
 test('"hvor henter jeg ethernet kabler?" finds the material by its description', async () => {

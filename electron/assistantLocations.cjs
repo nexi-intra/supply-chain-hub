@@ -88,6 +88,8 @@ const TEXT = {
     age: days => (days <= 0 ? 'i dag' : days === 1 ? '1 dag' : `${days} dage`), pcs: qty => `${qty} stk.`,
     station: 'Arbejdsstation', pick: 'Pluk-plads', reserve: 'Reservepaller, ældste først', more: n => `og ${n} til`, total: qty => `Samlet: ${qty} stk.`,
     noPallets: material => `Der står ingen reservepaller med ${material}.`,
+    onlyElsewhere: material => `Der står ingen reservepaller med ${material} i FIFO, men der står paller på andre pladser.`,
+    elsewhere: list => `Andre paller (ikke i FIFO): ${list}`, elsewhereReasons: { deaktiveret: 'deaktiveret', reserveret: 'reserveret', arbejdsstation: 'arbejdsstation' },
     nothingFound: query => `Jeg fandt intet materiale i Placeringer, der passer til "${query}".`, others: list => `Andre materialer: ${list}`,
     notFound: name => `Placeringen ${name} findes ikke i Placeringer.`, notPick: name => `${name} er ikke en pluk-plads.`,
     refill: (place, label, from) => `Fyld ${place} op med ${label} fra ${from} – den ældste reservepalle.`, noReserve: (place, label) => `${place} skal have ${label}, men der står ingen reservepalle med materialet.`,
@@ -108,6 +110,8 @@ const TEXT = {
     age: days => (days <= 0 ? 'today' : days === 1 ? '1 day' : `${days} days`), pcs: qty => `${qty} pcs`,
     station: 'Work station', pick: 'Pick place', reserve: 'Reserve pallets, oldest first', more: n => `and ${n} more`, total: qty => `Total: ${qty} pcs`,
     noPallets: material => `There are no reserve pallets with ${material}.`,
+    onlyElsewhere: material => `There are no reserve pallets with ${material} in FIFO, but there are pallets on other places.`,
+    elsewhere: list => `Other pallets (not in FIFO): ${list}`, elsewhereReasons: { deaktiveret: 'deactivated', reserveret: 'reserved', arbejdsstation: 'work station' },
     nothingFound: query => `I found no material in Locations that matches "${query}".`, others: list => `Other materials: ${list}`,
     notFound: name => `The location ${name} does not exist in Locations.`, notPick: name => `${name} is not a pick place.`,
     refill: (place, label, from) => `Refill ${place} with ${label} from ${from} – the oldest reserve pallet.`, noReserve: (place, label) => `${place} needs ${label}, but there is no reserve pallet with the material.`,
@@ -128,6 +132,8 @@ const TEXT = {
     age: days => (days <= 0 ? 'tänään' : days === 1 ? '1 päivä' : `${days} päivää`), pcs: qty => `${qty} kpl`,
     station: 'Työpiste', pick: 'Keräilypaikka', reserve: 'Varalavat, vanhin ensin', more: n => `ja ${n} muuta`, total: qty => `Yhteensä: ${qty} kpl`,
     noPallets: material => `Materiaalista ${material} ei ole varalavoja.`,
+    onlyElsewhere: material => `Materiaalista ${material} ei ole varalavoja FIFO:ssa, mutta lavoja on muilla paikoilla.`,
+    elsewhere: list => `Muut lavat (ei FIFO:ssa): ${list}`, elsewhereReasons: { deaktiveret: 'pois käytöstä', reserveret: 'varattu', arbejdsstation: 'työpiste' },
     nothingFound: query => `En löytänyt materiaalia, joka vastaa hakua "${query}".`, others: list => `Muut materiaalit: ${list}`,
     notFound: name => `Sijaintia ${name} ei ole.`, notPick: name => `${name} ei ole keräilypaikka.`,
     refill: (place, label, from) => `Täytä ${place} materiaalilla ${label} paikasta ${from} – vanhin varalava.`, noReserve: (place, label) => `${place} tarvitsee materiaalia ${label}, mutta varalavaa ei ole.`,
@@ -148,6 +154,8 @@ const TEXT = {
     age: days => (days <= 0 ? 'i dag' : days === 1 ? '1 dag' : `${days} dagar`), pcs: qty => `${qty} st.`,
     station: 'Arbetsstation', pick: 'Plockplats', reserve: 'Reservpallar, äldst först', more: n => `och ${n} till`, total: qty => `Totalt: ${qty} st.`,
     noPallets: material => `Det finns inga reservpallar med ${material}.`,
+    onlyElsewhere: material => `Det finns inga reservpallar med ${material} i FIFO, men det står pallar på andra platser.`,
+    elsewhere: list => `Andra pallar (inte i FIFO): ${list}`, elsewhereReasons: { deaktiveret: 'inaktiverad', reserveret: 'reserverad', arbejdsstation: 'arbetsstation' },
     nothingFound: query => `Jag hittade inget material som passar "${query}".`, others: list => `Andra material: ${list}`,
     notFound: name => `Placeringen ${name} finns inte.`, notPick: name => `${name} är ingen plockplats.`,
     refill: (place, label, from) => `Fyll på ${place} med ${label} från ${from} – den äldsta reservpallen.`, noReserve: (place, label) => `${place} behöver ${label}, men det finns ingen reservpall med materialet.`,
@@ -221,8 +229,16 @@ function createLocationsAssistant({ userFor, service, now = Date.now }) {
       if (card.reserve.length) {
         const shown = card.reserve.slice(0, RESERVE_LIMIT).map(palletText).join(', ')
         lines.push(`${t.reserve}: ${shown}${card.reserve.length > RESERVE_LIMIT ? ` ${t.more(card.reserve.length - RESERVE_LIMIT)}` : ''}`)
-        lines.push(t.total(number(card.total)))
-      } else lines.push(t.noPallets(card.material))
+      }
+      // On a deactivated, reserved or station place: counted in the total, so named too.
+      const elsewhere = card.elsewhere || []
+      if (elsewhere.length) {
+        if (!card.reserve.length) lines.push(t.onlyElsewhere(card.material))
+        const shown = elsewhere.slice(0, RESERVE_LIMIT).map(pallet => `${pallet.location} (${[t.elsewhereReasons[pallet.reason] || pallet.reason, pallet.quantity === null || pallet.quantity === undefined ? null : t.pcs(number(pallet.quantity))].filter(Boolean).join(', ')})`).join(', ')
+        lines.push(t.elsewhere(`${shown}${elsewhere.length > RESERVE_LIMIT ? ` ${t.more(elsewhere.length - RESERVE_LIMIT)}` : ''}`))
+      }
+      if (card.reserve.length || elsewhere.length) lines.push(t.total(number(card.total)))
+      else lines.push(t.noPallets(card.material))
       if (card.shelves?.length) lines.push(t.shelves(card.shelves.map(item => `${item.name} (${t.pcs(number(item.quantity))})`).join(', ')))
       if (others.length) lines.push(t.others(others.map(item => label(item.material, item.description)).join('; ')))
       return reply(lines.join('\n'), nav(`material:${card.material}`, t.openItem(card.material)), user)

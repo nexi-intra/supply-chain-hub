@@ -13,7 +13,7 @@ import { t } from '@/lib/warehouse/text'
 import type { MaterialCard } from '@/types/warehouse'
 import { CountPallet } from './CountPallet'
 import { OlderPalletWarning } from './OlderPalletWarning'
-import { youngerThanOldest } from './scanChoices'
+import { fifoConfirmStillDue, youngerThanOldest } from './scanChoices'
 
 type Reserve = MaterialCard['reserve'][number]
 
@@ -47,7 +47,10 @@ export function TakePallet({ material: initial, version, onDone }: { material?: 
     const fresh = startLocationsRead()
     try {
       const next = await bridge.materialCard({ material: material.trim() })
-      setCard(value => (refresh && value && !fresh() ? value : next))
+      const used = !refresh || fresh()
+      setCard(value => (!used && value ? value : next))
+      // The older pallet a confirm points at may be gone now (taken on another PC): the confirm goes with it.
+      if (used) setConfirm(value => fifoConfirmStillDue(next, value))
     } catch (error) {
       toast.error(errorMessage(error))
     }
@@ -70,6 +73,8 @@ export function TakePallet({ material: initial, version, onDone }: { material?: 
   }
 
   const stock = card ? stockText(card) : { amount: '', unknown: null }
+  // Shown only while it still holds: an older reserve pallet stands and the pallet is on the card.
+  const due = card ? fifoConfirmStillDue(card, confirm) : null
   return (
     <div className="mx-auto max-w-4xl space-y-4">
       <div>
@@ -143,8 +148,8 @@ export function TakePallet({ material: initial, version, onDone }: { material?: 
           <Button size="sm" onClick={() => take(pallet)}><HandGrabbing size={16} /> {t('Tag hele pallen', 'Take the whole pallet')}</Button>
           {pallet.quantity === null && <CountPallet pallet={pallet} onCounted={quantity => setCard(value => (value ? countedInCard(value, pallet.id, quantity) : value))} onDone={onDone} />}
         </span>
-        {confirm?.pallet.id === pallet.id && (
-          <OlderPalletWarning oldest={card.reserve[0]} confirmLabel={t('Tag alligevel', 'Take anyway')} onCancel={() => setConfirm(null)} onConfirm={() => take(confirm.pallet, confirm.quantity, true)} />
+        {due?.pallet.id === pallet.id && (
+          <OlderPalletWarning oldest={card.reserve[0]} confirmLabel={t('Tag alligevel', 'Take anyway')} onCancel={() => setConfirm(null)} onConfirm={() => take(due.pallet, due.quantity, true)} />
         )}
       </div>
     )

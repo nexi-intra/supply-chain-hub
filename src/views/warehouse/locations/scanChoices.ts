@@ -58,6 +58,16 @@ export function youngerThanOldest(reserve: { id: string; receivedAt: number }[],
   const oldest = reserve[0]
   return Boolean(oldest && oldest.id !== pallet.id && oldest.receivedAt < pallet.receivedAt)
 }
+type Received = { id: string; receivedAt: number }
+/**
+ * A FIFO confirm after the card changed (a re-read, or a take on another PC): kept only while the pallet is still on the
+ * card and an older reserve pallet still stands, else null, so the warning never shows without its oldest pallet.
+ */
+export function fifoConfirmStillDue<T extends { pallet: Received }>(card: { reserve: Received[]; elsewhere?: Received[] }, confirm: T | null): T | null {
+  if (!confirm) return null
+  const onCard = [...card.reserve, ...(card.elsewhere ?? [])].some(item => item.id === confirm.pallet.id)
+  return onCard && youngerThanOldest(card.reserve, confirm.pallet) ? confirm : null
+}
 /** A 49/50 number with several materials: the one to choose after `after` (or first) that is not saved yet, null when all are done. */
 export function nextUnsaved(count: number, saved: number[], after: number | null): number | null {
   const start = after === null ? 0 : after + 1

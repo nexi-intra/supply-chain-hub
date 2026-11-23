@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { LocationSearch } from '@/types/warehouse'
-import { enterChoice, enterOnSearch, enterSaves, markSaved, nextUnsaved, openWhenReady, restoredLines, savedOf, unmarkSaved, youngerThanOldest } from './scanChoices'
+import { enterChoice, enterOnSearch, enterSaves, fifoConfirmStillDue, markSaved, nextUnsaved, openWhenReady, restoredLines, savedOf, unmarkSaved, youngerThanOldest } from './scanChoices'
 
 const list = (...codes: string[]) => codes.map(material => ({ material, description: '' }))
 
@@ -73,6 +73,23 @@ describe('youngerThanOldest (Tag and Fyld op ask before a younger pallet)', () =
     expect(youngerThanOldest(reserve, reserve[0])).toBe(false)
     expect(youngerThanOldest(reserve, reserve[2])).toBe(false)
     expect(youngerThanOldest([], reserve[1])).toBe(false)
+  })
+})
+describe('fifoConfirmStillDue (a FIFO confirm after a re-read)', () => {
+  const reserve = [{ id: 'p1', receivedAt: 100 }, { id: 'p2', receivedAt: 200 }]
+  const elsewhere = [{ id: 'e1', receivedAt: 300 }]
+
+  it('keeps the confirm while an older reserve pallet still stands and the pallet is still on the card', () => {
+    const confirm = { pallet: elsewhere[0], quantity: 2 }
+    expect(fifoConfirmStillDue({ reserve, elsewhere }, confirm)).toBe(confirm)
+    expect(fifoConfirmStillDue({ reserve }, { pallet: reserve[1] })).toEqual({ pallet: reserve[1] })
+  })
+
+  it('drops it when the older reserve pallet was used up on another PC, the pallet is gone, or nothing was asked', () => {
+    expect(fifoConfirmStillDue({ reserve: [], elsewhere }, { pallet: elsewhere[0] }), 'no reserve pallet left').toBeNull()
+    expect(fifoConfirmStillDue({ reserve: [reserve[1]], elsewhere: [{ id: 'e1', receivedAt: 150 }] }, { pallet: { id: 'e1', receivedAt: 150 } }), 'now the oldest').toBeNull()
+    expect(fifoConfirmStillDue({ reserve, elsewhere: [] }, { pallet: elsewhere[0] }), 'taken elsewhere').toBeNull()
+    expect(fifoConfirmStillDue({ reserve, elsewhere }, null)).toBeNull()
   })
 })
 describe('nextUnsaved (Læg på hylde with a 49/50 number of several materials)', () => {

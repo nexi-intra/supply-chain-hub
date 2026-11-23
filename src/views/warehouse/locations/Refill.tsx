@@ -14,7 +14,7 @@ import { t } from '@/lib/warehouse/text'
 import type { Location, MaterialCard } from '@/types/warehouse'
 import { CountPallet } from './CountPallet'
 import { OlderPalletWarning } from './OlderPalletWarning'
-import { youngerThanOldest } from './scanChoices'
+import { fifoConfirmStillDue, youngerThanOldest } from './scanChoices'
 
 /** Refill a pick place: choose the place (and its material), and fetch from the oldest reserve pallet (FIFO; a younger one asks once, like Tag). */
 export function Refill({ id, version, onDone }: { id?: string; version: number; onDone: () => void }) {
@@ -49,7 +49,13 @@ export function Refill({ id, version, onDone }: { id?: string; version: number; 
     if (!chosen) { setCard(null); return }
     let current = true
     const fresh = startLocationsRead()
-    bridge.materialCard({ material: chosen }).then(result => { if (current) setCard(value => (value?.material === result.material && !fresh() ? value : result)) }).catch(error => toast.error(errorMessage(error)))
+    bridge.materialCard({ material: chosen }).then(result => {
+      if (!current) return
+      const used = fresh()
+      setCard(value => (value?.material === result.material && !used ? value : result))
+      // The older pallet a confirm points at may be gone now (taken on another PC): the confirm goes with it.
+      if (used) setConfirm(value => fifoConfirmStillDue(result, value))
+    }).catch(error => toast.error(errorMessage(error)))
     return () => { current = false }
   }, [bridge, chosen, version])
 
@@ -79,6 +85,8 @@ export function Refill({ id, version, onDone }: { id?: string; version: number; 
     })
   }
 
+  // Shown only while it still holds: an older reserve pallet stands and the pallet is on the card.
+  const due = card ? fifoConfirmStillDue(card, confirm) : null
   return (
     <div className="mx-auto max-w-5xl space-y-4">
       <div>
@@ -164,8 +172,8 @@ export function Refill({ id, version, onDone }: { id?: string; version: number; 
                               <ArrowsClockwise size={16} /> {t(`Fyldt op fra ${pallet.location}`, `Refilled from ${pallet.location}`)}
                             </Button>
                           </span>
-                          {confirm?.pallet.id === pallet.id && (
-                            <OlderPalletWarning oldest={card.reserve[0]} confirmLabel={t('Fyld op alligevel', 'Refill anyway')} onCancel={() => setConfirm(null)} onConfirm={() => refill(confirm.pallet, confirm.amount, true)} />
+                          {due?.pallet.id === pallet.id && (
+                            <OlderPalletWarning oldest={card.reserve[0]} confirmLabel={t('Fyld op alligevel', 'Refill anyway')} onCancel={() => setConfirm(null)} onConfirm={() => refill(due.pallet, due.amount, true)} />
                           )}
                         </div>
                       ))}
