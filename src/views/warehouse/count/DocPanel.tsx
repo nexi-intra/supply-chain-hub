@@ -42,6 +42,7 @@ export function DocPanel({ id, open, state }: PanelProps) {
   const [busy, setBusy] = useState<string | null>(null)
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null)
   const [serialConfirm, setSerialConfirm] = useState<SerialConfirm | null>(null)
+  const [resolving, setResolving] = useState<PiDoc | null>(null)
   const approvalsKey = JSON.stringify(state.approvals)
 
   const load = useCallback(async () => {
@@ -192,6 +193,21 @@ export function DocPanel({ id, open, state }: PanelProps) {
     }
   }
 
+  /** A manager's decision on a document SAP may or may not have; SAP itself is not touched. */
+  const resolveDoc = async (item: PiDoc, request: { outcome: 'saved' | 'missing'; docNo: string; reason: string }) => {
+    setResolving(null)
+    setBusy(`resolve:${item.id}`)
+    try {
+      setPiList(await window.electronWarehouse!.piDocs.resolve({ id, docId: item.id, ...request }))
+      toast.success(request.outcome === 'saved' ? t(`SAP-dokument ${request.docNo.trim()} er afklaret`, `SAP document ${request.docNo.trim()} is resolved`) : t('Dokumentet er afklaret', 'The document is resolved'))
+    } catch (error) {
+      toast.error(errorMessage(error), { duration: 20000 })
+      await load()
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const printDoc = async (item: PiDoc) => {
     setBusy(item.id)
     try {
@@ -256,7 +272,7 @@ export function DocPanel({ id, open, state }: PanelProps) {
             <Warning size={16} /> {formatNumber(doc.missingApproval)} {doc.missingApproval === 1 ? t('materiale mangler godkendelse og får intet antal.', 'material needs approval and gets no quantity.') : t('materialer mangler godkendelse og får intet antal.', 'materials need approval and get no quantity.')}
           </p>
         )}
-        {piList && <PiDocsSection list={piList} selected={selection} busy={busy} figuresAt={doc.fetchedAt} onCreate={() => void createDoc()} onPrint={item => void printDoc(item)} onCount={item => void countDoc(item)} onPost={items => void postDocs(items)} onDelete={item => void deleteDoc(item)} qtyOf={qtyOf} />}
+        {piList && <PiDocsSection list={piList} selected={selection} busy={busy} figuresAt={doc.fetchedAt} onCreate={() => void createDoc()} onPrint={item => void printDoc(item)} onCount={item => void countDoc(item)} onPost={items => void postDocs(items)} onDelete={item => void deleteDoc(item)} onResolve={item => setResolving(item)} qtyOf={qtyOf} />}
         <div className="flex flex-wrap items-center gap-4">
           <Input value={query} onChange={event => setQuery(event.target.value)} placeholder={t('Søg materiale, tekst eller sloc', 'Search material, text or sloc')} className="max-w-xs" />
           <label className="flex items-center gap-2 text-sm"><Checkbox checked={onlyDiff} onCheckedChange={value => setOnlyDiff(value === true)} /> {t('Kun med difference', 'Only with a difference')}</label>
@@ -327,6 +343,7 @@ export function DocPanel({ id, open, state }: PanelProps) {
             onConfirm={reason => void postDocs(serialConfirm.items, { docIds: serialConfirm.flagged.map(item => item.id), reason })}
           />
         )}
+        {resolving && <ResolveDialog item={resolving} onCancel={() => setResolving(null)} onResolve={request => void resolveDoc(resolving, request)} />}
       </CardContent>
     </Card>
   )
@@ -391,6 +408,78 @@ function SerialLinesDialog({ flagged, onCancel, onConfirm }: { flagged: PiDoc[];
           <SapActionButton variant="destructive" onAction={() => onConfirm(reason.trim())} disabled={!reason.trim()}>
             {t('Bogfør alligevel', 'Post anyway')}
           </SapActionButton>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/** What a manager can answer for an unknown document, per step SAP may have taken. */
+const resolveTexts = (item: PiDoc) => {
+  const step = item.sapUnknown?.step ?? 'create'
+  if (step === 'count') {
+    return {
+      title: t(`Afklar antallet på SAP-dokument ${item.docNo}`, `Resolve the quantity on SAP document ${item.docNo}`),
+      description: t(`Optælling ved ikke, om antallet blev gemt på SAP-dokument ${item.docNo}. Tjek dokumentet i SAP (MI03), og vælg hvad SAP viser.`, `Stock count does not know whether the quantity was saved on SAP document ${item.docNo}. Check the document in SAP (MI03) and choose what SAP shows.`),
+      saved: t('Antal er lagt på i SAP', 'The quantity is entered in SAP'),
+      savedHelp: t('Dokumentet står som Antal lagt på og kan bogføres.', 'The document is shown as Quantity entered and can be posted.'),
+      missing: t('Antal er ikke lagt på i SAP', 'The quantity is not entered in SAP'),
+      missingHelp: t('Dokumentet står igen som Printet, så en admin kan lægge antal på.', 'The document is shown as Printed again, so an admin can enter the quantity.'),
+    }
+  }
+  if (step === 'post') {
+    return {
+      title: t(`Afklar bogføringen af SAP-dokument ${item.docNo}`, `Resolve the posting of SAP document ${item.docNo}`),
+      description: t(`Optælling ved ikke, om SAP-dokument ${item.docNo} blev bogført. Tjek dokumentet i SAP (MI03), og vælg hvad SAP viser.`, `Stock count does not know whether SAP document ${item.docNo} was posted. Check the document in SAP (MI03) and choose what SAP shows.`),
+      saved: t('Bogført i SAP', 'Posted in SAP'),
+      savedHelp: t('Dokumentet står som Bogført, og materialerne markeres "Bogført i SAP".', 'The document is shown as Posted, and the materials are marked "Posted in SAP".'),
+      missing: t('Ikke bogført i SAP', 'Not posted in SAP'),
+      missingHelp: t('Dokumentet står igen som Antal lagt på og kan bogføres.', 'The document is shown as Quantity entered again and can be posted.'),
+    }
+  }
+  return {
+    title: t(`Afklar dokumentet med referencen ${item.reference}`, `Resolve the document with the reference ${item.reference}`),
+    description: t(`Optælling ved ikke, om SAP oprettede dokumentet. Søg i MI22 på referencen ${item.reference} (Phys. Inv. No.), og vælg hvad SAP viser.`, `Stock count does not know whether SAP created the document. Search MI22 for the reference ${item.reference} (Phys. Inv. No.) and choose what SAP shows.`),
+    saved: t('Oprettet i SAP', 'Created in SAP'),
+    savedHelp: t('Skriv dokumentnummeret fra SAP. Dokumentet står derefter som Oprettet og kan printes.', 'Type the document number from SAP. The document is then shown as Created and can be printed.'),
+    missing: t('Findes ikke i SAP', 'Not in SAP'),
+    missingHelp: t('Materialerne frigives, så der kan laves et nyt dokument.', 'The materials are released, so a new document can be made.'),
+  }
+}
+
+/** A manager's decision on a document SAP may or may not have: what SAP shows, the document number and why. */
+function ResolveDialog({ item, onCancel, onResolve }: { item: PiDoc; onCancel: () => void; onResolve: (request: { outcome: 'saved' | 'missing'; docNo: string; reason: string }) => void }) {
+  const [outcome, setOutcome] = useState<'saved' | 'missing' | null>(null)
+  const [docNo, setDocNo] = useState('')
+  const [reason, setReason] = useState('')
+  const texts = resolveTexts(item)
+  // Same rule as the backend (9 or 10 digits); a count or posting must name the document itself.
+  const validNo = /^\d{9,10}$/.test(docNo.trim()) && (!item.docNo || docNo.trim() === item.docNo)
+  const ready = outcome !== null && reason.trim() !== '' && (outcome === 'missing' || validNo)
+  const choice = (value: 'saved' | 'missing', label: string, help: string) => (
+    <button type="button" aria-pressed={outcome === value} onClick={() => setOutcome(value)} className={cn('rounded-md border px-3 py-2 text-left text-sm', outcome === value ? 'border-primary bg-primary/10' : 'hover:bg-muted/50')}>
+      <span className="block font-medium">{label}</span>
+      <span className="block text-xs text-muted-foreground">{help}</span>
+    </button>
+  )
+  return (
+    <Dialog open onOpenChange={value => { if (!value) onCancel() }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{texts.title}</DialogTitle>
+          <DialogDescription>{texts.description}</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-2">
+          {choice('saved', texts.saved, texts.savedHelp)}
+          {choice('missing', texts.missing, texts.missingHelp)}
+        </div>
+        {outcome === 'saved' && (
+          <Input value={docNo} maxLength={10} inputMode="numeric" onChange={event => setDocNo(event.target.value)} placeholder={t('SAP-dokumentnummer', 'SAP document number')} aria-label={t('SAP-dokumentnummer', 'SAP document number')} aria-invalid={docNo.trim() !== '' && !validNo} />
+        )}
+        <Input value={reason} maxLength={300} onChange={event => setReason(event.target.value)} placeholder={t('Hvad viser SAP?', 'What does SAP show?')} aria-label={t('Begrundelse', 'Reason')} />
+        <DialogFooter>
+          <Button variant="ghost" onClick={onCancel}>{t('Annullér', 'Cancel')}</Button>
+          <Button disabled={!ready} onClick={() => outcome && onResolve({ outcome, docNo: outcome === 'saved' ? docNo.trim() : '', reason: reason.trim() })}>{t('Gem afklaringen', 'Save the decision')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

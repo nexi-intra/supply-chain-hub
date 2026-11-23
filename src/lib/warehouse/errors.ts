@@ -120,6 +120,7 @@ const MESSAGES: Record<string, string> = {
   PIDOC_SAP_FAILED: 'SAP-trinnet fejlede. Prøv igen.',
   PIDOC_SAP_LANGUAGE: 'Log på SAP på engelsk (EN), og prøv igen.',
   PIDOC_UNKNOWN: 'Optælling ved ikke, om SAP har gemt. Tjek dokumentet i SAP (MI03).',
+  PIDOC_SAVE_FAILED: 'SAP har gemt, men det kunne ikke gemmes på M:. Det er gemt på denne PC og kommer med senere.',
   // Placeringer
   DATE_INVALID: 'Ugyldig dato.',
   LOCATIONS_LIVE: 'Placeringer er taget i brug – placeringsarket kan ikke importeres igen.',
@@ -388,6 +389,7 @@ const MESSAGES_EN: Record<string, string> = {
   PIDOC_SAP_FAILED: 'The SAP step failed. Try again.',
   PIDOC_SAP_LANGUAGE: 'Log on to SAP in English (EN) and try again.',
   PIDOC_UNKNOWN: 'Stock count does not know whether SAP saved it. Check the document in SAP (MI03).',
+  PIDOC_SAVE_FAILED: 'SAP saved it, but it could not be saved on M:. It is kept on this PC and saved later.',
   // Placeringer
   DATE_INVALID: 'Invalid date.',
   LOCATIONS_LIVE: 'Locations are in use – the placement sheet can no longer be imported.',

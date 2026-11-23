@@ -150,6 +150,7 @@ contextBridge.exposeInMainWorld('electronWarehouse', {
     count: request => warehouse('pidocs:count', request),
     post: request => warehouse('pidocs:post', request),
     remove: request => warehouse('pidocs:delete', request),
+    resolve: request => warehouse('pidocs:resolve', request),
   },
   sapCheck: {
     overview: () => warehouse('sap-check:overview'),

@@ -44,13 +44,12 @@ test('SAP splitting into several documents gives one CountPoint document each', 
   assert.deepEqual(stored()['105000902'].lines.map(line => line.material), ['R2'])
 })
 
-test('a failed or cancelled SAP step frees the materials again', async () => {
-  const { service, stored } = setup({ createResult: Object.assign(new Error('x'), { code: 'PIDOC_CANCELLED' }) })
-  await assert.rejects(service.create(MONA, 'c1', { materials: ['R1'], sloc: 'D000', stockType: 'unrestricted' }), { code: 'PIDOC_CANCELLED' })
-  assert.deepEqual(stored(), {})
-  const empty = setup({ createResult: { docs: [], missing: ['R1'] } })
-  await assert.rejects(empty.service.create(MONA, 'c1', { materials: ['R1'], sloc: 'D000', stockType: 'unrestricted' }), { code: 'PIDOC_NOT_CREATED' })
-  assert.deepEqual(empty.stored(), {})
+test('a failed or cancelled SAP step before F8 frees the materials again', async () => {
+  for (const code of ['PIDOC_CANCELLED', 'PIDOC_TIMEOUT', 'PIDOC_NOT_POSSIBLE', 'SAP_NOT_READY']) {
+    const { service, stored } = setup({ createResult: Object.assign(new Error('x'), { code }) })
+    await assert.rejects(service.create(MONA, 'c1', { materials: ['R1'], sloc: 'D000', stockType: 'unrestricted' }), { code })
+    assert.deepEqual(stored(), {}, code)
+  }
 })
 
 test('a document is not created in SAP for a count deleted meanwhile', async () => {
@@ -416,4 +415,230 @@ test('only managers create and print; admins and users cannot', async () => {
   assert.equal(printed.docs[0].canNext, false, 'the manager does not count')
   assert.equal((await service.list(ANNA, 'c1')).docs[0].canNext, true, 'the admin counts')
   await assert.rejects(service.print(MONA, 'c1', '105000900'), { code: 'PIDOC_FORBIDDEN' })
+})
+
+// ---- Unknown SAP results and the journal on this PC (count.md I6) ----
+
+const fs = require('node:fs')
+const path = require('node:path')
+const { RESERVATION_MS } = require('./core/piDocs.cjs')
+
+const UNKNOWN_TEXT = 'Optælling ved ikke, om SAP har gemt. Tjek dokumentet i SAP (MI03).'
+const sapUnknown = () => Object.assign(new Error(`PIDOC_UNKNOWN: ${UNKNOWN_TEXT}`), { code: 'PIDOC_UNKNOWN', detail: 'no-access-mi22' })
+const COUNT_ROWS = [
+  row('R1', 'accessory', { serialManaged: false, docQty: 5, sapToday: 5, sapAtApproval: 5 }),
+  row('R2', 'accessory', { serialManaged: false, docQty: 2, sapToday: 2, sapAtApproval: 2 }),
+  row('INT1-0', 'new', { docQty: 1, sapToday: 1, sapAtApproval: 1 }),
+]
+const sapDoc = (docNo, status, extra = {}) => ({ id: docNo, docNo, year: '2026', system: 'PS4', reference: `CP${docNo}`, status, sloc: 'D000', stockType: 'unrestricted', kind: 'accessory', transaction: 'MI04', createdBy: { email: 'mona@x', name: 'Mona', at: 1 }, lines: [{ material: 'R1', transaction: 'MI04' }], ...extra })
+
+let journals = 0
+/** This PC's journal folder for one test, next to the test (ignored by git as *.local) and removed after it. */
+function journalFolder(t) {
+  const dir = path.join(__dirname, `.pidoc-service-journal-${process.pid}-${++journals}.local`)
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  return dir
+}
+
+/**
+ * One stored documents file and a writer that answers what the test sets on `sap`. `state.down` makes every write to M:
+ * fail (reads still work); `state.failAfterSap` sets it as soon as SAP has answered, like a drive that fails right after.
+ */
+function flow(t, { docs = {}, rows = ROWS } = {}) {
+  const state = { stored: structuredClone(docs), down: false, failAfterSap: false, clock: new Date(2026, 10, 23, 9).getTime(), marked: [], calls: [] }
+  let counter = 0
+  const repo = {
+    getPiDocs: async () => structuredClone(state.stored),
+    changePiDocs: async (team, id, change) => {
+      if (state.down) throw Object.assign(new Error('EIO: M: is away'), { code: 'STORAGE_UNAVAILABLE' })
+      const { all, result } = change(structuredClone(state.stored))
+      if (all !== undefined) state.stored = all
+      return result
+    },
+  }
+  const sap = {
+    create: async () => ({ docs: [{ docNo: '105000900', materials: ['R1', 'R2'] }], missing: [] }),
+    counts: async () => ({ message: 'ok' }),
+    post: async request => ({ posted: request.docNos, open: [], unknown: [], materialDocs: {}, differences: [] }),
+  }
+  const answered = async (name, request, answer) => {
+    state.calls.push([name, request])
+    const result = await answer(request)
+    if (state.failAfterSap) state.down = true
+    return result
+  }
+  const writer = {
+    createDocument: request => answered('create', request, sap.create),
+    printDocument: request => answered('print', request, async () => ({ message: 'ok' })),
+    enterCounts: request => answered('counts', request, sap.counts),
+    postDocuments: request => answered('post', request, sap.post),
+    deleteDocument: request => answered('delete', request, async () => ({ deleted: true, message: 'deleted' })),
+  }
+  const counts = {
+    countDoc: async () => ({ fetchedAt: state.clock, rows }),
+    markPosted: async (user, id, materials) => { state.marked.push(...materials); return { posted: materials, skipped: [] } },
+  }
+  const journalDir = journalFolder(t)
+  const service = createPiDocService({ counts, repo, roles: { roleOf: async user => (user.email === 'anna@x' ? 'admin' : 'manager') }, writer, system: 'PS4', now: () => state.clock, newReference: () => `CPREF${++counter}`, journalDir })
+  const journal = () => (fs.existsSync(journalDir) ? fs.readdirSync(journalDir).filter(name => name.endsWith('.json')) : [])
+  const heal = () => { state.down = false; state.failAfterSap = false }
+  return { state, sap, service, journal, heal }
+}
+
+const CREATE = { materials: ['R1', 'R2'], sloc: 'D000', stockType: 'unrestricted' }
+
+test('MI31 that may have created documents after F8 (the MI22 lookup failed) keeps the entry as unknown with its reference', async t => {
+  const { state, sap, service } = flow(t)
+  sap.create = async () => { throw sapUnknown() }
+  await assert.rejects(service.create(MONA, 'c1', CREATE), { code: 'PIDOC_UNKNOWN', message: `PIDOC_UNKNOWN: ${UNKNOWN_TEXT}` })
+  const kept = state.stored.CPREF1
+  // Stored as 1.6.7 can show it (it knows no 'unknown' status): created without a document number, the unknown step beside it.
+  assert.deepEqual([kept.reference, kept.status, kept.docNo, kept.sapUnknown.step, kept.sapUnknown.status, kept.sapUnknown.by.email, kept.sapUnknown.detail], ['CPREF1', 'created', undefined, 'create', 'created', 'mona@x', 'no-access-mi22'])
+  assert.deepEqual(kept.lines.map(line => line.material), ['R1', 'R2'])
+  state.clock += 2 * RESERVATION_MS
+  const [doc] = (await service.list(MONA, 'c1')).docs
+  assert.deepEqual([doc.id, doc.status, doc.next, doc.canNext, doc.canDelete, doc.canResolve], ['CPREF1', 'unknown', null, false, false, true], 'never a stale reservation')
+  await assert.rejects(service.create(MONA, 'c1', { ...CREATE, materials: ['R1'] }), { code: 'PIDOC_EXISTS' })
+  assert.equal((await service.list(ANNA, 'c1')).docs[0].canResolve, false, 'admins do not resolve')
+})
+
+test('MI31 saying Created while MI22 lists nothing under the reference is unknown too, never "not created"', async t => {
+  const { state, sap, service } = flow(t)
+  sap.create = async () => ({ docs: [], missing: ['R1', 'R2'] })
+  await assert.rejects(service.create(MONA, 'c1', CREATE), { code: 'PIDOC_UNKNOWN' })
+  assert.deepEqual([state.stored.CPREF1.status, state.stored.CPREF1.sapUnknown.step], ['created', 'create'])
+})
+
+test('MI04 or MI20 whose result is unknown marks the document unknown; SAP is not asked again until a manager decides', async t => {
+  const docs = { 105000901: sapDoc('105000901', 'printed'), 105000902: sapDoc('105000902', 'counted', { lines: [{ material: 'R2' }] }), 105000903: sapDoc('105000903', 'counted', { lines: [{ material: 'INT1-0' }] }) }
+  const { state, sap, service } = flow(t, { docs, rows: COUNT_ROWS })
+  sap.counts = async () => { throw sapUnknown() }
+  await assert.rejects(service.count(ANNA, 'c1', '105000901'), { code: 'PIDOC_UNKNOWN' })
+  assert.deepEqual([state.stored['105000901'].status, state.stored['105000901'].sapUnknown.step, state.stored['105000901'].sapUnknown.by.email], ['printed', 'count', 'anna@x'])
+  sap.post = async () => { throw sapUnknown() }
+  await assert.rejects(service.post(MONA, 'c1', ['105000902']), { code: 'PIDOC_UNKNOWN' })
+  assert.deepEqual([state.stored['105000902'].status, state.stored['105000902'].sapUnknown.step], ['counted', 'post'])
+  // Not listed by MI22 at all after MI20: posted or not is unknown too.
+  sap.post = async request => ({ posted: [], open: [], unknown: request.docNos, materialDocs: {}, differences: [] })
+  assert.deepEqual((await service.post(MONA, 'c1', ['105000903'])).unknown, ['105000903'])
+  assert.deepEqual([state.stored['105000903'].status, state.stored['105000903'].sapUnknown.step], ['counted', 'post'])
+  state.calls.length = 0
+  await assert.rejects(service.count(ANNA, 'c1', '105000901'), { code: 'PIDOC_FORBIDDEN' })
+  await assert.rejects(service.post(MONA, 'c1', ['105000902']), { code: 'PIDOC_FORBIDDEN' })
+  await assert.rejects(service.remove(MONA, 'c1', '105000901'), { code: 'PIDOC_FORBIDDEN' })
+  assert.deepEqual(state.calls, [])
+  assert.deepEqual((await service.list(MONA, 'c1')).docs.map(doc => doc.status), ['unknown', 'unknown', 'unknown'])
+  assert.deepEqual(state.marked, [], 'nothing is marked "Bogført i SAP" on a guess')
+})
+
+test('a normal create, print, count and post still work and leave nothing in the journal', async t => {
+  const { state, service, journal } = flow(t, { rows: COUNT_ROWS })
+  await service.create(MONA, 'c1', CREATE)
+  await service.print(MONA, 'c1', '105000900')
+  await service.count(ANNA, 'c1', '105000900')
+  assert.deepEqual(state.calls.at(-1), ['counts', { docNo: '105000900', year: '2026', entries: [{ material: 'R1', qty: 5 }, { material: 'R2', qty: 2 }] }])
+  const result = await service.post(MONA, 'c1', ['105000900'])
+  assert.deepEqual([result.posted, state.stored['105000900'].status, state.marked], [['105000900'], 'posted', ['R1', 'R2']])
+  assert.deepEqual(journal(), [])
+})
+
+test('what SAP did while M: fails is kept on this PC and written to M: on the next look at the documents', async t => {
+  const { state, service, journal, heal } = flow(t, { rows: COUNT_ROWS })
+  state.failAfterSap = true
+  await assert.rejects(service.create(MONA, 'c1', CREATE), error => error.code === 'PIDOC_SAVE_FAILED' && /105000900/.test(error.message))
+  assert.equal(state.stored.CPREF1.status, 'creating', 'M: still has the reservation only')
+  assert.equal(journal().length, 1)
+  // M: still away: the journal is kept, also for another count's documents.
+  await service.list(MONA, 'c1')
+  heal()
+  await service.list(MONA, 'c2')
+  assert.equal(journal().length, 1, 'only merged into its own count')
+  await service.list(MONA, 'c1')
+  assert.deepEqual([state.stored.CPREF1, state.stored['105000900'].status, state.stored['105000900'].reference], [undefined, 'created', 'CPREF1'])
+  assert.deepEqual(journal(), [])
+
+  for (const [step, run, status] of [
+    ['print', () => service.print(MONA, 'c1', '105000900'), 'printed'],
+    ['count', () => service.count(ANNA, 'c1', '105000900'), 'counted'],
+    ['post', () => service.post(MONA, 'c1', ['105000900']), 'posted'],
+  ]) {
+    state.failAfterSap = true
+    await assert.rejects(run(), { code: 'PIDOC_SAVE_FAILED' }, step)
+    assert.notEqual(state.stored['105000900'].status, status, step)
+    heal()
+    const [doc] = (await service.list(MONA, 'c1')).docs
+    assert.equal(doc.status, status, step)
+    assert.deepEqual(journal(), [], step)
+  }
+  assert.deepEqual(Object.keys(state.stored['105000900'].entered).sort(), ['R1', 'R2'])
+  assert.equal(state.stored['105000900'].postedBy.email, 'mona@x')
+})
+
+test('an unknown create is never lost to a failing drive: the journal brings it to M: after the reservation went stale', async t => {
+  const { state, sap, service, journal, heal } = flow(t)
+  sap.create = async () => { state.down = true; throw sapUnknown() }
+  await assert.rejects(service.create(MONA, 'c1', CREATE), { code: 'PIDOC_UNKNOWN' })
+  assert.equal(state.stored.CPREF1.status, 'creating')
+  state.clock += 2 * RESERVATION_MS
+  heal()
+  const [doc] = (await service.list(MONA, 'c1')).docs
+  assert.deepEqual([doc.id, doc.status], ['CPREF1', 'unknown'])
+  assert.deepEqual(journal(), [])
+  await assert.rejects(service.create(MONA, 'c1', CREATE), { code: 'PIDOC_EXISTS' })
+})
+
+test('a manager resolves an unknown create: created in SAP with its number, or not in SAP (released); a reason is needed and logged', async t => {
+  const { state, sap, service } = flow(t)
+  sap.create = async () => { throw sapUnknown() }
+  await assert.rejects(service.create(MONA, 'c1', CREATE), { code: 'PIDOC_UNKNOWN' })
+  await assert.rejects(service.resolve(ANNA, 'c1', 'CPREF1', { outcome: 'saved', docNo: '105000900', reason: 'Fundet i MI22' }), { code: 'PIDOC_FORBIDDEN' })
+  for (const reason of ['', '   ', undefined]) await assert.rejects(service.resolve(MONA, 'c1', 'CPREF1', { outcome: 'saved', docNo: '105000900', reason }), { code: 'PIDOC_INVALID' }, 'a reason is required')
+  for (const docNo of [undefined, '', '12345', '10500090A', '10500090012']) await assert.rejects(service.resolve(MONA, 'c1', 'CPREF1', { outcome: 'saved', docNo, reason: 'Fundet' }), { code: 'PIDOC_INVALID' }, String(docNo))
+  await assert.rejects(service.resolve(MONA, 'c1', 'CPREF1', { outcome: 'maybe', reason: 'Fundet' }), { code: 'PIDOC_INVALID' })
+  assert.equal(state.stored.CPREF1.sapUnknown.step, 'create', 'nothing changed')
+
+  state.clock += 1000
+  const result = await service.resolve(MONA, 'c1', 'CPREF1', { outcome: 'saved', docNo: ' 105000900 ', reason: 'Fundet i MI22 på referencen' })
+  const doc = state.stored['105000900']
+  assert.equal(state.stored.CPREF1, undefined)
+  assert.deepEqual([doc.id, doc.docNo, doc.year, doc.reference, doc.status, doc.sapUnknown], ['105000900', '105000900', '2026', 'CPREF1', 'created', undefined])
+  assert.deepEqual(doc.sapResolutions.map(item => [item.step, item.outcome, item.docNo, item.reason, item.resolvedBy.email, item.resolvedBy.at, item.by.email]), [['create', 'saved', '105000900', 'Fundet i MI22 på referencen', 'mona@x', state.clock, 'mona@x']])
+  assert.deepEqual([result.docs[0].status, result.docs[0].next], ['created', 'print'])
+  assert.deepEqual(state.calls.map(call => call[0]), ['create'], 'SAP is not touched')
+  await assert.rejects(service.resolve(MONA, 'c1', '105000900', { outcome: 'missing', reason: 'igen' }), { code: 'PIDOC_FORBIDDEN' }, 'resolved once')
+
+  const other = flow(t)
+  other.sap.create = async () => { throw sapUnknown() }
+  await assert.rejects(other.service.create(MONA, 'c1', CREATE), { code: 'PIDOC_UNKNOWN' })
+  await other.service.resolve(MONA, 'c1', 'CPREF1', { outcome: 'missing', reason: 'MI22 har intet på referencen' })
+  const released = other.state.stored.CPREF1
+  assert.deepEqual([released.status, released.sapUnknown, released.sapResolutions[0].outcome, released.sapResolutions[0].reason], ['deleted', undefined, 'missing', 'MI22 har intet på referencen'])
+  other.sap.create = async () => ({ docs: [{ docNo: '105000905', materials: ['R1'] }], missing: [] })
+  await other.service.create(MONA, 'c1', { ...CREATE, materials: ['R1'] })
+  assert.equal(other.state.stored['105000905'].status, 'created', 'the materials are free again')
+})
+
+test('an unknown count or posting is resolved by a manager to counted or posted (its own number) or back to the step before', async t => {
+  const docs = { 105000901: sapDoc('105000901', 'printed'), 105000902: sapDoc('105000902', 'counted', { lines: [{ material: 'R2' }] }), 105000904: sapDoc('105000904', 'printed', { lines: [{ material: 'R2' }] }) }
+  const { state, sap, service } = flow(t, { docs, rows: COUNT_ROWS })
+  sap.counts = async () => { throw sapUnknown() }
+  sap.post = async () => { throw sapUnknown() }
+  await assert.rejects(service.count(ANNA, 'c1', '105000901'), { code: 'PIDOC_UNKNOWN' })
+  await assert.rejects(service.count(ANNA, 'c1', '105000904'), { code: 'PIDOC_UNKNOWN' })
+  await assert.rejects(service.post(MONA, 'c1', ['105000902']), { code: 'PIDOC_UNKNOWN' })
+
+  await assert.rejects(service.resolve(MONA, 'c1', '105000902', { outcome: 'saved', docNo: '105000901', reason: 'MI22 viser bogført' }), { code: 'PIDOC_INVALID' }, 'the number of this document')
+  await service.resolve(MONA, 'c1', '105000902', { outcome: 'saved', docNo: '105000902', reason: 'MI22 viser bogført' })
+  const posted = state.stored['105000902']
+  assert.deepEqual([posted.status, posted.postedBy.email, posted.sapUnknown, posted.sapResolutions[0].step, posted.sapResolutions[0].outcome], ['posted', 'mona@x', undefined, 'post', 'saved'])
+  assert.deepEqual(state.marked, ['R2'], 'its materials are marked "Bogført i SAP" like a posting')
+
+  await service.resolve(MONA, 'c1', '105000904', { outcome: 'saved', docNo: '105000904', reason: 'MI03 viser antallet' })
+  assert.deepEqual([state.stored['105000904'].status, state.stored['105000904'].countedBy.email], ['counted', 'anna@x'])
+
+  await service.resolve(MONA, 'c1', '105000901', { outcome: 'missing', reason: 'MI03 viser intet antal' })
+  assert.deepEqual([state.stored['105000901'].status, state.stored['105000901'].sapUnknown, state.stored['105000901'].sapResolutions[0].outcome], ['printed', undefined, 'missing'])
+  sap.counts = async () => ({ message: 'ok' })
+  await service.count(ANNA, 'c1', '105000901')
+  assert.equal(state.stored['105000901'].status, 'counted', 'the admin can enter it again')
 })

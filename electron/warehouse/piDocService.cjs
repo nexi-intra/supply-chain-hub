@@ -1,13 +1,50 @@
 // SAP physical inventory documents of a count: create (MI31) and print (MI21) through the SAP writer, with the rules of
 // core/piDocs.cjs. While SAP waits for the user's F8 the materials are reserved ('creating') so nobody creates them twice.
+// What a script did is written to this PC's journal (piDocJournal.cjs) before M:, and merged into M: on the next look
+// at the documents when the drive failed. A step SAP may have taken without the app knowing marks the document unknown
+// (`sapUnknown`) until a manager resolves it.
 const crypto = require('node:crypto')
-const { planDocument, refusal, NEXT, RESERVATION_MS } = require('./core/piDocs.cjs')
+const { planDocument, refusal, statusOf, NEXT, RESERVATION_MS } = require('./core/piDocs.cjs')
 const { approvedWithLinesText, confirmedAll } = require('./core/countDoc.cjs')
+const { createPiDocJournal } = require('./piDocJournal.cjs')
 
 function codeError(code, message) {
   const error = new Error(`${code}: ${message}`)
   error.code = code
   return error
+}
+
+const UNKNOWN_TEXT = 'Optælling ved ikke, om SAP har gemt. Tjek dokumentet i SAP (MI03).'
+const saveFailed = what => codeError('PIDOC_SAVE_FAILED', `SAP har gemt ${what}, men det kunne ikke gemmes på M:. Det er gemt på denne PC og kommer med, næste gang SAP-dokumenterne vises på denne PC.`)
+const changed = () => codeError('PIDOC_CHANGED', 'Dokumentet er ændret i mellemtiden')
+const DOC_NO = /^\d{9,10}$/
+const RESOLUTIONS = new Set(['saved', 'missing'])
+const clean = (value, max) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
+
+/**
+ * Applies what a step did to the stored documents. Used for the write right after SAP and again when this PC's journal is
+ * merged later, so both give the same result; a document whose state has moved on since is left as it is.
+ * - created: the documents MI31 made replace the reservation.
+ * - unknown-create: the reservation becomes a kept entry SAP may have created (when it is still the reservation).
+ * - unknown: the step on an existing document may have happened (when it still has the status it had).
+ * - step: fields of a step on one document, `from` the statuses it may have (null: any); `entered` adds materials entered.
+ */
+function applyChanges(all, changes) {
+  for (const change of changes) {
+    const current = all[change.docId]
+    if (change.kind === 'created') {
+      for (const doc of change.docs) if (!all[doc.id]) all[doc.id] = doc
+      if (all[change.reference]?.status === 'creating') delete all[change.reference]
+    } else if (change.kind === 'unknown-create') {
+      if (!current || current.status === 'creating') all[change.docId] = change.doc
+    } else if (change.kind === 'unknown') {
+      if (current && current.status === change.sapUnknown.status) all[change.docId] = { ...current, sapUnknown: change.sapUnknown }
+    } else if (change.kind === 'step') {
+      if (!current || (change.from && !change.from.includes(statusOf(current)))) continue
+      all[change.docId] = { ...current, ...change.set, ...(change.entered ? { entered: { ...(current.entered || {}), ...change.entered } } : {}) }
+    }
+  }
+  return all
 }
 
 const lower = value => String(value || '').trim().toLowerCase()
@@ -29,18 +66,73 @@ function staleFigures({ fetchedAt, docFetchedAt, at }) {
   return fromToday && !olderThanDoc ? null : `Hent dagens SAP-tal igen, før antallet lægges på. Tallene er fra ${dateTime(fetchedAt)}.`
 }
 
-function createPiDocService({ counts, repo, roles, writer, system, writeEnabled = true, now = Date.now, newReference = defaultReference }) {
+function createPiDocService({ counts, repo, roles, writer, system, writeEnabled = true, now = Date.now, newReference = defaultReference, journalDir = null }) {
+  const journal = createPiDocJournal(journalDir)
   /** Documents that count: everything except stale reservations of a crashed app. */
   const live = (all, at) => Object.values(all || {}).filter(doc => doc.status !== 'creating' || at - doc.startedAt < RESERVATION_MS)
 
+  /**
+   * Writes `changes` to this PC's journal first, then to M: (after `check`, which may refuse with PIDOC_CHANGED: then
+   * nothing is kept). False when M: failed: the journal keeps the changes for the next look at the documents.
+   */
+  async function persist(user, id, changes, check = () => {}) {
+    const name = journal.nameFor('pidoc')
+    journal.hold(name)
+    await journal.put(name, { team: user.team, countId: id, changes })
+    try {
+      await repo.changePiDocs(user.team, id, all => {
+        check(all)
+        return { all: applyChanges(all, changes) }
+      })
+    } catch (error) {
+      journal.release(name)
+      if (error?.code === 'PIDOC_CHANGED') {
+        await journal.remove(name)
+        throw error
+      }
+      console.error('CountPoint: PI document kept on this PC until M: answers', id, error?.code || error?.message)
+      return false
+    }
+    await journal.remove(name)
+    return true
+  }
+
+  /** Merges what this PC's journal holds for the count into M:, in one write. A deleted count's entries are kept. */
+  async function mergeJournal(user, id) {
+    const entries = (await journal.list()).filter(({ entry }) => entry?.team === user.team && entry.countId === id && Array.isArray(entry.changes))
+    if (!entries.length) return
+    if (repo.isDeleted && await repo.isDeleted(user.team, id)) return
+    await repo.changePiDocs(user.team, id, all => {
+      for (const { entry } of entries) applyChanges(all, entry.changes)
+      return { all }
+    })
+    for (const { name } of entries) await journal.remove(name)
+  }
+
+  /** The documents SAP may have changed in `step` without the app knowing: kept as unknown, never lost to M: failing. */
+  async function markUnknown(user, id, docs, step, status, error) {
+    const at = now()
+    const sapUnknown = { step, status, by: by(user, at), detail: clean(error?.detail || error?.code || 'unknown', 200) }
+    await persist(user, id, docs.map(doc => ({ kind: 'unknown', docId: doc.id, sapUnknown }))).catch(() => false)
+  }
+
   async function context(user, id) {
+    await mergeJournal(user, id).catch(error => console.error('CountPoint: PI document journal not merged yet', id, error?.code || error?.message))
     const [doc, all, role] = await Promise.all([counts.countDoc(user, id), repo.getPiDocs(user.team, id), roles.roleOf(user)])
     return { rows: doc.rows, fetchedAt: doc.fetchedAt || null, confirmedMissing: doc.confirmedMissing || null, docs: live(all, now()), role }
   }
 
   function view(user, role, doc) {
-    const action = NEXT[doc.status] || null
-    return { ...doc, next: action, canNext: writeEnabled && action ? refusal({ action, role, email: user.email, doc }) === null : false, canDelete: writeEnabled && refusal({ action: 'delete', role, email: user.email, doc }) === null }
+    const status = statusOf(doc)
+    const action = NEXT[status] || null
+    return {
+      ...doc,
+      status,
+      next: action,
+      canNext: writeEnabled && action ? refusal({ action, role, email: user.email, doc }) === null : false,
+      canDelete: writeEnabled && refusal({ action: 'delete', role, email: user.email, doc }) === null,
+      canResolve: refusal({ action: 'resolve', role, doc }) === null,
+    }
   }
 
   async function list(user, id) {
@@ -85,26 +177,44 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
       await takeBack()
       throw codeError('COUNT_DELETED', 'Optællingen er slettet')
     }
+    /**
+     * After the user's F8 SAP may have created documents with the reference: the reservation becomes a kept entry that
+     * holds its materials until a manager resolves it. Stored 'created' without a document number, so 1.6.7 shows it.
+     */
+    const keepUnknown = async error => {
+      const at = now()
+      const doc = {
+        id: reference, reference, status: 'created', year: String(new Date(at).getFullYear()), system, sloc: plan.sloc, stockType: plan.stockType, kind: plan.kind, transaction: plan.transaction,
+        lines: plan.lines, createdBy: by(user, startedAt), startedAt, docFetchedAt: fetchedAt,
+        sapUnknown: { step: 'create', status: 'created', by: by(user, at), detail: clean(error?.detail || error?.code || 'unknown', 200) },
+      }
+      await persist(user, id, [{ kind: 'unknown-create', docId: reference, doc }]).catch(() => false)
+    }
     let result
     try {
       result = await writer.createDocument({ sloc: plan.sloc, stockType: plan.stockType, reference, materials: plan.lines.map(line => line.material) })
     } catch (error) {
-      await takeBack()
+      if (error?.code !== 'PIDOC_UNKNOWN') {
+        await takeBack()
+        throw error
+      }
+      await keepUnknown(error)
+      throw error
+    }
+    // MI31 said Created, but MI22 lists nothing under the reference: what SAP made cannot be found from here.
+    if (!result.docs.length) {
+      const error = Object.assign(codeError('PIDOC_UNKNOWN', UNKNOWN_TEXT), { detail: `created-but-not-listed: ${result.missing.join(', ')}` })
+      console.error('CountPoint: PI document state unknown', 'pidoc-create', error.detail)
+      await keepUnknown(error)
       throw error
     }
     const at = now()
     const year = String(new Date(at).getFullYear())
-    await repo.changePiDocs(user.team, id, all => {
-      delete all[reference]
-      for (const created of result.docs) {
-        all[created.docNo] = {
-          id: created.docNo, docNo: created.docNo, year, system, reference, status: 'created', sloc: plan.sloc, stockType: plan.stockType, kind: plan.kind, transaction: plan.transaction,
-          lines: plan.lines.filter(line => created.materials.includes(line.material)), createdBy: by(user, at), docFetchedAt: fetchedAt,
-        }
-      }
-      return { all }
-    })
-    if (!result.docs.length) throw codeError('PIDOC_NOT_CREATED', 'SAP oprettede ikke noget dokument')
+    const made = result.docs.map(created => ({
+      id: created.docNo, docNo: created.docNo, year, system, reference, status: 'created', sloc: plan.sloc, stockType: plan.stockType, kind: plan.kind, transaction: plan.transaction,
+      lines: plan.lines.filter(line => created.materials.includes(line.material)), createdBy: by(user, at), docFetchedAt: fetchedAt,
+    }))
+    if (!(await persist(user, id, [{ kind: 'created', reference, docs: made }]))) throw saveFailed(`dokument ${made.map(doc => doc.docNo).join(', ')}`)
     return { ...(await list(user, id)), created: result.docs.map(doc => doc.docNo), missing: result.missing }
   }
 
@@ -115,11 +225,8 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
     if (reason) throw codeError('PIDOC_FORBIDDEN', reason)
     const result = await writer.printDocument({ docNo: doc.docNo, year: doc.year, sloc: doc.sloc })
     const at = now()
-    await repo.changePiDocs(user.team, id, all => {
-      if (all[docId]?.status !== 'created') throw codeError('PIDOC_CHANGED', 'Dokumentet er ændret i mellemtiden')
-      all[docId] = { ...all[docId], status: 'printed', printedBy: { ...by(user, at), message: result.message } }
-      return { all }
-    })
+    const change = { kind: 'step', docId, from: ['created'], set: { status: 'printed', printedBy: { ...by(user, at), message: result.message } } }
+    if (!(await persist(user, id, [change], all => { if (statusOf(all[docId]) !== 'created') throw changed() }))) throw saveFailed(`udskriften af ${doc.docNo}`)
     return list(user, id)
   }
 
@@ -144,13 +251,19 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
     const stale = staleFigures({ fetchedAt, docFetchedAt: doc.docFetchedAt, at: now() })
     if (stale) throw codeError('PIDOC_DOC_STALE', stale)
     const done = { ...(doc.entered || {}) }
+    const isPrinted = all => { if (statusOf(all[docId]) !== 'printed') throw changed() }
     const remember = async (material, value) => {
       done[material] = { ...value, by: lower(user.email), at: now() }
-      await repo.changePiDocs(user.team, id, all => {
-        if (all[docId]?.status !== 'printed') throw codeError('PIDOC_CHANGED', 'Dokumentet er ændret i mellemtiden')
-        all[docId] = { ...all[docId], entered: { ...(all[docId].entered || {}), [material]: done[material] } }
-        return { all }
-      })
+      if (!(await persist(user, id, [{ kind: 'step', docId, from: ['printed'], entered: { [material]: done[material] } }], isPrinted))) throw saveFailed(`serienumrene for ${material} på ${doc.docNo}`)
+    }
+    // SAP may have saved what it was given: the document waits for a manager instead of being entered again.
+    const inSap = async step => {
+      try {
+        return await step()
+      } catch (error) {
+        if (error?.code === 'PIDOC_UNKNOWN') await markUnknown(user, id, [doc], 'count', 'printed', error)
+        throw error
+      }
     }
     const quantities = []
     const pending = doc.lines.filter(item => !done[item.material])
@@ -177,7 +290,7 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
       if (line.transaction === 'ZMS_COUNT_SERIAL') {
         const serials = serialLists.get(line.material)
         if (!serials.length) { quantities.push({ material: line.material, qty: 0 }); continue }
-        const result = await writer.enterSerials({ docNo: doc.docNo, year: doc.year, material: line.material, serials })
+        const result = await inSap(() => writer.enterSerials({ docNo: doc.docNo, year: doc.year, material: line.material, serials }))
         // SAP's own count must be the list sent; anything else would go on to MI20 unnoticed.
         if (result.counted !== serials.length) throw codeError('PIDOC_NOT_COUNTED', `SAP har talt ${result.counted} på ${line.material}, men der blev sendt ${serials.length} serienumre. Tjek dokumentet i SAP (MI03)`)
         await remember(line.material, { serials: result.serials, qty: result.counted })
@@ -189,17 +302,14 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
       }
     }
     if (quantities.length) {
-      await writer.enterCounts({ docNo: doc.docNo, year: doc.year, entries: quantities })
+      await inSap(() => writer.enterCounts({ docNo: doc.docNo, year: doc.year, entries: quantities }))
       // One write for every quantity entered (was one 20-s write per material).
       const enteredAt = now()
       for (const entry of quantities) done[entry.material] = { qty: entry.qty, by: lower(user.email), at: enteredAt }
     }
     const at = now()
-    await repo.changePiDocs(user.team, id, all => {
-      if (all[docId]?.status !== 'printed') throw codeError('PIDOC_CHANGED', 'Dokumentet er ændret i mellemtiden')
-      all[docId] = { ...all[docId], entered: { ...(all[docId].entered || {}), ...done }, status: 'counted', countedBy: by(user, at) }
-      return { all }
-    })
+    const change = { kind: 'step', docId, from: ['printed'], set: { status: 'counted', countedBy: by(user, at) }, entered: done }
+    if (!(await persist(user, id, [change], isPrinted))) throw saveFailed(`antallet på ${doc.docNo}`)
     return list(user, id)
   }
 
@@ -229,8 +339,16 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
     const confirmReason = String(confirmSerialLines?.reason ?? '').replace(/\s+/g, ' ').trim().slice(0, 300)
     if (flagged.length && !confirmReason) throw codeError('PIDOC_INVALID', 'Skriv hvorfor dokumentet bogføres alligevel')
     const confirmed = new Set(flagged.map(doc => doc.id))
-    const result = await writer.postDocuments({ docNos: chosen.map(doc => doc.docNo), year: chosen[0].year })
+    let result
+    try {
+      result = await writer.postDocuments({ docNos: chosen.map(doc => doc.docNo), year: chosen[0].year })
+    } catch (error) {
+      // The user may have posted any of them: they wait for a manager, never "Antal lagt på" to be posted again.
+      if (error?.code === 'PIDOC_UNKNOWN') await markUnknown(user, id, chosen, 'post', 'counted', error)
+      throw error
+    }
     const at = now()
+    const unknown = result.unknown || []
     const postedMaterials = chosen.filter(item => result.posted.includes(item.docNo)).flatMap(doc => doc.lines.map(line => line.material))
     const confirmedMaterials = new Set(flagged.flatMap(doc => doc.lines.map(line => line.material)))
     // The documents and the approvals are different files: both are written at the same time. The approvals are one
@@ -249,20 +367,17 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
         return { posted: [], skipped: [...new Set(postedMaterials)], failed: true }
       }
     }
-    const [, marked] = await Promise.all([
-      repo.changePiDocs(user.team, id, all => {
-        for (const doc of chosen) {
-          // Who confirmed it, when and why: also when SAP did not post it this time.
-          if (confirmed.has(doc.id) && all[doc.id]) all[doc.id] = { ...all[doc.id], serialLinesConfirmedBy: by(user, at), serialLinesConfirmedAt: at, serialLinesReason: confirmReason }
-          if (!result.posted.includes(doc.docNo) || all[doc.id]?.status !== 'counted') continue
-          const differences = result.differences.filter(item => item.docNo === doc.docNo).map(({ material, book, counted, diff, amount }) => ({ material, book, counted, diff, amount }))
-          all[doc.id] = { ...all[doc.id], status: 'posted', postedBy: by(user, at), materialDoc: result.materialDocs[doc.docNo] || null, differences }
-        }
-        return { all }
-      }),
-      markPosted(),
+    // Who confirmed it, when and why: also when SAP did not post it this time. Not listed by MI22 at all: unknown.
+    const changes = chosen.flatMap(doc => [
+      ...(confirmed.has(doc.id) ? [{ kind: 'step', docId: doc.id, from: null, set: { serialLinesConfirmedBy: by(user, at), serialLinesConfirmedAt: at, serialLinesReason: confirmReason } }] : []),
+      ...(result.posted.includes(doc.docNo) ? [{
+        kind: 'step', docId: doc.id, from: ['counted'],
+        set: { status: 'posted', postedBy: by(user, at), materialDoc: result.materialDocs[doc.docNo] || null, differences: result.differences.filter(item => item.docNo === doc.docNo).map(({ material, book, counted, diff, amount }) => ({ material, book, counted, diff, amount })) },
+      }] : unknown.includes(doc.docNo) ? [{ kind: 'unknown', docId: doc.id, sapUnknown: { step: 'post', status: 'counted', by: by(user, at), detail: 'not-listed-in-mi22' } }] : []),
     ])
-    return { ...(await list(user, id)), posted: result.posted, open: result.open, unknown: result.unknown || [], marked }
+    const [saved, marked] = await Promise.all([changes.length ? persist(user, id, changes) : true, markPosted()])
+    if (!saved && result.posted.length) throw saveFailed(`bogføringen af ${result.posted.join(', ')}`)
+    return { ...(await list(user, id)), posted: result.posted, open: result.open, unknown, marked }
   }
 
   /** MI02 for a wrong document (created or printed); it frees the materials for a new document. */
@@ -273,14 +388,64 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
     if (reason) throw codeError('PIDOC_FORBIDDEN', reason)
     const result = await writer.deleteDocument({ docNo: doc.docNo, year: doc.year, reference: doc.reference })
     const at = now()
-    await repo.changePiDocs(user.team, id, all => {
-      all[docId] = { ...all[docId], status: 'deleted', deletedBy: { ...by(user, at), message: result.message } }
-      return { all }
-    })
+    const change = { kind: 'step', docId, from: null, set: { status: 'deleted', deletedBy: { ...by(user, at), message: result.message } } }
+    if (!(await persist(user, id, [change]))) throw saveFailed(`sletningen af ${doc.docNo}`)
     return list(user, id)
   }
 
-  return { list, create, print, count, post, remove }
+  /**
+   * A manager's decision on a document SAP may or may not have (status unknown), after looking in SAP (MI03/MI22):
+   * `saved` with the document number typed in (an unknown create gets that number; a count or posting must name the
+   * document itself) makes it created, counted or posted as the step it came from; `missing` releases an unknown create
+   * (kept as deleted) and takes a count or posting back to the step before, so it can be done again. SAP is not touched.
+   * Who, when, why and the step it came from are added to `sapResolutions`. A resolved posting marks its materials
+   * "Bogført i SAP" as a posting does.
+   */
+  async function resolve(user, id, docId, { outcome, docNo, reason } = {}) {
+    const { docs, role } = await context(user, id)
+    const doc = docs.find(item => item.id === docId)
+    const refused = refusal({ action: 'resolve', role, email: user.email, doc })
+    if (refused) throw codeError('PIDOC_FORBIDDEN', refused)
+    if (!RESOLUTIONS.has(outcome)) throw codeError('PIDOC_INVALID', 'Vælg om dokumentet findes i SAP')
+    const text = clean(reason, 300)
+    if (!text) throw codeError('PIDOC_INVALID', 'Skriv hvad SAP viser')
+    const step = doc.sapUnknown?.step || 'create'
+    const number = String(docNo ?? '').trim()
+    if (outcome === 'saved' && !DOC_NO.test(number)) throw codeError('PIDOC_INVALID', 'Skriv SAP-dokumentnummeret (9 eller 10 cifre)')
+    if (outcome === 'saved' && step !== 'create' && number !== doc.docNo) throw codeError('PIDOC_INVALID', `Dokumentnummeret er ${doc.docNo}`)
+    const at = now()
+    let resolvedTo = null
+    await repo.changePiDocs(user.team, id, all => {
+      const current = all[docId]
+      if (statusOf(current) !== 'unknown') throw changed()
+      const { sapUnknown = {}, ...rest } = current
+      const sapResolutions = [...(current.sapResolutions || []), { ...sapUnknown, step, outcome, docNo: outcome === 'saved' ? number : null, reason: text, resolvedBy: by(user, at) }]
+      const doer = sapUnknown.by || by(user, at)
+      if (step === 'create' && outcome === 'saved') {
+        if (all[number] && number !== docId) throw codeError('PIDOC_INVALID', `${number} er allerede et SAP-dokument i optællingen`)
+        delete all[docId]
+        resolvedTo = { ...rest, id: number, docNo: number, year: rest.year || String(new Date(rest.createdBy?.at || at).getFullYear()), system: rest.system || system, status: 'created', sapResolutions }
+        all[number] = resolvedTo
+      } else if (step === 'create') {
+        resolvedTo = { ...rest, status: 'deleted', sapResolutions }
+        all[docId] = resolvedTo
+      } else if (step === 'count') {
+        resolvedTo = { ...rest, status: outcome === 'saved' ? 'counted' : 'printed', ...(outcome === 'saved' ? { countedBy: doer } : {}), sapResolutions }
+        all[docId] = resolvedTo
+      } else {
+        resolvedTo = { ...rest, status: outcome === 'saved' ? 'posted' : 'counted', ...(outcome === 'saved' ? { postedBy: doer, materialDoc: rest.materialDoc || null, differences: rest.differences || [] } : {}), sapResolutions }
+        all[docId] = resolvedTo
+      }
+      return { all }
+    })
+    if (resolvedTo?.status === 'posted') {
+      const materials = resolvedTo.lines.map(line => line.material)
+      await counts.markPosted(user, id, materials).catch(error => console.error('CountPoint: could not mark as posted', materials.join(', '), error?.code || error?.message))
+    }
+    return list(user, id)
+  }
+
+  return { list, create, print, count, post, remove, resolve }
 }
 
 module.exports = { createPiDocService }

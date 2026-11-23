@@ -6,6 +6,7 @@ const path = require('node:path')
 const ExcelJS = require('exceljs')
 const { scopeStockTypes } = require('./core/scopes.cjs')
 const { teamOfSloc } = require('./core/sapCheck.cjs')
+const { statusOf } = require('./core/piDocs.cjs')
 
 const STOCK_LABELS = { unrestricted: 'Unblocked', blocked: 'Blocked' }
 const DATE_FORMAT = 'dd-mm-yyyy hh:mm'
@@ -73,7 +74,7 @@ const REPORT_TEXT = {
     history: { started: 'Startet', locked: 'Godkendt og låst', unlocked: 'Låst op' },
     historyHeaders: ['Tidspunkt', 'Handling', 'Af', 'Begrundelse'],
     sheets: { summary: 'Resumé', differences: 'Differencer', all: 'Alle materialer', serials: 'Serienumre', moves: 'Skal flyttes', lines: 'Tællelinjer', history: 'Historik', docs: 'SAP-dokumenter' },
-    docStatus: { creating: 'Under oprettelse', created: 'Oprettet', printed: 'Udskrevet', counted: 'Talt', posted: 'Bogført', deleted: 'Slettet' },
+    docStatus: { creating: 'Under oprettelse', created: 'Oprettet', printed: 'Udskrevet', counted: 'Talt', posted: 'Bogført', deleted: 'Slettet', unknown: 'Ukendt i SAP' },
     docHeaders: ['SAP-dokument', 'År', 'Status', 'Storage location', 'Lagertype', 'Materiale', 'SAP antal', 'Talt', 'Difference', 'Beløb (DKK)', 'Materialedokument', 'Oprettet af', 'Bogført af', 'Bogført'],
     and: ' og ',
     total: 'I alt',
@@ -103,7 +104,7 @@ const REPORT_TEXT = {
     history: { started: 'Started', locked: 'Approved and locked', unlocked: 'Unlocked' },
     historyHeaders: ['Time', 'Action', 'By', 'Reason'],
     sheets: { summary: 'Summary', differences: 'Differences', all: 'All materials', serials: 'Serial numbers', moves: 'Must be moved', lines: 'Count lines', history: 'Status history', docs: 'SAP documents' },
-    docStatus: { creating: 'Being created', created: 'Created', printed: 'Printed', counted: 'Counted', posted: 'Posted', deleted: 'Deleted' },
+    docStatus: { creating: 'Being created', created: 'Created', printed: 'Printed', counted: 'Counted', posted: 'Posted', deleted: 'Deleted', unknown: 'Unknown in SAP' },
     docHeaders: ['SAP document', 'Year', 'Status', 'Storage location', 'Stock type', 'Material', 'SAP quantity', 'Counted', 'Difference', 'Amount (DKK)', 'Material document', 'Created by', 'Posted by', 'Posted'],
     and: ' and ',
     total: 'Total',
@@ -146,7 +147,7 @@ function docRowsOf(docs, text) {
     .flatMap(doc => (doc.lines || []).map(line => {
       const posted = doc.status === 'posted' ? (doc.differences || []).find(item => item.material === line.material) : null
       return [
-        String(doc.docNo), doc.year ? String(doc.year) : '', text.docStatus[doc.status] || doc.status || '', doc.sloc || '', STOCK_LABELS[doc.stockType] || '', line.material,
+        String(doc.docNo), doc.year ? String(doc.year) : '', text.docStatus[statusOf(doc)] || doc.status || '', doc.sloc || '', STOCK_LABELS[doc.stockType] || '', line.material,
         posted ? posted.book : null, posted ? posted.counted : null, posted ? posted.diff : null, posted ? posted.amount : null,
         doc.materialDoc || '', personName(doc.createdBy), doc.status === 'posted' ? personName(doc.postedBy) : '', doc.status === 'posted' ? asDate(doc.postedBy?.at) : null,
       ]

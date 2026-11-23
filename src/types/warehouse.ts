@@ -456,8 +456,21 @@ export interface CountDoc {
   rows: CountDocRow[]
 }
 
-export type PiDocStatus = 'creating' | 'created' | 'printed' | 'counted' | 'posted' | 'deleted'
+/** 'unknown' is never stored (1.6.7 could not show it): SAP may have taken `sapUnknown.step`, and a manager resolves it. */
+export type PiDocStatus = 'creating' | 'created' | 'printed' | 'counted' | 'posted' | 'deleted' | 'unknown'
 export type PiDocAction = 'print' | 'count' | 'post'
+export type PiDocStep = 'create' | 'count' | 'post'
+
+/** A manager's decision on an unknown document: found in SAP (`saved`) or not (`missing`), and why. */
+export interface PiDocResolution {
+  step: PiDocStep
+  outcome: 'saved' | 'missing'
+  docNo: string | null
+  reason: string
+  /** Who took the step in SAP. */
+  by?: { email: string; name: string; at: number }
+  resolvedBy: { email: string; name: string; at: number }
+}
 
 /** A physical inventory document in SAP, created from CountPoint. */
 export interface PiDoc {
@@ -484,6 +497,11 @@ export interface PiDoc {
   next: PiDocAction | null
   canNext: boolean
   canDelete: boolean
+  /** A manager may resolve it (status unknown). */
+  canResolve: boolean
+  /** SAP may have taken this step without the app knowing; `detail` is the script's answer. */
+  sapUnknown?: { step: PiDocStep; status: PiDocStatus; by: { email: string; name: string; at: number }; detail: string }
+  sapResolutions?: PiDocResolution[]
   deletedBy?: { email: string; name: string; at: number; message: string }
 }
 
@@ -1238,6 +1256,8 @@ export interface WarehouseBridge {
     /** Refused with PIDOC_SERIAL_LINES when a document holds a material approved with quantity lines; posted only when it is on `confirmSerialLines.docIds` with a reason (counted again in SAP with MI05, managers only). */
     post(request: { id: string; docIds: string[]; confirmSerialLines?: { docIds: string[]; reason: string } }): Promise<PiDocList & { posted: string[]; open: string[]; unknown: string[]; marked: { posted: string[]; skipped: string[]; failed?: boolean } }>
     remove(request: { id: string; docId: string }): Promise<PiDocList>
+  /** Managers only, on an unknown document, with a reason: `saved` needs the SAP document number (a count or posting: its own). SAP is not touched. */
+  resolve(request: { id: string; docId: string; outcome: 'saved' | 'missing'; docNo?: string; reason: string }): Promise<PiDocList>
   }
   sapCheck: {
     overview(): Promise<SapCheckOverview>

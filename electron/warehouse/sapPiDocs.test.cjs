@@ -56,7 +56,20 @@ test('nothing is created when the test run does not list every material', async 
 test('closing SAP without F8 or a timeout is reported; nothing was created', async () => {
   await assert.rejects(setup({ createResult: { ok: false, error: 'cancelled' } }).writer.createDocument(REQUEST), { code: 'PIDOC_CANCELLED' })
   await assert.rejects(setup({ createResult: { ok: false, error: 'timeout' } }).writer.createDocument(REQUEST), { code: 'PIDOC_TIMEOUT' })
-  await assert.rejects(setup({ createResult: { ok: false, error: 'not-created: x' } }).writer.createDocument(REQUEST), { code: 'PIDOC_NOT_CREATED' })
+  await assert.rejects(setup({ createResult: { ok: false, error: 'mi31-screen-changed' } }).writer.createDocument(REQUEST), { code: 'PIDOC_SAP_FAILED' })
+  await assert.rejects(setup({ createResult: { ok: false, error: 'field-not-set: wnd[0]/usr/txtINVNU' } }).writer.createDocument(REQUEST), { code: 'PIDOC_SAP_FAILED' })
+})
+
+test('any failure after the user\'s F8 in MI31 is unknown: SAP may have created the documents', async t => {
+  t.mock.method(console, 'error', () => {})
+  const unknown = { code: 'PIDOC_UNKNOWN', message: 'PIDOC_UNKNOWN: Optælling ved ikke, om SAP har gemt. Tjek dokumentet i SAP (MI03).' }
+  for (const error of ['left-mi31', 'not-created: x', 'no-access-mi22', 'mi22-screen-changed', 'created-but-not-found', 'read-failed', 'field-not-set: wnd[0]/usr/ctxtIM_INVNU-LOW']) {
+    await assert.rejects(setup({ createResult: { ok: false, error } }).writer.createDocument(REQUEST), error => error.code === unknown.code && error.message === unknown.message && typeof error.detail === 'string', error)
+  }
+  // A script killed at the time limit, or one whose MI22 list cannot be read.
+  const killing = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript: async (name, args) => { if (args[1] === 'test') { fs.writeFileSync(path.join(args[5], args[6]), fixture('mi31-test.txt')); return '{"ok":true}' } throw Object.assign(new Error('SAP_TIMEOUT'), { code: 'SAP_TIMEOUT' }) }, clipboard: { writeText: () => {}, readText: () => 'R133-0032\r\nR133-0033' }, system: 'QS4', waitSeconds: 600 })
+  await assert.rejects(killing.createDocument(REQUEST), unknown)
+  await assert.rejects(setup({ list: 'not a MI22 list' }).writer.createDocument(REQUEST), unknown)
 })
 
 test('a material SAP skipped after F8 is reported as missing', async () => {

@@ -62,3 +62,20 @@ test('who does what: managers create, print, post and delete; admins count, neve
   assert.match(refusal({ action: 'delete', role: 'manager', doc: doc('posted') }), /lagt antal på/)
   assert.match(refusal({ action: 'delete', role: 'admin', doc: doc('created') }), /Kun managers/)
 })
+
+test('a document SAP may or may not have (unknown) holds its materials and waits for a manager; nothing else can be done to it', () => {
+  const lines = [{ material: 'R1' }]
+  // Stored as 1.6.7 can read it: the status it had, with the unknown step beside it. A plain 'unknown' status holds too.
+  const flagged = { status: 'created', sloc: 'D000', stockType: 'unrestricted', lines, sapUnknown: { step: 'create', status: 'created' } }
+  for (const doc of [flagged, { status: 'unknown', sloc: 'D000', stockType: 'unrestricted', lines }]) {
+    assert.throws(() => planDocument({ rows, docs: [doc], materials: ['R1'], sloc: 'D000', stockType: 'unrestricted' }), { code: 'PIDOC_EXISTS' })
+  }
+  for (const action of ['print', 'delete']) assert.notEqual(refusal({ action, role: 'manager', doc: flagged }), null, action)
+  assert.notEqual(refusal({ action: 'count', role: 'admin', email: 'a@x', doc: { ...flagged, status: 'printed', sapUnknown: { step: 'count', status: 'printed' } } }), null)
+  assert.equal(refusal({ action: 'resolve', role: 'manager', doc: flagged }), null)
+  assert.equal(refusal({ action: 'resolve', role: 'status-manager', doc: flagged }), null)
+  assert.notEqual(refusal({ action: 'resolve', role: 'admin', doc: flagged }), null, 'managers decide')
+  assert.notEqual(refusal({ action: 'resolve', role: 'manager', doc: { ...flagged, sapUnknown: undefined } }), null, 'only an unknown document is resolved')
+  // The step was taken since (an older client went on): the mark is old and the document is what its status says.
+  assert.equal(refusal({ action: 'print', role: 'manager', doc: { ...flagged, status: 'created', sapUnknown: { step: 'count', status: 'printed' } } }), null)
+})

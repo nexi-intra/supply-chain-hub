@@ -1,9 +1,10 @@
-import { CheckCircle, FilePlus, ListChecks, Printer, Trash, Warning } from '@phosphor-icons/react'
+import { CheckCircle, FilePlus, ListChecks, Printer, Question, Trash, Warning } from '@phosphor-icons/react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { errorMessage } from '@/lib/warehouse/errors'
 import { formatDateTime, formatNumber } from '@/lib/warehouse/format'
 import { cn } from '@/lib/utils'
-import type { PiDoc, PiDocList, PiDocStatus } from '@/types/warehouse'
+import type { PiDoc, PiDocList, PiDocResolution, PiDocStatus } from '@/types/warehouse'
 import { t } from '@/lib/warehouse/text'
 
 const statusMap = (): Record<PiDocStatus, { label: string; className: string }> => ({
@@ -13,7 +14,13 @@ const statusMap = (): Record<PiDocStatus, { label: string; className: string }> 
   counted: { label: t('Antal lagt på', 'Quantity entered'), className: 'border-amber-500 text-amber-700 dark:text-amber-300' },
   posted: { label: t('Bogført', 'Posted'), className: 'border-emerald-500 text-emerald-700 dark:text-emerald-300' },
   deleted: { label: t('Slettet', 'Deleted'), className: 'text-muted-foreground' },
+  unknown: { label: t('Ukendt i SAP', 'Unknown in SAP'), className: 'border-red-500 text-red-700 dark:text-red-300' },
 })
+
+const stepText = (): Record<string, string> => ({ create: t('oprettelsen (MI31)', 'the creation (MI31)'), count: t('antallet (MI04/ZMS_COUNT_SERIAL)', 'the quantity (MI04/ZMS_COUNT_SERIAL)'), post: t('bogføringen (MI20)', 'the posting (MI20)') })
+const outcomeText = (resolution: PiDocResolution) => resolution.outcome === 'saved'
+  ? t(`fandtes i SAP${resolution.docNo ? ` (${resolution.docNo})` : ''}`, `was in SAP${resolution.docNo ? ` (${resolution.docNo})` : ''}`)
+  : t('fandtes ikke i SAP', 'was not in SAP')
 
 const waitingFor = (): Record<string, string> => ({ print: t('Venter på print (manager)', 'Waiting for print (manager)'), count: t('Venter på en admin', 'Waiting for an admin'), post: t('Venter på bogføring (manager)', 'Waiting for posting (manager)') })
 
@@ -28,6 +35,7 @@ interface PiDocsSectionProps {
   onCount: (doc: PiDoc) => void
   onPost: (docs: PiDoc[]) => void
   onDelete: (doc: PiDoc) => void
+  onResolve: (doc: PiDoc) => void
   qtyOf: (doc: PiDoc, material: string) => number | null
 }
 
@@ -44,7 +52,7 @@ const busyTexts = (): Record<string, string> => ({
 const amount = (doc: PiDoc) => (doc.differences || []).reduce((sum, item) => sum + item.amount * Math.sign(item.diff || 0), 0)
 
 /** The SAP documents of the count and the step each one waits for. */
-export function PiDocsSection({ list, selected, busy, figuresAt, onCreate, onPrint, onCount, onPost, onDelete, qtyOf }: PiDocsSectionProps) {
+export function PiDocsSection({ list, selected, busy, figuresAt, onCreate, onPrint, onCount, onPost, onDelete, onResolve, qtyOf }: PiDocsSectionProps) {
   const figuresToday = figuresAt !== null && new Date(figuresAt).toDateString() === new Date().toDateString()
   const busyDoc = list.docs.find(doc => doc.id === busy || `delete:${doc.id}` === busy)
   const BUSY_TEXT = busyTexts()
@@ -82,7 +90,7 @@ export function PiDocsSection({ list, selected, busy, figuresAt, onCreate, onPri
         <ul className="divide-y rounded-md border">
           {list.docs.map(doc => (
             <li key={doc.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-sm">
-              <span className="font-mono font-semibold">{doc.docNo || '–'}</span>
+              <span className="font-mono font-semibold">{doc.docNo || (doc.status === 'unknown' ? doc.reference : '–')}</span>
               <span className="font-mono">{doc.sloc}</span>
               {doc.stockType === 'blocked' && <Badge className="bg-orange-500 text-white">Blocked</Badge>}
               <Badge variant="outline" className={statusMap()[doc.status].className}>{statusMap()[doc.status].label}</Badge>
@@ -110,6 +118,23 @@ export function PiDocsSection({ list, selected, busy, figuresAt, onCreate, onPri
                     ? <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => onPost([doc])}><CheckCircle size={16} /> {t('Bogfør', 'Post')}</Button>
                     : doc.next && <span className="text-xs text-muted-foreground">{waitingFor()[doc.next]}</span>}
               {doc.canDelete && <Button size="sm" variant="ghost" className="text-destructive" disabled={busy !== null} loading={busy === `delete:${doc.id}`} onClick={() => onDelete(doc)}><Trash size={16} /> {t('Slet i SAP', 'Delete in SAP')}</Button>}
+              {doc.status === 'unknown' && (
+                <span className="flex basis-full flex-wrap items-center gap-2">
+                  <span role="alert" className="flex items-center gap-1 text-xs font-medium text-red-700 dark:text-red-300">
+                    <Warning size={14} /> {errorMessage('PIDOC_UNKNOWN')}
+                    {doc.sapUnknown && t(` Gælder ${stepText()[doc.sapUnknown.step]}, ${doc.sapUnknown.by.name} ${formatDateTime(doc.sapUnknown.by.at)}.`, ` Concerns ${stepText()[doc.sapUnknown.step]}, ${doc.sapUnknown.by.name} ${formatDateTime(doc.sapUnknown.by.at)}.`)}
+                    {!doc.docNo && t(` Søg i MI22 på referencen ${doc.reference}.`, ` Search MI22 for the reference ${doc.reference}.`)}
+                  </span>
+                  {doc.canResolve
+                    ? <Button size="sm" variant="outline" disabled={busy !== null} loading={busy === `resolve:${doc.id}`} onClick={() => onResolve(doc)}><Question size={16} /> {t('Afklar', 'Resolve')}</Button>
+                    : <span className="text-xs text-muted-foreground">{t('Venter på en manager', 'Waiting for a manager')}</span>}
+                </span>
+              )}
+              {doc.sapResolutions?.map(item => (
+                <span key={`${item.resolvedBy.at}-${item.step}`} className="basis-full text-xs text-muted-foreground">
+                  {t(`Afklaret af ${item.resolvedBy.name} ${formatDateTime(item.resolvedBy.at)}: ${stepText()[item.step]} ${outcomeText(item)}. ${item.reason}`, `Resolved by ${item.resolvedBy.name} ${formatDateTime(item.resolvedBy.at)}: ${stepText()[item.step]} ${outcomeText(item)}. ${item.reason}`)}
+                </span>
+              ))}
               {doc.status !== 'deleted' && (
                 <table className="mt-1 w-full basis-full text-xs">
                   <tbody>

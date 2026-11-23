@@ -41,7 +41,19 @@ function checkDoc({ docNo, year }) {
 /** After a timeout the scripts read SAP back; when even that fails, nobody knows whether the user saved. */
 function unknownState(name, detail) {
   console.error('CountPoint: PI document state unknown', name, detail)
-  return writeError('PIDOC_UNKNOWN', 'Optælling ved ikke, om SAP har gemt. Tjek dokumentet i SAP (MI03).')
+  return writeError('PIDOC_UNKNOWN', 'Optælling ved ikke, om SAP har gemt. Tjek dokumentet i SAP (MI03).', { detail: String(detail ?? '').slice(0, 200) })
+}
+
+/**
+ * pidoc-create.vbs answers that end before the user's F8 in MI31 (nothing can have been created): the checks before the
+ * screen is handed over, a closed window and no F8 in time. Every other failure comes after F8 (MI31's answer or the
+ * MI22 lookup, also the check of its reference field), so SAP may have created the documents.
+ */
+function beforeF8(error) {
+  const text = String(error || '')
+  if (/^field-not-set: .*IM_INVNU/.test(text)) return false
+  return /^(arguments|invalid-mode|invalid-stock-type|out-dir-missing|sap-not-running|sap-busy|session-not-created|wrong-system|language-not-supported|no-access-mi31|multiple-selection-failed|mi31-screen-changed|cancelled|timeout)$/.test(text)
+    || /^not-logged-in-/.test(text) || /^field-not-set: /.test(text)
 }
 
 function createPiDocWriter({ bridge, runScript, clipboard, system, tempRoot = os.tmpdir(), waitSeconds = WAIT_SECONDS }) {
@@ -138,9 +150,22 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, tempRoot = os
         throw writeError('PIDOC_NOT_POSSIBLE', `SAP vil ikke oprette dokument for ${missing.join(', ') || 'alle materialer'}${problems.length ? ` (${problems.join('; ')})` : ''}. Der er ikke oprettet noget`, { missing, problems })
       }
       onWaiting()
-      const result = await run(dir, 'create', request, 'mi22.txt', (waitSeconds + 120) * 1000)
+      // From the hand-over on SAP may create the documents: a failure after the user's F8 leaves that unknown.
+      let result
+      try {
+        result = await run(dir, 'create', request, 'mi22.txt', (waitSeconds + 120) * 1000)
+      } catch (error) {
+        if (error?.code === 'SAP_TIMEOUT') throw unknownState('pidoc-create', error.code)
+        throw error
+      }
+      if (!result?.ok && !beforeF8(result?.error)) throw unknownState('pidoc-create', result?.error || 'no-answer')
       if (!result?.ok) throw scriptFailure(result, 'Oprettelsen i MI31')
-      const found = parseMi22(await fs.promises.readFile(path.join(dir, 'mi22.txt'), 'utf8')).filter(doc => doc.physInvNo === request.reference && doc.sloc === request.sloc)
+      let found
+      try {
+        found = parseMi22(await fs.promises.readFile(path.join(dir, 'mi22.txt'), 'utf8')).filter(doc => doc.physInvNo === request.reference && doc.sloc === request.sloc)
+      } catch (error) {
+        throw unknownState('pidoc-create', error?.code || error?.message)
+      }
       const byDoc = new Map()
       for (const doc of found) {
         if (!byDoc.has(doc.docNo)) byDoc.set(doc.docNo, [])

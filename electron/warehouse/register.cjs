@@ -215,7 +215,11 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   const roleCache = createRoleCache({ roleOf: user => roles.roleOf(user), now: () => Date.now() })
   const cachedRoleOf = user => roleCache.roleOf(user)
   const dropRoles = () => roleCache.drop()
-  const piDocs = createPiDocService({ counts, repo: countRepo, roles, system: config.sapSystem, writeEnabled: WRITE_SYSTEMS.includes(config.sapSystem), writer: createPiDocWriter({ bridge: sap, runScript, clipboard, system: config.sapSystem }) })
+  const piDocs = createPiDocService({
+    counts, repo: countRepo, roles, system: config.sapSystem, writeEnabled: WRITE_SYSTEMS.includes(config.sapSystem), writer: createPiDocWriter({ bridge: sap, runScript, clipboard, system: config.sapSystem }),
+    // What a PI script did is written here before M:, so a drive that fails right after SAP changed never loses it.
+    journalDir: path.join(localDir, 'pidoc-journal'),
+  })
   const sapViewer = createSapViewer({ bridge: sap, runScript })
   // Placeringer: one store per hub in <team>/lagerstyring/placeringer; the placement sheet is only read by the import.
   const locationRepo = createLocationRepository({ storeFor: team => storeAt(path.join(dataDirOf(team), 'placeringer')), newId: () => crypto.randomUUID() })
@@ -404,6 +408,7 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
     confirmSerialLines: p.confirmSerialLines && typeof p.confirmSerialLines === 'object' ? { docIds: confirmedList(p.confirmSerialLines.docIds), reason: typeof p.confirmSerialLines.reason === 'string' ? p.confirmSerialLines.reason.slice(0, 300) : '' } : null,
   }))
   handle('pidocs:delete', (user, p) => piDocs.remove(user, p.id, p.docId))
+  handle('pidocs:resolve', (user, p) => piDocs.resolve(user, p.id, p.docId, { outcome: p.outcome, docNo: typeof p.docNo === 'string' ? p.docNo : '', reason: typeof p.reason === 'string' ? p.reason : '' }))
   handle('roles:me', async user => ({ role: await roles.roleOf(user), locationAdmin: await roles.isLocationAdmin(user) }))
   handle('roles:list', user => roles.list(user))
   handle('roles:set-admin', async (user, p) => { try { return await roles.setAdmin(user, { email: p.email, admin: p.admin === true }) } finally { dropRoles() } })
