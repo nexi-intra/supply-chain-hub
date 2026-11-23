@@ -125,23 +125,40 @@ function setup({ timeclockRunning = null, sap = { writeEnabled: false }, matdocs
       throw Object.assign(new Error('M: svarer ikke'), { code: 'STORAGE_UNAVAILABLE' })
     }
   }
+  // `unreadableTeam` holds keys of the team stores that fail to read, as a broken file.
+  const unreadableTeam = new Set()
   const faulty = store => new Proxy(store, {
     get: (target, name) => {
       if (name === 'mutateAsync') return async (key, change) => { await hurdle(key); return target.mutateAsync(key, change) }
       if (name === 'withLockedKeysAsync') return async (keys, change) => { for (const key of keys) await hurdle(key); return target.withLockedKeysAsync(keys, change) }
+      if (name === 'getAsync') return (key, options) => (unreadableTeam.has(key) ? Promise.reject(new Error('Filen kan ikke læses')) : target.getAsync(key, options))
       return target[name]
     },
   })
   const journalDir = path.join(root, 'journal')
-  // The shared search index records the files a search reads; a key in `unreadableIndex` fails like a broken file.
+  // The shared search index records the files a search reads; a key in `unreadableIndex` fails like a broken file, and
+  // `indexFaults.set(key, n)` makes the next n writes to that file fail as if M: were gone.
   const indexReads = []
   const unreadableIndex = new Set()
+  const indexFaults = new Map()
   const sharedIndex = new Proxy(storeAt(path.join('_lagerstyring', 'softwareload')), {
-    get: (target, name) => (name !== 'getAsync' ? target[name] : (key, options) => {
-      indexReads.push(key)
-      if (unreadableIndex.has(key)) return Promise.reject(new Error('Filen kan ikke læses'))
-      return target.getAsync(key, options)
-    }),
+    get: (target, name) => {
+      if (name === 'mutateAsync') {
+        return async (key, change) => {
+          if (indexFaults.get(key) > 0) {
+            indexFaults.set(key, indexFaults.get(key) - 1)
+            throw Object.assign(new Error('M: svarer ikke'), { code: 'STORAGE_UNAVAILABLE' })
+          }
+          return target.mutateAsync(key, change)
+        }
+      }
+      if (name !== 'getAsync') return target[name]
+      return (key, options) => {
+        indexReads.push(key)
+        if (unreadableIndex.has(key)) return Promise.reject(new Error('Filen kan ikke læses'))
+        return target.getAsync(key, options)
+      }
+    },
   })
   // 18 November 2026, 07:00 local time.
   const clock = { now: new Date(2026, 10, 18, 7, 0, 0).getTime() }
@@ -181,7 +198,7 @@ function setup({ timeclockRunning = null, sap = { writeEnabled: false }, matdocs
     const keys = (await store.keysAsync()).filter(key => key.startsWith('opgaver-') && key.endsWith(month))
     return Object.assign({}, ...await Promise.all(keys.map(async key => (await store.getAsync(key)).tasks)))
   }
-  return { root, clock, timeclock, stops, storeFor, index, indexReads, unreadableIndex, finished, service, faults, gates, journal, tick: ms => { clock.now += ms } }
+  return { root, clock, timeclock, stops, storeFor, index, indexReads, unreadableIndex, indexFaults, unreadableTeam, finished, service, faults, gates, journal, tick: ms => { clock.now += ms } }
 }
 
 test('start saves type, KIF, target and version, and remembers the version', async () => {
@@ -1678,4 +1695,61 @@ test('a KIF move deleted while a PC still holds its record is never brought back
   assert.deepEqual(ctx.journal(), [], 'the journal is emptied')
   assert.deepEqual((await ctx.storeFor('TCD').getAsync('kif-2026-11', { skipCache: true })).moves, {})
   assert.deepEqual(await allIndexLines(ctx), [])
+})
+
+const shardKey = (year, serial) => `serier-${year}-${crypto.createHash('sha256').update(serial).digest('hex').slice(0, 2)}`
+
+test('a KIF move deleted while one shard write fails: its lines are hidden from search, and deleting again removes them', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D001' }, B: { material: 'M-R', sloc: 'D001' } })
+  const ctx = setup({ sap })
+  const svc = ctx.service()
+  assert.equal((await svc.kifMove(BO, { serials: ['A', 'B'] })).id, 't1')
+  assert.notEqual(shardKey(2026, 'A'), shardKey(2026, 'B'))
+  // A's file fails twice and is tried again; B's fails every try.
+  ctx.indexFaults.set(shardKey(2026, 'A'), 2)
+  ctx.indexFaults.set(shardKey(2026, 'B'), 100)
+
+  await assert.rejects(svc.deleteKifMove(MONA, { id: 't1' }), { code: 'STORAGE_UNAVAILABLE' })
+  assert.deepEqual((await allIndexLines(ctx)).map(line => line.serial), ['B'], 'A went after the retries, B is left')
+  for (const user of [MONA, BO, TRINE]) assert.deepEqual((await svc.search(user, { serial: 'B' })).lines, [], `${user.email} never sees it`)
+
+  ctx.indexFaults.clear()
+  assert.deepEqual(await svc.deleteKifMove(MONA, { id: 't1' }), { ok: true })
+  assert.deepEqual(await allIndexLines(ctx), [])
+  assert.equal((await ctx.storeFor('TCD').getAsync('slettet-2026-11', { skipCache: true })).entries.length, 1, 'logged once')
+})
+
+test('an index line written after its KIF move was deleted is hidden', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D001' }, B: { material: 'M-R', sloc: 'D000' } })
+  const ctx = setup({ sap })
+  const svc = ctx.service()
+  await svc.kifMove(BO, { serials: ['A'] })
+  // A task started on 31 October and finished on 1 November: its lines are filed under November.
+  ctx.clock.now = new Date(2026, 9, 31, 23, 50).getTime()
+  assert.equal(await finishedTask(ctx, svc, ANNA, ['B']), 't2')
+  const late = await allIndexLines(ctx)
+  assert.deepEqual(late.map(line => [line.serial, line.kind]), [['A', 'kif'], ['B', 'load']])
+
+  await svc.deleteKifMove(MONA, { id: 't1' })
+  await svc.deleteTask(MONA, { taskId: 't2' })
+  // A run that checked the record before the deletion writes its lines after it.
+  for (const line of late) await ctx.index.mutateAsync(shardKey(2026, line.serial), index => ({ ...index, lines: [...(index?.lines || []), line] }))
+  assert.equal((await allIndexLines(ctx)).length, 2)
+  for (const user of [MONA, ANNA, TOM]) {
+    assert.deepEqual((await svc.search(user, { serial: 'A' })).lines, [], `${user.email}: the KIF move`)
+    assert.deepEqual((await svc.search(user, { serial: 'B' })).lines, [], `${user.email}: the task`)
+  }
+})
+
+test('a delete passes over an unreadable month file, and fails only when the id may be in it', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' }, B: { material: 'M-R', sloc: 'D000' } })
+  const ctx = setup({ sap })
+  const svc = ctx.service()
+  assert.equal(await finishedTask(ctx, svc, ANNA, ['A']), 't1')
+  assert.equal(await finishedTask(ctx, svc, BO, ['B']), 't2')
+  ctx.unreadableTeam.add(`opgaver-${runningKeyOf(BO).slice('aktiv-'.length)}-2026-11`)
+  assert.deepEqual(await svc.deleteTask(MONA, { taskId: 't1' }), { ok: true })
+  await assert.rejects(svc.deleteTask(MONA, { taskId: 'nope' }), { message: 'Filen kan ikke læses' })
+  ctx.unreadableTeam.clear()
+  await assert.rejects(svc.deleteTask(MONA, { taskId: 'nope' }), { code: 'SOFTWARELOAD_NOT_FOUND' })
 })

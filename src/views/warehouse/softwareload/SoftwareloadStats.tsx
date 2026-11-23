@@ -144,8 +144,8 @@ export function SoftwareloadStats({ isManager }: { isManager: boolean }) {
         <DeleteDialog
           title={t('Slet opgaven?', 'Delete the task?')}
           what={t(
-            `${deleting.name}s opgave fra ${formatDateTime(deleting.startedAt)} med ${Object.keys(deleting.terminals).length} terminaler slettes fra statistikken og søgningen.`,
-            `${deleting.name}'s task from ${formatDateTime(deleting.startedAt)} with ${Object.keys(deleting.terminals).length} terminals is deleted from the statistics and the search.`,
+            `Opgaven fra ${deleting.name}, startet ${formatDateTime(deleting.startedAt)}, med ${Object.keys(deleting.terminals).length} terminaler slettes fra statistikken og søgningen.`,
+            `The task by ${deleting.name}, started ${formatDateTime(deleting.startedAt)}, with ${Object.keys(deleting.terminals).length} terminals is deleted from the statistics and the search.`,
           )}
           onCancel={() => setDeleting(null)}
           onDelete={() => deleteTask(deleting)}

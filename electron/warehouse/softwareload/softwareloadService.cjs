@@ -1053,25 +1053,37 @@ function createSoftwareloadService({
     const files = await Promise.all(keys.map(key => indexStore.getAsync(key).then(file => ({ file }), () => ({ unreadable: true }))))
     const lines = files.flatMap(({ file }) => (file?.lines || []).filter(line => line.serial === wanted)).sort((a, b) => b.at - a.at)
     return {
-      lines: await withMoveIds(user, lines).catch(() => lines),
+      lines: await withDeletions(user, lines).catch(() => lines),
       unreadable: files.filter(item => item.unreadable).length,
     }
   }
 
+  /** The team's month file that knows the event of a search line: `kif-<month>`, or the owner's task file of the month it ended. */
+  const eventFileOf = line => (line.kind === 'kif' ? kifKey(line.at) : `${FINISHED_PREFIX}${writerOf(line.email)}-${monthOf(line.at)}`)
+  /** The move of a KIF search line, kept or deleted: a line names no move, so it is matched on email and time. */
+  function kifMoveOf(file, line) {
+    const kept = Object.values(file?.moves || {}).find(move => move.email === line.email && move.at === line.at)
+    if (kept) return { id: kept.id, deleted: false }
+    const gone = Object.entries(file?.deleted || {}).find(([, item]) => item.email === line.email && item.movedAt === line.at)
+    return gone ? { id: gone[0], deleted: true } : null
+  }
+
   /**
-   * A KIF search line names no move, so a manager's lines of the own team get `moveId` (the move it belongs to) from the
-   * KIF month files; that is what "Slet" deletes, also for lines saved before moves could be deleted.
+   * Leaves out the lines of a deleted task or KIF move: a deletion whose index write failed midway, or a line written
+   * just after the deletion, is never shown. A manager's KIF lines of the own team get `moveId`, the move "Slet" deletes,
+   * also for lines saved before moves could be deleted. The month files are the team's own, read from either team.
    */
-  async function withMoveIds(user, lines) {
-    const own = line => line.kind === 'kif' && line.team === user.team
-    if (!isManager(user) || !lines.some(own)) return lines
-    const store = storeFor(user.team)
-    const keys = [...new Set(lines.filter(own).map(line => kifKey(line.at)))]
-    const months = new Map(await Promise.all(keys.map(async key => [key, await store.getAsync(key).catch(() => null)])))
-    return lines.map(line => {
-      if (!own(line)) return line
-      const move = Object.values(months.get(kifKey(line.at))?.moves || {}).find(item => item.email === line.email && item.at === line.at)
-      return move ? { ...line, moveId: move.id } : line
+  async function withDeletions(user, lines) {
+    const fileKey = line => `${line.team}|${eventFileOf(line)}`
+    const wanted = new Map(lines.map(line => [fileKey(line), line]))
+    const read = await Promise.all([...wanted].map(async ([key, line]) => [key, await storeFor(line.team).getAsync(eventFileOf(line)).catch(() => null)]))
+    const files = new Map(read)
+    return lines.flatMap(line => {
+      const file = files.get(fileKey(line))
+      if (line.kind === 'load') return file?.deleted?.[line.taskId] ? [] : [line]
+      const move = kifMoveOf(file, line)
+      if (move?.deleted) return []
+      return move && isManager(user) && line.team === user.team ? [{ ...line, moveId: move.id }] : [line]
     })
   }
 
@@ -1091,12 +1103,20 @@ function createSoftwareloadService({
   const TASK_MONTH = new RegExp(`^${FINISHED_PREFIX}[0-9a-f]{16}-\\d{4}-\\d{2}$`)
   const KIF_MONTH = new RegExp(`^${KIF_PREFIX}\\d{4}-\\d{2}$`)
 
-  /** The team's month file (matching `pattern`) that has `id` under `field` or under `deleted`, read past the cache. */
+  /**
+   * The team's month file (matching `pattern`) that has `id` under `field` or under `deleted`, read past the cache. An
+   * unreadable file is passed over; only when no file has the id does its error stand, as the id may be in it.
+   */
   async function findInMonths(store, pattern, field, id) {
     const keys = (await store.keysAsync()).filter(key => pattern.test(key))
-    const files = await Promise.all(keys.map(key => store.getAsync(key, { skipCache: true })))
-    const index = files.findIndex(file => file?.[field]?.[id] || file?.deleted?.[id])
-    return index === -1 ? null : { key: keys[index], file: files[index] }
+    const read = await Promise.all(keys.map(key => store.getAsync(key, { skipCache: true }).then(file => ({ file }), error => ({ error }))))
+    // A file that still has the id itself wins over one that only marks it deleted.
+    const kept = read.findIndex(({ file }) => file?.[field]?.[id])
+    const index = kept !== -1 ? kept : read.findIndex(({ file }) => file?.deleted?.[id])
+    if (index !== -1) return { key: keys[index], file: read[index].file }
+    const unreadable = read.find(item => item.error)
+    if (unreadable) throw unreadable.error
+    return null
   }
 
   async function isRunning(store, id) {
@@ -1112,14 +1132,17 @@ function createSoftwareloadService({
     transaction.set(key, { ...log, entries: [...(log?.entries || []), entry] })
   }
 
-  /** Removes the lines `belongs` picks from the search files of the serials in the year of `at`. */
+  /**
+   * Removes the lines `belongs` picks from the search files of the serials in the year of `at`, each file tried again
+   * while M: fails. Lines a failure leaves are hidden by the search and go when the deletion is run again.
+   */
   async function dropFromIndex(serials, at, belongs) {
     for (const key of new Set(serials.map(serial => indexKey({ serial, at })))) {
-      await indexStore.mutateAsync(key, index => {
+      await retried(() => indexStore.mutateAsync(key, index => {
         const lines = index?.lines || []
         const kept = lines.filter(line => !belongs(line))
         return kept.length === lines.length ? undefined : { ...index, lines: kept }
-      })
+      }))
     }
   }
 
@@ -1144,11 +1167,14 @@ function createSoftwareloadService({
       if (await store.getAsync(pendingKey(id), { skipCache: true }) || await isRunning(store, id)) throw notFinished()
       throw notFound()
     }
-    const owner = (found.file.tasks?.[id] || found.file.deleted[id]).email
+    const known = found.file.tasks?.[id] || found.file.deleted[id]
+    const owner = known.email
+    // The search finds a task's lines by the month it ended, so a task started in an earlier month is marked there too.
+    const endedKey = `${FINISHED_PREFIX}${writerOf(owner)}-${monthOf(known.endedAt)}`
     const at = now()
     const by = lower(user.email)
     const running = runningKey(owner)
-    const gone = await store.withLockedKeysAsync([pendingKey(id), found.key, running, deletedKey(at)], transaction => {
+    const gone = await store.withLockedKeysAsync([pendingKey(id), found.key, endedKey, running, deletedKey(at)], transaction => {
       // A finish that has written the month file but not yet removed the pending one is still on its way.
       if (transaction.get(pendingKey(id))) throw notFinished()
       const month = transaction.get(found.key)
@@ -1160,9 +1186,12 @@ function createSoftwareloadService({
       if (task) {
         const tasks = { ...month.tasks }
         delete tasks[id]
+        // The task's own file first: a write that stops after it still leaves the task deleted.
         transaction.set(found.key, { ...month, tasks, deleted: { ...month.deleted, [id]: deleted } })
         logDeletion(transaction, { kind: 'task', id, by, at, serials: deleted.serials })
       }
+      const ended = transaction.get(endedKey)
+      if (endedKey !== found.key && !ended?.deleted?.[id]) transaction.set(endedKey, { ...ended, deleted: { ...ended?.deleted, [id]: deleted } })
       if (transaction.get(running)?.id === id) transaction.delete(running)
       return deleted
     })
