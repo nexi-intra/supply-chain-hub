@@ -157,6 +157,8 @@ const MESSAGES: Record<string, string> = {
   SOFTWARELOAD_SAVE_FAILED: 'SAP har flyttet, men det kunne ikke gemmes på M:. Det er gemt på denne PC og kommer med senere.',
   SOFTWARELOAD_CHANGED: 'Opgaven er rettet imens. Se oversigten igen.',
   SOFTWARELOAD_ALREADY_FINISHED: 'Opgaven er allerede afsluttet. Se Venter på SAP eller statistikken.',
+  SOFTWARELOAD_NOT_FOUND: 'Opgaven eller flytningen findes ikke (længere).',
+  SOFTWARELOAD_NOT_FINISHED: 'Opgaven er ikke afsluttet. En opgave, der kører eller venter på SAP, kan ikke slettes.',
   UNEXPECTED_ERROR: 'Der skete en uventet fejl. Prøv igen.',
 }
 
@@ -329,6 +331,8 @@ const MESSAGES_EN: Record<string, string> = {
   SOFTWARELOAD_SAVE_FAILED: 'SAP made the move, but it could not be saved on M:. It is kept on this PC and saved later.',
   SOFTWARELOAD_CHANGED: 'The task was edited meanwhile. Check the overview again.',
   SOFTWARELOAD_ALREADY_FINISHED: 'The task is already finished. Check Waiting for SAP or the statistics.',
+  SOFTWARELOAD_NOT_FOUND: 'The task or the move does not exist (any more).',
+  SOFTWARELOAD_NOT_FINISHED: 'The task is not finished. A task that is running or waiting for SAP cannot be deleted.',
   UNEXPECTED_ERROR: 'Something unexpected went wrong. Try again.',
 }
 

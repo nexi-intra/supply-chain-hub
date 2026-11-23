@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
@@ -142,4 +143,34 @@ export function ErrorLine({ text, className }: { text: string; className?: strin
 
 export function WriteDisabledLine() {
   return <p className="text-sm text-muted-foreground">{t('Softwareload må endnu ikke flytte i dette SAP-system', 'Softwareload may not move anything in this SAP system yet')}</p>
+}
+
+/**
+ * A manager confirms deleting a task or a KIF move: `what` says what goes, and the dialog adds that SAP stays as it is.
+ * It stays open while `onDelete` runs; `onDelete` closes it when the deletion is done.
+ */
+export function DeleteDialog({ title, what, onCancel, onDelete }: { title: string; what: string; onCancel: () => void; onDelete: () => Promise<void> }) {
+  const [deleting, setDeleting] = useState(false)
+  const remove = async () => {
+    setDeleting(true)
+    try {
+      await onDelete()
+    } finally {
+      setDeleting(false)
+    }
+  }
+  return (
+    <AlertDialog open onOpenChange={open => { if (!open && !deleting) onCancel() }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{title}</AlertDialogTitle>
+          <AlertDialogDescription>{what} {t('SAP ændres ikke. Flytningerne og materialedokumenterne ligger stadig i SAP.', 'SAP is not changed. The moves and the material documents are still in SAP.')}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={deleting}>{t('Annullér', 'Cancel')}</AlertDialogCancel>
+          <AlertDialogAction className="bg-destructive text-white hover:bg-destructive/90" disabled={deleting} onClick={event => { event.preventDefault(); void remove() }}>{t('Slet', 'Delete')}</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
 }

@@ -125,7 +125,7 @@ export function Softwareload({ user, onOpenTimeclock, onBusyChange }: { user: Wa
       </div>
       {status && <div hidden={tab !== 'pending'}><SoftwareloadPending user={user} status={status} reload={load} onBusy={reportBusy} /></div>}
       <div hidden={tab !== 'kif'}><SoftwareloadKif user={user} writeEnabled={status?.writeEnabled ?? false} active={tab === 'kif'} onBusy={reportBusy} /></div>
-      {tab === 'search' && <SoftwareloadSearch />}
+      {tab === 'search' && <SoftwareloadSearch isManager={status?.isManager ?? false} team={user.team} />}
       {tab === 'stats' && <SoftwareloadStats isManager={status?.isManager ?? false} />}
     </div>
   )

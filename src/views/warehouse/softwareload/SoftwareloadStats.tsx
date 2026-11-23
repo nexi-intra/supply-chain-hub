@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { CaretDown, CaretRight } from '@phosphor-icons/react'
+import { CaretDown, CaretRight, Trash } from '@phosphor-icons/react'
+import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -14,7 +15,7 @@ import { formatDateTime, formatTime } from '@/lib/warehouse/format'
 import { currentWarehouseLanguage, t, warehouseLocale } from '@/lib/warehouse/text'
 import { cn } from '@/lib/utils'
 import type { SoftwareloadChoice, SoftwareloadTask } from '@/types/warehouse'
-import { ErrorLine, isProblem, label } from './common'
+import { DeleteDialog, ErrorLine, isProblem, label } from './common'
 
 type Period = PeriodKind | 'custom'
 
@@ -41,6 +42,7 @@ export function SoftwareloadStats({ isManager }: { isManager: boolean }) {
   const [person, setPerson] = useState('')
   const [type, setType] = useState('')
   const [version, setVersion] = useState('')
+  const [deleting, setDeleting] = useState<SoftwareloadTask | null>(null)
   const language = currentWarehouseLanguage()
 
   // Only the newest request may fill the screen: a slow answer for an earlier period must not replace a newer one.
@@ -70,6 +72,17 @@ export function SoftwareloadStats({ isManager }: { isManager: boolean }) {
   const versions = useMemo(() => [...new Set(all.map(task => task.version))].sort((a, b) => b.localeCompare(a, 'da', { numeric: true })), [all])
   const totals = useMemo(() => rows.reduce((sum, row) => ({ moved: sum.moved + row.moved, failed: sum.failed + row.failed, sapFailed: sum.sapFailed + row.sapFailed, workedMs: sum.workedMs + row.workedMs }), { moved: 0, failed: 0, sapFailed: 0, workedMs: 0 }), [rows])
   const pace = totals.workedMs > 0 ? Math.round((totals.moved / (totals.workedMs / 3_600_000)) * 10) / 10 : 0
+
+  const deleteTask = async (task: SoftwareloadTask) => {
+    try {
+      await window.electronWarehouse!.softwareload.deleteTask({ taskId: task.id })
+      toast.success(t('Opgaven er slettet', 'The task is deleted'))
+      setDeleting(null)
+    } catch (error) {
+      toast.error(errorMessage(error))
+    }
+    void load()
+  }
 
   return (
     <div className="space-y-5">
@@ -121,10 +134,22 @@ export function SoftwareloadStats({ isManager }: { isManager: boolean }) {
           ) : (
             <>
               <SummaryTable rows={rows} />
-              <TaskList tasks={filtered} />
+              <TaskList tasks={filtered} onDelete={isManager ? setDeleting : undefined} />
             </>
           )}
         </>
+      )}
+
+      {deleting && (
+        <DeleteDialog
+          title={t('Slet opgaven?', 'Delete the task?')}
+          what={t(
+            `${deleting.name}s opgave fra ${formatDateTime(deleting.startedAt)} med ${Object.keys(deleting.terminals).length} terminaler slettes fra statistikken og søgningen.`,
+            `${deleting.name}'s task from ${formatDateTime(deleting.startedAt)} with ${Object.keys(deleting.terminals).length} terminals is deleted from the statistics and the search.`,
+          )}
+          onCancel={() => setDeleting(null)}
+          onDelete={() => deleteTask(deleting)}
+        />
       )}
     </div>
   )
@@ -180,8 +205,8 @@ function SummaryTable({ rows }: { rows: ReturnType<typeof summarizeTasks> }) {
   )
 }
 
-/** Every task in the period; a task opens to its serials with the outcome and the note. */
-function TaskList({ tasks }: { tasks: SoftwareloadTask[] }) {
+/** Every task in the period; a task opens to its serials with the outcome and the note, and `onDelete` (managers) to "Slet". */
+function TaskList({ tasks, onDelete }: { tasks: SoftwareloadTask[]; onDelete?: (task: SoftwareloadTask) => void }) {
   const [open, setOpen] = useState<Set<string>>(() => new Set())
   const language = currentWarehouseLanguage()
   const toggle = (id: string) => setOpen(current => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next })
@@ -237,6 +262,11 @@ function TaskList({ tasks }: { tasks: SoftwareloadTask[] }) {
                           <p key={item.at} className="mb-2 text-xs text-muted-foreground">{t(`Rettet kl. ${formatTime(item.at)}: ${choiceText(item.from)} → ${choiceText(item.to)}`, `Edited at ${formatTime(item.at)}: ${choiceText(item.from)} → ${choiceText(item.to)}`)}</p>
                         ))}
                         <SerialList task={task} />
+                        {onDelete && (
+                          <div className="mt-3 flex justify-end">
+                            <Button size="sm" variant="outline" className="text-destructive hover:text-destructive" onClick={() => onDelete(task)}><Trash size={16} /> {t('Slet', 'Delete')}</Button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   )}

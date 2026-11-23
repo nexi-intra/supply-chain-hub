@@ -374,6 +374,19 @@ const WAREHOUSE_MODULE = {
       ],
       notes: 'Managere ser hele teamets opgaver, og medarbejdere ser kun deres egne. Tempoet tæller terminaler pr. arbejdstime. Kun dem, der er markeret som fejlet, tæller ikke med. Dem SAP afviste, vises også for sig.',
     },
+    {
+      id: 'softwareload-delete',
+      title: 'Slet en opgave eller KIF-flytning',
+      requires: MANAGER,
+      preferred: true,
+      keywords: ['slet en softwareload', 'slette en softwareload', 'sletter en softwareload', 'sletter jeg en softwareload', 'sletter jeg en softwareload opgave', 'slet softwareload', 'slette softwareload', 'sletter softwareload', 'slet en kif flytning', 'slette en kif flytning', 'sletter en kif flytning', 'slet kif flytningen', 'slette kif flytningen', 'slet en flytning ind i kif', 'slette en flytning ind i kif', 'slet testdata', 'slette testdata', 'sletter testdata', 'testdata i statistikken', 'delete a softwareload', 'delete a softwareload task', 'delete the softwareload', 'delete softwareload', 'delete a kif move', 'delete the kif move', 'delete a move into kif', 'delete test data', 'remove test data', 'test data in the statistics', 'poista softwareload', 'poistan softwareload', 'poistaa softwareload', 'poistan softwareload tehtaevaen', 'poista softwareload tehtaevae', 'poista kif siirto', 'poistan kif siirron', 'poistaa kif siirron', 'poista testidata', 'poistan testidatan', 'poistaa testidatan', 'ta bort en softwareload', 'tar bort en softwareload', 'tar jag bort en softwareload', 'tar jag bort en softwareload uppgift', 'radera en softwareload', 'raderar en softwareload', 'ta bort en kif flytt', 'tar bort en kif flytt', 'tar jag bort en kif flytt', 'ta bort testdata', 'tar bort testdata', 'radera testdata'],
+      steps: [
+        'Åbn "Arbejdsværktøjer" > "Softwareload". En afsluttet opgave sletter du under fanen "Statistik": klik på opgaven, så den åbner, og klik "Slet".',
+        'En flytning ind i KIF eller en opgave finder du også under fanen "Søg serienummer": søg på et af serienumrene, og klik "Slet" på linjen. "Slet" på en load sletter hele opgaven, ikke kun linjen.',
+        'Bekræftelsen viser, hvad der slettes. Klik "Slet". Listen opdateres, og opgaven eller flytningen tæller ikke længere med i statistikken og søgningen.',
+      ],
+      notes: 'Kun managere kan slette, og kun i deres eget team. Brug det fx til testdata. SAP ændres ikke: flytningerne og materialedokumenterne ligger stadig i SAP. En opgave, der kører eller venter på SAP, kan ikke slettes. Hvem der slettede hvad og hvornår, bliver gemt.',
+    },
   ],
 }
 

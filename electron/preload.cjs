@@ -189,6 +189,8 @@ contextBridge.exposeInMainWorld('electronWarehouse', {
     kifMove: request => warehouse('softwareload:kif-move', request),
     search: request => warehouse('softwareload:search', request),
     tasks: request => warehouse('softwareload:tasks', request),
+    deleteTask: request => warehouse('softwareload:delete-task', request),
+    deleteKifMove: request => warehouse('softwareload:delete-kif', request),
     onProgress: warehouseEvents('softwareload-progress'),
   },
   // Placeringer: where pallets stand, pick places and FIFO, per hub.

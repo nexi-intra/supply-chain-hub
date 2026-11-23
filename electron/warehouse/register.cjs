@@ -415,6 +415,9 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   handle('softwareload:kif-move', (user, p) => softwareload.kifMove(user, { serials: p.serials, document: p.document }, { onProgress: softwareloadProgress(user) }))
   handle('softwareload:search', (user, p) => softwareload.search(user, { serial: p.serial }))
   handle('softwareload:tasks', (user, p) => softwareload.tasks(user, { from: p.from, to: p.to }))
+  // Managers delete test data and the like from the app's records; SAP is never touched.
+  handle('softwareload:delete-task', (user, p) => softwareload.deleteTask(user, { taskId: p.taskId }))
+  handle('softwareload:delete-kif', (user, p) => softwareload.deleteKifMove(user, { id: p.id }))
 
   // Placeringer: reads, then the changes; every change tells the open windows of that hub.
   const LOCATION_READS = { overview: 'overview', 'lookup-document': 'lookupDocument', suggest: 'suggest', search: 'search', 'material-card': 'materialCard', 'location-card': 'locationCard', 'pallet-card': 'palletCard', list: 'list', stamp: 'stamp', log: 'log', 'rack-card': 'rackCard', 'map-contents': 'mapContents' }

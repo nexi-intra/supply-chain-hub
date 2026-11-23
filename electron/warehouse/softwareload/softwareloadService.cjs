@@ -3,7 +3,8 @@
 // each person writes only their own running task, so colleagues never wait for each other's locks. Finishing stops the
 // time and moves the terminals in SAP; until every move is saved the task waits as `venter-<id>` and can be continued
 // by its owner or a manager, or given up by a manager. "Flyt ind i KIF" moves terminals to D005 ahead of time without
-// a task. Every move lands in a search index shared by TRR and TCD. No Electron imports: register.cjs wires it to IPC,
+// a task. Every move lands in a search index shared by TRR and TCD. A manager can delete a finished task or a KIF move
+// (e.g. test data) from the app's records; SAP is never touched. No Electron imports: register.cjs wires it to IPC,
 // tests drive it.
 const crypto = require('node:crypto')
 const fs = require('node:fs')
@@ -24,6 +25,9 @@ const VERSIONS_KEY = 'versioner'
 const PENDING_PREFIX = 'venter-'
 const FINISHED_PREFIX = 'opgaver-'
 const INDEX_PREFIX = 'serier-'
+const KIF_PREFIX = 'kif-'
+const RUNNING_PREFIX = 'aktiv-'
+const DELETED_PREFIX = 'slettet-'
 const TASK_ID_PATTERN = /^[\w-]{1,100}$/
 const BLOCK_BWART = '344'
 /** How long a claim on a pending task keeps others out; a run renews it on a timer and before every SAP call. */
@@ -42,7 +46,7 @@ function codeError(code, message) {
 const lower = value => String(value || '').trim().toLowerCase()
 const clean = (value, max) => String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max)
 const writerOf = email => crypto.createHash('sha256').update(lower(email)).digest('hex').slice(0, 16)
-const runningKey = email => `aktiv-${writerOf(email)}`
+const runningKey = email => `${RUNNING_PREFIX}${writerOf(email)}`
 const pausedMs = (pauses, end) => pauses.reduce((sum, pause) => sum + Math.max(0, Math.min(pause.to ?? end, end) - pause.from), 0)
 const isPaused = task => { const open = task.pauses.at(-1); return Boolean(open && open.to == null) }
 const notRunning = () => codeError('SOFTWARELOAD_NOT_RUNNING', 'Der kører ikke nogen softwareload-opgave')
@@ -62,13 +66,20 @@ const monthOf = ms => { const date = new Date(ms); return `${date.getFullYear()}
 const dayOf = ms => `${monthOf(ms)}-${pad(new Date(ms).getDate())}`
 const pendingKey = id => `${PENDING_PREFIX}${id}`
 const finishedKey = task => `${FINISHED_PREFIX}${writerOf(task.email)}-${monthOf(task.startedAt)}`
+/** A month file holds its finished tasks and, under `deleted`, the ids a manager deleted (with who, when and the serials). */
+const inMonth = (month, id) => Boolean(month?.tasks?.[id] || month?.deleted?.[id])
 /**
  * The search index is split by year and serial: `serier-<yyyy>-<hh>`, where hh is the first two hex characters of
  * the serial's sha256 and yyyy the (local) year of the event. A search reads one file per year.
  */
 const shardOf = serial => crypto.createHash('sha256').update(String(serial)).digest('hex').slice(0, 2)
 const indexKey = line => `${INDEX_PREFIX}${new Date(line.at).getFullYear()}-${shardOf(line.serial)}`
-const kifKey = at => `kif-${monthOf(at)}`
+const kifKey = at => `${KIF_PREFIX}${monthOf(at)}`
+/** Who deleted which task or KIF move and when, by the month of the deletion. */
+const deletedKey = at => `${DELETED_PREFIX}${monthOf(at)}`
+const notFound = () => codeError('SOFTWARELOAD_NOT_FOUND', 'Opgaven eller flytningen findes ikke (længere)')
+const notFinished = () => codeError('SOFTWARELOAD_NOT_FINISHED', 'Opgaven er ikke afsluttet. En opgave, der kører eller venter på SAP, kan ikke slettes')
+const managerOnly = () => codeError('MANAGER_ONLY', 'Kun en manager kan slette')
 const serialsOf = list => [...new Set((Array.isArray(list) ? list : []).map(normalizeSerial).filter(Boolean))]
 const chunks = (list, size) => Array.from({ length: Math.ceil(list.length / size) }, (_, index) => list.slice(index * size, (index + 1) * size))
 const lastTo = steps => steps.filter(step => step.to).at(-1)?.to ?? null
@@ -298,11 +309,14 @@ function createSoftwareloadService({
     return { running: view(running), pending, isManager: isManager(user), writeEnabled: Boolean(sap?.writeEnabled) }
   }
 
-  /** Whether a running task was handed over to SAP already: it waits as `venter-<id>` or is in its owner's month file. */
+  /**
+   * Whether a running task was handed over to SAP already: it waits as `venter-<id>` or is in its owner's month file,
+   * finished or deleted by a manager. A deleted task stays handed over, so its id is never finished again.
+   */
   async function wasHandedOver(user, task) {
     const store = storeFor(user.team)
     const [pending, month] = await Promise.all([store.getAsync(pendingKey(task.id), { skipCache: true }), store.getAsync(finishedKey(task), { skipCache: true })])
-    return Boolean(pending || month?.tasks?.[task.id])
+    return Boolean(pending || inMonth(month, task.id))
   }
 
   /** Deletes the person's running file under its lock, only while it still holds task `id`. */
@@ -584,7 +598,15 @@ function createSoftwareloadService({
   }
 
   const saveFailed = (doc, later) => codeError('SOFTWARELOAD_SAVE_FAILED', `SAP har lavet materialedokument ${doc}, men det kunne ikke gemmes på M:. Det er gemt på denne PC og kommer med, ${later}`)
-  const writeKif = move => storeFor(move.team).mutateAsync(kifKey(move.at), month => ({ ...month, moves: { ...month?.moves, [move.id]: move } }))
+  /** Saves a KIF move record; false when a manager deleted the move meanwhile, which is never brought back. */
+  async function writeKif(move) {
+    let kept = true
+    await storeFor(move.team).mutateAsync(kifKey(move.at), month => {
+      kept = !month?.deleted?.[move.id]
+      return kept ? { ...month, moves: { ...month?.moves, [move.id]: move } } : undefined
+    })
+    return kept
+  }
   const kifLinesOf = move => line => line.kind === 'kif' && line.email === move.email && line.at === move.at
 
   /** Adds a journalled SAP step to the pending task, once, in place of the unverified step it may have got since. */
@@ -622,9 +644,10 @@ function createSoftwareloadService({
         await journal.remove(name)
       } else if (entry.kind === 'kif' && kif) {
         const move = entry.final ? entry.move : { ...entry.move, results: interruptedResults(entry.move.results) }
-        await writeKif(move)
-        const lines = kifLines(move)
-        await addToIndex(entry.final ? lines : lines.filter(line => line.docs.length), kifLinesOf(move))
+        if (await writeKif(move)) {
+          const lines = kifLines(move)
+          await addToIndex(entry.final ? lines : lines.filter(line => line.docs.length), kifLinesOf(move))
+        }
         await journal.remove(name)
       }
     }
@@ -822,7 +845,7 @@ function createSoftwareloadService({
       try {
         // Under the locks of the pending file and the month file, so a continue that completes the task meanwhile is seen.
         handedOver = await store.withLockedKeysAsync([pendingKey(ended.id), finishedKey(ended)], transaction => {
-          if (transaction.get(pendingKey(ended.id)) || transaction.get(finishedKey(ended))?.tasks?.[ended.id]) return true
+          if (transaction.get(pendingKey(ended.id)) || inMonth(transaction.get(finishedKey(ended)), ended.id)) return true
           transaction.set(pendingKey(ended.id), { ...ended, claim: claimOf(user, runId) })
           return false
         })
@@ -965,7 +988,7 @@ function createSoftwareloadService({
     const save = async ({ doc = null, final = false } = {}) => {
       await journal.put(journalName, { kind: 'kif', team: user.team, final, move })
       try {
-        await retried(() => writeKif(move))
+        return await retried(() => writeKif(move))
       } catch (error) {
         throw doc ? saveFailed(doc, 'næste gang Softwareload åbnes på denne PC') : error
       }
@@ -977,9 +1000,10 @@ function createSoftwareloadService({
       if (interrupted) {
         for (const serial of serials) if (results[serial].outcome === 'to-target' && !results[serial].steps.length) results[serial] = { ...results[serial], outcome: 'interrupted' }
       }
-      await save({ final: !interrupted })
-      const lines = kifLines(move)
-      await addToIndex(interrupted ? lines.filter(line => line.docs.length) : lines, kifLinesOf(move))
+      if (await save({ final: !interrupted })) {
+        const lines = kifLines(move)
+        await addToIndex(interrupted ? lines.filter(line => line.docs.length) : lines, kifLinesOf(move))
+      }
       await journal.remove(journalName)
     }
     try {
@@ -1027,10 +1051,28 @@ function createSoftwareloadService({
     const own = new RegExp(`^${INDEX_PREFIX}\\d{4}-${shardOf(wanted)}$`)
     const keys = (await indexStore.keysAsync()).filter(key => own.test(key))
     const files = await Promise.all(keys.map(key => indexStore.getAsync(key).then(file => ({ file }), () => ({ unreadable: true }))))
+    const lines = files.flatMap(({ file }) => (file?.lines || []).filter(line => line.serial === wanted)).sort((a, b) => b.at - a.at)
     return {
-      lines: files.flatMap(({ file }) => (file?.lines || []).filter(line => line.serial === wanted)).sort((a, b) => b.at - a.at),
+      lines: await withMoveIds(user, lines).catch(() => lines),
       unreadable: files.filter(item => item.unreadable).length,
     }
+  }
+
+  /**
+   * A KIF search line names no move, so a manager's lines of the own team get `moveId` (the move it belongs to) from the
+   * KIF month files; that is what "Slet" deletes, also for lines saved before moves could be deleted.
+   */
+  async function withMoveIds(user, lines) {
+    const own = line => line.kind === 'kif' && line.team === user.team
+    if (!isManager(user) || !lines.some(own)) return lines
+    const store = storeFor(user.team)
+    const keys = [...new Set(lines.filter(own).map(line => kifKey(line.at)))]
+    const months = new Map(await Promise.all(keys.map(async key => [key, await store.getAsync(key).catch(() => null)])))
+    return lines.map(line => {
+      if (!own(line)) return line
+      const move = Object.values(months.get(kifKey(line.at))?.moves || {}).find(item => item.email === line.email && item.at === line.at)
+      return move ? { ...line, moveId: move.id } : line
+    })
   }
 
   /** Finished tasks started (local day) in the period: the person's own, or the whole team's for a manager. */
@@ -1046,10 +1088,121 @@ function createSoftwareloadService({
       .sort((a, b) => b.startedAt - a.startedAt)
   }
 
+  const TASK_MONTH = new RegExp(`^${FINISHED_PREFIX}[0-9a-f]{16}-\\d{4}-\\d{2}$`)
+  const KIF_MONTH = new RegExp(`^${KIF_PREFIX}\\d{4}-\\d{2}$`)
+
+  /** The team's month file (matching `pattern`) that has `id` under `field` or under `deleted`, read past the cache. */
+  async function findInMonths(store, pattern, field, id) {
+    const keys = (await store.keysAsync()).filter(key => pattern.test(key))
+    const files = await Promise.all(keys.map(key => store.getAsync(key, { skipCache: true })))
+    const index = files.findIndex(file => file?.[field]?.[id] || file?.deleted?.[id])
+    return index === -1 ? null : { key: keys[index], file: files[index] }
+  }
+
+  async function isRunning(store, id) {
+    const keys = (await store.keysAsync()).filter(key => key.startsWith(RUNNING_PREFIX))
+    const tasks = await Promise.all(keys.map(key => store.getAsync(key, { skipCache: true })))
+    return tasks.some(task => task?.id === id)
+  }
+
+  /** Adds a line to the deletion log of the month, inside the transaction that deletes. */
+  function logDeletion(transaction, entry) {
+    const key = deletedKey(entry.at)
+    const log = transaction.get(key)
+    transaction.set(key, { ...log, entries: [...(log?.entries || []), entry] })
+  }
+
+  /** Removes the lines `belongs` picks from the search files of the serials in the year of `at`. */
+  async function dropFromIndex(serials, at, belongs) {
+    for (const key of new Set(serials.map(serial => indexKey({ serial, at })))) {
+      await indexStore.mutateAsync(key, index => {
+        const lines = index?.lines || []
+        const kept = lines.filter(line => !belongs(line))
+        return kept.length === lines.length ? undefined : { ...index, lines: kept }
+      })
+    }
+  }
+
+  const idOf = value => {
+    const id = String(value ?? '')
+    if (!TASK_ID_PATTERN.test(id)) throw notFound()
+    return id
+  }
+
+  /**
+   * A manager deletes a finished task of the team, e.g. test data: it leaves its month file, and so the list and the
+   * statistics, and the search. SAP is never touched. The id stays in the month file under `deleted`, so the task is
+   * never finished again, and a running file left behind with the same id goes too. A task that runs or waits for SAP
+   * is refused. Deleting a deleted task again only cleans the search once more, as a retry after M: failed midway.
+   */
+  async function deleteTask(user, { taskId } = {}) {
+    if (!isManager(user)) throw managerOnly()
+    const id = idOf(taskId)
+    const store = storeFor(user.team)
+    const found = await findInMonths(store, TASK_MONTH, 'tasks', id)
+    if (!found) {
+      if (await store.getAsync(pendingKey(id), { skipCache: true }) || await isRunning(store, id)) throw notFinished()
+      throw notFound()
+    }
+    const owner = (found.file.tasks?.[id] || found.file.deleted[id]).email
+    const at = now()
+    const by = lower(user.email)
+    const running = runningKey(owner)
+    const gone = await store.withLockedKeysAsync([pendingKey(id), found.key, running, deletedKey(at)], transaction => {
+      // A finish that has written the month file but not yet removed the pending one is still on its way.
+      if (transaction.get(pendingKey(id))) throw notFinished()
+      const month = transaction.get(found.key)
+      const task = month?.tasks?.[id]
+      const deleted = task
+        ? { by, at, email: task.email, endedAt: task.endedAt, serials: [...new Set([...Object.keys(task.terminals || {}), ...Object.keys(task.results || {})])] }
+        : month?.deleted?.[id]
+      if (!deleted) throw notFound()
+      if (task) {
+        const tasks = { ...month.tasks }
+        delete tasks[id]
+        transaction.set(found.key, { ...month, tasks, deleted: { ...month.deleted, [id]: deleted } })
+        logDeletion(transaction, { kind: 'task', id, by, at, serials: deleted.serials })
+      }
+      if (transaction.get(running)?.id === id) transaction.delete(running)
+      return deleted
+    })
+    await dropFromIndex(gone.serials, gone.endedAt, line => line.kind === 'load' && line.taskId === id && line.team === user.team)
+    return { ok: true }
+  }
+
+  /**
+   * A manager deletes a move into KIF of the team: the record leaves `kif-<yyyy-mm>` and its lines leave the search.
+   * SAP is never touched. The id stays under `deleted`, so a copy still in a PC's journal never brings it back.
+   */
+  async function deleteKifMove(user, { id: moveId } = {}) {
+    if (!isManager(user)) throw managerOnly()
+    const id = idOf(moveId)
+    const store = storeFor(user.team)
+    const found = await findInMonths(store, KIF_MONTH, 'moves', id)
+    if (!found) throw notFound()
+    const at = now()
+    const by = lower(user.email)
+    const gone = await store.withLockedKeysAsync([found.key, deletedKey(at)], transaction => {
+      const month = transaction.get(found.key)
+      const move = month?.moves?.[id]
+      const deleted = move ? { by, at, email: move.email, movedAt: move.at, serials: Object.keys(move.results || {}) } : month?.deleted?.[id]
+      if (!deleted) throw notFound()
+      if (move) {
+        const moves = { ...month.moves }
+        delete moves[id]
+        transaction.set(found.key, { ...month, moves, deleted: { ...month.deleted, [id]: deleted } })
+        logDeletion(transaction, { kind: 'kif', id, by, at, serials: deleted.serials })
+      }
+      return deleted
+    })
+    await dropFromIndex(gone.serials, gone.movedAt, line => line.kind === 'kif' && line.team === user.team && line.email === gone.email && line.at === gone.movedAt)
+    return { ok: true }
+  }
+
   return {
     status, start, edit, scan, unscan, markFailed, unmarkFailed,
     pause: user => changePause(user, true), resume, pauseIfRunning,
-    cancel, versions, preview, finish, continueFinish, abandon, kifPreview, kifMove, search, tasks, isManager,
+    cancel, versions, preview, finish, continueFinish, abandon, kifPreview, kifMove, search, tasks, deleteTask, deleteKifMove, isManager,
   }
 }
 

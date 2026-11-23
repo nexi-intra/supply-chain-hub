@@ -1508,3 +1508,174 @@ test('tasks: an employee gets own tasks, a manager all in the period', async () 
   await assert.rejects(svc.tasks(MONA, { from: '2025-11-01', to: '2026-11-30' }), { code: 'SOFTWARELOAD_INVALID' })
   await assert.rejects(svc.tasks(ANNA, { from: '18-11-2026', to: '2026-11-30' }), { code: 'SOFTWARELOAD_INVALID' })
 })
+
+const NOVEMBER = { from: '2026-11-01', to: '2026-11-30' }
+/** Starts, scans and finishes a task outside KIF to D006; returns its id. */
+async function finishedTask(ctx, svc, user, serials) {
+  const started = await svc.start(user, { ...TASK, kif: false })
+  for (const serial of serials) await svc.scan(user, { serial, taskId: started.id })
+  ctx.tick(30 * MIN)
+  return (await svc.finish(user, await confirmed(ctx, user))).taskId
+}
+
+test('a manager deletes a finished task: it leaves the task list, the statistics and the search', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' }, B: { material: 'M-R', sloc: 'D000' }, C: { material: 'M-R', sloc: 'D000' } })
+  const ctx = setup({ sap })
+  const svc = ctx.service()
+  assert.equal(await finishedTask(ctx, svc, ANNA, ['A', 'B']), 't1')
+  ctx.tick(MIN)
+  assert.equal(await finishedTask(ctx, svc, BO, ['C']), 't2')
+  ctx.tick(MIN)
+  await svc.kifMove(BO, { serials: ['A'] })
+  assert.deepEqual((await svc.tasks(MONA, NOVEMBER)).map(task => task.id), ['t2', 't1'])
+  sap.calls.length = 0
+
+  assert.deepEqual(await svc.deleteTask(MONA, { taskId: 't1' }), { ok: true })
+  assert.deepEqual((await svc.tasks(MONA, NOVEMBER)).map(task => task.id), ['t2'], 'gone from the list and so from the statistics')
+  assert.deepEqual(await svc.tasks(ANNA, NOVEMBER), [])
+  assert.deepEqual((await svc.search(MONA, { serial: 'A' })).lines.map(line => [line.kind, line.name]), [['kif', 'Bo']], 'the KIF move of the same serial stays')
+  assert.deepEqual((await svc.search(MONA, { serial: 'B' })).lines, [])
+  assert.deepEqual((await allIndexLines(ctx)).map(line => [line.serial, line.kind, line.taskId]), [['A', 'kif', undefined], ['C', 'load', 't2']])
+  assert.deepEqual(sap.calls, [], 'SAP is never touched')
+
+  // A second click, or a retry after M: failed midway, finds it deleted and cleans the search again.
+  assert.deepEqual(await svc.deleteTask(MONA, { taskId: 't1' }), { ok: true })
+  await assert.rejects(svc.deleteTask(MONA, { taskId: 'nope' }), { code: 'SOFTWARELOAD_NOT_FOUND' })
+  await assert.rejects(svc.deleteTask(MONA, {}), { code: 'SOFTWARELOAD_NOT_FOUND' })
+  await assert.rejects(svc.deleteTask(TOM, { taskId: 't2' }), { code: 'SOFTWARELOAD_NOT_FOUND' }, 'another team\'s manager cannot reach it')
+  assert.deepEqual((await svc.tasks(MONA, NOVEMBER)).map(task => task.id), ['t2'])
+})
+
+test('a manager deletes a KIF move and its search lines', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D001' }, B: { material: 'M-R', sloc: 'D001' }, C: { material: 'M-R', sloc: 'D001' } })
+  const ctx = setup({ sap })
+  const svc = ctx.service()
+  assert.equal((await svc.kifMove(BO, { serials: ['A', 'B'] })).id, 't1')
+  ctx.tick(MIN)
+  assert.equal((await svc.kifMove(BO, { serials: ['C'] })).id, 't2')
+  ctx.tick(MIN)
+  assert.equal((await svc.kifMove(TRINE, { serials: ['A'] })).id, 't3')
+
+  // A search line knows no move; a manager is given the id of the own team's moves, also of lines saved before this.
+  assert.deepEqual((await svc.search(MONA, { serial: 'A' })).lines.map(line => [line.team, line.moveId]), [['TRR', undefined], ['TCD', 't1']])
+  assert.deepEqual((await svc.search(ANNA, { serial: 'A' })).lines.map(line => line.moveId), [undefined, undefined], 'an employee gets no ids')
+  sap.calls.length = 0
+
+  assert.deepEqual(await svc.deleteKifMove(MONA, { id: 't1' }), { ok: true })
+  assert.deepEqual(Object.keys((await ctx.storeFor('TCD').getAsync('kif-2026-11', { skipCache: true })).moves), ['t2'])
+  assert.deepEqual((await svc.search(MONA, { serial: 'A' })).lines.map(line => line.team), ['TRR'], 'the other team\'s move of the same serial stays')
+  assert.deepEqual((await svc.search(MONA, { serial: 'B' })).lines, [])
+  assert.deepEqual((await svc.search(MONA, { serial: 'C' })).lines.map(line => line.moveId), ['t2'])
+  assert.deepEqual(sap.calls, [], 'SAP is never touched')
+
+  assert.deepEqual(await svc.deleteKifMove(MONA, { id: 't1' }), { ok: true }, 'a second click finds it deleted')
+  await assert.rejects(svc.deleteKifMove(MONA, { id: 't3' }), { code: 'SOFTWARELOAD_NOT_FOUND' }, 'another team\'s move')
+  await assert.rejects(svc.deleteKifMove(MONA, { id: 'nope' }), { code: 'SOFTWARELOAD_NOT_FOUND' })
+})
+
+test('an employee cannot delete', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' }, B: { material: 'M-R', sloc: 'D001' } })
+  const ctx = setup({ sap })
+  const svc = ctx.service()
+  assert.equal(await finishedTask(ctx, svc, ANNA, ['A']), 't1')
+  assert.equal((await svc.kifMove(ANNA, { serials: ['B'] })).id, 't2')
+  const STATUS_MANAGER = { ...BO, role: 'manager', statusManager: true }
+  for (const user of [ANNA, BO, STATUS_MANAGER]) {
+    await assert.rejects(svc.deleteTask(user, { taskId: 't1' }), { code: 'MANAGER_ONLY' }, user.email)
+    await assert.rejects(svc.deleteKifMove(user, { id: 't2' }), { code: 'MANAGER_ONLY' }, user.email)
+  }
+  assert.deepEqual((await svc.tasks(ANNA, NOVEMBER)).map(task => task.id), ['t1'])
+  assert.deepEqual((await allIndexLines(ctx)).map(line => [line.serial, line.kind]), [['A', 'load'], ['B', 'kif']])
+  assert.equal(await ctx.storeFor('TCD').getAsync('slettet-2026-11'), undefined)
+})
+
+test('a running or pending task cannot be deleted', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
+  sap.throwWhen = kind => kind === 'lookup'
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, TASK, ['A'])
+  await assert.rejects(svc.deleteTask(MONA, { taskId: 't1' }), { code: 'SOFTWARELOAD_NOT_FINISHED' })
+  assert.equal((await savedRunning(ctx, ANNA)).id, 't1', 'the running task is untouched')
+
+  await assert.rejects(svc.finish(ANNA, await confirmed(ctx, ANNA)), { code: 'SAP_NOT_READY' })
+  const store = ctx.storeFor('TCD')
+  await assert.rejects(svc.deleteTask(MONA, { taskId: 't1' }), { code: 'SOFTWARELOAD_NOT_FINISHED' })
+  assert.equal((await store.getAsync('venter-t1', { skipCache: true })).id, 't1', 'the pending task is untouched')
+
+  // A finish that has written the month file but not yet removed the pending one is still on its way.
+  const pending = await store.getAsync('venter-t1', { skipCache: true })
+  const monthKey = `opgaver-${runningKeyOf(ANNA).slice('aktiv-'.length)}-2026-11`
+  await store.setAsync(monthKey, { tasks: { t1: { ...pending, state: 'faerdig', results: {} } } })
+  await assert.rejects(svc.deleteTask(MONA, { taskId: 't1' }), { code: 'SOFTWARELOAD_NOT_FINISHED' })
+  assert.deepEqual(Object.keys((await store.getAsync(monthKey, { skipCache: true })).tasks), ['t1'])
+  assert.equal(await store.getAsync('slettet-2026-11'), undefined)
+})
+
+test('deletion is logged', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' }, B: { material: 'M-R', sloc: 'D000' }, C: { material: 'M-R', sloc: 'D001' } })
+  const ctx = setup({ sap })
+  const svc = ctx.service()
+  assert.equal(await finishedTask(ctx, svc, ANNA, ['A', 'B']), 't1')
+  assert.equal((await svc.kifMove(BO, { serials: ['C'] })).id, 't2')
+  ctx.tick(MIN)
+  const at = ctx.clock.now
+  await svc.deleteTask(MONA, { taskId: 't1' })
+  await svc.deleteKifMove(MONA, { id: 't2' })
+  const log = {
+    entries: [
+      { kind: 'task', id: 't1', by: 'mona@example.test', at, serials: ['A', 'B'] },
+      { kind: 'kif', id: 't2', by: 'mona@example.test', at, serials: ['C'] },
+    ],
+  }
+  assert.deepEqual(await ctx.storeFor('TCD').getAsync('slettet-2026-11', { skipCache: true }), log)
+  await svc.deleteTask(MONA, { taskId: 't1' })
+  await svc.deleteKifMove(MONA, { id: 't2' })
+  assert.deepEqual(await ctx.storeFor('TCD').getAsync('slettet-2026-11', { skipCache: true }), log, 'a second click logs nothing more')
+})
+
+test('a deleted task id can never be finished again', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, TASK, ['A'])
+  const before = await savedRunning(ctx, ANNA)
+  await svc.finish(ANNA, await confirmed(ctx, ANNA))
+  // Another PC wrote a stale copy of the running file back after the finish.
+  const leaveBehind = (extra = {}) => ctx.storeFor('TCD').setAsync(runningKeyOf(ANNA), { ...before, ...extra })
+  await leaveBehind()
+  await svc.deleteTask(MONA, { taskId: 't1' })
+  assert.equal(await savedRunning(ctx, ANNA), undefined, 'the leftover running file is retired with the task')
+
+  sap.calls.length = 0
+  const finishAgain = { taskId: 't1', choice: { type: 'sw+key', kif: true, target: 'D006', version: 'v2.1.3' } }
+  for (const extra of [{}, { finishing: { at: ctx.clock.now, runId: 'crashed' } }]) {
+    await leaveBehind(extra)
+    await assert.rejects(svc.finish(ANNA, finishAgain), { code: 'SOFTWARELOAD_ALREADY_FINISHED' })
+    assert.equal(await savedRunning(ctx, ANNA), undefined)
+  }
+  await leaveBehind({ finishing: { at: ctx.clock.now, runId: 'crashed' } })
+  assert.equal((await svc.status(ANNA)).running, null, 'the screen never shows it running again')
+  assert.equal(await savedRunning(ctx, ANNA), undefined)
+
+  assert.deepEqual(sap.calls, [])
+  assert.equal(await ctx.storeFor('TCD').getAsync('venter-t1', { skipCache: true }), undefined, 'no new pending task')
+  assert.deepEqual(await ctx.finished('2026-11'), {})
+  assert.deepEqual(await allIndexLines(ctx), [])
+  assert.deepEqual(await svc.tasks(MONA, NOVEMBER), [])
+})
+
+test('a KIF move deleted while a PC still holds its record is never brought back', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D001' } })
+  const ctx = setup({ sap })
+  const svc = ctx.service()
+  const restore = dropDriveAfterTransfer(sap, ctx, 'kif', 100)
+  await assert.rejects(svc.kifMove(ANNA, { serials: ['A'] }), { code: 'SOFTWARELOAD_SAVE_FAILED' })
+  assert.equal(ctx.journal().length, 1)
+  restore()
+  ctx.faults.kif = 0
+
+  await svc.deleteKifMove(MONA, { id: 't1' })
+  await svc.status(ANNA)
+  assert.deepEqual(ctx.journal(), [], 'the journal is emptied')
+  assert.deepEqual((await ctx.storeFor('TCD').getAsync('kif-2026-11', { skipCache: true })).moves, {})
+  assert.deepEqual(await allIndexLines(ctx), [])
+})

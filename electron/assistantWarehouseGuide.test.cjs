@@ -126,6 +126,24 @@ test('the guide answers how-to questions about Softwareload in four languages', 
   }
 })
 
+test('a manager is told how to delete a softwareload task or KIF move, in four languages, and that SAP is not changed', () => {
+  const DELETE = [
+    ['hvordan sletter jeg en softwareload-opgave?', 'da', 'Slet en opgave eller KIF-flytning'], ['hvordan sletter jeg en KIF-flytning?', 'da', 'Slet en opgave eller KIF-flytning'],
+    ['hvordan sletter jeg testdata i softwareload?', 'da', 'Slet en opgave eller KIF-flytning'],
+    ['how do I delete a softwareload task?', 'en', 'Delete a task or KIF move'], ['how do I delete a KIF move?', 'en', 'Delete a task or KIF move'],
+    ['miten poistan softwareload-tehtävän?', 'fi', 'Poista tehtävä tai KIF-siirto'], ['miten poistan KIF-siirron?', 'fi', 'Poista tehtävä tai KIF-siirto'],
+    ['hur tar jag bort en softwareload-uppgift?', 'sv', 'Ta bort en uppgift eller KIF-flytt'], ['hur tar jag bort en KIF-flytt?', 'sv', 'Ta bort en uppgift eller KIF-flytt'],
+  ]
+  for (const [question, language, title] of DELETE) {
+    const answer = ask({ q: question, lang: language }, { role: 'manager' })
+    assert.equal(answer.mode, 'app-guide', `${language}: ${question} -> ${answer.text.slice(0, 80)}`)
+    assert.match(answer.text, starts(language, title), `${language}: ${question} -> ${answer.text.slice(0, 80)}`)
+    if (language !== 'da') assert.doesNotMatch(answer.text, DANISH_GUIDE, language)
+  }
+  assert.match(ask({ q: 'hvordan sletter jeg en softwareload-opgave?', lang: 'da' }, { role: 'manager' }).text, /SAP ændres ikke: flytningerne og materialedokumenterne ligger stadig i SAP/)
+  assert.doesNotMatch(ask({ q: 'hvordan sletter jeg en softwareload-opgave?', lang: 'da' }, { role: 'user' }).text, /^Arbejdsværktøjer - Slet en opgave/, 'an employee is not told how to delete')
+})
+
 test('"where can I see" questions about Softwareload get the search and the statistics directly, also for an employee', () => {
   const WHERE = [
     ['hvor kan jeg se hvem der har loadet en terminal?', 'da', 'Søg på et serienummer'], ['where can I see who loaded a terminal?', 'en', 'Search a serial number'],

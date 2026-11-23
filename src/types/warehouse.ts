@@ -1332,7 +1332,8 @@ export type SoftwareloadIndexLine = {
   unverified?: true
 } & (
   | { kind: 'load'; taskId: string; type: SoftwareloadType; version: string; kif: boolean; note?: string }
-  | { kind: 'kif' }
+  /** `moveId` is given to a manager for the own team's moves: the move "Slet" deletes. */
+  | { kind: 'kif'; moveId?: string }
 )
 
 /** A finished task as saved for its owner's month. */
@@ -1405,6 +1406,13 @@ export interface SoftwareloadBridge {
   search(request: { serial: string }): Promise<{ lines: SoftwareloadIndexLine[]; unreadable: number }>
   /** Finished tasks started in the period (`YYYY-MM-DD`): the own, or the hub's for a manager. */
   tasks(request: { from: string; to: string }): Promise<SoftwareloadTask[]>
+  /**
+   * Managers only: deletes a finished task of the own team from the statistics and the search (SAP is not changed).
+   * A running or pending task is refused with SOFTWARELOAD_NOT_FINISHED, an unknown one with SOFTWARELOAD_NOT_FOUND.
+   */
+  deleteTask(request: { taskId: string }): Promise<{ ok: true }>
+  /** Managers only: deletes a move into KIF (`moveId` of a search line) and its search lines (SAP is not changed). */
+  deleteKifMove(request: { id: string }): Promise<{ ok: true }>
   onProgress(listener: (progress: SoftwareloadProgress) => void): () => void
 }
 
