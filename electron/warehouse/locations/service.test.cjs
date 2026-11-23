@@ -326,6 +326,31 @@ test('a replayed action id is applied once, also from another PC: a partial take
   assert.equal((await pc1.repo.read('TCD')).pallets.p1.quantity, 80, 'a new id is a new action')
 })
 
+// M: drops while a transaction replaces its files: the rename of `file` fails once (the files before it are written).
+const dropAt = (t, file) => {
+  const rename = fs.promises.rename
+  let armed = true
+  t.mock.method(fs.promises, 'rename', async (from, to) => {
+    if (armed && path.basename(String(to)) === file) { armed = false; throw Object.assign(new Error('EIO: M: er væk'), { code: 'EIO' }) }
+    return rename(from, to)
+  })
+}
+
+test('a put-away replayed after M: dropped between the pallets and the rest makes one pallet, with an id from the action', async t => {
+  const { pc1, seed } = setup()
+  await seed([place('A2.1'), place('A2.2')])
+  const request = { actionId: 'put-1', pallets: [{ location: 'A2.1', material: 'R162-0717', quantity: 10 }, { location: 'A2.2', material: 'R162-0717', quantity: 20 }] }
+  dropAt(t, 'meta.json')
+  await assert.rejects(pc1.service.putAway(ANNA, request), { code: 'EIO' })
+  t.mock.restoreAll()
+  const replayed = await pc1.service.putAway(ANNA, request)
+  const pallets = Object.values((await pc1.repo.read('TCD')).pallets)
+  assert.deepEqual(pallets.map(pallet => [pallet.id, pallet.location, pallet.quantity]).sort(), [['put-1:0', 'A2.1', 10], ['put-1:1', 'A2.2', 20]], 'one pallet per physical pallet')
+  if (!replayed.duplicate) assert.deepEqual(replayed.created.map(pallet => pallet.id), ['put-1:0', 'put-1:1'])
+  assert.deepEqual(await pc1.service.putAway(ANNA, request), { duplicate: true })
+  assert.deepEqual((await pc1.repo.history('TCD', { type: 'putaway' })).map(event => event.pallet).sort(), ['put-1:0', 'put-1:1'], 'one log line per pallet')
+})
+
 test('a pallet put or moved straight onto a pick place is used up there and leaves no pallet behind, also the second time', async () => {
   const { pc1, seed } = setup()
   await seed([place('A2.1'), place('H26', { purpose: 'pick', type: 'Hylde', fixedMaterials: ['R162-0717'] })], [{ id: 'p1', location: 'A2.1', material: 'R162-0717', quantity: 40, receivedAt: 1 }])

@@ -116,7 +116,16 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
     const result = await repo.transact(team, { actionId, writes: ['pallets'] }, tx => {
       const created = []
       const filled = []
-      for (const input of pallets) {
+      for (const [index, input] of pallets.entries()) {
+        // The id comes from the action, so a replay after M: dropped halfway (the pallets written, the rest not) finds
+        // the pallet it already made instead of making a second one.
+        const id = actionId ? `${actionId}:${index}` : newId()
+        const made = actionId ? tx.pallets[id] : null
+        if (made) {
+          tx.event({ type: 'putaway', by: by(user), pallet: id, location: made.location, material: made.material, quantity: made.quantity })
+          created.push(made)
+          continue
+        }
         const location = roomIn(tx, input.location)
         if (location.purpose === 'pick') {
           // Straight onto a pick place: the pallet is used up there (pick places hold no pallets and have no quantity).
@@ -128,7 +137,7 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
         const sloc = String(input.sloc || 'D000').trim().toUpperCase()
         if (!SLOC.test(sloc)) throw codeError('SLOC_INVALID', 'Storage location skal være som D000')
         const pallet = {
-          id: newId(), location: location.id, material: materialOf(input.material), quantity: quantityOf(input.quantity, { min: 0, optional: true }),
+          id, location: location.id, material: materialOf(input.material), quantity: quantityOf(input.quantity, { min: 0, optional: true }),
           receivedAt: Number.isFinite(input.receivedAt) ? input.receivedAt : now(), document: normalizeMatdoc(input.document) || null,
           serials: serialsOf(input.serials), sloc, tags: tagsOf(input.tags), note: String(input.note || '').trim().slice(0, 500), createdAt: now(), createdBy: by(user),
         }
