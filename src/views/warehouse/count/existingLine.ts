@@ -16,3 +16,6 @@ export function findExistingLine(lines: CountLine[], { place, material, stockTyp
 
 /** The quantity to save on the existing line: the new one to replace it, the old plus the new to add to it. */
 export const qtyForExisting = (existing: Pick<CountLine, 'qty'>, value: number, choice: ExistingChoice) => (choice === 'add' ? existing.qty + value : value)
+
+/** Tilføj tællelinje: the line to overwrite when the counter replaces it; adding saves a separate line, so each counter keeps their own name. */
+export const addLineTarget = (existing: CountLine | null, choice: ExistingChoice) => (existing && choice === 'replace' ? existing : null)

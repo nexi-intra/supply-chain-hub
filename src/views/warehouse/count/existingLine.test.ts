@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CountLine } from '@/types/warehouse'
-import { findExistingLine, placeKey, qtyForExisting } from './existingLine'
+import { addLineTarget, findExistingLine, placeKey, qtyForExisting } from './existingLine'
 
 const line = (changes: Partial<CountLine>): CountLine => ({ lineId: 'ln-1', place: 'Reol 3', area: 'A', material: 'R162-0717', sloc: 'D000', stockType: 'unrestricted', qty: 10, status: 'counted', comment: '', by: 'anna@x.dk', byName: 'Anna', at: 1, ...changes })
 
@@ -28,5 +28,11 @@ describe('existingLine', () => {
     expect(qtyForExisting(line({ qty: 10 }), 6, 'replace')).toBe(6)
     expect(qtyForExisting(line({ qty: 10 }), 6, 'add')).toBe(16)
     expect(qtyForExisting(line({ qty: 10 }), 0, 'add')).toBe(10)
+  })
+
+  it('in Tilføj tællelinje overwrites the line only to replace; to add it saves a separate line of its own', () => {
+    expect(addLineTarget(line({ lineId: 'ln-a' }), 'replace')?.lineId).toBe('ln-a')
+    expect(addLineTarget(line({ lineId: 'ln-a' }), 'add')).toBeNull()
+    expect(addLineTarget(null, 'replace')).toBeNull()
   })
 })

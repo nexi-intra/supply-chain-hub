@@ -16,7 +16,7 @@ import type { CountLine, CountListLine, StockType } from '@/types/warehouse'
 import type { PanelProps } from './CountView'
 import { isApproved, isSubmitted, lockOf, mayCount, MaterialsInProgress, RequestButton, SubmitDialog, type SubmitRetry } from './MaterialWork'
 import { takeLock, withLine, withoutLine } from './optimisticState'
-import { findExistingLine, placeKey, qtyForExisting, type ExistingChoice } from './existingLine'
+import { addLineTarget, findExistingLine, placeKey, qtyForExisting, type ExistingChoice } from './existingLine'
 import { t } from '@/lib/warehouse/text'
 
 type Filter = 'all' | 'missing' | 'uncounted' | 'over'
@@ -395,32 +395,31 @@ function AddLine({ id, open, state, types, reloadOpen, optimistic, person }: Pic
     if (serialManaged) { toast.error(serialText); return }
     const value = Number(qty)
     if (!place.trim() || !material.trim() || qty.trim() === '' || !Number.isInteger(value) || value < 0) { toast.error(t('Udfyld placering, materiale og et helt antal', 'Fill in location, material and a whole number')); return }
-    // Same place, material and stock type as a counted line: the counter chooses to replace it or add to it, as in the material list.
+    // Same place, material and stock type as a counted line: the counter chooses to replace it or add a line of their own.
     const existing = findExistingLine(state.lines, { place, material: material.trim().toUpperCase(), stockType })
-    if (existing) { setAsking({ existing, value, save: answer => commit(value, existing, answer) }); return }
-    commit(value, null, 'replace')
+    if (existing) { setAsking({ existing, value, save: answer => commit(value, addLineTarget(existing, answer)) }); return }
+    commit(value, null)
   }
 
   // The line shows at once (the material is taken for you); the save runs in the background. A new location is saved
   // alongside it, not before it.
-  const commit = (value: number, existing: CountLine | null, answer: ExistingChoice) => {
+  const commit = (value: number, replaced: CountLine | null) => {
     const code = material.trim().toUpperCase()
-    const area = existing?.area || known?.area || newArea
-    const lineId = existing?.lineId ?? newLineId()
-    const lineQty = existing ? qtyForExisting(existing, value, answer) : value
-    const linePlace = existing?.place ?? place
-    const lineComment = comment.trim() || existing?.comment || ''
-    if (!known && !existing) saveOwnPlace(place, newArea, reloadOpen)
-    const sloc = existing?.sloc || state.rows.find(row => row.material === code && row.stockType === stockType)?.sloc || ''
-    const line: CountLine = { lineId, place: linePlace.trim(), area, material: code, sloc, stockType, qty: lineQty, status: 'counted', comment: lineComment, by: person.email, byName: person.name, at: Date.now() }
+    const area = replaced?.area || known?.area || newArea
+    const lineId = replaced?.lineId ?? newLineId()
+    const linePlace = replaced?.place ?? place
+    const lineComment = comment.trim() || replaced?.comment || ''
+    if (!known && !replaced) saveOwnPlace(place, newArea, reloadOpen)
+    const sloc = replaced?.sloc || state.rows.find(row => row.material === code && row.stockType === stockType)?.sloc || ''
+    const line: CountLine = { lineId, place: linePlace.trim(), area, material: code, sloc, stockType, qty: value, status: 'counted', comment: lineComment, by: person.email, byName: person.name, at: Date.now() }
     const typed = { material, qty, comment }
-    toast.success(t(`Gemt: ${formatNumber(lineQty)} × ${code} på ${linePlace}`, `Saved: ${formatNumber(lineQty)} × ${code} in ${linePlace}`))
+    toast.success(t(`Gemt: ${formatNumber(value)} × ${code} på ${linePlace}`, `Saved: ${formatNumber(value)} × ${code} in ${linePlace}`))
     setMaterial('')
     setQty('')
     setComment('')
     void optimistic(
       current => takeLock(code, person)(withLine(line)(current)),
-      () => window.electronWarehouse!.counts.saveLine({ id, line: { lineId, place: linePlace, area, material, sloc: existing?.sloc, stockType, qty: lineQty, comment: lineComment } }),
+      () => window.electronWarehouse!.counts.saveLine({ id, line: { lineId, place: linePlace, area, material, sloc: replaced?.sloc, stockType, qty: value, comment: lineComment } }),
       {
         onError: () => {
           setMaterial(current => current || typed.material)
