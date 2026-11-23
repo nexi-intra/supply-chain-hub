@@ -1,10 +1,8 @@
 // SAP physical inventory documents of a count: create (MI31) and print (MI21) through the SAP writer, with the rules of
 // core/piDocs.cjs. While SAP waits for the user's F8 the materials are reserved ('creating') so nobody creates them twice.
 const crypto = require('node:crypto')
-const { planDocument, refusal, NEXT } = require('./core/piDocs.cjs')
+const { planDocument, refusal, NEXT, RESERVATION_MS } = require('./core/piDocs.cjs')
 const { approvedWithLinesText, confirmedAll } = require('./core/countDoc.cjs')
-
-const RESERVATION_MS = 20 * 60 * 1000
 
 function codeError(code, message) {
   const error = new Error(`${code}: ${message}`)

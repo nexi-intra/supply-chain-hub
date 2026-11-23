@@ -134,7 +134,7 @@ export function DeleteStatusDialog({ status, onClose, onDeleted }: { status: Cou
         <DialogHeader>
           <DialogTitle>{t('Slet status', 'Delete status')}</DialogTitle>
           <DialogDescription>
-            {t(`Statussen og alle dens ${status.counts.length} ${status.counts.length === 1 ? 'optælling' : 'optællinger'} slettes for alle: SAP-billeder, scanninger, tællelinjer, deltagere, godkendelser og historik. Det kan ikke fortrydes. Allerede gemte Excel-rapporter bliver liggende.`, `The status and all its ${status.counts.length} ${status.counts.length === 1 ? 'count' : 'counts'} are deleted for everyone: SAP snapshots, scans, count lines, participants, approvals and history. It cannot be undone. Excel reports already saved are kept.`)}
+            {t(`Statussen og alle dens ${status.counts.length} ${status.counts.length === 1 ? 'optælling' : 'optællinger'} slettes for alle: SAP-billeder, scanninger, tællelinjer, deltagere, godkendelser og historik. Det kan ikke fortrydes. Har en optælling SAP-dokumenter, der ikke er bogført, skal de slettes først. Bogførte SAP-dokumenter gemmes med dokumentnummer og materialedokument. Allerede gemte Excel-rapporter bliver liggende.`, `The status and all its ${status.counts.length} ${status.counts.length === 1 ? 'count' : 'counts'} are deleted for everyone: SAP snapshots, scans, count lines, participants, approvals and history. It cannot be undone. SAP documents of a count that are not posted must be deleted first. Posted SAP documents are kept with document number and material document. Excel reports already saved are kept.`)}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2">

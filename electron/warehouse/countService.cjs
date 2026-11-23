@@ -11,6 +11,7 @@ const { normalizeSerial, matchSerial, activeEvents, aggregateCount, applyApprova
 const { docLinesFromSnapshot, missingAtApproval, linesAtApproval, approvedWithLinesText, buildCountDoc, confirmedAll } = require('./core/countDoc.cjs')
 const { normalizeMatdoc } = require('./core/sapParsers.cjs')
 const { differenceTotals, archiveLines } = require('./core/archive.cjs')
+const { ACTIVE: ACTIVE_PIDOC, RESERVATION_MS } = require('./core/piDocs.cjs')
 const { createJournal, readAllJournals } = require('./journal.cjs')
 
 const CLAIM_IDLE_MS = 30 * 60 * 1000
@@ -210,12 +211,12 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const cacheKey = `${team}:${statusId}:${status.lockedAt}`
     if (archives.has(cacheKey)) return archives.get(cacheKey)
     const entries = (await statusCounts(team, statusId)).filter(entry => !entry.creating)
-    const read = await Promise.all(entries.map(entry => Promise.all([reportData(user, entry.id), repo.getPiDocs(team, entry.id).catch(() => ({}))])))
+    const read = await Promise.all(entries.map(entry => reportData(user, entry.id)))
     const counts = []
     const lines = []
     entries.forEach((entry, index) => {
-      const [data, docs] = read[index]
-      const own = archiveLines({ count: { id: entry.id, name: entry.name }, rows: data.aggregate.rows, approvals: data.approvals, docs: Object.values(docs) })
+      const data = read[index]
+      const own = archiveLines({ count: { id: entry.id, name: entry.name }, rows: data.aggregate.rows, approvals: data.approvals, docs: data.piDocs })
       counts.push({ id: entry.id, name: entry.name, totals: differenceTotals(own) })
       lines.push(...own)
     })
@@ -1494,7 +1495,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   async function reportData(user, id) {
     const state = await refresh(await load(user, id), true)
     await state.journal.flush()
-    const [stored, approvals] = await Promise.all([repo.getMembers(state.team, state.id), repo.getApprovals(state.team, state.id)])
+    const [stored, approvals, piDocs] = await Promise.all([repo.getMembers(state.team, state.id), repo.getApprovals(state.team, state.id), repo.getPiDocs(state.team, state.id).catch(() => ({}))])
     // Managers and Optælling admins count without being in the members file: whoever registered something took part.
     const members = { ...stored }
     for (const event of state.events || []) {
@@ -1502,7 +1503,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       if (email && members[email]?.status !== 'approved') members[email] = { email, name: event.byName || email, role: 'participant', status: 'approved', byRole: true }
     }
     const aggregate = applyApprovals(state.aggregate, approvals)
-    return { meta: state.meta, snapshot: state.snapshot, aggregate, members, approvals, progress: computeProgress({ snapshot: state.snapshot, aggregate, countLists: state.countLists, events: state.events || [], approvals, now: now() }) }
+    // The SAP documents go into the report too ("SAP-dokumenter"): their numbers are the trail of what was posted in SAP.
+    return { meta: state.meta, snapshot: state.snapshot, aggregate, members, approvals, progress: computeProgress({ snapshot: state.snapshot, aggregate, countLists: state.countLists, events: state.events || [], approvals, now: now() }), piDocs: Object.values(piDocs) }
   }
 
   async function flush(user, id) {
@@ -1538,8 +1540,31 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const meta = await repo.getMeta(team, id)
     if (lower(meta.owner.email) !== lower(user.email) && !isManager(user)) throw codeError('COUNT_OWNER_ONLY', 'Kun den ansvarlige eller en manager kan slette optællingen')
     await assertStatusOpen(team, meta)
-    await removeCount(team, id, me(user))
+    const posted = await sapDocTrail(team, [{ id, name: meta.name }])
+    await removeCounts(team, [id], me(user), null, posted)
     return { ok: true }
+  }
+
+  /**
+   * The SAP documents of counts about to be deleted. One still active in SAP (being created, created, printed or
+   * counted) refuses the delete: its files are the only way to find it from the app. The posted ones are returned per
+   * count for the tombstone. Read without a fallback: when the documents cannot be read, nothing is deleted.
+   */
+  async function sapDocTrail(team, counts) {
+    const all = await Promise.all(counts.map(entry => repo.getPiDocs(team, entry.id)))
+    const at = now()
+    const active = []
+    const posted = {}
+    counts.forEach((entry, index) => {
+      for (const doc of Object.values(all[index] || {})) {
+        if (!doc || typeof doc !== 'object') continue
+        const open = doc.status === 'creating' ? at - (doc.startedAt || 0) < RESERVATION_MS : ACTIVE_PIDOC.has(doc.status)
+        if (open) active.push(`${doc.docNo || 'et dokument under oprettelse'}${counts.length > 1 && entry.name ? ` (${entry.name})` : ''}`)
+        else if (doc.status === 'posted' && doc.docNo) (posted[entry.id] ||= []).push({ docNo: doc.docNo, year: doc.year || null, materialDoc: doc.materialDoc || null })
+      }
+    })
+    if (active.length) throw codeError('COUNT_PIDOCS_ACTIVE', `Slet SAP-dokumenterne først. Disse SAP-dokumenter er ikke bogført: ${active.join(', ')}`)
+    return posted
   }
 
   async function removeCount(team, id, by) {
@@ -1548,11 +1573,12 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
 
   /**
    * One write with all tombstones (other PCs stop using the counts at once), then the files of every count are removed
-   * in parallel – together with `alongside` (e.g. removing the status), which needs the tombstones first.
+   * in parallel – together with `alongside` (e.g. removing the status), which needs the tombstones first. `posted` (from
+   * sapDocTrail) goes into the tombstones.
    */
-  async function removeCounts(team, ids, by, alongside = null) {
+  async function removeCounts(team, ids, by, alongside = null, posted = {}) {
     const stopped = Promise.all(ids.map(id => forget(team, id)))
-    await repo.markDeleted(team, ids, by)
+    await repo.markDeleted(team, ids, by, posted)
     // A journal upload or local save already on its way must finish first, or it would write a file again afterwards.
     await stopped
     const [, result] = await Promise.all([
@@ -1565,7 +1591,10 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     return result
   }
 
-  /** Deletes a status and every count in it, locked or not. Saved Excel reports stay in the reports folder. */
+  /**
+   * Deletes a status and every count in it, locked or not. Saved Excel reports stay in the reports folder. Refused while
+   * a count has an SAP document not posted yet; posted ones are kept in the tombstones (sapDocTrail).
+   */
   async function deleteStatus(user, statusId) {
     if (!isManager(user)) throw codeError('MANAGER_ONLY', 'Kun managers kan slette en status')
     const team = teamOf(user)
@@ -1573,7 +1602,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     // Counts whose creation crashed: whole ones are deleted with the others, unfinished ones lose their files too.
     const unfinished = await repo.settleStaleReservations(team, statusId)
     const counts = await statusCounts(team, statusId)
-    await removeCounts(team, [...counts.map(entry => entry.id), ...unfinished], me(user), () => repo.deleteStatus(team, statusId))
+    const posted = await sapDocTrail(team, [...counts, ...unfinished.map(id => ({ id, name: '' }))])
+    await removeCounts(team, [...counts.map(entry => entry.id), ...unfinished], me(user), () => repo.deleteStatus(team, statusId), posted)
     return { ok: true, counts: counts.length }
   }
 

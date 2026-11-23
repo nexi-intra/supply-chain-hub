@@ -9,6 +9,8 @@ const NEXT = Object.freeze({ created: 'print', printed: 'count', counted: 'post'
 const ACTION_ROLE = Object.freeze({ create: 'manager', print: 'manager', post: 'manager', delete: 'manager', count: 'admin' })
 // Same as MI31's "Maximum No. of Items" in the guide.
 const MAX_LINES = 20
+// A document still 'creating' after this was left by a crashed app: it holds nothing any more.
+const RESERVATION_MS = 20 * 60 * 1000
 
 function codeError(code, message) {
   const error = new Error(`${code}: ${message}`)
@@ -68,4 +70,4 @@ function refusal({ action, role, email, doc }) {
   return null
 }
 
-module.exports = { transactionFor, serialFormat, planDocument, refusal, NEXT, ACTIVE, MAX_LINES }
+module.exports = { transactionFor, serialFormat, planDocument, refusal, NEXT, ACTIVE, MAX_LINES, RESERVATION_MS }

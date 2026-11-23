@@ -192,14 +192,18 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId, wa
     await removeCountFiles(team, ids)
   }
 
-  async function markDeleted(team, ids, by) {
+  /**
+   * The tombstones of the counts. `docsById` keeps the posted SAP documents of a count in its tombstone (`deletedDocs`:
+   * number, year and material document), the only trace of what was posted in SAP once its files are gone.
+   */
+  async function markDeleted(team, ids, by, docsById = {}) {
     if (!ids.length) return
     for (const id of ids) key(id, '')
     const at = now()
     const deletedBy = { email: by.email, name: by.name }
     await store(team).mutateAsync(INDEX_KEY, index => {
       const next = index && typeof index === 'object' ? index : {}
-      for (const id of ids) next[id] = { id, deleted: true, deletedAt: at, deletedBy }
+      for (const id of ids) next[id] = { id, deleted: true, deletedAt: at, deletedBy, ...(docsById[id]?.length ? { deletedDocs: docsById[id] } : {}) }
       return next
     })
   }

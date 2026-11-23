@@ -28,7 +28,7 @@ export function DeleteCountDialog({ id, name, onClose, onDeleted }: { id: string
         <DialogHeader>
           <DialogTitle>{t('Slet optælling', 'Delete count')}</DialogTitle>
           <DialogDescription>
-            {t('Alt i optællingen slettes for alle: SAP-billedet, scanninger, tællelinjer, deltagere og godkendelser. Det kan ikke fortrydes. Allerede gemte Excel-rapporter bliver liggende.', 'Everything in the count is deleted for everyone: the SAP snapshot, scans, count lines, participants and approvals. It cannot be undone. Excel reports already saved are kept.')}
+            {t('Alt i optællingen slettes for alle: SAP-billedet, scanninger, tællelinjer, deltagere og godkendelser. Det kan ikke fortrydes. Har optællingen SAP-dokumenter, der ikke er bogført, skal de slettes først. Bogførte SAP-dokumenter gemmes med dokumentnummer og materialedokument. Allerede gemte Excel-rapporter bliver liggende.', 'Everything in the count is deleted for everyone: the SAP snapshot, scans, count lines, participants and approvals. It cannot be undone. SAP documents that are not posted must be deleted first. Posted SAP documents are kept with document number and material document. Excel reports already saved are kept.')}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2">

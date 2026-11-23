@@ -33,6 +33,11 @@ function reportData() {
     snapshot, aggregate, approvals,
     members: { 'anna@example.test': { name: 'Anna', role: 'owner', status: 'approved' }, 'bo@example.test': { name: 'Bo', role: 'participant', status: 'approved' } },
     progress: computeProgress({ snapshot, aggregate, events, approvals, now: 100 }),
+    piDocs: [
+      { id: '105000990', docNo: '105000990', year: '2026', status: 'posted', sloc: 'D000', stockType: 'unrestricted', lines: [{ material: 'R162-0717' }], createdBy: { name: 'Mona', at: 5 }, postedBy: { name: 'Mona', at: Date.UTC(2026, 9, 16, 13, 0) }, materialDoc: '4905204990', differences: [{ material: 'R162-0717', book: 100, counted: 97, diff: -3, amount: 15 }] },
+      { id: '105000991', docNo: '105000991', year: '2026', status: 'printed', sloc: 'D000', stockType: 'unrestricted', lines: [{ material: 'INT4300-4921-0-R' }, { material: 'INT4300-4921-0' }], createdBy: { name: 'Mona', at: 6 } },
+      { id: 'CPREF1', reference: 'CPREF1', status: 'creating', startedAt: 7, sloc: 'D000', stockType: 'unrestricted', lines: [{ material: 'R162-0717' }] },
+    ],
   }
 }
 
@@ -46,7 +51,7 @@ test('the final status report sums every count, keeps free and blocked stock apa
   assert.equal(path.basename(file), 'Status Q4 2026 endelig v2 2026-10-16 0905.xlsx')
   const workbook = new ExcelJS.Workbook()
   await workbook.xlsx.readFile(file)
-  assert.deepEqual(workbook.worksheets.map(sheet => sheet.name), ['Resumé', 'Differencer', 'Serienumre', 'Skal flyttes', 'Historik'])
+  assert.deepEqual(workbook.worksheets.map(sheet => sheet.name), ['Resumé', 'Differencer', 'Serienumre', 'Skal flyttes', 'SAP-dokumenter', 'Historik'])
 
   const values = sheet => { const rows = []; sheet.eachRow(row => rows.push(row.values.slice(1))); return rows }
   const summary = values(workbook.getWorksheet('Resumé'))
@@ -60,6 +65,9 @@ test('the final status report sums every count, keeps free and blocked stock apa
   assert.deepEqual(differences.slice(1).map(row => row[5]), ['Unblocked', 'Unblocked', 'Unblocked', 'Unblocked', 'Blocked', 'Blocked'])
   assert.equal(values(workbook.getWorksheet('Serienumre')).length - 1, 6)
   assert.equal(values(workbook.getWorksheet('Skal flyttes')).length - 1, 4)
+  const docs = values(workbook.getWorksheet('SAP-dokumenter'))
+  assert.deepEqual(docs[0].slice(0, 3), ['Optælling', 'SAP-dokument', 'År'])
+  assert.deepEqual(docs.slice(1).map(row => `${row[0]}:${row[1]}:${row[3]}:${row[6]}`), ['Status D000 / uge 42:105000990:Bogført:R162-0717', 'Status D000 / uge 42:105000991:Udskrevet:INT4300-4921-0-R', 'Status D000 / uge 42:105000991:Udskrevet:INT4300-4921-0', 'D000 spærret:105000990:Bogført:R162-0717', 'D000 spærret:105000991:Udskrevet:INT4300-4921-0-R', 'D000 spærret:105000991:Udskrevet:INT4300-4921-0'])
   const history = values(workbook.getWorksheet('Historik'))
   assert.deepEqual(history.slice(1).map(row => `${row[1]}:${row[2]}:${row[3] ?? ''}`), ['Startet:Mona:', 'Låst op:Mona:Rettelse af R162', 'Godkendt og låst:Mona:'])
 })
@@ -105,7 +113,7 @@ test('the Excel report has summary, differences, serial numbers, move list and c
   assert.equal(path.dirname(file), dir)
   const workbook = new ExcelJS.Workbook()
   await workbook.xlsx.readFile(file)
-  assert.deepEqual(workbook.worksheets.map(sheet => sheet.name), ['Resumé', 'Differencer', 'Alle materialer', 'Serienumre', 'Skal flyttes', 'Tællelinjer'])
+  assert.deepEqual(workbook.worksheets.map(sheet => sheet.name), ['Resumé', 'Differencer', 'Alle materialer', 'Serienumre', 'Skal flyttes', 'Tællelinjer', 'SAP-dokumenter'])
 
   const values = sheet => { const rows = []; sheet.eachRow(row => rows.push(row.values.slice(1))); return rows }
   const summary = values(workbook.getWorksheet('Resumé'))
@@ -127,6 +135,12 @@ test('the Excel report has summary, differences, serial numbers, move list and c
   assert.equal(lines[1][7], '=HYPERLINK("x")', 'text stays text')
   const commentCell = workbook.getWorksheet('Tællelinjer').getRow(2).getCell(8)
   assert.equal(commentCell.formula, undefined)
+
+  const docs = values(workbook.getWorksheet('SAP-dokumenter'))
+  assert.deepEqual(docs[0], ['SAP-dokument', 'År', 'Status', 'Storage location', 'Lagertype', 'Materiale', 'SAP antal', 'Talt', 'Difference', 'Beløb (DKK)', 'Materialedokument', 'Oprettet af', 'Bogført af', 'Bogført'])
+  assert.deepEqual(docs[1].slice(0, 13), ['105000990', '2026', 'Bogført', 'D000', 'Unblocked', 'R162-0717', 100, 97, -3, 15, '4905204990', 'Mona', 'Mona'], 'the posted document with its differences and material document')
+  assert.ok(docs[1][13] instanceof Date)
+  assert.deepEqual(docs.slice(2).map(row => `${row[0]}:${row[2]}:${row[5]}:${row[6] ?? ''}:${row[10] ?? ''}`), ['105000991:Udskrevet:INT4300-4921-0-R::', '105000991:Udskrevet:INT4300-4921-0::'], 'one row per material; a reservation without a number is left out')
 })
 
 test('in English the count report and the final status report have English sheets, headings and labels – no Danish text', async () => {
@@ -141,8 +155,8 @@ test('in English the count report and the final status report have English sheet
   const read = async file => { const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(file); return workbook }
   const count = await read(countFile)
   const final = await read(statusFile)
-  assert.deepEqual(count.worksheets.map(sheet => sheet.name), ['Summary', 'Differences', 'All materials', 'Serial numbers', 'Must be moved', 'Count lines'])
-  assert.deepEqual(final.worksheets.map(sheet => sheet.name), ['Summary', 'Differences', 'Serial numbers', 'Must be moved', 'Status history'], 'Excel reserves the sheet name History')
+  assert.deepEqual(count.worksheets.map(sheet => sheet.name), ['Summary', 'Differences', 'All materials', 'Serial numbers', 'Must be moved', 'Count lines', 'SAP documents'])
+  assert.deepEqual(final.worksheets.map(sheet => sheet.name), ['Summary', 'Differences', 'Serial numbers', 'Must be moved', 'SAP documents', 'Status history'], 'Excel reserves the sheet name History')
 
   const texts = workbook => workbook.worksheets.flatMap(sheet => { const cells = []; sheet.eachRow(row => row.eachCell(cell => { if (typeof cell.value === 'string') cells.push(`${sheet.name}: ${cell.value}`) })); return cells })
   const danish = [...texts(count), ...texts(final)].filter(text => /[æøåÆØÅ]|\b(I alt|Godkendt|Bogført|Talt|Mangler|Materiale|Antal|Startet|og)\b/.test(text))

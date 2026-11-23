@@ -1226,6 +1226,62 @@ test('after the status is locked the SAP documents are still made, counted, post
   await assert.rejects(mona.approveAllWithoutDifference(MONA, id), locked)
 })
 
+test('a count with an SAP document not posted yet cannot be deleted; posted ones are kept in the delete mark', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const mona = ctx.service('pc3')
+  const { id } = await newCount(ctx, anna)
+  const doc = (docId, status, extra = {}) => ({ id: docId, docNo: docId, year: '2026', status, sloc: 'D000', stockType: 'unrestricted', lines: [{ material: 'R162-0717' }], ...extra })
+  const setDocs = docs => ctx.repo.changePiDocs('TCD', id, () => ({ all: Object.fromEntries(docs.map(item => [item.id, item])) }))
+  for (const status of ['created', 'printed', 'counted']) {
+    await setDocs([doc('105000960', status)])
+    await assert.rejects(anna.deleteCount(ANNA, id), error => error.code === 'COUNT_PIDOCS_ACTIVE' && error.message === 'Slet SAP-dokumenterne først. Disse SAP-dokumenter er ikke bogført: 105000960')
+  }
+  await setDocs([{ id: 'CPREF1', reference: 'CPREF1', status: 'creating', startedAt: ctx.clock.now, sloc: 'D000', stockType: 'unrestricted', lines: [{ material: 'R162-0717' }] }])
+  await assert.rejects(mona.deleteCount(MONA, id), error => error.code === 'COUNT_PIDOCS_ACTIVE' && /under oprettelse$/.test(error.message))
+  assert.equal((await ctx.repo.listCounts('TCD')).length, 1, 'nothing deleted')
+
+  // A reservation left by a crash (older than 20 minutes) and a deleted document do not stop it.
+  ctx.tick(20 * 60 * 1000 + 1)
+  await setDocs([{ id: 'CPREF1', reference: 'CPREF1', status: 'creating', startedAt: 0, lines: [] }, doc('105000961', 'deleted'), doc('105000962', 'posted', { materialDoc: '4905204901' }), doc('105000963', 'posted')])
+  assert.deepEqual(await anna.deleteCount(ANNA, id), { ok: true })
+  const entry = (await ctx.storeFor('TCD').getAsync('counts-index'))[id]
+  assert.deepEqual([entry.deleted, entry.deletedDocs], [true, [{ docNo: '105000962', year: '2026', materialDoc: '4905204901' }, { docNo: '105000963', year: '2026', materialDoc: null }]])
+})
+
+test('deleting a status is refused while one of its counts has an SAP document not posted yet; posted ones are kept per count', async () => {
+  const ctx = setup()
+  ctx.sap.mb52[0] = stock('INT4300-4921-0', 'D000', 2, 1, 2000, 1000)
+  ctx.sap.serials.push(serial('B1', 'INT4300-4921-0', 'D000', 'blocked'))
+  const anna = ctx.service('pc1')
+  const mona = ctx.service('pc3')
+  const create = async scope => anna.createCount(ANNA, { token: (await anna.preview(ANNA, { scope })).token, name: `D000 ${scope.stockTypes[0]}` })
+  const first = await create({ type: 'slocs', slocs: ['D000'], stockTypes: ['unrestricted'] })
+  const second = await create({ type: 'slocs', slocs: ['D000'], stockTypes: ['blocked'] })
+  const doc = (docId, status) => ({ id: docId, docNo: docId, year: '2026', status, sloc: 'D000', stockType: 'unrestricted', lines: [{ material: 'R162-0717' }], ...(status === 'posted' ? { materialDoc: `49${docId}` } : {}) })
+  await ctx.repo.changePiDocs('TCD', first.id, () => ({ all: { 105000970: doc('105000970', 'posted') } }))
+  await ctx.repo.changePiDocs('TCD', second.id, () => ({ all: { 105000971: doc('105000971', 'printed') } }))
+  await ctx.repo.updateStatus('TCD', 'st0open1', { state: 'locked', lockedAt: 2 }, { action: 'locked', by: { email: 'mona@example.test', name: 'Mona' } })
+  await assert.rejects(mona.deleteStatus(MONA, 'st0open1'), error => error.code === 'COUNT_PIDOCS_ACTIVE' && error.message === 'Slet SAP-dokumenterne først. Disse SAP-dokumenter er ikke bogført: 105000971 (D000 blocked)')
+  assert.equal((await ctx.repo.listCounts('TCD')).length, 2, 'nothing deleted')
+  assert.equal((await ctx.repo.getStatus('TCD', 'st0open1')).state, 'locked')
+
+  await ctx.repo.changePiDocs('TCD', second.id, () => ({ all: { 105000971: doc('105000971', 'posted') } }))
+  assert.deepEqual(await mona.deleteStatus(MONA, 'st0open1'), { ok: true, counts: 2 })
+  const index = await ctx.storeFor('TCD').getAsync('counts-index')
+  assert.deepEqual([index[first.id].deletedDocs, index[second.id].deletedDocs], [[{ docNo: '105000970', year: '2026', materialDoc: '49105000970' }], [{ docNo: '105000971', year: '2026', materialDoc: '49105000971' }]])
+})
+
+test('the report data has the SAP documents of the count', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const { id } = await newCount(ctx, anna)
+  assert.deepEqual((await anna.reportData(ANNA, id)).piDocs, [])
+  const posted = { id: '105000980', docNo: '105000980', year: '2026', status: 'posted', sloc: 'D000', stockType: 'unrestricted', lines: [{ material: 'R162-0717' }], materialDoc: '4905204902', differences: [{ material: 'R162-0717', book: 100, counted: 97, diff: -3, amount: 15 }] }
+  await ctx.repo.changePiDocs('TCD', id, () => ({ all: { [posted.id]: posted } }))
+  assert.deepEqual((await anna.reportData(ANNA, id)).piDocs, [posted])
+})
+
 test('count document for serials: SAP\'s serials of the day minus the ones missing at approval – also for an older approval', async () => {
   const ctx = setup()
   const anna = ctx.service('pc1')

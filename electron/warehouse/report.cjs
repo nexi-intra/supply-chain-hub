@@ -71,7 +71,9 @@ const REPORT_TEXT = {
     lineStatus: { error: 'Fejl', counted: 'Talt' },
     history: { started: 'Startet', locked: 'Godkendt og låst', unlocked: 'Låst op' },
     historyHeaders: ['Tidspunkt', 'Handling', 'Af', 'Begrundelse'],
-    sheets: { summary: 'Resumé', differences: 'Differencer', all: 'Alle materialer', serials: 'Serienumre', moves: 'Skal flyttes', lines: 'Tællelinjer', history: 'Historik' },
+    sheets: { summary: 'Resumé', differences: 'Differencer', all: 'Alle materialer', serials: 'Serienumre', moves: 'Skal flyttes', lines: 'Tællelinjer', history: 'Historik', docs: 'SAP-dokumenter' },
+    docStatus: { creating: 'Under oprettelse', created: 'Oprettet', printed: 'Udskrevet', counted: 'Talt', posted: 'Bogført', deleted: 'Slettet' },
+    docHeaders: ['SAP-dokument', 'År', 'Status', 'Storage location', 'Lagertype', 'Materiale', 'SAP antal', 'Talt', 'Difference', 'Beløb (DKK)', 'Materialedokument', 'Oprettet af', 'Bogført af', 'Bogført'],
     and: ' og ',
     total: 'I alt',
     materials: list => `Materialer: ${list}`,
@@ -99,7 +101,9 @@ const REPORT_TEXT = {
     lineStatus: { error: 'Error', counted: 'Counted' },
     history: { started: 'Started', locked: 'Approved and locked', unlocked: 'Unlocked' },
     historyHeaders: ['Time', 'Action', 'By', 'Reason'],
-    sheets: { summary: 'Summary', differences: 'Differences', all: 'All materials', serials: 'Serial numbers', moves: 'Must be moved', lines: 'Count lines', history: 'Status history' },
+    sheets: { summary: 'Summary', differences: 'Differences', all: 'All materials', serials: 'Serial numbers', moves: 'Must be moved', lines: 'Count lines', history: 'Status history', docs: 'SAP documents' },
+    docStatus: { creating: 'Being created', created: 'Created', printed: 'Printed', counted: 'Counted', posted: 'Posted', deleted: 'Deleted' },
+    docHeaders: ['SAP document', 'Year', 'Status', 'Storage location', 'Stock type', 'Material', 'SAP quantity', 'Counted', 'Difference', 'Amount (DKK)', 'Material document', 'Created by', 'Posted by', 'Posted'],
     and: ' and ',
     total: 'Total',
     materials: list => `Materials: ${list}`,
@@ -130,10 +134,29 @@ function moveRowsOf(aggregate, text) {
   return aggregate.moves.map(item => [item.material || '', item.serial || '', item.quantity, item.sloc || '', item.place || '', (item.suggestions || []).join(', '), text.moveReasons[item.reason] || item.reason, item.byName || item.by || '', asDate(item.at)])
 }
 
+/**
+ * The SAP documents of a count, one row per material: the trail of what was posted in SAP (with the differences of MI20
+ * and the material document). A reservation without a number yet is left out.
+ */
+function docRowsOf(docs, text) {
+  return (Array.isArray(docs) ? docs : [])
+    .filter(doc => doc && doc.docNo)
+    .sort((a, b) => (a.createdBy?.at || 0) - (b.createdBy?.at || 0) || String(a.docNo).localeCompare(String(b.docNo)))
+    .flatMap(doc => (doc.lines || []).map(line => {
+      const posted = doc.status === 'posted' ? (doc.differences || []).find(item => item.material === line.material) : null
+      return [
+        String(doc.docNo), doc.year ? String(doc.year) : '', text.docStatus[doc.status] || doc.status || '', doc.sloc || '', STOCK_LABELS[doc.stockType] || '', line.material,
+        posted ? posted.book : null, posted ? posted.counted : null, posted ? posted.diff : null, posted ? posted.amount : null,
+        doc.materialDoc || '', personName(doc.createdBy), doc.status === 'posted' ? personName(doc.postedBy) : '', doc.status === 'posted' ? asDate(doc.postedBy?.at) : null,
+      ]
+    }))
+}
+const docFormats = text => ({ [text.docHeaders[9]]: MONEY_FORMAT, [text.docHeaders[13]]: DATE_FORMAT })
+
 const scopeTextOf = (scope, text) => (scope.type === 'materials' ? text.materials(scope.materials.join(', ')) : `Storage locations: ${scope.slocs.join(', ')}`)
 const round2 = value => Math.round(value * 100) / 100 || 0
 
-function buildWorkbook({ meta, snapshot, aggregate, members, approvals, progress, language }) {
+function buildWorkbook({ meta, snapshot, aggregate, members, approvals, progress, piDocs, language }) {
   const text = textFor(language)
   const workbook = new ExcelJS.Workbook()
   workbook.creator = 'CountPoint'
@@ -199,6 +222,7 @@ function buildWorkbook({ meta, snapshot, aggregate, members, approvals, progress
 
   const lineRows = aggregate.lines.map(line => [line.place, line.area, line.material, line.sloc, STOCK_LABELS[line.stockType], line.qty, line.status === 'error' ? text.lineStatus.error : text.lineStatus.counted, line.comment, line.byName || line.by || '', asDate(line.at)])
   addTable(workbook.addWorksheet(text.sheets.lines), text.lineHeaders, lineRows, timeFormat(text.lineHeaders))
+  addTable(workbook.addWorksheet(text.sheets.docs), text.docHeaders, docRowsOf(piDocs, text), docFormats(text))
   return workbook
 }
 
@@ -273,6 +297,7 @@ function buildStatusWorkbook({ status, version, counts, language }) {
   addTable(workbook.addWorksheet(text.sheets.differences), [text.countColumn, ...text.rowHeaders], differences, rowFormats(text))
   addTable(workbook.addWorksheet(text.sheets.serials), [text.countColumn, ...text.serialHeaders], counts.flatMap(data => serialRowsOf(data.aggregate, text).map(row => [data.meta.name, ...row])), timeFormat(text.serialHeaders.slice(0, 9)))
   addTable(workbook.addWorksheet(text.sheets.moves), [text.countColumn, ...text.moveHeaders], counts.flatMap(data => moveRowsOf(data.aggregate, text).map(row => [data.meta.name, ...row])), timeFormat(text.moveHeaders))
+  addTable(workbook.addWorksheet(text.sheets.docs), [text.countColumn, ...text.docHeaders], counts.flatMap(data => docRowsOf(data.piDocs, text).map(row => [data.meta.name, ...row])), docFormats(text))
   const history = (status.history || []).map(entry => [asDate(entry.at), text.history[entry.action] || entry.action, personName(entry.by), entry.reason || ''])
   addTable(workbook.addWorksheet(text.sheets.history), text.historyHeaders, history, { [text.historyHeaders[0]]: DATE_FORMAT })
   return workbook
