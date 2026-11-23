@@ -12,6 +12,8 @@ const { putOnClipboard, CLIPBOARD_REFUSED } = require('./clipboardText.cjs')
 const EXPORT_TIMEOUT_MS = 4 * 60 * 1000
 const LONG_CHUNK = 1000
 const TEXT_CHUNK = 500
+// A material document typed without year is looked for this many years back, besides this year.
+const MATDOC_YEARS_BACK = 2
 const EXPORTS = Object.freeze([
   { step: 'mb52', args: ['mb52'], file: 'mb52.txt' },
   { step: 'iq09-unrestricted', args: ['iq09'], file: 'iq09-01.txt', stockArg: '01', stockType: 'unrestricted' },
@@ -77,7 +79,7 @@ function createSapFetcher({ bridge, runScript, tempRoot = os.tmpdir(), expected 
   /**
    * Serial numbers of a material document: ZMS_REP for TCD (no ZMS_PREP access), ZMS_PREP for TRR.
    * Neither finds a document by its number alone (no error, just no rows), so a number without year is tried with
-   * this year and then last year; `document` is the attempt used, with its year.
+   * this year and then each of the MATDOC_YEARS_BACK years before; `document` is the attempt used, with its year.
    */
   function fetchMatdoc({ team, document }) {
     const normalized = normalizeMatdoc(document)
@@ -85,7 +87,7 @@ function createSapFetcher({ bridge, runScript, tempRoot = os.tmpdir(), expected 
     const mode = team === 'TCD' ? 'rep' : 'prep'
     const transaction = mode === 'rep' ? 'ZMS_REP' : 'ZMS_PREP'
     const year = new Date(now()).getFullYear()
-    const attempts = /^\d{10}$/.test(normalized) ? [`${normalized} ${year}`, `${normalized} ${year - 1}`] : [normalized]
+    const attempts = /^\d{10}$/.test(normalized) ? Array.from({ length: MATDOC_YEARS_BACK + 1 }, (_, back) => `${normalized} ${year - back}`) : [normalized]
     return bridge.exclusive(async () => {
       const state = computeSapState(lastJsonLine(await runScript('status')) || {}, expected)
       if (!state.ready) throw fetchError('SAP_NOT_READY', 'SAP er ikke klar', { sapState: state.state })

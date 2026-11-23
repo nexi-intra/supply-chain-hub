@@ -797,7 +797,7 @@ function createSoftwareloadService({
 
   /**
    * The serials to move into KIF: those of the material document when one is given, else the scanned or pasted ones.
-   * `document` is the one SAP found, with its year (the lookup adds this or last year when none is typed).
+   * `document` is the one SAP found, with its year (the lookup tries this year and the two before when none is typed).
    */
   async function kifSerials(user, { serials, document } = {}) {
     if (!String(document ?? '').trim()) {

@@ -83,7 +83,7 @@ export function MatdocImport({ id, team, place, placeInput, refresh }: MatdocImp
       <CardHeader>
         <CardTitle className="text-base">{t('Importér fra materialedokument', 'Import from material document')}</CardTitle>
         <CardDescription>
-          {t(`Skriv eller scan materialedokumentet som i ${transaction}, fx "4900229137" eller "4900229137 2026 01". Året kan udelades, så prøver Optælling i år og sidste år. Optælling slår serienumrene op i SAP – kun opslag, intet ændres.`, `Type or scan the material document as in ${transaction}, e.g. "4900229137" or "4900229137 2026 01". The year can be left out, then Stock count tries this year and last year. Stock count looks the serial numbers up in SAP – lookup only, nothing is changed.`)}
+          {t(`Skriv eller scan materialedokumentet som i ${transaction}, fx "4900229137" eller "4900229137 2026 01". Året kan udelades, så prøver Optælling i år og de to foregående år. Optælling slår serienumrene op i SAP – kun opslag, intet ændres.`, `Type or scan the material document as in ${transaction}, e.g. "4900229137" or "4900229137 2026 01". The year can be left out, then Stock count tries this year and the two years before. Stock count looks the serial numbers up in SAP – lookup only, nothing is changed.`)}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

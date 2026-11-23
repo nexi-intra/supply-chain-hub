@@ -150,7 +150,7 @@ export function SoftwareloadKif({ user, writeEnabled, active, onBusy }: { user: 
         <div className="space-y-2">
           <Label htmlFor="sl-kif-doc">{t('Eller et materialedokument', 'Or a material document')}</Label>
           <Input id="sl-kif-doc" value={matdoc} onChange={event => setMatdoc(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && byDocument) void showPreview() }} placeholder={t('4905204948 eller 4905204948 2026', '4905204948 or 4905204948 2026')} className="font-mono" autoComplete="off" />
-          <p className="text-xs text-muted-foreground">{t('Dokumentnummer, året er valgfrit. Uden år prøves i år og sidste år. Så bruges dokumentets serienumre i stedet for listen.', 'Document number, the year is optional. Without a year, this year and last year are tried. Then the serial numbers of the document are used instead of the list.')}</p>
+          <p className="text-xs text-muted-foreground">{t('Dokumentnummer, året er valgfrit. Uden år prøves i år og de to foregående år. Så bruges dokumentets serienumre i stedet for listen.', 'Document number, the year is optional. Without a year, this year and the two years before are tried. Then the serial numbers of the document are used instead of the list.')}</p>
         </div>
       </div>
       {failed && <ErrorLine text={failed} />}

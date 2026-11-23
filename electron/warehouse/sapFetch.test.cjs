@@ -136,7 +136,7 @@ function matdocYears({ found = [], now = new Date(2026, 0, 5, 8, 0).getTime() } 
   return { fetcher, asked, calls, tempRoot }
 }
 
-test('a material document without year is tried with this year and then last year, in one SAP job', async () => {
+test('a material document without year is tried with this year and then the two years before, in one SAP job', async () => {
   const lastYear = matdocYears({ found: ['4905204948 2025'] })
   const result = await lastYear.fetcher.fetchMatdoc({ team: 'TCD', document: ' 4905204948 ' })
   assert.deepEqual(lastYear.asked, ['4905204948 2026', '4905204948 2025'])
@@ -149,6 +149,11 @@ test('a material document without year is tried with this year and then last yea
   const first = await thisYear.fetcher.fetchMatdoc({ team: 'TRR', document: '4905204948' })
   assert.deepEqual(thisYear.asked, ['4905204948 2026'], 'it stops at the first year with serials')
   assert.equal(first.document, '4905204948 2026')
+  const twoYearsBack = matdocYears({ found: ['4905204948 2024'] })
+  const oldest = await twoYearsBack.fetcher.fetchMatdoc({ team: 'TCD', document: '4905204948' })
+  assert.deepEqual(twoYearsBack.asked, ['4905204948 2026', '4905204948 2025', '4905204948 2024'])
+  assert.deepEqual(twoYearsBack.calls, ['status', 'matdoc', 'matdoc', 'matdoc'])
+  assert.deepEqual([oldest.document, oldest.rows.length], ['4905204948 2024', 3])
 })
 
 test('a material document with a year is looked up exactly as given', async () => {
@@ -158,11 +163,11 @@ test('a material document with a year is looked up exactly as given', async () =
   assert.deepEqual([result.document, result.rows], ['4905204948 2024', []])
 })
 
-test('a material document without year that neither year finds gives no rows and the last document tried', async () => {
+test('a material document without year that no year finds gives no rows and the last document tried', async () => {
   const sap = matdocYears()
   const result = await sap.fetcher.fetchMatdoc({ team: 'TCD', document: '4905204949' })
-  assert.deepEqual(sap.asked, ['4905204949 2026', '4905204949 2025'])
-  assert.deepEqual(result, { document: '4905204949 2025', rows: [], transaction: 'ZMS_REP' })
+  assert.deepEqual(sap.asked, ['4905204949 2026', '4905204949 2025', '4905204949 2024'])
+  assert.deepEqual(result, { document: '4905204949 2024', rows: [], transaction: 'ZMS_REP' })
   assert.deepEqual(fs.readdirSync(sap.tempRoot), [])
 })
 
