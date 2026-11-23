@@ -607,3 +607,21 @@ Jacob: hvis opgaven er oprettet forkert, skal man kunne rette den. Besluttet: al
   - `register.test.cjs` (kanalen findes)
 
 - [ ] Tests først, se dem fejle, implementér, se dem bestå, tsc, vitest, commit `feat(softwareload): ret en kørende opgave`
+
+### Task 15: Slet afsluttede opgaver og KIF-flytninger (Jacobs ønske 23.11)
+
+Jacob: testdata må ikke påvirke statistikken i drift, og man skal kunne slette. Sletningen fjerner kun appens registrering. SAP ændres ikke.
+
+*(Mine beslutninger, bygget som sletning i Stempelkort:)*
+- Kun managere (`isManager`) kan slette. Bekræftelse i UI'et med teksten "SAP ændres ikke. Flytningerne og materialedokumenterne ligger stadig i SAP."
+- Statistik: hver afsluttet opgave i opgavelisten får "Slet". Søg: en KIF-flytning (`kind: 'kif'`) får "Slet". En task-linje i søgningen kan også slettes og sletter hele opgaven.
+- Sletning fjerner opgaven fra `opgaver-<writer>-<yyyy-mm>` (eller KIF-flytningen fra `kif-<yyyy-mm>`) og alle dens linjer i søgeindekset (`serier-<yyyy>-<hh>`, alle shards hvor serienumrene ligger). En opgave, der venter på SAP eller kører, kan ikke slettes.
+- Hvem der slettede hvad og hvornår logges i `slettet-<yyyy-mm>` i teamets softwareload-mappe (`{ kind, id, by, at, serials }`), så det kan spores.
+
+**Files:**
+- Modify: `softwareloadService.cjs` (`deleteTask(user, { taskId })` og `deleteKifMove(user, { id })`; `MANAGER_ONLY`, `SOFTWARELOAD_NOT_FOUND`), `register.cjs` (`softwareload:delete-task`, `softwareload:delete-kif`), `preload.cjs`, `src/types/warehouse.ts`
+- Modify: `SoftwareloadStats.tsx`, `SoftwareloadSearch.tsx` (knapper kun for managere, bekræftelsesdialog, listen opdateres)
+- Modify: Hubert-guiden (fire sprog) og changelog 1.6.8
+- Test: 'a manager deletes a finished task: it leaves the task list, the statistics and the search', 'a manager deletes a KIF move and its search lines', 'an employee cannot delete', 'a running or pending task cannot be deleted', 'deletion is logged'
+
+- [ ] Tests først, se dem fejle, implementér, se dem bestå, tsc, vitest, commit `feat(softwareload): slet afsluttede opgaver og KIF-flytninger`
