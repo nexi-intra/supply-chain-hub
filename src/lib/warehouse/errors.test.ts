@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { danishCodes, errorCode, errorMessage } from './errors'
+import { danishCodes, errorCode, errorMaterials, errorMessage } from './errors'
 import { setWarehouseLanguage } from './text'
+
+describe('errorMaterials', () => {
+  it('reads the materials listed at the end of the detail', () => {
+    const error = new Error("Error invoking remote method 'warehouse:counts:doc-fetch': Error: DOC_STOCK_MISSING: Dagens SAP-tal har ingen linje. Tallene er ikke gemt. Gælder: INT4300-4921-0 D000, R162-0717 D003 blocked")
+    expect(errorCode(error)).toBe('DOC_STOCK_MISSING')
+    expect(errorMaterials(error)).toEqual(['INT4300-4921-0 D000', 'R162-0717 D003 blocked'])
+    expect(errorMaterials(new Error('Error: PIDOC_ZERO_CONFIRM'))).toEqual([])
+  })
+})
 
 describe('errorCode', () => {
   it('reads the code from an Electron IPC error', () => {

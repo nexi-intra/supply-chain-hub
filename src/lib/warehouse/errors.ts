@@ -22,6 +22,15 @@ export function errorDetail(error: unknown): string | null {
   return rest.startsWith(': ') && rest.slice(2).trim() ? rest.slice(2).trim() : null
 }
 
+const LIST_MARK = 'Gælder: '
+
+/** The materials the main process listed at the end of its detail ("… Gælder: A, B"), as for DOC_STOCK_MISSING. */
+export function errorMaterials(error: unknown): string[] {
+  const detail = errorDetail(error) || ''
+  const at = detail.lastIndexOf(LIST_MARK)
+  return at < 0 ? [] : detail.slice(at + LIST_MARK.length).split(', ').map(item => item.trim()).filter(Boolean)
+}
+
 const MESSAGES: Record<string, string> = {
   WAREHOUSE_TEAM_NOT_ALLOWED: 'Arbejdsværktøjer er kun for TCD og TRR. Åbn TCD- eller TRR-hubben.',
   AUTH_REQUIRED: 'Du skal logge ind igen.',
@@ -72,6 +81,9 @@ const MESSAGES: Record<string, string> = {
   RULE_INVALID: 'Ugyldig regel.',
   SAP_NO_ACCESS: 'Du har ikke adgang til transaktionen i SAP.',
   SAP_EXPORT_FAILED: 'Opslaget i SAP fejlede. Prøv igen.',
+  SAP_EXPORT_EMPTY: 'SAP-eksporten kom tom tilbage, så tallene er ikke brugt. Prøv igen.',
+  DOC_STOCK_MISSING: 'Dagens SAP-tal mangler godkendte materialer, som SAP havde på lager ved godkendelsen. Tallene er ikke gemt.',
+  PIDOC_ZERO_CONFIRM: 'Serienummerlisten er tom, men SAP har lager i dag. Bekræft, at antallet skal være 0.',
   PREVIEW_EXPIRED: 'Forhåndsvisningen er udløbet. Hent data fra SAP igen.',
   PLACEMENTS_NOT_FOUND: 'Placeringsarket blev ikke fundet på M:.',
   KV_CONFLICT: 'Data blev ændret af en anden. Prøv igen.',
@@ -250,6 +262,9 @@ const MESSAGES_EN: Record<string, string> = {
   RULE_INVALID: 'Invalid rule.',
   SAP_NO_ACCESS: 'You do not have access to the transaction in SAP.',
   SAP_EXPORT_FAILED: 'The SAP lookup failed. Try again.',
+  SAP_EXPORT_EMPTY: 'The SAP export came back empty, so the figures were not used. Try again.',
+  DOC_STOCK_MISSING: "Today's SAP figures lack approved materials that SAP had in stock at approval. The figures were not saved.",
+  PIDOC_ZERO_CONFIRM: 'The serial number list is empty, but SAP has stock today. Confirm that the quantity is 0.',
   PREVIEW_EXPIRED: 'The preview has expired. Fetch the data from SAP again.',
   PLACEMENTS_NOT_FOUND: 'The placement sheet was not found on M:.',
   KV_CONFLICT: 'Someone else changed the data. Try again.',

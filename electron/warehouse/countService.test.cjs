@@ -1026,6 +1026,34 @@ test('"Læg antal på" two days later needs the SAP figures of the day again, an
   assert.deepEqual(entered, [{ docNo: '105000930', year: String(new Date(1_000_000).getFullYear()), entries: [{ material: 'R162-0717', qty: 77 }] }], 'SAP today 80 + difference -3')
 })
 
+test('"Hent dagens SAP-tal" refuses figures without a line for an approved material that had SAP stock at approval, unless confirmed', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const mona = ctx.service('pc3')
+  const { id } = await newCount(ctx, anna)
+  await anna.saveLine(ANNA, id, { place: 'A1.1', material: 'R162-0717', qty: 97 })
+  await anna.flush(ANNA, id)
+  ctx.tick(2000)
+  await mona.setApproval(MONA, id, { material: 'R162-0717', status: 'approved' })
+  const row = doc => doc.rows.find(item => item.material === 'R162-0717')
+
+  // SAP of the day lists neither the approved R162-0717 (SAP 100 at approval) nor the not yet approved terminals.
+  ctx.sap.mb52 = [stock('INT4300-4921-0-R', 'D000', 1)]
+  ctx.tick(60_000)
+  await assert.rejects(mona.fetchDocStock(MONA, id), error => error.code === 'DOC_STOCK_MISSING' && /: R162-0717 D000$/.test(error.message))
+  assert.equal((await mona.countDoc(MONA, id)).fetchedAt, null, 'nothing is saved')
+  await assert.rejects(mona.fetchDocStock(MONA, id, { confirmMissing: 'yes' }), { code: 'DOC_STOCK_MISSING' }, 'only true confirms')
+
+  const doc = await mona.fetchDocStock(MONA, id, { confirmMissing: true })
+  assert.deepEqual([doc.fetchedAt, row(doc).sapToday, row(doc).docQty], [ctx.clock.now, 0, -3])
+
+  // A material with no SAP stock at approval may be missing today.
+  await ctx.repo.setApproval('TCD', id, 'R162-0717', { ...(await ctx.repo.getApprovals('TCD', id))['R162-0717'], frozen: [{ sloc: 'D000', stockType: 'unrestricted', sapQty: 0, counted: 0, diff: 0, valueDiff: 0 }] })
+  ctx.sap.mb52 = [stock('INT4300-4921-0-R', 'D000', 1)]
+  ctx.tick(60_000)
+  assert.equal((await mona.fetchDocStock(MONA, id)).fetchedAt, ctx.clock.now)
+})
+
 test('the SAP figures of the day can be fetched after the status is locked; nothing else in the count changes', async () => {
   const ctx = setup()
   const anna = ctx.service('pc1')

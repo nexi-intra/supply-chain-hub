@@ -5,9 +5,10 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { SapActionButton } from '@/components/warehouse/SapActionButton'
-import { errorCode, errorMessage } from '@/lib/warehouse/errors'
+import { errorCode, errorMaterials, errorMessage } from '@/lib/warehouse/errors'
 import { fetchSteps, formatDateTime, formatNumber } from '@/lib/warehouse/format'
 import { cn } from '@/lib/utils'
 import type { CountDoc, CountDocRow, FetchStep, PiDoc, PiDocList } from '@/types/warehouse'
@@ -20,6 +21,9 @@ const rowKey = (row: { material: string; sloc: string; stockType: string }) => `
 // Same limit as MI31's "Maximum No. of Items" (electron/core/piDocs.cjs MAX_LINES).
 const MAX_LINES = 20
 
+/** What the main process asks to confirm: SAP figures of the day missing approved materials, or a Zero Count on a document. */
+type Confirmation = { kind: 'missing'; materials: string[]; message: string } | { kind: 'zero'; materials: string[]; message: string; item: PiDoc }
+
 export function DocPanel({ id, open, state }: PanelProps) {
   const [doc, setDoc] = useState<CountDoc | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
@@ -29,6 +33,7 @@ export function DocPanel({ id, open, state }: PanelProps) {
   const [piList, setPiList] = useState<PiDocList | null>(null)
   const [chosen, setChosen] = useState<string[]>([])
   const [busy, setBusy] = useState<string | null>(null)
+  const [confirmation, setConfirmation] = useState<Confirmation | null>(null)
   const approvalsKey = JSON.stringify(state.approvals)
 
   const load = useCallback(async () => {
@@ -47,14 +52,16 @@ export function DocPanel({ id, open, state }: PanelProps) {
 
   useEffect(() => { void load() }, [load, approvalsKey])
 
-  const fetchToday = async () => {
+  const fetchToday = async (confirmMissing = false) => {
+    setConfirmation(null)
     setStep('check')
     const unsubscribe = window.electronWarehouse!.sap.onFetchProgress(progress => setStep(progress.step))
     try {
-      setDoc(await window.electronWarehouse!.counts.fetchDoc(id))
+      setDoc(await window.electronWarehouse!.counts.fetchDoc(id, { confirmMissing }))
       toast.success(t('Dagens SAP-tal er hentet', "Today's SAP figures are fetched"))
     } catch (error) {
-      toast.error(errorMessage(error, t('Hentningen fra SAP fejlede.', 'Fetching from SAP failed.')))
+      if (errorCode(error) === 'DOC_STOCK_MISSING') setConfirmation({ kind: 'missing', materials: errorMaterials(error), message: errorMessage(error) })
+      else toast.error(errorMessage(error, t('Hentningen fra SAP fejlede.', 'Fetching from SAP failed.')))
     } finally {
       unsubscribe()
       setStep(null)
@@ -142,12 +149,17 @@ export function DocPanel({ id, open, state }: PanelProps) {
     }
   }
 
-  const countDoc = async (item: PiDoc) => {
+  const countDoc = async (item: PiDoc, confirmZero = false) => {
+    setConfirmation(null)
     setBusy(item.id)
     try {
-      setPiList(await window.electronWarehouse!.piDocs.count({ id, docId: item.id }))
+      setPiList(await window.electronWarehouse!.piDocs.count({ id, docId: item.id, ...(confirmZero ? { confirmZero: true } : {}) }))
       toast.success(t(`Antal er lagt på SAP-dokument ${item.docNo}`, `Quantity entered on SAP document ${item.docNo}`), { description: t('Klar til bogføring (manager).', 'Ready for posting (manager).') })
     } catch (error) {
+      if (errorCode(error) === 'PIDOC_ZERO_CONFIRM') {
+        setConfirmation({ kind: 'zero', materials: errorMaterials(error), message: errorMessage(error), item })
+        return
+      }
       const refetch = errorCode(error) === 'PIDOC_DOC_STALE' && doc?.canFetch ? { action: { label: t('Hent dagens SAP-tal', "Fetch today's SAP figures"), onClick: () => void fetchToday() } } : {}
       toast.error(errorMessage(error), { duration: 20000, ...refetch })
       await load()
@@ -184,7 +196,7 @@ export function DocPanel({ id, open, state }: PanelProps) {
       <CardContent className="space-y-4">
         <div className="flex flex-wrap items-center gap-3">
           {doc.canFetch && (
-            <SapActionButton variant="outline" onAction={fetchToday} disabled={step !== null}>
+            <SapActionButton variant="outline" onAction={() => fetchToday()} disabled={step !== null}>
               <ArrowsClockwise size={18} /> {t('Hent dagens SAP-tal', "Fetch today's SAP figures")}
             </SapActionButton>
           )}
@@ -249,7 +261,7 @@ export function DocPanel({ id, open, state }: PanelProps) {
                   <td className="px-3 py-1.5 font-mono text-xs">{docOf.get(rowKey(row))?.docNo || ''}</td>
                   <td className="px-3 py-1.5 text-right tabular-nums">{row.sapAtApproval === null ? '–' : formatNumber(row.sapAtApproval)}</td>
                   <td className={cn('px-3 py-1.5 text-right font-semibold tabular-nums', (row.diff || 0) < 0 && 'text-red-600 dark:text-red-400', (row.diff || 0) > 0 && 'text-amber-600 dark:text-amber-400')}>{row.diff === null ? '–' : formatNumber(row.diff)}</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">
+                  <td className={cn('px-3 py-1.5 text-right tabular-nums', row.sapToday === 0 && 'font-semibold text-red-600 dark:text-red-400')}>
                     {row.sapToday === null ? '–' : formatNumber(row.sapToday)}
                     {row.sapToday !== null && row.sapAtApproval !== null && row.sapToday !== row.sapAtApproval && (
                       <div className="text-xs text-muted-foreground">{row.sapToday > row.sapAtApproval ? '+' : ''}{formatNumber(row.sapToday - row.sapAtApproval)} {t('siden godkendelse', 'since approval')}</div>
@@ -269,8 +281,45 @@ export function DocPanel({ id, open, state }: PanelProps) {
           </table>
         </div>
         {rows.length > 600 && <p className="text-xs text-muted-foreground">{t(`Viser 600 af ${formatNumber(rows.length)}.`, `Showing 600 of ${formatNumber(rows.length)}.`)}</p>}
+        {confirmation && (
+          <ConfirmDialog
+            confirmation={confirmation}
+            onCancel={() => setConfirmation(null)}
+            onConfirm={() => void (confirmation.kind === 'missing' ? fetchToday(true) : countDoc(confirmation.item, true))}
+          />
+        )}
       </CardContent>
     </Card>
+  )
+}
+
+/** Lists what the main process refused and lets the user go ahead anyway, deliberately. */
+function ConfirmDialog({ confirmation, onCancel, onConfirm }: { confirmation: Confirmation; onCancel: () => void; onConfirm: () => void }) {
+  const missing = confirmation.kind === 'missing'
+  return (
+    <Dialog open onOpenChange={value => { if (!value) onCancel() }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>
+            {missing ? t('Materialer mangler i dagens SAP-tal', "Materials are missing from today's SAP figures") : t(`Antal 0 på SAP-dokument ${confirmation.item.docNo}?`, `Quantity 0 on SAP document ${confirmation.item.docNo}?`)}
+          </DialogTitle>
+          <DialogDescription>
+            {missing
+              ? t('Dagens SAP-tal har ingen linje for disse godkendte materialer, selvom SAP havde dem på lager ved godkendelsen. Det sker, hvis eksporten fra SAP fejlede. Gemmer du tallene, bliver SAP i dag 0 for dem. Tjek dem i MB52, før du gemmer.', "Today's SAP figures have no line for these approved materials, although SAP had them in stock at approval. That happens when the export from SAP failed. If you save the figures, SAP today becomes 0 for them. Check them in MB52 before you save.")
+              : t('Serienummerlisten er tom for disse materialer, men SAP har lager i dag. Antallet bliver 0 i SAP, og hele lageret bogføres som tab. Bekræft kun, hvis der virkelig ikke er nogen.', 'The serial number list is empty for these materials, but SAP has stock today. The quantity becomes 0 in SAP, and the whole stock is posted as a loss. Only confirm if there really are none.')}
+          </DialogDescription>
+        </DialogHeader>
+        {confirmation.materials.length
+          ? <ul className="max-h-60 overflow-auto rounded-md border px-3 py-2 font-mono text-sm">{confirmation.materials.map(material => <li key={material}>{material}</li>)}</ul>
+          : <p role="alert" className="text-sm text-destructive">{confirmation.message}</p>}
+        <DialogFooter>
+          <Button variant="ghost" onClick={onCancel}>{t('Annullér', 'Cancel')}</Button>
+          <SapActionButton variant="destructive" onAction={onConfirm}>
+            {missing ? t('Gem tallene alligevel', 'Save the figures anyway') : t('Læg 0 på alligevel', 'Enter 0 anyway')}
+          </SapActionButton>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

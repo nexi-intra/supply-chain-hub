@@ -110,8 +110,10 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
    * ZMS_COUNT_SERIAL one material at a time, quantities through MI04
    * ("Antal til dokument"). Every material entered is remembered, so a later failure can be retried without repeating it.
    * The quantities are worked out again from the SAP figures of the day on every call, so these must be fresh (staleFigures).
+   * An empty serial list is a Zero Count in MI04, which posts the whole book stock as a loss: unless SAP has none today
+   * either, it needs `confirmZero: true` (PIDOC_ZERO_CONFIRM), checked before anything goes into SAP.
    */
-  async function count(user, id, docId) {
+  async function count(user, id, docId, { confirmZero = false } = {}) {
     const { rows, fetchedAt, docs, role } = await context(user, id)
     const doc = docs.find(item => item.id === docId)
     const reason = refusal({ action: 'count', role, email: user.email, doc })
@@ -132,14 +134,23 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
     // Checked for every material before anything goes into SAP, so a document is never half entered for this reason.
     const flagged = pending.find(line => rows.some(item => item.material === line.material && item.sloc === doc.sloc && item.stockType === doc.stockType && item.serialLinesAtApproval))
     if (flagged) throw codeError('APPROVED_WITH_SERIAL_LINES', approvedWithLinesText(flagged.material))
+    const rowOf = material => rows.find(item => item.material === material && item.sloc === doc.sloc && item.stockType === doc.stockType)
+    const serialLists = new Map()
+    for (const line of pending) {
+      if (line.transaction !== 'ZMS_COUNT_SERIAL') continue
+      const { serials } = await counts.copySerials(user, id, { material: line.material, sloc: doc.sloc, stockType: doc.stockType, forDoc: true })
+      serialLists.set(line.material, serials)
+    }
+    const zero = [...serialLists].filter(([material, serials]) => !serials.length && rowOf(material)?.sapToday !== 0).map(([material]) => material)
+    if (zero.length && confirmZero !== true) throw codeError('PIDOC_ZERO_CONFIRM', `Serienummerlisten er tom, men SAP har lager i dag. Antallet bliver 0, og hele lageret bogføres som tab. Gælder: ${zero.join(', ')}`)
     for (const line of pending) {
       if (line.transaction === 'ZMS_COUNT_SERIAL') {
-        const { serials } = await counts.copySerials(user, id, { material: line.material, sloc: doc.sloc, stockType: doc.stockType, forDoc: true })
+        const serials = serialLists.get(line.material)
         if (!serials.length) { quantities.push({ material: line.material, qty: 0 }); continue }
         const result = await writer.enterSerials({ docNo: doc.docNo, year: doc.year, material: line.material, serials })
         await remember(line.material, { serials: result.serials, qty: result.counted })
       } else {
-        const row = rows.find(item => item.material === line.material && item.sloc === doc.sloc && item.stockType === doc.stockType)
+        const row = rowOf(line.material)
         if (!row || row.docQty === null) throw codeError('PIDOC_NO_QTY', `Hent dagens SAP-tal, før antallet for ${line.material} lægges på`)
         if (row.docQty < 0) throw codeError('PIDOC_NO_QTY', `Antallet for ${line.material} er negativt (${row.docQty}) – tjek materialet`)
         quantities.push({ material: line.material, qty: row.docQty })

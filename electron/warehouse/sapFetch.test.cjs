@@ -11,7 +11,7 @@ const READY = JSON.stringify({ running: true, scripting: true, connections: [{ d
 const NOT_LOGGED_IN = JSON.stringify({ running: true, scripting: true, connections: [{ disabledByServer: false, sessions: [{ busy: false, popup: false, system: 'PS4', client: '100', user: '', transaction: 'S000' }] }] })
 const FILES = { mb52: 'mb52-sample.txt', '01': 'iq09-01-sample.txt', '07': 'iq09-07-sample.txt' }
 
-function fakeSap({ status = READY, fail = null, empty = [] } = {}) {
+function fakeSap({ status = READY, fail = null, failWith = '{"ok":false,"error":"Listen kunne ikke gemmes"}', empty = [], texts = {} } = {}) {
   const calls = []
   const dirs = []
   async function runScript(name, args = [], options = {}) {
@@ -20,9 +20,10 @@ function fakeSap({ status = READY, fail = null, empty = [] } = {}) {
     const [report, dir, file, stockType] = args
     dirs.push(dir)
     const key = report === 'mb52' ? 'mb52' : stockType
-    if (fail === key) return '{"ok":false,"error":"Listen kunne ikke gemmes"}'
+    if (fail === key) return failWith
     if (empty.includes(key)) return '{"ok":true,"rows":0}'
-    fs.copyFileSync(path.join(FIXTURES, FILES[key]), path.join(dir, file))
+    if (texts[key] !== undefined) fs.writeFileSync(path.join(dir, file), texts[key], 'utf8')
+    else fs.copyFileSync(path.join(FIXTURES, FILES[key]), path.join(dir, file))
     return '{"ok":true,"rows":3}'
   }
   return { runScript, calls, dirs }
@@ -70,6 +71,42 @@ test('an empty blocked-stock list is simply no serials', async () => {
   const { fetcher } = makeFetcher(sap)
   const result = await fetcher.fetchPlant()
   assert.equal(result.serials.some(row => row.stockType === 'blocked'), false)
+})
+
+test('export.vbs refusing (SAP message on the selection screen, or no result) is a failed export, never an empty one', async () => {
+  for (const answer of ['{"ok":false,"error":"sap: Ingen autorisation til fabrik D301"}', '{"ok":false,"error":"export-no-result"}']) {
+    const sap = fakeSap({ fail: 'mb52', failWith: answer })
+    const { fetcher, tempRoot } = makeFetcher(sap)
+    const detail = JSON.parse(answer).error
+    await assert.rejects(fetcher.fetchPlant(), error => error.code === 'SAP_EXPORT_FAILED' && error.message.includes(detail))
+    assert.deepEqual(sap.calls.map(call => call.args[0] || call.name), ['status', 'mb52'], 'IQ09 is not run')
+    assert.deepEqual(fs.readdirSync(tempRoot), [])
+  }
+})
+
+test('an MB52 export without rows for D301 is refused, also when only MB52 is fetched', async () => {
+  const sap = fakeSap({ empty: ['mb52'] })
+  const { fetcher, tempRoot } = makeFetcher(sap)
+  await assert.rejects(fetcher.fetchPlant(), error => error.code === 'SAP_EXPORT_EMPTY' && /MB52/.test(error.message))
+  assert.deepEqual(sap.calls.map(call => call.args[0] || call.name), ['status', 'mb52'], 'IQ09 is not run')
+  assert.deepEqual(fs.readdirSync(tempRoot), [])
+  await assert.rejects(fetcher.fetchStock(), { code: 'SAP_EXPORT_EMPTY' })
+  const header = (await fs.promises.readFile(path.join(FIXTURES, FILES.mb52), 'utf8')).split(/\r?\n/).slice(0, 3).join('\r\n')
+  await assert.rejects(makeFetcher(fakeSap({ texts: { mb52: header } })).fetcher.fetchPlant(), { code: 'SAP_EXPORT_EMPTY' }, 'a list with only the header')
+})
+
+test('an empty unrestricted IQ09 is refused while MB52 has INT materials in unrestricted stock', async () => {
+  const sap = fakeSap({ empty: ['01'] })
+  const { fetcher, tempRoot } = makeFetcher(sap)
+  await assert.rejects(fetcher.fetchPlant(), error => error.code === 'SAP_EXPORT_EMPTY' && /IQ09/.test(error.message))
+  assert.deepEqual(fs.readdirSync(tempRoot), [])
+
+  // Without INT stock an empty serial list is believable.
+  const lines = (await fs.promises.readFile(path.join(FIXTURES, FILES.mb52), 'utf8')).split(/\r?\n/)
+  const noTerminals = lines.filter(line => !/\tINT/.test(line)).join('\r\n')
+  const result = await makeFetcher(fakeSap({ empty: ['01'], texts: { mb52: noTerminals } })).fetcher.fetchPlant()
+  assert.ok(result.mb52.length > 0)
+  assert.equal(result.serials.some(row => row.stockType === 'unrestricted'), false)
 })
 
 test('ZMS_STOCK_SER_CHK2 runs in its own script and is parsed; no access gives a clear error', async () => {

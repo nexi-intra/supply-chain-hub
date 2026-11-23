@@ -9,7 +9,7 @@ Option Explicit
 On Error Resume Next
 
 Const PLANT = "D301"
-Dim report, outDir, outFile, stockType, app, conn, s, base, i, before, beforeIds, fso, rows, grid
+Dim report, outDir, outFile, stockType, app, conn, s, base, i, before, beforeIds, fso, rows, grid, msgType, msgText
 
 Function JsonText(value)
   Dim t
@@ -116,6 +116,17 @@ Sub SetFields(names, value)
   Next
 End Sub
 
+' SAP's status bar after F8 (as matdoc.vbs reads it); both stay empty when it cannot be read.
+Sub ReadStatusBar()
+  On Error Resume Next
+  Err.Clear
+  msgType = ""
+  msgText = ""
+  msgType = CStr(s.findById("wnd[0]/sbar").MessageType)
+  msgText = CStr(s.findById("wnd[0]/sbar").Text)
+  Err.Clear
+End Sub
+
 report = LCase(WScript.Arguments(0))
 outDir = WScript.Arguments(1)
 outFile = WScript.Arguments(2)
@@ -192,10 +203,10 @@ If report = "mb52" Then
   s.findById("wnd[0]").sendVKey 8
   WaitIdle
   If CStr(s.Info.ScreenNumber) = "1000" Then
-    ' Still on the selection screen: nothing in stock.
-    Err.Clear
-    rows = 0
-    Finish True, ""
+    ' Still on the selection screen: D301 always has stock, so this is an error or access message, never "0 rows".
+    ReadStatusBar
+    If msgType = "E" Or msgType = "A" Then Finish False, "sap: " & msgText
+    Finish False, "export-no-result"
   End If
   Err.Clear
   s.findById("wnd[0]/tbar[0]/okcd").Text = "%pc"
@@ -215,7 +226,13 @@ Else
   s.findById("wnd[0]").sendVKey 8
   WaitIdle
   Set grid = FindGridIn(s.findById("wnd[0]/usr"))
-  If grid Is Nothing Then Err.Clear : rows = 0 : Finish True, ""
+  If grid Is Nothing Then
+    ' No list: an error or access message fails; otherwise IQ09 found no serials (sapFetch.cjs checks that against MB52).
+    ReadStatusBar
+    If msgType = "E" Or msgType = "A" Then Finish False, "sap: " & msgText
+    rows = 0
+    Finish True, ""
+  End If
   rows = grid.RowCount
   ' List > Save > File... (position-based, so it also works with a Danish SAP logon).
   s.findById("wnd[0]/mbar/menu[0]/menu[10]/menu[2]").Select

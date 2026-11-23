@@ -1411,14 +1411,29 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   /**
    * Also after the status is locked: the SAP figures of the day only feed the count document ("Læg antal på" refuses
    * old ones), they change nothing in the count itself.
+   * Refused (DOC_STOCK_MISSING) when the new figures have no line for an approved material where SAP had stock at
+   * approval: a failed or empty export would otherwise become "SAP i dag 0". `confirmMissing: true` saves them anyway.
    */
-  async function fetchDocStock(user, id) {
+  async function fetchDocStock(user, id, { confirmMissing = false } = {}) {
     const state = await load(user, id)
     const rights = await access(user, state)
     if (!canFetchDoc(user, rights)) throw codeError('COUNT_OWNER_ONLY', 'Kun den ansvarlige, en admin eller en manager kan hente dagens SAP-tal')
     const fetched = await fetcher.fetchPlant({ onProgress: step => emit('sap:fetch-progress', { step }) })
     const snapshot = buildSnapshot({ team: state.team, scope: state.snapshot.scope, mb52: fetched.mb52, serials: fetched.serials || [], rulesByTeam: await rulesByTeam(state.team), exclusions: state.snapshot.excluded.manual, fetchedAt: fetched.fetchedAt, fetchedBy: lower(user.email) })
-    await repo.setCountDoc(state.team, state.id, { fetchedAt: fetched.fetchedAt, by: me(user), withSerials: true, lines: docLinesFromSnapshot(snapshot) })
+    const lines = docLinesFromSnapshot(snapshot)
+    if (confirmMissing !== true) {
+      const today = new Set(lines.map(line => `${line.material}|${line.sloc}|${line.stockType}`))
+      const approvals = await repo.getApprovals(state.team, state.id)
+      const missing = []
+      for (const [material, approval] of Object.entries(approvals)) {
+        if (approval?.status !== 'approved' || !Array.isArray(approval.frozen)) continue
+        for (const row of approval.frozen) {
+          if (row.sapQty > 0 && !today.has(`${material}|${row.sloc}|${row.stockType}`)) missing.push(`${material} ${row.sloc}${row.stockType === 'blocked' ? ' blocked' : ''}`)
+        }
+      }
+      if (missing.length) throw codeError('DOC_STOCK_MISSING', `Dagens SAP-tal har ingen linje for godkendte materialer, som SAP havde på lager ved godkendelsen. Tallene er ikke gemt. Gælder: ${missing.sort().join(', ')}`)
+    }
+    await repo.setCountDoc(state.team, state.id, { fetchedAt: fetched.fetchedAt, by: me(user), withSerials: true, lines })
     return countDoc(user, id)
   }
 

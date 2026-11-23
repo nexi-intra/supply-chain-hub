@@ -7,6 +7,7 @@ const { computeSapState, EXPECTED } = require('./sapState.cjs')
 const { parseMb52, parseIq09, parseMatdoc, normalizeMatdoc, parseLongSerno, parseStockCheck, parseMm60 } = require('./core/sapParsers.cjs')
 const { MATERIAL_PATTERN } = require('./core/snapshot.cjs')
 const { normalizeSerial } = require('./core/countState.cjs')
+const { materialKind } = require('./core/classify.cjs')
 const { putOnClipboard, CLIPBOARD_REFUSED } = require('./clipboardText.cjs')
 
 const EXPORT_TIMEOUT_MS = 4 * 60 * 1000
@@ -55,8 +56,17 @@ function createSapFetcher({ bridge, runScript, tempRoot = os.tmpdir(), expected 
       for (const definition of exports) {
         progress(definition.step)
         const text = await exportOne(definition, dir)
-        if (definition.step === 'mb52') mb52 = text ? parseMb52(text) : []
-        else if (text) serials.push(...parseIq09(text, definition.stockType))
+        if (definition.step === 'mb52') {
+          mb52 = text ? parseMb52(text) : []
+          // D301 always has stock: an empty list is an export that went wrong (count.md C3), never "nothing in stock".
+          if (!mb52.length) throw fetchError('SAP_EXPORT_EMPTY', 'MB52 gav ingen rækker for D301. Prøv igen.')
+        } else if (text) serials.push(...parseIq09(text, definition.stockType))
+      }
+      const unrestrictedFetched = exports.some(definition => definition.step === 'iq09-unrestricted')
+      // INT materials (classify.cjs: new and used terminals) are serial-managed: stock in MB52 means serials in IQ09.
+      const terminalsInStock = mb52.some(row => ['new', 'used'].includes(materialKind(row.material)) && row.unrestricted > 0)
+      if (unrestrictedFetched && terminalsInStock && !serials.some(row => row.stockType === 'unrestricted')) {
+        throw fetchError('SAP_EXPORT_EMPTY', 'IQ09 gav ingen serienumre i fri lager, men MB52 har INT-materialer på lager. Prøv igen.')
       }
       progress('done')
       return { mb52, serials, sapUser: state.user, fetchedAt: now() }

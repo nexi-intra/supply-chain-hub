@@ -70,7 +70,7 @@ test('the admin enters the count: serials per material in ZMS_COUNT_SERIAL, quan
   }
   const calls = []
   let failOn = null
-  const rows = [row('R1', 'accessory', { docQty: 97 }), row('R2', 'accessory', { docQty: 0 }), row('INT1-0', 'new', { docQty: 2 })]
+  const rows = [row('R1', 'accessory', { docQty: 97 }), row('R2', 'accessory', { docQty: 0 }), row('INT1-0', 'new', { docQty: 2 }), row('R6', 'accessory', { serialManaged: true, docQty: 0, sapToday: 0 })]
   const repo = { getPiDocs: async () => structuredClone(stored), changePiDocs: async (team, id, change) => { const { all } = change(structuredClone(stored)); stored = all } }
   const writer = {
     enterSerials: async request => { calls.push(['serials', request]); if (failOn === request.material) throw Object.assign(new Error('x'), { code: 'PIDOC_CHECK_ERRORS' }); return { counted: request.serials.length, serials: request.serials.length, newSerials: 0 } },
@@ -95,8 +95,45 @@ test('the admin enters the count: serials per material in ZMS_COUNT_SERIAL, quan
   failOn = null
   calls.length = 0
   await service.count(ANNA, 'c1', 'D3')
-  assert.deepEqual(calls, [['serials', { docNo: '105000912', year: '2026', material: 'R5', serials: ['A1'] }], ['counts', { docNo: '105000912', year: '2026', entries: [{ material: 'R6', qty: 0 }] }]], 'no serials found = Zero Count in MI04')
+  assert.deepEqual(calls, [['serials', { docNo: '105000912', year: '2026', material: 'R5', serials: ['A1'] }], ['counts', { docNo: '105000912', year: '2026', entries: [{ material: 'R6', qty: 0 }] }]], 'no serials found and SAP has none today = Zero Count in MI04')
   assert.equal(stored.D3.status, 'counted')
+})
+
+test('an empty serial list with SAP stock today is never a silent Zero Count: refused before anything goes into SAP, entered when confirmed', async () => {
+  const lines = [{ material: 'INT1-0', transaction: 'ZMS_COUNT_SERIAL' }, { material: 'INT2-0', transaction: 'ZMS_COUNT_SERIAL' }, { material: 'INT3-0', transaction: 'ZMS_COUNT_SERIAL' }]
+  let stored = { D4: { id: 'D4', docNo: '105000913', year: '2026', status: 'printed', sloc: 'D000', stockType: 'unrestricted', createdBy: { email: 'mona@x' }, lines } }
+  const calls = []
+  // INT1-0 has serials; INT2-0 has none although SAP has 5 today (an empty IQ09); INT3-0 has none and SAP has none.
+  const rows = [row('INT1-0', 'new', { docQty: 1, sapToday: 1 }), row('INT2-0', 'new', { docQty: 0, sapToday: 5 }), row('INT3-0', 'new', { docQty: 0, sapToday: 0 })]
+  const serials = { 'INT1-0': ['S1'], 'INT2-0': [], 'INT3-0': [] }
+  const repo = { getPiDocs: async () => structuredClone(stored), changePiDocs: async (team, id, change) => { stored = change(structuredClone(stored)).all } }
+  const writer = {
+    enterSerials: async request => { calls.push(['serials', request]); return { counted: request.serials.length, serials: request.serials.length, newSerials: 0 } },
+    enterCounts: async request => { calls.push(['counts', request]); return { message: 'ok' } },
+  }
+  const counts = { countDoc: async () => ({ fetchedAt: Date.now(), rows }), copySerials: async (user, id, { material }) => ({ serials: serials[material] }) }
+  const service = createPiDocService({ counts, repo, roles: { roleOf: async () => 'admin' }, writer, system: 'QS4' })
+
+  await assert.rejects(service.count(ANNA, 'c1', 'D4'), error => error.code === 'PIDOC_ZERO_CONFIRM' && /: INT2-0$/.test(error.message))
+  await assert.rejects(service.count(ANNA, 'c1', 'D4', { confirmZero: 'yes' }), { code: 'PIDOC_ZERO_CONFIRM' }, 'only true confirms')
+  assert.deepEqual(calls, [], 'nothing went into SAP, not even the material with serials')
+  assert.equal(stored.D4.status, 'printed')
+
+  await service.count(ANNA, 'c1', 'D4', { confirmZero: true })
+  assert.deepEqual(calls, [['serials', { docNo: '105000913', year: '2026', material: 'INT1-0', serials: ['S1'] }], ['counts', { docNo: '105000913', year: '2026', entries: [{ material: 'INT2-0', qty: 0 }, { material: 'INT3-0', qty: 0 }] }]])
+  assert.equal(stored.D4.status, 'counted')
+})
+
+test('the Zero Count check comes after the stale-figures and quantity-line checks', async () => {
+  let stored = { D5: { id: 'D5', docNo: '105000914', year: '2026', status: 'printed', sloc: 'D000', stockType: 'unrestricted', createdBy: { email: 'mona@x' }, lines: [{ material: 'INT2-0', transaction: 'ZMS_COUNT_SERIAL' }] } }
+  const state = { fetchedAt: null, rows: [row('INT2-0', 'new', { docQty: 0, sapToday: 5 })] }
+  const repo = { getPiDocs: async () => structuredClone(stored), changePiDocs: async (team, id, change) => { stored = change(structuredClone(stored)).all } }
+  const counts = { countDoc: async () => state, copySerials: async () => { throw Object.assign(new Error('x'), { code: 'APPROVED_WITH_SERIAL_LINES' }) } }
+  const service = createPiDocService({ counts, repo, roles: { roleOf: async () => 'admin' }, writer: {}, system: 'QS4' })
+  await assert.rejects(service.count(ANNA, 'c1', 'D5', { confirmZero: true }), { code: 'PIDOC_DOC_STALE' })
+  state.fetchedAt = Date.now()
+  state.rows = [row('INT2-0', 'new', { docQty: null, sapToday: 5, serialLinesAtApproval: true })]
+  await assert.rejects(service.count(ANNA, 'c1', 'D5'), { code: 'APPROVED_WITH_SERIAL_LINES' })
 })
 
 test('quantities need the SAP numbers of the day', async () => {
