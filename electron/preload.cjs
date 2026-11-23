@@ -115,7 +115,7 @@ contextBridge.exposeInMainWorld('electronWarehouse', {
     answerMaterialRequest: request => warehouse('counts:material-answer', request),
     releaseMaterial: request => warehouse('counts:material-release', request),
     submitMaterial: request => warehouse('counts:material-submit', request),
-    approveClean: id => warehouse('counts:approve-clean', { id }),
+    approveClean: (id, options) => warehouse('counts:approve-clean', { id, confirmFoundElsewhere: Array.isArray(options?.confirmFoundElsewhere) ? options.confirmFoundElsewhere : [] }),
     copySerials: request => warehouse('counts:copy-serials', request),
     doc: id => warehouse('counts:doc', { id }),
     fetchDoc: (id, options) => warehouse('counts:doc-fetch', { id, confirmMissing: Array.isArray(options?.confirmMissing) ? options.confirmMissing : [] }),

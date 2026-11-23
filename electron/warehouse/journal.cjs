@@ -31,10 +31,11 @@ async function readAllJournals({ remote, countId, cache = new Map() }) {
 /**
  * Every writer's events, oldest first, and per writer the heartbeat of its newest upload (`uploadedAt`, `pendingAtUpload`,
  * `lastEventAt`, `exitedAt` after a clean close; null for chunks written before the heartbeat, by 1.6.7). Read from the same chunks, so it costs no extra read.
+ * `keys` is the store's key list when the caller already has it (several counts read in one go list the folder once).
  */
-async function readJournals({ remote, countId, cache = new Map() }) {
+async function readJournals({ remote, countId, cache = new Map(), keys: listed = null }) {
   const prefix = chunkPrefix(countId)
-  const keys = (await remote.keysAsync()).filter(name => name.startsWith(prefix)).sort()
+  const keys = (listed || await remote.keysAsync()).filter(name => name.startsWith(prefix)).sort()
   const events = []
   const writers = new Map()
   for (const name of keys) {

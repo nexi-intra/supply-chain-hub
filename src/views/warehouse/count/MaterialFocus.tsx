@@ -11,6 +11,7 @@ import { formatDateTime, formatNumber, kindLabel, stockLabel } from '@/lib/wareh
 import { cn } from '@/lib/utils'
 import type { CountState, MaterialSerialItem, MaterialSerials } from '@/types/warehouse'
 import { isApproved, isSubmitted, lockOf, mayCount } from './MaterialWork'
+import { FoundElsewhereNote } from './FoundElsewhere'
 import { RemoveSerialButton } from './RemoveSerial'
 import { t } from '@/lib/warehouse/text'
 
@@ -176,7 +177,7 @@ function SerialTable({ kind, items, lastSerial, remove }: { kind: ListKind; item
         <tbody>
           {items.map(item => (
             <tr key={item.serial} className={cn('border-t', item.serial === lastSerial && 'bg-emerald-500/10')}>
-              <td className="px-3 py-1.5 font-mono">{item.serial}</td>
+              <td className="px-3 py-1.5"><span className="font-mono">{item.serial}</span>{kind === 'missing' && item.foundElsewhere && <FoundElsewhereNote item={item.foundElsewhere} className="block" />}</td>
               <td className="px-3 py-1.5 font-mono">{item.sloc || '–'}</td>
               <td className="px-3 py-1.5">{item.stockType === 'blocked' ? <Badge className="bg-orange-500 text-white">Blocked</Badge> : stockLabel(item.stockType)}</td>
               {showWhere && <td className="px-3 py-1.5">{item.place || '–'}{item.source === 'import' && <span className="ml-1 text-xs text-muted-foreground">({item.document ? t(`matdok ${item.document}`, `mat. doc. ${item.document}`) : 'import'})</span>}</td>}

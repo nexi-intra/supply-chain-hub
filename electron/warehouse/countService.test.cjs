@@ -2360,3 +2360,61 @@ test('deleting a status marks all its counts deleted in one write of the index',
   assert.deepEqual(await ctx.repo.listCounts('TCD'), [])
   assert.deepEqual((await ctx.storeFor('TCD').keysAsync()).filter(key => key.includes(first.id) || key.includes(second.id)), [], 'the files of both counts are gone')
 })
+
+test('a serial found in another count of the status shows as found there in the missing lists, warns at approval and is marked on the count document', async () => {
+  const ctx = setup()
+  ctx.sap.mb52.push(stock('INT4300-4921-0', 'D004', 1))
+  ctx.sap.serials.push(serial('N9', 'INT4300-4921-0', 'D004'), serial('N7', 'INT4300-4922-0', 'D004'))
+  const anna = ctx.service('pc1')
+  const bo = ctx.service('pc2')
+  const mona = ctx.service('pc3')
+  const a = await newCount(ctx, anna)
+  const b = await bo.createCount(BO, { token: (await bo.preview(BO, { scope: { type: 'slocs', slocs: ['D004'] } })).token, name: 'D004 terminaler' })
+  assert.equal((await anna.scan(ANNA, a.id, { serial: 'U2', place: 'P14' })).outcome, 'other-sloc')
+  await anna.scan(ANNA, a.id, { serial: 'N7', place: 'P15' })
+  await anna.flush(ANNA, a.id)
+  ctx.tick(2000)
+
+  const missing = await mona.listSerials(MONA, b.id, { kind: 'missing' })
+  const of = serialNo => missing.items.find(item => item.serial === serialNo)
+  const where = item => item.foundElsewhere && [item.foundElsewhere.countId, item.foundElsewhere.countName, item.foundElsewhere.place, item.foundElsewhere.byName]
+  assert.deepEqual(where(of('U2')), [a.id, 'Status D000', 'P14', 'Anna'])
+  assert.equal(of('N9').foundElsewhere, undefined, 'not found anywhere: missing as before')
+  assert.deepEqual((await mona.listSerials(MONA, b.id, { kind: 'found-elsewhere' })).items.map(item => item.serial).sort(), ['N7', 'U2'])
+  assert.deepEqual(where((await mona.materialSerials(MONA, b.id, { material: 'INT4300-4921-0-R' })).missing[0]), [a.id, 'Status D000', 'P14', 'Anna'])
+
+  // Read only and cached: the poll never reads the other counts' journals, and the lists read them at most once a minute.
+  const store = ctx.storeFor('TCD')
+  const getAsync = store.getAsync
+  const reads = []
+  store.getAsync = (key, ...rest) => { if (key.startsWith(`count-${a.id}-j-`)) reads.push(key); return getAsync(key, ...rest) }
+  ctx.tick(30_000)
+  await mona.getState(MONA, b.id)
+  await mona.listSerials(MONA, b.id, { kind: 'missing' })
+  await mona.materialSerials(MONA, b.id, { material: 'INT4300-4921-0-R' })
+  ctx.tick(31_000)
+  await mona.getState(MONA, b.id)
+  assert.deepEqual(reads, [], 'nothing read within the minute, and never by the poll')
+  await mona.listSerials(MONA, b.id, { kind: 'missing' })
+  assert.ok(reads.length > 0, 'read again after a minute')
+  store.getAsync = getAsync
+
+  await assert.rejects(mona.setApproval(MONA, b.id, { material: 'INT4300-4921-0-R', status: 'approved' }), error => error.code === 'APPROVAL_FOUND_ELSEWHERE' && error.message.endsWith('Gælder: U2'))
+  assert.equal((await ctx.repo.getApprovals('TCD', b.id))['INT4300-4921-0-R'], undefined, 'never approved over the warning the first time')
+  const normal = await mona.setApproval(MONA, b.id, { material: 'INT4300-4921-0', status: 'approved' })
+  assert.deepEqual([normal.status, normal.frozen.map(row => row.missingSerials), 'confirmedFoundElsewhere' in normal], ['approved', [['N9']], false], 'a missing serial not found elsewhere is approved as before')
+  await assert.rejects(mona.setApproval(MONA, b.id, { material: 'INT4300-4921-0-R', status: 'approved', confirmFoundElsewhere: ['N9'] }), { code: 'APPROVAL_FOUND_ELSEWHERE' })
+  const confirmed = await mona.setApproval(MONA, b.id, { material: 'INT4300-4921-0-R', status: 'approved', confirmFoundElsewhere: ['U2'] })
+  assert.deepEqual([confirmed.status, confirmed.frozen[0].missingSerials, confirmed.confirmedFoundElsewhere], ['approved', ['U2'], ['U2']], 'a warning: approved once confirmed')
+
+  await assert.rejects(mona.approveAllWithoutDifference(MONA, b.id), error => error.code === 'APPROVAL_FOUND_ELSEWHERE' && error.message.endsWith('Gælder: N7'))
+  assert.equal((await ctx.repo.getApprovals('TCD', b.id))['INT4300-4922-0'], undefined)
+  assert.deepEqual(await mona.approveAllWithoutDifference(MONA, b.id, { confirmFoundElsewhere: ['N7'] }), { approved: 1 })
+
+  await mona.fetchDocStock(MONA, b.id)
+  const doc = await mona.countDoc(MONA, b.id)
+  const row = material => doc.rows.find(item => item.material === material)
+  assert.deepEqual(row('INT4300-4921-0-R').foundElsewhere.map(item => `${item.serial} ${item.countName} ${item.place}`), ['U2 Status D000 P14'])
+  assert.deepEqual(row('INT4300-4922-0').foundElsewhere.map(item => item.serial), ['N7'])
+  assert.deepEqual(row('INT4300-4921-0').foundElsewhere, [])
+})

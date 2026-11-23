@@ -99,3 +99,18 @@ test('a serial-managed row approved with quantity lines gets no quantity and no 
   const unfetched = buildCountDoc({ rows: [row], approvals: { 'INT1-0': { status: 'approved' } }, doc: null, missingOf, withLinesAtApproval: () => true }).rows[0]
   assert.deepEqual([unfetched.docQty, unfetched.serialLinesAtApproval], [null, true], 'shown before the SAP figures of the day are fetched')
 })
+
+test('a serial missing at approval but found in another count of the status is marked on its row', () => {
+  const row = { material: 'INT1-0', description: '', kind: 'new', sloc: 'D006', stockType: 'unrestricted', serialManaged: true, countedSerials: 1, sapQty: 3, counted: 1, diff: -2 }
+  const line = { material: 'INT1-0', sloc: 'D006', stockType: 'unrestricted', qty: 3, serials: ['S1', 'S2', 'S3'] }
+  const found = new Map([['S2', { countId: 'c1', countName: 'D000 terminaler', place: 'P14', by: 'anna@x', byName: 'Anna', at: 5, source: 'scan', document: '' }], ['S9', { countId: 'c1', countName: 'D000 terminaler', place: 'P1', by: 'anna@x', byName: 'Anna', at: 6, source: 'scan', document: '' }]])
+  const missingOf = () => ['S2', 'S3']
+  const build = (doc, approvals = { 'INT1-0': { status: 'approved' } }) => buildCountDoc({ rows: [row], approvals, doc, missingOf, foundElsewhere: found }).rows[0]
+  const marked = build({ fetchedAt: 9, withSerials: true, lines: [line] })
+  assert.deepEqual(marked.foundElsewhere, [{ serial: 'S2', countId: 'c1', countName: 'D000 terminaler', place: 'P14', byName: 'Anna', at: 5 }])
+  assert.deepEqual(marked.docSerials, ['S1'], 'the list itself is unchanged: the mark is a warning')
+  assert.deepEqual(build(null).foundElsewhere.map(item => item.serial), ['S2'], 'also before the SAP figures of the day are fetched')
+  assert.deepEqual(build({ fetchedAt: 9, withSerials: true, lines: [{ ...line, serials: ['S1', 'S3'] }] }).foundElsewhere, [], 'moved in SAP since: nothing is written off here')
+  assert.deepEqual(build({ fetchedAt: 9, withSerials: true, lines: [line] }, { 'INT1-0': { status: 'open' } }).foundElsewhere, [], 'not approved: nothing is frozen as missing')
+  assert.deepEqual(buildCountDoc({ rows: [row], approvals: { 'INT1-0': { status: 'approved' } }, doc: null, missingOf }).rows[0].foundElsewhere, [], 'nothing found elsewhere')
+})

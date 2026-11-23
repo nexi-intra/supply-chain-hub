@@ -6,10 +6,12 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
+import { errorCode, errorMaterials } from '@/lib/warehouse/errors'
 import { formatDateTime, formatMoney, formatNumber, kindLabel } from '@/lib/warehouse/format'
 import { cn } from '@/lib/utils'
 import type { Approval, Kind, Unpost } from '@/types/warehouse'
 import type { PanelProps } from './CountView'
+import { FoundElsewhereDialog } from './FoundElsewhere'
 import { withApprovals } from './optimisticState'
 import { UnsentPcsNotice } from './UnsentPcs'
 import { t } from '@/lib/warehouse/text'
@@ -40,6 +42,8 @@ export function ApprovalPanel({ id, state, optimistic, person }: PanelProps) {
   const [query, setQuery] = useState('')
   // Materials whose approval is still on its way to M: (their buttons wait, so two changes cannot cross).
   const [saving, setSaving] = useState<ReadonlySet<string>>(new Set())
+  // Refused with APPROVAL_FOUND_ELSEWHERE: the serials to confirm, and the approval to send again with them.
+  const [foundElsewhere, setFoundElsewhere] = useState<{ serials: string[]; retry: (confirmed: string[]) => void } | null>(null)
   const canEdit = state.me.isManager && !state.statusLocked
   const approvedWithLines = useMemo(() => new Set(state.approvedWithSerialLines || []), [state.approvedWithSerialLines])
   const materials = useMemo(() => {
@@ -64,17 +68,22 @@ export function ApprovalPanel({ id, state, optimistic, person }: PanelProps) {
   const visible = materials.filter(item => (!needle || item.material.includes(needle) || item.description.toUpperCase().includes(needle)) && (!onlyOpen || !['approved', 'posted'].includes(state.approvals[item.material]?.status || '')))
 
   /** Shown at once; saved in the background (a write to M: takes 15–90 s) and taken back if the drive refuses it. */
-  const save = (approvals: Record<string, Approval>, write: () => Promise<unknown>, releaseLocks: boolean) => {
+  const save = (approvals: Record<string, Approval>, write: () => Promise<unknown>, releaseLocks: boolean, retry?: (confirmed: string[]) => void) => {
     const changed = Object.keys(approvals)
     setSaving(current => new Set([...current, ...changed]))
     const patch = (current: typeof state) => {
       const next = withApprovals(approvals)(current)
       return releaseLocks ? { ...next, materialLocks: next.materialLocks.filter(lock => !changed.includes(lock.material)) } : next
     }
-    void optimistic(patch, write).finally(() => setSaving(current => new Set([...current].filter(material => !changed.includes(material)))))
+    const onError = (error: unknown) => {
+      if (!retry || errorCode(error) !== 'APPROVAL_FOUND_ELSEWHERE') return false
+      setFoundElsewhere({ serials: errorMaterials(error), retry })
+      return true
+    }
+    void optimistic(patch, write, { onError }).finally(() => setSaving(current => new Set([...current].filter(material => !changed.includes(material)))))
   }
 
-  const set = (material: string, status: 'approved' | 'returned' | 'posted' | 'reset') => {
+  const set = (material: string, status: 'approved' | 'returned' | 'posted' | 'reset', confirmFoundElsewhere?: string[]) => {
     if (saving.has(material)) return
     let comment = ''
     if (status === 'returned') {
@@ -87,7 +96,7 @@ export function ApprovalPanel({ id, state, optimistic, person }: PanelProps) {
     const value: Approval = status === 'reset' ? { status: 'open', by: person, at, ...log }
       : status === 'posted' ? { ...current, status: 'posted', postedBy: person, postedAt: at }
       : { status, comment: comment.trim().slice(0, 300), by: person, at, ...log }
-    save({ [material]: value }, () => window.electronWarehouse!.counts.approval({ id, material, status, comment }), status === 'approved')
+    save({ [material]: value }, () => window.electronWarehouse!.counts.approval({ id, material, status, comment, ...(confirmFoundElsewhere ? { confirmFoundElsewhere } : {}) }), status === 'approved', status === 'approved' ? confirmed => set(material, 'approved', confirmed) : undefined)
   }
 
   /** Undoes a wrong manual "Bogført i SAP" mark; the backend refuses while an SAP document holds the material. */
@@ -100,10 +109,10 @@ export function ApprovalPanel({ id, state, optimistic, person }: PanelProps) {
     save({ [material]: value }, () => window.electronWarehouse!.counts.unpost({ id, material, reason }), false)
   }
 
-  const approveClean = () => {
+  const approveClean = (confirmFoundElsewhere?: string[]) => {
     const clean = materials.filter(item => item.serialLines === 0 && !state.rows.some(row => row.material === item.material && row.diff !== 0) && !['approved', 'posted'].includes(state.approvals[item.material]?.status || '') && !saving.has(item.material))
     const at = Date.now()
-    save(Object.fromEntries(clean.map(item => [item.material, { status: 'approved', comment: t('Ingen difference', 'No difference'), by: person, at, unposts: state.approvals[item.material]?.unposts } satisfies Approval])), () => window.electronWarehouse!.counts.approveClean(id), false)
+    save(Object.fromEntries(clean.map(item => [item.material, { status: 'approved', comment: t('Ingen difference', 'No difference'), by: person, at, unposts: state.approvals[item.material]?.unposts } satisfies Approval])), () => window.electronWarehouse!.counts.approveClean(id, confirmFoundElsewhere ? { confirmFoundElsewhere } : undefined), false, confirmed => approveClean(confirmed))
     toast.success(t(`${formatNumber(clean.length)} materialer uden difference er godkendt`, `${formatNumber(clean.length)} materials without a difference are approved`))
   }
 
@@ -178,6 +187,14 @@ export function ApprovalPanel({ id, state, optimistic, person }: PanelProps) {
             </tbody>
           </table>
         </div>
+        {foundElsewhere && (
+          <FoundElsewhereDialog
+            id={id}
+            serials={foundElsewhere.serials}
+            onCancel={() => setFoundElsewhere(null)}
+            onConfirm={() => { setFoundElsewhere(null); foundElsewhere.retry(foundElsewhere.serials) }}
+          />
+        )}
       </CardContent>
     </Card>
   )

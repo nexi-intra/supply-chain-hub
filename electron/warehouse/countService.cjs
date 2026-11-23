@@ -7,7 +7,7 @@ const { TEAMS } = require('./teams.cjs')
 const { storageRulesFor, suggestRulesFromStock, KINDS } = require('./core/classify.cjs')
 const { buildSnapshot, indexSnapshot, summarizeSnapshot, normalizeMaterial, normalizeScope, MATERIAL_PATTERN } = require('./core/snapshot.cjs')
 const { scopeStockTypes, scopeKinds, scopeOverlap, describeOverlap, TERMINAL_KINDS, ACCESSORY_KINDS } = require('./core/scopes.cjs')
-const { normalizeSerial, matchSerial, activeEvents, aggregateCount, applyApprovals, freezeRows, buildCountLists, computeProgress } = require('./core/countState.cjs')
+const { normalizeSerial, matchSerial, activeEvents, aggregateCount, registeredSerials, foundElsewhere, applyApprovals, freezeRows, buildCountLists, computeProgress } = require('./core/countState.cjs')
 const { docLinesFromSnapshot, missingAtApproval, linesAtApproval, approvedWithLinesText, buildCountDoc, confirmedAll } = require('./core/countDoc.cjs')
 const { normalizeMatdoc } = require('./core/sapParsers.cjs')
 const { differenceTotals, archiveLines } = require('./core/archive.cjs')
@@ -28,6 +28,11 @@ const IMPORT_TEXT_MAX = 2_000_000
 const QTY_MAX = 10000000
 const REFRESH_MIN_MS = 1500
 const OTHERS_REFRESH_MS = 10000
+// "Fundet i en anden optælling": the other counts' journals are read only when a missing list, an approval or the count
+// document asks, at most once a minute per status (a closed count every 10 minutes); an approval wants them 10 s fresh.
+const ELSEWHERE_MS = 60000
+const ELSEWHERE_CLOSED_MS = 10 * 60000
+const ELSEWHERE_APPROVAL_MS = 10000
 // A refetch on another PC writes the meta and the snapshot in parallel: a snapshot not there yet is read again this often.
 const SNAPSHOT_RETRY_MS = 30000
 // The Hub asks for count notifications every minute; answers are shown to the one who asked for 14 days.
@@ -492,6 +497,75 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     return [...byId.values()].sort((a, b) => a.at - b.at || (a.id < b.id ? -1 : 1))
   }
 
+  // ---------- Found in another count of the status ----------
+  /** Per status: what each of its counts registered (registeredSerials), when that was read, and its journal chunk cache. */
+  const elsewhereByStatus = new Map()
+
+  /**
+   * The serials the other counts of the status registered: serial -> count, place, who and when. Only read, and cached per
+   * status for every count of it on this PC; never asked by the poll (getState), only by the missing lists, the approvals
+   * and the count document.
+   */
+  async function foundElsewhereFor(state, maxAge = ELSEWHERE_MS) {
+    if (!state.meta.statusId) return new Map()
+    const key = `${state.team}:${state.meta.statusId}`
+    let entry = elsewhereByStatus.get(key)
+    if (!entry) elsewhereByStatus.set(key, (entry = { at: 0, counts: new Map(), running: null }))
+    while (entry.running) await entry.running
+    if (now() - entry.at >= maxAge) {
+      entry.running = readElsewhere(state, entry, maxAge).finally(() => { entry.running = null })
+      await entry.running
+    }
+    return foundElsewhere([...entry.counts].filter(([id]) => id !== state.id).map(([id, count]) => ({ id, name: count.name, serials: count.serials })))
+  }
+
+  /**
+   * One read of the status: the count list, one listing of the folder for all journals, and per count only its chunks not
+   * cached yet (a full chunk never changes, so each writer's last chunk). A count open on this PC and refreshed within
+   * `maxAge` gives its events without reading M:; a closed count is read again after 10 minutes. Never throws: what
+   * cannot be read keeps what was read before.
+   */
+  async function readElsewhere(state, entry, maxAge) {
+    const at = now()
+    try {
+      const list = (await statusCounts(state.team, state.meta.statusId)).filter(item => !item.creating)
+      const ids = new Set(list.map(item => item.id))
+      for (const id of entry.counts.keys()) if (!ids.has(id)) entry.counts.delete(id)
+      const remote = storeFor(state.team)
+      let keys = null
+      await Promise.all(list.map(async item => {
+        const known = entry.counts.get(item.id)
+        if (known && item.status === 'closed' && known.status === 'closed' && at - known.at < ELSEWHERE_CLOSED_MS) { known.name = item.name; return }
+        try {
+          const local = [...opened.values()].find(other => other.team === state.team && other.id === item.id && at - other.refreshedAt < maxAge)
+          const chunks = known?.chunks || new Map()
+          let events
+          if (local) events = mergedEvents(local)
+          else {
+            keys ||= remote.keysAsync()
+            events = (await readJournals({ remote, countId: item.id, cache: chunks, keys: await keys })).events
+          }
+          entry.counts.set(item.id, { name: item.name, status: item.status, at, serials: registeredSerials(events), chunks })
+        } catch (error) {
+          console.error('CountPoint: journals of another count unavailable', error.code || error.message)
+        }
+      }))
+    } catch (error) {
+      console.error('CountPoint: other counts unavailable', error.code || error.message)
+    } finally {
+      // Also after a failure: a drive that is away is asked again after the same pause, not on every list.
+      entry.at = at
+    }
+  }
+
+  /** The missing serials of `material` (aggregate.serials.missing) that another count of the status found. */
+  function missingFoundElsewhere(state, found, material) {
+    if (!found.size) return []
+    return state.aggregate.serials.missing.filter(item => item.material === material && found.has(item.serial)).map(item => item.serial)
+  }
+
+  const foundElsewhereError = serials => codeError('APPROVAL_FOUND_ELSEWHERE', `Serienumre, der mangler her, er fundet i en anden optælling i statussen. Godkendes de som manglende, afskrives varer, der er fundet. Flyt dem i SAP, eller godkend alligevel. Gælder: ${[...serials].sort().join(', ')}`)
+
   async function access(user, state) {
     const [members, locked] = await Promise.all([repo.getMembers(state.team, state.id).catch(() => null), statusLocked(state.team, state.meta.statusId)])
     adoptMembers(state, members)
@@ -654,12 +728,17 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     return Object.entries(claims).filter(([, claim]) => claim && now() - claim.lastActivity < CLAIM_IDLE_MS).map(([area, claim]) => ({ area, ...claim }))
   }
 
+  /** `missing` items found by another count of the status carry `foundElsewhere`; `found-elsewhere` lists only those. */
   async function listSerials(user, id, { kind = 'missing', query = '', limit = LIST_LIMIT } = {}) {
     const state = await refresh(await load(user, id))
+    const missingKind = kind !== 'extra' && kind !== 'duplicates'
     const source = kind === 'extra' ? state.aggregate.serials.extra : kind === 'duplicates' ? state.aggregate.duplicates : state.aggregate.serials.missing
     const needle = String(query || '').trim().toUpperCase()
-    const filtered = needle ? source.filter(item => item.serial.includes(needle) || String(item.material || '').includes(needle) || String(item.sloc || '') === needle) : source
-    return { total: filtered.length, items: filtered.slice(0, Math.min(Number(limit) || LIST_LIMIT, 2000)) }
+    let filtered = needle ? source.filter(item => item.serial.includes(needle) || String(item.material || '').includes(needle) || String(item.sloc || '') === needle) : source
+    const found = missingKind && filtered.length ? await foundElsewhereFor(state) : new Map()
+    if (kind === 'found-elsewhere') filtered = filtered.filter(item => found.has(item.serial))
+    const items = filtered.slice(0, Math.min(Number(limit) || LIST_LIMIT, 2000))
+    return { total: filtered.length, items: found.size ? items.map(item => (found.has(item.serial) ? { ...item, foundElsewhere: found.get(item.serial) } : item)) : items }
   }
 
   // ---------- Scanning and counting ----------
@@ -684,11 +763,14 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     found.sort((a, b) => b.at - a.at)
     missing.sort((a, b) => a.serial.localeCompare(b.serial))
     const pick = list => list.filter(matches).slice(0, max)
+    // A missing serial another count of the status found: "Fundet i '…' på …".
+    const elsewhereFound = missing.length ? await foundElsewhereFor(state) : new Map()
+    const missingItems = pick(missing).map(item => (elsewhereFound.has(item.serial) ? { ...item, foundElsewhere: elsewhereFound.get(item.serial) } : item))
     return {
       material: code, description: entry.description, kind: entry.kind, serialManaged: entry.serialManaged,
       expected: found.length + missing.length,
       totals: { found: found.length, missing: missing.length, elsewhere: elsewhere.length },
-      found: pick(found), missing: pick(missing),
+      found: pick(found), missing: missingItems,
       elsewhere: pick(elsewhere.map(item => ({ serial: item.serial, sloc: item.sloc, stockType: item.stockType, place: item.place, byName: item.byName, at: item.at, source: item.source, outcome: item.outcome }))),
     }
   }
@@ -1330,7 +1412,11 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   /** The SAP count document (not deleted) that holds the material, if any. */
   const activePiDoc = (docs, code) => Object.values(docs).find(doc => doc.status !== 'deleted' && doc.lines?.some(line => line.material === code))
 
-  async function setApproval(user, id, { material, status, comment = '' } = {}) {
+  /**
+   * Approving a material whose missing serials another count of the status found is refused once (APPROVAL_FOUND_ELSEWHERE,
+   * "Gælder: <serials>"): a warning, approved when every such serial is on `confirmFoundElsewhere` (the list shown).
+   */
+  async function setApproval(user, id, { material, status, comment = '', confirmFoundElsewhere = [] } = {}) {
     const state = status === 'approved' || status === 'posted' ? await refresh(await load(user, id), true) : await load(user, id)
     if (!isManager(user)) throw codeError('MANAGER_ONLY', 'Kun managers kan godkende')
     await assertStatusOpen(state.team, state.meta)
@@ -1352,6 +1438,9 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const at = now()
     const frozen = status === 'approved' ? freezeRows(state.aggregate.rows, code, state.aggregate.serials.missing) : null
     const serialLines = status === 'approved' ? serialLinesOf(state, code) : []
+    // Asked before the lock (a write to M: can take long, the warning should not wait for it); only reads.
+    const elsewhere = status === 'approved' && !serialLines.length && state.aggregate.serials.missing.some(item => item.material === code) ? missingFoundElsewhere(state, await foundElsewhereFor(state, ELSEWHERE_APPROVAL_MS), code) : []
+    if (elsewhere.length && !confirmedAll(elsewhere, confirmFoundElsewhere)) throw foundElsewhereError(elsewhere)
     // Checked and written under the lock: a "Bogført i SAP" from another PC that a cached read has not seen yet is never overwritten.
     const write = repo.changeApprovals(state.team, state.id, all => {
       const current = all[code]
@@ -1364,7 +1453,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       const log = current?.unposts?.length ? { unposts: current.unposts } : {}
       all[code] = status === 'reset' ? { status: 'open', by, at, ...log }
         : status === 'posted' ? { ...current, status: 'posted', postedBy: by, postedAt: at }
-        : status === 'approved' ? { status, comment: clean(comment, 300), by, at, frozen, ...log }
+        : status === 'approved' ? { status, comment: clean(comment, 300), by, at, frozen, ...(elsewhere.length ? { confirmedFoundElsewhere: [...elsewhere].sort() } : {}), ...log }
         // Who sent it to approval is told that it came back (the Hub's notifications).
         : { status, comment: clean(comment, 300), by, at, submittedBy: current?.status === 'submitted' ? current.by : current?.submittedBy || null, ...log }
       return { all, result: all[code] }
@@ -1377,7 +1466,11 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     return value
   }
 
-  async function approveAllWithoutDifference(user, id) {
+  /**
+   * Like setApproval, a material with missing serials found in another count of the status is not approved over the
+   * warning the first time: APPROVAL_FOUND_ELSEWHERE lists the serials, and all are approved once they are confirmed.
+   */
+  async function approveAllWithoutDifference(user, id, { confirmFoundElsewhere = [] } = {}) {
     const state = await refresh(await load(user, id), true)
     if (!isManager(user)) throw codeError('MANAGER_ONLY', 'Kun managers kan godkende')
     await assertStatusOpen(state.team, state.meta)
@@ -1391,16 +1484,24 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const at = now()
     // A serial-managed material with quantity lines waits until they are deleted (setApproval refuses it the same way).
     const candidates = [...byMaterial].filter(([material, entry]) => !entry.diff && !serialLinesOf(state, material).length).map(([material]) => material)
+    const withMissing = new Set(state.aggregate.serials.missing.map(item => item.material))
+    const found = candidates.some(material => withMissing.has(material)) ? await foundElsewhereFor(state, ELSEWHERE_APPROVAL_MS) : new Map()
+    const elsewhereOf = materials => materials.flatMap(material => missingFoundElsewhere(state, found, material))
+    // Told before the lock (from the approvals as read now), and checked again under it with what is approved there.
+    const known = found.size ? await repo.getApprovals(state.team, state.id).catch(() => ({})) : {}
+    const warned = elsewhereOf(candidates.filter(material => !['approved', 'posted'].includes(known[material]?.status)))
+    if (!confirmedAll(warned, confirmFoundElsewhere)) throw foundElsewhereError(warned)
     // One locked write of the approvals with every material (was one 20-s write per material). Already approved or
     // posted materials are skipped under the lock, so an approval made meanwhile on another PC is kept.
     const approved = await repo.changeApprovals(state.team, state.id, all => {
-      let count = 0
-      for (const material of candidates) {
-        if (['approved', 'posted'].includes(all[material]?.status)) continue
-        all[material] = { status: 'approved', comment: 'Ingen difference', by, at, frozen: freezeRows(state.aggregate.rows, material, state.aggregate.serials.missing), ...(all[material]?.unposts?.length ? { unposts: all[material].unposts } : {}) }
-        count += 1
+      const chosen = candidates.filter(material => !['approved', 'posted'].includes(all[material]?.status))
+      const elsewhere = elsewhereOf(chosen)
+      if (!confirmedAll(elsewhere, confirmFoundElsewhere)) throw foundElsewhereError(elsewhere)
+      for (const material of chosen) {
+        const confirmed = missingFoundElsewhere(state, found, material).sort()
+        all[material] = { status: 'approved', comment: 'Ingen difference', by, at, frozen: freezeRows(state.aggregate.rows, material, state.aggregate.serials.missing), ...(confirmed.length ? { confirmedFoundElsewhere: confirmed } : {}), ...(all[material]?.unposts?.length ? { unposts: all[material].unposts } : {}) }
       }
-      return { all, result: count }
+      return { all, result: chosen.length }
     })
     return { approved }
   }
@@ -1540,17 +1641,18 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   }
 
   // ---------- Count document (read-only preparation; the document itself is created in SAP) ----------
-  async function docOf(state) {
+  /** `found`: the serials found in another count of the status, to mark on the rows (countDoc); not needed for the lists. */
+  async function docOf(state, found = new Map()) {
     const [approvals, doc] = await Promise.all([repo.getApprovals(state.team, state.id).catch(() => ({})), repo.getCountDoc(state.team, state.id).catch(() => null)])
     const missingOf = row => missingAtApproval({ approval: approvals[row.material], row, index: state.index, found: state.found })
     const withLines = approvedWithLines(state, approvals)
-    return { doc, result: buildCountDoc({ rows: applyApprovals(state.aggregate, approvals).rows, approvals, doc, missingOf, withLinesAtApproval: row => withLines.has(row.material) }) }
+    return { doc, result: buildCountDoc({ rows: applyApprovals(state.aggregate, approvals).rows, approvals, doc, missingOf, withLinesAtApproval: row => withLines.has(row.material), foundElsewhere: found }) }
   }
 
   async function countDoc(user, id) {
     const state = await refresh(await load(user, id))
     const rights = await access(user, state)
-    const { doc, result } = await docOf(state)
+    const { doc, result } = await docOf(state, state.aggregate.rows.some(row => row.serialManaged) ? await foundElsewhereFor(state) : new Map())
     // The serial lists stay in the main process (copySerials / SAP entry); the screen only needs the numbers.
     const rows = result.rows.map(({ docSerials, ...row }) => row)
     return { fetchedAt: doc?.fetchedAt || null, fetchedBy: doc?.by || null, canFetch: canFetchDoc(user, rights), ...(doc?.confirmedMissing ? { confirmedMissing: doc.confirmedMissing } : {}), ...result, rows }

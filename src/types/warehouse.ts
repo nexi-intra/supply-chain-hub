@@ -436,6 +436,8 @@ export interface CountDocRow {
   needsSerials: boolean
   /** Serial-managed and approved while it had quantity lines: no quantity or list until it is reset and approved again. */
   serialLinesAtApproval?: boolean
+  /** Serials missing at approval that another count of the status found: the document writes them off unless they are moved in SAP first. */
+  foundElsewhere?: ({ serial: string } & Pick<FoundElsewhere, 'countId' | 'countName' | 'place' | 'byName' | 'at'>)[]
 }
 
 export interface CountDoc {
@@ -581,6 +583,8 @@ export interface Approval {
   postedAt?: number
   /** Every undone "Bogført i SAP" mark, oldest first; kept through reset, sending back and approving again. */
   unposts?: Unpost[]
+  /** Missing serials another count of the status had found, approved anyway after the warning (APPROVAL_FOUND_ELSEWHERE). */
+  confirmedFoundElsewhere?: string[]
   /** Set when a counter sent the material to approval. */
   diff?: number
   sapQty?: number
@@ -702,6 +706,18 @@ export interface MatdocLookup {
   alreadyImported: { byName: string; at: number; place: string } | null
 }
 
+/** Where another count of the same status registered a serial this count misses: "Fundet i '{countName}' på {place}". */
+export interface FoundElsewhere {
+  countId: string
+  countName: string
+  place: string
+  by?: string
+  byName: string
+  at: number
+  source?: 'scan' | 'import'
+  document?: string
+}
+
 export interface SerialListItem {
   serial: string
   material: string | null
@@ -712,6 +728,8 @@ export interface SerialListItem {
   place?: string
   byName?: string
   at?: number
+  /** A missing serial another count of the status found. */
+  foundElsewhere?: FoundElsewhere
 }
 
 export interface MaterialSerialItem {
@@ -724,6 +742,8 @@ export interface MaterialSerialItem {
   source?: 'scan' | 'import'
   outcome?: string
   document?: string
+  /** A missing serial another count of the status found. */
+  foundElsewhere?: FoundElsewhere
 }
 
 export interface MaterialSerials {
@@ -1139,7 +1159,7 @@ export interface WarehouseBridge {
     create(request: { token: string; name: string }): Promise<CountMeta>
     open(id: string): Promise<OpenCount>
     state(id: string): Promise<CountState>
-    serials(request: { id: string; kind: 'missing' | 'extra' | 'duplicates'; query?: string; limit?: number }): Promise<{ total: number; items: SerialListItem[] }>
+    serials(request: { id: string; kind: 'missing' | 'extra' | 'duplicates' | 'found-elsewhere'; query?: string; limit?: number }): Promise<{ total: number; items: SerialListItem[] }>
     materialSerials(request: { id: string; material: string; query?: string; limit?: number }): Promise<MaterialSerials>
     scan(request: { id: string; serial: string; place: string }): Promise<ScanResult>
     undo(request: { id: string; eventId?: string }): Promise<{ undone: JournalEvent }>
@@ -1162,7 +1182,7 @@ export interface WarehouseBridge {
     remove(id: string): Promise<{ ok: true }>
     refetchPreview(id: string): Promise<{ token: string; diff: { changes: { material: string; sloc: string; before: Record<StockType, number>; after: Record<StockType, number>; frozen?: boolean }[]; serials: { added: number; removed: number } } }>
     refetchApply(request: { id: string; token: string }): Promise<CountMeta>
-    approval(request: { id: string; material: string; status: 'approved' | 'returned' | 'posted' | 'reset'; comment?: string }): Promise<Approval>
+    approval(request: { id: string; material: string; status: 'approved' | 'returned' | 'posted' | 'reset'; comment?: string; confirmFoundElsewhere?: string[] }): Promise<Approval>
     /** Managers only: undoes a wrong manual "Bogført i SAP" mark (back to approved). Refused while an SAP document holds the material. */
     unpost(request: { id: string; material: string; reason: string }): Promise<Approval>
     lockMaterial(request: { id: string; material: string }): Promise<MaterialLock>
@@ -1170,7 +1190,8 @@ export interface WarehouseBridge {
     answerMaterialRequest(request: { id: string; material: string; email: string; allow: boolean }): Promise<MaterialLock>
     releaseMaterial(request: { id: string; material: string }): Promise<{ ok: true }>
     submitMaterial(request: { id: string; material: string; comment?: string; acceptDiff?: boolean }): Promise<Approval>
-    approveClean(id: string): Promise<{ approved: number }>
+    /** Approving is refused with APPROVAL_FOUND_ELSEWHERE when missing serials were found in another count of the status; approved when every one is on confirmFoundElsewhere (the list shown). */
+    approveClean(id: string, options?: { confirmFoundElsewhere?: string[] }): Promise<{ approved: number }>
     copySerials(request: { id: string; material: string; sloc: string; stockType: StockType; forDoc?: boolean }): Promise<CopySerialsResult>
     doc(id: string): Promise<CountDoc>
     /** Refused with DOC_STOCK_MISSING when an approved material with SAP stock at approval has no line today; saved only when every missing line is on `confirmMissing` (the list shown). */

@@ -146,6 +146,42 @@ function aggregateCount({ snapshot, index, events }) {
   }
 }
 
+/**
+ * Every serial a count registered (scanned or imported, not undone or removed): serial -> its first registration.
+ * Needs no SAP snapshot, so another count's journal is enough (what it found in its own area, and its extra serials).
+ */
+function registeredSerials(events) {
+  const active = activeEvents(events)
+  const removedUntil = new Map()
+  for (const event of active) if (event.type === 'serial-remove') removedUntil.set(normalizeSerial(event.serial), Math.max(event.at, removedUntil.get(normalizeSerial(event.serial)) ?? -Infinity))
+  const registered = new Map()
+  const record = (rawSerial, event, source) => {
+    const serial = normalizeSerial(rawSerial)
+    if (!serial || registered.has(serial) || event.at <= (removedUntil.get(serial) ?? -Infinity)) return
+    registered.set(serial, { place: event.place || '', by: event.by, byName: event.byName, at: event.at, source, document: event.document || '' })
+  }
+  for (const event of active) {
+    if (event.type === 'scan') record(event.serial, event, 'scan')
+    else if (event.type === 'import' && Array.isArray(event.serials)) for (const serial of event.serials) record(serial, event, 'import')
+  }
+  return registered
+}
+
+/**
+ * The serials the other counts of a status registered (`counts`: { id, name, serials: registeredSerials }): serial ->
+ * the count that registered it first, with place, who and when. A count's missing serial found here is "Fundet i …".
+ */
+function foundElsewhere(counts) {
+  const result = new Map()
+  for (const count of counts) {
+    for (const [serial, who] of count.serials) {
+      const known = result.get(serial)
+      if (!known || who.at < known.at) result.set(serial, { countId: count.id, countName: count.name, ...who })
+    }
+  }
+  return result
+}
+
 function totalsOf(rows) {
   const totals = {}
   for (const row of rows) {
@@ -350,4 +386,4 @@ function computeProgress({ snapshot, aggregate, countLists = [], events, approva
   }
 }
 
-module.exports = { normalizeSerial, matchSerial, activeEvents, aggregateCount, applyApprovals, freezeRows, buildCountLists, computeProgress, lineIdFor }
+module.exports = { normalizeSerial, matchSerial, activeEvents, aggregateCount, registeredSerials, foundElsewhere, applyApprovals, freezeRows, buildCountLists, computeProgress, lineIdFor }

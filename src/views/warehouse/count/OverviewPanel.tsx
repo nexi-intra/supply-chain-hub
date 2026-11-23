@@ -14,6 +14,7 @@ import { formatDateTime, formatMoney, formatNumber, kindLabel, stockLabel } from
 import { cn } from '@/lib/utils'
 import type { Kind, ResultRow, SerialListItem, StockType } from '@/types/warehouse'
 import type { PanelProps } from './CountView'
+import { FoundElsewhereNote } from './FoundElsewhere'
 import { t } from '@/lib/warehouse/text'
 
 const KINDS: Kind[] = ['new', 'used', 'accessory', 'other']
@@ -249,7 +250,7 @@ function SerialLists({ id, counts, version }: { id: string; counts: Record<Seria
                   <td className="px-3 py-1.5"><span className="font-mono">{item.material || '–'}</span> {item.description && <span className="text-xs text-muted-foreground">{item.description}</span>}</td>
                   <td className="px-3 py-1.5 font-mono">{item.sloc || '–'}</td>
                   <td className="px-3 py-1.5">{stockLabel(item.stockType)}</td>
-                  <td className="px-3 py-1.5 text-xs text-muted-foreground">{kind === 'missing' ? '' : `${item.place || ''} · ${item.byName || ''} · ${formatDateTime(item.at)}`}</td>
+                  <td className="px-3 py-1.5 text-xs text-muted-foreground">{kind === 'missing' ? (item.foundElsewhere ? <FoundElsewhereNote item={item.foundElsewhere} /> : '') : `${item.place || ''} · ${item.byName || ''} · ${formatDateTime(item.at)}`}</td>
                 </tr>
               ))}
               {items.length === 0 && <tr><td colSpan={5} className="px-3 py-6 text-center text-muted-foreground">{t('Ingen.', 'None.')}</td></tr>}

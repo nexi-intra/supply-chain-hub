@@ -13,6 +13,7 @@ import { fetchSteps, formatDateTime, formatNumber } from '@/lib/warehouse/format
 import { cn } from '@/lib/utils'
 import type { CountDoc, CountDocRow, FetchStep, PiDoc, PiDocList } from '@/types/warehouse'
 import type { PanelProps } from './CountView'
+import { FoundElsewhereNote } from './FoundElsewhere'
 import { CopySerialsButton } from './OverviewPanel'
 import { PiDocsSection } from './PiDocsSection'
 import { t } from '@/lib/warehouse/text'
@@ -207,6 +208,7 @@ export function DocPanel({ id, open, state }: PanelProps) {
   if (!doc) return <p className="text-sm text-muted-foreground">{t('Henter …', 'Fetching …')}</p>
   const needsSerials = doc.rows.filter(row => row.needsSerials).length
   const mismatches = doc.rows.filter(serialMismatch).length
+  const foundElsewhere = doc.rows.filter(row => row.foundElsewhere?.length).length
 
   return (
     <Card>
@@ -242,6 +244,11 @@ export function DocPanel({ id, open, state }: PanelProps) {
         {mismatches > 0 && (
           <p className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200">
             <Warning size={16} /> {t(`${formatNumber(mismatches)} ${mismatches === 1 ? 'linje' : 'linjer'} med serienumre giver et andet antal end SAP i dag + difference. Serienumrene bestemmer – tjek materialet, før dokumentet laves.`, `${formatNumber(mismatches)} ${mismatches === 1 ? 'line' : 'lines'} with serial numbers give another quantity than SAP today + difference. The serial numbers decide – check the material before the document is made.`)}
+          </p>
+        )}
+        {foundElsewhere > 0 && (
+          <p className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200">
+            <Warning size={16} /> {t(`${formatNumber(foundElsewhere)} ${foundElsewhere === 1 ? 'linje' : 'linjer'} med serienumre afskriver serienumre, der er fundet i en anden optælling i statussen. Flyt dem i SAP, før dokumentet laves.`, `${formatNumber(foundElsewhere)} ${foundElsewhere === 1 ? 'line' : 'lines'} with serial numbers write off serial numbers that were found in another count of the status. Move them in SAP before the document is made.`)}
           </p>
         )}
         {doc.missingApproval > 0 && (
@@ -292,6 +299,7 @@ export function DocPanel({ id, open, state }: PanelProps) {
                   </td>
                   <td className="px-3 py-1.5 text-right">
                     <DocQty row={row} fetched={doc.fetchedAt !== null} />
+                    {row.foundElsewhere?.map(item => <div key={item.serial} className="text-xs"><span className="font-mono">{item.serial}</span> <FoundElsewhereNote item={item} /></div>)}
                   </td>
                   <td className="space-x-1 px-3 py-1.5 text-right whitespace-nowrap">
                     {row.docQty !== null && <CopyQtyButton row={row} />}

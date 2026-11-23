@@ -2,7 +2,7 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const { buildSnapshot, indexSnapshot } = require('./snapshot.cjs')
 const { storageRulesFor } = require('./classify.cjs')
-const { normalizeSerial, matchSerial, aggregateCount, buildCountLists, computeProgress, applyApprovals, freezeRows } = require('./countState.cjs')
+const { normalizeSerial, matchSerial, aggregateCount, buildCountLists, computeProgress, applyApprovals, freezeRows, registeredSerials, foundElsewhere } = require('./countState.cjs')
 
 const rulesByTeam = { TCD: storageRulesFor('TCD', {}), TRR: storageRulesFor('TRR', {}) }
 const stock = (material, sloc, unrestricted, blocked = 0, valueUnrestricted = 0, valueBlocked = 0) => ({ material, description: `${material} tekst`, plant: 'D301', sloc, unrestricted, blocked, valueUnrestricted, valueBlocked })
@@ -252,4 +252,30 @@ test('approval freezes the missing serials of serial-managed rows, not of quanti
   const missing = [{ serial: 'N3', material: 'INT1-0', sloc: 'D000', stockType: 'unrestricted' }, { serial: 'N9', material: 'INT2-0', sloc: 'D000', stockType: 'unrestricted' }]
   assert.deepEqual(freezeRows(rows, 'INT1-0', missing).map(row => row.missingSerials), [['N3'], []])
   assert.equal('missingSerials' in freezeRows(rows, 'R1', missing)[0], false)
+})
+test('the serials a count registered: the first active scan or import, without undone or removed ones', () => {
+  const events = [
+    { id: 'a', type: 'scan', serial: ' u2 ', place: 'P14', by: 'anna@x', byName: 'Anna', at: 10 },
+    { id: 'b', type: 'scan', serial: 'U2', place: 'P99', by: 'bo@x', byName: 'Bo', at: 20 },
+    { id: 'c', type: 'import', serials: ['N7', 'bad<'], place: 'P15', document: '4900000001', by: 'bo@x', byName: 'Bo', at: 30 },
+    { id: 'd', type: 'scan', serial: 'X1', place: 'P1', by: 'anna@x', byName: 'Anna', at: 40 },
+    { id: 'e', type: 'undo', target: 'd', by: 'anna@x', at: 41 },
+    { id: 'f', type: 'scan', serial: 'X2', place: 'P1', by: 'anna@x', byName: 'Anna', at: 50 },
+    { id: 'g', type: 'serial-remove', serial: 'X2', by: 'anna@x', at: 60 },
+  ]
+  const registered = registeredSerials(events)
+  assert.deepEqual([...registered.keys()].sort(), ['N7', 'U2'])
+  assert.deepEqual(registered.get('U2'), { place: 'P14', by: 'anna@x', byName: 'Anna', at: 10, source: 'scan', document: '' })
+  assert.deepEqual(registered.get('N7'), { place: 'P15', by: 'bo@x', byName: 'Bo', at: 30, source: 'import', document: '4900000001' })
+})
+
+test('found elsewhere in the status: serial -> the count that registered it first, with place, who and when', () => {
+  const who = (place, at) => ({ place, by: 'anna@x', byName: 'Anna', at, source: 'scan', document: '' })
+  const result = foundElsewhere([
+    { id: 'c1', name: 'D000 terminaler', serials: new Map([['U2', who('P14', 30)], ['N7', who('P15', 5)]]) },
+    { id: 'c2', name: 'D001 terminaler', serials: new Map([['U2', who('P2', 20)]]) },
+  ])
+  assert.deepEqual(result.get('U2'), { countId: 'c2', countName: 'D001 terminaler', ...who('P2', 20) })
+  assert.equal(result.get('N7').countName, 'D000 terminaler')
+  assert.equal(foundElsewhere([]).size, 0)
 })

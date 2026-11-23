@@ -89,8 +89,10 @@ function linesAtApproval({ approvals = {}, events = [], serialManaged }) {
  * `rows` are the result rows with the approved numbers frozen (applyApprovals). `doc` is the stock of the day or null.
  * `missingOf(row)` gives the serials missing at approval of an approved serial-managed row. `withLinesAtApproval(row)`
  * is true when that approval also held quantity lines (linesAtApproval): such a row gets no quantity and no list.
+ * `foundElsewhere` (serial -> where another count of the status registered it, countState.foundElsewhere) marks the
+ * serials missing at approval that were found there: the document would write them off (`row.foundElsewhere`).
  */
-function buildCountDoc({ rows, approvals = {}, doc = null, missingOf = () => [], withLinesAtApproval = () => false }) {
+function buildCountDoc({ rows, approvals = {}, doc = null, missingOf = () => [], withLinesAtApproval = () => false, foundElsewhere = new Map() }) {
   const today = doc ? new Map(doc.lines.map(line => [keyOf(line.material, line.sloc, line.stockType), line])) : null
   const withSerials = doc?.withSerials === true
   const missing = new Set()
@@ -119,6 +121,15 @@ function buildCountDoc({ rows, approvals = {}, doc = null, missingOf = () => [],
         docQty = docSerials.length
       }
     }
+    let elsewhere = []
+    if (row.serialManaged && approved && foundElsewhere.size) {
+      // Only what this row writes off: a serial SAP has moved since (not on today's list) is not written off here.
+      const listed = withSerials && today ? new Set(line?.serials || []) : null
+      elsewhere = missingOf(row).filter(serial => foundElsewhere.has(serial) && (!listed || listed.has(serial))).sort().map(serial => {
+        const { countId, countName, place, byName, at } = foundElsewhere.get(serial)
+        return { serial, countId, countName, place, byName, at }
+      })
+    }
     return {
       material: row.material,
       description: row.description,
@@ -137,6 +148,7 @@ function buildCountDoc({ rows, approvals = {}, doc = null, missingOf = () => [],
       docSerials,
       needsSerials,
       serialLinesAtApproval,
+      foundElsewhere: elsewhere,
     }
   })
   return { rows: result, missingApproval: missing.size, withSerials }
