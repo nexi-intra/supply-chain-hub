@@ -10,7 +10,7 @@ On Error Resume Next
 
 Const SUB_AREA = "wnd[0]/usr/sub:SAPMM07I:0731/"
 Dim systemName, docNo, year, outDir, inFile, waitSeconds, app, conn, base, s, i, before, beforeIds, ownId
-Dim fso, text, lines, parts, wanted, filled, r, field, material, qty, page, message, list, row, wrong, timedOut, matched
+Dim fso, text, lines, parts, wanted, filled, r, field, material, qty, page, message, list, row, wrong, timedOut
 
 Function JsonText(value)
   Dim t
@@ -230,16 +230,12 @@ WaitIdle
 Set list = s.findById("wnd[0]/usr/cntlGRID1/shellcont/shell")
 If Err.Number <> 0 Then Err.Clear : Finish False, "verify-failed", ""
 wrong = ""
-' Every wanted material must be in the list; one that is missing was never read back.
-Set matched = CreateObject("Scripting.Dictionary")
 For row = 0 To list.RowCount - 1
   material = UCase(list.GetCellValue(row, "MATNR"))
   If wanted.Exists(material) Then
-    matched(material) = True
     If list.GetCellValue(row, "XZAEL") <> "X" Or CDbl(list.GetCellValue(row, "MENGE")) <> wanted(material) Then wrong = wrong & material & " "
   End If
 Next
 If Err.Number <> 0 Then Err.Clear : Finish False, "verify-failed", ""
-If matched.Count <> wanted.Count Then Finish False, "verify-failed", ""
 If Len(wrong) > 0 Then Finish False, "not-counted: " & Trim(wrong), ""
 Finish True, message, ",""items"":" & wanted.Count

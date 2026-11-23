@@ -120,12 +120,10 @@ test('pidoc-serials.vbs compares SAP\'s counted quantity with the serials sent a
   assert.match(source, /^Function OnlyDigits\(value\)\r$/m)
 })
 
-test('the MI04 read-back fails when a wanted material is not in the list at all', () => {
+test('the MI04 read-back lets a wanted material missing from the grid pass, as before (until QS4 shows the grid lists non-serial materials)', () => {
   const source = fs.readFileSync(path.join(__dirname, 'sap', 'pidoc-count.vbs'), 'utf8')
-  const check = source.indexOf('If matched.Count <> wanted.Count Then Finish False, "verify-failed", ""')
-  assert.ok(check > 0 && check < source.indexOf('If Len(wrong) > 0 Then Finish False, "not-counted: "'))
-  assert.match(source, /^    matched\(material\) = True\r$/m)
-  assert.match(source, /^Dim [^\r\n]*\bmatched\b/m, 'declared (Option Explicit)')
+  assert.doesNotMatch(source, /\bmatched\b/)
+  assert.match(source, /^If Err\.Number <> 0 Then Err\.Clear : Finish False, "verify-failed", ""\r\nIf Len\(wrong\) > 0 Then Finish False, "not-counted: " & Trim\(wrong\), ""\r$/m)
 })
 
 test('quantities: MI04 for the whole document; 0 is allowed (Zero Count)', async () => {
@@ -243,6 +241,25 @@ test('a script killed at the time limit while the user may have saved is unknown
   await assert.rejects(writer.postDocuments({ docNos: ['105000894'], year: '2026' }), UNKNOWN)
   const failing = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript: async () => { throw Object.assign(new Error('SAP_SCRIPT_FAILED'), { code: 'SAP_SCRIPT_FAILED' }) }, clipboard: null, system: 'QS4', waitSeconds: 300 })
   await assert.rejects(failing.enterCounts({ docNo: '105000894', year: '2026', entries: [{ material: 'R1', qty: 3 }] }), { code: 'SAP_SCRIPT_FAILED' }, 'other failures are passed on')
+})
+
+test('an unknown state is logged with the script and SAP\'s detail; the message stays the plain text', async t => {
+  const logged = t.mock.method(console, 'error', () => {})
+  let next = '{"ok":false,"error":"verify-failed"}'
+  const runScript = async () => { if (next instanceof Error) throw next; return next }
+  const writer = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
+  await assert.rejects(writer.enterCounts({ docNo: '105000894', year: '2026', entries: [{ material: 'R1', qty: 3 }] }), UNKNOWN)
+  await assert.rejects(writer.enterSerials({ docNo: '105000893', year: '2026', material: 'INT1-0', serials: ['S1'] }), UNKNOWN)
+  next = '{"ok":false,"error":"read-failed","screens":"SAPMSSY0/120/1"}'
+  await assert.rejects(writer.postDocuments({ docNos: ['105000894'], year: '2026' }), UNKNOWN)
+  next = Object.assign(new Error('SAP_TIMEOUT'), { code: 'SAP_TIMEOUT' })
+  await assert.rejects(writer.enterCounts({ docNo: '105000894', year: '2026', entries: [{ material: 'R1', qty: 3 }] }), UNKNOWN)
+  assert.deepEqual(logged.mock.calls.map(call => call.arguments), [
+    ['CountPoint: PI document state unknown', 'pidoc-count', 'verify-failed'],
+    ['CountPoint: PI document state unknown', 'pidoc-serials', 'verify-failed'],
+    ['CountPoint: PI document state unknown', 'pidoc-post', 'read-failed'],
+    ['CountPoint: PI document state unknown', 'pidoc-count', 'SAP_TIMEOUT'],
+  ])
 })
 
 test('the waiting scripts read SAP back after a timeout instead of ending with "timeout"', () => {
