@@ -657,4 +657,4 @@ Jacob: testdata må ikke påvirke statistikken i drift, og man skal kunne slette
   - 'summarizeByMaterial splits time by terminal count'
   - 'commentsFor matches material and version, and empty fields match everything'
 
-- [ ] Tests først, se dem fejle, implementér, se dem bestå, tsc, vitest, commit `feat(softwareload): kommentarer til perioder i statistikken`
+- [x] Tests først, se dem fejle, implementér, se dem bestå, tsc, vitest, commit `feat(softwareload): kommentarer til perioder i statistikken`
