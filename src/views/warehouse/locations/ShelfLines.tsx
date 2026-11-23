@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ArrowsLeftRight, HandGrabbing, PencilSimple } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { errorCode } from '@/lib/warehouse/errors'
 import { formatNumber } from '@/lib/warehouse/format'
 import { sendLocationAction } from '@/lib/warehouse/locationActions'
 import { locationKeyOf, materialLabel, newActionId, shownQuantity, type LocationsTarget } from '@/lib/warehouse/locations'
@@ -13,7 +14,7 @@ import type { StockLineView } from '@/types/warehouse'
 type Action = 'take' | 'move' | 'set'
 /** A change of one shelf line: `delta` added to the material on the place (a take is negative). */
 export type StockChange = { line: Pick<StockLineView, 'location' | 'material' | 'description'>; delta: number }
-type Sent = { changes: StockChange[]; write: () => Promise<object>; success: string }
+type Sent = { changes: StockChange[]; write: () => Promise<object>; success: string; offer?: (error: unknown) => { label: string; onClick: () => void } | null }
 
 /**
  * A lagerhylde's lines (material + quantity) with "Tag", "Flyt" and "Ret antal" (everyone in the team). The dialog closes
@@ -21,10 +22,26 @@ type Sent = { changes: StockChange[]; write: () => Promise<object>; success: str
  */
 export function ShelfLines({ shelf, lines, onOpen, onApply, onChanged }: { shelf: string; lines: StockLineView[]; onOpen: (target: LocationsTarget) => void; onApply: (changes: StockChange[]) => void; onChanged: () => void }) {
   const [open, setOpen] = useState<{ action: Action; line: StockLineView } | null>(null)
-  const send = ({ changes, write, success }: Sent) => {
+  // The lines as shown now: "Gem alligevel" comes after a refusal and a re-read, so it changes what is shown then.
+  const shown = useRef(lines)
+  useEffect(() => { shown.current = lines })
+  const send = ({ changes, write, success, offer }: Sent) => {
     setOpen(null)
     onApply(changes)
-    void sendLocationAction(write, { success, rollback: () => onApply(changes.map(change => ({ ...change, delta: -change.delta }))), settled: onChanged })
+    void sendLocationAction(write, { success, offer, rollback: () => onApply(changes.map(change => ({ ...change, delta: -change.delta }))), settled: onChanged })
+  }
+  /**
+   * "Ret antal": sent with the quantity the dialog showed (`expected`), so M: refuses when someone changed it meanwhile
+   * (STOCK_CHANGED); the refusal offers "Gem alligevel", which sends the count again without it.
+   */
+  const setQuantity = (line: StockLineView, next: number, expected?: number) => {
+    const now = expected ?? shown.current.find(item => item.id === line.id)?.quantity ?? 0
+    send({
+      changes: [{ line, delta: next - now }],
+      write: () => window.electronWarehouse!.locations.shelfSet({ actionId: newActionId(), label: t(`Ret antal af ${line.material} på ${shelf}`, `Correct ${line.material} on ${shelf}`), location: line.location, material: line.material, quantity: next, ...(expected === undefined ? {} : { expected }) }),
+      success: t(`Antallet på ${shelf} er rettet`, `The quantity on ${shelf} has been corrected`),
+      offer: expected === undefined ? undefined : error => (errorCode(error) === 'STOCK_CHANGED' ? { label: t('Gem alligevel', 'Save anyway'), onClick: () => setQuantity(line, next) } : null),
+    })
   }
   if (!lines.length) return <p className="text-sm text-muted-foreground">{t('Hylden er tom.', 'The shelf is empty.')}</p>
   return (
@@ -43,12 +60,12 @@ export function ShelfLines({ shelf, lines, onOpen, onApply, onChanged }: { shelf
           </div>
         ))}
       </div>
-      {open && <ShelfLineDialog shelf={shelf} action={open.action} line={open.line} onClose={() => setOpen(null)} onSend={send} />}
+      {open && <ShelfLineDialog shelf={shelf} action={open.action} line={open.line} onClose={() => setOpen(null)} onSend={send} onSet={setQuantity} />}
     </>
   )
 }
 
-function ShelfLineDialog({ shelf, action, line, onClose, onSend }: { shelf: string; action: Action; line: StockLineView; onClose: () => void; onSend: (sent: Sent) => void }) {
+function ShelfLineDialog({ shelf, action, line, onClose, onSend, onSet }: { shelf: string; action: Action; line: StockLineView; onClose: () => void; onSend: (sent: Sent) => void; onSet: (line: StockLineView, next: number, expected: number) => void }) {
   const [quantity, setQuantity] = useState(action === 'set' ? String(line.quantity) : '')
   const [target, setTarget] = useState('')
   const bridge = window.electronWarehouse!.locations
@@ -72,12 +89,8 @@ function ShelfLineDialog({ shelf, action, line, onClose, onSend }: { shelf: stri
         success: t(`${formatNumber(moved)} stk. flyttet fra ${shelf} til ${to}`, `${formatNumber(moved)} pcs moved from ${shelf} to ${to}`),
       })
     } else {
-      const next = amount ?? 0
-      onSend({
-        changes: [{ line, delta: next - line.quantity }],
-        write: () => bridge.shelfSet({ actionId, label: t(`Ret antal af ${line.material} på ${shelf}`, `Correct ${line.material} on ${shelf}`), location: line.location, material: line.material, quantity: next }),
-        success: t(`Antallet på ${shelf} er rettet`, `The quantity on ${shelf} has been corrected`),
-      })
+      // The quantity the dialog shows goes with it: M: refuses the count if someone changed it meanwhile.
+      onSet(line, amount ?? 0, line.quantity)
     }
   }
 

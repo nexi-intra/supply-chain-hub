@@ -601,6 +601,70 @@ test('stock moves between shelves and its quantity can be set; the rack card sho
   assert.equal((await pc1.repo.read('TCD')).stock['E9 H2|R162-0717'], undefined, '0 removes the line')
 })
 
+const hhmm = at => `${String(new Date(at).getHours()).padStart(2, '0')}:${String(new Date(at).getMinutes()).padStart(2, '0')}`
+
+test('Ret antal refuses with STOCK_CHANGED, naming who changed the quantity and when, when the shelf no longer has what the dialog showed', async () => {
+  const { pc1, pc2, clock, seed } = setup()
+  const MIA = { email: 'mia@x.test', fullName: 'Mia', role: 'user', team: 'TCD' }
+  const OLE = { email: 'ole@x.test', fullName: 'Ole', role: 'user', team: 'TCD' }
+  await seed([shelf('E9 H5'), shelf('E9 H6')])
+  await pc1.service.shelfPut(ANNA, { location: 'E9 H5', material: 'R162-0717', quantity: 40, actionId: 'anna-put' })
+  await pc1.service.shelfPut(ANNA, { location: 'E9 H6', material: 'R162-0717', quantity: 40 })
+  // Mia's dialog shows 40 and she starts counting; meanwhile Ole takes 10 on his PC.
+  clock.now += 10 * 60000
+  await pc2.service.shelfTake(OLE, { location: 'E9 H5', material: 'R162-0717', quantity: 10 })
+  const taken = clock.now
+  clock.now += 60000
+  await assert.rejects(pc1.service.shelfSet(MIA, { location: 'E9 H5', material: 'R162-0717', quantity: 38, expected: 40, actionId: 'mia-set' }),
+    { code: 'STOCK_CHANGED', message: `Antallet er ændret til 30 af Ole kl. ${hhmm(taken)}. Tæl igen, eller gem alligevel.` })
+  let state = await pc1.repo.read('TCD')
+  assert.equal(state.stock['E9 H5|R162-0717'].quantity, 30, "Ole's take is kept")
+  assert.equal(state.meta.applied.includes('mia-set'), false, 'a refused count is not recorded as applied')
+  assert.deepEqual((await pc1.repo.history('TCD', { type: 'shelf-set' })), [])
+  // Her count is what is there already: nothing to refuse.
+  assert.equal((await pc1.service.shelfSet(MIA, { location: 'E9 H5', material: 'R162-0717', quantity: 30, expected: 40 })).line.quantity, 30)
+  // "Gem alligevel" sends again without expected.
+  await pc1.service.shelfSet(MIA, { location: 'E9 H5', material: 'R162-0717', quantity: 38, actionId: 'mia-set-2' })
+  // What the dialog showed is still there: the count goes through.
+  await pc1.service.shelfSet(MIA, { location: 'E9 H6', material: 'R162-0717', quantity: 36, expected: 40 })
+  state = await pc1.repo.read('TCD')
+  assert.deepEqual([state.stock['E9 H5|R162-0717'].quantity, state.stock['E9 H6|R162-0717'].quantity], [38, 36])
+  // A line emptied meanwhile is 0; the dialog's number must be a whole number.
+  await pc2.service.shelfTake(OLE, { location: 'E9 H6', material: 'R162-0717' })
+  await assert.rejects(pc1.service.shelfSet(MIA, { location: 'E9 H6', material: 'R162-0717', quantity: 30, expected: 36 }), { code: 'STOCK_CHANGED', message: /^Antallet er ændret til 0 af Ole kl\. / })
+  await assert.rejects(pc1.service.shelfSet(MIA, { location: 'E9 H5', material: 'R162-0717', quantity: 30, expected: 'x' }), { code: 'QUANTITY_INVALID' })
+})
+
+test('STOCK_CHANGED without anyone in the log to name says so without a name', async () => {
+  const { pc1, seed } = setup()
+  await seed([shelf('E9 H5')])
+  await pc1.repo.transact('TCD', tx => { tx.stock['E9 H5|R162-0717'] = { id: 'E9 H5|R162-0717', location: 'E9 H5', material: 'R162-0717', quantity: 12, note: '' } })
+  await assert.rejects(pc1.service.shelfSet(ANNA, { location: 'E9 H5', material: 'R162-0717', quantity: 20, expected: 15 }), { code: 'STOCK_CHANGED', message: 'Antallet er ændret til 12 imens. Tæl igen, eller gem alligevel.' })
+})
+
+test('a count queued while M: is down keeps expected and is refused with STOCK_CHANGED when replayed after a take', async () => {
+  const { pc1, pc2, seed } = setup()
+  const OLE = { email: 'ole@x.test', fullName: 'Ole', role: 'user', team: 'TCD' }
+  await seed([shelf('E9 H5')])
+  await pc1.service.shelfPut(ANNA, { location: 'E9 H5', material: 'R162-0717', quantity: 40 })
+  let mDown = true
+  const outbox = createOutbox({
+    dir: fs.mkdtempSync(path.join(os.tmpdir(), 'locations-outbox-')),
+    run: async action => { if (mDown) throw Object.assign(new Error('STORAGE_UNAVAILABLE'), { code: 'STORAGE_UNAVAILABLE' }); return pc1.service[action.method](action.user, action.request) },
+    isStorageError: error => error?.code === 'STORAGE_UNAVAILABLE',
+    pauseMs: 0,
+  })
+  const request = { actionId: 'mia-set', location: 'E9 H5', material: 'R162-0717', quantity: 38, expected: 40 }
+  assert.deepEqual(await outbox.submit({ id: 'mia-set', method: 'shelfSet', user: ANNA, request }), { queued: true })
+  await pc2.service.shelfTake(OLE, { location: 'E9 H5', material: 'R162-0717', quantity: 10 })
+  mDown = false
+  const { done, failed } = await outbox.flush()
+  assert.equal(done, 0)
+  assert.equal(failed[0].code, 'STOCK_CHANGED')
+  assert.deepEqual(outbox.failures()[0].request.expected, 40)
+  assert.equal((await pc1.repo.read('TCD')).stock['E9 H5|R162-0717'].quantity, 30)
+})
+
 test('the migration turns shelf pallets into stock once, also when two PCs open at the same time', async () => {
   const { pc1, pc2, seed } = setup()
   await seed([shelf('E9 H5'), place('A1.1')], [

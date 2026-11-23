@@ -42,6 +42,8 @@ export interface LocationActionOptions<T> {
   rollback?: (error: unknown) => void
   /** The error text; the backend's message when left out. */
   failure?: (error: unknown) => string
+  /** A button on the error toast for this refusal (like "Gem alligevel"), or null for none. */
+  offer?: (error: unknown) => { label: string; onClick: () => void } | null
   /** M:'s answer, when the action was done there (not when it was only kept on this PC). */
   confirmed?: (result: T) => void
   /** Always after the answer: the screens read again, now that the write is done. */
@@ -73,7 +75,13 @@ export function sendLocationAction<T>(write: () => Promise<T>, options: Location
       return true
     },
     error => {
-      try { options.rollback?.(error) } finally { toast.error(options.failure ? options.failure(error) : errorMessage(error)) }
+      try { options.rollback?.(error) } finally {
+        const message = options.failure ? options.failure(error) : errorMessage(error)
+        const action = options.offer?.(error)
+        // The choice stays a while (the person may count again first), and can be closed.
+        if (action) toast.error(message, { action, duration: 60000, closeButton: true })
+        else toast.error(message)
+      }
       return false
     },
   ).finally(() => {

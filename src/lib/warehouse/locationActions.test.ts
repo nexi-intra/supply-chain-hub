@@ -9,6 +9,7 @@ import {
   addToStock, countedInCard, isPlaceHidden, locationActionsInFlight, matdocOf, movedInList, moveTargetCheck, palletEdit, predictedRack, sendLocationAction, startLocationsRead,
   takeFromCard, takeFromCardShelf, withPutAway, withStockQuantity,
 } from './locationActions'
+import { errorCode } from './errors'
 import { setWarehouseLanguage } from './text'
 
 type Listed = LocationList['locations'][number]
@@ -50,6 +51,20 @@ describe('sendLocationAction', () => {
     expect(rollback).toHaveBeenCalledWith(refused)
     expect(toast.error).toHaveBeenCalledWith('A1.1 er fuld – vælg en anden plads')
     expect(settled).toHaveBeenCalledTimes(1)
+  })
+
+  it('a refusal can offer to send again: the screen is rolled back and the error toast gets the button', async () => {
+    const rollback = vi.fn()
+    const again = vi.fn()
+    const offer = (error: unknown) => (errorCode(error) === 'STOCK_CHANGED' ? { label: 'Gem alligevel', onClick: again } : null)
+    const refused = new Error('STOCK_CHANGED: Antallet er ændret til 30 af Ole kl. 10:12. Tæl igen, eller gem alligevel.')
+    await expect(sendLocationAction(() => Promise.reject(refused), { rollback, offer, settled: () => {} })).resolves.toBe(false)
+    expect(rollback).toHaveBeenCalledWith(refused)
+    expect(toast.error).toHaveBeenCalledWith('Antallet er ændret til 30 af Ole kl. 10:12. Tæl igen, eller gem alligevel.', expect.objectContaining({ action: { label: 'Gem alligevel', onClick: again } }))
+    expect(again).not.toHaveBeenCalled()
+    toast.error.mockClear()
+    await sendLocationAction(() => Promise.reject(new Error('STOCK_TOO_LOW: Der er kun 5')), { rollback, offer, settled: () => {} })
+    expect(toast.error).toHaveBeenCalledWith('Der er kun 5')
   })
 
   it('hands every action to the Hub at once, without waiting for the one before (the Hub keeps the order and the outbox)', async () => {

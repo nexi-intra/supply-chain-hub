@@ -1047,7 +1047,8 @@ export interface LocationsBridge {
   shelfTake(request: WithActionId<{ location: string; material: string; quantity?: number }>): Promise<{ left: StockLine | null; taken: number } | Deferred>
   shelfMove(request: WithActionId<{ from: string; to: string; material: string; quantity?: number }>): Promise<{ line: StockLine } | Deferred>
   /** The exact quantity; 0 removes the line. */
-  shelfSet(request: WithActionId<{ location: string; material: string; quantity: number }>): Promise<{ line: StockLine | null } | Deferred>
+  /** `expected`: the quantity the dialog showed; the count is refused (STOCK_CHANGED) when the shelf no longer has it. "Gem alligevel" sends without. */
+  shelfSet(request: WithActionId<{ location: string; material: string; quantity: number; expected?: number }>): Promise<{ line: StockLine | null } | Deferred>
   createRack(request: { name: string; shelves: number; area?: string; purpose?: 'reserve' | 'pick' }): Promise<{ created: Location[] }>
   addShelf(request: { rack: string }): Promise<{ location: Location }>
   /** Only empty places are deleted; `allOrNothing` (a rack) deletes none when one is not empty. */

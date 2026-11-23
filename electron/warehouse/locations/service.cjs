@@ -272,23 +272,48 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
     })
   }
 
-  /** "Ret antal": the exact quantity after a count or a correction; 0 removes the line. */
-  async function shelfSet(user, { location, material, quantity, actionId } = {}) {
+  /**
+   * "Ret antal": the exact quantity after a count or a correction; 0 removes the line. `expected` (optional; an older Hub
+   * sends without it, and so does "Gem alligevel") is the quantity the dialog showed: when the shelf no longer has it,
+   * someone changed it meanwhile and the count is refused, so their take or put is never written over in silence.
+   */
+  async function shelfSet(user, { location, material, quantity, expected, actionId } = {}) {
     const team = teamOf(user)
     const code = materialOf(material)
     const amount = quantityOf(quantity, { min: 0 })
-    return repo.transact(team, { actionId, writes: ['stock'] }, tx => {
-      const place = shelfIn(tx, location)
-      const id = shelves.stockId(place.id, code)
-      const before = tx.stock[id]?.quantity ?? 0
-      if (before === amount) return { line: tx.stock[id] || null }
-      if (amount === 0) delete tx.stock[id]
-      else if (tx.stock[id]) Object.assign(tx.stock[id], { quantity: amount, updatedAt: now(), updatedBy: by(user) })
-      else shelves.putStock(tx.stock, { location: place.id, material: code, quantity: amount, by: by(user), at: now() })
-      tx.event({ type: 'shelf-set', by: by(user), location: place.id, material: code, quantity: amount, changes: { quantity: [before, amount] } })
-      goLive(tx)
-      return { line: tx.stock[id] || null }
-    })
+    const shown = quantityOf(expected, { min: 0, optional: true })
+    try {
+      return await repo.transact(team, { actionId, writes: ['stock'] }, tx => {
+        const place = shelfIn(tx, location)
+        const id = shelves.stockId(place.id, code)
+        const before = tx.stock[id]?.quantity ?? 0
+        if (before === amount) return { line: tx.stock[id] || null }
+        if (shown !== null && before !== shown) throw Object.assign(codeError('STOCK_CHANGED'), { id, quantity: before })
+        if (amount === 0) delete tx.stock[id]
+        else if (tx.stock[id]) Object.assign(tx.stock[id], { quantity: amount, updatedAt: now(), updatedBy: by(user) })
+        else shelves.putStock(tx.stock, { location: place.id, material: code, quantity: amount, by: by(user), at: now() })
+        tx.event({ type: 'shelf-set', by: by(user), location: place.id, material: code, quantity: amount, changes: { quantity: [before, amount] } })
+        goLive(tx)
+        return { line: tx.stock[id] || null }
+      })
+    } catch (error) {
+      if (error.code !== 'STOCK_CHANGED') throw error
+      const latest = await latestChange(team, { kind: 'stock', id: error.id }, change => (change.before.stock?.[error.id]?.quantity ?? 0) !== (change.after.stock?.[error.id]?.quantity ?? 0))
+      const who = `${latest?.by?.name ? ` af ${latest.by.name}` : ''}${latest ? ` kl. ${clock(latest.at)}` : ''}`
+      throw codeError('STOCK_CHANGED', `Antallet er ændret til ${error.quantity}${who || ' imens'}. Tæl igen, eller gem alligevel.`)
+    }
+  }
+
+  /**
+   * The latest action in the log that changed `target` as `changed(change)` says (else the latest that changed it at
+   * all), to name who changed something meanwhile. The whole log is read, not only the target's events: a transaction's
+   * change is kept on its first event, which can be about something else. An action that changed nothing is skipped.
+   */
+  async function latestChange(team, target, changed) {
+    const events = await repo.history(team, { months: 2 }).catch(() => [])
+    const changes = changesOf(events)
+    const mine = events.filter(event => !(event.tx && !changes.has(event.tx)) && touches(event, target))
+    return mine.find(event => event.tx && changes.has(event.tx) && changed(changes.get(event.tx))) || mine[0]
   }
 
   const EDITABLE = {
@@ -326,17 +351,9 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
       })
     } catch (error) {
       if (error.code !== 'PALLET_CHANGED') throw error
-      // Who changed it: the latest action in the log that changed one of the refused fields of the pallet; else the latest
-      // that changed the pallet at all, as an undo names the one that blocks it. The whole log is read, not only the
-      // pallet's events: a transaction's change is kept on its first event, which can be about another pallet.
-      const events = await repo.history(team, { months: 2 }).catch(() => [])
-      const changed = changesOf(events)
-      const fieldChanged = event => {
-        const change = event.tx && changed.get(event.tx)
-        return Boolean(change) && (error.fields || []).some(field => JSON.stringify(change.before.pallets?.[id]?.[field] ?? null) !== JSON.stringify(change.after.pallets?.[id]?.[field] ?? null))
-      }
-      const mine = events.filter(event => !(event.tx && !changed.has(event.tx)) && touches(event, { kind: 'pallet', id }))
-      const latest = mine.find(fieldChanged) || mine[0]
+      // Who changed it: the latest action that changed one of the refused fields of the pallet; else the latest that
+      // changed the pallet at all, as an undo names the one that blocks it.
+      const latest = await latestChange(team, { kind: 'pallet', id }, change => (error.fields || []).some(field => JSON.stringify(change.before.pallets?.[id]?.[field] ?? null) !== JSON.stringify(change.after.pallets?.[id]?.[field] ?? null)))
       throw codeError('PALLET_CHANGED', latest?.by?.name ? `Pallen er ændret af ${latest.by.name} imens. Se den igen.` : 'Pallen er ændret imens. Se den igen.')
     }
   }
@@ -809,8 +826,9 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
   const DAY = 86400000
   const LOG_LIMIT = 500
   const clock = at => {
-    const time = new Date(at).toLocaleTimeString('da-DK', { hour: '2-digit', minute: '2-digit' })
-    return new Date(at).toDateString() === new Date(now()).toDateString() ? time : `${new Date(at).toLocaleDateString('da-DK', { day: 'numeric', month: 'numeric' })} ${time}`
+    const date = new Date(at)
+    const time = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+    return date.toDateString() === new Date(now()).toDateString() ? time : `${date.toLocaleDateString('da-DK', { day: 'numeric', month: 'numeric' })} ${time}`
   }
   /** "Bo tog 5 stk. fra A1.1" – how a later event is named when it blocks an undo. */
   function said(event) {
