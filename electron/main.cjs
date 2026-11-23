@@ -1292,8 +1292,9 @@ app.whenReady().then(() => {
         if (stock) return stock
       }
       // Optælling's own role (status manager, admin) decides which of Arbejdsværktøjer's guide tasks Hubert shows; set here
-      // only, so the window can never claim one.
-      const countRole = warehouse?.assistant?.countRole ? await warehouse.assistant.countRole(event) : null
+      // only, so the window can never claim one. A manager or creator already sees them all, so nothing is looked up.
+      const needsCountRole = principal.role !== 'manager' && principal.role !== 'creator' && warehouse?.assistant?.countRole
+      const countRole = needsCountRole ? await warehouse.assistant.countRole(event) : null
       const evidence = await resolveAssistantAnswer(assistant, localAI, { ...request, countRole: countRole || undefined })
       const resolvedRequest = { ...request, question: evidence.contextQuestion || request.question }
       const answer = conciseGuideFact(evidence, resolvedRequest) || evidence

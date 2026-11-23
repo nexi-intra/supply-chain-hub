@@ -124,7 +124,7 @@ const WAREHOUSE_MODULE = {
       requires: [COUNT_MANAGER, COUNT_ADMIN],
       preferred: true,
       userTask: 'submit-material',
-      keywords: ['optaellingsdokument', 'optaellingsdokumenter', 'sap-dokument', 'sap dokument', 'opret sap-dokument', 'laeg antal paa', 'bogfoer differencen', 'bogfoere differencen', 'bogfoer i sap', 'mi31', 'mi21', 'mi20', 'mi04', 'zms_count_serial', 'physical inventory document', 'sap document', 'create a sap document', 'enter quantities', 'post the difference', 'inventointiasiakirja', 'sap-asiakirja', 'kirjaa erotus', 'inventeringsdokument', 'sap-dokument skapa', 'bokfoer differensen'],
+      keywords: ['optaellingsdokument', 'optaellingsdokumenter', 'sap-dokument', 'sap dokument', 'opret sap-dokument', 'laeg antal paa', 'bogfoer differencen', 'bogfoere differencen', 'bogfoerer jeg differencen', 'bogfoerer differencen', 'bogfoer i sap', 'mi31', 'mi21', 'mi20', 'mi04', 'zms_count_serial', 'physical inventory document', 'sap document', 'create a sap document', 'enter quantities', 'post the difference', 'inventointiasiakirja', 'sap-asiakirja', 'kirjaa erotus', 'inventeringsdokument', 'sap-dokument skapa', 'bokfoer differensen'],
       steps: [
         'Åbn optællingen og vælg fanen "Til optællingsdokument". Klik "Hent dagens SAP-tal" den dag, dokumentet laves.',
         'Sæt flueben ved godkendte materialer og klik "Opret SAP-dokument". SAP åbner, og du trykker selv F8. Klik derefter "Print".',
@@ -150,7 +150,7 @@ const WAREHOUSE_MODULE = {
       requires: COUNT_MANAGER,
       preferred: true,
       userTask: 'archive',
-      keywords: ['laas statussen', 'laase statussen', 'godkend og laas', 'godkende og laase', 'laas status op', 'endelig rapport', 'lock the status', 'approve and lock', 'unlock the status', 'final report', 'lukitse status', 'lukitsen statuksen', 'lopullinen raportti', 'laas statusen', 'godkaenn och laas', 'slutrapport'],
+      keywords: ['laas statussen', 'laase statussen', 'laaser jeg statussen', 'laaser statussen', 'laaser jeg en status', 'laase en status', 'godkend og laas', 'godkende og laase', 'laas status op', 'endelig rapport', 'lock the status', 'approve and lock', 'unlock the status', 'final report', 'lukitse status', 'lukitsen statuksen', 'lopullinen raportti', 'laas statusen', 'godkaenn och laas', 'slutrapport'],
       steps: [
         'Åbn statussen med "Se detaljer". Tjeklisten viser, hvad der mangler: åbne optællinger og materialer, der ikke er godkendt eller bogført.',
         'Når der står "Alt er klar", klik "Godkend og lås status" og bekræft. Den endelige statusrapport og en rapport pr. optælling gemmes.',
@@ -183,6 +183,7 @@ const WAREHOUSE_MODULE = {
       title: 'Udnævn admin, status manager eller Placerings admin',
       requires: MANAGER,
       preferred: true,
+      userTask: 'sap-documents',
       keywords: ['udnaevn en admin', 'udnaevne en admin', 'status manager', 'admin i optaelling', 'optaellingsroller', 'hvem maa laegge antal paa', 'appoint an admin', 'appoint a status manager', 'stock count roles', 'who can enter quantities', 'nimeae admin', 'nimitaen adminin', 'inventoinnin roolit', 'utse en admin', 'utser en admin', 'inventeringsroller', 'placerings admin', 'placeringsadmin', 'lagerstyringsroller', 'location admin', 'warehouse roles', 'sijaintien admin', 'varastonhallinnan roolit', 'lagerstyrningsroller'],
       steps: [
         'Åbn "Manager Panel" og vælg fanen "Rettigheder". Kortet "Roller i Arbejdsværktøjer" vises kun i TCD- og TRR-hubben.',

@@ -84,10 +84,25 @@ test('Optælling tasks follow Optælling\'s own roles: an admin gets "Læg antal
     assert.doesNotMatch(asked('hvordan lægger jeg antal på SAP-dokumentet?', countRole), SAP_DOC, String(countRole))
     assert.doesNotMatch(asked('hvordan starter jeg en status?', countRole), START, String(countRole))
   }
-  // Who may enter quantities is explained by the roles answer, never by the managers' SAP document steps.
+  // Who may enter quantities: a plain user gets the roles answer, never the managers' SAP document steps; an admin or a
+  // status manager, who may read those steps, gets them.
   const roles = asked('hvem må lægge antal på?', 'user')
   assert.doesNotMatch(roles, SAP_DOC)
   assert.match(roles, /^Roller og hvem der kan hvad/)
+  for (const countRole of ['admin', 'status-manager']) assert.match(asked('hvem må lægge antal på?', countRole), SAP_DOC, countRole)
+})
+
+test('everyday phrasings of locking a status and posting the difference reach their task, for a status manager and a Hub manager', () => {
+  const api = createFixture()
+  const PHRASINGS = [
+    ['hvordan låser jeg statussen?', /^Arbejdsværktøjer - Godkend og lås statussen/],
+    ['hvordan låser jeg en status?', /^Arbejdsværktøjer - Godkend og lås statussen/],
+    ['hvordan bogfører jeg differencen?', /^Arbejdsværktøjer - Opret og bogfør SAP-optællingsdokumenter/],
+  ]
+  for (const [question, title] of PHRASINGS) {
+    assert.match(api.query({ token: 'valid', question, language: 'da', countRole: 'status-manager' }, NOW).text, title, `status manager: ${question}`)
+    assert.match(api.query({ token: 'boss', question, language: 'da' }, NOW).text, title, `Hub manager: ${question}`)
+  }
 })
 
 test('Optælling\'s roles open nothing outside Arbejdsværktøjer', () => {

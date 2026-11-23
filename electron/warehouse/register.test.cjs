@@ -162,8 +162,15 @@ test('Hubert\'s guide gets the Optælling role from the module\'s own user, and 
   await call('mona', 'roles:set-role', { email: 'anna@nexi.test', role: 'status-manager' })
   assert.equal(await roleOf('anna'), 'status-manager')
   const startedAt = Date.now()
-  assert.equal(await roleOf('anna', 3000), null, 'a slow lookup shows the guide of a plain user')
-  assert.ok(Date.now() - startedAt < 2000, `${Date.now() - startedAt} ms`)
+  const slow = roleOf('anna', 1500)
+  assert.equal(await slow, null, 'a slow lookup shows the guide of a plain user')
+  assert.ok(Date.now() - startedAt < 1400, `${Date.now() - startedAt} ms`)
+  // While that lookup still hangs, the next questions do not wait for it again.
+  const again = Date.now()
+  assert.equal(await roleOf('anna'), null)
+  assert.ok(Date.now() - again < 200, `${Date.now() - again} ms`)
+  await new Promise(resolve => setTimeout(resolve, 700))
+  assert.equal(await roleOf('anna'), 'status-manager', 'once the slow lookup has settled, the role is looked up again')
 })
 
 const LOCATION_CHANNELS = ['overview', 'lookup-document', 'suggest', 'put-away', 'take', 'refill', 'move', 'change-sloc', 'edit-pallet', 'search', 'material-card', 'location-card', 'pallet-card', 'list', 'stamp', 'log', 'undo', 'rack-card', 'shelf-put', 'shelf-take', 'shelf-move', 'shelf-set', 'create-rack', 'add-shelf', 'delete-locations', 'set-active-many', 'create-location', 'create-series', 'edit-location', 'set-active', 'set-tags', 'preview-import', 'apply-import', 'map-contents',

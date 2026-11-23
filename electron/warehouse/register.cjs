@@ -570,14 +570,23 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   // Placeringer first ("hvor står R162-0717?"); questions about Optælling are left to it.
   // `countRole`: the person's role in Optælling for Hubert's guide ('manager', 'status-manager', 'admin' or 'user'; null
   // outside TCD/TRR). It is the module's serviceUser with its role cache, and Hubert never waits more than 1 s for it
-  // (then the guide shows the tasks of a plain user).
-  const countRole = event => new Promise(resolve => {
-    const timer = setTimeout(() => resolve(null), ASSISTANT_ROLE_LIMIT_MS)
-    timer.unref?.()
-    serviceUser(event)
-      .then(user => user.statusManager ? 'status-manager' : user.countAdmin ? 'admin' : user.role === 'user' ? 'user' : 'manager', () => null)
-      .then(role => { clearTimeout(timer); resolve(role) })
-  })
+  // (then the guide shows the tasks of a plain user). A lookup that missed the limit is not waited on again: until it
+  // settles, the next questions from that window get null at once (as roleCache does with `slow`).
+  const slowRoleReads = new Map()
+  const countRole = event => {
+    const key = event?.sender?.id
+    if (slowRoleReads.has(key)) return Promise.resolve(null)
+    const read = serviceUser(event).then(user => user.statusManager ? 'status-manager' : user.countAdmin ? 'admin' : user.role === 'user' ? 'user' : 'manager', () => null)
+    return new Promise(resolve => {
+      const timer = setTimeout(() => {
+        slowRoleReads.set(key, read)
+        read.finally(() => { if (slowRoleReads.get(key) === read) slowRoleReads.delete(key) })
+        resolve(null)
+      }, ASSISTANT_ROLE_LIMIT_MS)
+      timer.unref?.()
+      read.then(role => { clearTimeout(timer); resolve(role) })
+    })
+  }
   const assistant = { answer: async request => (await locationsAssistant.answer(request)) || stockAssistant.answer(request), countRole }
   return {
     channels, counts, locations, assistant,
