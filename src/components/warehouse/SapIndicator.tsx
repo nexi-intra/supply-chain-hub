@@ -2,7 +2,7 @@ import { ArrowClockwise } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useSapStatus } from '@/components/warehouse/SapStatusContext'
-import { describeSapState, type SapTone } from '@/lib/warehouse/sapStatus'
+import { describeSapState, sapTestSystemNote, sapToolNote, type SapTone, type SapTool } from '@/lib/warehouse/sapStatus'
 import { t } from '@/lib/warehouse/text'
 import { cn } from '@/lib/utils'
 
@@ -20,14 +20,15 @@ const DOT: Record<SapTone, string> = {
   unknown: 'bg-muted-foreground',
 }
 
-export function SapIndicator() {
+/** `tool`: the tool it is shown in; the popover tells what that tool does in SAP. */
+export function SapIndicator({ tool }: { tool: SapTool }) {
   const { status, checking, refresh } = useSapStatus()
-  const description = describeSapState(status)
+  const description = describeSapState(status, tool)
 
   return (
     <div className="flex items-center gap-2">
     {status?.expectedSystem && status.expectedSystem !== 'PS4' && (
-      <span className="rounded-full border-2 border-amber-500 bg-amber-500/15 px-2.5 py-1 text-xs font-bold tracking-wide text-amber-700 dark:text-amber-300" title={t("Optælling læser fra og skriver til SAP's testsystem", "Stock count reads from and writes to SAP's test system")}>
+      <span className="rounded-full border-2 border-amber-500 bg-amber-500/15 px-2.5 py-1 text-xs font-bold tracking-wide text-amber-700 dark:text-amber-300" title={sapTestSystemNote(tool)}>
         TEST-SAP {status.expectedSystem}
       </span>
     )}
@@ -65,7 +66,7 @@ export function SapIndicator() {
             )}
           </dl>
         )}
-        <p className="text-xs text-muted-foreground">{t('Optælling læser fra SAP. Optællingsdokumenter udfyldes i SAP, men du trykker altid selv F8, Gem eller Post.', 'Stock count reads from SAP. Count documents are filled in in SAP, but you always press F8, Save or Post yourself.')}</p>
+        <p className="text-xs text-muted-foreground">{sapToolNote(tool, status?.expectedSystem || 'PS4')}</p>
         <Button variant="outline" size="sm" className="w-full" loading={checking} onClick={() => refresh(true)}>
           <ArrowClockwise />
           {t('Tjek igen', 'Check again')}

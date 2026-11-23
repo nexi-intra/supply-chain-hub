@@ -11,6 +11,7 @@ import { useLanguage } from '@/contexts/LanguageContext'
 import { isAnyModalOpen } from '@/lib/modalStack'
 import { cn } from '@/lib/utils'
 import { errorMessage } from '@/lib/warehouse/errors'
+import type { SapTool } from '@/lib/warehouse/sapStatus'
 import { t, useWarehouseLanguage } from '@/lib/warehouse/text'
 import { getWarehouseLabels } from '@/lib/warehouseLabels'
 import { targetFromItem, type LocationsTarget } from '@/lib/warehouse/locations'
@@ -72,7 +73,7 @@ export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
   // Keeps t() in step with the Hub language; the whole module re-renders below this component when it changes.
   const language = useWarehouseLanguage()
   const { language: hubLanguage } = useLanguage()
-  const usesSap = Boolean(user) && (tool === 'counts' || tool === 'locations' || tool === 'softwareload')
+  const sapTool: SapTool | null = user && (tool === 'counts' || tool === 'locations' || tool === 'softwareload') ? tool : null
 
   useEffect(() => {
     const bridge = window.electronWarehouse
@@ -108,7 +109,7 @@ export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
             {tool === 'softwareload' && <><span className="text-muted-foreground">·</span><span className="text-muted-foreground">Softwareload</span></>}
           </h1>
           {user && <Badge variant="secondary" className="font-mono">{user.team}</Badge>}
-          {user && usesSap && <div className="ml-auto"><SapIndicator /></div>}
+          {sapTool && <div className="ml-auto"><SapIndicator tool={sapTool} /></div>}
         </div>
       </div>
       {failed && (
@@ -130,7 +131,7 @@ export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
     </div>
   )
   // SAP is polled only inside Placeringer, Optælling and Softwareload for a TCD/TRR person; the tools page, Stempelkort and other hubs never reach SAP.
-  return usesSap ? <SapStatusProvider>{page}</SapStatusProvider> : page
+  return sapTool ? <SapStatusProvider>{page}</SapStatusProvider> : page
 }
 
 function WarehouseContent({ user, view, onNavigate }: { user: WarehouseUser; view: View; onNavigate: (view: View) => void }) {
