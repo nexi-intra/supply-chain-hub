@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/warehouse/ui'
@@ -15,6 +16,7 @@ import type { CountLine, CountListLine, StockType } from '@/types/warehouse'
 import type { PanelProps } from './CountView'
 import { isApproved, isSubmitted, lockOf, mayCount, MaterialsInProgress, RequestButton, SubmitDialog, type SubmitRetry } from './MaterialWork'
 import { takeLock, withLine, withoutLine } from './optimisticState'
+import { findExistingLine, placeKey, qtyForExisting, type ExistingChoice } from './existingLine'
 import { t } from '@/lib/warehouse/text'
 
 type Filter = 'all' | 'missing' | 'uncounted' | 'over'
@@ -187,18 +189,47 @@ function saveOwnPlace(name: string, area: string, reloadOpen: () => Promise<void
 
 interface PlaceOption { place: string; area: string; sloc?: string; lineId?: string; sheetQty: number | null }
 
+/** A quantity typed for a place that already has a line: saved once the counter has chosen to replace or add. */
+interface ExistingAsk { existing: CountLine; value: number; save: (choice: ExistingChoice) => void }
+
+function ExistingLineDialog({ ask, onClose }: { ask: ExistingAsk; onClose: () => void }) {
+  const n = formatNumber(ask.existing.qty)
+  const m = formatNumber(ask.value)
+  const place = ask.existing.place
+  const choose = (choice: ExistingChoice) => {
+    onClose()
+    ask.save(choice)
+  }
+  return (
+    <Dialog open onOpenChange={value => { if (!value) onClose() }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t(`${ask.existing.material} er allerede talt på ${place}`, `${ask.existing.material} is already counted in ${place}`)}</DialogTitle>
+          <DialogDescription>{t(`Der er allerede talt ${n} på ${place}. Erstat med ${m} eller læg ${m} til?`, `${n} have already been counted in ${place}. Replace with ${m} or add ${m}?`)}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>{t('Annullér', 'Cancel')}</Button>
+          <Button variant="outline" onClick={() => choose('replace')}>{t(`Erstat med ${m}`, `Replace with ${m}`)}</Button>
+          <Button onClick={() => choose('add')}>{t(`Læg ${m} til`, `Add ${m}`)}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 type RowProps = Pick<PanelProps, 'id' | 'open' | 'state' | 'reloadOpen' | 'optimistic' | 'person'>
 
 function MaterialRow({ id, open, state, group, showType, canWrite, reloadOpen, optimistic, person }: RowProps & { group: MaterialGroup; showType: boolean; canWrite: boolean }) {
   const lock = lockOf(state, group.material)
   const taken = !mayCount(lock, state.me.email)
   const [submitting, setSubmitting] = useState<{ retry?: SubmitRetry } | null>(null)
-  const countedAt = new Map(group.lines.map(line => [line.place.toLowerCase(), line]))
+  const [asking, setAsking] = useState<ExistingAsk | null>(null)
+  const countedAt = new Map(group.lines.map(line => [placeKey(line.place), line]))
   const options: PlaceOption[] = [
     ...group.suggestions.map(line => ({ place: line.place, area: line.area, sloc: line.sloc, lineId: line.lineId, sheetQty: line.sheetQty })),
-    ...group.lines.filter(line => !group.suggestions.some(item => item.place.toLowerCase() === line.place.toLowerCase())).map(line => ({ place: line.place, area: line.area, sloc: line.sloc, sheetQty: null })),
+    ...group.lines.filter(line => !group.suggestions.some(item => placeKey(item.place) === placeKey(line.place))).map(line => ({ place: line.place, area: line.area, sloc: line.sloc, sheetQty: null })),
   ]
-  const firstOpen = options.find(option => !countedAt.has(option.place.toLowerCase()))
+  const firstOpen = options.find(option => !countedAt.has(placeKey(option.place)))
   const [choice, setChoice] = useState(firstOpen?.place ?? options[0]?.place ?? OTHER)
   const [otherPlace, setOtherPlace] = useState('')
   const [qty, setQty] = useState('')
@@ -207,32 +238,43 @@ function MaterialRow({ id, open, state, group, showType, canWrite, reloadOpen, o
 
   const pick = (place: string) => {
     setChoice(place)
-    const existing = countedAt.get(place.toLowerCase())
+    const existing = countedAt.get(placeKey(place))
     setQty(existing ? String(existing.qty) : '')
     qtyRef.current?.focus()
   }
 
-  // The line and the counted quantity show at once (the material is taken for you); the save runs in the background.
   const save = () => {
     const place = (choice === OTHER ? otherPlace : choice).trim()
     const value = Number(qty)
     if (!place) { toast.error(t('Vælg eller skriv en placering', 'Choose or type a location')); return }
     if (qty.trim() === '' || !Number.isInteger(value) || value < 0) { toast.error(t('Skriv et helt antal (0 eller mere)', 'Type a whole number (0 or more)')); return }
-    const option = options.find(item => item.place.toLowerCase() === place.toLowerCase())
-    const existing = countedAt.get(place.toLowerCase())
-    const known = open.places.find(item => item.name.toLowerCase() === place.toLowerCase())
+    // A place picked in the list shows its counted quantity in the field; a typed one does not, so the counter chooses.
+    const existing = countedAt.get(placeKey(place))
+    if (choice === OTHER && existing) { setAsking({ existing, value, save: answer => commit(place, value, answer) }); return }
+    commit(place, value, 'replace')
+  }
+
+  // The line and the counted quantity show at once (the material is taken for you); the save runs in the background.
+  const commit = (typed: string, value: number, answer: ExistingChoice) => {
+    const key = placeKey(typed)
+    const option = options.find(item => placeKey(item.place) === key)
+    const existing = countedAt.get(key)
+    const known = open.places.find(item => placeKey(item.name) === key)
+    const place = existing?.place ?? typed
     const lineId = existing?.lineId ?? option?.lineId ?? newLineId()
     const area = option?.area || existing?.area || known?.area || ''
+    const total = existing ? qtyForExisting(existing, value, answer) : value
+    const comment = existing?.comment ?? ''
     if (!option && !known) saveOwnPlace(place, '', reloadOpen)
-    const line: CountLine = { lineId, place, area, material: group.material, sloc: option?.sloc || existing?.sloc || '', stockType: group.stockType, qty: value, status: 'counted', comment: '', by: person.email, byName: person.name, at: Date.now() }
-    toast.success(t(`Gemt: ${formatNumber(value)} × ${group.material} på ${place}`, `Saved: ${formatNumber(value)} × ${group.material} in ${place}`))
+    const line: CountLine = { lineId, place, area, material: group.material, sloc: option?.sloc || existing?.sloc || '', stockType: group.stockType, qty: total, status: 'counted', comment, by: person.email, byName: person.name, at: Date.now() }
+    toast.success(t(`Gemt: ${formatNumber(total)} × ${group.material} på ${place}`, `Saved: ${formatNumber(total)} × ${group.material} in ${place}`))
     setQty('')
     setOtherPlace('')
-    const next = options.find(item => item.place.toLowerCase() !== place.toLowerCase() && !countedAt.has(item.place.toLowerCase()))
+    const next = options.find(item => placeKey(item.place) !== key && !countedAt.has(placeKey(item.place)))
     setChoice(next?.place ?? place)
     void optimistic(
       current => takeLock(group.material, person)(withLine(line)(current)),
-      () => window.electronWarehouse!.counts.saveLine({ id, line: { lineId, place, area, material: group.material, sloc: option?.sloc, stockType: group.stockType, qty: value, comment: '' } }),
+      () => window.electronWarehouse!.counts.saveLine({ id, line: { lineId, place, area, material: group.material, sloc: option?.sloc || existing?.sloc, stockType: group.stockType, qty: total, comment } }),
       { onError: () => { setQty(current => current || String(value)); return false } },
     )
   }
@@ -245,7 +287,7 @@ function MaterialRow({ id, open, state, group, showType, canWrite, reloadOpen, o
         <div className="mt-2 flex flex-wrap gap-1.5">
           {options.length === 0 && <span className="text-xs text-muted-foreground">{t('Ingen placering i arket.', 'No location in the sheet.')}</span>}
           {options.map(option => {
-            const counted = countedAt.get(option.place.toLowerCase())
+            const counted = countedAt.get(placeKey(option.place))
             return (
               <button
                 key={option.place}
@@ -279,7 +321,7 @@ function MaterialRow({ id, open, state, group, showType, canWrite, reloadOpen, o
       ) : canWrite ? (
         <div className="flex flex-wrap items-center gap-2">
           <NativeSelect value={choice} onChange={event => pick(event.target.value)} className="h-9 max-w-44" aria-label={t(`Placering for ${group.material}`, `Location for ${group.material}`)}>
-            {options.map(option => <option key={option.place} value={option.place}>{option.place}{countedAt.has(option.place.toLowerCase()) ? ' ✓' : ''}</option>)}
+            {options.map(option => <option key={option.place} value={option.place}>{option.place}{countedAt.has(placeKey(option.place)) ? ' ✓' : ''}</option>)}
             <option value={OTHER}>{t('Anden placering …', 'Other location …')}</option>
           </NativeSelect>
           {choice === OTHER && <Input value={otherPlace} list="line-places" maxLength={60} onChange={event => setOtherPlace(event.target.value)} placeholder={t('Placering', 'Location')} className="h-9 w-40" aria-label={t(`Anden placering for ${group.material}`, `Other location for ${group.material}`)} />}
@@ -289,6 +331,7 @@ function MaterialRow({ id, open, state, group, showType, canWrite, reloadOpen, o
         </div>
       ) : <div />}
       {submitting && <SubmitDialog key={submitting.retry?.serverDiff ?? 'new'} id={id} material={group.material} state={state} optimistic={optimistic} person={person} retry={submitting.retry} onClose={() => setSubmitting(null)} onServerDiff={retry => setSubmitting({ retry })} />}
+      {asking && <ExistingLineDialog ask={asking} onClose={() => setAsking(null)} />}
     </div>
   )
 }
@@ -336,37 +379,48 @@ function AddLine({ id, open, state, types, reloadOpen, optimistic, person }: Pic
   const [stockType, setStockType] = useState<StockType>(types[0])
   const [qty, setQty] = useState('')
   const [comment, setComment] = useState('')
+  const [asking, setAsking] = useState<ExistingAsk | null>(null)
   const materials = useMemo(() => {
     const seen = new Map<string, string>()
     for (const item of open.materials) if (!seen.has(item.material)) seen.set(item.material, item.description)
     return [...seen]
   }, [open.materials])
-  const known = open.places.find(item => item.name.toLowerCase() === place.trim().toLowerCase())
+  const known = open.places.find(item => placeKey(item.name) === placeKey(place))
   const materialInfo = open.materials.filter(item => item.material === material.trim().toUpperCase())
   const serialManaged = materialInfo.some(item => item.serialManaged)
   const serialText = t('Materialet har serienumre. Scan eller importér dem, eller brug Fjern serienummer.', 'The material has serial numbers. Scan or import them, or use Remove serial number.')
 
-  // The line shows at once (the material is taken for you); the save runs in the background. A new location is saved
-  // alongside it, not before it.
   const save = () => {
     // The count document of a serial-managed material only knows its serials, so a quantity line is never saved.
     if (serialManaged) { toast.error(serialText); return }
     const value = Number(qty)
     if (!place.trim() || !material.trim() || qty.trim() === '' || !Number.isInteger(value) || value < 0) { toast.error(t('Udfyld placering, materiale og et helt antal', 'Fill in location, material and a whole number')); return }
+    // Same place, material and stock type as a counted line: the counter chooses to replace it or add to it, as in the material list.
+    const existing = findExistingLine(state.lines, { place, material: material.trim().toUpperCase(), stockType })
+    if (existing) { setAsking({ existing, value, save: answer => commit(value, existing, answer) }); return }
+    commit(value, null, 'replace')
+  }
+
+  // The line shows at once (the material is taken for you); the save runs in the background. A new location is saved
+  // alongside it, not before it.
+  const commit = (value: number, existing: CountLine | null, answer: ExistingChoice) => {
     const code = material.trim().toUpperCase()
-    const area = known?.area || newArea
-    const lineId = newLineId()
-    if (!known) saveOwnPlace(place, newArea, reloadOpen)
-    const sloc = state.rows.find(row => row.material === code && row.stockType === stockType)?.sloc || ''
-    const line: CountLine = { lineId, place: place.trim(), area, material: code, sloc, stockType, qty: value, status: 'counted', comment: comment.trim(), by: person.email, byName: person.name, at: Date.now() }
+    const area = existing?.area || known?.area || newArea
+    const lineId = existing?.lineId ?? newLineId()
+    const lineQty = existing ? qtyForExisting(existing, value, answer) : value
+    const linePlace = existing?.place ?? place
+    const lineComment = comment.trim() || existing?.comment || ''
+    if (!known && !existing) saveOwnPlace(place, newArea, reloadOpen)
+    const sloc = existing?.sloc || state.rows.find(row => row.material === code && row.stockType === stockType)?.sloc || ''
+    const line: CountLine = { lineId, place: linePlace.trim(), area, material: code, sloc, stockType, qty: lineQty, status: 'counted', comment: lineComment, by: person.email, byName: person.name, at: Date.now() }
     const typed = { material, qty, comment }
-    toast.success(t(`Gemt: ${formatNumber(value)} × ${code} på ${place}`, `Saved: ${formatNumber(value)} × ${code} in ${place}`))
+    toast.success(t(`Gemt: ${formatNumber(lineQty)} × ${code} på ${linePlace}`, `Saved: ${formatNumber(lineQty)} × ${code} in ${linePlace}`))
     setMaterial('')
     setQty('')
     setComment('')
     void optimistic(
       current => takeLock(code, person)(withLine(line)(current)),
-      () => window.electronWarehouse!.counts.saveLine({ id, line: { lineId, place, area, material, stockType, qty: value, comment } }),
+      () => window.electronWarehouse!.counts.saveLine({ id, line: { lineId, place: linePlace, area, material, sloc: existing?.sloc, stockType, qty: lineQty, comment: lineComment } }),
       {
         onError: () => {
           setMaterial(current => current || typed.material)
@@ -422,6 +476,7 @@ function AddLine({ id, open, state, types, reloadOpen, optimistic, person }: Pic
           </div>
           <Button onClick={() => save()} disabled={serialManaged}><Plus size={18} weight="bold" /> {t('Gem linje', 'Save line')}</Button>
         </div>
+        {asking && <ExistingLineDialog ask={asking} onClose={() => setAsking(null)} />}
       </CardContent>
     </Card>
   )
