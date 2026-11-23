@@ -1,6 +1,6 @@
 import { toast } from 'sonner'
 import { trackPendingWrite } from '@/lib/pendingWrites'
-import type { DocumentLookup, LocationList, MapContents, MaterialCard, PalletInput, RackCard, StockLineView } from '@/types/warehouse'
+import type { Deferred, DocumentLookup, LocationList, MapContents, MaterialCard, PalletInput, RackCard, StockLineView } from '@/types/warehouse'
 import { errorMessage } from './errors'
 import { deferredText, formatDate, isDeferred, isShelfPlace, locationKeyOf, palletLimitOf } from './locations'
 import { t } from './text'
@@ -46,6 +46,8 @@ export interface LocationActionOptions<T> {
   offer?: (error: unknown) => { label: string; onClick: () => void } | null
   /** M:'s answer, when the action was done there (not when it was only kept on this PC). */
   confirmed?: (result: T) => void
+  /** The action was only kept on this PC (M: down, `queued`) or had been done before (`duplicate`). */
+  deferred?: (result: Deferred) => void
   /** Always after the answer: the screens read again, now that the write is done. */
   settled: () => void
   /** Places the action deletes: hidden everywhere while it is on its way. */
@@ -70,7 +72,7 @@ export function sendLocationAction<T>(write: () => Promise<T>, options: Location
   try { running = Promise.resolve(write()) } catch (error) { running = Promise.reject(error) }
   return trackPendingWrite(running).then(
     result => {
-      if (result && typeof result === 'object' && isDeferred(result)) { toast.warning(deferredText(result)); return true }
+      if (result && typeof result === 'object' && isDeferred(result)) { toast.warning(deferredText(result)); options.deferred?.(result); return true }
       options.confirmed?.(result)
       return true
     },
@@ -321,11 +323,32 @@ export function holdSerials(serials: string[]): () => void {
 
 export const serialsOnTheirWay = (): ReadonlySet<string> => new Set(sentSerials.keys())
 
+// Put-aways kept on this PC (M: down): their serials stay held until the Hub's outbox no longer has the action, applied
+// or refused. `after` is the outbox read count when it was kept: only a read started later may say it is gone.
+const queuedHolds = new Map<string, { release: () => void; after: number }>()
+let pendingReads = 0
+
+/** Keeps a queued action's serials held (its `release`) until the outbox no longer lists `actionId`. */
+export function holdUntilSent(actionId: string, release: () => void) {
+  queuedHolds.set(actionId, { release, after: pendingReads })
+}
+
+/** Taken when a read of the outbox (locations.pending) starts; its answer lets go of the kept actions no longer in it. */
+export function startPendingRead(): (ids: string[] | undefined) => void {
+  const read = ++pendingReads
+  return ids => {
+    if (!Array.isArray(ids)) return
+    const still = new Set(ids)
+    for (const [id, hold] of [...queuedHolds]) if (read > hold.after && !still.has(id)) { queuedHolds.delete(id); hold.release() }
+  }
+}
+
 /**
- * For each pallet of the form (its serials), a warning when some of them are also on an earlier pallet of the form (one
- * delivery split over pallets carries the document's whole list on each) or on their way to M: from this window.
+ * For each pallet of the form (its serials): a note when some of them are also on an earlier pallet of the form (one
+ * delivery split over pallets carries the document's whole list on each; M: takes that), and a warning when some are
+ * in a put-away from this window still on its way to M: (M: refuses them without allowDuplicate).
  */
-export function serialOverlapNotes(serialLists: string[][], onTheirWay: ReadonlySet<string>): (string | null)[] {
+export function serialOverlapNotes(serialLists: string[][], onTheirWay: ReadonlySet<string>): { earlier: string | null; onTheirWay: string | null }[] {
   const seen: Set<string>[] = []
   return serialLists.map(list => {
     const serials = new Set(list.map(serialKey).filter(Boolean))
@@ -333,9 +356,9 @@ export function serialOverlapNotes(serialLists: string[][], onTheirWay: Readonly
     const shared = [...serials].filter(serial => seen.some(other => other.has(serial))).length
     const sent = [...serials].filter(serial => onTheirWay.has(serial)).length
     seen.push(serials)
-    const notes: string[] = []
-    if (shared) notes.push(t(`${shared} af serienumrene er også på palle ${earlier + 1}.`, shared === 1 ? `1 of the serial numbers is also on pallet ${earlier + 1}.` : `${shared} of the serial numbers are also on pallet ${earlier + 1}.`))
-    if (sent) notes.push(t(`${sent} af serienumrene er lige sat på plads herfra og er på vej til M:.`, sent === 1 ? '1 of the serial numbers was just put away from here and is on its way to M:.' : `${sent} of the serial numbers were just put away from here and are on their way to M:.`))
-    return notes.length ? notes.join(' ') : null
+    return {
+      earlier: shared ? t(`${shared} af serienumrene er også på palle ${earlier + 1}.`, shared === 1 ? `1 of the serial numbers is also on pallet ${earlier + 1}.` : `${shared} of the serial numbers are also on pallet ${earlier + 1}.`) : null,
+      onTheirWay: sent ? t(`${sent} af serienumrene er lige sat på plads herfra og er på vej til M:.`, sent === 1 ? '1 of the serial numbers was just put away from here and is on its way to M:.' : `${sent} of the serial numbers were just put away from here and are on their way to M:.`) : null,
+    }
   })
 }

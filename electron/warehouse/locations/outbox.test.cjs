@@ -72,6 +72,18 @@ test('when M: is down the action is queued locally and replayed in order when it
   assert.ok(fs.existsSync(path.join(dir, 'locations-outbox.json')))
 })
 
+test('pendingIds names every action still in the queue, until it is applied or refused', async () => {
+  const { sap, make } = setup()
+  const outbox = make()
+  await outbox.submit({ id: 'a1', method: 'putAway', user: ANNA, request: { pallets: [] } })
+  await outbox.submit({ id: 'a2', method: 'take', user: ANNA, request: { pallet: 'p1' } })
+  assert.deepEqual(outbox.pendingIds(), ['a1', 'a2'])
+  sap.up = true
+  sap.refuse.add('a2')
+  await outbox.flush()
+  assert.deepEqual(outbox.pendingIds(), [], 'gone once applied, and once refused')
+})
+
 test('a new action waits behind the queue so the order stays', async () => {
   const { sap, clock, make } = setup()
   const outbox = make()

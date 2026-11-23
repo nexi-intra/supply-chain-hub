@@ -521,7 +521,7 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
     })
   }
   const ownTeam = user => item => item.team === user.team
-  handle('locations:pending', user => ({ pending: outbox.pending(), failures: outbox.failures(ownTeam(user)).map(({ id, method, label, name, email, code, at }) => ({ id, method, label, name, email, code, at })) }))
+  handle('locations:pending', user => ({ pending: outbox.pending(), ids: outbox.pendingIds(), failures: outbox.failures(ownTeam(user)).map(({ id, method, label, name, email, code, at }) => ({ id, method, label, name, email, code, at })) }))
   handle('locations:ack-failures', async (user, p) => {
     const mine = new Set(outbox.failures(ownTeam(user)).map(item => item.id))
     await outbox.acknowledge((Array.isArray(p.ids) ? p.ids : []).filter(id => mine.has(id)))

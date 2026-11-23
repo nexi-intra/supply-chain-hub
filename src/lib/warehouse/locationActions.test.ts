@@ -6,7 +6,7 @@ vi.mock('sonner', () => ({ toast }))
 
 import { pendingWriteCount } from '@/lib/pendingWrites'
 import {
-  addToStock, countedInCard, isPlaceHidden, locationActionsInFlight, matdocOf, movedInList, moveTargetCheck, palletEdit, holdSerials, placedFor, placedSummary, predictedRack, putAwayPlaceChecks, replayFailureText, sendLocationAction, serialOverlapNotes, serialsOnTheirWay, startLocationsRead,
+  addToStock, countedInCard, isPlaceHidden, locationActionsInFlight, matdocOf, movedInList, moveTargetCheck, palletEdit, holdSerials, holdUntilSent, placedFor, placedSummary, predictedRack, putAwayPlaceChecks, replayFailureText, sendLocationAction, serialOverlapNotes, serialsOnTheirWay, startLocationsRead, startPendingRead,
   takeFromCard, takeFromCardShelf, withoutPutAway, withPutAway, withStockQuantity,
 } from './locationActions'
 import { errorCode } from './errors'
@@ -115,9 +115,11 @@ describe('sendLocationAction', () => {
 
   it('an action kept on this PC (M: down) says so and is not confirmed', async () => {
     const confirmed = vi.fn()
-    await sendLocationAction(() => Promise.resolve({ queued: true as const }), { confirmed, settled: () => {} })
+    const deferred = vi.fn()
+    await sendLocationAction(() => Promise.resolve({ queued: true as const }), { confirmed, deferred, settled: () => {} })
     expect(toast.warning).toHaveBeenCalledTimes(1)
     expect(confirmed).not.toHaveBeenCalled()
+    expect(deferred, 'the caller learns it is only kept on this PC').toHaveBeenCalledWith({ queued: true })
   })
 
   it('a write that throws at once is a refusal, not an uncaught error', async () => {
@@ -258,10 +260,16 @@ describe('optimistic changes', () => {
     expect(putAwayPlaceChecks(['Z9'], null), 'without the list M: checks it').toEqual([{ note: null, blocked: false }])
   })
 
-  it('serialOverlapNotes warns about serials on an earlier pallet of the form or on their way to M: from this window', () => {
+  it('serialOverlapNotes tells apart serials on an earlier pallet of the form and serials on their way to M: from this window', () => {
     const release = holdSerials(['n7', 'N8'])
-    const notes = serialOverlapNotes([['N1', 'N2'], [], ['n1', 'N2', 'N3'], ['N7'], ['N1', 'N2']], serialsOnTheirWay())
-    expect(notes).toEqual([null, null, '2 af serienumrene er også på palle 1.', '1 af serienumrene er lige sat på plads herfra og er på vej til M:.', '2 af serienumrene er også på palle 1.'])
+    const notes = serialOverlapNotes([['N1', 'N2'], [], ['n1', 'N2', 'N3'], ['N7'], ['N1', 'N2', 'N8']], serialsOnTheirWay())
+    expect(notes).toEqual([
+      { earlier: null, onTheirWay: null },
+      { earlier: null, onTheirWay: null },
+      { earlier: '2 af serienumrene er også på palle 1.', onTheirWay: null },
+      { earlier: null, onTheirWay: '1 af serienumrene er lige sat på plads herfra og er på vej til M:.' },
+      { earlier: '2 af serienumrene er også på palle 1.', onTheirWay: '1 af serienumrene er lige sat på plads herfra og er på vej til M:.' },
+    ])
     release()
     release()
     expect(serialsOnTheirWay().size, 'released once, when the put-away has its answer').toBe(0)
@@ -271,7 +279,20 @@ describe('optimistic changes', () => {
     expect(serialsOnTheirWay().has('N9'), 'still on its way in the other put-away').toBe(true)
     second()
     setWarehouseLanguage('en')
-    expect(serialOverlapNotes([['N1'], ['N1']], new Set())[1]).toBe('1 of the serial numbers is also on pallet 1.')
+    expect(serialOverlapNotes([['N1'], ['N1']], new Set())[1].earlier).toBe('1 of the serial numbers is also on pallet 1.')
+  })
+
+  it('a put-away kept on this PC holds its serials until a read of the outbox started after it no longer lists it', () => {
+    const release = holdSerials(['Q1'])
+    const before = startPendingRead()
+    holdUntilSent('act-1', release)
+    before([])
+    expect(serialsOnTheirWay().has('Q1'), 'a read that started before it was kept says nothing about it').toBe(true)
+    startPendingRead()(['act-1'])
+    startPendingRead()(undefined)
+    expect(serialsOnTheirWay().has('Q1'), 'still in the outbox, or no ids').toBe(true)
+    startPendingRead()(['other'])
+    expect(serialsOnTheirWay().has('Q1'), 'gone from the outbox: applied or refused').toBe(false)
   })
 
   it('matdocOf reads a 49/50 number like the backend', () => {

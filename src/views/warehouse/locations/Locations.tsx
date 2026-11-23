@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { isAnyModalOpen } from '@/lib/modalStack'
 import { errorMessage } from '@/lib/warehouse/errors'
 import type { LocationsTarget } from '@/lib/warehouse/locations'
-import { replayFailureText, startLocationsRead } from '@/lib/warehouse/locationActions'
+import { replayFailureText, startLocationsRead, startPendingRead } from '@/lib/warehouse/locationActions'
 import { t } from '@/lib/warehouse/text'
 import type { LocationList, WarehouseUser } from '@/types/warehouse'
 import { Admin } from './Admin'
@@ -58,15 +58,20 @@ export function Locations({ user, initial }: { user: WarehouseUser; initial: Loc
   useEffect(() => {
     const bridge = window.electronWarehouse!.locations
     // Failures of replayed actions are shown once on this PC (also another person's, by name) and then acknowledged.
-    const checkPending = () => bridge.pending().then(result => {
-      setPending(result.pending)
-      if (!result.failures.length) return
-      for (const failure of result.failures) {
-        const who = failure.email === user.email ? '' : ` (${failure.name || failure.email})`
-        toast.error(t(`En handling gemt på denne PC kunne ikke gennemføres${who}`, `An action saved on this PC could not be completed${who}`), { id: `locations-sync-failed-${failure.id}`, description: `${failure.label || failure.method}: ${replayFailureText(failure.code)}`, duration: Infinity })
-      }
-      void bridge.acknowledgeFailures(result.failures.map(failure => failure.id)).catch(() => {})
-    }).catch(() => {})
+    // Put-aways that were only kept on this PC hold their serials until the outbox no longer lists them.
+    const checkPending = () => {
+      const gone = startPendingRead()
+      return bridge.pending().then(result => {
+        gone(result.ids)
+        setPending(result.pending)
+        if (!result.failures.length) return
+        for (const failure of result.failures) {
+          const who = failure.email === user.email ? '' : ` (${failure.name || failure.email})`
+          toast.error(t(`En handling gemt på denne PC kunne ikke gennemføres${who}`, `An action saved on this PC could not be completed${who}`), { id: `locations-sync-failed-${failure.id}`, description: `${failure.label || failure.method}: ${replayFailureText(failure.code)}`, duration: Infinity })
+        }
+        void bridge.acknowledgeFailures(result.failures.map(failure => failure.id)).catch(() => {})
+      }).catch(() => {})
+    }
     let seen: number | null = null
     const checkStamp = () => bridge.stamp().then(({ changedAt }) => {
       if (seen !== null && changedAt !== seen) setVersion(value => value + 1)

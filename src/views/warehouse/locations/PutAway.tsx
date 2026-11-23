@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils'
 import { errorCode, errorMessage } from '@/lib/warehouse/errors'
 import { contextOf, type MapContext } from '@/lib/warehouse/layout/map'
 import { peekOf } from '@/lib/warehouse/layout/peek'
-import { holdSerials, placedFor, placedSummary, putAwayPlaceChecks, sendLocationAction, serialOverlapNotes, serialsOnTheirWay, startLocationsRead, withoutPutAway, withPutAway, type PlacedFound } from '@/lib/warehouse/locationActions'
+import { holdSerials, holdUntilSent, placedFor, placedSummary, putAwayPlaceChecks, sendLocationAction, serialOverlapNotes, serialsOnTheirWay, startLocationsRead, withoutPutAway, withPutAway, type PlacedFound } from '@/lib/warehouse/locationActions'
 import { locationKeyOf, newActionId, reasonLabel, type LocationsTarget } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
 import type { LocationList, MapContents, PalletInput, SlotSuggestion, WarehouseLayout, WarehouseUser } from '@/types/warehouse'
@@ -119,6 +119,8 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
   const places = useMemo(() => (data ? Object.fromEntries(data.list.locations.map(location => [location.id, location])) : null), [data])
   const checks = useMemo(() => putAwayPlaceChecks(drafts.map(item => item.location), places), [drafts, places])
   const blocked = checks.some(check => check.blocked)
+  // Serials also on an earlier pallet of the form: only a note (M: takes one delivery split over pallets).
+  const sharedSerials = useMemo(() => serialOverlapNotes(drafts.map(item => item.serials), new Set()).map(note => note.earlier), [drafts])
 
   function showOnMap(placeId: string) {
     const typed = drafts.some(item => item.material.trim() || item.location.trim() || item.document.trim())
@@ -161,21 +163,21 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
     const ready = drafts.filter(item => item.material || item.location)
     if (invalidDrafts(ready) || blocked) return
     // The same delivery put away again is asked first, in one question: the 49/50 number or serials already put away,
-    // serials also on an earlier pallet of the form (one delivery split over pallets) and serials of this window's
-    // put-aways still on their way to M:. A yes to serials sends allowDuplicate; a partial delivery (the same number
-    // with other serials) only warns, and M: still refuses a serial put away meanwhile on another PC.
+    // and serials of this window's put-aways still on their way to M:. A yes to serials sends allowDuplicate; a partial
+    // delivery (the same number with other serials) only warns, and M: still refuses a serial put away meanwhile on
+    // another PC. Serials shared by pallets of this form (one delivery split over pallets) are fine on M: and not asked.
     const readyKeys = new Set(ready.map(item => item.key))
-    const overlaps = serialOverlapNotes(drafts.map(item => (readyKeys.has(item.key) ? item.serials : [])), serialsOnTheirWay())
-    const warned = drafts.map((item, index) => ({ item, index, placed: readyKeys.has(item.key) ? placedSummary(item.placed) : null, overlap: overlaps[index] }))
-      .filter(entry => entry.placed || entry.overlap)
+    const sending = serialOverlapNotes(drafts.map(item => (readyKeys.has(item.key) ? item.serials : [])), serialsOnTheirWay())
+    const warned = drafts.map((item, index) => ({ item, index, placed: readyKeys.has(item.key) ? placedSummary(item.placed) : null, onTheirWay: sending[index].onTheirWay }))
+      .filter(entry => entry.placed || entry.onTheirWay)
     let allowDuplicate = false
     if (warned.length) {
-      const lines = warned.map(({ index, placed, overlap }) => {
-        const text = [placed, overlap].filter(Boolean).join(' ')
+      const lines = warned.map(({ index, placed, onTheirWay }) => {
+        const text = [placed, onTheirWay].filter(Boolean).join(' ')
         return drafts.length > 1 ? `${t(`Palle ${index + 1}`, `Pallet ${index + 1}`)}: ${text}` : text
       })
       if (!window.confirm(`${lines.join('\n')}\n\n${t('Gem alligevel?', 'Save anyway?')}`)) return
-      allowDuplicate = warned.some(({ item, overlap }) => Boolean(overlap) || (item.placed?.serials ?? 0) > 0)
+      allowDuplicate = warned.some(({ item, onTheirWay }) => Boolean(onTheirWay) || (item.placed?.serials ?? 0) > 0)
     }
     setDrafts([blank()])
     send(ready, allowDuplicate)
@@ -195,8 +197,11 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
     const where = locationKeyOf(pallets[0].location)
     // The places view counts the new pallets at once, so the next pallet sees the place as taken.
     setData(value => value && withPutAway(value, pallets))
-    // Its serials count as put away for the next save until M: has answered.
+    // Its serials count as put away for the next save until M: has answered; one only kept on this PC (M: down) holds
+    // them until the Hub's outbox no longer has it (Locations reads the outbox every 15 s).
+    const actionId = newActionId()
     const release = holdSerials(pallets.flatMap(item => item.serials || []))
+    let onlyOnThisPc = false
     // A serial already on a pallet (put away on another PC meanwhile) is refused; "Gem alligevel" sends the pallets as
     // they stand in the form now, without the check.
     const again = () => {
@@ -206,7 +211,7 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
       setDrafts(list => { const rest = list.filter(item => !keys.has(item.key)); return rest.length ? rest : [blank()] })
       send(current, true)
     }
-    void sendLocationAction(() => bridge.putAway({ actionId: newActionId(), label: t('Sæt på plads: ', 'Put away: ') + pallets.map(item => `${item.material} → ${item.location}`).join(', '), pallets, ...(allowDuplicate ? { allowDuplicate } : {}) }), {
+    void sendLocationAction(() => bridge.putAway({ actionId, label: t('Sæt på plads: ', 'Put away: ') + pallets.map(item => `${item.material} → ${item.location}`).join(', '), pallets, ...(allowDuplicate ? { allowDuplicate } : {}) }), {
       success: pallets.length > 1 ? t(`${pallets.length} paller er sat på plads`, `${pallets.length} pallets put away`)
         : pick ? t(`${where} er fyldt op`, `${where} has been refilled`)
         : t(`Pallen står nu på ${where}`, `The pallet is now on ${where}`),
@@ -216,7 +221,8 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
         setData(value => value && withoutPutAway(value, pallets))
       },
       offer: error => (!allowDuplicate && errorCode(error) === 'SERIAL_ON_PALLET' ? { label: t('Gem alligevel', 'Save anyway'), onClick: again } : null),
-      settled: () => { release(); onDone() },
+      deferred: result => { if ('queued' in result) { onlyOnThisPc = true; holdUntilSent(actionId, release) } },
+      settled: () => { if (!onlyOnThisPc) release(); onDone() },
     })
   }
 
@@ -227,7 +233,7 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
         <p className="text-sm text-muted-foreground">{t('Scan 49/50-nummeret, så henter Hubben materiale, antal og serienumre fra SAP. Uden SAP: skriv materiale og antal.', 'Scan the 49/50 number and the Hub fetches material, quantity and serial numbers from SAP. Without SAP: type material and quantity.')}</p>
       </div>
       {drafts.map((draft, index) => (
-        <DraftCard key={draft.key} draft={draft} index={index} tags={tags} canRemove={drafts.length > 1} map={map} mapFailed={mapFailed} check={checks[index]} onShowOnMap={showOnMap}
+        <DraftCard key={draft.key} draft={draft} index={index} tags={tags} canRemove={drafts.length > 1} map={map} mapFailed={mapFailed} check={checks[index]} shared={sharedSerials[index]} onShowOnMap={showOnMap}
           onChange={patch => update(draft.key, patch)} onLookup={() => lookup(draft)} onDescribe={material => void describe(draft.key, material)}
           onRemove={() => setDrafts(list => list.filter(item => item.key !== draft.key))} />
       ))}
@@ -239,8 +245,8 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
   )
 }
 
-function DraftCard({ draft, index, tags, canRemove, map, mapFailed, check, onShowOnMap, onChange, onLookup, onDescribe, onRemove }: {
-  draft: Draft; index: number; tags: string[]; canRemove: boolean; map: PeekMap | null; mapFailed: boolean; check: { note: string | null; blocked: boolean }; onShowOnMap: (placeId: string) => void
+function DraftCard({ draft, index, tags, canRemove, map, mapFailed, check, shared, onShowOnMap, onChange, onLookup, onDescribe, onRemove }: {
+  draft: Draft; index: number; tags: string[]; canRemove: boolean; map: PeekMap | null; mapFailed: boolean; check: { note: string | null; blocked: boolean }; shared: string | null; onShowOnMap: (placeId: string) => void
   onChange: (patch: Partial<Draft>) => void; onLookup: () => Promise<void>; onDescribe: (material: string) => void; onRemove: () => void
 }) {
   const id = (name: string) => `putaway-${draft.key}-${name}`
@@ -303,6 +309,7 @@ function DraftCard({ draft, index, tags, canRemove, map, mapFailed, check, onSho
           </div>
         </div>
         {draft.serials.length > 0 && <p className="text-xs text-muted-foreground">{t(`${draft.serials.length} serienumre fra SAP`, `${draft.serials.length} serial numbers from SAP`)}</p>}
+        {shared && <p className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400"><Warning size={14} className="mt-px shrink-0" /> {shared}</p>}
 
         <div className="space-y-1.5">
           <Label htmlFor={id('location')}>{t('Plads', 'Place')}</Label>

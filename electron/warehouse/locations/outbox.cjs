@@ -301,6 +301,8 @@ function createOutbox({ dir, run, isStorageError, isBusyError = () => false, now
     flush,
     // Kept here for M: (shown as "venter på M:"), not the ones running right now with a person waiting for them.
     pending: () => state.queue.filter(action => !waiting.has(action.id)).length,
+    // The ids of every action not yet done on M: (also the one running now): a window holds what it sent until the id is gone.
+    pendingIds: () => state.queue.map(action => action.id),
     // Everything not yet on M:, also what is running right now (diagnostics).
     unsettled: () => state.queue.length,
     // Handed in but not yet on this PC's disk: the only actions a close has to wait for.

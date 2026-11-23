@@ -1072,7 +1072,8 @@ export interface LocationsBridge {
   setTags(request: { tags: string[] }): Promise<{ tags: string[] }>
   previewImport(): Promise<ImportPreview>
   applyImport(request: { token: string; replace?: boolean }): Promise<{ locations: number; pallets: number }>
-  pending(): Promise<{ pending: number; failures: SyncFailure[] }>
+  /** `ids`: every action on this PC not yet done on M: (queued or running), so a window knows when what it sent is gone. */
+  pending(): Promise<{ pending: number; ids?: string[]; failures: SyncFailure[] }>
   acknowledgeFailures(ids: string[]): Promise<{ ok: true }>
   /** The published drawing; everyone in the hub. The rest are for Placerings admins and need M: (never queued). */
   layout(): Promise<{ layout: WarehouseLayout | null }>

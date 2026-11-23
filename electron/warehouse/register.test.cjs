@@ -165,7 +165,7 @@ test('the drawing is reached over IPC without the local queue; only a publish te
   // The publish starts the next draft on the new drawing; publishing it needs its own preview (revision) first.
   assert.equal(published.draft.basedOn, 1)
   await assert.rejects(call('mona', 'locations:layout-publish'), /LAYOUT_STALE/)
-  assert.deepEqual(await call('anna', 'locations:pending'), { pending: 0, failures: [] })
+  assert.deepEqual(await call('anna', 'locations:pending'), { pending: 0, ids: [], failures: [] })
 })
 
 test('every Placeringer channel is registered under "warehouse:locations:" and data lands in <team>\\lagerstyring\\placeringer', async () => {
@@ -198,7 +198,7 @@ test('daily Placeringer actions go through the local queue: the same action id i
   assert.equal(first.created.length, 1)
   assert.deepEqual(await call('anna', 'locations:put-away', { actionId: 'act-1', pallets: [{ location: 'A2.4', material: 'R162-0717', quantity: 50 }] }), { duplicate: true })
   assert.equal((await call('anna', 'locations:overview')).counts.pallets, 1)
-  assert.deepEqual(await call('anna', 'locations:pending'), { pending: 0, failures: [] })
+  assert.deepEqual(await call('anna', 'locations:pending'), { pending: 0, ids: [], failures: [] })
   assert.equal(registered.hasPendingWrites(), false)
   assert.equal(await registered.whenWritesSettled(1000), true)
 })
@@ -211,7 +211,7 @@ test('a daily action that finds M: busy (KV_LOCK_BUSY) is kept on this PC instea
   // The store gives up on the locks before anything is written (fileLock.cjs withFileLocksAsync).
   registered.locations.take = async () => { throw Object.assign(new Error('KV_LOCK_BUSY: Lageret er optaget af en anden klient. Prøv igen.'), { code: 'KV_LOCK_BUSY' }) }
   assert.deepEqual(await call('anna', 'locations:take', { actionId: 'busy-1', pallet: pallet.id, quantity: 30 }), { queued: true })
-  assert.deepEqual(await call('anna', 'locations:pending'), { pending: 1, failures: [] }, 'queued, not a failure')
+  assert.deepEqual(await call('anna', 'locations:pending'), { pending: 1, ids: ['busy-1'], failures: [] }, 'queued, not a failure')
   assert.equal(registered.hasPendingWrites(), false, 'safe on this PC: closing the window does not wait for M:')
   assert.equal(await registered.whenWritesSettled(20), true)
   assert.deepEqual(broadcasts.filter(([channel]) => channel === 'warehouse:locations:queued').map(([, payload]) => payload), [{ team: 'TCD' }], 'the windows show the waiting banner at once')
@@ -220,7 +220,7 @@ test('a daily action that finds M: busy (KV_LOCK_BUSY) is kept on this PC instea
   // Started again on the same PC: the queue is replayed at once.
   const again = setup({ root })
   for (let waited = 0; (await again.call('anna', 'locations:pending')).pending && waited < 5000; waited += 20) await new Promise(resolve => setTimeout(resolve, 20))
-  assert.deepEqual(await again.call('anna', 'locations:pending'), { pending: 0, failures: [] })
+  assert.deepEqual(await again.call('anna', 'locations:pending'), { pending: 0, ids: [], failures: [] })
   assert.deepEqual(await again.call('anna', 'locations:take', { actionId: 'busy-1', pallet: pallet.id, quantity: 30 }), { duplicate: true })
   assert.equal((await again.call('anna', 'locations:pallet-card', { pallet: pallet.id })).pallet.quantity, 70, 'taken once')
   again.registered.closeAll()
@@ -243,14 +243,14 @@ test('a Hub started before M: is reachable keeps the waiting Placeringer actions
   }
   const again = setup({ root, teamDir: fallback, storageConnected: () => connected })
   await new Promise(resolve => setTimeout(resolve, 100))
-  assert.deepEqual(await again.call('anna', 'locations:pending'), { pending: 1, failures: [] }, 'still waiting, not thrown away')
+  assert.deepEqual(await again.call('anna', 'locations:pending'), { pending: 1, ids: ['kept-1'], failures: [] }, 'still waiting, not thrown away')
   // An action handed in meanwhile waits behind it instead of running the queue against the local folder.
   assert.deepEqual(await again.call('anna', 'locations:take', { actionId: 'kept-2', pallet: pallet.id, quantity: 10 }), { queued: true })
-  assert.deepEqual(await again.call('anna', 'locations:pending'), { pending: 2, failures: [] })
+  assert.deepEqual(await again.call('anna', 'locations:pending'), { pending: 2, ids: ['kept-1', 'kept-2'], failures: [] })
   connected = true
   again.registered.replayWrites()
   for (let waited = 0; (await again.call('anna', 'locations:pending')).pending && waited < 5000; waited += 20) await new Promise(resolve => setTimeout(resolve, 20))
-  assert.deepEqual(await again.call('anna', 'locations:pending'), { pending: 0, failures: [] })
+  assert.deepEqual(await again.call('anna', 'locations:pending'), { pending: 0, ids: [], failures: [] })
   assert.equal((await again.call('anna', 'locations:pallet-card', { pallet: pallet.id })).pallet.quantity, 60, 'both applied once')
   await again.registered.closeAll()
 })
@@ -297,7 +297,7 @@ test('a put-away on a place made just before it waits for that place, also when 
   assert.deepEqual(taken, { queued: true })
   assert.equal(made.location.name, 'G1')
   for (let waited = 0; (await call('anna', 'locations:pending')).pending && waited < 5000; waited += 20) await new Promise(resolve => setTimeout(resolve, 20))
-  assert.deepEqual(await call('anna', 'locations:pending'), { pending: 0, failures: [] }, 'the put-away was not replayed before G1 existed')
+  assert.deepEqual(await call('anna', 'locations:pending'), { pending: 0, ids: [], failures: [] }, 'the put-away was not replayed before G1 existed')
   assert.equal((await call('anna', 'locations:location-card', { location: 'G1' })).pallets.length, 1)
   assert.equal((await call('anna', 'locations:pallet-card', { pallet: pallet.id })).pallet.quantity, 70)
   registered.closeAll()
@@ -333,7 +333,7 @@ test('a pallet edit keeps what the dialog showed (expected) through the local qu
   const { created: [pallet] } = await call('anna', 'locations:put-away', { pallets: [{ location: 'A2.4', material: 'R162-0717', quantity: 100 }] })
   await call('mona', 'locations:take', { pallet: pallet.id, quantity: 30 })
   await assert.rejects(call('anna', 'locations:edit-pallet', { actionId: 'edit-1', pallet: pallet.id, changes: { quantity: 90 }, expected: { quantity: 100 } }), /PALLET_CHANGED/)
-  assert.deepEqual(await call('anna', 'locations:pending'), { pending: 0, failures: [] })
+  assert.deepEqual(await call('anna', 'locations:pending'), { pending: 0, ids: [], failures: [] })
 })
 
 test('Hubert answers Placeringer questions first and still answers Optælling questions', async () => {
@@ -542,7 +542,7 @@ test('a plain user past the role limit is not held up by a hanging roles read: a
     connected = false
     const answer = await within(call('anna', 'locations:put-away', { actionId: 'hang-1', pallets: [{ location: 'A2.4', material: 'R162-0717', quantity: 5 }] }), 1000)
     assert.deepEqual(answer, { queued: true })
-    assert.deepEqual(await within(call('anna', 'locations:pending'), 1000), { pending: 1, failures: [] })
+    assert.deepEqual(await within(call('anna', 'locations:pending'), 1000), { pending: 1, ids: ['hang-1'], failures: [] })
     await registered.closeAll()
   } finally {
     await m.restore()
