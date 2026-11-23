@@ -1,4 +1,4 @@
-import type { SoftwareloadComment, SoftwareloadOutcome, SoftwareloadResult, SoftwareloadTask, SoftwareloadType } from '@/types/warehouse'
+import type { SoftwareloadComment, SoftwareloadKifPreview, SoftwareloadOutcome, SoftwareloadResult, SoftwareloadTask, SoftwareloadType } from '@/types/warehouse'
 import { errorCode, errorMessage } from './warehouse/errors'
 import { t } from './warehouse/text'
 
@@ -114,6 +114,39 @@ export function previewGroups(outcomes: Record<string, SoftwareloadOutcome>): Pr
     if (group) groups[group].push(serial)
   }
   return groups
+}
+
+export interface KifMovePlan {
+  /** The dialog's question, e.g. "Flyt 3 terminaler til D005 i SAP?". */
+  title: string
+  /** Terminals the preview moves to D005. */
+  count: number
+  /** "Trin i SAP": one line per transfer, from → D005 and its number of terminals. */
+  steps: { key: string; from: string; to: string; count: number }[]
+  /** What "Flyt" sends: the serials and the document of the preview the user saw, copied when the dialog opened. */
+  request: { serials: string[]; document?: string }
+}
+
+/** The confirmation of a move into KIF, made once from the preview so the dialog and "Flyt" use the same plan. */
+export function kifMovePlan(preview: Pick<SoftwareloadKifPreview, 'serials' | 'outcomes' | 'transfers'>, document: string): KifMovePlan {
+  const count = Object.values(preview.outcomes).filter(outcome => outcome === 'to-target').length
+  return {
+    title: count === 1 ? t('Flyt 1 terminal til D005 i SAP?', 'Move 1 terminal to D005 in SAP?') : t(`Flyt ${count} terminaler til D005 i SAP?`, `Move ${count} terminals to D005 in SAP?`),
+    count,
+    steps: preview.transfers.map(item => ({ key: `${item.wave}-${item.from}-${item.to}`, from: item.from, to: item.to, count: item.serials.length })),
+    request: { serials: [...preview.serials], ...(document ? { document } : {}) },
+  }
+}
+
+/** A dialog's confirm button ignores presses this soon after it opened, so a fast double press cannot reach it. */
+export const CONFIRM_ARM_MS = 400
+
+/**
+ * Whether a press on a confirm button in a dialog that moves in SAP was meant for it: not the second click of a double
+ * click (`detail` 2 or more) that opened the dialog, and not a press within CONFIRM_ARM_MS of it opening.
+ */
+export function isDeliberateConfirm({ detail, sinceOpenMs }: { detail: number; sinceOpenMs: number }): boolean {
+  return detail <= 1 && sinceOpenMs >= CONFIRM_ARM_MS
 }
 
 export interface SoftwareloadSummaryRow {

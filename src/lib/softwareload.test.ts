@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { commentsFor, commentsOnTask, finishTitle, outcomeLabel, previewGroups, sapRunErrorMessage, SOFTWARELOAD_TARGETS, summarizeByMaterial, summarizeTasks, targetLabel, taskForMaterial, TYPE_LABELS } from './softwareload'
+import { commentsFor, commentsOnTask, finishTitle, isDeliberateConfirm, kifMovePlan, outcomeLabel, previewGroups, sapRunErrorMessage, SOFTWARELOAD_TARGETS, summarizeByMaterial, summarizeTasks, targetLabel, taskForMaterial, TYPE_LABELS } from './softwareload'
 import { setWarehouseLanguage } from './warehouse/text'
-import type { SoftwareloadComment, SoftwareloadOutcome, SoftwareloadResult, SoftwareloadTask } from '@/types/warehouse'
+import type { SoftwareloadComment, SoftwareloadKifPreview, SoftwareloadOutcome, SoftwareloadResult, SoftwareloadTask } from '@/types/warehouse'
 
 const HOUR = 3_600_000
 const result = (outcome: SoftwareloadOutcome): SoftwareloadResult => ({ material: 'M-0', from: 'D001', outcome, steps: [] })
@@ -76,6 +76,50 @@ describe('finishTitle', () => {
     } finally {
       setWarehouseLanguage('da')
     }
+  })
+})
+
+describe('kifMovePlan', () => {
+  const preview: Pick<SoftwareloadKifPreview, 'serials' | 'outcomes' | 'transfers'> = {
+    serials: ['A', 'B', 'C', 'D', 'E'],
+    outcomes: { A: 'to-target', B: 'to-target', C: 'skipped', D: 'not-found', E: 'to-target' },
+    transfers: [
+      { wave: 1, from: 'D001', to: 'D005', serials: ['A', 'B'] },
+      { wave: 1, from: 'D003', to: 'D005', serials: ['E'] },
+    ],
+  }
+
+  it('asks about the terminals that move and lists the SAP steps from the preview', () => {
+    const plan = kifMovePlan(preview, '')
+    expect(plan.title).toBe('Flyt 3 terminaler til D005 i SAP?')
+    expect(plan.count).toBe(3)
+    expect(plan.steps).toEqual([
+      { key: '1-D001-D005', from: 'D001', to: 'D005', count: 2 },
+      { key: '1-D003-D005', from: 'D003', to: 'D005', count: 1 },
+    ])
+  })
+
+  it('confirms exactly the serials and the document of the preview the user saw', () => {
+    expect(kifMovePlan(preview, '').request).toEqual({ serials: ['A', 'B', 'C', 'D', 'E'] })
+    const plan = kifMovePlan(preview, '4905204948 2026')
+    expect(plan.request).toEqual({ serials: ['A', 'B', 'C', 'D', 'E'], document: '4905204948 2026' })
+    // A copy: changing the preview afterwards does not change what is confirmed.
+    preview.serials.push('F')
+    expect(plan.request.serials).toEqual(['A', 'B', 'C', 'D', 'E'])
+    preview.serials.pop()
+  })
+
+  it('says terminal for one', () => {
+    expect(kifMovePlan({ serials: ['A'], outcomes: { A: 'to-target' }, transfers: [{ wave: 1, from: 'D001', to: 'D005', serials: ['A'] }] }, '').title).toBe('Flyt 1 terminal til D005 i SAP?')
+  })
+})
+
+describe('isDeliberateConfirm', () => {
+  it('ignores the second click of a double click and a press right after the dialog opened', () => {
+    expect(isDeliberateConfirm({ detail: 1, sinceOpenMs: 1000 })).toBe(true)
+    expect(isDeliberateConfirm({ detail: 0, sinceOpenMs: 1000 }), 'Space or Enter on the focused button').toBe(true)
+    expect(isDeliberateConfirm({ detail: 2, sinceOpenMs: 1000 }), 'second click of a double click').toBe(false)
+    expect(isDeliberateConfirm({ detail: 1, sinceOpenMs: 100 }), 'too soon after the dialog opened').toBe(false)
   })
 })
 

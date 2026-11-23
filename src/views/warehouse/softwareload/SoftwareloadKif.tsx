@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, MagnifyingGlass, Truck } from '@phosphor-icons/react'
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/warehouse/ui'
-import { previewGroups, sapRunErrorMessage, targetLabel } from '@/lib/softwareload'
+import { isDeliberateConfirm, kifMovePlan, previewGroups, sapRunErrorMessage, targetLabel, type KifMovePlan } from '@/lib/softwareload'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { t } from '@/lib/warehouse/text'
 import { cn } from '@/lib/utils'
@@ -25,6 +26,9 @@ export function SoftwareloadKif({ user, writeEnabled, active, onBusy }: { user: 
   const [moving, setMoving] = useState(false)
   const [failed, setFailed] = useState<string | null>(null)
   const [result, setResult] = useState<SoftwareloadKifMoveResult | null>(null)
+  // The plan stays set while the dialog closes, so it does not empty during the animation.
+  const [confirm, setConfirm] = useState<{ plan: KifMovePlan; openedAt: number } | null>(null)
+  const [confirming, setConfirming] = useState(false)
   const [progress, resetProgress] = useSoftwareloadProgress(user.email)
   const textRef = useRef<HTMLTextAreaElement>(null)
   const inFlight = useRef(false)
@@ -54,15 +58,17 @@ export function SoftwareloadKif({ user, writeEnabled, active, onBusy }: { user: 
     }
   }
 
-  const move = async () => {
+  const move = async (plan: KifMovePlan) => {
+    setConfirming(false)
     // One SAP run at a time; a second press must not touch the state of the run in progress.
-    if (!preview || inFlight.current) return
+    if (inFlight.current) return
     inFlight.current = true
     setFailed(null)
     resetProgress()
     setMoving(true)
     try {
-      setResult(await window.electronWarehouse!.softwareload.kifMove({ serials: preview.serials, ...(usedDocument ? { document: usedDocument } : {}) }))
+      // Exactly what the dialog showed: the serials and the document copied when it opened.
+      setResult(await window.electronWarehouse!.softwareload.kifMove(plan.request))
       setPreview(null)
     } catch (error) {
       setFailed(sapRunErrorMessage(error))
@@ -123,11 +129,43 @@ export function SoftwareloadKif({ user, writeEnabled, active, onBusy }: { user: 
         {moving && <ProgressBlock progress={progress} />}
         {!moving && (
           <div className="space-y-2">
-            <Button size="lg" onClick={move} disabled={!writeEnabled || toMove === 0}><ArrowRight size={20} /> {t(`Flyt til ${KIF}`, `Move to ${KIF}`)}</Button>
+            {/* Secondary on purpose: it only opens the confirmation, and must not look like the obvious target for Enter. */}
+            <Button size="lg" variant="outline" onClick={() => { setConfirm({ plan: kifMovePlan(preview, usedDocument), openedAt: Date.now() }); setConfirming(true) }} disabled={!writeEnabled || toMove === 0}><ArrowRight size={20} /> {t(`Flyt til ${KIF}`, `Move to ${KIF}`)}</Button>
             {!writeEnabled && <WriteDisabledLine />}
             {writeEnabled && toMove === 0 && <p className="text-sm text-muted-foreground">{t('Ingen af terminalerne skal flyttes.', 'None of the terminals need to be moved.')}</p>}
           </div>
         )}
+        <AlertDialog open={confirming} onOpenChange={setConfirming}>
+          <AlertDialogContent>
+            {confirm && (
+              <>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>{confirm.plan.title}</AlertDialogTitle>
+                  <AlertDialogDescription>{t('Appen flytter terminalerne i SAP nu. Det kan ikke fortrydes.', 'The app moves the terminals in SAP now. It cannot be undone.')}</AlertDialogDescription>
+                </AlertDialogHeader>
+                <div className="space-y-1 text-sm">
+                  <p className="font-medium">{t('Trin i SAP', 'Steps in SAP')}</p>
+                  <ul className="space-y-1">
+                    {confirm.plan.steps.map(step => (
+                      <li key={step.key} className="flex justify-between gap-4">
+                        <span>{targetLabel(step.from)} → {targetLabel(step.to)}</span>
+                        <span className="font-semibold tabular-nums">{step.count}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>{t('Annullér', 'Cancel')}</AlertDialogCancel>
+                  <AlertDialogAction onClick={event => {
+                    // The second click of the double click that opened the dialog, or a press right after it opened, is not a confirmation.
+                    if (!isDeliberateConfirm({ detail: event.detail, sinceOpenMs: Date.now() - confirm.openedAt })) { event.preventDefault(); return }
+                    void move(confirm.plan)
+                  }}>{t('Flyt', 'Move')}</AlertDialogAction>
+                </AlertDialogFooter>
+              </>
+            )}
+          </AlertDialogContent>
+        </AlertDialog>
       </Card>
     )
   }
