@@ -16,7 +16,7 @@ import type { CountLine, CountListLine, StockType } from '@/types/warehouse'
 import type { PanelProps } from './CountView'
 import { isApproved, isSubmitted, lockOf, mayCount, MaterialsInProgress, RequestButton, SubmitDialog, type SubmitRetry } from './MaterialWork'
 import { takeLock, withLine, withoutLine } from './optimisticState'
-import { addLineTarget, findExistingLine, placeKey, qtyForExisting, type ExistingChoice } from './existingLine'
+import { addLineTarget, existingTotal, findExistingLines, materialRowSave, mayReplace, placeKey, type ExistingChoice } from './existingLine'
 import { t } from '@/lib/warehouse/text'
 
 type Filter = 'all' | 'missing' | 'uncounted' | 'over'
@@ -189,13 +189,15 @@ function saveOwnPlace(name: string, area: string, reloadOpen: () => Promise<void
 
 interface PlaceOption { place: string; area: string; sloc?: string; lineId?: string; sheetQty: number | null }
 
-/** A quantity typed for a place that already has a line: saved once the counter has chosen to replace or add. */
-interface ExistingAsk { existing: CountLine; value: number; save: (choice: ExistingChoice) => void }
+/** A quantity typed for a place that already has lines: saved once the counter has chosen to replace or add. */
+interface ExistingAsk { lines: CountLine[]; value: number; save: (choice: ExistingChoice) => void }
 
 function ExistingLineDialog({ ask, onClose }: { ask: ExistingAsk; onClose: () => void }) {
-  const n = formatNumber(ask.existing.qty)
   const m = formatNumber(ask.value)
-  const place = ask.existing.place
+  const place = ask.lines[ask.lines.length - 1].place
+  const material = ask.lines[0].material
+  const n = formatNumber(existingTotal(ask.lines))
+  const several = !mayReplace(ask.lines)
   const choose = (choice: ExistingChoice) => {
     onClose()
     ask.save(choice)
@@ -204,12 +206,13 @@ function ExistingLineDialog({ ask, onClose }: { ask: ExistingAsk; onClose: () =>
     <Dialog open onOpenChange={value => { if (!value) onClose() }}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{t(`${ask.existing.material} er allerede talt på ${place}`, `${ask.existing.material} is already counted in ${place}`)}</DialogTitle>
+          <DialogTitle>{t(`${material} er allerede talt på ${place}`, `${material} is already counted in ${place}`)}</DialogTitle>
           <DialogDescription>{t(`Der er allerede talt ${n} på ${place}. Erstat med ${m} eller læg ${m} til?`, `${n} have already been counted in ${place}. Replace with ${m} or add ${m}?`)}</DialogDescription>
         </DialogHeader>
+        {several && <p className="text-sm text-muted-foreground">{t(`Der er flere tællelinjer på ${place}. Ret dem enkeltvis under Talte linjer.`, `There are several count lines in ${place}. Edit them one by one under Counted lines.`)}</p>}
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>{t('Annullér', 'Cancel')}</Button>
-          <Button variant="outline" onClick={() => choose('replace')}>{t(`Erstat med ${m}`, `Replace with ${m}`)}</Button>
+          {!several && <Button variant="outline" onClick={() => choose('replace')}>{t(`Erstat med ${m}`, `Replace with ${m}`)}</Button>}
           <Button onClick={() => choose('add')}>{t(`Læg ${m} til`, `Add ${m}`)}</Button>
         </DialogFooter>
       </DialogContent>
@@ -249,13 +252,14 @@ function MaterialRow({ id, open, state, group, showType, canWrite, reloadOpen, o
     if (!place) { toast.error(t('Vælg eller skriv en placering', 'Choose or type a location')); return }
     if (qty.trim() === '' || !Number.isInteger(value) || value < 0) { toast.error(t('Skriv et helt antal (0 eller mere)', 'Type a whole number (0 or more)')); return }
     // A place picked in the list shows its counted quantity in the field; a typed one does not, so the counter chooses.
-    const existing = countedAt.get(placeKey(place))
-    if (choice === OTHER && existing) { setAsking({ existing, value, save: answer => commit(place, value, answer) }); return }
-    commit(place, value, 'replace')
+    const existing = findExistingLines(group.lines, { place, material: group.material, stockType: group.stockType })
+    if (choice === OTHER && existing.length > 0) { setAsking({ lines: existing, value, save: answer => commit(place, value, answer) }); return }
+    commit(place, value, null)
   }
 
   // The line and the counted quantity show at once (the material is taken for you); the save runs in the background.
-  const commit = (typed: string, value: number, answer: ExistingChoice) => {
+  // Without an answer (a place picked in the list) the shown line gets the typed quantity.
+  const commit = (typed: string, value: number, answer: ExistingChoice | null) => {
     const key = placeKey(typed)
     const option = options.find(item => placeKey(item.place) === key)
     const existing = countedAt.get(key)
@@ -263,7 +267,8 @@ function MaterialRow({ id, open, state, group, showType, canWrite, reloadOpen, o
     const place = existing?.place ?? typed
     const lineId = existing?.lineId ?? option?.lineId ?? newLineId()
     const area = option?.area || existing?.area || known?.area || ''
-    const total = existing ? qtyForExisting(existing, value, answer) : value
+    const atPlace = findExistingLines(group.lines, { place: typed, material: group.material, stockType: group.stockType })
+    const total = answer && atPlace.length > 0 ? materialRowSave(atPlace, value, answer).qty : value
     const comment = existing?.comment ?? ''
     if (!option && !known) saveOwnPlace(place, '', reloadOpen)
     const line: CountLine = { lineId, place, area, material: group.material, sloc: option?.sloc || existing?.sloc || '', stockType: group.stockType, qty: total, status: 'counted', comment, by: person.email, byName: person.name, at: Date.now() }
@@ -396,8 +401,8 @@ function AddLine({ id, open, state, types, reloadOpen, optimistic, person }: Pic
     const value = Number(qty)
     if (!place.trim() || !material.trim() || qty.trim() === '' || !Number.isInteger(value) || value < 0) { toast.error(t('Udfyld placering, materiale og et helt antal', 'Fill in location, material and a whole number')); return }
     // Same place, material and stock type as a counted line: the counter chooses to replace it or add a line of their own.
-    const existing = findExistingLine(state.lines, { place, material: material.trim().toUpperCase(), stockType })
-    if (existing) { setAsking({ existing, value, save: answer => commit(value, addLineTarget(existing, answer)) }); return }
+    const existing = findExistingLines(state.lines, { place, material: material.trim().toUpperCase(), stockType })
+    if (existing.length > 0) { setAsking({ lines: existing, value, save: answer => commit(value, addLineTarget(existing, answer)) }); return }
     commit(value, null)
   }
 
