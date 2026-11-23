@@ -114,8 +114,9 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
 
   // ---------- Daily actions ----------
   /**
-   * A serial already on another pallet (or on two pallets of this put-away) is refused unless `allowDuplicate`: the same
-   * delivery put away twice makes stock that is not there. The same 49/50 number alone is fine (a partial delivery).
+   * A serial already on a pallet from before this action is refused unless `allowDuplicate`: the same delivery put away
+   * twice makes stock that is not there. The pallets of this action may share serials (one delivery split over several
+   * pallets carries the document's whole list on each), and the same 49/50 number alone is fine (a partial delivery).
    */
   async function putAway(user, { pallets, actionId, allowDuplicate } = {}) {
     const team = teamOf(user)
@@ -123,18 +124,15 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
     const result = await repo.transact(team, { actionId, writes: ['pallets'] }, tx => {
       const created = []
       const filled = []
-      // The pallets a first try of this action made are its own, so a replay is never refused for their serials.
+      // Read before the first pallet is made, without the pallets a first try of this action made: a replay (also an
+      // older one, without allowDuplicate) is never refused for the serials of its own pallets.
       const own = new Set(actionId ? pallets.map((_, index) => `${actionId}:${index}`) : [])
       const serialsOnPallets = new Map()
       const checked = allowDuplicate !== true
       if (checked) for (const pallet of Object.values(tx.pallets)) if (!own.has(pallet.id)) for (const serial of pallet.serials || []) serialsOnPallets.set(serial, pallet.location)
-      const inThisPutAway = new Set()
       const checkSerials = serials => {
-        if (!checked) return
         const onPallets = serials.filter(serial => serialsOnPallets.has(serial))
-        const twice = serials.filter(serial => inThisPutAway.has(serial) && !serialsOnPallets.has(serial))
         if (onPallets.length) throw codeError('SERIAL_ON_PALLET', `${serialList(onPallets)} står allerede på en palle på ${[...new Set(onPallets.map(serial => nameOf(tx, serialsOnPallets.get(serial))))].join(', ')}. Tjek, om pallen allerede er sat på plads.`)
-        if (twice.length) throw codeError('SERIAL_ON_PALLET', `${serialList(twice)} er på to paller i denne registrering.`)
       }
       for (const [index, input] of pallets.entries()) {
         // The id comes from the action, so a replay after M: dropped halfway (the pallets written, the rest not) finds
@@ -146,13 +144,11 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
           tx.adopt(id)
           tx.event({ type: 'putaway', by: by(user), pallet: id, location: made.location, material: made.material, quantity: made.quantity })
           created.push(made)
-          for (const serial of made.serials || []) inThisPutAway.add(serial)
           continue
         }
         const location = roomIn(tx, input.location)
         const serials = serialsOf(input.serials)
         checkSerials(serials)
-        for (const serial of serials) inThisPutAway.add(serial)
         if (location.purpose === 'pick') {
           // Straight onto a pick place: the pallet is used up there (pick places hold no pallets and have no quantity).
           const material = pickMaterial(location, materialOf(input.material))

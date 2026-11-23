@@ -316,24 +316,36 @@ test('lookupDocument also returns the pallets and shelf lines that already have 
 
 test('putAway refuses a serial already on another pallet unless allowDuplicate; the same 49/50 number alone is a partial delivery', async () => {
   const { pc1, seed } = setup()
-  await seed([place('A2.4'), place('A2.5'), place('A2.6'), place('A2.7')], [{ id: 'p1', location: 'A2.4', material: 'INT4300-4921-0', quantity: 1, document: '5000032337 2026', serials: ['N1'], receivedAt: 1 }])
+  await seed([place('A2.4'), place('A2.5'), place('A2.6'), place('A2.7'), place('A2.8'), place('A2.9')], [{ id: 'p1', location: 'A2.4', material: 'INT4300-4921-0', quantity: 1, document: '5000032337 2026', serials: ['N1'], receivedAt: 1 }])
   const twice = { location: 'A2.5', material: 'INT4300-4921-0', quantity: 2, document: '5000032337 2026', serials: ['n1', 'N3'] }
   await assert.rejects(pc1.service.putAway(ANNA, { actionId: 'a1', pallets: [twice] }), error => error.code === 'SERIAL_ON_PALLET' && /N1/.test(error.message) && /A2\.4/.test(error.message))
   assert.deepEqual(Object.keys((await pc1.repo.read('TCD')).pallets), ['p1'], 'nothing is put away')
-  await assert.rejects(pc1.service.putAway(ANNA, { actionId: 'a2', pallets: [{ ...twice, serials: ['N5'] }, { ...twice, location: 'A2.6', serials: ['N5'] }] }), { code: 'SERIAL_ON_PALLET' }, 'also twice in one put-away')
-  const partial = await pc1.service.putAway(ANNA, { actionId: 'a3', pallets: [{ ...twice, location: 'A2.6', serials: ['N4'] }] })
+  // One delivery split over several pallets: each carries the document's whole serial list from SAP.
+  const split = await pc1.service.putAway(ANNA, { actionId: 'a2', pallets: [{ ...twice, serials: ['N5'] }, { ...twice, location: 'A2.6', serials: ['N5'] }] })
+  assert.equal(split.created.length, 2, 'the same serials on several pallets of one put-away go in')
+  const partial = await pc1.service.putAway(ANNA, { actionId: 'a3', pallets: [{ ...twice, location: 'A2.8', serials: ['N4'] }] })
   assert.equal(partial.created.length, 1, 'the same 49/50 number with other serials goes in')
   const allowed = await pc1.service.putAway(ANNA, { actionId: 'a4', allowDuplicate: true, pallets: [{ ...twice, location: 'A2.7' }] })
   assert.deepEqual(allowed.created.map(pallet => pallet.serials), [['N1', 'N3']], 'put away anyway when the person said so')
 })
 
-test('a replayed put-away is not refused for the serials on the pallet its own first try made', async () => {
+test('a second put-away with the serials of a pallet that already landed is refused, and goes in with allowDuplicate', async () => {
+  const { pc1, seed } = setup()
+  await seed([place('A2.4'), place('A2.5'), place('A2.6')])
+  const pallet = location => ({ location, material: 'INT4300-4921-0', quantity: 2, document: '5000032337 2026', serials: ['N1', 'N2'] })
+  await pc1.service.putAway(ANNA, { actionId: 'b1', pallets: [pallet('A2.4')] })
+  await assert.rejects(pc1.service.putAway(BO, { actionId: 'b2', pallets: [pallet('A2.5')] }), error => error.code === 'SERIAL_ON_PALLET' && /N1, N2/.test(error.message) && /A2\.4/.test(error.message))
+  const { created } = await pc1.service.putAway(BO, { actionId: 'b3', allowDuplicate: true, pallets: [pallet('A2.6')] })
+  assert.deepEqual(created.map(item => [item.id, item.location]), [['b3:0', 'A2.6']])
+})
+
+test('a replayed put-away (also an older one, without allowDuplicate, split over pallets) is not refused for the serials of its own pallets', async () => {
   const { pc1, seed } = setup()
   // What a first try leaves when M: dropped before its action id landed: its first pallet, with the serials.
   await seed([place('A2.4'), place('A2.5')], [{ id: 'put-3:0', location: 'A2.4', material: 'INT4300-4921-0', quantity: 1, serials: ['N1'], receivedAt: 1 }])
   const { created } = await pc1.service.putAway(ANNA, { actionId: 'put-3', pallets: [
     { location: 'A2.4', material: 'INT4300-4921-0', quantity: 1, serials: ['N1'] },
-    { location: 'A2.5', material: 'INT4300-4921-0', quantity: 1, serials: ['N2'] },
+    { location: 'A2.5', material: 'INT4300-4921-0', quantity: 1, serials: ['N1'] },
   ] })
   assert.deepEqual(created.map(pallet => pallet.id), ['put-3:0', 'put-3:1'])
   assert.deepEqual(Object.keys((await pc1.repo.read('TCD')).pallets).sort(), ['put-3:0', 'put-3:1'])

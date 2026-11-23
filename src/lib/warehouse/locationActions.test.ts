@@ -6,7 +6,7 @@ vi.mock('sonner', () => ({ toast }))
 
 import { pendingWriteCount } from '@/lib/pendingWrites'
 import {
-  addToStock, countedInCard, isPlaceHidden, locationActionsInFlight, matdocOf, movedInList, moveTargetCheck, palletEdit, placedFor, placedSummary, predictedRack, putAwayPlaceChecks, replayFailureText, sendLocationAction, startLocationsRead,
+  addToStock, countedInCard, isPlaceHidden, locationActionsInFlight, matdocOf, movedInList, moveTargetCheck, palletEdit, holdSerials, placedFor, placedSummary, predictedRack, putAwayPlaceChecks, replayFailureText, sendLocationAction, serialOverlapNotes, serialsOnTheirWay, startLocationsRead,
   takeFromCard, takeFromCardShelf, withoutPutAway, withPutAway, withStockQuantity,
 } from './locationActions'
 import { errorCode } from './errors'
@@ -249,13 +249,29 @@ describe('optimistic changes', () => {
   })
 
   it('putAwayPlaceChecks checks each pallet\'s place as the backend would, counting the pallets before it in the form', () => {
-    const places = { 'A1.1': listed('A1.1'), 'A1.2': listed('A1.2', { type: 'Reol', capacity: 2 }), H26: listed('H26', { purpose: 'pick' }), 'E9 H1': listed('E9 H1', { type: 'Hylde' }) }
-    const checks = putAwayPlaceChecks(['a1.1', 'A1.1', '', 'Z9', 'H26', 'H26', 'E9 H1', 'A1.2', 'A1.2'], places)
-    expect(checks.map(check => check.blocked)).toEqual([false, true, false, true, false, false, true, false, false])
-    expect(checks[1].note).toBe('A1.1 er fuld – vælg en anden plads')
+    const places = { 'A1.1': listed('A1.1'), 'A1.2': listed('A1.2', { type: 'Reol', capacity: 2 }), H26: listed('H26', { purpose: 'pick' }), 'E9 H1': listed('E9 H1', { type: 'Hylde' }), S1: listed('S1', { purpose: 'station' }), 'A1.9': listed('A1.9', { active: false }) }
+    const checks = putAwayPlaceChecks(['a1.1', 'A1.1', '', 'Z9', 'H26', 'H26', 'E9 H1', 'A1.2', 'A1.2', 'S1', 'A1.9'], places)
+    expect(checks.map(check => check.blocked), 'only what M: refuses whatever the list says blocks Gem').toEqual([false, false, false, false, false, false, true, false, false, true, true])
+    expect(checks[1], 'full by the list (which may be old) is a warning: M: still refuses it').toEqual({ note: 'A1.1 er fuld – vælg en anden plads', blocked: false })
     expect(checks[2], 'an empty place is left to Gem\'s own message').toEqual({ note: null, blocked: false })
-    expect(checks[3].note).toBe('Z9 findes ikke')
+    expect(checks[3], 'a place made since the list was read is a warning').toEqual({ note: 'Z9 findes ikke', blocked: false })
     expect(putAwayPlaceChecks(['Z9'], null), 'without the list M: checks it').toEqual([{ note: null, blocked: false }])
+  })
+
+  it('serialOverlapNotes warns about serials on an earlier pallet of the form or on their way to M: from this window', () => {
+    const release = holdSerials(['n7', 'N8'])
+    const notes = serialOverlapNotes([['N1', 'N2'], [], ['n1', 'N2', 'N3'], ['N7'], ['N1', 'N2']], serialsOnTheirWay())
+    expect(notes).toEqual([null, null, '2 af serienumrene er også på palle 1.', '1 af serienumrene er lige sat på plads herfra og er på vej til M:.', '2 af serienumrene er også på palle 1.'])
+    release()
+    release()
+    expect(serialsOnTheirWay().size, 'released once, when the put-away has its answer').toBe(0)
+    const first = holdSerials(['N9'])
+    const second = holdSerials(['N9'])
+    first()
+    expect(serialsOnTheirWay().has('N9'), 'still on its way in the other put-away').toBe(true)
+    second()
+    setWarehouseLanguage('en')
+    expect(serialOverlapNotes([['N1'], ['N1']], new Set())[1]).toBe('1 of the serial numbers is also on pallet 1.')
   })
 
   it('matdocOf reads a 49/50 number like the backend', () => {

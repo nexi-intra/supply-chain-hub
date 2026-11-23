@@ -284,7 +284,9 @@ export function withoutPutAway<T extends { list: LocationList }>(data: T, pallet
 
 /**
  * Each pallet's place in Sæt palle på plads checked as the backend's roomIn would, with the pallets before it in the form
- * counted on their places. An empty place is left to Gem's own message; without the list (not read) M: checks it.
+ * counted on their places. An empty place is left to Gem's own message; without the list (not read) M: checks it. Only
+ * what a newer list cannot change blocks (a reserved or station place, a deactivated one, a lagerhylde): "fuld" and
+ * "findes ikke" come from a list that may be up to 15 s old, so they only warn, and M: still refuses a place that is.
  */
 export function putAwayPlaceChecks(locations: string[], places: Record<string, Listed> | null): { note: string | null; blocked: boolean }[] {
   const unchecked = { note: null, blocked: false }
@@ -293,9 +295,47 @@ export function putAwayPlaceChecks(locations: string[], places: Record<string, L
   return locations.map(location => {
     if (!location.trim()) return unchecked
     const place = places[locationKeyOf(location)] || null
-    if (!place) return moveTargetCheck(location, null, undefined)
+    if (!place) return { note: moveTargetCheck(location, null, undefined).note, blocked: false }
     const counted = before.get(place.id) || 0
     before.set(place.id, counted + 1)
-    return moveTargetCheck(location, { ...place, used: place.used + counted }, undefined)
+    const { note } = moveTargetCheck(location, { ...place, used: place.used + counted }, undefined)
+    return { note, blocked: place.purpose === 'reserved' || place.purpose === 'station' || !place.active || isShelfPlace(place) }
+  })
+}
+
+// Serials of this window's put-aways still on their way to M: (counted, as two put-aways can carry the same ones).
+const sentSerials = new Map<string, number>()
+const serialKey = (serial: string) => serial.trim().toUpperCase()
+
+/** Holds a put-away's serials as on their way to M:; the returned release (once, when the answer came) lets go of them. */
+export function holdSerials(serials: string[]): () => void {
+  const held = [...new Set(serials.map(serialKey).filter(Boolean))]
+  for (const serial of held) sentSerials.set(serial, (sentSerials.get(serial) || 0) + 1)
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    for (const serial of held) { const left = (sentSerials.get(serial) || 1) - 1; if (left > 0) sentSerials.set(serial, left); else sentSerials.delete(serial) }
+  }
+}
+
+export const serialsOnTheirWay = (): ReadonlySet<string> => new Set(sentSerials.keys())
+
+/**
+ * For each pallet of the form (its serials), a warning when some of them are also on an earlier pallet of the form (one
+ * delivery split over pallets carries the document's whole list on each) or on their way to M: from this window.
+ */
+export function serialOverlapNotes(serialLists: string[][], onTheirWay: ReadonlySet<string>): (string | null)[] {
+  const seen: Set<string>[] = []
+  return serialLists.map(list => {
+    const serials = new Set(list.map(serialKey).filter(Boolean))
+    const earlier = seen.findIndex(other => [...serials].some(serial => other.has(serial)))
+    const shared = [...serials].filter(serial => seen.some(other => other.has(serial))).length
+    const sent = [...serials].filter(serial => onTheirWay.has(serial)).length
+    seen.push(serials)
+    const notes: string[] = []
+    if (shared) notes.push(t(`${shared} af serienumrene er også på palle ${earlier + 1}.`, shared === 1 ? `1 of the serial numbers is also on pallet ${earlier + 1}.` : `${shared} of the serial numbers are also on pallet ${earlier + 1}.`))
+    if (sent) notes.push(t(`${sent} af serienumrene er lige sat på plads herfra og er på vej til M:.`, sent === 1 ? '1 of the serial numbers was just put away from here and is on its way to M:.' : `${sent} of the serial numbers were just put away from here and are on their way to M:.`))
+    return notes.length ? notes.join(' ') : null
   })
 }

@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils'
 import { errorCode, errorMessage } from '@/lib/warehouse/errors'
 import { contextOf, type MapContext } from '@/lib/warehouse/layout/map'
 import { peekOf } from '@/lib/warehouse/layout/peek'
-import { placedFor, placedSummary, putAwayPlaceChecks, sendLocationAction, startLocationsRead, withoutPutAway, withPutAway, type PlacedFound } from '@/lib/warehouse/locationActions'
+import { holdSerials, placedFor, placedSummary, putAwayPlaceChecks, sendLocationAction, serialOverlapNotes, serialsOnTheirWay, startLocationsRead, withoutPutAway, withPutAway, type PlacedFound } from '@/lib/warehouse/locationActions'
 import { locationKeyOf, newActionId, reasonLabel, type LocationsTarget } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
 import type { LocationList, MapContents, PalletInput, SlotSuggestion, WarehouseLayout, WarehouseUser } from '@/types/warehouse'
@@ -114,7 +114,8 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
   const mapFailed = published && ((layout === undefined && layoutFailed) || (!data?.contents && dataFailed))
 
   // Each place is checked here as M: will (exists, active, a pallet place, room), with the pallets before it in the form
-  // counted, so a full place is changed now instead of the whole put-away coming back 15-40 s later.
+  // counted, so a wrong place is changed now instead of the whole put-away coming back 15-40 s later. Only a reserved,
+  // deactivated or shelf place blocks Gem; "fuld" and "findes ikke" come from a list that may be old and only warn.
   const places = useMemo(() => (data ? Object.fromEntries(data.list.locations.map(location => [location.id, location])) : null), [data])
   const checks = useMemo(() => putAwayPlaceChecks(drafts.map(item => item.location), places), [drafts, places])
   const blocked = checks.some(check => check.blocked)
@@ -159,13 +160,22 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
   function save() {
     const ready = drafts.filter(item => item.material || item.location)
     if (invalidDrafts(ready) || blocked) return
-    // The same delivery put away again: asked first. A partial delivery with the same 49/50 number is saved anyway.
-    const warned = ready.map(item => ({ item, text: placedSummary(item.placed) })).filter(entry => entry.text)
+    // The same delivery put away again is asked first, in one question: the 49/50 number or serials already put away,
+    // serials also on an earlier pallet of the form (one delivery split over pallets) and serials of this window's
+    // put-aways still on their way to M:. A yes to serials sends allowDuplicate; a partial delivery (the same number
+    // with other serials) only warns, and M: still refuses a serial put away meanwhile on another PC.
+    const readyKeys = new Set(ready.map(item => item.key))
+    const overlaps = serialOverlapNotes(drafts.map(item => (readyKeys.has(item.key) ? item.serials : [])), serialsOnTheirWay())
+    const warned = drafts.map((item, index) => ({ item, index, placed: readyKeys.has(item.key) ? placedSummary(item.placed) : null, overlap: overlaps[index] }))
+      .filter(entry => entry.placed || entry.overlap)
     let allowDuplicate = false
     if (warned.length) {
-      const lines = warned.map(({ item, text }) => (drafts.length > 1 ? `${t(`Palle ${drafts.indexOf(item) + 1}`, `Pallet ${drafts.indexOf(item) + 1}`)}: ${text}` : text))
+      const lines = warned.map(({ index, placed, overlap }) => {
+        const text = [placed, overlap].filter(Boolean).join(' ')
+        return drafts.length > 1 ? `${t(`Palle ${index + 1}`, `Pallet ${index + 1}`)}: ${text}` : text
+      })
       if (!window.confirm(`${lines.join('\n')}\n\n${t('Gem alligevel?', 'Save anyway?')}`)) return
-      allowDuplicate = warned.some(({ item }) => (item.placed?.serials ?? 0) > 0)
+      allowDuplicate = warned.some(({ item, overlap }) => Boolean(overlap) || (item.placed?.serials ?? 0) > 0)
     }
     setDrafts([blank()])
     send(ready, allowDuplicate)
@@ -185,6 +195,8 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
     const where = locationKeyOf(pallets[0].location)
     // The places view counts the new pallets at once, so the next pallet sees the place as taken.
     setData(value => value && withPutAway(value, pallets))
+    // Its serials count as put away for the next save until M: has answered.
+    const release = holdSerials(pallets.flatMap(item => item.serials || []))
     // A serial already on a pallet (put away on another PC meanwhile) is refused; "Gem alligevel" sends the pallets as
     // they stand in the form now, without the check.
     const again = () => {
@@ -204,7 +216,7 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
         setData(value => value && withoutPutAway(value, pallets))
       },
       offer: error => (!allowDuplicate && errorCode(error) === 'SERIAL_ON_PALLET' ? { label: t('Gem alligevel', 'Save anyway'), onClick: again } : null),
-      settled: onDone,
+      settled: () => { release(); onDone() },
     })
   }
 
