@@ -134,12 +134,14 @@ describe('taskLoadCounts', () => {
     expect(taskLoadCounts(withFailed).loaded).toBe(summarizeTasks([withFailed])[0].moved)
   })
 
-  it('counts the problem outcomes apart, in the order of isProblem, including those of failed terminals', () => {
+  it('counts the problem outcomes apart, in the order of isProblem, only among terminals not marked failed', () => {
     const refused = task({
       terminals: { ...terminals('a', 9), ...terminals('f', 1, true) },
       results: { ...results('a', 6, 'to-target'), a6: result('not-found'), a7: result('failed-sap'), a8: result('blocked-stock'), f0: result('failed-sap') },
     })
-    expect(taskLoadCounts(refused)).toEqual({ loaded: 9, failed: 1, problems: [['failed-sap', 2], ['not-found', 1], ['blocked-stock', 1]] })
+    // f0 is in "1 fejlet" already, so its SAP refusal is not counted a second time, as in summarizeTasks.sapFailed.
+    expect(taskLoadCounts(refused)).toEqual({ loaded: 9, failed: 1, problems: [['failed-sap', 1], ['not-found', 1], ['blocked-stock', 1]] })
+    expect(taskLoadCounts(refused).problems[0][1]).toBe(summarizeTasks([refused])[0].sapFailed)
     expect(isProblemOutcome('to-target')).toBe(false)
     expect(isProblemOutcome('skipped')).toBe(false)
     expect(isProblemOutcome('abandoned')).toBe(true)

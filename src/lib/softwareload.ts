@@ -189,16 +189,17 @@ export function summarizeTasks(tasks: SoftwareloadTask[]): SoftwareloadSummaryRo
 
 /**
  * One task in the task list, counted like summarizeTasks: `loaded` is every terminal not marked failed (its `moved`),
- * and `problems` the problem outcomes of all its terminals per outcome, in the order of PROBLEMS.
+ * and `problems` the problem outcomes of those loaded terminals per outcome, in the order of PROBLEMS. A failed terminal
+ * is counted in `failed` only, so it never shows twice (as summarizeTasks.sapFailed).
  */
 export function taskLoadCounts(task: SoftwareloadTask): { loaded: number; failed: number; problems: [SoftwareloadOutcome, number][] } {
   const terminals = Object.entries(task.terminals)
-  const failed = terminals.filter(([, terminal]) => terminal.failed).length
-  const outcomes = terminals.map(([serial]) => task.results[serial]?.outcome)
+  const loaded = terminals.filter(([, terminal]) => !terminal.failed)
+  const outcomes = loaded.map(([serial]) => task.results[serial]?.outcome)
   const problems = PROBLEMS
     .map(outcome => [outcome, outcomes.filter(item => item === outcome).length] as [SoftwareloadOutcome, number])
     .filter(([, count]) => count > 0)
-  return { loaded: terminals.length - failed, failed, problems }
+  return { loaded: loaded.length, failed: terminals.length - loaded.length, problems }
 }
 
 export interface SoftwareloadMaterialRow {
