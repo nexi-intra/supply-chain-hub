@@ -1,5 +1,6 @@
 // SAP physical inventory documents for approved materials: which materials may share a document, which
 // transaction takes the count, short or long serials, and who may do which step. Pure rules; SAP is driven elsewhere.
+const { approvedWithLinesText } = require('./countDoc.cjs')
 
 const MANAGER_ROLES = new Set(['manager', 'status-manager'])
 const ACTIVE = new Set(['created', 'printed', 'counted'])
@@ -43,6 +44,7 @@ function planDocument({ rows, docs = [], materials, sloc, stockType }) {
     const row = rows.find(item => item.material === material && item.sloc === sloc && item.stockType === stockType)
     if (!row) throw codeError('PIDOC_INVALID', `${material} er ikke talt i ${sloc} (${stockType})`)
     if (row.status !== 'approved') throw codeError('PIDOC_NOT_APPROVED', `${material} er ikke godkendt`)
+    if (row.serialLinesAtApproval) throw codeError('APPROVED_WITH_SERIAL_LINES', approvedWithLinesText(material))
     if (taken.has(lineKey(material, sloc, stockType))) throw codeError('PIDOC_EXISTS', `${material} har allerede et SAP-dokument`)
     return { material, description: row.description || '', kind: row.kind, serialManaged: row.serialManaged === true, transaction: transactionFor(row) }
   })

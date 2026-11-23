@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { docLinesFromSnapshot, missingAtApproval, buildCountDoc } = require('./countDoc.cjs')
+const { docLinesFromSnapshot, missingAtApproval, linesAtApproval, buildCountDoc } = require('./countDoc.cjs')
 const { buildSnapshot } = require('./snapshot.cjs')
 
 test('the SAP stock of the day: only in-scope lines and the stock types of the count', () => {
@@ -70,4 +70,32 @@ test('serial-managed: the list of the day = SAP serials today minus the ones mis
 
   const old = buildCountDoc({ rows, approvals, doc: { ...doc, withSerials: undefined }, missingOf: item => missing[item.material] })
   assert.deepEqual([old.rows[0].needsSerials, old.rows[0].docQty, old.rows[0].docSerials, old.rows[0].sapToday], [true, null, null, 2], 'fetched before serials were included: fetch again')
+})
+
+test('quantity lines active at approval: saved at or before it and not deleted (or undone) before it', () => {
+  const line = (id, at, material = 'INT1-0', lineId = `ln-${id}`) => ({ id, at, type: 'line', lineId, material, qty: 1 })
+  const approvals = { 'INT1-0': { status: 'approved', at: 100 }, 'INT2-0': { status: 'posted', at: 100 }, 'INT3-0': { status: 'open', at: 100 }, R1: { status: 'approved', at: 100 } }
+  const serialManaged = material => material !== 'R1'
+  const check = events => [...linesAtApproval({ approvals, events, serialManaged })].sort()
+  assert.deepEqual(check([line('a', 50), line('b', 50, 'INT2-0'), line('c', 50, 'INT3-0'), line('d', 50, 'R1')]), ['INT1-0', 'INT2-0'], 'only approved or posted serial-managed materials')
+  assert.deepEqual(check([line('a', 100)]), ['INT1-0'], 'saved at the approval time counts')
+  assert.deepEqual(check([line('a', 101)]), [], 'saved after the approval')
+  assert.deepEqual(check([line('a', 50), { id: 'x', at: 90, type: 'line-delete', lineId: 'ln-a' }]), [], 'deleted before the approval')
+  assert.deepEqual(check([line('a', 50), { id: 'x', at: 150, type: 'line-delete', lineId: 'ln-a' }]), ['INT1-0'], 'deleted after the approval: the frozen numbers still hold it')
+  assert.deepEqual(check([line('a', 50), { id: 'u', at: 60, type: 'undo', target: 'a' }]), [], 'undone before the approval')
+  assert.deepEqual(check([line('a', 50), { id: 'u', at: 150, type: 'undo', target: 'a' }]), ['INT1-0'], 'undone after the approval')
+  assert.deepEqual(check([line('a', 50), { id: 'x', at: 60, type: 'line-delete', lineId: 'ln-a' }, { id: 'u', at: 70, type: 'undo', target: 'x' }]), ['INT1-0'], 'a deletion undone before the approval')
+  assert.deepEqual(check([line('a', 50, 'INT1-0', 'ln-same'), line('b', 60, 'R1', 'ln-same')]), [], 'the line was changed to another material before the approval')
+})
+
+test('a serial-managed row approved with quantity lines gets no quantity and no serial list for the document', () => {
+  const row = { material: 'INT1-0', description: '', kind: 'new', sloc: 'D000', stockType: 'unrestricted', serialManaged: true, countedSerials: 8, sapQty: 10, counted: 10, diff: 0 }
+  const doc = { fetchedAt: 9, withSerials: true, lines: [{ material: 'INT1-0', sloc: 'D000', stockType: 'unrestricted', qty: 10, serials: ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8', 'S9', 'S10'] }] }
+  const missingOf = () => ['S9', 'S10']
+  const flagged = buildCountDoc({ rows: [row], approvals: { 'INT1-0': { status: 'approved' } }, doc, missingOf, withLinesAtApproval: item => item.material === 'INT1-0' }).rows[0]
+  assert.deepEqual([flagged.docQty, flagged.docSerials, flagged.serialLinesAtApproval, flagged.expectedQty], [null, null, true, 10], 'never 8 serials for an approved 10')
+  const clean = buildCountDoc({ rows: [row], approvals: { 'INT1-0': { status: 'approved' } }, doc, missingOf }).rows[0]
+  assert.deepEqual([clean.docQty, clean.serialLinesAtApproval], [8, false])
+  const unfetched = buildCountDoc({ rows: [row], approvals: { 'INT1-0': { status: 'approved' } }, doc: null, missingOf, withLinesAtApproval: () => true }).rows[0]
+  assert.deepEqual([unfetched.docQty, unfetched.serialLinesAtApproval], [null, true], 'shown before the SAP figures of the day are fetched')
 })

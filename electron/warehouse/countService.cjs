@@ -8,7 +8,7 @@ const { storageRulesFor, suggestRulesFromStock, KINDS } = require('./core/classi
 const { buildSnapshot, indexSnapshot, summarizeSnapshot, normalizeMaterial, normalizeScope, MATERIAL_PATTERN } = require('./core/snapshot.cjs')
 const { scopeStockTypes, scopeKinds, scopeOverlap, describeOverlap, TERMINAL_KINDS, ACCESSORY_KINDS } = require('./core/scopes.cjs')
 const { normalizeSerial, matchSerial, activeEvents, aggregateCount, applyApprovals, freezeRows, buildCountLists, computeProgress } = require('./core/countState.cjs')
-const { docLinesFromSnapshot, missingAtApproval, buildCountDoc } = require('./core/countDoc.cjs')
+const { docLinesFromSnapshot, missingAtApproval, linesAtApproval, approvedWithLinesText, buildCountDoc } = require('./core/countDoc.cjs')
 const { normalizeMatdoc } = require('./core/sapParsers.cjs')
 const { differenceTotals, archiveLines } = require('./core/archive.cjs')
 const { createJournal, readAllJournals } = require('./journal.cjs')
@@ -551,6 +551,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       claims: activeClaims(claims),
       materialLocks: Object.entries(locks).map(([material, lock]) => lockView(material, lock)),
       approvals,
+      approvedWithSerialLines: [...approvedWithLines(state, approvals)].sort(),
       journal: state.journal.status(),
       myLastEvents: state.journal.events().filter(event => event.type !== 'undo').slice(-20).reverse(),
     }
@@ -820,6 +821,9 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
 
   /** Quantity lines on a serial-managed material, saved before LINE_SERIAL_MANAGED: they count in the difference, not in the count document. */
   const serialLinesOf = (state, code) => (state.index.materials.get(code)?.serialManaged ? state.aggregate.lines.filter(line => line.material === code) : [])
+  /** Approved or posted serial-managed materials whose approval held quantity lines (linesAtApproval); from the journal, not today's lines. */
+  const approvedWithLines = (state, approvals) => linesAtApproval({ approvals, events: state.events || [], serialManaged: material => Boolean(state.index.materials.get(material)?.serialManaged) })
+  const approvedWithLinesError = code => codeError('APPROVED_WITH_SERIAL_LINES', approvedWithLinesText(code))
   const serialLinesError = code => codeError('APPROVAL_SERIAL_LINES', `${code} har tællelinjer med antal, men materialet har serienumre. Slet linjerne under Tilbehør og tællelister, før materialet kan godkendes.`)
 
   async function saveLine(user, id, input = {}) {
@@ -1188,7 +1192,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   const activePiDoc = (docs, code) => Object.values(docs).find(doc => doc.status !== 'deleted' && doc.lines?.some(line => line.material === code))
 
   async function setApproval(user, id, { material, status, comment = '' } = {}) {
-    const state = status === 'approved' ? await refresh(await load(user, id), true) : await load(user, id)
+    const state = status === 'approved' || status === 'posted' ? await refresh(await load(user, id), true) : await load(user, id)
     if (!isManager(user)) throw codeError('MANAGER_ONLY', 'Kun managers kan godkende')
     await assertStatusOpen(state.team, state.meta)
     const code = normalizeMaterial(material)
@@ -1210,6 +1214,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       // Posted is final: a reset would let numbers counted afterwards be posted in SAP a second time.
       if (current?.status === 'posted') throw postedError(code)
       if (status === 'posted' && current?.status !== 'approved') throw codeError('APPROVAL_INVALID', 'Materialet skal godkendes før det markeres som bogført')
+      if (status === 'posted' && approvedWithLines(state, { [code]: current }).has(code)) throw approvedWithLinesError(code)
       if (serialLines.length) throw serialLinesError(code)
       // The log of undone "Bogført i SAP" marks follows the material.
       const log = current?.unposts?.length ? { unposts: current.unposts } : {}
@@ -1256,9 +1261,12 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     return { approved }
   }
 
-  /** "Bogført i SAP" for the materials of posted SAP documents, in one write. Only approved materials change. */
+  /**
+   * "Bogført i SAP" for the materials of posted SAP documents, in one write. Only approved materials change; one approved
+   * with quantity lines (APPROVED_WITH_SERIAL_LINES) is left approved and returned in `serialLines`.
+   */
   async function markPosted(user, id, materials = []) {
-    const state = await load(user, id)
+    const state = await refresh(await load(user, id), true)
     if (!isManager(user)) throw codeError('MANAGER_ONLY', 'Kun managers kan godkende')
     await assertStatusOpen(state.team, state.meta)
     const codes = [...new Set(materials.map(normalizeMaterial))]
@@ -1267,12 +1275,15 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     return repo.changeApprovals(state.team, state.id, all => {
       const posted = []
       const skipped = []
+      const serialLines = []
+      const withLines = approvedWithLines(state, all)
       for (const code of codes) {
         if (all[code]?.status !== 'approved') { skipped.push(code); continue }
+        if (withLines.has(code)) { serialLines.push(code); continue }
         all[code] = { ...all[code], status: 'posted', postedBy: by, postedAt: at }
         posted.push(code)
       }
-      return { all, result: { posted, skipped } }
+      return { all, result: { posted, skipped, serialLines } }
     })
   }
 
@@ -1353,6 +1364,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       const { result } = await docOf(state)
       const row = result.rows.find(item => item.material === code && item.sloc === sloc && item.stockType === type)
       if (!row?.approved) throw codeError('APPROVAL_INVALID', `${code} er ikke godkendt`)
+      if (row.serialLinesAtApproval) throw approvedWithLinesError(code)
       if (!row.docSerials) throw codeError('DOC_NOT_FETCHED', 'Hent dagens SAP-tal først – serienumrene til dokumentet kommer derfra')
       short = [...row.docSerials]
     } else {
@@ -1383,7 +1395,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   async function docOf(state) {
     const [approvals, doc] = await Promise.all([repo.getApprovals(state.team, state.id).catch(() => ({})), repo.getCountDoc(state.team, state.id).catch(() => null)])
     const missingOf = row => missingAtApproval({ approval: approvals[row.material], row, index: state.index, found: state.found })
-    return { doc, result: buildCountDoc({ rows: applyApprovals(state.aggregate, approvals).rows, approvals, doc, missingOf }) }
+    const withLines = approvedWithLines(state, approvals)
+    return { doc, result: buildCountDoc({ rows: applyApprovals(state.aggregate, approvals).rows, approvals, doc, missingOf, withLinesAtApproval: row => withLines.has(row.material) }) }
   }
 
   async function countDoc(user, id) {

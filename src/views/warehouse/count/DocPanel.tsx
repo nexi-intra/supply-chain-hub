@@ -72,7 +72,7 @@ export function DocPanel({ id, open, state }: PanelProps) {
     for (const item of piList?.docs || []) if (item.status !== 'deleted') for (const line of item.lines) map.set(rowKey({ ...line, sloc: item.sloc, stockType: item.stockType }), item)
     return map
   }, [piList])
-  const selectable = (row: CountDocRow) => Boolean(piList?.canCreate) && row.status === 'approved' && !docOf.has(rowKey(row))
+  const selectable = (row: CountDocRow) => Boolean(piList?.canCreate) && row.status === 'approved' && !row.serialLinesAtApproval && !docOf.has(rowKey(row))
   const chosenRows = (doc?.rows || []).filter(row => chosen.includes(rowKey(row)) && selectable(row))
   const selection = chosenRows.length ? { materials: chosenRows.map(row => row.material), sloc: chosenRows[0].sloc, stockType: chosenRows[0].stockType } : null
 
@@ -92,6 +92,8 @@ export function DocPanel({ id, open, state }: PanelProps) {
     if (posted) return posted.counted
     const row = doc?.rows.find(entry => entry.material === material && entry.sloc === item.sloc && entry.stockType === item.stockType)
     if (!row) return null
+    // Approved with quantity lines: the frozen figures cannot be trusted, so no quantity is shown for the document.
+    if (row.serialLinesAtApproval) return null
     return row.docQty ?? (row.sapAtApproval !== null && row.diff !== null ? row.sapAtApproval + row.diff : null)
   }
 
@@ -277,6 +279,7 @@ const serialMismatch = (row: CountDocRow) => row.serialManaged && row.docQty !==
 
 function DocQty({ row, fetched }: { row: CountDocRow; fetched: boolean }) {
   if (!row.approved) return <Badge variant="outline" className="border-amber-500 text-amber-700 dark:text-amber-300">{t('Mangler godkendelse', 'Needs approval')}</Badge>
+  if (row.serialLinesAtApproval) return <span role="alert" className="inline-block max-w-56 text-left text-xs font-medium text-destructive">{t('Godkendt med tællelinjer med antal. Nulstil materialet, slet linjen og godkend igen.', 'Approved with count lines with a quantity. Reset the material, delete the line and approve again.')}</span>
   if (row.needsSerials) return <span className="text-xs text-amber-700 dark:text-amber-300">{t('Hent igen (serienumre)', 'Fetch again (serial numbers)')}</span>
   if (!fetched || row.docQty === null) return <span className="text-xs text-muted-foreground">{t('Hent dagens SAP-tal', "Fetch today's SAP figures")}</span>
   if (row.docQty < 0) {

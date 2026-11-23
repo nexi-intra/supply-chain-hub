@@ -2,6 +2,7 @@
 // core/piDocs.cjs. While SAP waits for the user's F8 the materials are reserved ('creating') so nobody creates them twice.
 const crypto = require('node:crypto')
 const { planDocument, refusal, NEXT } = require('./core/piDocs.cjs')
+const { approvedWithLinesText } = require('./core/countDoc.cjs')
 
 const RESERVATION_MS = 20 * 60 * 1000
 
@@ -127,7 +128,11 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
       })
     }
     const quantities = []
-    for (const line of doc.lines.filter(item => !done[item.material])) {
+    const pending = doc.lines.filter(item => !done[item.material])
+    // Checked for every material before anything goes into SAP, so a document is never half entered for this reason.
+    const flagged = pending.find(line => rows.some(item => item.material === line.material && item.sloc === doc.sloc && item.stockType === doc.stockType && item.serialLinesAtApproval))
+    if (flagged) throw codeError('APPROVED_WITH_SERIAL_LINES', approvedWithLinesText(flagged.material))
+    for (const line of pending) {
       if (line.transaction === 'ZMS_COUNT_SERIAL') {
         const { serials } = await counts.copySerials(user, id, { material: line.material, sloc: doc.sloc, stockType: doc.stockType, forDoc: true })
         if (!serials.length) { quantities.push({ material: line.material, qty: 0 }); continue }
@@ -178,6 +183,7 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
       try {
         const marked = await counts.markPosted(user, id, postedMaterials)
         for (const material of marked.skipped) console.error('CountPoint: could not mark as posted', material, 'APPROVAL_INVALID')
+        for (const material of marked.serialLines || []) console.error('CountPoint: could not mark as posted', material, 'APPROVED_WITH_SERIAL_LINES')
       } catch (error) {
         console.error('CountPoint: could not mark as posted', postedMaterials.join(', '), error.code || error.message)
       }

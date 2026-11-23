@@ -434,6 +434,8 @@ export interface CountDocRow {
   docQty: number | null
   /** The stock of the day was fetched before serials were included: fetch again to get the list. */
   needsSerials: boolean
+  /** Serial-managed and approved while it had quantity lines: no quantity or list until it is reset and approved again. */
+  serialLinesAtApproval?: boolean
 }
 
 export interface CountDoc {
@@ -633,6 +635,8 @@ export interface CountState {
   claims: Claim[]
   materialLocks: MaterialLock[]
   approvals: Record<string, Approval>
+  /** Approved or posted serial-managed materials whose approval held quantity lines (from the journal, so also after the lines are deleted). */
+  approvedWithSerialLines?: string[]
   journal: JournalStatus
   myLastEvents: JournalEvent[]
 }

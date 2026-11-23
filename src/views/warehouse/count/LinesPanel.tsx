@@ -38,6 +38,13 @@ export function LinesPanel({ id, open, state, reloadOpen, optimistic, person }: 
   const types = scopeStockTypes(state.meta.scope)
   const descriptions = useMemo(() => new Map(open.materials.map(item => [item.material, item.description])), [open.materials])
   const serialMaterials = useMemo(() => new Set(state.rows.filter(row => row.serialManaged).map(row => row.material)), [state.rows])
+  /** What a quantity line on a serial-managed material must say: approved with it (the frozen figures hold it), approved, or not yet. */
+  const serialNoteOf = (material: string) => {
+    if (!serialMaterials.has(material)) return null
+    if (isApproved(state, material) && state.approvedWithSerialLines?.includes(material)) return t('Godkendt med tællelinjer med antal. Nulstil materialet, slet linjen og godkend igen.', 'Approved with count lines with a quantity. Reset the material, delete the line and approve again.')
+    if (isApproved(state, material)) return t('Materialet har serienumre. Slet linjen.', 'The material has serial numbers. Delete the line.')
+    return t('Materialet har serienumre. Slet linjen, før materialet kan godkendes.', 'The material has serial numbers. Delete the line before the material can be approved.')
+  }
   const groups = useMemo(() => {
     const suggestions = new Map<string, CountListLine[]>()
     for (const line of open.countLists) suggestions.set(line.material, [...(suggestions.get(line.material) || []), line])
@@ -57,9 +64,10 @@ export function LinesPanel({ id, open, state, reloadOpen, optimistic, person }: 
       group.sapQty += row.sapQty
       group.counted += row.counted
     }
-    for (const line of state.lines) groupOf(line.material, line.stockType, descriptions.get(line.material) || '').lines.push(line)
+    // A quantity line on a serial-managed material is never counted here (LINE_SERIAL_MANAGED); it is only deleted under Talte linjer.
+    for (const line of state.lines) if (!serialMaterials.has(line.material)) groupOf(line.material, line.stockType, descriptions.get(line.material) || '').lines.push(line)
     return [...byKey.values()].filter(group => !isApproved(state, group.material)).sort((a, b) => a.material.localeCompare(b.material) || a.stockType.localeCompare(b.stockType))
-  }, [state, open.countLists, descriptions])
+  }, [state, open.countLists, descriptions, serialMaterials])
 
   const needle = query.trim().toUpperCase()
   const visible = groups.filter(group => {
@@ -138,7 +146,7 @@ export function LinesPanel({ id, open, state, reloadOpen, optimistic, person }: 
                   </tr>
                 </thead>
                 <tbody>
-                  {state.lines.map(line => <OwnRow key={line.lineId} id={id} line={line} description={descriptions.get(line.material) || ''} serialManaged={serialMaterials.has(line.material)} canWrite={canWrite} optimistic={optimistic} person={person} />)}
+                  {state.lines.map(line => <OwnRow key={line.lineId} id={id} line={line} description={descriptions.get(line.material) || ''} serialNote={serialNoteOf(line.material)} canWrite={canWrite} optimistic={optimistic} person={person} />)}
                 </tbody>
               </table>
             </div>
@@ -281,7 +289,7 @@ function MaterialRow({ id, open, state, group, showType, canWrite, reloadOpen, o
   )
 }
 
-function OwnRow({ id, line, description, serialManaged, canWrite, optimistic, person }: Pick<PanelProps, 'id' | 'optimistic' | 'person'> & { line: CountLine; description: string; serialManaged: boolean; canWrite: boolean }) {
+function OwnRow({ id, line, description, serialNote, canWrite, optimistic, person }: Pick<PanelProps, 'id' | 'optimistic' | 'person'> & { line: CountLine; description: string; serialNote: string | null; canWrite: boolean }) {
   // Shown at once; saved in the background and taken back if the drive refuses it.
   const edit = () => {
     const answer = window.prompt(t(`Nyt antal for ${line.material} på ${line.place}:`, `New quantity for ${line.material} in ${line.place}:`), String(line.qty))
@@ -300,7 +308,7 @@ function OwnRow({ id, line, description, serialManaged, canWrite, optimistic, pe
   return (
     <tr className="border-t">
       <td className="px-3 py-2">{line.place} <span className="text-xs text-muted-foreground">{line.area}</span></td>
-      <td className="px-3 py-2"><div className="font-mono">{line.material}</div>{description && <div className="text-xs text-muted-foreground">{description}</div>}{serialManaged && <div className="text-xs font-medium text-destructive">{t('Materialet har serienumre. Slet linjen, før materialet kan godkendes.', 'The material has serial numbers. Delete the line before the material can be approved.')}</div>}</td>
+      <td className="px-3 py-2"><div className="font-mono">{line.material}</div>{description && <div className="text-xs text-muted-foreground">{description}</div>}{serialNote && <div className="text-xs font-medium text-destructive">{serialNote}</div>}</td>
       <td className="px-3 py-2 font-mono">{line.sloc}</td>
       <td className="px-3 py-2">{stockLabel(line.stockType)}</td>
       <td className="px-3 py-2 text-right tabular-nums">{formatNumber(line.qty)}</td>
@@ -308,7 +316,7 @@ function OwnRow({ id, line, description, serialManaged, canWrite, optimistic, pe
       <td className="px-3 py-2 text-right">
         {canWrite && (
           <div className="flex justify-end gap-1">
-            {!serialManaged && <Button size="sm" variant="ghost" onClick={() => edit()} aria-label={t('Ret antal', 'Edit quantity')}><PencilSimple size={16} /></Button>}
+            {!serialNote && <Button size="sm" variant="ghost" onClick={() => edit()} aria-label={t('Ret antal', 'Edit quantity')}><PencilSimple size={16} /></Button>}
             <Button size="sm" variant="ghost" onClick={() => remove()} aria-label={t('Slet linje', 'Delete line')}><Trash size={16} /></Button>
           </div>
         )}

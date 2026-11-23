@@ -901,6 +901,63 @@ test('an old quantity line on a serial-managed material blocks its approval unti
   assert.deepEqual(approved.frozen.map(item => [item.counted, item.diff, item.missingSerials]), [[1, -1, ['N2']]], 'after the deletion the serials decide')
 })
 
+test('a material approved with a quantity line (older client) gets no document quantity and cannot be posted until it is approved again', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const mona = ctx.service('pc3')
+  const ADA = { email: 'ada@example.test', fullName: 'Ada', role: 'user', team: 'TCD', countAdmin: true }
+  const ada = ctx.service('pc4')
+  const { id } = await newCount(ctx, anna)
+  const terminal = { material: 'INT4300-4921-0', sloc: 'D000', stockType: 'unrestricted' }
+  await anna.scan(ANNA, id, { serial: 'N1', place: 'Reol 3' })
+  await anna.flush(ANNA, id)
+  // What 1.6.7 wrote: "1 stk." for the unreadable N2, approved as "Ingen difference" with N2 frozen as missing.
+  const old = { type: 'line', lineId: 'ln-old', place: 'Reol 3', area: '', ...terminal, qty: 1, status: 'counted', comment: '', id: 'old-1', at: ctx.clock.now, by: BO.email, byName: 'Bo' }
+  await ctx.storeFor('TCD').setAsync(`count-${id}-j-oldclient000-0000`, { writer: 'oldclient000', by: BO.email, full: false, events: [old] })
+  await ctx.repo.setApproval('TCD', id, terminal.material, { status: 'approved', comment: 'Ingen difference', by: { email: MONA.email, name: 'Mona' }, at: ctx.clock.now + 1000, frozen: [{ sloc: 'D000', stockType: 'unrestricted', sapQty: 2, counted: 2, diff: 0, valueDiff: 0, missingSerials: ['N2'] }] })
+  ctx.tick(10_000)
+
+  assert.deepEqual((await mona.getState(MONA, id)).approvedWithSerialLines, [terminal.material])
+  let doc = await mona.fetchDocStock(MONA, id)
+  const rowOf = result => result.rows.find(item => item.material === terminal.material && item.sloc === 'D000')
+  assert.deepEqual([rowOf(doc).docQty, rowOf(doc).serialLinesAtApproval, rowOf(doc).expectedQty], [null, true, 2], 'never the 1 serial for an approved 2')
+  const refused = { code: 'APPROVED_WITH_SERIAL_LINES' }
+  await assert.rejects(mona.copySerials(MONA, id, { ...terminal, forDoc: true }), refused)
+  const entered = []
+  const writer = {
+    createDocument: async () => ({ docs: [{ docNo: '105000940', materials: [terminal.material] }], missing: [] }),
+    enterSerials: async request => { entered.push(request); return { counted: request.serials.length, serials: request.serials.length, newSerials: 0 } },
+    enterCounts: async request => { entered.push(request); return { message: 'ok' } },
+  }
+  const piDocsOf = counts => createPiDocService({ counts, repo: ctx.repo, roles: { roleOf: async user => (user.countAdmin ? 'admin' : user.role) }, writer, system: 'QS4', now: () => ctx.clock.now })
+  await assert.rejects(piDocsOf(mona).create(MONA, id, { materials: [terminal.material], sloc: 'D000', stockType: 'unrestricted' }), refused)
+  await assert.rejects(mona.setApproval(MONA, id, { material: terminal.material, status: 'posted' }), refused)
+  assert.deepEqual(await mona.markPosted(MONA, id, [terminal.material]), { posted: [], skipped: [], serialLines: [terminal.material] })
+  assert.equal((await ctx.repo.getApprovals('TCD', id))[terminal.material].status, 'approved')
+
+  // A document made before this rule: "Læg antal på" enters nothing.
+  await ctx.repo.changePiDocs('TCD', id, all => ({ all: { ...all, D1: { id: 'D1', docNo: '105000939', year: '2026', status: 'printed', sloc: 'D000', stockType: 'unrestricted', kind: 'new', transaction: 'ZMS_COUNT_SERIAL', createdBy: { email: MONA.email }, docFetchedAt: doc.fetchedAt, lines: [{ material: terminal.material, transaction: 'ZMS_COUNT_SERIAL' }] } } }))
+  await assert.rejects(piDocsOf(ada).count(ADA, id, 'D1'), refused)
+  assert.deepEqual(entered, [])
+  await ctx.repo.changePiDocs('TCD', id, all => ({ all: { ...all, D1: { ...all.D1, status: 'deleted' } } }))
+
+  // Deleting the line does not hide it: the frozen numbers still hold it.
+  await anna.deleteLine(ANNA, id, { lineId: 'ln-old' })
+  await anna.flush(ANNA, id)
+  ctx.tick(10_000)
+  assert.deepEqual((await mona.getState(MONA, id)).approvedWithSerialLines, [terminal.material])
+  await mona.setApproval(MONA, id, { material: terminal.material, status: 'reset' })
+  ctx.tick(10_000)
+  assert.deepEqual((await mona.getState(MONA, id)).approvedWithSerialLines, [])
+  const again = await mona.setApproval(MONA, id, { material: terminal.material, status: 'approved' })
+  assert.deepEqual(again.frozen.map(item => [item.counted, item.diff, item.missingSerials]), [[1, -1, ['N2']]])
+  doc = await mona.countDoc(MONA, id)
+  assert.deepEqual([rowOf(doc).docQty, rowOf(doc).serialLinesAtApproval, rowOf(doc).expectedQty], [1, false, 1])
+  assert.deepEqual((await mona.copySerials(MONA, id, { ...terminal, forDoc: true })).serials, ['N1'])
+  await piDocsOf(mona).create(MONA, id, { materials: [terminal.material], sloc: 'D000', stockType: 'unrestricted' })
+  assert.equal((await mona.setApproval(MONA, id, { material: terminal.material, status: 'posted' })).status, 'posted')
+})
+
 test('count document: SAP stock of the day + the approved difference; fetched by a manager or the owner, read by everyone', async () => {
   const ctx = setup()
   const anna = ctx.service('pc1')
@@ -1573,7 +1630,7 @@ test('posted SAP documents mark all their approved materials "Bogført i SAP" in
   await mona.setApproval(MONA, id, { material: 'INT4300-4921-0', status: 'approved' })
   await assert.rejects(anna.markPosted(ANNA, id, ['R162-0717']), { code: 'MANAGER_ONLY' })
   const watched = watchWrites(ctx.storeFor('TCD'), { watch: key => key.endsWith('-approvals') })
-  assert.deepEqual(await mona.markPosted(MONA, id, ['r162-0717', 'INT4300-4921-0', 'INT4300-4921-0-R']), { posted: ['R162-0717', 'INT4300-4921-0'], skipped: ['INT4300-4921-0-R'] })
+  assert.deepEqual(await mona.markPosted(MONA, id, ['r162-0717', 'INT4300-4921-0', 'INT4300-4921-0-R']), { posted: ['R162-0717', 'INT4300-4921-0'], skipped: ['INT4300-4921-0-R'], serialLines: [] })
   assert.equal(watched.writes.length, 1)
   const approvals = await ctx.repo.getApprovals('TCD', id)
   assert.deepEqual([approvals['R162-0717'].status, approvals['R162-0717'].postedBy.name, approvals['INT4300-4921-0-R']], ['posted', 'Mona', undefined])

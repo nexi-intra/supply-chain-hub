@@ -5,6 +5,7 @@
  * decides the quantity, and a quantity that differs from "SAP today + difference" is flagged.
  */
 const { indexSnapshot } = require('./snapshot.cjs')
+const { activeEvents } = require('./countState.cjs')
 
 const keyOf = (material, sloc, stockType) => `${material}|${sloc}|${stockType}`
 
@@ -56,11 +57,38 @@ function missingAtApproval({ approval, row, index, found }) {
   return missing.sort()
 }
 
+const LINE_EVENTS = new Set(['line', 'line-delete', 'undo'])
+/** APPROVED_WITH_SERIAL_LINES: what to do about a material linesAtApproval found. */
+const approvedWithLinesText = material => `${material} er godkendt med tællelinjer med antal. Nulstil materialet, slet linjen og godkend igen.`
+
+/**
+ * The approved (or posted) serial-managed materials that had a quantity line when they were approved (older clients
+ * allowed it). Their frozen count includes the line, but the serial list of the document does not, so neither can be
+ * trusted. Worked out from the journal as it stood at `approval.at`: lines saved at or before it, not deleted or undone
+ * before it. Deleting the line afterwards does not change the frozen numbers, so it does not clear this either.
+ */
+function linesAtApproval({ approvals = {}, events = [], serialManaged }) {
+  const result = new Set()
+  const relevant = events.filter(event => LINE_EVENTS.has(event.type))
+  for (const [material, approval] of Object.entries(approvals)) {
+    if (!['approved', 'posted'].includes(approval?.status) || typeof approval.at !== 'number' || !serialManaged(material)) continue
+    const lines = new Map()
+    for (const event of activeEvents(relevant.filter(item => item.at <= approval.at))) {
+      if (typeof event.lineId !== 'string') continue
+      if (event.type === 'line') lines.set(event.lineId, event)
+      else if (event.type === 'line-delete') lines.delete(event.lineId)
+    }
+    if ([...lines.values()].some(event => String(event.material || '').toUpperCase() === material)) result.add(material)
+  }
+  return result
+}
+
 /**
  * `rows` are the result rows with the approved numbers frozen (applyApprovals). `doc` is the stock of the day or null.
- * `missingOf(row)` gives the serials missing at approval of an approved serial-managed row.
+ * `missingOf(row)` gives the serials missing at approval of an approved serial-managed row. `withLinesAtApproval(row)`
+ * is true when that approval also held quantity lines (linesAtApproval): such a row gets no quantity and no list.
  */
-function buildCountDoc({ rows, approvals = {}, doc = null, missingOf = () => [] }) {
+function buildCountDoc({ rows, approvals = {}, doc = null, missingOf = () => [], withLinesAtApproval = () => false }) {
   const today = doc ? new Map(doc.lines.map(line => [keyOf(line.material, line.sloc, line.stockType), line])) : null
   const withSerials = doc?.withSerials === true
   const missing = new Set()
@@ -74,7 +102,11 @@ function buildCountDoc({ rows, approvals = {}, doc = null, missingOf = () => [] 
     let docQty = expectedQty
     let docSerials = null
     let needsSerials = false
-    if (row.serialManaged && approved && today) {
+    const serialLinesAtApproval = Boolean(row.serialManaged && approved && withLinesAtApproval(row))
+    if (serialLinesAtApproval) {
+      // The approved count includes quantity lines the serial list cannot hold: approve again without them.
+      docQty = null
+    } else if (row.serialManaged && approved && today) {
       if (!withSerials) {
         // Fetched before serials were part of the stock of the day: no list, so no quantity either.
         needsSerials = true
@@ -102,9 +134,10 @@ function buildCountDoc({ rows, approvals = {}, doc = null, missingOf = () => [] 
       docQty,
       docSerials,
       needsSerials,
+      serialLinesAtApproval,
     }
   })
   return { rows: result, missingApproval: missing.size, withSerials }
 }
 
-module.exports = { docLinesFromSnapshot, missingAtApproval, buildCountDoc }
+module.exports = { docLinesFromSnapshot, missingAtApproval, linesAtApproval, approvedWithLinesText, buildCountDoc }
