@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { commentsFor, commentsOnTask, finishTitle, isDeliberateConfirm, isProblemOutcome, kifMovePlan, outcomeLabel, pendingMovePlan, previewGroups, sapRunErrorMessage, scannedDuringPause, SOFTWARELOAD_TARGETS, summarizeByMaterial, summarizeTasks, targetLabel, taskForMaterial, taskLoadCounts, TYPE_LABELS } from './softwareload'
+import { commentsFor, commentsOnTask, finishTitle, isDeliberateConfirm, isProblemOutcome, kifMovePlan, nextLongRunAsk, outcomeLabel, pendingMovePlan, previewGroups, sapRunErrorMessage, scannedDuringPause, SOFTWARELOAD_TARGETS, summarizeByMaterial, summarizeTasks, targetLabel, taskForMaterial, taskLoadCounts, TYPE_LABELS, type LongRunAsk } from './softwareload'
+import { suggestedEnd } from './timeclock'
 import { setWarehouseLanguage } from './warehouse/text'
 import type { SoftwareloadComment, SoftwareloadKifPreview, SoftwareloadOutcome, SoftwareloadResult, SoftwareloadTask } from '@/types/warehouse'
 
@@ -133,6 +134,29 @@ describe('pendingMovePlan', () => {
     preview.transfers[0].serials.push('C')
     expect(plan.request.planned.transfers[0].serials).toEqual(['A', 'B'])
     expect(pendingMovePlan({ taskId: 't2', transfers: [], blocks: [] }).title).toBe('Afslut opgaven uden at flytte noget i SAP?')
+  })
+})
+
+describe('nextLongRunAsk', () => {
+  const closed: LongRunAsk = { open: false, key: 0, earliest: 100 }
+
+  it('a 10-hour refusal opens a fresh dialog from the moment of the refusal, with the earliest end the task has now', () => {
+    // Started 07:00 and forgotten; the screen has been open since then, and "Stop tiden nu" is pressed at 08:00 the next morning.
+    const startedAt = new Date(2026, 10, 23, 7, 0).getTime()
+    const refusedAt = new Date(2026, 10, 24, 8, 0).getTime()
+    const ask = nextLongRunAsk(closed, { kind: 'long-run', at: refusedAt, earliest: startedAt + HOUR })
+    expect(ask).toEqual({ open: true, key: refusedAt, earliest: startedAt + HOUR })
+    // The dialog mounts again with this key, so its suggestion is worked out now, not at 07:00 (0 minutes worked).
+    expect(suggestedEnd({ startedAt, earliest: ask.earliest, now: ask.key })).toBeGreaterThan(startedAt + HOUR)
+    const again = nextLongRunAsk(nextLongRunAsk(ask, { kind: 'close' }), { kind: 'long-run', at: refusedAt, earliest: startedAt })
+    expect(again.key).not.toBe(ask.key)
+  })
+
+  it('a refused end time opens the same dialog again, so the typed time survives, and closing keeps it', () => {
+    const ask = nextLongRunAsk(closed, { kind: 'long-run', at: 5000, earliest: 200 })
+    expect(nextLongRunAsk(ask, { kind: 'invalid' })).toEqual({ open: true, key: 5000, earliest: 200 })
+    expect(nextLongRunAsk(ask, { kind: 'invalid', earliest: 300 })).toEqual({ open: true, key: 5000, earliest: 300 })
+    expect(nextLongRunAsk(ask, { kind: 'close' })).toEqual({ open: false, key: 5000, earliest: 200 })
   })
 })
 

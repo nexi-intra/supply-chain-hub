@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { confirmedSteps, finishTitle, isDeliberateConfirm, previewGroups, sapRunErrorMessage, targetLabel, TYPE_LABELS } from '@/lib/softwareload'
+import { confirmedSteps, finishTitle, isDeliberateConfirm, nextLongRunAsk, previewGroups, sapRunErrorMessage, targetLabel, TYPE_LABELS, type LongRunAsk } from '@/lib/softwareload'
 import { errorCode, errorMessage } from '@/lib/warehouse/errors'
 import { formatDuration } from '@/lib/timeclock'
 import { t } from '@/lib/warehouse/text'
@@ -33,8 +33,8 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
   const [preview, setPreview] = useState<SoftwareloadPreview | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [confirming, setConfirming] = useState(false)
-  const [askEnd, setAskEnd] = useState(false)
-  const [earliest, setEarliest] = useState(() => initial?.earliestEndAt)
+  // Worked out again at every 10-hour refusal (see nextLongRunAsk).
+  const [ask, setAsk] = useState<LongRunAsk>(() => ({ open: false, key: 0, earliest: initial?.earliestEndAt }))
   const [moving, setMoving] = useState(false)
   const [result, setResult] = useState<SoftwareloadFinishResult | null>(null)
   const [finishError, setFinishError] = useState<{ text: string; stillRunning: boolean; alreadyFinished: boolean } | null>(null)
@@ -66,7 +66,7 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
 
   const finish = async (endAt?: number) => {
     setConfirming(false)
-    setAskEnd(false)
+    setAsk(current => nextLongRunAsk(current, { kind: 'close' }))
     // The dialog closes with an animation, so its button can be pressed twice; the second press must not touch this run.
     if (inFlight.current || !preview) return
     inFlight.current = true
@@ -100,9 +100,12 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
           toast.error(errorMessage(error))
           // The task may have been resumed elsewhere since the screen opened; the earliest end is asked again.
           const fresh = await window.electronWarehouse!.softwareload.status().catch(() => null)
-          if (fresh?.running && fresh.running.id === task?.id) setEarliest(fresh.running.earliestEndAt)
+          const earliest = fresh?.running && fresh.running.id === task?.id ? fresh.running.earliestEndAt : undefined
+          setAsk(current => nextLongRunAsk(current, { kind: 'invalid', earliest }))
+        } else {
+          // A fresh dialog: its suggested end is worked out now, also when the screen has been open for long.
+          setAsk(current => nextLongRunAsk(current, { kind: 'long-run', at: Date.now(), earliest: task?.earliestEndAt }))
         }
-        setAskEnd(true)
         return
       }
       // Some refusals come before the time stops; anything later leaves the task waiting for SAP. The status tells which.
@@ -229,7 +232,7 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <LongRunDialog open={askEnd} startedAt={task.startedAt} earliest={earliest} taskName={t('softwareload-opgaven', 'the softwareload task')} onCancel={() => setAskEnd(false)} onStop={endAt => void finish(endAt)} busy={moving} />
+      <LongRunDialog key={ask.key} open={ask.open} startedAt={task.startedAt} earliest={ask.earliest} taskName={t('softwareload-opgaven', 'the softwareload task')} onCancel={() => setAsk(current => nextLongRunAsk(current, { kind: 'close' }))} onStop={endAt => void finish(endAt)} busy={moving} />
     </div>
   )
 }

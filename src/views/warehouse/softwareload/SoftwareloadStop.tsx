@@ -3,7 +3,7 @@ import { Stop } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
-import { targetLabel, TYPE_LABELS } from '@/lib/softwareload'
+import { nextLongRunAsk, targetLabel, TYPE_LABELS, type LongRunAsk } from '@/lib/softwareload'
 import { errorCode, errorMessage } from '@/lib/warehouse/errors'
 import { t } from '@/lib/warehouse/text'
 import type { SoftwareloadStopResult, SoftwareloadTaskView } from '@/types/warehouse'
@@ -31,15 +31,15 @@ interface StopLaterProps {
  */
 export function StopLaterButton({ task, writeEnabled, disabled, variant = 'outline', onStopped, onChanged }: StopLaterProps) {
   const [confirming, setConfirming] = useState(false)
-  const [askEnd, setAskEnd] = useState(false)
-  const [earliest, setEarliest] = useState(task.earliestEndAt)
+  // Worked out again at every 10-hour refusal (see nextLongRunAsk); this button lives as long as the task screen.
+  const [ask, setAsk] = useState<LongRunAsk>(() => ({ open: false, key: 0, earliest: task.earliestEndAt }))
   const [stopping, setStopping] = useState(false)
   const inFlight = useRef(false)
   const failed = task.terminals.filter(terminal => terminal.failed).length
 
   const stop = async (endAt?: number) => {
     setConfirming(false)
-    setAskEnd(false)
+    setAsk(current => nextLongRunAsk(current, { kind: 'close' }))
     // The dialog closes with an animation, so its button can be pressed twice; the second press must not stop again.
     if (inFlight.current) return
     inFlight.current = true
@@ -54,9 +54,11 @@ export function StopLaterButton({ task, writeEnabled, disabled, variant = 'outli
         if (code === 'SOFTWARELOAD_INVALID') {
           toast.error(errorMessage(error))
           const fresh = await window.electronWarehouse!.softwareload.status().catch(() => null)
-          if (fresh?.running && fresh.running.id === task.id) setEarliest(fresh.running.earliestEndAt)
+          const earliest = fresh?.running && fresh.running.id === task.id ? fresh.running.earliestEndAt : undefined
+          setAsk(current => nextLongRunAsk(current, { kind: 'invalid', earliest }))
+        } else {
+          setAsk(current => nextLongRunAsk(current, { kind: 'long-run', at: Date.now(), earliest: task.earliestEndAt }))
         }
-        setAskEnd(true)
         return
       }
       if (TASK_CHANGED.includes(code ?? '')) {
@@ -96,7 +98,7 @@ export function StopLaterButton({ task, writeEnabled, disabled, variant = 'outli
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <LongRunDialog open={askEnd} startedAt={task.startedAt} earliest={earliest} taskName={t('softwareload-opgaven', 'the softwareload task')} onCancel={() => setAskEnd(false)} onStop={endAt => void stop(endAt)} busy={stopping} />
+      <LongRunDialog key={ask.key} open={ask.open} startedAt={task.startedAt} earliest={ask.earliest} taskName={t('softwareload-opgaven', 'the softwareload task')} onCancel={() => setAsk(current => nextLongRunAsk(current, { kind: 'close' }))} onStop={endAt => void stop(endAt)} busy={stopping} />
     </>
   )
 }

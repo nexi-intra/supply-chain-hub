@@ -188,6 +188,27 @@ export function pendingMovePlan(preview: Pick<SoftwareloadPreview, 'taskId' | 't
   }
 }
 
+/**
+ * The "Hvornår stoppede du?" dialog of a finish or stop that was refused because the task ran for more than 10 hours.
+ * `key` remounts the dialog, so its suggested end is worked out from the moment of the refusal, not from when the screen
+ * opened (a screen kept open since the morning would suggest an end at the start: 0 minutes). `earliest` is the earliest
+ * end the main process accepts.
+ */
+export interface LongRunAsk { open: boolean; key: number; earliest: number | undefined }
+
+export type LongRunEvent =
+  /** SOFTWARELOAD_LONG_RUN at `at`: a fresh dialog, with the earliest end the task has now. */
+  | { kind: 'long-run'; at: number; earliest: number | undefined }
+  /** SOFTWARELOAD_INVALID for the chosen end: the same dialog again, so the typed time survives; `earliest` when it was read again. */
+  | { kind: 'invalid'; earliest?: number }
+  | { kind: 'close' }
+
+export function nextLongRunAsk(ask: LongRunAsk, event: LongRunEvent): LongRunAsk {
+  if (event.kind === 'long-run') return { open: true, key: Math.max(event.at, ask.key + 1), earliest: event.earliest }
+  if (event.kind === 'invalid') return { ...ask, open: true, earliest: event.earliest ?? ask.earliest }
+  return { ...ask, open: false }
+}
+
 /** A dialog's confirm button ignores presses this soon after it opened, so a fast double press cannot reach it. */
 export const CONFIRM_ARM_MS = 400
 
