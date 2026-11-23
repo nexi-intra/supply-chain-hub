@@ -2,13 +2,15 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { t } from '@/lib/warehouse/text'
+import { enterChoice } from './scanChoices'
 
 type Suggestion = { material: string; description: string }
 const SUGGESTIONS = 8
 
 /**
  * A material field with suggestions while typing (material numbers by prefix, SAP descriptions by words). A scanner
- * types the whole number and Enter: an exact number wins over the highlighted suggestion.
+ * types the whole number and Enter before its suggestions have come: the highlighted suggestion counts only when the list
+ * belongs to the text now or the user moved to it with the arrow keys, otherwise the typed number is taken.
  */
 export function MaterialPicker({ value, chosen, onValueChange, onChoose, label, listId, placeholder, autoFocus, className, icon }: {
   value: string
@@ -24,17 +26,20 @@ export function MaterialPicker({ value, chosen, onValueChange, onChoose, label, 
   icon?: ReactNode
 }) {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([])
+  // The text the suggestions were found for, and whether the user moved in them with the arrow keys.
+  const [suggestionsFor, setSuggestionsFor] = useState<string | null>(null)
+  const [moved, setMoved] = useState(false)
   const [active, setActive] = useState(0)
   const [open, setOpen] = useState(false)
   const bridge = window.electronWarehouse!.locations
 
   useEffect(() => {
     const text = value.trim()
-    if (!text || text.toUpperCase() === chosen) { setSuggestions([]); return }
+    if (!text || text.toUpperCase() === chosen) { setSuggestions([]); setSuggestionsFor(null); return }
     let current = true
     const timer = window.setTimeout(() => {
       bridge.search({ query: text })
-        .then(found => { if (current) { setSuggestions(found.materials.slice(0, SUGGESTIONS)); setActive(0); setOpen(true) } })
+        .then(found => { if (current) { setSuggestions(found.materials.slice(0, SUGGESTIONS)); setSuggestionsFor(text); setActive(0); setMoved(false); setOpen(true) } })
         .catch(() => {})
     }, 150)
     return () => { current = false; window.clearTimeout(timer) }
@@ -43,19 +48,18 @@ export function MaterialPicker({ value, chosen, onValueChange, onChoose, label, 
   function choose(code: string) {
     onChoose(code)
     setSuggestions([])
+    setSuggestionsFor(null)
     setOpen(false)
   }
 
   function onKey(event: React.KeyboardEvent<HTMLInputElement>) {
-    if (event.key === 'ArrowDown' && suggestions.length) { event.preventDefault(); setOpen(true); setActive(index => Math.min(index + 1, suggestions.length - 1)) }
-    else if (event.key === 'ArrowUp' && suggestions.length) { event.preventDefault(); setActive(index => Math.max(index - 1, 0)) }
+    if (event.key === 'ArrowDown' && suggestions.length) { event.preventDefault(); setOpen(true); setMoved(true); setActive(index => Math.min(index + 1, suggestions.length - 1)) }
+    else if (event.key === 'ArrowUp' && suggestions.length) { event.preventDefault(); setMoved(true); setActive(index => Math.max(index - 1, 0)) }
     else if (event.key === 'Escape' && open) { event.preventDefault(); event.stopPropagation(); setOpen(false) }
     else if (event.key === 'Enter') {
       event.preventDefault()
-      const exact = suggestions.find(item => item.material === value.trim().toUpperCase())
-      const pick = exact || (open ? suggestions[active] : null) || (suggestions.length === 1 ? suggestions[0] : null)
-      if (pick) choose(pick.material)
-      else if (value.trim()) choose(value.trim().toUpperCase())
+      const pick = enterChoice({ value, suggestions, suggestionsFor, active, open, moved })
+      if (pick) choose(pick)
     }
   }
 
@@ -66,7 +70,7 @@ export function MaterialPicker({ value, chosen, onValueChange, onChoose, label, 
       <Input
         autoFocus={autoFocus}
         value={value}
-        onChange={event => onValueChange(event.target.value)}
+        onChange={event => { setMoved(false); onValueChange(event.target.value) }}
         onKeyDown={onKey}
         onFocus={() => suggestions.length && setOpen(true)}
         onBlur={() => window.setTimeout(() => setOpen(false), 150)}
