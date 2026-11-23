@@ -26,6 +26,7 @@ const { createOutlookDrafter, createFakeDrafter } = require('./outlookDraft.cjs'
 const { createLocalCache } = require('./localCache.cjs')
 const { findNewestPlacementSheet, readPlacementSheet } = require('./core/placements.cjs')
 const { readSerialFile } = require('./importFile.cjs')
+const { putOnClipboard } = require('./clipboardText.cjs')
 const { createMaterialCatalog, withLearning } = require('./locations/catalog.cjs')
 const { createLocationRepository } = require('./locations/repository.cjs')
 const { createLocationService } = require('./locations/service.cjs')
@@ -289,10 +290,16 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
     emit('counts:changed', { team: user.team })
     return result
   }
+  // Copies people paste into SAP by hand. Electron 44 resolves even when Windows refuses the clipboard, so the text is read
+  // back; a refusal (or an error) is CLIPBOARD_REFUSED, never "copied" with the previous value still on the clipboard.
+  const copyForPerson = async text => {
+    const placed = await putOnClipboard(clipboard, text).catch(error => { console.error('Lagerstyring: clipboard write failed', error?.message || error); return false })
+    if (!placed) throw codeError('CLIPBOARD_REFUSED')
+  }
   // The window has no clipboard permission; text copies go through here, plain text only and size-limited.
   handle('clipboard:write', async (user, p) => {
     if (typeof p.text !== 'string' || p.text.length > 2_000_000) throw codeError('CLIPBOARD_INVALID')
-    await clipboard.writeText(p.text)
+    await copyForPerson(p.text)
     return { ok: true }
   })
   handle('sap:status', async (user, p) => ({ ...(await sap.status({ fresh: p.fresh === true })), expectedSystem: config.sapSystem }))
@@ -362,7 +369,7 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   handle('serial-rules:set', (user, p) => counts.setSerialRule(user, { material: p.material, unrestricted: p.unrestricted === true }))
   handle('counts:copy-serials', async (user, p) => {
     const result = await counts.copySerials(user, p.id, { material: p.material, sloc: p.sloc, stockType: p.stockType, forDoc: p.forDoc === true })
-    if (result.serials.length) await clipboard.writeText(result.serials.join('\r\n'))
+    if (result.serials.length) await copyForPerson(result.serials.join('\r\n'))
     return { long: result.long, total: result.total, withoutLong: result.withoutLong.slice(0, 200), withoutLongTotal: result.withoutLong.length, lookedUp: result.lookedUp }
   })
   handle('placements:save', (user, p) => counts.savePlacement(user, { name: p.name, area: p.area, type: p.type }))

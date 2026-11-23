@@ -334,8 +334,8 @@ test('Windows silently refusing the clipboard stops long serials and MM60 before
   const clipboard = { writeText: async () => {}, readText: async () => 'old clipboard text' }
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'countpoint-clipdenied-'))
   const fetcher = createSapFetcher({ bridge: createSapBridge({ runScript }), runScript, tempRoot, clipboard })
-  await assert.rejects(fetcher.fetchLongSerials({ material: 'INT4300-7825-0', serials: ['S1', 'S2'] }), { code: 'SAP_EXPORT_FAILED', message: /Udklipsholderen/ })
-  await assert.rejects(fetcher.fetchMaterialTexts({ materials: ['R133-0032', 'R162-0717'] }), { code: 'SAP_EXPORT_FAILED', message: /Udklipsholderen/ })
+  await assert.rejects(fetcher.fetchLongSerials({ material: 'INT4300-7825-0', serials: ['S1', 'S2'] }), { code: 'CLIPBOARD_REFUSED', message: /Udklipsholderen/ })
+  await assert.rejects(fetcher.fetchMaterialTexts({ materials: ['R133-0032', 'R162-0717'] }), { code: 'CLIPBOARD_REFUSED', message: /Udklipsholderen/ })
   assert.deepEqual(calls.filter(name => name !== 'status'), [], 'ZMS_LONG_SERNO/MM60 never start')
   assert.deepEqual(fs.readdirSync(tempRoot), [])
 })

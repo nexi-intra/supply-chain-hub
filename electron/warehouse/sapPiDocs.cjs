@@ -90,7 +90,7 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, tempRoot = os
 
   async function run(dir, mode, { sloc, stockType, reference, materials }, file, timeoutMs) {
     const many = materials.length > 1
-    if (many && !(await putOnClipboard(clipboard, materials.join('\r\n')))) throw writeError('PIDOC_SAP_FAILED', CLIPBOARD_REFUSED)
+    if (many && !(await putOnClipboard(clipboard, materials.join('\r\n')))) throw writeError('CLIPBOARD_REFUSED', CLIPBOARD_REFUSED)
     const args = [system, mode, sloc, stockType, reference, dir, file, String(mode === 'test' ? 60 : waitSeconds), materials[0], ...(many ? ['clipboard'] : [])]
     return lastJsonLine(await runScript('pidoc-create', args, { timeoutMs }))
   }
@@ -141,7 +141,7 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, tempRoot = os
     if (!list.length || list.some(docNo => !/^\d{9,10}$/.test(docNo)) || !/^\d{4}$/.test(String(year || ''))) throw writeError('PIDOC_INVALID', 'Ugyldige dokumenter')
     if (list.length > 1 && !clipboard) throw writeError('PIDOC_SAP_FAILED', 'Udklipsholderen er ikke tilgængelig')
     return exclusiveWrite(async dir => {
-      if (list.length > 1 && !(await putOnClipboard(clipboard, list.join('\r\n')))) throw writeError('PIDOC_SAP_FAILED', CLIPBOARD_REFUSED)
+      if (list.length > 1 && !(await putOnClipboard(clipboard, list.join('\r\n')))) throw writeError('CLIPBOARD_REFUSED', CLIPBOARD_REFUSED)
       onWaiting()
       const result = lastJsonLine(await runScript('pidoc-post', [system, String(year), dir, 'mi20.txt', 'mi22.txt', String(waitSeconds), list[0], ...(list.length > 1 ? ['clipboard'] : [])], { timeoutMs: (waitSeconds + 300) * 1000 }))
       if (!result?.ok) throw scriptFailure(result, 'Bogføringen i MI20')

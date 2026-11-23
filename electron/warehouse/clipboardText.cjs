@@ -1,6 +1,7 @@
 // The SAP scripts read their lists (materials, documents, serials) from the Windows clipboard. Electron 44's clipboard is
 // async and resolves even when Windows refuses it, so the text is read back before SAP is started: never old text.
-const CLIPBOARD_REFUSED = 'Udklipsholderen virker ikke lige nu (Windows nægter adgang), så SAP kan ikke få listen – prøv igen, eller tag ét ad gangen'
+// The SAP lookups throw this as the detail of code CLIPBOARD_REFUSED; the copy buttons throw the code alone.
+const CLIPBOARD_REFUSED = 'Udklipsholderen virker ikke lige nu (Windows nægter adgang), så SAP kan ikke få listen. Prøv igen, eller tag ét ad gangen'
 
 const sameText = (a, b) => String(a ?? '').replace(/\r\n/g, '\n') === String(b ?? '').replace(/\r\n/g, '\n')
 

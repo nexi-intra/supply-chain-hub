@@ -91,6 +91,33 @@ test('copying answers only when the text is on the (async, Electron 44) clipboar
   assert.equal(clipboard.current, 'NCC202796019')
 })
 
+test('Windows refusing the clipboard (Electron 44 still resolves) is CLIPBOARD_REFUSED, never "copied"', async () => {
+  const clipboard = { current: '37', refuse: false }
+  clipboard.readText = async () => clipboard.current
+  clipboard.writeText = async text => { if (!clipboard.refuse) clipboard.current = text }
+  const { call } = setup({ clipboard })
+  await call('mona', 'statuses:start', { year: 2026, quarter: 4 })
+  const preview = await call('anna', 'counts:preview', { scope: { type: 'slocs', slocs: ['D000'] } })
+  const { id } = await call('anna', 'counts:create', { token: preview.token, name: 'D000' })
+  await call('anna', 'counts:scan', { id, serial: 'NCC202796019', place: 'A1.1' })
+  await call('anna', 'counts:scan', { id, serial: 'NCC202796020', place: 'A1.1' })
+  const row = { id, material: 'INT4300-4921-0', sloc: 'D000', stockType: 'unrestricted' }
+
+  clipboard.refuse = true
+  await assert.rejects(call('anna', 'clipboard:write', { text: '42' }), /^Error: CLIPBOARD_REFUSED$/)
+  await assert.rejects(call('anna', 'counts:copy-serials', row), /^Error: CLIPBOARD_REFUSED$/)
+  assert.equal(clipboard.current, '37', 'the previous value is still there, and the window was told')
+  const resolves = clipboard.writeText
+  clipboard.writeText = () => Promise.reject(new Error('OpenClipboard failed'))
+  await assert.rejects(call('anna', 'clipboard:write', { text: '42' }), /^Error: CLIPBOARD_REFUSED$/)
+  clipboard.writeText = resolves
+
+  clipboard.refuse = false
+  assert.deepEqual(await call('anna', 'clipboard:write', { text: '42' }), { ok: true })
+  assert.equal((await call('anna', 'counts:copy-serials', row)).total, 2)
+  assert.equal(clipboard.current, 'NCC202796019\r\nNCC202796020')
+})
+
 test('data is written to "<team folder>\\lagerstyring", never next to the Hub\'s own keys', async () => {
   const { root, call } = setup()
   await assert.rejects(call('anna', 'statuses:start', { year: 2026, quarter: 4 }), /MANAGER_ONLY/)

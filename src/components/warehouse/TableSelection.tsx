@@ -3,6 +3,7 @@ import { Copy, X } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { t } from '@/lib/warehouse/text'
+import { errorMessage } from '@/lib/warehouse/errors'
 
 const ATTR = 'data-cell-selected'
 const INTERACTIVE = 'input, button, select, textarea, a, label, summary, [role="button"], [role="radio"], [role="checkbox"], [contenteditable="true"]'
@@ -67,7 +68,7 @@ export function TableSelection() {
       const cells = rows.reduce((sum, row) => sum + row.length, 0)
       window.electronWarehouse!.app.copyText(text)
         .then(() => toast.success(t(`${cells} ${cells === 1 ? 'celle' : 'celler'} kopieret`, `${cells} ${cells === 1 ? 'cell' : 'cells'} copied`)))
-        .catch(() => toast.error(t('Kunne ikke kopiere til udklipsholderen', 'Could not copy to the clipboard')))
+        .catch(error => toast.error(errorMessage(error, t('Kunne ikke kopiere til udklipsholderen', 'Could not copy to the clipboard'))))
     }
     copyRef.current = copy
     clearRef.current = clear

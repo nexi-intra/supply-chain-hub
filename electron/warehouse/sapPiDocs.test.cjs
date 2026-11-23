@@ -183,8 +183,8 @@ test('Windows silently refusing the clipboard (Electron 44 still resolves) stops
   const runScript = async name => { calls.push(name); return '{"ok":true}' }
   const clipboard = { writeText: async () => {}, readText: async () => '105000111\r\n105000222' }
   const writer = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript, clipboard, system: 'QS4', tempRoot: os.tmpdir(), waitSeconds: 600 })
-  await assert.rejects(writer.createDocument(REQUEST), { code: 'PIDOC_SAP_FAILED', message: /Udklipsholderen/ })
-  await assert.rejects(writer.postDocuments({ docNos: ['105000893', '105000894'], year: '2026' }), { code: 'PIDOC_SAP_FAILED', message: /Udklipsholderen/ })
+  await assert.rejects(writer.createDocument(REQUEST), { code: 'CLIPBOARD_REFUSED', message: /^CLIPBOARD_REFUSED: Udklipsholderen/ })
+  await assert.rejects(writer.postDocuments({ docNos: ['105000893', '105000894'], year: '2026' }), { code: 'CLIPBOARD_REFUSED', message: /^CLIPBOARD_REFUSED: Udklipsholderen/ })
   assert.deepEqual(calls, [], 'MI31/MI20 never start with the old clipboard text')
 })
 

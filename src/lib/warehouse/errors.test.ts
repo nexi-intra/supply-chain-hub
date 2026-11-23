@@ -45,6 +45,18 @@ describe('errorMessage', () => {
     expect(errorMessage(new Error('Error: SAP_TIMEOUT'))).toMatch(/SAP/)
   })
 
+  it('a refused clipboard says nothing was copied, in Danish and English', () => {
+    const refused = new Error("Error invoking remote method 'warehouse:clipboard:write': Error: CLIPBOARD_REFUSED")
+    expect(errorMessage(refused)).toMatch(/^Windows afviste udklipsholderen, så intet blev kopieret/)
+    setWarehouseLanguage('en')
+    try {
+      expect(errorMessage(refused)).toMatch(/^Windows refused the clipboard, so nothing was copied/)
+      expect(errorMessage(new Error('Error: CLIPBOARD_REFUSED: Udklipsholderen virker ikke lige nu'))).toMatch(/^Windows refused the clipboard/)
+    } finally {
+      setWarehouseLanguage('da')
+    }
+  })
+
   it('in English the softwareload codes that carry the service\'s detail still show it', () => {
     setWarehouseLanguage('en')
     try {
