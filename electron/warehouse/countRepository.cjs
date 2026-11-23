@@ -18,8 +18,11 @@ const COUNT_ID = /^[a-z0-9]{6,32}$/
 const NAME_MAX = 80
 const PLACEMENT_NAME_MAX = 60
 // A count being created is in the index at once, marked `creating` until its files are written. A mark older than this
-// is left from a crash: it no longer holds the area, and the next count created removes it.
+// is left from a crash: it no longer holds the area, and is settled by the next count created, or by deleting or locking
+// the status.
 const CREATING_STALE_MS = 10 * 60 * 1000
+// Clearing the mark once the files are written is tried again after these waits before the count is given up.
+const FINISH_RETRY_MS = [1000, 3000, 9000]
 
 function codeError(code, message) {
   return Object.assign(new Error(message || code), { code })
@@ -28,8 +31,9 @@ function codeError(code, message) {
 const isCountId = value => typeof value === 'string' && COUNT_ID.test(value)
 const collapse = value => String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim()
 const defaultId = () => `${Date.now().toString(36)}${crypto.randomBytes(4).toString('hex')}`
+const defaultWait = ms => new Promise(resolve => setTimeout(resolve, ms))
 
-function createCountRepository({ storeFor, now = Date.now, newId = defaultId }) {
+function createCountRepository({ storeFor, now = Date.now, newId = defaultId, wait = defaultWait }) {
   function store(team) {
     if (!isAllowedTeam(team)) throw codeError('TEAM_NOT_ALLOWED')
     return storeFor(team)
@@ -41,6 +45,45 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId }) 
   const indexEntry = meta => ({ id: meta.id, name: meta.name, scope: meta.scope, status: meta.status, owner: meta.owner, createdAt: meta.createdAt, fetchedAt: meta.fetchedAt, statusId: meta.statusId || null })
   const staleCreating = (entry, at) => entry.creating === true && !(at - (entry.createdAt || 0) < CREATING_STALE_MS)
   const liveEntry = (entry, at) => Boolean(entry && isCountId(entry.id) && !entry.deleted && !staleCreating(entry, at))
+  const withoutMark = entry => {
+    const { creating, ...done } = entry
+    return done
+  }
+
+  /**
+   * Reservations left by a crash (`creating` older than 10 min), with whether their meta exists. The meta is written last,
+   * so with it the count is whole (only the mark was not cleared); without it, the count was never finished. Looked up
+   * before the index's lock (file checks), settled inside it with settleStale.
+   */
+  async function staleReservations(target, statusId) {
+    const index = (await target.getAsync(INDEX_KEY)) || {}
+    const at = now()
+    const stale = Object.values(index).filter(entry => entry && isCountId(entry.id) && !entry.deleted && staleCreating(entry, at) && (statusId === undefined || entry.statusId === statusId))
+    const whole = await Promise.all(stale.map(entry => target.statAsync(key(entry.id, 'meta')).then(Boolean, () => null)))
+    return new Map(stale.map((entry, position) => [entry.id, whole[position]]))
+  }
+
+  /** Inside the index's lock: a whole count loses its mark; an unfinished one gets a tombstone, so 1.6.7 stops showing it too. */
+  function settleStale(index, stale, at) {
+    for (const [id, whole] of stale) {
+      const entry = index[id]
+      if (!entry || entry.deleted || !staleCreating(entry, at) || whole === null) continue
+      index[id] = whole ? withoutMark(entry) : { id, deleted: true, deletedAt: at, deletedBy: { email: entry.owner?.email || '', name: entry.owner?.name || '' }, abandoned: true }
+    }
+  }
+
+  /** Settles the status's reservations left by a crash; returns the unfinished ones (now tombstones), whose files may be removed. */
+  async function settleStaleReservations(team, statusId) {
+    const target = store(team)
+    const stale = await staleReservations(target, statusId)
+    if (!stale.size) return []
+    await target.mutateAsync(INDEX_KEY, index => {
+      const next = index && typeof index === 'object' ? index : {}
+      settleStale(next, stale, now())
+      return next
+    })
+    return [...stale].filter(([, whole]) => whole === false).map(([id]) => id)
+  }
 
   async function createCount(team, { name, snapshot, placements = [], owner, statusId = null }) {
     const cleanName = collapse(name)
@@ -49,23 +92,35 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId }) 
     const createdAt = now()
     const meta = { id, team, name: cleanName, scope: snapshot.scope, status: 'open', owner: { email: owner.email, name: owner.name }, createdAt, fetchedAt: snapshot.fetchedAt, snapshotVersion: 1, statusId }
     const target = store(team)
+    const stale = await staleReservations(target)
     // The area is reserved first, under the index's lock, so two PCs creating a count for the same area at the same time
     // cannot both pass the check. Each write to M: takes 15–90 s, so the count's own files are then written at once,
     // except the small meta: it comes last, so a PC (also 1.6.7) that opens the count meanwhile finds all or nothing.
+    let refused = null
     await target.mutateAsync(INDEX_KEY, index => {
       const next = index && typeof index === 'object' ? index : {}
+      settleStale(next, stale, createdAt)
       for (const entry of Object.values(next)) {
-        if (!entry || !isCountId(entry.id) || entry.deleted) continue
-        if (staleCreating(entry, createdAt)) {
-          next[entry.id] = { id: entry.id, deleted: true, deletedAt: createdAt, deletedBy: { email: entry.owner?.email || '', name: entry.owner?.name || '' }, abandoned: true }
-          continue
-        }
+        if (!liveEntry(entry, createdAt)) continue
         const overlap = statusId && entry.statusId === statusId && entry.scope ? scopeOverlap(meta.scope, entry.scope) : null
-        if (overlap) throw codeError('SCOPE_TAKEN', describeOverlap(overlap, entry))
+        if (overlap) {
+          // Refused, but the settled reservations are still written.
+          refused = codeError('SCOPE_TAKEN', describeOverlap(overlap, entry))
+          return next
+        }
       }
       next[id] = { ...indexEntry(meta), creating: true }
       return next
     })
+    if (refused) throw refused
+    const giveBack = () => Promise.allSettled([
+      target.mutateAsync(INDEX_KEY, index => {
+        if (!index?.[id]?.creating) return undefined
+        delete index[id]
+        return index
+      }),
+      removeCountFiles(team, [id]),
+    ])
     const written = await Promise.allSettled([
       target.setAsync(key(id, 'expected'), snapshot),
       target.setAsync(key(id, 'placements'), placements),
@@ -74,27 +129,30 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId }) 
     const failed = written.find(result => result.status === 'rejected') || await target.setAsync(key(id, 'meta'), meta).then(() => null, reason => ({ reason }))
     if (failed) {
       // Best effort: the area is given back and what was written is removed.
-      await Promise.allSettled([
-        target.mutateAsync(INDEX_KEY, index => {
-          if (!index?.[id]?.creating) return undefined
-          delete index[id]
-          return index
-        }),
-        removeCountFiles(team, [id]),
-      ])
+      await giveBack()
       throw failed.reason
     }
     let gone = false
-    await target.mutateAsync(INDEX_KEY, index => {
+    const finish = () => target.mutateAsync(INDEX_KEY, index => {
       const entry = index?.[id]
-      if (!entry || entry.deleted) {
-        gone = true
-        return undefined
-      }
-      const { creating, ...done } = entry
-      index[id] = done
+      gone = !entry || Boolean(entry.deleted)
+      if (gone || !entry.creating) return undefined
+      index[id] = withoutMark(entry)
       return index
     })
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await finish()
+        break
+      } catch (error) {
+        if (attempt >= FINISH_RETRY_MS.length) {
+          // A whole count must not stay hidden behind its own mark: given back as when a file write fails.
+          await giveBack()
+          throw error
+        }
+        await wait(FINISH_RETRY_MS[attempt])
+      }
+    }
     if (gone) {
       await removeCountFiles(team, [id]).catch(() => {})
       throw codeError('COUNT_DELETED', 'Optællingen blev slettet, mens den blev oprettet. Opret den igen.')
@@ -169,7 +227,7 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId }) 
       if (!stored) throw codeError('COUNT_NOT_FOUND')
       return { ...stored, ...changes, ...(check ? check(stored) : null) }
     })
-    const writeIndex = () => (listed.length ? target.mutateAsync(INDEX_KEY, index => {
+    const writeIndex = () => target.mutateAsync(INDEX_KEY, index => {
       const next = index && typeof index === 'object' ? index : {}
       const entry = next[id]
       if (entry?.deleted) return next
@@ -177,13 +235,14 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId }) 
       for (const field of listed) merged[field] = indexEntry(changes)[field]
       next[id] = merged
       return next
-    }) : null)
+    })
     if (check) {
       const meta = await writeMeta()
-      await writeIndex()
+      // The meta is committed; the index only repeats the changed fields for the list, so failing there does not undo it.
+      if (listed.length) await writeIndex().catch(error => console.error('CountPoint: count list not updated', error.code || error.message))
       return meta
     }
-    const [meta] = await Promise.all([writeMeta(), writeIndex()])
+    const [meta] = await Promise.all([writeMeta(), listed.length ? writeIndex() : null])
     return meta
   }
 
@@ -337,6 +396,7 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId }) 
   return {
     createCount,
     listCounts,
+    settleStaleReservations,
     listStatuses,
     getStatus,
     getActiveStatus,

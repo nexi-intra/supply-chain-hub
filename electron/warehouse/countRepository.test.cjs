@@ -115,6 +115,18 @@ test('a count being created holds its area; a reservation left by a crash is ign
   assert.equal(await repo.isDeleted('TCD', crashed.id), true, 'older clients, which do not know the mark, stop seeing it too')
 })
 
+test('a reservation left by a crash after its meta was written is kept as a real count', async () => {
+  const { repo, storeFor, tick } = setup()
+  const crashed = { id: 'crashed2abc', name: 'Hel', scope: SNAPSHOT.scope, status: 'open', owner: { email: 'bo@example.test', name: 'Bo' }, createdAt: 1000, fetchedAt: 900, statusId: 'status1', creating: true }
+  await storeFor('TCD').updateAsync('counts-index', { op: 'setField', field: crashed.id, value: crashed })
+  await storeFor('TCD').setAsync('count-crashed2abc-meta', { ...crashed, team: 'TCD', creating: undefined })
+  tick(10 * 60 * 1000 + 1)
+  await assert.rejects(repo.createCount('TCD', { name: 'Anna D000', snapshot: SNAPSHOT, owner: OWNER, statusId: 'status1' }), error => error.code === 'SCOPE_TAKEN' && /"Hel" af Bo/.test(error.message))
+  const [entry] = await repo.listCounts('TCD')
+  assert.deepEqual([entry.id, 'creating' in entry, await repo.isDeleted('TCD', crashed.id)], [crashed.id, false, false])
+  assert.ok(await repo.createCount('TCD', { name: 'Anden status', snapshot: SNAPSHOT, owner: OWNER, statusId: 'status2' }))
+})
+
 test('a count whose files cannot be written gives its area back', async () => {
   const { repo, dataDir } = setup()
   const real = createStore(path.join(dataDir, 'TCD'))

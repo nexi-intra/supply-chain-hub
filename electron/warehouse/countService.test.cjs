@@ -525,6 +525,68 @@ test('a count still being created holds its area in the status but is not shown 
   assert.deepEqual([checklist.ready, checklist.counts.map(item => [item.name, item.open])], [false, [['D000 på vej', true]]], 'the status cannot be locked meanwhile')
 })
 
+/** A store whose "count is created" index write (the `creating` mark cleared) fails the next `times` times. */
+function finishFailing(real, times) {
+  const left = { times }
+  return {
+    left,
+    store: {
+      ...real,
+      mutateAsync: (key, change) => real.mutateAsync(key, current => {
+        const before = structuredClone(current)
+        const next = change(current)
+        const finishing = key === 'counts-index' && next && Object.keys(next).some(id => before?.[id]?.creating && next[id] && !next[id].creating)
+        if (finishing && left.times > 0) {
+          left.times--
+          throw Object.assign(new Error('KV_LOCK_BUSY'), { code: 'KV_LOCK_BUSY' })
+        }
+        return next
+      }),
+    },
+  }
+}
+
+test('a new count whose "created" mark cannot be written is tried again, and given back if it never can', async () => {
+  const ctx = setup()
+  const failing = finishFailing(ctx.storeFor('TCD'), 1)
+  const waits = []
+  const repo = createCountRepository({ storeFor: () => failing.store, now: () => ctx.clock.now, wait: async ms => { waits.push(ms) } })
+  const svc = createCountService({ repo, storeFor: ctx.storeFor, fetcher: ctx.fetcher, placementSource: null, journalsDir: path.join(ctx.root, 'local-finish'), deviceId: 'finish', now: () => ctx.clock.now, newId: () => 'unused', journalOptions: { autoFlush: false } })
+  const first = await newCount(ctx, svc)
+  assert.deepEqual([failing.left.times, waits.length], [0, 1], 'failed once, then tried again')
+  assert.deepEqual((await ctx.repo.listCounts('TCD')).map(entry => [entry.id, 'creating' in entry]), [[first.id, false]], 'the count is shown')
+  await ctx.repo.deleteCount('TCD', first.id, { email: 'anna@example.test', name: 'Anna' })
+
+  failing.left.times = 99
+  const preview = await svc.preview(ANNA, { scope: { type: 'slocs', slocs: ['D000'] } })
+  await assert.rejects(svc.createCount(ANNA, { token: preview.token, name: 'Status D000' }), { code: 'KV_LOCK_BUSY' })
+  assert.equal(waits.length, 4, 'tried again three times')
+  assert.deepEqual(await ctx.repo.listCounts('TCD'), [], 'the area is given back')
+  assert.equal(fs.readdirSync(path.join(ctx.root, 'data', 'TCD')).some(name => name.startsWith('count-') && !name.startsWith(`count-${first.id}-`)), false, 'and its files are removed')
+  failing.left.times = 0
+  const meta = await svc.createCount(ANNA, { token: preview.token, name: 'Status D000' })
+  assert.deepEqual((await ctx.repo.listCounts('TCD')).map(entry => entry.id), [meta.id], 'the same preview creates it')
+})
+
+test('a status deleted or locked removes the reservations left there by a crash', async () => {
+  const ctx = setup()
+  const mona = ctx.service('pc3')
+  const store = ctx.storeFor('TCD')
+  const crashed = id => ({ id, name: 'Hængt', scope: { type: 'slocs', slocs: ['D000'], materials: [] }, status: 'open', owner: { email: 'bo@example.test', name: 'Bo' }, createdAt: ctx.clock.now, fetchedAt: ctx.clock.now, statusId: 'st0open1', creating: true })
+  await store.updateAsync('counts-index', { op: 'setField', field: 'crashed1abc', value: crashed('crashed1abc') })
+  await store.setAsync('count-crashed1abc-expected', { partial: true })
+  ctx.tick(10 * 60 * 1000 + 1)
+  await assert.rejects(mona.lockStatus(MONA, 'st0open1'), { code: 'STATUS_NOT_READY' })
+  assert.equal(await ctx.repo.isDeleted('TCD', 'crashed1abc'), true, 'locking settles it')
+
+  await store.updateAsync('counts-index', { op: 'setField', field: 'crashed2abc', value: { ...crashed('crashed2abc'), createdAt: ctx.clock.now } })
+  await store.setAsync('count-crashed2abc-expected', { partial: true })
+  ctx.tick(10 * 60 * 1000 + 1)
+  await mona.deleteStatus(MONA, 'st0open1')
+  assert.equal(await ctx.repo.isDeleted('TCD', 'crashed2abc'), true, 'deleting settles it')
+  assert.equal(fs.readdirSync(path.join(ctx.root, 'data', 'TCD')).some(name => name.startsWith('count-crashed2abc-')), false, 'with its files')
+})
+
 test('the status overview sums the progress and value differences of its counts', async () => {
   const ctx = setup()
   const anna = ctx.service('pc1')
@@ -1270,6 +1332,24 @@ test('"Hent SAP igen" that stopped after the meta was written can be tried again
   const meta = await svc.applyRefetch(ANNA, id, { token: preview.token })
   assert.deepEqual([meta.fetchedAt, meta.snapshotVersion], [ctx.clock.now, 2], 'counted once')
   assert.equal((await ctx.repo.getSnapshot('TCD', id)).fetchedAt, ctx.clock.now)
+})
+
+test('"Hent SAP igen" goes on when only the count list could not be updated after the meta', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const { id } = await newCount(ctx, anna)
+  const real = ctx.storeFor('TCD')
+  let failIndex = false
+  const wrapped = { ...real, mutateAsync: async (key, change) => { if (failIndex && key === 'counts-index') { failIndex = false; throw Object.assign(new Error('KV_LOCK_BUSY'), { code: 'KV_LOCK_BUSY' }) } return real.mutateAsync(key, change) } }
+  const repo = createCountRepository({ storeFor: () => wrapped, now: () => ctx.clock.now })
+  const svc = createCountService({ repo, storeFor: ctx.storeFor, fetcher: ctx.fetcher, journalsDir: path.join(ctx.root, 'local-index'), deviceId: 'index', now: () => ctx.clock.now, journalOptions: { autoFlush: false } })
+  ctx.tick(1000)
+  const preview = await svc.previewRefetch(ANNA, id)
+  failIndex = true
+  const meta = await svc.applyRefetch(ANNA, id, { token: preview.token })
+  assert.equal(failIndex, false, 'the index write was tried and failed')
+  const [stored, snapshot] = [await ctx.repo.getMeta('TCD', id), await ctx.repo.getSnapshot('TCD', id)]
+  assert.deepEqual([meta.fetchedAt, stored.fetchedAt, snapshot.fetchedAt, stored.snapshotVersion], [ctx.clock.now, ctx.clock.now, ctx.clock.now, 2])
 })
 
 test('after "Hent SAP igen" on one PC, another PC with the count open shows the new SAP figures without a restart', async () => {

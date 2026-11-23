@@ -170,6 +170,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const team = teamOf(user)
     const known = await repo.getStatus(team, statusId)
     if (known.state !== 'open') throw lockedError()
+    // A count whose creation crashed is settled first: whole, it is in the checklist; unfinished, it is removed.
+    await repo.settleStaleReservations(team, statusId)
     const { status, datas, checklist } = await checklistData(user, statusId, known)
     if (!checklist.ready) throw codeError('STATUS_NOT_READY', checklist.counts.length ? 'Alle optællinger skal være afsluttet og alle materialer godkendt eller bogført' : 'Statussen har ingen optællinger')
     if (!reportWriter) throw codeError('REPORT_UNAVAILABLE')
@@ -1168,7 +1170,9 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const state = await sapAction(user, id)
     if (state.meta.status !== 'open') throw codeError('COUNT_CLOSED', 'Genåbn optællingen først')
     const fetched = await fetcher.fetchPlant({ onProgress: step => emit('sap:fetch-progress', { step }) })
-    // The SAP export takes minutes: the differences are shown against what the count holds now (another PC may have fetched meanwhile).
+    // The SAP export takes minutes: the differences are shown against what the count holds now (another PC may have fetched
+    // meanwhile), so the snapshot is read again at once, even if a read was tried less than 30 s ago.
+    state.snapshotTriedAt = 0
     await refresh(state, true)
     const snapshot = buildSnapshot({ team: state.team, scope: state.snapshot.scope, mb52: fetched.mb52, serials: fetched.serials, rulesByTeam: await rulesByTeam(state.team), exclusions: state.snapshot.excluded.manual, fetchedAt: fetched.fetchedAt, fetchedBy: lower(user.email) })
     const token = crypto.randomBytes(16).toString('hex')
@@ -1193,13 +1197,14 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
         // This preview's own meta is already written (the snapshot write failed): only the snapshot is left.
         if (entry.metaWritten && stored.fetchedAt === entry.snapshot.fetchedAt) return {}
         if (stored.fetchedAt !== entry.basedOn || !(entry.snapshot.fetchedAt > stored.fetchedAt)) throw codeError('REFETCH_OUTDATED', 'En anden har hentet SAP igen imens. Hent igen for at se forskellene.')
+        // Set under the lock, just before the commit: if anything fails after it, the same preview can finish the job.
+        entry.metaWritten = true
         return { snapshotVersion: (stored.snapshotVersion || 1) + 1 }
       },
     }).catch(error => {
       if (error.code === 'REFETCH_OUTDATED') pending.delete(token)
       throw error
     })
-    entry.metaWritten = true
     state.meta = meta
     await repo.replaceSnapshot(state.team, state.id, entry.snapshot)
     pending.delete(token)
@@ -1561,8 +1566,10 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     if (!isManager(user)) throw codeError('MANAGER_ONLY', 'Kun managers kan slette en status')
     const team = teamOf(user)
     await repo.getStatus(team, statusId)
+    // Counts whose creation crashed: whole ones are deleted with the others, unfinished ones lose their files too.
+    const unfinished = await repo.settleStaleReservations(team, statusId)
     const counts = await statusCounts(team, statusId)
-    await removeCounts(team, counts.map(entry => entry.id), me(user), () => repo.deleteStatus(team, statusId))
+    await removeCounts(team, [...counts.map(entry => entry.id), ...unfinished], me(user), () => repo.deleteStatus(team, statusId))
     return { ok: true, counts: counts.length }
   }
 
