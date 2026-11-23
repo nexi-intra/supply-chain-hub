@@ -640,6 +640,24 @@ test('the tools page reads only the active status and the summaries of its count
   assert.equal(await ctx.service('pc7').activeProgress(ANNA), null, 'no active status, no line')
 })
 
+test('a count reopened on the tools page and closed again shows its new progress, not the one remembered from before', async () => {
+  const ctx = setup()
+  const store = ctx.storeFor('TCD')
+  const entry = { id: 'closed1abc', name: 'D004', scope: { type: 'slocs', slocs: ['D004'], materials: [] }, status: 'closed', owner: { email: 'bo@example.test', name: 'Bo' }, createdAt: 1, fetchedAt: 1, statusId: 'st0open1' }
+  const write = async (status, reached) => {
+    await store.updateAsync('counts-index', { op: 'setField', field: entry.id, value: { ...entry, status } })
+    await store.setAsync('count-closed1abc-summary', { percent: reached * 10, reached, total: 10, valueDiff: 0, updatedAt: reached })
+  }
+  const anna = ctx.service('pc1')
+  await write('closed', 4)
+  assert.equal((await anna.statusOverview(ANNA)).active.progress.percent, 40, 'closed and remembered')
+  await write('open', 6)
+  assert.equal((await anna.activeProgress(ANNA)).progress.percent, 60)
+  await write('closed', 9)
+  assert.equal((await anna.activeProgress(ANNA)).progress.percent, 90)
+  assert.equal((await anna.statusOverview(ANNA)).active.progress.percent, 90)
+})
+
 test('a manager locks the status when every count is closed and every material approved; unlocking needs a reason', async () => {
   const ctx = setup()
   const anna = ctx.service('pc1')

@@ -139,8 +139,10 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const entries = all.filter(entry => entry.statusId === status.id && !entry.creating)
     const email = lower(user.email)
     const summaries = await Promise.all(entries.map(entry => {
-      const cached = entry.status === 'closed' && closedDetails.get(`${team}:${entry.id}:${email}`)
-      return cached ? cached.summary : repo.getSummary(team, entry.id).catch(() => null)
+      const cacheKey = `${team}:${entry.id}:${email}`
+      if (entry.status !== 'closed') closedDetails.delete(cacheKey)
+      else if (closedDetails.has(cacheKey)) return closedDetails.get(cacheKey).summary
+      return repo.getSummary(team, entry.id).catch(() => null)
     }))
     const counts = entries.map((entry, index) => ({ id: entry.id, status: entry.status, summary: summaries[index] || null }))
     return { id: status.id, name: status.name, counts, progress: statusProgress(counts) }
