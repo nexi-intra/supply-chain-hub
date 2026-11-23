@@ -12,8 +12,40 @@ const { docLinesFromSnapshot, missingAtApproval, linesAtApproval, approvedWithLi
 const { normalizeMatdoc } = require('./core/sapParsers.cjs')
 const { differenceTotals, archiveLines } = require('./core/archive.cjs')
 const { ACTIVE: ACTIVE_PIDOC, RESERVATION_MS, statusOf } = require('./core/piDocs.cjs')
-/** A PI document SAP may or may not have: named by its reference, never by an empty number. */
-const unknownDocText = doc => `et ukendt dokument (reference ${doc.reference || doc.id}), som en manager skal afklare`
+/**
+ * What has to happen to an open PI document before its count or material can change, per status (det: one, dem: more):
+ * created or printed is deleted in MI02, counted can only be posted, unknown waits for a manager, a reservation for MI31.
+ */
+const PIDOC_ADVICE = {
+  delete: ['slet det i SAP (MI02)', 'slet dem i SAP (MI02)'],
+  post: ['bogfør det (Bogfør)', 'bogfør dem (Bogfør)'],
+  unknown: ['en manager skal afklare det', 'en manager skal afklare dem'],
+  creating: ['vent, til det er oprettet', 'vent, til de er oprettet'],
+}
+const adviceOf = doc => ({ unknown: 'unknown', counted: 'post', creating: 'creating' })[statusOf(doc)] || 'delete'
+/** A document is named by its number; one SAP may not have made (yet) by CountPoint's reference, never by an empty number. */
+const docLabel = doc => (doc.docNo && doc.status !== 'creating' ? doc.docNo : `reference ${doc.reference || doc.id}`)
+const sentence = text => `${text[0].toUpperCase()}${text.slice(1)}`
+
+/** COUNT_PIDOCS_ACTIVE: every open document, then what to do with each (one sentence when all need the same). */
+function activeDocsText(items) {
+  const groups = Object.keys(PIDOC_ADVICE).map(key => [key, items.filter(item => adviceOf(item.doc) === key).map(item => item.label)]).filter(([, labels]) => labels.length)
+  const advice = groups.length === 1
+    ? `${sentence(PIDOC_ADVICE[groups[0][0]][items.length > 1 ? 1 : 0])}.`
+    : groups.map(([key, labels]) => `${sentence(PIDOC_ADVICE[key][labels.length > 1 ? 1 : 0])}: ${labels.join(', ')}.`).join(' ')
+  return `Disse SAP-dokumenter er ikke bogført: ${items.map(item => item.label).join(', ')}. ${advice}`
+}
+
+/** PIDOC_ACTIVE: the open document holding a material that is reset or sent back, and what to do with it. */
+function activeDocText(code, doc, withLines) {
+  const status = statusOf(doc)
+  if (status === 'creating') return `${code} er ved at få et SAP-dokument (${docLabel(doc)}). Vent, til det er oprettet.`
+  if (status === 'unknown') return `${code} har et ukendt SAP-dokument (${docLabel(doc)}). En manager skal afklare det først.`
+  if (status === 'counted') return `${code} har SAP-dokument ${doc.docNo}, som der er lagt antal på. Bogfør det (Bogfør).`
+  return withLines
+    ? `${code} er godkendt med tællelinjer med antal og har SAP-dokument ${doc.docNo}. Slet det i SAP (MI02), nulstil materialet, slet linjen og godkend igen.`
+    : `${code} har SAP-dokument ${doc.docNo}. Slet det i SAP (MI02) først.`
+}
 const { createJournal, readJournals, unsentWriters, KEEPALIVE_MS } = require('./journal.cjs')
 
 const CLAIM_IDLE_MS = 30 * 60 * 1000
@@ -1428,8 +1460,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
 
   // ---------- Approval (managers) ----------
   const postedError = code => codeError('COUNT_MATERIAL_POSTED', `${code} er bogført i SAP og kan ikke ændres. Lav en ny optælling, hvis der skal rettes mere.`)
-  /** The SAP count document (not deleted) that holds the material, if any. */
-  const activePiDoc = (docs, code) => Object.values(docs).find(doc => doc.status !== 'deleted' && doc.lines?.some(line => line.material === code))
+  /** The SAP count document (not deleted, not a reservation left by a crash) that holds the material, if any. */
+  const activePiDoc = (docs, code) => Object.values(docs).find(doc => doc.status !== 'deleted' && !(doc.status === 'creating' && now() - (doc.startedAt || 0) >= RESERVATION_MS) && doc.lines?.some(line => line.material === code))
 
   /**
    * Approving a material whose missing serials another count of the status found is refused once (APPROVAL_FOUND_ELSEWHERE,
@@ -1449,8 +1481,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       if (active) {
         // Approved with quantity lines: a reset alone does not do; the whole way out is told at once.
         const withLines = approvedWithLines(state, { [code]: (await repo.getApprovals(state.team, state.id).catch(() => ({})))[code] }).has(code)
-        if (withLines) throw codeError('PIDOC_ACTIVE', statusOf(active) === 'unknown' ? `${code} er godkendt med tællelinjer med antal og har ${unknownDocText(active)}. Afklar det, nulstil materialet, slet linjen og godkend igen.` : `${code} er godkendt med tællelinjer med antal og har SAP-dokument ${active.docNo || ''}. Slet SAP-dokumentet, nulstil materialet, slet linjen og godkend igen.`)
-        throw codeError('PIDOC_ACTIVE', statusOf(active) === 'unknown' ? `${code} har ${unknownDocText(active)}. Afklar det først.` : `${code} har SAP-dokument ${active.docNo || ''}. Slet det først.`)
+        throw codeError('PIDOC_ACTIVE', activeDocText(code, active, withLines))
       }
     }
     const by = me(user)
@@ -1796,11 +1827,11 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       for (const doc of Object.values(all[index] || {})) {
         if (!doc || typeof doc !== 'object') continue
         const open = doc.status === 'creating' ? at - (doc.startedAt || 0) < RESERVATION_MS : ACTIVE_PIDOC.has(doc.status)
-        if (open) active.push(`${statusOf(doc) === 'unknown' ? unknownDocText(doc) : doc.docNo || 'et dokument under oprettelse'}${counts.length > 1 && entry.name ? ` (${entry.name})` : ''}`)
+        if (open) active.push({ doc, label: `${docLabel(doc)}${counts.length > 1 && entry.name ? ` (${entry.name})` : ''}` })
         else if (doc.status === 'posted' && doc.docNo) (posted[entry.id] ||= []).push({ docNo: doc.docNo, year: doc.year || null, materialDoc: doc.materialDoc || null })
       }
     })
-    if (active.length) throw codeError('COUNT_PIDOCS_ACTIVE', `Slet SAP-dokumenterne først. Disse SAP-dokumenter er ikke bogført: ${active.join(', ')}`)
+    if (active.length) throw codeError('COUNT_PIDOCS_ACTIVE', activeDocsText(active))
     return posted
   }
 

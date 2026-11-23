@@ -839,10 +839,14 @@ test('approval freezes a material: fetching SAP again or counting afterwards doe
 
   await mona.undoPosted(MONA, id, { material: 'R162-0717', reason: 'Trykket ved en fejl' })
   await ctx.repo.changePiDocs('TCD', id, all => ({ all: { ...all, D1: { id: 'D1', docNo: '105000903', status: 'printed', lines: [{ material: 'R162-0717' }] } } }))
-  await assert.rejects(mona.setApproval(MONA, id, { material: 'R162-0717', status: 'reset' }), { code: 'PIDOC_ACTIVE', message: 'R162-0717 har SAP-dokument 105000903. Slet det først.' }, 'an SAP document locks the approval')
+  await assert.rejects(mona.setApproval(MONA, id, { material: 'R162-0717', status: 'reset' }), { code: 'PIDOC_ACTIVE', message: 'R162-0717 har SAP-dokument 105000903. Slet det i SAP (MI02) først.' }, 'an SAP document locks the approval')
   await ctx.repo.changePiDocs('TCD', id, all => ({ all: { ...all, D1: { id: 'CPREF4', reference: 'CPREF4', status: 'created', lines: [{ material: 'R162-0717' }], sapUnknown: { step: 'create', status: 'created' } } } }))
-  await assert.rejects(mona.setApproval(MONA, id, { material: 'R162-0717', status: 'reset' }), { code: 'PIDOC_ACTIVE', message: 'R162-0717 har et ukendt dokument (reference CPREF4), som en manager skal afklare. Afklar det først.' }, 'a document SAP may have locks it too')
+  await assert.rejects(mona.setApproval(MONA, id, { material: 'R162-0717', status: 'reset' }), { code: 'PIDOC_ACTIVE', message: 'R162-0717 har et ukendt SAP-dokument (reference CPREF4). En manager skal afklare det først.' }, 'a document SAP may have locks it too')
   await ctx.repo.changePiDocs('TCD', id, all => ({ all: { ...all, D1: { ...all.D1, status: 'deleted' } } }))
+  // A reservation of a document being made holds it; one left by a crash (20 minutes old) holds nothing, as for deleting a count.
+  await ctx.repo.changePiDocs('TCD', id, all => ({ all: { ...all, CPREF5: { id: 'CPREF5', reference: 'CPREF5', status: 'creating', startedAt: ctx.clock.now, lines: [{ material: 'R162-0717' }] } } }))
+  await assert.rejects(mona.setApproval(MONA, id, { material: 'R162-0717', status: 'reset' }), { code: 'PIDOC_ACTIVE', message: 'R162-0717 er ved at få et SAP-dokument (reference CPREF5). Vent, til det er oprettet.' })
+  ctx.tick(20 * 60 * 1000)
 
   await mona.setApproval(MONA, id, { material: 'R162-0717', status: 'reset' })
   await anna.saveLine(ANNA, id, { place: 'A1.2', material: 'R162-0717', qty: 5 })
@@ -1357,8 +1361,12 @@ test('a material approved with a quantity line (older client) gets no document q
   await assert.rejects(piDocsOf(ada).count(ADA, id, 'D1'), refused)
   assert.deepEqual(entered, [])
   // "Nulstil" while the document holds it tells the whole way out, not only "slet det først".
-  await assert.rejects(mona.setApproval(MONA, id, { material: terminal.material, status: 'reset' }), { code: 'PIDOC_ACTIVE', message: `${terminal.material} er godkendt med tællelinjer med antal og har SAP-dokument 105000939. Slet SAP-dokumentet, nulstil materialet, slet linjen og godkend igen.` })
+  await assert.rejects(mona.setApproval(MONA, id, { material: terminal.material, status: 'reset' }), { code: 'PIDOC_ACTIVE', message: `${terminal.material} er godkendt med tællelinjer med antal og har SAP-dokument 105000939. Slet det i SAP (MI02), nulstil materialet, slet linjen og godkend igen.` })
   await ctx.repo.changePiDocs('TCD', id, all => ({ all: { ...all, D1: { ...all.D1, status: 'deleted' } } }))
+  // A reservation of a document being made holds it; one left by a crash (20 minutes old) holds nothing, as for deleting a count.
+  await ctx.repo.changePiDocs('TCD', id, all => ({ all: { ...all, CPREF5: { id: 'CPREF5', reference: 'CPREF5', status: 'creating', startedAt: ctx.clock.now, lines: [{ material: 'R162-0717' }] } } }))
+  await assert.rejects(mona.setApproval(MONA, id, { material: 'R162-0717', status: 'reset' }), { code: 'PIDOC_ACTIVE', message: 'R162-0717 er ved at få et SAP-dokument (reference CPREF5). Vent, til det er oprettet.' })
+  ctx.tick(20 * 60 * 1000)
 
   // Deleting the line does not hide it: the frozen numbers still hold it.
   await anna.deleteLine(ANNA, id, { lineId: 'ln-old' })
@@ -1578,15 +1586,18 @@ test('a count with an SAP document not posted yet cannot be deleted; posted ones
   const { id } = await newCount(ctx, anna)
   const doc = (docId, status, extra = {}) => ({ id: docId, docNo: docId, year: '2026', status, sloc: 'D000', stockType: 'unrestricted', lines: [{ material: 'R162-0717' }], ...extra })
   const setDocs = docs => ctx.repo.changePiDocs('TCD', id, () => ({ all: Object.fromEntries(docs.map(item => [item.id, item])) }))
-  for (const status of ['created', 'printed', 'counted']) {
+  // Each document says what to do with it, so the advice can be followed.
+  for (const [status, advice] of [['created', 'Slet det i SAP (MI02).'], ['printed', 'Slet det i SAP (MI02).'], ['counted', 'Bogfør det (Bogfør).']]) {
     await setDocs([doc('105000960', status)])
-    await assert.rejects(anna.deleteCount(ANNA, id), error => error.code === 'COUNT_PIDOCS_ACTIVE' && error.message === 'Slet SAP-dokumenterne først. Disse SAP-dokumenter er ikke bogført: 105000960')
+    await assert.rejects(anna.deleteCount(ANNA, id), error => error.code === 'COUNT_PIDOCS_ACTIVE' && error.message === `Disse SAP-dokumenter er ikke bogført: 105000960. ${advice}`)
   }
+  await setDocs([doc('105000960', 'printed'), doc('105000961', 'counted'), doc('105000962', 'created'), { id: 'CPREF4', reference: 'CPREF4', status: 'created', lines: [], sapUnknown: { step: 'create', status: 'created' } }])
+  await assert.rejects(anna.deleteCount(ANNA, id), error => error.code === 'COUNT_PIDOCS_ACTIVE' && error.message === 'Disse SAP-dokumenter er ikke bogført: 105000960, 105000961, 105000962, reference CPREF4. Slet dem i SAP (MI02): 105000960, 105000962. Bogfør det (Bogfør): 105000961. En manager skal afklare det: reference CPREF4.')
   await setDocs([{ id: 'CPREF1', reference: 'CPREF1', status: 'creating', startedAt: ctx.clock.now, sloc: 'D000', stockType: 'unrestricted', lines: [{ material: 'R162-0717' }] }])
-  await assert.rejects(mona.deleteCount(MONA, id), error => error.code === 'COUNT_PIDOCS_ACTIVE' && /under oprettelse$/.test(error.message))
+  await assert.rejects(mona.deleteCount(MONA, id), error => error.code === 'COUNT_PIDOCS_ACTIVE' && error.message === 'Disse SAP-dokumenter er ikke bogført: reference CPREF1. Vent, til det er oprettet.')
   // SAP may have it (unknown): named by its reference, never as an empty number.
   await setDocs([{ id: 'CPREF4', reference: 'CPREF4', status: 'created', year: '2026', sloc: 'D000', stockType: 'unrestricted', lines: [{ material: 'R162-0717' }], sapUnknown: { step: 'create', status: 'created' } }])
-  await assert.rejects(mona.deleteCount(MONA, id), error => error.code === 'COUNT_PIDOCS_ACTIVE' && error.message === 'Slet SAP-dokumenterne først. Disse SAP-dokumenter er ikke bogført: et ukendt dokument (reference CPREF4), som en manager skal afklare')
+  await assert.rejects(mona.deleteCount(MONA, id), error => error.code === 'COUNT_PIDOCS_ACTIVE' && error.message === 'Disse SAP-dokumenter er ikke bogført: reference CPREF4. En manager skal afklare det.')
   assert.equal((await ctx.repo.listCounts('TCD')).length, 1, 'nothing deleted')
 
   // A reservation left by a crash (older than 20 minutes) and a deleted document do not stop it.
@@ -1666,7 +1677,7 @@ test('a document reserved on another PC while the count is being deleted stops t
   const repo = { ...ctx.repo, markDeleted: async (...args) => { const result = await ctx.repo.markDeleted(...args); await ctx.repo.changePiDocs('TCD', args[1][0], all => ({ all: { ...all, CPRACE1: { ...reservation, startedAt: ctx.clock.now } } })); return result } }
   const svc = createCountService({ repo, storeFor: ctx.storeFor, fetcher: ctx.fetcher, placementSource: null, journalsDir: path.join(ctx.root, 'local-race'), deviceId: 'race', now: () => ctx.clock.now, newId: () => 'unused', journalOptions: { autoFlush: false } })
   const entry = (await ctx.storeFor('TCD').getAsync('counts-index'))[id]
-  const refused = error => error.code === 'COUNT_PIDOCS_ACTIVE' && /under oprettelse$/.test(error.message)
+  const refused = error => error.code === 'COUNT_PIDOCS_ACTIVE' && /Vent, til det er oprettet\.$/.test(error.message)
   await assert.rejects(svc.deleteCount(ANNA, id), refused)
   assert.deepEqual((await ctx.storeFor('TCD').getAsync('counts-index', { skipCache: true }))[id], entry, 'the index entry is back as it was')
   assert.equal((await ctx.repo.getMeta('TCD', id)).id, id, 'the files are kept')
@@ -1691,7 +1702,7 @@ test('deleting a status is refused while one of its counts has an SAP document n
   await ctx.repo.changePiDocs('TCD', first.id, () => ({ all: { 105000970: doc('105000970', 'posted') } }))
   await ctx.repo.changePiDocs('TCD', second.id, () => ({ all: { 105000971: doc('105000971', 'printed') } }))
   await ctx.repo.updateStatus('TCD', 'st0open1', { state: 'locked', lockedAt: 2 }, { action: 'locked', by: { email: 'mona@example.test', name: 'Mona' } })
-  await assert.rejects(mona.deleteStatus(MONA, 'st0open1'), error => error.code === 'COUNT_PIDOCS_ACTIVE' && error.message === 'Slet SAP-dokumenterne først. Disse SAP-dokumenter er ikke bogført: 105000971 (D000 blocked)')
+  await assert.rejects(mona.deleteStatus(MONA, 'st0open1'), error => error.code === 'COUNT_PIDOCS_ACTIVE' && error.message === 'Disse SAP-dokumenter er ikke bogført: 105000971 (D000 blocked). Slet det i SAP (MI02).')
   assert.equal((await ctx.repo.listCounts('TCD')).length, 2, 'nothing deleted')
   assert.equal((await ctx.repo.getStatus('TCD', 'st0open1')).state, 'locked')
 

@@ -44,5 +44,23 @@
     ["^Kan ikke fortrydes\\. (.+) er reserveret\\.$", "Cannot be undone. $1 is reserved."],
     ["^Kan ikke fortrydes\\. (.+) er en arbejdsstation\\.$", "Cannot be undone. $1 is a work station."],
     ["^Kan ikke fortrydes\\. (.+) er deaktiveret\\.$", "Cannot be undone. $1 is deactivated."]
+  ],
+  "PIDOC_ACTIVE": [
+    ["^(\\S+) har SAP-dokument (\\d+)\\. Slet det i SAP \\(MI02\\) først\\.$", "$1 has SAP document $2. Delete it in SAP (MI02) first."],
+    ["^(\\S+) er godkendt med tællelinjer med antal og har SAP-dokument (\\d+)\\. Slet det i SAP \\(MI02\\), nulstil materialet, slet linjen og godkend igen\\.$", "$1 was approved with count lines with a quantity and has SAP document $2. Delete it in SAP (MI02), reset the material, delete the line and approve again."],
+    ["^(\\S+) har SAP-dokument (\\d+), som der er lagt antal på\\. Bogfør det \\(Bogfør\\)\\.$", "$1 has SAP document $2 with a quantity entered. Post it (Post)."],
+    ["^(\\S+) har et ukendt SAP-dokument \\((.+)\\)\\. En manager skal afklare det først\\.$", "$1 has an unknown SAP document ($2). A manager must resolve it first."],
+    ["^(\\S+) er ved at få et SAP-dokument \\((.+)\\)\\. Vent, til det er oprettet\\.$", "$1 is getting a SAP document ($2). Wait until it is created."]
+  ],
+  "COUNT_PIDOCS_ACTIVE": [
+    ["^Disse SAP-dokumenter er ikke bogført: (.+)\\. Slet det i SAP \\(MI02\\)\\.$", "These SAP documents are not posted: $1. Delete it in SAP (MI02)."],
+    ["^Disse SAP-dokumenter er ikke bogført: (.+)\\. Slet dem i SAP \\(MI02\\)\\.$", "These SAP documents are not posted: $1. Delete them in SAP (MI02)."],
+    ["^Disse SAP-dokumenter er ikke bogført: (.+)\\. Bogfør det \\(Bogfør\\)\\.$", "These SAP documents are not posted: $1. Post it (Post)."],
+    ["^Disse SAP-dokumenter er ikke bogført: (.+)\\. Bogfør dem \\(Bogfør\\)\\.$", "These SAP documents are not posted: $1. Post them (Post)."],
+    ["^Disse SAP-dokumenter er ikke bogført: (.+)\\. En manager skal afklare det\\.$", "These SAP documents are not posted: $1. A manager must resolve it."],
+    ["^Disse SAP-dokumenter er ikke bogført: (.+)\\. En manager skal afklare dem\\.$", "These SAP documents are not posted: $1. A manager must resolve them."],
+    ["^Disse SAP-dokumenter er ikke bogført: (.+)\\. Vent, til det er oprettet\\.$", "These SAP documents are not posted: $1. Wait until it is created."],
+    ["^Disse SAP-dokumenter er ikke bogført: (.+)\\. Vent, til de er oprettet\\.$", "These SAP documents are not posted: $1. Wait until they are created."],
+    ["^Disse SAP-dokumenter er ikke bogført: (.+?)\\. (?:Slet|Bogfør|En manager|Vent) [\\s\\S]*$", "These SAP documents are not posted: $1. Delete the created and printed ones in SAP (MI02), post the counted ones (Post), let a manager resolve the unknown ones and wait for the ones being created."]
   ]
 }
