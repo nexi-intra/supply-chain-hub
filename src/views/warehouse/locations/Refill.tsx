@@ -13,8 +13,10 @@ import { formatAge, materialLabel, newActionId } from '@/lib/warehouse/locations
 import { t } from '@/lib/warehouse/text'
 import type { Location, MaterialCard } from '@/types/warehouse'
 import { CountPallet } from './CountPallet'
+import { OlderPalletWarning } from './OlderPalletWarning'
+import { youngerThanOldest } from './scanChoices'
 
-/** Refill a pick place: choose the place (and its material), and fetch from the oldest reserve pallet (FIFO). */
+/** Refill a pick place: choose the place (and its material), and fetch from the oldest reserve pallet (FIFO; a younger one asks once, like Tag). */
 export function Refill({ id, version, onDone }: { id?: string; version: number; onDone: () => void }) {
   const [initialPlace, initialMaterial] = (id || '').split('|')
   const [places, setPlaces] = useState<Location[] | null>(null)
@@ -23,6 +25,8 @@ export function Refill({ id, version, onDone }: { id?: string; version: number; 
   const [material, setMaterial] = useState<string | null>(initialMaterial || null)
   const [card, setCard] = useState<MaterialCard | null>(null)
   const [quantity, setQuantity] = useState('')
+  // A younger pallet than the oldest asks once, like Tag.
+  const [confirm, setConfirm] = useState<{ pallet: MaterialCard['reserve'][number]; amount?: number } | null>(null)
   const bridge = window.electronWarehouse!.locations
 
   useEffect(() => {
@@ -39,6 +43,7 @@ export function Refill({ id, version, onDone }: { id?: string; version: number; 
     return (places || []).filter(location => !query || location.id.includes(query) || location.fixedMaterials.some(code => code.includes(query)))
   }, [places, filter])
 
+  useEffect(() => setConfirm(null), [chosen])
   // A re-read during a refill on its way to M: is older than the card, which already shows the refill.
   useEffect(() => {
     if (!chosen) { setCard(null); return }
@@ -60,9 +65,10 @@ export function Refill({ id, version, onDone }: { id?: string; version: number; 
     })
   }
 
-  function refill(pallet: MaterialCard['reserve'][number]) {
-    if (!selected) return
-    const amount = quantity.trim() ? Number(quantity) : undefined
+  function refill(pallet: MaterialCard['reserve'][number], amount: number | undefined, sure = false) {
+    if (!selected || !card) return
+    if (!sure && youngerThanOldest(card.reserve, pallet)) { setConfirm({ pallet, amount }); return }
+    setConfirm(null)
     setCard(value => (value ? takeFromCard(value, pallet.id, amount) : value))
     setQuantity('')
     void sendLocationAction(() => bridge.refill({ actionId: newActionId(), label: t(`Fyld ${selected.name} op fra ${pallet.location}`, `Refill ${selected.name} from ${pallet.location}`), location: selected.id, pallet: pallet.id, quantity: amount }), {
@@ -139,7 +145,7 @@ export function Refill({ id, version, onDone }: { id?: string; version: number; 
                 {card.reserve.length > 0 && (
                   <>
                     <div className="flex flex-wrap items-center gap-2">
-                      <Input inputMode="numeric" value={quantity} onChange={event => setQuantity(event.target.value.replace(/\D/g, ''))} placeholder={t('Hele pallen', 'Whole pallet')} className="w-36"
+                      <Input inputMode="numeric" value={quantity} onChange={event => { setConfirm(null); setQuantity(event.target.value.replace(/\D/g, '')) }} placeholder={t('Hele pallen', 'Whole pallet')} className="w-36"
                         aria-label={card.reserve[0].quantity === null ? t('stk. taget (pallen bliver stående)', 'pcs taken (the pallet stays)') : t('Antal taget fra pallen', 'Quantity taken from the pallet')} />
                       <span className="text-xs text-muted-foreground">{t('Tomt felt = hele pallen er brugt', 'Empty = the whole pallet was used')}</span>
                       {card.reserve.some(pallet => pallet.quantity === null) && <span className="text-xs text-muted-foreground">{t('Ved antal ukendt: stk. taget (pallen bliver stående)', 'Quantity unknown: pcs taken (the pallet stays)')}</span>}
@@ -154,10 +160,13 @@ export function Refill({ id, version, onDone }: { id?: string; version: number; 
                           {pallet.quantity === null && quantity.trim() && <span className="text-xs text-muted-foreground">{t(`${formatNumber(Number(quantity))} stk. taget (pallen bliver stående)`, `${formatNumber(Number(quantity))} pcs taken (the pallet stays)`)}</span>}
                           <span className="ml-auto flex flex-wrap items-center justify-end gap-2">
                             {pallet.quantity === null && <CountPallet pallet={pallet} onCounted={count => setCard(value => (value ? countedInCard(value, pallet.id, count) : value))} onDone={onDone} />}
-                            <Button size="sm" variant={index === 0 ? 'default' : 'outline'} onClick={() => refill(pallet)}>
+                            <Button size="sm" variant={index === 0 ? 'default' : 'outline'} onClick={() => refill(pallet, quantity.trim() ? Number(quantity) : undefined)}>
                               <ArrowsClockwise size={16} /> {t(`Fyldt op fra ${pallet.location}`, `Refilled from ${pallet.location}`)}
                             </Button>
                           </span>
+                          {confirm?.pallet.id === pallet.id && (
+                            <OlderPalletWarning oldest={card.reserve[0]} confirmLabel={t('Fyld op alligevel', 'Refill anyway')} onCancel={() => setConfirm(null)} onConfirm={() => refill(confirm.pallet, confirm.amount, true)} />
+                          )}
                         </div>
                       ))}
                     </div>

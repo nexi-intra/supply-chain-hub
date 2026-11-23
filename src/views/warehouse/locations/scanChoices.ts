@@ -53,3 +53,8 @@ export function openWhenReady(waitFor: string | null, result: SearchResult): Sea
   if (result.query !== waitFor) return { open: null, waitFor }
   return { open: singleHit(result.found), waitFor: null }
 }
+/** FIFO: the chosen pallet was received later than the oldest reserve pallet (`reserve` is oldest first), so Tag and Fyld op ask first. */
+export function youngerThanOldest(reserve: { id: string; receivedAt: number }[], pallet: { id: string; receivedAt: number }): boolean {
+  const oldest = reserve[0]
+  return Boolean(oldest && oldest.id !== pallet.id && oldest.receivedAt < pallet.receivedAt)
+}

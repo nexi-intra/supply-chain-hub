@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { LocationSearch } from '@/types/warehouse'
-import { enterChoice, enterOnSearch, openWhenReady } from './scanChoices'
+import { enterChoice, enterOnSearch, openWhenReady, youngerThanOldest } from './scanChoices'
 
 const list = (...codes: string[]) => codes.map(material => ({ material, description: '' }))
 
@@ -60,5 +60,18 @@ describe('enterOnSearch and openWhenReady (front-page search Enter)', () => {
   it('keeps waiting while an older result comes, and does nothing when no Enter is waiting', () => {
     expect(openWhenReady('R162-0717', { query: 'E9', found: oneRack })).toEqual({ open: null, waitFor: 'R162-0717' })
     expect(openWhenReady(null, { query: 'E9', found: oneRack })).toEqual({ open: null, waitFor: null })
+  })
+})
+describe('youngerThanOldest (Tag and Fyld op ask before a younger pallet)', () => {
+  const reserve = [{ id: 'p1', receivedAt: 100 }, { id: 'p2', receivedAt: 200 }, { id: 'p3', receivedAt: 100 }]
+
+  it('asks when the chosen pallet was received later than the oldest reserve pallet', () => {
+    expect(youngerThanOldest(reserve, reserve[1])).toBe(true)
+  })
+
+  it('does not ask for the oldest itself, for one received the same day, or without reserve pallets', () => {
+    expect(youngerThanOldest(reserve, reserve[0])).toBe(false)
+    expect(youngerThanOldest(reserve, reserve[2])).toBe(false)
+    expect(youngerThanOldest([], reserve[1])).toBe(false)
   })
 })

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { HandGrabbing, MagnifyingGlass, Warning } from '@phosphor-icons/react'
+import { HandGrabbing, MagnifyingGlass } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -12,6 +12,8 @@ import { formatAge, formatDate, materialLabel, newActionId } from '@/lib/warehou
 import { t } from '@/lib/warehouse/text'
 import type { MaterialCard } from '@/types/warehouse'
 import { CountPallet } from './CountPallet'
+import { OlderPalletWarning } from './OlderPalletWarning'
+import { youngerThanOldest } from './scanChoices'
 
 type Reserve = MaterialCard['reserve'][number]
 
@@ -50,8 +52,7 @@ export function TakePallet({ material: initial, version, onDone }: { material?: 
   useEffect(() => { if (card || initial) void load(card?.material || initial || '', true) }, [version]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function take(pallet: Reserve, quantity?: number, sure = false) {
-    const oldest = card?.reserve[0]
-    if (!sure && oldest && oldest.id !== pallet.id && oldest.receivedAt < pallet.receivedAt) { setConfirm({ pallet, quantity }); return }
+    if (!sure && card && youngerThanOldest(card.reserve, pallet)) { setConfirm({ pallet, quantity }); return }
     setConfirm(null)
     const whole = quantity === undefined || (pallet.quantity !== null && quantity >= pallet.quantity)
     setCard(value => (value ? takeFromCard(value, pallet.id, quantity) : value))
@@ -120,12 +121,7 @@ export function TakePallet({ material: initial, version, onDone }: { material?: 
                     {pallet.quantity === null && <CountPallet pallet={pallet} onCounted={quantity => setCard(value => (value ? countedInCard(value, pallet.id, quantity) : value))} onDone={onDone} />}
                   </span>
                   {confirm?.pallet.id === pallet.id && (
-                    <div className="flex w-full flex-wrap items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2">
-                      <Warning size={16} className="text-amber-600" />
-                      <span className="flex-1">{t(`Der står en ældre palle på ${card.reserve[0].location} (${formatAge(card.reserve[0].ageDays)}).`, `There is an older pallet on ${card.reserve[0].location} (${formatAge(card.reserve[0].ageDays)}).`)}</span>
-                      <Button size="sm" variant="ghost" onClick={() => setConfirm(null)}>{t('Annullér', 'Cancel')}</Button>
-                      <Button size="sm" variant="outline" onClick={() => take(confirm.pallet, confirm.quantity, true)}>{t('Tag alligevel', 'Take anyway')}</Button>
-                    </div>
+                    <OlderPalletWarning oldest={card.reserve[0]} confirmLabel={t('Tag alligevel', 'Take anyway')} onCancel={() => setConfirm(null)} onConfirm={() => take(confirm.pallet, confirm.quantity, true)} />
                   )}
                 </div>
               ))}

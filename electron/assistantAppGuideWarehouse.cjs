@@ -221,7 +221,7 @@ const WAREHOUSE_MODULE = {
       steps: [
         'Når en kasse ved arbejdsstationen er tom: åbn "Arbejdsværktøjer" > "Placeringer" og klik "Fyld pluk-plads op".',
         'Vælg pluk-pladsen (og materialet, hvis pladsen har flere). Forslaget er den ældste reservepalle med samme materiale (FIFO).',
-        'Hent kassen og klik "Fyldt op fra …". Skriv et antal, hvis du kun tog en del af pallen.',
+        'Hent kassen og klik "Fyldt op fra …". Skriv et antal, hvis du kun tog en del af pallen. Vælger du en yngre palle, får du vist den ældre og kan klikke "Fyld op alligevel".',
       ],
       notes: 'Pluk-pladser har ingen FIFO og intet antal selv; FIFO gælder pallerne, de fyldes op fra. Du kan også spørge Hubert: "hvad fylder jeg H26 op med?".',
     },
