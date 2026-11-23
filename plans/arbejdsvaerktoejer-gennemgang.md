@@ -44,7 +44,7 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
 
 ## Fase 1: Kritiske fejl
 
-- [ ] **1.1 "Tjek SAP-fejl" gemmer ikke resultatet og kan lave dobbelte mails (shared.md C1)**
+- [x] **1.1 "Tjek SAP-fejl" gemmer ikke resultatet og kan lave dobbelte mails (shared.md C1)**
   Allerede i den udgivne 1.6.7 (commit cc741f1). Bekræftet af controlleren.
   - **Hvad sker der i dag:** En admin trykker "Tjek SAP nu". SAP kører i flere minutter, og derefter fejler gemningen med "Der skete en uventet fejl". Kontrollen kommer aldrig i oversigten, gamle kontroller slettes ikke, og der efterlades en løs fil på M: hver gang. Ved "Lav mail til SAP-teamet" åbner kladden, men brugeren får en fejl, trykker igen og får endnu en kladde og endnu en Excel-fil.
   - **Hvorfor det betyder noget:** En hel fane er i stykker i produktion, resultater går tabt, og SAP-teamet kan få dobbelte mails.
@@ -55,7 +55,7 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
   - **Risiko ved ændringen:** Meget lav, for `mutateAsync` findes på alle stores, og første kørsel sammenligner bare én gang med en gammel indekspost.
   - **Hvor:** `electron/warehouse/register.cjs:106-111`; `electron/warehouse/sapCheckService.cjs:119-130` og `:168-177`
 
-- [ ] **1.2 "Nulstil" er tilladt på et materiale, der allerede er bogført i SAP (count.md C2)**
+- [x] **1.2 "Nulstil" er tilladt på et materiale, der allerede er bogført i SAP (count.md C2)**
   Bekræftet af controlleren.
   - **Hvad sker der i dag:** R162-0717 er godkendt med -3 og bogført i SAP med hånden. En tæller finder 2 mere, og skærmen foreslår "Nulstil for at tage dem med". Manageren nulstiller, godkender igen (-1) og laver et nyt dokument ud fra dagens SAP-tal, som allerede indeholder de -3, så differencen bogføres en gang til.
   - **Hvorfor det betyder noget:** Lageret i PS4 bliver rettet to gange, og det er appens egen tekst, der leder brugeren derhen.
@@ -66,7 +66,7 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
   - **Risiko ved ændringen:** Lav, men en forkert manuel "Bogført"-markering kan så ikke fortrydes i appen; hvis det skal kunne lade sig gøre, så kun for managere med en begrundelse, kun når der ikke findes et SAP-dokument, og med log.
   - **Hvor:** `electron/warehouse/countService.cjs:1172-1201`; `src/views/warehouse/count/ApprovalPanel.tsx:134` og `:142`; `src/views/warehouse/count/OverviewPanel.tsx:166`; `countService.test.cjs:696-706`
 
-- [ ] **1.3 Et delvist tag fra en palle med ukendt antal sletter hele pallen (locations.md C2)**
+- [x] **1.3 Et delvist tag fra en palle med ukendt antal sletter hele pallen (locations.md C2)**
   Bekræftet af controlleren.
   - **Hvad sker der i dag:** En palle sat på plads uden antal viser "antal ukendt". En plukker skriver 5 og trykker "Tag 5 stk.". Beskeden siger "5 stk. taget fra A2.4", men pallen slettes i Placeringer, selvom den stadig står på A2.4 med resten af varerne. Det samme sker ved "Fyld op" fra sådan en palle.
   - **Hvorfor det betyder noget:** Lager forsvinder fra systemet, pladsen ser ledig ud, næste palle sendes til en optaget plads, og FIFO springer pallen over.
@@ -77,7 +77,7 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
   - **Risiko ved ændringen:** Lav, fortryd virker stadig, men den der brugte "skriv et tal" til at rydde en palle med ukendt antal, skal nu bruge "Tag hele pallen".
   - **Hvor:** `electron/warehouse/locations/service.cjs:92-101`, `:142-152`, `:170-178`; `src/views/warehouse/locations/TakePallet.tsx:110-114`; `Refill.tsx:62-72`; `src/lib/warehouse/locationActions.ts:94-104`
 
-- [ ] **1.4 "Læg antal på" bruger gamle "dagens SAP-tal" uden at tjekke datoen (count.md C1)**
+- [x] **1.4 "Læg antal på" bruger gamle "dagens SAP-tal" uden at tjekke datoen (count.md C1)**
   - **Hvad sker der i dag:** Mandag kl. 8 henter en manager dagens SAP-tal og opretter MI31-dokumentet for R162-0717 (SAP 100, godkendt difference -3, antal 97). Om eftermiddagen udleveres 20 stk. i SAP. Onsdag trykker en admin "Læg antal på": MI04 får 97, selvom SAP nu har 80, og MI20 bogfører +17 i stedet for -3.
   - **Hvorfor det betyder noget:** Det er en forkert lagerrettelse i PS4, og den admin, der lægger antal på, er ikke den, der så den gule advarsel.
   - **Hvad skal ændres:**
@@ -88,7 +88,7 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
   - **Risiko ved ændringen:** Lav, for trin 2 tilføjer kun en afvisning, og trin 3 tilføjer én SAP-læsning på nogle minutter.
   - **Hvor:** `electron/warehouse/piDocService.cjs:97-141`; `electron/warehouse/core/countDoc.cjs:71-86`; `electron/warehouse/countService.cjs:1342-1351`; `src/views/warehouse/count/DocPanel.tsx:195-198`
 
-- [ ] **1.5 Antalslinjer på serienummerstyrede materialer tæller med i differencen, men falder ud af optællingsdokumentet (count.md C4)**
+- [x] **1.5 Antalslinjer på serienummerstyrede materialer tæller med i differencen, men falder ud af optællingsdokumentet (count.md C4)**
   - **Hvad sker der i dag:** INT4300-4921-0 har 10 i SAP. En tæller scanner 8, men to etiketter kan ikke læses, så hun tilføjer en linje "2 stk." på Reol 3. Oversigten viser difference 0 og godkendes, men dokumentet bygger kun på serienumrene, så antallet bliver 8, og ZMS_COUNT_SERIAL bogfører -2 for varer, der blev talt.
   - **Hvorfor det betyder noget:** Det godkendte tal og det bogførte tal er forskellige, og skærmen ("Serienumrene bestemmer") siger, at man skal stole på det forkerte.
   - **Hvad skal ændres:**
@@ -98,7 +98,7 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
   - **Risiko ved ændringen:** Lav, tællerne mister en nødløsning for ulæselige etiketter, men import fra materialedokument og indtastning af serienummeret dækker det.
   - **Hvor:** `electron/warehouse/countService.cjs:799-815`; `src/views/warehouse/count/LinesPanel.tsx:388`; `electron/warehouse/core/countState.cjs:128`, `:198-206`, `:247-258`; `electron/warehouse/core/countDoc.cjs:84-85`
 
-- [ ] **1.6 En fejlet eller tom SAP-eksport bliver brugt som rigtigt lager (count.md C3) (usikkert)**
+- [x] **1.6 En fejlet eller tom SAP-eksport bliver brugt som rigtigt lager (count.md C3) (usikkert)**
   Kodevejen er bekræftet. Hvor ofte SAP-skærmene opstår, er usikkert.
   - **Hvad sker der i dag:** Hvis MB52 bliver stående på startskærmen (fx ved en fejl- eller adgangsbesked), eller IQ09 ikke viser en tabel, melder scriptet "ok" med 0 rækker. "Hent dagens SAP-tal" har ingen forhåndsvisning og gemmer det tomme resultat, så SAP i dag bliver 0, og en tom serienummerliste bliver til et nultal ("Zero Count") i MI04.
   - **Hvorfor det betyder noget:** Et nultal på et dokument bogfører hele beholdningen af de materialer som tab.
@@ -110,7 +110,7 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
   - **Risiko ved ændringen:** Lav til middel, fordi en liste, der virkelig er tom, skal igennem bekræftelsen.
   - **Hvor:** `electron/warehouse/sap/export.vbs:194-199` og `:218`; `sap/matdoc.vbs:133-138`; `electron/warehouse/sapFetch.cjs:56-66`; `countService.cjs:1342-1351`; `piDocService.cjs:115`
 
-- [ ] **1.7 Handlinger, der venter i vinduets kø, går tabt, når Hub lukkes (locations.md C5)**
+- [x] **1.7 Handlinger, der venter i vinduets kø, går tabt, når Hub lukkes (locations.md C5)**
   - **Hvad sker der i dag:** Ved vagtskifte tager Bo tre paller hurtigt efter hinanden, og skærmen siger, at alle tre er taget. Tag 1 er på vej til M:, mens tag 2 og 3 venter i vinduet. Bo lukker Hub, lukkevagten venter kun på tag 1, og tag 2 og 3 når aldrig frem; det samme sker ved genindlæsning, nedbrud, "Luk alligevel" eller hvis PC'en slukkes.
   - **Hvorfor det betyder noget:** Lager, som brugeren fik at vide var registreret, bliver aldrig registreret, og der kommer ingen fejlbesked.
   - **Hvad skal ændres:**
@@ -120,7 +120,7 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
   - **Risiko ved ændringen:** Middel for trin 1, fordi skærmenes visning regner med én handling ad gangen, og lav for trin 2, som kun er én ekstra skrivning på den lokale disk.
   - **Hvor:** `src/lib/warehouse/locationActions.ts:56-90`; `electron/main.cjs:825-836`; `electron/mainActivity.cjs:19-33`; `electron/warehouse/locations/outbox.cjs:113-126`
 
-- [ ] **1.8 Handlinger i køen kasseres som "fejlet" ved en kort låse-timeout (KV_LOCK_BUSY) (locations.md C4)**
+- [x] **1.8 Handlinger i køen kasseres som "fejlet" ved en kort låse-timeout (KV_LOCK_BUSY) (locations.md C4)**
   - **Hvad sker der i dag:** M: er nede i 10 minutter, og fem PC'er lægger handlinger i kø. Når M: er tilbage, sender alle på én gang, og nogle giver op med KV_LOCK_BUSY. Outboxen gemmer dem som endelige fejl, fjerner dem fra køen og skriver "Prøv igen om et øjeblik", men der er intet at prøve igen; en direkte handling en travl morgen bliver også afvist i stedet for at vente.
   - **Hvorfor det betyder noget:** Indsættelser, tag og flytninger lavet, mens M: var nede, går tabt lige efter, at M: er tilbage, og den der ser beskeden, er måske ikke den, der gjorde arbejdet.
   - **Hvad skal ændres:**
@@ -130,7 +130,7 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
   - **Risiko ved ændringen:** Lav, for fejlen opstår, før noget køres, så et nyt forsøg kan ikke udføre handlingen to gange.
   - **Hvor:** `electron/warehouse/register.cjs:442`; `electron/warehouse/locations/outbox.cjs:68-77`; `electron/fileLock.cjs:277-293`; `electron/store.cjs:29`
 
-- [ ] **1.9 En handling gemmes fil for fil, og en fejl midt i plus genafspilning udfører den to gange (locations.md C3)**
+- [x] **1.9 En handling gemmes fil for fil, og en fejl midt i plus genafspilning udfører den to gange (locations.md C3)**
   - **Hvad sker der i dag:** Ved "Sæt palle på plads" skrives først pallerne, så `meta` med handlings-id'et og til sidst historikken. Falder M: ud efter pallerne, men før `meta`, ser det ud som en fejl, outboxen genafspiller, finder intet id og opretter pallen igen, så der er to paller for én fysisk palle; ved et delvist tag trækkes antallet fra to gange. Falder M: ud mellem `meta` og historikken, er handlingen udført uden loglinje og kan hverken ses eller fortrydes.
   - **Hvorfor det betyder noget:** Dobbelte paller og dobbelte fradrag opstår netop, når M: er ustabil, og ingen ser det før en optælling.
   - **Hvad skal ændres:**
@@ -142,7 +142,7 @@ Linjenumre i "Hvor" passer til filerne, som de så ud den 23.11.2026.
   - **Risiko ved ændringen:** Middel, fordi den fælles skrivevej ændres, og 1.6.6-klienter skriver de samme nøgler uden at gøre en journal færdig; det faste palle-id alene er lav risiko.
   - **Hvor:** `electron/warehouse/locations/repository.cjs:31-35`, `:92`, `:99-103`; `electron/store.cjs:751-768`; `electron/warehouse/locations/outbox.cjs:113-126`; `electron/warehouse/register.cjs:442`
 
-- [ ] **1.10 Ret palle sender alle felter og ruller andres tag tilbage i stilhed (locations.md C1)**
+- [x] **1.10 Ret palle sender alle felter og ruller andres tag tilbage i stilhed (locations.md C1)**
   - **Hvad sker der i dag:** En palle på A2.4 viser 100 stk. på Bos pallekort. Lis tager 30 på sin PC, så der er 70. Bo tilføjer noten "Hjørne skadet" og gemmer, men anmodningen indeholder stadig antal 100, så pallen sættes tilbage til 100, og loggen siger kun "Pallen rettet".
   - **Hvorfor det betyder noget:** Lageret bliver forkert uden spor af hvorfor, og ingen leder efter en fejl, fordi personen kun ændrede en note.
   - **Hvad skal ændres:**
