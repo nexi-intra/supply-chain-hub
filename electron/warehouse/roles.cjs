@@ -19,9 +19,9 @@ const lower = value => String(value || '').trim().toLowerCase()
 const isManager = user => user.role === 'manager' || user.role === 'creator'
 
 function createRoles({ storeFor, listTeamUsers, now = Date.now }) {
-  async function read(team) {
+  async function read(team, options) {
     const store = storeFor(team)
-    const stored = await store.getAsync(ROLES_KEY)
+    const stored = await store.getAsync(ROLES_KEY, options)
     // A missing file is "no roles yet" only while the team folder is there; with M: down it must not read as "not admin".
     if (stored === undefined && store.dataDir && !(await fs.promises.access(store.dataDir).then(() => true, () => false))) throw codeError('STORAGE_UNAVAILABLE', 'Lagerstyrings data kan ikke læses lige nu')
     const value = stored || {}
@@ -42,7 +42,10 @@ function createRoles({ storeFor, listTeamUsers, now = Date.now }) {
   async function roleOf(user) {
     if (user.statusManager) return 'status-manager'
     if (isManager(user)) return 'manager'
-    const { admins, statusManagers } = await read(user.team)
+    // Not queued behind other reads for one of the store's shared read slots: the role cache gives a slow read 1 s
+    // (createRoleCache), and a queue on a busy but working M: must not turn an admin into a plain user. It is one small
+    // file, and the role cache reads it at most once per person at a time.
+    const { admins, statusManagers } = await read(user.team, { unthrottled: true })
     const email = lower(user.email)
     return statusManagers[email] ? 'status-manager' : admins[email] ? 'admin' : 'user'
   }

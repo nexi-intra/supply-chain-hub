@@ -731,6 +731,36 @@ test('a status manager past the role limit keeps the role when M: answers in tim
   }
 })
 
+test('a status manager past the role limit keeps the role while the shared read slots are busy with slow reads', async () => {
+  const realNow = Date.now
+  const realReadFile = fs.promises.readFile
+  const held = []
+  let clock = realNow()
+  Date.now = () => clock
+  // Six slow reads of other files hold every shared read slot of the store (MAX_CONCURRENT_READS) for 1.5 s.
+  fs.promises.readFile = (file, ...rest) => {
+    if (path.basename(String(file)).startsWith('langsom')) return new Promise(resolve => held.push(resolve)).then(() => realReadFile(file, ...rest))
+    return realReadFile(file, ...rest)
+  }
+  const slow = []
+  try {
+    const { root, call } = setup()
+    await call('mona', 'roles:set-role', { email: 'anna@nexi.test', role: 'status-manager' })
+    assert.equal((await call('anna', 'me')).role, 'manager')
+    const other = createStore(path.join(root, '_slow'))
+    for (let i = 0; i < 6; i++) slow.push(other.getAsync(`langsom-${i}`, { skipCache: true }).catch(() => {}))
+    const release = setTimeout(() => held.forEach(resolve => resolve()), 1500)
+    clock += 61000
+    assert.equal((await call('anna', 'me')).role, 'manager', 'M: is fine: the queue for a read slot is not a slow M:')
+    clearTimeout(release)
+  } finally {
+    Date.now = realNow
+    fs.promises.readFile = realReadFile
+    held.forEach(resolve => resolve())
+    await Promise.all(slow)
+  }
+})
+
 // M: hanging must never freeze the Hub: stores are made with fs.promises.mkdir, never mkdirSync on the main thread.
 test('the stores on M: are opened without a synchronous mkdir, and a report is looked up without a synchronous call', async t => {
   const { root, call } = setup()
