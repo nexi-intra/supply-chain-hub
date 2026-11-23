@@ -1055,6 +1055,7 @@ test('kif move by material document moves to D005 and is found by search from th
   assert.deepEqual(asked, [{ team: 'TCD', document: ' 4900229137  2026 01 ' }])
   assert.deepEqual(preview, {
     serials: ['A', 'B', 'N'],
+    document: '4900229137 2026 01',
     outcomes: { A: 'to-target', B: 'to-target', N: 'not-found' },
     transfers: [{ wave: 1, from: 'D000', to: 'D005', serials: ['A'] }, { wave: 1, from: 'D001', to: 'D005', serials: ['B'] }],
   })
@@ -1098,6 +1099,61 @@ test('kif move skips terminals already on D005', async () => {
     lines.map(line => [line.serial, line.kind, line.outcome, line.from, line.to, line.docs]),
     [['A', 'kif', 'skipped', 'D005', null, []], ['B', 'kif', 'blocked-stock', 'D000', null, []]],
   )
+})
+
+test('kif move moves terminals from several storage locations, one transfer per location', async () => {
+  const sap = fakeSap({
+    A: { material: 'M-0', sloc: 'D000' }, B: { material: 'M-3', sloc: 'D003' }, C: { material: 'M-6', sloc: 'D006' }, D: { material: 'M-0', sloc: 'D005' },
+  })
+  const ctx = setup({ sap })
+  const svc = ctx.service()
+  const moved = await svc.kifMove(ANNA, { serials: ['A', 'B', 'C', 'D'] })
+  const calls = sap.calls.filter(([kind]) => kind === 'transfer').map(([, call]) => call)
+  assert.equal(calls.length, 3)
+  assert.deepEqual(calls.map(({ from, to, serials }) => ({ from, to, serials })).sort((a, b) => a.from.localeCompare(b.from)), [
+    { from: 'D000', to: 'D005', serials: ['A'] },
+    { from: 'D003', to: 'D005', serials: ['B'] },
+    { from: 'D006', to: 'D005', serials: ['C'] },
+  ])
+  assert.equal(moved.results.D.outcome, 'skipped')
+  assert.deepEqual(moved.results.D.steps, [])
+  for (const [serial, from] of [['A', 'D000'], ['B', 'D003'], ['C', 'D006']]) {
+    assert.equal(moved.results[serial].outcome, 'to-target')
+    assert.deepEqual(moved.results[serial].steps.map(step => [step.from, step.to]), [[from, 'D005']], serial)
+  }
+})
+
+test('a material document without year is looked up with the current year, then the previous year', async () => {
+  const sap = fakeSap({ A: { material: 'M-0', sloc: 'D000' } })
+  const asked = []
+  const matdocs = async ({ team, document }) => {
+    asked.push(document)
+    return { document, transaction: 'ZMS_REP', rows: document === '4905204948 2025' ? [{ serial: 'a', material: 'M-0' }] : [] }
+  }
+  const ctx = setup({ sap, matdocs })
+  ctx.clock.now = new Date(2026, 0, 5, 8, 0).getTime()
+  const svc = ctx.service()
+  const preview = await svc.kifPreview(ANNA, { document: ' 4905204948 ' })
+  assert.deepEqual(asked, ['4905204948 2026', '4905204948 2025'])
+  assert.deepEqual(preview.serials, ['A'])
+  assert.equal(preview.document, '4905204948 2025', 'the document used is returned with its year')
+
+  asked.length = 0
+  await assert.rejects(svc.kifPreview(ANNA, { document: '4905204949' }), {
+    code: 'SOFTWARELOAD_INVALID', message: 'Materialedokumentet har ingen serienumre. Skriv det som fx "4905204948 2026"',
+  })
+  assert.deepEqual(asked, ['4905204949 2026', '4905204949 2025'])
+})
+
+test('a material document with year is used as given', async () => {
+  const asked = []
+  const matdocs = async ({ document }) => {
+    asked.push(document)
+    return { document, transaction: 'ZMS_REP', rows: [] }
+  }
+  const svc = setup({ sap: fakeSap({}), matdocs }).service()
+  await assert.rejects(svc.kifPreview(ANNA, { document: '4905204948 2024' }), { code: 'SOFTWARELOAD_INVALID' })
+  assert.deepEqual(asked, ['4905204948 2024'], 'no other year is tried')
 })
 
 test('kif move needs writing in SAP, refuses a double click, and a serial SAP refuses gets its message', async () => {

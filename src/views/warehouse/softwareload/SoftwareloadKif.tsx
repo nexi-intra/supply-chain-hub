@@ -43,8 +43,9 @@ export function SoftwareloadKif({ user, writeEnabled, active, onBusy }: { user: 
     setLoading(true)
     try {
       const request = byDocument ? { document: matdoc.trim() } : { serials: parsed.serials }
-      setPreview(await window.electronWarehouse!.softwareload.kifPreview(request))
-      setUsedDocument(byDocument ? matdoc.trim() : '')
+      const planned = await window.electronWarehouse!.softwareload.kifPreview(request)
+      setPreview(planned)
+      setUsedDocument(byDocument ? planned.document ?? matdoc.trim() : '')
     } catch (error) {
       setFailed(errorMessage(error))
     } finally {
@@ -148,8 +149,8 @@ export function SoftwareloadKif({ user, writeEnabled, active, onBusy }: { user: 
         </div>
         <div className="space-y-2">
           <Label htmlFor="sl-kif-doc">{t('Eller et materialedokument', 'Or a material document')}</Label>
-          <Input id="sl-kif-doc" value={matdoc} onChange={event => setMatdoc(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && byDocument) void showPreview() }} placeholder="4900229137 2026 01" className="font-mono" autoComplete="off" />
-          <p className="text-xs text-muted-foreground">{t('Dokumentnummer og eventuelt år og linje. Så bruges dokumentets serienumre i stedet for listen.', 'Document number and, if needed, year and line. Then the serial numbers of the document are used instead of the list.')}</p>
+          <Input id="sl-kif-doc" value={matdoc} onChange={event => setMatdoc(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && byDocument) void showPreview() }}           placeholder={t('4905204948 eller 4905204948 2026', '4905204948 or 4905204948 2026')} className="font-mono" autoComplete="off" />
+                    <p className="text-xs text-muted-foreground">{t('Dokumentnummer, året er valgfrit. Uden år prøves i år og sidste år. Så bruges dokumentets serienumre i stedet for listen.', 'Document number, the year is optional. Without a year, this year and last year are tried. Then the serial numbers of the document are used instead of the list.')}</p>
         </div>
       </div>
       {failed && <ErrorLine text={failed} />}

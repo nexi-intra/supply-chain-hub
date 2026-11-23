@@ -795,17 +795,26 @@ function createSoftwareloadService({
   // A double click on "Flyt til D005" in this process; a second PC would find the moved ones on D005 and skip them.
   const movingToKif = new Set()
 
-  /** The serials to move into KIF: those of the material document when one is given, else the scanned or pasted ones. */
+  /**
+   * The serials to move into KIF: those of the material document when one is given, else the scanned or pasted ones.
+   * SAP finds a document by its number alone in neither ZMS_REP nor ZMS_PREP, so a number without year is tried with
+   * this year and then last year; `document` is the one that had serials, with its year.
+   */
   async function kifSerials(user, { serials, document } = {}) {
     if (!String(document ?? '').trim()) {
       const typed = serialsOf(serials)
       if (!typed.length) throw noSerials()
-      return typed
+      return { serials: typed }
     }
-    const fetched = await matdocs({ team: user.team, document })
-    const found = serialsOf(fetched.rows.map(row => row.serial))
-    if (!found.length) throw codeError('SOFTWARELOAD_INVALID', 'Materialedokumentet har ingen serienumre')
-    return found
+    const normalized = normalizeMatdoc(document)
+    const year = new Date(now()).getFullYear()
+    const attempts = normalized && /^\d{10}$/.test(normalized) ? [`${normalized} ${year}`, `${normalized} ${year - 1}`] : [document]
+    for (const attempt of attempts) {
+      const fetched = await matdocs({ team: user.team, document: attempt })
+      const found = serialsOf(fetched.rows.map(row => row.serial))
+      if (found.length) return { serials: found, document: normalizeMatdoc(attempt) }
+    }
+    throw codeError('SOFTWARELOAD_INVALID', 'Materialedokumentet har ingen serienumre. Skriv det som fx "4905204948 2026"')
   }
 
   /** Plans the moves to D005 from where SAP says the terminals stand now; nothing is failed and nothing goes via D005. */
@@ -816,9 +825,9 @@ function createSoftwareloadService({
   }
 
   async function kifPreview(user, input = {}) {
-    const serials = await kifSerials(user, input)
+    const { serials, document } = await kifSerials(user, input)
     const { outcomes, transfers } = await kifPlan(user.team, serials)
-    return { serials, outcomes, transfers }
+    return { serials, ...(document ? { document } : {}), outcomes, transfers }
   }
 
   /** Moves the serials the user confirmed to D005. SAP is asked again, as stock may have moved since the preview. */

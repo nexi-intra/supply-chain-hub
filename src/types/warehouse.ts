@@ -1302,6 +1302,8 @@ export interface SoftwareloadFinishResult {
 
 export interface SoftwareloadKifPreview {
   serials: string[]
+  /** The material document whose serials these are, with its year; only when one was given. */
+  document?: string
   outcomes: Record<string, SoftwareloadOutcome>
   transfers: SoftwareloadTransfer[]
 }
