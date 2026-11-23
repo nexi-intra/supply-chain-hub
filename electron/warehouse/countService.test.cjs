@@ -1060,6 +1060,7 @@ test('"Hent dagens SAP-tal" refuses figures without a line for an approved mater
   assert.equal(ctx.fetcher.calls, callsBefore, 'no second SAP export')
   assert.ok(callsBefore > exports)
   assert.deepEqual([doc.fetchedAt, row(doc).sapToday, row(doc).docQty], [exportedAt, 0, -3])
+  assert.deepEqual(doc.confirmedMissing, { fetchedAt: exportedAt, materials: ['R162-0717 D000'] }, 'kept with the figures, so "Læg antal på" does not ask again')
 
   // The next fetch also misses INT4300-4921-0-R in MB52 (approved meanwhile; IQ09 still lists U1, which is SAP i dag 0
   // all the same): confirming only what was shown before is not enough.
@@ -1079,7 +1080,8 @@ test('"Hent dagens SAP-tal" refuses figures without a line for an approved mater
   await ctx.repo.setApproval('TCD', id, 'R162-0717', { ...(await ctx.repo.getApprovals('TCD', id))['R162-0717'], frozen: [{ sloc: 'D000', stockType: 'unrestricted', sapQty: 0, counted: 0, diff: 0, valueDiff: 0 }] })
   ctx.sap.mb52 = [stock('INT4300-4921-0-R', 'D000', 1)]
   ctx.tick(60_000)
-  assert.equal((await mona.fetchDocStock(MONA, id)).fetchedAt, ctx.clock.now)
+  const plain = await mona.fetchDocStock(MONA, id)
+  assert.deepEqual([plain.fetchedAt, plain.confirmedMissing], [ctx.clock.now, undefined], 'nothing confirmed for these figures')
 })
 
 test('the SAP figures of the day can be fetched after the status is locked; nothing else in the count changes', async () => {

@@ -159,6 +159,21 @@ test('quantities are never entered from day figures that lack an approved materi
   assert.deepEqual(calls, [{ docNo: '105000916', year: '2026', entries: [{ material: 'R1', qty: 0 }, { material: 'R2', qty: 3 }, { material: 'R4', qty: 1 }] }])
   assert.equal(stored.D7.status, 'counted')
 
+  // Confirmed already at "Hent dagens SAP-tal" for these very figures (same fetchedAt): not asked again. Figures saved
+  // by 1.6.7 (no list) or a list from other figures still ask.
+  const fetchedAt = Date.now()
+  counts.countDoc = async () => ({ fetchedAt, rows, confirmedMissing: { fetchedAt, materials: ['R1 D000'] } })
+  stored.D9 = doc('D9', '105000918', ['R1'])
+  calls.length = 0
+  await service.count(ANNA, 'c1', 'D9')
+  assert.deepEqual(calls, [{ docNo: '105000918', year: '2026', entries: [{ material: 'R1', qty: 0 }] }])
+  stored.D10 = doc('D10', '105000919', ['R1'])
+  for (const confirmedMissing of [undefined, { fetchedAt: fetchedAt - 1, materials: ['R1 D000'] }, { fetchedAt, materials: ['R2 D000'] }]) {
+    counts.countDoc = async () => ({ fetchedAt, rows, ...(confirmedMissing ? { confirmedMissing } : {}) })
+    await assert.rejects(service.count(ANNA, 'c1', 'D10'), { code: 'PIDOC_MISSING_CONFIRM' })
+  }
+  counts.countDoc = async () => ({ fetchedAt: Date.now(), rows })
+
   // A document whose materials are all in the figures is entered at once.
   calls.length = 0
   await service.count(ANNA, 'c1', 'D8')

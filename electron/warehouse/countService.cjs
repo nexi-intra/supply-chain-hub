@@ -1410,7 +1410,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const { doc, result } = await docOf(state)
     // The serial lists stay in the main process (copySerials / SAP entry); the screen only needs the numbers.
     const rows = result.rows.map(({ docSerials, ...row }) => row)
-    return { fetchedAt: doc?.fetchedAt || null, fetchedBy: doc?.by || null, canFetch: canFetchDoc(user, rights), ...result, rows }
+    return { fetchedAt: doc?.fetchedAt || null, fetchedBy: doc?.by || null, canFetch: canFetchDoc(user, rights), ...(doc?.confirmedMissing ? { confirmedMissing: doc.confirmedMissing } : {}), ...result, rows }
   }
 
   /**
@@ -1454,7 +1454,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       pending.set(crypto.randomBytes(16).toString('hex'), { at: kept && !newer ? kept[1].at : now(), email, team: state.team, countId: state.id, docStock: true, fetchedAt, lines })
       throw codeError('DOC_STOCK_MISSING', `Dagens SAP-tal har ingen linje for godkendte materialer, som SAP havde på lager ved godkendelsen. Tallene er ikke gemt. Gælder: ${missing.sort().join(', ')}`)
     }
-    await repo.setCountDoc(state.team, state.id, { fetchedAt, by: me(user), withSerials: true, lines })
+    // Kept with the figures it was given for, so "Læg antal på" does not ask about the same materials again.
+    await repo.setCountDoc(state.team, state.id, { fetchedAt, by: me(user), withSerials: true, lines, ...(missing.length ? { confirmedMissing: { fetchedAt, materials: missing.sort() } } : {}) })
     return countDoc(user, id)
   }
 
