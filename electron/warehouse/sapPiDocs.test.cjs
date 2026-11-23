@@ -108,12 +108,24 @@ test('serials: SAP\'s counted quantity is read as a SAP number; a count that dif
   await assert.rejects(writer.enterSerials({ docNo: '105000893', year: '2026', material: 'INT1-0', serials: ['S1'] }), { code: 'PIDOC_NOT_COUNTED', message: 'PIDOC_NOT_COUNTED: INT1-0 står ikke som talt i SAP' })
 })
 
-test('pidoc-serials.vbs compares SAP\'s counted quantity with the serials sent, like pidoc-count.vbs', () => {
+test('pidoc-serials.vbs compares SAP\'s counted quantity with the serials sent as text, independent of the Windows locale', () => {
   const source = fs.readFileSync(path.join(__dirname, 'sap', 'pidoc-serials.vbs'), 'utf8')
   const marked = source.indexOf('If list.GetCellValue(row, "XZAEL") <> "X" Then Finish False, "not-counted", ""')
-  const compared = source.indexOf('If CDbl(list.GetCellValue(row, "MENGE")) <> count Then Finish False, "not-counted: " & list.GetCellValue(row, "MENGE"), ""')
+  const read = source.indexOf('menge = Trim(list.GetCellValue(row, "MENGE"))')
+  const compared = source.indexOf('If Not OnlyDigits(counted) Or counted <> CStr(count) Then Finish False, "not-counted: " & menge, ""')
   const done = source.indexOf('Finish True, message,')
-  assert.ok(marked > 0 && compared > marked && done > compared)
+  assert.ok(marked > 0 && read > marked && compared > read && done > compared)
+  assert.doesNotMatch(source, /CDbl\(/, 'CDbl reads "1.234" by the Windows locale')
+  assert.match(source, /^Dim [^\r\n]*\bcounted, comma, menge\b/m, 'declared (Option Explicit)')
+  assert.match(source, /^Function OnlyDigits\(value\)\r$/m)
+})
+
+test('the MI04 read-back fails when a wanted material is not in the list at all', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'sap', 'pidoc-count.vbs'), 'utf8')
+  const check = source.indexOf('If matched.Count <> wanted.Count Then Finish False, "verify-failed", ""')
+  assert.ok(check > 0 && check < source.indexOf('If Len(wrong) > 0 Then Finish False, "not-counted: "'))
+  assert.match(source, /^    matched\(material\) = True\r$/m)
+  assert.match(source, /^Dim [^\r\n]*\bmatched\b/m, 'declared (Option Explicit)')
 })
 
 test('quantities: MI04 for the whole document; 0 is allowed (Zero Count)', async () => {
@@ -138,7 +150,8 @@ test('posting: MI20 for several documents; MI22 decides what was posted; the mat
   const writer = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript, clipboard: { writeText: text => clip.push(text), readText: () => clip.at(-1) }, system: 'QS4', waitSeconds: 300 })
   const result = await writer.postDocuments({ docNos: ['105000893', '105000894', '105000999'], year: '2026' })
   assert.deepEqual(result.posted, ['105000893', '105000894'])
-  assert.deepEqual(result.open, ['105000999'], 'not in MI22 = not confirmed')
+  assert.deepEqual(result.open, [], 'nothing MI22 lists as active')
+  assert.deepEqual(result.unknown, ['105000999'], 'not in MI22 = unknown, never "open"')
   assert.deepEqual(result.materialDocs, { 105000894: '4905204847' })
   assert.equal(result.differences.length, 3)
   assert.deepEqual([calls[0].name, calls[0].args.slice(0, 2), calls[0].args.slice(-2)], ['pidoc-post', ['QS4', '2026'], ['105000893', 'clipboard']])
@@ -186,6 +199,50 @@ test('MI04 and ZMS_COUNT_SERIAL after a timeout: the read-back decides; when it 
   await assert.rejects(counts(), { code: 'PIDOC_NOT_COUNTED' }, 'read back: SAP does not have it')
   next = { ok: false, error: 'not-counted', timedOut: true }
   await assert.rejects(serials(), { code: 'PIDOC_NOT_COUNTED' })
+})
+
+test('posting: a document MI22 lists as active is open; one MI22 does not list is unknown', async () => {
+  const runScript = async (name, args) => {
+    fs.copyFileSync(path.join(__dirname, 'fixtures', 'sap', 'pidoc', 'mi20-list.txt'), path.join(args[2], args[3]))
+    fs.writeFileSync(path.join(args[2], args[4]), MI22)
+    return JSON.stringify({ ok: true, ticked: 1, screens: 'SAPMSSY0/120/1' })
+  }
+  const clip = []
+  const writer = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript, clipboard: { writeText: text => clip.push(text), readText: () => clip.at(-1) }, system: 'QS4', waitSeconds: 300 })
+  const result = await writer.postDocuments({ docNos: ['100000784', '105000900', '105000999'], year: '2026' })
+  assert.deepEqual([result.posted, result.open, result.unknown], [['100000784'], ['105000900'], ['105000999']])
+})
+
+test('posting: any failure after the hand-over (the screens are logged) is unknown; MI22 checks its document selection', async () => {
+  let next
+  const runScript = async (name, args) => { fs.copyFileSync(path.join(__dirname, 'fixtures', 'sap', 'pidoc', 'mi20-list.txt'), path.join(args[2], args[3])); return JSON.stringify(next) }
+  const writer = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
+  next = { ok: false, error: "field-not-set: wnd[0]/usr/txtIM_IBLNR-LOW = 'HELLO'", screens: 'SAPMSSY0/120/1 > SAPMM07I/701/1 []' }
+  await assert.rejects(writer.postDocuments({ docNos: ['105000894'], year: '2026' }), UNKNOWN)
+  next = { ok: false, error: "field-not-set: wnd[0]/usr/txtIM_IBLNR-LOW = ''", screens: '' }
+  await assert.rejects(writer.postDocuments({ docNos: ['105000894'], year: '2026' }), { code: 'PIDOC_SAP_FAILED' }, 'MI20 before the hand-over: nothing posted')
+  const source = fs.readFileSync(path.join(__dirname, 'sap', 'pidoc-post.vbs'), 'utf8')
+  const mi22 = source.indexOf('okcd").Text = "/nMI22"')
+  const upload = source.indexOf('If fromClipboard Then UploadClipboard', mi22)
+  assert.ok(mi22 > 0 && upload > mi22)
+  assert.equal(source.slice(upload).split('\r\n')[1], 'Check "wnd[0]/usr/txtIM_IBLNR-LOW", firstDoc', 'a wrong clipboard upload in MI22 stops')
+})
+
+test('MI04 and ZMS_COUNT_SERIAL: a failed read-back is unknown, also without a timeout', async () => {
+  const runScript = async () => '{"ok":false,"error":"verify-failed"}'
+  const writer = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
+  await assert.rejects(writer.enterCounts({ docNo: '105000894', year: '2026', entries: [{ material: 'R1', qty: 3 }] }), UNKNOWN)
+  await assert.rejects(writer.enterSerials({ docNo: '105000893', year: '2026', material: 'INT1-0', serials: ['S1'] }), UNKNOWN)
+})
+
+test('a script killed at the time limit while the user may have saved is unknown, not "Prøv igen"', async () => {
+  const runScript = async () => { throw Object.assign(new Error('SAP_TIMEOUT'), { code: 'SAP_TIMEOUT' }) }
+  const writer = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
+  await assert.rejects(writer.enterSerials({ docNo: '105000893', year: '2026', material: 'INT1-0', serials: ['S1'] }), UNKNOWN)
+  await assert.rejects(writer.enterCounts({ docNo: '105000894', year: '2026', entries: [{ material: 'R1', qty: 3 }] }), UNKNOWN)
+  await assert.rejects(writer.postDocuments({ docNos: ['105000894'], year: '2026' }), UNKNOWN)
+  const failing = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript: async () => { throw Object.assign(new Error('SAP_SCRIPT_FAILED'), { code: 'SAP_SCRIPT_FAILED' }) }, clipboard: null, system: 'QS4', waitSeconds: 300 })
+  await assert.rejects(failing.enterCounts({ docNo: '105000894', year: '2026', entries: [{ material: 'R1', qty: 3 }] }), { code: 'SAP_SCRIPT_FAILED' }, 'other failures are passed on')
 })
 
 test('the waiting scripts read SAP back after a timeout instead of ending with "timeout"', () => {

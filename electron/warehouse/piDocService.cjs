@@ -262,7 +262,7 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
       }),
       markPosted(),
     ])
-    return { ...(await list(user, id)), posted: result.posted, open: result.open, marked }
+    return { ...(await list(user, id)), posted: result.posted, open: result.open, unknown: result.unknown || [], marked }
   }
 
   /** MI02 for a wrong document (created or printed); it frees the materials for a new document. */

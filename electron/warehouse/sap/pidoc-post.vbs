@@ -276,6 +276,7 @@ SetFields Array("ctxtIM_MATNR-LOW", "ctxtIM_MATNR-HIGH", "ctxtIM_WERKS-HIGH", "c
   "txtIM_IBLNR-LOW", "txtIM_IBLNR-HIGH", "ctxtIM_INVNU-LOW", "ctxtIM_INVNU-HIGH", "ctxtZLDAT-LOW", "ctxtZLDAT-HIGH", "ctxtGIDAT-LOW", "ctxtGIDAT-HIGH", _
   "txtBUCHP-LOW", "txtBUCHP-HIGH", "ctxtPA_VARI"), ""
 If fromClipboard Then UploadClipboard "btn%_IM_IBLNR_%_APP_%-VALU_PUSH", "txtIM_IBLNR-LOW" Else s.findById("wnd[0]/usr/txtIM_IBLNR-LOW").Text = firstDoc
+Check "wnd[0]/usr/txtIM_IBLNR-LOW", firstDoc
 s.findById("wnd[0]/usr/ctxtIM_WERKS-LOW").Text = PLANT
 If Err.Number <> 0 Then Err.Clear : Finish False, "mi22-screen-changed"
 s.findById("wnd[0]").sendVKey 8

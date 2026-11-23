@@ -44,6 +44,15 @@ const unknownState = () => writeError('PIDOC_UNKNOWN', 'Optælling ved ikke, om 
 function createPiDocWriter({ bridge, runScript, clipboard, system, tempRoot = os.tmpdir(), waitSeconds = WAIT_SECONDS }) {
   let writing = false
 
+  /** A script that hands SAP to the user: killed at the time limit, the user may have saved meanwhile. */
+  async function runWaiting(name, args, options) {
+    try {
+      return await runScript(name, args, options)
+    } catch (error) {
+      if (error?.code === 'SAP_TIMEOUT') throw unknownState()
+      throw error
+    }
+  }
   async function exclusiveWrite(job) {
     if (writing) throw writeError('PIDOC_BUSY', 'Der er allerede et SAP-dokument i gang på denne PC')
     writing = true
@@ -64,7 +73,7 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, tempRoot = os
     return exclusiveWrite(async dir => {
       await fs.promises.writeFile(path.join(dir, 'serials.txt'), list.join('\r\n'), 'utf8')
       onWaiting()
-      const result = lastJsonLine(await runScript('pidoc-serials', [system, String(docNo), String(year), String(material).toUpperCase(), dir, 'serials.txt', 'errors.txt', String(waitSeconds)], { timeoutMs: (waitSeconds + 300) * 1000 }))
+      const result = lastJsonLine(await runWaiting('pidoc-serials', [system, String(docNo), String(year), String(material).toUpperCase(), dir, 'serials.txt', 'errors.txt', String(waitSeconds)], { timeoutMs: (waitSeconds + 300) * 1000 }))
       if (result?.error === 'check-errors') {
         const errors = (await fs.promises.readFile(path.join(dir, 'errors.txt'), 'utf8').catch(() => '')).replace(/^\uFEFF/, '').split(/\r?\n/).filter(Boolean).map(line => { const [serial, message] = line.split('\t'); return { serial, message: message || '' } })
         const shown = errors.slice(0, 5).map(item => `${item.serial}: ${item.message}`).join('; ')
@@ -76,7 +85,7 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, tempRoot = os
         const counted = parseSapNumber(result.error.slice('not-counted: '.length))
         throw writeError('PIDOC_NOT_COUNTED', `SAP har talt ${Number.isNaN(counted) ? result.error.slice('not-counted: '.length) : counted} på ${material}, men der blev sendt ${list.length} serienumre. Tjek dokumentet i SAP (MI03)`, { counted })
       }
-      if (!result?.ok && result?.timedOut) throw unknownState()
+      if (!result?.ok && (result?.timedOut || result?.error === 'verify-failed')) throw unknownState()
       if (!result?.ok) throw scriptFailure(result, 'ZMS_COUNT_SERIAL')
       return { counted: parseSapNumber(result.counted) || 0, serials: Number(result.serials) || 0, newSerials: Number(result.newSerials) || 0 }
     })
@@ -89,10 +98,10 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, tempRoot = os
     return exclusiveWrite(async dir => {
       await fs.promises.writeFile(path.join(dir, 'count.txt'), entries.map(entry => `${entry.material.toUpperCase()}\t${entry.qty}`).join('\r\n'), 'utf8')
       onWaiting()
-      const result = lastJsonLine(await runScript('pidoc-count', [system, String(docNo), String(year), dir, 'count.txt', String(waitSeconds)], { timeoutMs: (waitSeconds + 300) * 1000 }))
+      const result = lastJsonLine(await runWaiting('pidoc-count', [system, String(docNo), String(year), dir, 'count.txt', String(waitSeconds)], { timeoutMs: (waitSeconds + 300) * 1000 }))
       if (result?.error === 'cancelled') throw writeError('PIDOC_CANCELLED', 'SAP-vinduet blev lukket uden Gem – intet er gemt')
       if (/^not-counted/.test(result?.error || '')) throw writeError('PIDOC_NOT_COUNTED', `SAP viser ikke de rigtige antal (${result.error.slice(13)})`)
-      if (!result?.ok && result?.timedOut) throw unknownState()
+      if (!result?.ok && (result?.timedOut || result?.error === 'verify-failed')) throw unknownState()
       if (!result?.ok) throw scriptFailure(result, 'MI04')
       return { message: String(result.message || '') }
     })
@@ -153,16 +162,19 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, tempRoot = os
     return exclusiveWrite(async dir => {
       if (list.length > 1 && !(await putOnClipboard(clipboard, list.join('\r\n')))) throw writeError('CLIPBOARD_REFUSED', CLIPBOARD_REFUSED)
       onWaiting()
-      const result = lastJsonLine(await runScript('pidoc-post', [system, String(year), dir, 'mi20.txt', 'mi22.txt', String(waitSeconds), list[0], ...(list.length > 1 ? ['clipboard'] : [])], { timeoutMs: (waitSeconds + 300) * 1000 }))
-      // A timeout ends like a closed window: MI22 decides. Only when that status could not be read is the state unknown.
-      if (!result?.ok && (result?.timedOut || result?.error === 'closed-unknown')) throw unknownState()
+      const result = lastJsonLine(await runWaiting('pidoc-post', [system, String(year), dir, 'mi20.txt', 'mi22.txt', String(waitSeconds), list[0], ...(list.length > 1 ? ['clipboard'] : [])], { timeoutMs: (waitSeconds + 300) * 1000 }))
+      // The screens are logged from the hand-over on: any failure after it (MI22 not read, a timeout, a closed window
+      // without a session for MI22) leaves the user's posting unknown.
+      if (!result?.ok && (result?.timedOut || result?.error === 'closed-unknown' || result?.screens)) throw unknownState()
       if (!result?.ok) throw scriptFailure(result, 'Bogføringen i MI20')
       const differences = parseMi20(await fs.promises.readFile(path.join(dir, 'mi20.txt'), 'utf8')).filter(item => list.includes(item.docNo))
       const status = parseMi22(await fs.promises.readFile(path.join(dir, 'mi22.txt'), 'utf8')).filter(doc => list.includes(doc.docNo))
       const materialDocs = {}
       for (const match of String(result.screens || '').matchAll(/doc\.\s*(\d{9,10})\s+posted with m\.\s*doc\.\s*(\d+)/gi)) materialDocs[match[1]] = match[2]
       const posted = list.filter(docNo => status.some(doc => doc.docNo === docNo) && status.filter(doc => doc.docNo === docNo).every(doc => !/active/i.test(doc.status)))
-      return { posted, open: list.filter(docNo => !posted.includes(docNo)), differences, materialDocs }
+      // Not listed by MI22 at all (e.g. a wrong selection): nobody knows, so it is never reported as "open".
+      const seen = new Set(status.map(doc => doc.docNo))
+      return { posted, open: list.filter(docNo => seen.has(docNo) && !posted.includes(docNo)), unknown: list.filter(docNo => !seen.has(docNo)), differences, materialDocs }
     })
   }
 

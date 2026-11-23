@@ -10,7 +10,7 @@ Option Explicit
 On Error Resume Next
 
 Dim systemName, docNo, year, material, outDir, inFile, outFile, waitSeconds, app, conn, base, s, i, before, beforeIds, ownId
-Dim fso, serials, count, grid, list, row, errorsFound, newSerials, stream, message, text, timedOut
+Dim fso, serials, count, grid, list, row, errorsFound, newSerials, stream, message, text, timedOut, counted, comma, menge
 
 Function JsonText(value)
   Dim t
@@ -77,6 +77,15 @@ End Sub
 
 Function SerialGrid()
   Set SerialGrid = s.findById("wnd[0]/usr/cntlGRID1/shellcont/shell/shellcont[1]/shell")
+End Function
+
+' True when value is one or more digits 0-9 and nothing else.
+Function OnlyDigits(value)
+  Dim k
+  OnlyDigits = (Len(value) > 0)
+  For k = 1 To Len(value)
+    If InStr("0123456789", Mid(value, k, 1)) = 0 Then OnlyDigits = False
+  Next
 End Function
 
 systemName = WScript.Arguments(0)
@@ -256,5 +265,14 @@ Next
 If row < 0 Then Finish False, "verify-failed", ""
 If list.GetCellValue(row, "XZAEL") <> "X" Then Finish False, "not-counted", ""
 ' The quantity SAP counted must be the number of serials sent (rows deleted in the grid, or dropped by SAP, would differ).
-If CDbl(list.GetCellValue(row, "MENGE")) <> count Then Finish False, "not-counted: " & list.GetCellValue(row, "MENGE"), ""
+' Compared as text, like parseSapNumber reads it ("." groups thousands, "," starts decimals), so the Windows locale does
+' not matter: decimals must be zeros, and anything that is not a whole number is not counted.
+menge = ""
+menge = Trim(list.GetCellValue(row, "MENGE"))
+counted = Replace(menge, ".", "")
+comma = InStr(counted, ",")
+If comma > 0 Then
+  If Len(Replace(Mid(counted, comma + 1), "0", "")) > 0 Then counted = "" Else counted = Left(counted, comma - 1)
+End If
+If Not OnlyDigits(counted) Or counted <> CStr(count) Then Finish False, "not-counted: " & menge, ""
 Finish True, message, ",""newSerials"":" & newSerials & ",""counted"":" & JsonText(list.GetCellValue(row, "MENGE")) & ",""serials"":" & JsonText(list.GetCellValue(row, "SERNR_COUNT"))

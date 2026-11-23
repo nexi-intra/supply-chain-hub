@@ -40,6 +40,7 @@ describe('errorMessage', () => {
   })
 
   it('explains storage and SAP problems', () => {
+    expect(errorMessage('PIDOC_UNKNOWN')).toBe('Optælling ved ikke, om SAP har gemt. Tjek dokumentet i SAP (MI03).')
     expect(errorMessage(new Error('Error: STORAGE_UNAVAILABLE'))).toBe('Kan ikke nå data på M: lige nu. Prøv igen om lidt.')
     expect(errorMessage(new Error('Error: SAP_NOT_READY: SAP er ikke klar'))).toBe('SAP er ikke klar')
     expect(errorMessage(new Error('Error: SAP_TIMEOUT'))).toMatch(/SAP/)

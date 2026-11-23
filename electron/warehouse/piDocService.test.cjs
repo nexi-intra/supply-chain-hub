@@ -319,6 +319,22 @@ test('the manager posts counted documents; only what MI22 confirms is posted, an
   assert.deepEqual(result.marked, { posted: ['R1', 'R2'], skipped: [] })
 })
 
+test('posting passes on the documents MI22 did not list as unknown; the confirmed ones are still marked', async () => {
+  let stored = {
+    D1: { id: 'D1', docNo: '105000893', year: '2026', status: 'counted', sloc: 'D000', stockType: 'unrestricted', createdBy: { email: 'mona@x' }, lines: [{ material: 'INT1-0' }] },
+    D2: { id: 'D2', docNo: '105000894', year: '2026', status: 'counted', sloc: 'D000', stockType: 'unrestricted', createdBy: { email: 'mona@x' }, lines: [{ material: 'R1' }] },
+  }
+  const approvals = []
+  const repo = { getPiDocs: async () => structuredClone(stored), changePiDocs: async (team, id, change) => { stored = change(structuredClone(stored)).all } }
+  const writer = { postDocuments: async () => ({ posted: ['105000894'], open: [], unknown: ['105000893'], materialDocs: {}, differences: [] }) }
+  const counts = { countDoc: async () => ({ rows: [] }), markPosted: async (user, id, materials) => { approvals.push(materials); return { posted: materials, skipped: [] } } }
+  const service = createPiDocService({ counts, repo, roles: { roleOf: async () => 'manager' }, writer, system: 'QS4' })
+  const result = await service.post(MONA, 'c1', ['D1', 'D2'])
+  assert.deepEqual([result.posted, result.open, result.unknown], [['105000894'], [], ['105000893']])
+  assert.deepEqual([stored.D1.status, stored.D2.status], ['counted', 'posted'])
+  assert.deepEqual(approvals, [['R1']])
+})
+
 test('posting says which materials were marked "Bogført i SAP" and which were not', async () => {
   const counted = (id, docNo, materials) => ({ id, docNo, year: '2026', status: 'counted', sloc: 'D000', stockType: 'unrestricted', createdBy: { email: 'mona@x' }, lines: materials.map(material => ({ material })) })
   const make = markPosted => {
