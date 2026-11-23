@@ -38,18 +38,18 @@ function createLocationRepository({ storeFor, now = Date.now, newId }) {
         const allowed = new Set([...keys, JOURNAL_KEY])
         const out = await store.withLockedKeysAsync([...allowed], locked => {
           const stage = createStage(locked)
-          const hadJournal = finishLeftover(stage, allowed, { keepApplied: KEEP_APPLIED })
+          const leftover = finishLeftover(stage, allowed, { keepApplied: KEEP_APPLIED })
           const finished = stage.mark()
           let result
           try {
             result = work(stage, prepared)
           } catch (error) {
-            if (!hadJournal) throw error
+            if (!leftover || leftover === 'done') throw error
             stage.reset(finished)
-            commitStage(locked, stage, { at, hadJournal })
+            commitStage(locked, stage, { at, leftover })
             return new Thrown(error)
           }
-          commitStage(locked, stage, { at, hadJournal })
+          commitStage(locked, stage, { at, leftover })
           return result
         })
         if (out instanceof Thrown) throw out.error
@@ -66,8 +66,8 @@ function createLocationRepository({ storeFor, now = Date.now, newId }) {
     const allowed = new Set([...keys, KEYS.meta, JOURNAL_KEY])
     return store.withLockedKeysAsync([...allowed], locked => {
       const stage = createStage(locked)
-      const hadJournal = finishLeftover(stage, allowed, { keepApplied: KEEP_APPLIED })
-      commitStage(locked, stage, { at, hadJournal })
+      const leftover = finishLeftover(stage, allowed, { keepApplied: KEEP_APPLIED })
+      commitStage(locked, stage, { at, leftover })
     })
   }
 
@@ -120,6 +120,7 @@ function createLocationRepository({ storeFor, now = Date.now, newId }) {
    * With an `actionId` (`transact(team, { actionId }, fn)`) the id is recorded in the same transaction, and an id that is
    * already recorded returns { duplicate: true } without running `fn`: a replayed action is never applied twice.
    * All events of the transaction share one `tx` id; the first carries the change, unless `snapshot: false` (import).
+   * `tx.adopt(id)` records an existing pallet as made by this transaction (a replay finding what its first try made).
    * With `withLayout` the drawing's keys are locked too and on `tx` as `layout`, `layoutVersions` and `draft`.
    * `writes` (a daily action: e.g. ['pallets']) locks only those keys, the places, meta and the history: every lock file
    * costs seconds on M:. The other keys (which such an action never reads to decide) are read without a lock, and
@@ -147,11 +148,21 @@ function createLocationRepository({ storeFor, now = Date.now, newId }) {
       if (actionId && (before.meta.applied || []).includes(actionId)) return { duplicate: true }
       const tx = structuredClone(before)
       const events = []
+      const adopted = new Set()
       const txId = actionId || newId()
       tx.event = event => { events.push({ id: newId(), at, tx: txId, ...(actionId ? { actionId } : {}), ...event }) }
+      tx.adopt = id => { adopted.add(id) }
       const result = fn(tx)
       delete tx.event
-      const change = options?.snapshot === false ? null : changeOf(placesOf(before), placesOf(tx))
+      delete tx.adopt
+      let change = options?.snapshot === false ? null : changeOf(placesOf(before), placesOf(tx))
+      // A pallet this action made in an earlier try that stopped halfway: recorded as made now, so the undo removes it.
+      for (const id of options?.snapshot === false ? [] : adopted) {
+        if (!tx.pallets[id]) continue
+        change ||= { before: { pallets: {}, locations: {} }, after: { pallets: {}, locations: {} } }
+        change.before.pallets[id] = null
+        change.after.pallets[id] = structuredClone(tx.pallets[id])
+      }
       if (change && events.length) events[0].change = change
       writeState(locked, before, tx, { at, actionId, changed: events.length > 0 })
       if (withLayout) writeLayout(locked, before, tx)

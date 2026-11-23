@@ -122,6 +122,8 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
         const id = actionId ? `${actionId}:${index}` : newId()
         const made = actionId ? tx.pallets[id] : null
         if (made) {
+          // Made by this action's first try (its log line and id did not land): taken over, so the undo removes it.
+          tx.adopt(id)
           tx.event({ type: 'putaway', by: by(user), pallet: id, location: made.location, material: made.material, quantity: made.quantity })
           created.push(made)
           continue

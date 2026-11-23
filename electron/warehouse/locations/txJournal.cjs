@@ -2,8 +2,9 @@
 // The store replaces a transaction's files one at a time, so when M: drops halfway some files are new and some old –
 // and a replay of the action would apply it a second time. A transaction that changes more than one file therefore
 // first writes the journal (what every file becomes, the log lines it adds and the action ids it records in meta), then
-// the files – the places and pallets, then the log, meta last – and then deletes the journal. The next transaction
-// finishes a journal it finds, under the same locks, before it runs.
+// the files – the places and pallets, then the log, meta last. The journal stays (finished once its action ids are in
+// meta; one without action ids is deleted). The next transaction finishes a journal it finds, under the same locks,
+// before it runs.
 // 1.6.6/1.6.7 Hubs do not know the journal and write the same files under the same locks. The journal therefore keeps a
 // fingerprint of every file before and after, and a file somebody wrote since is never overwritten: such a journal is
 // only finished where the log proves how far it got, otherwise it is given up (as before the journal: the outbox replays).
@@ -151,19 +152,26 @@ function mergeMeta(current, change, keepApplied) {
 
 const historySeen = (list, ops) => Array.isArray(list) && list.some(event => ops.append.some(added => added.id === event?.id) || (ops.marks[event?.id] && event.undoneAt === ops.marks[event.id].undoneAt))
 
+/** Every action id of the journal is in meta, which is written last: all of it reached M:. */
+const isDone = (journal, meta) => {
+  const ids = journal.actionIds || []
+  const applied = new Set(meta?.applied || [])
+  return ids.length > 0 && ids.every(id => applied.has(id))
+}
+
 /**
  * What finishing `journal` writes, with `read(key)` the value on M: now.
  * - Its action ids are all in meta: everything reached M: (meta is written last). Nothing to do.
  * - meta is as before or after the transaction: nobody acted since (every action writes meta). Every file still as
  *   before is written; a file changed since is never overwritten – the journal is given up (the draft is just skipped).
- * - meta was changed by somebody else (a 1.6.6/1.6.7 Hub acted since): the files are written before the log, so only a
- *   log line of the action that reached M: proves the files did. Then the log and meta are finished (both only added
- *   to); the files are left as they are. Without such proof the journal is given up and the outbox replays the action.
+ * - meta was changed by somebody else (a 1.6.6/1.6.7 Hub acted since): only proof that the files landed counts – the
+ *   last file renamed as the transaction left it, or a log line of the action (the log is written after the files).
+ *   Then the log and meta are finished (both only added to); the files are left as they are. Without proof the
+ *   journal is given up and the outbox replays the action.
  */
 function finishPlan(journal, read, { keepApplied }) {
   const meta = read(META)
-  const ids = journal.actionIds || []
-  if (ids.length && ids.every(id => (meta?.applied || []).includes(id))) return { outcome: 'done', writes: [] }
+  if (isDone(journal, meta)) return { outcome: 'done', writes: [] }
   const metaNow = journal.meta && fingerprint(json(meta))
   const metaTouched = !journal.meta || (metaNow !== journal.meta.pre && metaNow !== journal.meta.post)
   const writes = []
@@ -185,8 +193,13 @@ function finishPlan(journal, read, { keepApplied }) {
         writes.push([key, value])
       } else writes.push([key, entry.value])
     }
-  } else if (!history.some(({ now, ops }) => historySeen(now, ops))) {
-    return { outcome: 'abandoned', reason: 'en anden Hub har skrevet siden, og intet viser at handlingen nåede M:', writes: [] }
+  } else {
+    // The files are renamed in order, so the last one as the transaction left it proves they all landed.
+    const last = Object.keys(journal.keys || {}).at(-1)
+    const landed = last !== undefined && fingerprint(json(read(last))) === journal.keys[last].post
+    if (!landed && !history.some(({ now, ops }) => historySeen(now, ops))) {
+      return { outcome: 'abandoned', reason: 'en anden Hub har skrevet siden, og intet viser at handlingen nåede M:', writes: [] }
+    }
   }
   for (const { key, ops, now } of history) {
     const merged = mergeHistory(now, ops)
@@ -201,16 +214,19 @@ function finishPlan(journal, read, { keepApplied }) {
 }
 
 /**
- * Finishes a journal left on M: inside a transaction (`stage` over the locked keys `allowed`). Returns whether there
- * was one. Throws TX_JOURNAL_KEYS (before anything is changed) when it needs keys that are not locked.
+ * Finishes a journal left on M: inside a transaction (`stage` over the locked keys `allowed`). Returns null without
+ * one, else 'done' (finished before: nothing to do), 'rolled' or 'abandoned'. Throws TX_JOURNAL_KEYS (before anything
+ * is changed) when an unfinished one needs keys that are not locked.
  */
 function finishLeftover(stage, allowed, { keepApplied, warn = console.warn }) {
   const journal = stage.get(JOURNAL_KEY)
-  if (!journal) return false
+  if (!journal) return null
   if (journal.v !== 1) {
     warn('Placeringer: en efterladt transaktion i et ukendt format er opgivet', journal?.v)
-    return true
+    return 'abandoned'
   }
+  // Only meta (always locked) is needed to see that it is finished: the kept journal costs no extra locks.
+  if (isDone(journal, stage.get(META))) return 'done'
   const keys = keysOf(journal)
   if (keys.some(key => !allowed.has(key))) throw Object.assign(new Error('TX_JOURNAL_KEYS'), { code: 'TX_JOURNAL_KEYS', keys })
   const plan = finishPlan(journal, key => stage.get(key), { keepApplied })
@@ -219,24 +235,27 @@ function finishLeftover(stage, allowed, { keepApplied, warn = console.warn }) {
     if (value === undefined) stage.delete(key)
     else stage.set(key, value)
   }
-  return true
+  return plan.outcome
 }
 
 /**
- * Hands the stage's changes to the store transaction: more than one file goes journal first, then the files, then
- * the journal is deleted; a single file is one rename and needs none. A finished leftover journal is deleted.
+ * Hands the stage's changes to the store transaction: more than one file goes journal first, then the files; a single
+ * file is one rename and needs none. A journal with action ids is kept – it is finished once they are all in meta –
+ * so the file is always there and a PC never misses a new one through its SMB cache of "file not found"; one without
+ * is deleted once every file landed. A leftover journal that was not finished before is deleted.
  */
-function commitStage(locked, stage, { at, hadJournal }) {
+function commitStage(locked, stage, { at, leftover }) {
   const changes = stage.changes()
   const write = ({ key, value }) => (value === undefined ? locked.delete(key) : locked.set(key, value))
   if (changes.length > 1) {
-    locked.set(JOURNAL_KEY, journalOf(changes, at))
+    const journal = journalOf(changes, at)
+    locked.set(JOURNAL_KEY, journal)
     changes.forEach(write)
-    locked.deleteAfterCommit(JOURNAL_KEY)
+    if (!journal.actionIds.length) locked.deleteAfterCommit(JOURNAL_KEY)
     return
   }
   changes.forEach(write)
-  if (hadJournal) locked.delete(JOURNAL_KEY)
+  if (leftover && leftover !== 'done') locked.delete(JOURNAL_KEY)
 }
 
 module.exports = { JOURNAL_KEY, createStage, finishLeftover, commitStage, journalOf, finishPlan, keysOf }

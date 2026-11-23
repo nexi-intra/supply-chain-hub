@@ -351,6 +351,20 @@ test('a put-away replayed after M: dropped between the pallets and the rest make
   assert.deepEqual((await pc1.repo.history('TCD', { type: 'putaway' })).map(event => event.pallet).sort(), ['put-1:0', 'put-1:1'], 'one log line per pallet')
 })
 
+test('a put-away replayed onto the pallet its first try left behind adopts it: the log line can be undone and removes it', async () => {
+  const { pc1, clock, seed } = setup()
+  // What a first try leaves when its journal had to be given up: the pallet, but no action id and no log line.
+  await seed([place('A2.1')], [{ id: 'put-2:0', location: 'A2.1', material: 'R162-0717', quantity: 10, receivedAt: 1 }])
+  const { created } = await pc1.service.putAway(ANNA, { actionId: 'put-2', pallets: [{ location: 'A2.1', material: 'R162-0717', quantity: 10 }] })
+  assert.deepEqual(created.map(pallet => pallet.id), ['put-2:0'])
+  assert.equal(Object.keys((await pc1.repo.read('TCD')).pallets).length, 1)
+  const [line] = (await pc1.service.log(ADA, { type: 'putaway' })).events
+  assert.equal(line.canUndo, true)
+  clock.now += 60000
+  assert.deepEqual(await pc1.service.undo(ADA, { eventId: line.id, actionId: 'u-put-2' }), { undone: 1 })
+  assert.deepEqual((await pc1.repo.read('TCD')).pallets, {})
+})
+
 test('a partial take replayed after M: dropped before the action id was written is subtracted once, also from another PC', async t => {
   const { pc1, pc2, seed } = setup()
   await seed([place('A2.1')], [{ id: 'p1', location: 'A2.1', material: 'R162-0717', quantity: 100, receivedAt: 1 }])

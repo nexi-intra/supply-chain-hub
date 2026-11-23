@@ -317,7 +317,7 @@ test('an action left in the file by a crash is replayed exactly once at the next
   sap.before = async action => { sap.applied.push(action.id); await new Promise(() => {}) }
   void crashed.submit({ id: 'a1', method: 'take', user: ANNA, request: { pallet: 'p1' } })
   void crashed.submit({ id: 'a2', method: 'undo', user: ANNA, request: { eventId: 'e1' } })
-  await until(() => onDisk(dir).queue.length === 2)
+  await until(() => onDisk(dir).queue.length === 2 && sap.runs === 1)
   assert.deepEqual(onDisk(dir).queue.map(item => item.id), ['a1', 'a2'], 'both on disk although neither finished')
   sap.before = null
   const started = make()

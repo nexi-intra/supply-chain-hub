@@ -7,6 +7,13 @@ const { createStore } = require('../../store.cjs')
 const { locationKey, areaFromName } = require('./model.cjs')
 const { createLocationRepository } = require('./repository.cjs')
 
+// No journal on M:, or one whose action ids are all recorded (a finished journal is kept).
+async function finished(store) {
+  const journal = await store.getAsync('tx-pending', { skipCache: true })
+  const applied = (await store.getAsync('meta', { skipCache: true }))?.applied || []
+  return !journal || (journal.actionIds.length > 0 && journal.actionIds.every(id => applied.includes(id)))
+}
+
 function setup() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'locations-repo-'))
   const stores = new Map()
@@ -69,7 +76,7 @@ test('a daily action locks only what it writes, the places, meta and the history
   })
   assert.equal(result, 'done')
   assert.deepEqual(locks[1], ['history-2026-10', 'locations', 'meta', 'pallets', 'tx-pending'])
-  assert.equal(await store.getAsync('tx-pending'), undefined, 'the journal is gone once the action is written')
+  assert.ok(await finished(store), 'the journal is finished once the action is written')
   const state = await repo.read('TCD')
   assert.deepEqual([state.pallets.p1.location, state.meta.applied], ['A2.4', ['a1']])
   assert.ok((await repo.history('TCD'))[0].change, 'the change is still recorded for undo')
@@ -252,10 +259,10 @@ const takeTen = (repo, actionId, id = 'p1') => repo.transact('TCD', { actionId, 
   tx.event({ type: 'take', by: ANNA, pallet: id, location: 'A2.4', material: 'R162-0717', quantity: 10 })
 })
 // What a 1.6.6/1.6.7 Hub does: the same keys under the same locks, without knowing the journal.
-const oldHub = (store, actionId, change) => store.withLockedKeysAsync(['history-2026-10', 'locations', 'meta', 'pallets'], locked => {
-  const pallets = locked.get('pallets') || {}
-  change(pallets)
-  locked.set('pallets', pallets)
+const oldHub = (store, actionId, change, key = 'pallets') => store.withLockedKeysAsync(['history-2026-10', 'locations', 'meta', key], locked => {
+  const value = locked.get(key) || {}
+  change(value)
+  locked.set(key, value)
   const meta = locked.get('meta') || {}
   locked.set('meta', { ...meta, applied: [...(meta.applied || []), actionId], changedAt: Date.UTC(2026, 9, 20, 9) })
   locked.set('history-2026-10', [...(locked.get('history-2026-10') || []), { id: `e-${actionId}`, at: Date.UTC(2026, 9, 20, 9), tx: actionId, actionId, type: 'edit-pallet', by: MONA }])
@@ -281,7 +288,7 @@ test('an action M: dropped before its log line is finished by the next action: t
   assert.deepEqual([state.pallets.p1.quantity, state.pallets.p2.quantity], [90, 90])
   assert.deepEqual(await repo.undo('TCD', { eventId: take.id, by: MONA, actionId: 'undo-1' }), { undone: 1 })
   assert.equal((await repo.read('TCD')).pallets.p1.quantity, 100)
-  assert.equal(await store.getAsync('tx-pending', { skipCache: true }), undefined)
+  assert.ok(await finished(store), 'the journal is finished')
 })
 
 test('a dropped action is finished once however often M: drops again, also when a rename landed but its answer was lost', async t => {
@@ -301,7 +308,7 @@ test('a dropped action is finished once however often M: drops again, also when 
   assert.deepEqual([state.pallets.p1.quantity, state.pallets.p2.quantity], [80, 90])
   assert.deepEqual((await repo.history('TCD', { type: 'take' })).map(event => event.actionId).sort(), ['take-1', 'take-2', 'take-3'])
   assert.deepEqual(state.meta.applied.filter(id => id.startsWith('take-')), ['take-1', 'take-2', 'take-3'])
-  assert.equal(await store.getAsync('tx-pending', { skipCache: true }), undefined)
+  assert.ok(await finished(store), 'the journal is finished')
 })
 
 test('an older Hub that wrote after the drop is never overwritten by the leftover journal', async t => {
@@ -310,13 +317,13 @@ test('an older Hub that wrote after the drop is never overwritten by the leftove
   await assert.rejects(takeTen(repo, 'take-1'), { code: 'EIO' })
   t.mock.restoreAll()
   const warn = t.mock.method(console, 'warn', () => {})
-  assert.ok(await store.getAsync('tx-pending', { skipCache: true }), 'the journal is on M:, nothing else of the action')
+  assert.deepEqual((await store.getAsync('tx-pending', { skipCache: true })).actionIds, ['take-1'], 'the journal is on M:, nothing else of the action')
   await oldHub(store, 'old-1', pallets => { pallets.p1.quantity = 55 })
   await takeTen(repo, 'take-2', 'p2')
   const state = await repo.read('TCD')
   assert.deepEqual([state.pallets.p1.quantity, state.pallets.p2.quantity], [55, 90], 'the older Hub\'s count stands')
   assert.equal((await repo.history('TCD', { type: 'take', pallet: 'p1' })).length, 0, 'the dropped action is not logged as done')
-  assert.equal(await store.getAsync('tx-pending', { skipCache: true }), undefined, 'the journal is given up')
+  assert.deepEqual((await store.getAsync('tx-pending', { skipCache: true })).actionIds, ['take-2'], 'the journal is given up')
   assert.equal(warn.mock.callCount(), 1, 'and that is logged')
 })
 
@@ -342,7 +349,7 @@ test('an undo finishes a leftover journal first, also when it is refused, and a 
   await assert.rejects(repo.undo('TCD', { eventId: put.id, by: MONA, actionId: 'undo-put' }), { code: 'UNDO_CONFLICT' })
   const [take] = await repo.history('TCD', { type: 'take' })
   assert.equal(take?.actionId, 'take-1', 'the journal was finished although the undo was refused')
-  assert.equal(await store.getAsync('tx-pending', { skipCache: true }), undefined)
+  assert.ok(await finished(store), 'the journal is finished')
   dropAt(t, 'meta.json')
   await assert.rejects(repo.undo('TCD', { eventId: take.id, by: MONA, actionId: 'undo-take' }), { code: 'EIO' })
   t.mock.restoreAll()
@@ -367,6 +374,41 @@ test('a leftover journal with keys the next action does not lock is finished on 
   assert.deepEqual([state.stock['E9 H5|R162-0717'].quantity, state.pallets.p1.quantity], [40, 90])
   assert.deepEqual((await repo.history('TCD', { months: 2 })).filter(event => event.actionId).map(event => event.actionId).sort(), ['act-p1', 'act-p2', 'shelf-1', 'take-1'])
   assert.ok(state.meta.applied.includes('shelf-1'))
+})
+
+test('an older Hub that wrote another file after a drop behind the pallets: the pallets prove the action landed, it is not applied twice', async t => {
+  const { repo, store } = await seeded()
+  dropAt(t, 'history-2026-10.json')
+  await assert.rejects(takeTen(repo, 'take-1'), { code: 'EIO' })
+  t.mock.restoreAll()
+  await oldHub(store, 'old-1', stock => { stock['E9 H5|R162-0717'] = { id: 'E9 H5|R162-0717', location: 'E9 H5', material: 'R162-0717', quantity: 5 } }, 'stock')
+  assert.deepEqual(await takeTen(repo, 'take-1'), { duplicate: true })
+  const state = await repo.read('TCD')
+  assert.deepEqual([state.pallets.p1.quantity, state.stock['E9 H5|R162-0717'].quantity], [90, 5])
+  assert.deepEqual((await repo.history('TCD', { type: 'take' })).map(event => event.actionId), ['take-1'], 'the log line is finished')
+  assert.deepEqual(state.meta.applied.slice(-2), ['old-1', 'take-1'])
+})
+
+test('a finished journal stays on M: and costs no extra transaction or write, also for an action that locks other files', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'locations-repo-'))
+  const store = createStore(root)
+  const calls = []
+  const spied = { ...store, withLockedKeysAsync: (keys, fn) => { calls.push([...keys].sort()); return store.withLockedKeysAsync(keys, fn) } }
+  const repo = createLocationRepository({ storeFor: () => spied, now: () => Date.UTC(2026, 9, 20, 8), newId: (() => { let ids = 0; return () => `id${++ids}` })() })
+  await repo.transact('TCD', tx => { tx.locations['A2.4'] = place('A2.4'); tx.locations['E9 H5'] = { ...place('E9 H5'), type: 'Hylde', rack: 'E9', shelf: 5 } })
+  await repo.transact('TCD', { actionId: 'shelf-1', writes: ['stock'] }, tx => {
+    tx.stock['E9 H5|M1'] = { id: 'E9 H5|M1', location: 'E9 H5', material: 'M1', quantity: 3 }
+    tx.event({ type: 'shelf-put', by: ANNA, location: 'E9 H5', material: 'M1', quantity: 3 })
+  })
+  assert.deepEqual((await store.getAsync('tx-pending', { skipCache: true }))?.actionIds, ['shelf-1'], 'kept: a file that is always there is never hidden by a cached "not found"')
+  calls.length = 0
+  assert.deepEqual(await repo.transact('TCD', { actionId: 'shelf-1', writes: ['pallets'] }, () => assert.fail('a replay never runs')), { duplicate: true })
+  assert.equal(calls.length, 1, 'a finished journal with files this action does not lock needs no transaction of its own')
+  assert.deepEqual((await store.getAsync('tx-pending', { skipCache: true }))?.actionIds, ['shelf-1'], 'and is not written again')
+  await assert.rejects(repo.transact('TCD', { actionId: 'a2', writes: ['pallets'] }, () => { throw Object.assign(new Error('PALLET_GONE'), { code: 'PALLET_GONE' }) }), { code: 'PALLET_GONE' })
+  assert.equal((await repo.read('TCD')).meta.applied.includes('a2'), false, 'a refused action still writes nothing')
+  await repo.transact('TCD', { snapshot: false }, tx => { tx.tags = ['Brandskab']; tx.event({ type: 'tags', by: MONA }) })
+  assert.equal(await store.getAsync('tx-pending', { skipCache: true }), undefined, 'a journal without action ids is deleted once its files landed')
 })
 
 test('a leftover drawing publish is finished on its own, and a draft the admin saved since is kept', async t => {
