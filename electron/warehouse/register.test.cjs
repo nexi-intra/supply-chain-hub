@@ -148,6 +148,21 @@ test('Hubert reads Optælling through the same services and Hub user: TCD gets t
   assert.equal(await registered.assistant.answer({ event: { who: 'anna', sender: { id: 1 } }, question: 'hvem har ferie i dag?', language: 'da' }), null)
 })
 
+test('Hubert\'s guide gets the Optælling role from the module\'s own user, and never waits more than 1 s for it', async () => {
+  const { call, registered } = setup()
+  const roleOf = (who, delay = 0) => registered.assistant.countRole({ who, sender: { id: 1 }, delay })
+  assert.equal(await roleOf('anna'), 'user')
+  assert.equal(await roleOf('mona'), 'manager')
+  assert.equal(await roleOf('pim'), null, 'outside TCD/TRR there is no Optælling role')
+  await call('mona', 'roles:set-role', { email: 'anna@nexi.test', role: 'admin' })
+  assert.equal(await roleOf('anna'), 'admin')
+  await call('mona', 'roles:set-role', { email: 'anna@nexi.test', role: 'status-manager' })
+  assert.equal(await roleOf('anna'), 'status-manager')
+  const startedAt = Date.now()
+  assert.equal(await roleOf('anna', 3000), null, 'a slow lookup shows the guide of a plain user')
+  assert.ok(Date.now() - startedAt < 2000, `${Date.now() - startedAt} ms`)
+})
+
 const LOCATION_CHANNELS = ['overview', 'lookup-document', 'suggest', 'put-away', 'take', 'refill', 'move', 'change-sloc', 'edit-pallet', 'search', 'material-card', 'location-card', 'pallet-card', 'list', 'stamp', 'log', 'undo', 'rack-card', 'shelf-put', 'shelf-take', 'shelf-move', 'shelf-set', 'create-rack', 'add-shelf', 'delete-locations', 'set-active-many', 'create-location', 'create-series', 'edit-location', 'set-active', 'set-tags', 'preview-import', 'apply-import', 'map-contents',
   'layout', 'layout-draft', 'layout-preview', 'layout-versions', 'layout-start-draft', 'layout-save-draft', 'layout-discard-draft', 'layout-publish', 'layout-open-version']
 
