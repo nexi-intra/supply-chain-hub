@@ -25,7 +25,7 @@ function setup() {
     learn: async entries => { learned.push(...entries) },
     describeMissing: async materials => { missing.push(materials) },
   }
-  const fetcher = { fetchMatdoc: async ({ document }) => ({ document, transaction: 'ZMS_REP', rows: [{ serial: 'N1', material: 'INT4300-4921-0', description: 'SmartPOS N950' }, { serial: 'N2', material: 'INT4300-4921-0', description: 'SmartPOS N950' }] }) }
+  const fetcher = { fetchMatdoc: async ({ document }) => ({ document: /^\d{10}$/.test(document) ? `${document} 2026` : document, transaction: 'ZMS_REP', rows: [{ serial: 'N1', material: 'INT4300-4921-0', description: 'SmartPOS N950' }, { serial: 'N2', material: 'INT4300-4921-0', description: 'SmartPOS N950' }] }) }
   // One store per "PC", both on the same folder, like two Hubs on M:.
   const service = () => {
     const stores = new Map()
@@ -181,6 +181,7 @@ test('lookupDocument returns material, description and serials from the material
   const result = await pc1.service.lookupDocument(ANNA, { document: '4900229137 2026 01' })
   assert.deepEqual(result.materials, [{ material: 'INT4300-4921-0', description: 'SmartPOS N950', quantity: 2, serials: ['N1', 'N2'] }])
   assert.deepEqual(learned.map(entry => `${entry.material}:${entry.source}`), ['INT4300-4921-0:matdoc'])
+  assert.equal((await pc1.service.lookupDocument(ANNA, { document: '4900229137' })).document, '4900229137 2026', 'the document SAP found, with its year')
 })
 
 test('cards show descriptions, FIFO, pick places and history', async () => {

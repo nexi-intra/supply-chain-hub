@@ -218,7 +218,7 @@ function DraftCard({ draft, index, tags, canRemove, map, mapFailed, onShowOnMap,
         <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
           <div className="space-y-1.5">
             <Label htmlFor={id('document')}>{t('49/50-nummer (materialedokument)', '49/50 number (material document)')}</Label>
-            <Input id={id('document')} value={draft.document} placeholder={t('Scan eller skriv, fx 5000032337 2026 0001', 'Scan or type, e.g. 5000032337 2026 0001')} onChange={event => onChange({ document: event.target.value })} onKeyDown={event => { if (event.key === 'Enter' && draft.document.trim()) void onLookup() }} />
+            <Input id={id('document')} value={draft.document} placeholder={t('Scan eller skriv, fx 5000032337 eller 5000032337 2026 0001', 'Scan or type, e.g. 5000032337 or 5000032337 2026 0001')} onChange={event => onChange({ document: event.target.value })} onKeyDown={event => { if (event.key === 'Enter' && draft.document.trim()) void onLookup() }} />
           </div>
           <SapActionButton variant="outline" className="self-end" disabled={!draft.document.trim()} onAction={onLookup}><ArrowsClockwise size={16} /> {t('Hent fra SAP', 'Fetch from SAP')}</SapActionButton>
         </div>

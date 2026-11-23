@@ -74,21 +74,33 @@ function createSapFetcher({ bridge, runScript, tempRoot = os.tmpdir(), expected 
     return bridge.exclusive(() => run(onProgress, EXPORTS.filter(definition => definition.step === 'mb52')))
   }
 
-  /** Serial numbers of a material document: ZMS_REP for TCD (no ZMS_PREP access), ZMS_PREP for TRR. */
+  /**
+   * Serial numbers of a material document: ZMS_REP for TCD (no ZMS_PREP access), ZMS_PREP for TRR.
+   * Neither finds a document by its number alone (no error, just no rows), so a number without year is tried with
+   * this year and then last year; `document` is the attempt used, with its year.
+   */
   function fetchMatdoc({ team, document }) {
     const normalized = normalizeMatdoc(document)
-    if (!normalized) return Promise.reject(fetchError('MATDOC_INVALID', 'Skriv materialedokumentet som fx "4900229137 2026 01"'))
+    if (!normalized) return Promise.reject(fetchError('MATDOC_INVALID', 'Skriv materialedokumentet som fx "4900229137" eller "4900229137 2026 01"'))
     const mode = team === 'TCD' ? 'rep' : 'prep'
+    const transaction = mode === 'rep' ? 'ZMS_REP' : 'ZMS_PREP'
+    const year = new Date(now()).getFullYear()
+    const attempts = /^\d{10}$/.test(normalized) ? [`${normalized} ${year}`, `${normalized} ${year - 1}`] : [normalized]
     return bridge.exclusive(async () => {
       const state = computeSapState(lastJsonLine(await runScript('status')) || {}, expected)
       if (!state.ready) throw fetchError('SAP_NOT_READY', 'SAP er ikke klar', { sapState: state.state })
       const dir = await fs.promises.mkdtemp(path.join(tempRoot, 'countpoint-sap-'))
       try {
-        const result = lastJsonLine(await runScript('matdoc', [mode, dir, 'matdoc.txt', normalized], { timeoutMs: EXPORT_TIMEOUT_MS }))
-        if (result?.error && /^no-access-/.test(result.error)) throw fetchError('SAP_NO_ACCESS', `Du har ikke adgang til ${mode === 'rep' ? 'ZMS_REP' : 'ZMS_PREP'} i SAP`)
-        if (!result?.ok) throw fetchError('SAP_EXPORT_FAILED', `Opslaget af materialedokumentet fejlede: ${String(result?.error || 'ukendt fejl').slice(0, 200)}`)
-        const rows = result.rows === 0 ? [] : parseMatdoc(await fs.promises.readFile(path.join(dir, 'matdoc.txt'), 'utf8'))
-        return { document: normalized, rows, transaction: mode === 'rep' ? 'ZMS_REP' : 'ZMS_PREP' }
+        let found = { document: attempts[attempts.length - 1], rows: [], transaction }
+        for (const attempt of attempts) {
+          await fs.promises.rm(path.join(dir, 'matdoc.txt'), { force: true })
+          const result = lastJsonLine(await runScript('matdoc', [mode, dir, 'matdoc.txt', attempt], { timeoutMs: EXPORT_TIMEOUT_MS }))
+          if (result?.error && /^no-access-/.test(result.error)) throw fetchError('SAP_NO_ACCESS', `Du har ikke adgang til ${transaction} i SAP`)
+          if (!result?.ok) throw fetchError('SAP_EXPORT_FAILED', `Opslaget af materialedokumentet fejlede: ${String(result?.error || 'ukendt fejl').slice(0, 200)}`)
+          const rows = result.rows === 0 ? [] : parseMatdoc(await fs.promises.readFile(path.join(dir, 'matdoc.txt'), 'utf8'))
+          if (rows.length) { found = { document: attempt, rows, transaction }; break }
+        }
+        return found
       } finally {
         await fs.promises.rm(dir, { recursive: true, force: true })
       }

@@ -797,8 +797,7 @@ function createSoftwareloadService({
 
   /**
    * The serials to move into KIF: those of the material document when one is given, else the scanned or pasted ones.
-   * SAP finds a document by its number alone in neither ZMS_REP nor ZMS_PREP, so a number without year is tried with
-   * this year and then last year; `document` is the one that had serials, with its year.
+   * `document` is the one SAP found, with its year (the lookup adds this or last year when none is typed).
    */
   async function kifSerials(user, { serials, document } = {}) {
     if (!String(document ?? '').trim()) {
@@ -806,15 +805,10 @@ function createSoftwareloadService({
       if (!typed.length) throw noSerials()
       return { serials: typed }
     }
-    const normalized = normalizeMatdoc(document)
-    const year = new Date(now()).getFullYear()
-    const attempts = normalized && /^\d{10}$/.test(normalized) ? [`${normalized} ${year}`, `${normalized} ${year - 1}`] : [document]
-    for (const attempt of attempts) {
-      const fetched = await matdocs({ team: user.team, document: attempt })
-      const found = serialsOf(fetched.rows.map(row => row.serial))
-      if (found.length) return { serials: found, document: normalizeMatdoc(attempt) }
-    }
-    throw codeError('SOFTWARELOAD_INVALID', 'Materialedokumentet har ingen serienumre. Skriv det som fx "4905204948 2026"')
+    const fetched = await matdocs({ team: user.team, document })
+    const found = serialsOf(fetched.rows.map(row => row.serial))
+    if (!found.length) throw codeError('SOFTWARELOAD_INVALID', 'Materialedokumentet har ingen serienumre. Skriv det som fx "4905204948" eller "4905204948 2026"')
+    return { serials: found, document: fetched.document }
   }
 
   /** Plans the moves to D005 from where SAP says the terminals stand now; nothing is failed and nothing goes via D005. */
@@ -837,7 +831,7 @@ function createSoftwareloadService({
     if (!confirmed.length) throw noSerials()
     const given = String(document ?? '').trim()
     const matdoc = given ? normalizeMatdoc(given) : null
-    if (given && !matdoc) throw codeError('SOFTWARELOAD_INVALID', 'Skriv materialedokumentet som fx "4900229137 2026 01"')
+    if (given && !matdoc) throw codeError('SOFTWARELOAD_INVALID', 'Skriv materialedokumentet som fx "4900229137" eller "4900229137 2026 01"')
     const email = lower(user.email)
     if (movingToKif.has(email)) throw codeError('SOFTWARELOAD_BUSY', 'Du er allerede ved at flytte terminaler til D005')
     movingToKif.add(email)

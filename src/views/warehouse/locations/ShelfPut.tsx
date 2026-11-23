@@ -67,6 +67,7 @@ export function ShelfPut({ shelf: initial, version, onDone }: { shelf?: string; 
       const found = await bridge.lookupDocument({ document: document.trim() })
       const first = found.materials[0]
       if (!first) { toast.warning(t('Ingen materialer på 49/50-nummeret', 'No materials on the 49/50 number')); return }
+      setDocument(found.document)
       setMaterial(first.material)
       setQuery(first.material)
       setQuantity(String(first.quantity))
@@ -133,7 +134,7 @@ export function ShelfPut({ shelf: initial, version, onDone }: { shelf?: string; 
           <div className="grid gap-1.5">
             <Label htmlFor="shelf-document">{t('49/50-nummer (valgfrit)', '49/50 number (optional)')}</Label>
             <div className="flex gap-2">
-              <Input id="shelf-document" value={document} onChange={event => setDocument(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') void lookup() }} placeholder={t('Scan eller skriv, fx 5000032337 2026 0001', 'Scan or type, e.g. 5000032337 2026 0001')} />
+              <Input id="shelf-document" value={document} onChange={event => setDocument(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') void lookup() }} placeholder={t('Scan eller skriv, fx 5000032337 eller 5000032337 2026 0001', 'Scan or type, e.g. 5000032337 or 5000032337 2026 0001')} />
               <Button variant="outline" onClick={() => lookup()} loading={looking} disabled={!document.trim()}><Barcode size={16} /> {t('Hent fra SAP', 'Get from SAP')}</Button>
             </div>
           </div>

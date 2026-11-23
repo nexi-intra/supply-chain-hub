@@ -212,7 +212,7 @@ const MESSAGES_EN: Record<string, string> = {
   LINE_NOT_FOUND: 'The count line does not exist (any more).',
   IMPORT_TOO_LARGE: 'The import is too large.',
   IMPORT_EMPTY: 'There are no serial numbers to import.',
-  MATDOC_INVALID: 'Type the material document like "4900229137 2026 01".',
+  MATDOC_INVALID: 'Type the material document like "4900229137" or "4900229137 2026 01".',
   SAP_CHECK_NOT_FOUND: 'The SAP check does not exist (any more).',
   SAP_CHECK_NOTHING: 'There are no errors to send.',
   SAP_CHECK_SCOPE_INVALID: 'Choose TCD, TRR or all of D301.',

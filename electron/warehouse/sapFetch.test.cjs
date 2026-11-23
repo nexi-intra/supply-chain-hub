@@ -120,6 +120,52 @@ test('a material document is looked up in ZMS_REP for TCD and ZMS_PREP for TRR',
   assert.deepEqual(fs.readdirSync(tempRoot), [])
 })
 
+function matdocYears({ found = [], now = new Date(2026, 0, 5, 8, 0).getTime() } = {}) {
+  const asked = []
+  const calls = []
+  const runScript = async (name, args = []) => {
+    calls.push(name)
+    if (name === 'status') return READY
+    asked.push(args[3])
+    if (!found.includes(args[3])) return '{"ok":true,"rows":0}'
+    fs.copyFileSync(path.join(FIXTURES, 'matdoc-rep-sample.txt'), path.join(args[1], args[2]))
+    return '{"ok":true,"rows":3}'
+  }
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'countpoint-matdoc-year-test-'))
+  const fetcher = createSapFetcher({ bridge: createSapBridge({ runScript }), runScript, tempRoot, now: () => now })
+  return { fetcher, asked, calls, tempRoot }
+}
+
+test('a material document without year is tried with this year and then last year, in one SAP job', async () => {
+  const lastYear = matdocYears({ found: ['4905204948 2025'] })
+  const result = await lastYear.fetcher.fetchMatdoc({ team: 'TCD', document: ' 4905204948 ' })
+  assert.deepEqual(lastYear.asked, ['4905204948 2026', '4905204948 2025'])
+  assert.deepEqual(lastYear.calls, ['status', 'matdoc', 'matdoc'])
+  assert.equal(result.document, '4905204948 2025', 'the document used is returned with its year')
+  assert.equal(result.rows.length, 3)
+  assert.equal(result.transaction, 'ZMS_REP')
+  assert.deepEqual(fs.readdirSync(lastYear.tempRoot), [])
+  const thisYear = matdocYears({ found: ['4905204948 2026'] })
+  const first = await thisYear.fetcher.fetchMatdoc({ team: 'TRR', document: '4905204948' })
+  assert.deepEqual(thisYear.asked, ['4905204948 2026'], 'it stops at the first year with serials')
+  assert.equal(first.document, '4905204948 2026')
+})
+
+test('a material document with a year is looked up exactly as given', async () => {
+  const sap = matdocYears({ found: ['4905204948 2026'] })
+  const result = await sap.fetcher.fetchMatdoc({ team: 'TCD', document: '4905204948 2024' })
+  assert.deepEqual(sap.asked, ['4905204948 2024'], 'no other year is tried')
+  assert.deepEqual([result.document, result.rows], ['4905204948 2024', []])
+})
+
+test('a material document without year that neither year finds gives no rows and the last document tried', async () => {
+  const sap = matdocYears()
+  const result = await sap.fetcher.fetchMatdoc({ team: 'TCD', document: '4905204949' })
+  assert.deepEqual(sap.asked, ['4905204949 2026', '4905204949 2025'])
+  assert.deepEqual(result, { document: '4905204949 2025', rows: [], transaction: 'ZMS_REP' })
+  assert.deepEqual(fs.readdirSync(sap.tempRoot), [])
+})
+
 test('long serial numbers: material + short serials via the clipboard, in chunks; never a lookup without serials', async () => {
   const calls = []
   const clip = []

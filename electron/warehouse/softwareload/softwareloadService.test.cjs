@@ -1123,37 +1123,27 @@ test('kif move moves terminals from several storage locations, one transfer per 
   }
 })
 
-test('a material document without year is looked up with the current year, then the previous year', async () => {
+test('a material document without year is shown and saved with the year SAP found it under', async () => {
   const sap = fakeSap({ A: { material: 'M-0', sloc: 'D000' } })
   const asked = []
   const matdocs = async ({ document }) => {
     asked.push(document)
-    return { document, transaction: 'ZMS_REP', rows: document === '4905204948 2025' ? [{ serial: 'a', material: 'M-0' }] : [] }
+    return document.trim() === '4905204948'
+      ? { document: '4905204948 2025', transaction: 'ZMS_REP', rows: [{ serial: 'a', material: 'M-0' }] }
+      : { document: `${document} 2025`, transaction: 'ZMS_REP', rows: [] }
   }
   const ctx = setup({ sap, matdocs })
-  ctx.clock.now = new Date(2026, 0, 5, 8, 0).getTime()
   const svc = ctx.service()
   const preview = await svc.kifPreview(ANNA, { document: ' 4905204948 ' })
-  assert.deepEqual(asked, ['4905204948 2026', '4905204948 2025'])
+  assert.deepEqual(asked, [' 4905204948 '], 'the lookup is asked once; it tries the years itself')
   assert.deepEqual(preview.serials, ['A'])
   assert.equal(preview.document, '4905204948 2025', 'the document used is returned with its year')
+  const moved = await svc.kifMove(ANNA, { serials: preview.serials, document: preview.document })
+  assert.equal((await ctx.storeFor('TCD').getAsync('kif-2026-11')).moves[moved.id].document, '4905204948 2025')
 
-  asked.length = 0
   await assert.rejects(svc.kifPreview(ANNA, { document: '4905204949' }), {
-    code: 'SOFTWARELOAD_INVALID', message: 'Materialedokumentet har ingen serienumre. Skriv det som fx "4905204948 2026"',
+    code: 'SOFTWARELOAD_INVALID', message: 'Materialedokumentet har ingen serienumre. Skriv det som fx "4905204948" eller "4905204948 2026"',
   })
-  assert.deepEqual(asked, ['4905204949 2026', '4905204949 2025'])
-})
-
-test('a material document with year is used as given', async () => {
-  const asked = []
-  const matdocs = async ({ document }) => {
-    asked.push(document)
-    return { document, transaction: 'ZMS_REP', rows: [] }
-  }
-  const svc = setup({ sap: fakeSap({}), matdocs }).service()
-  await assert.rejects(svc.kifPreview(ANNA, { document: '4905204948 2024' }), { code: 'SOFTWARELOAD_INVALID' })
-  assert.deepEqual(asked, ['4905204948 2024'], 'no other year is tried')
 })
 
 test('kif move needs writing in SAP, refuses a double click, and a serial SAP refuses gets its message', async () => {

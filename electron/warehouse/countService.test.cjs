@@ -408,6 +408,25 @@ test('a material document is looked up in SAP, checked, imported with its number
   assert.deepEqual(focus.found.map(item => item.document), ['4900229137 2026 01', '4900229137 2026 01'])
 })
 
+test('a material document typed with and without year is recognised as already imported', async () => {
+  const ctx = setup()
+  const asked = []
+  ctx.fetcher.fetchMatdoc = async ({ document }) => {
+    asked.push(document)
+    return { document: '4900229137 2026', transaction: 'ZMS_REP', rows: [{ serial: 'N1', material: 'INT4300-4921-0', description: 'SmartPOS', plant: 'D301', sloc: 'D000', userStatus: '' }] }
+  }
+  const anna = ctx.service('pc1')
+  const { id } = await newCount(ctx, anna)
+  const first = await anna.lookupMatdoc(ANNA, id, { document: '4900229137 2026' })
+  await anna.importSerials(ANNA, id, { serials: first.serials, place: 'Palle 14.2', document: first.document, dryRun: false })
+  const again = await anna.lookupMatdoc(ANNA, id, { document: '4900229137' })
+  assert.deepEqual(asked, ['4900229137 2026', '4900229137'])
+  assert.equal(again.document, '4900229137 2026', 'the document SAP found, with its year, is shown')
+  assert.equal(again.alreadyImported?.place, 'Palle 14.2')
+  const focus = await anna.materialSerials(ANNA, id, { material: 'INT4300-4921-0' })
+  assert.deepEqual(focus.found.map(item => item.document), ['4900229137 2026'])
+})
+
 test('a manager starts a status; without one no count can be created', async () => {
   const ctx = setup({ status: false })
   const anna = ctx.service('pc1')

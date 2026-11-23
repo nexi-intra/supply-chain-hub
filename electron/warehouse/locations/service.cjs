@@ -280,7 +280,7 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
     material: materialOf,
     quantity: value => quantityOf(value, { min: 0, optional: true }),
     receivedAt: value => { if (!Number.isFinite(value) || value <= 0) throw codeError('DATE_INVALID', 'Ugyldig dato'); return value },
-    document: value => (value ? normalizeMatdoc(value) || (() => { throw codeError('MATDOC_INVALID', 'Skriv 49/50-nummeret som fx "5000032337 2026 0001"') })() : null),
+    document: value => (value ? normalizeMatdoc(value) || (() => { throw codeError('MATDOC_INVALID', 'Skriv 49/50-nummeret som fx "5000032337" eller "5000032337 2026 0001"') })() : null),
     serials: serialsOf,
     tags: tagsOf,
     note: value => String(value || '').trim().slice(0, 500),
