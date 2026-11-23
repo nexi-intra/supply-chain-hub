@@ -2,6 +2,63 @@
 
 Dato: 23.11.2026
 
+## Status efter natten 23.-24.11.2026
+
+Alle 10 kritiske fejl i Fase 1 og 36 af de 40 vigtige fejl i Fase 2 til 5 er rettet på `develop/1.6.8`. Intet er pushet eller udgivet, og der er ikke skrevet til SAP eller M:.
+
+Sådan blev det lavet:
+
+- Hver rettelse blev skrevet med tests først og gennemgået af en uafhængig reviewer, og fundene blev rettet, indtil gennemgangen var ren.
+- Til sidst kørte en samlet gennemgang for Fase 1 og en for Fase 2 til 5, delt i Optælling, Placeringer og det fælles. Alle fund derfra er rettet og gennemgået igen.
+
+Sidste testkørsel er grøn:
+
+| Testpakke | Resultat |
+|---|---|
+| Lagertests | 801 bestået, 1 sprunget over (kræver M:) |
+| Electron-tests | 1317 bestået |
+| Skærmtests (vitest) | 1788 bestået |
+| tsc | ingen fejl |
+
+### Bevidst udskudt
+
+| Punkt | Hvorfor |
+|---|---|
+| 3.11 og 3.12 | De ændrer historik og `meta`, som 1.6.6 og 1.6.7 bruger til at undgå dobbelte handlinger. Bør vente, til alle PC'er kører 1.6.8. |
+| 5.3 og VBS-delen af 5.4 | De ændrer seks SAP-skrivescripts og skal testes i QS4 først. JavaScript-delen af 5.4 er lavet: en ufuldstændig MI22-læsning giver nu "ukendt" og ikke "åben". |
+| Trin 3 i 5.2 (kontakt i konfigurationen) | Det er en ny funktion (forslag 7.18). |
+| "Tjek i SAP"-knappen fra 2.4 og 7.1 | Den kræver et nyt SAP-script og en QS4-test. Indtil da afklarer en manager et ukendt dokument med en begrundelse. |
+
+### Skal testes i QS4 før udgivelse
+
+Ændringerne i PI-scripts og SAP-eksport er kun læst igennem, ikke kørt mod SAP:
+
+1. Dansk logon giver "Log på SAP på engelsk (EN), og prøv igen" i alle seks PI-trin, og engelsk logon virker hele vejen.
+2. ZMS_COUNT_SERIAL med mindst 1000 serienumre. Antallet MENGE skal læses rigtigt, og en slettet række skal stoppe med "SAP har talt N-1".
+3. MI04 med materialer uden serienumre. Hvis de står i ZMS_COUNT_SERIAL-listen, kan tjekket "alle materialer fundet" komme tilbage.
+4. `/n` fra MI04 og fra MI20's Post Difference med ugemte data må ikke give en popup, der hænger.
+5. Timeout i MI20 med flere dokumenter og et nummer kopieret imens. Resultatet skal være "Ukendt i SAP" og ikke "Ikke bogført".
+6. Timeout i MI04 og serienumre: gemt og forladt giver "talt", ikke gemt giver "ikke talt".
+7. Tidsforbrug: 15 minutters ventetid plus tilbagelæsning skal holde sig inden for 300 sekunder.
+8. IQ09 uden resultat: hvilken besked (id) giver SAP? Appen godtager IH 047 som "ingen serienumre".
+9. MB52 må ikke blive stående på startskærmen ved normal brug.
+10. MI31 "Freeze book inventory": er beholdningen frosset på appens PI-dokumenter? Er den det, regnes antallet forkert.
+11. MI05 på et talt dokument og derefter "Bogfør alligevel" fra Hub med begrundelse. Det rettede antal skal bogføres.
+12. Lukker brugeren MI31, mens SAP arbejder efter F8, bør det give "ukendt" og ikke "intet oprettet". Det kræver en ændring i scriptet.
+
+### Skal prøves i appen
+
+- En rigtig scanner i Placeringer: Enter i materialevælgeren og i søgningen skal tage det, der lige er scannet.
+- Finske og svenske ord i Huberts linje "Andre paller", fx "pois käytöstä" og "inaktiverad".
+- At "lukket pænt" (exitedAt) når frem til M: inden for 10 sekunder ved lukning. Ellers kommer der falske "har ikke sendt"-advarsler.
+
+### Kendte risici med blandede versioner
+
+- Managere og admins skal opdateres til 1.6.8 først. En PC på 1.6.7 kender ikke de nye spærringer: den kan nulstille bogførte materialer, lægge antal på med gamle eller tomme SAP-tal og handle på PI-dokumenter, som 1.6.8 har markeret som ukendte.
+- Fejlen i "Tjek SAP-fejl" (1.1) findes også i den udgivne 1.6.7. Det er Jacobs beslutning, om der skal laves en hotfix af 1.6.7.
+
+Hele forløbet med commits og afgørelser står i `.superpowers/sdd/arbejdsvaerktoejer-gennemgang/progress.md`.
+
 ## Hvad er gennemgået
 
 Fire gennemgange af modulet Arbejdsværktøjer i Supply Chain Hub 1.6.8 er samlet her:
