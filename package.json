@@ -24,8 +24,8 @@
         "test:updater": "node --test electron/updater.test.cjs",
         "test:unit": "vitest run",
         "test:electron-auth": "electron electron/fixtures/auth-smoke.cjs",
-        "test:warehouse": "node --test electron/warehouse/*.test.cjs electron/warehouse/core/*.test.cjs",
-        "test": "node --test electron/*.test.cjs electron/warehouse/*.test.cjs electron/warehouse/core/*.test.cjs && vitest run"
+        "test:warehouse": "node --test electron/warehouse/*.test.cjs electron/warehouse/core/*.test.cjs electron/warehouse/locations/*.test.cjs electron/warehouse/softwareload/*.test.cjs electron/warehouse/softwareload/core/*.test.cjs",
+        "test": "node --test electron/*.test.cjs electron/games/backgammon/*.test.cjs electron/games/chess/*.test.cjs electron/games/wordPuzzle/*.test.cjs electron/warehouse/*.test.cjs electron/warehouse/core/*.test.cjs electron/warehouse/locations/*.test.cjs electron/warehouse/softwareload/*.test.cjs electron/warehouse/softwareload/core/*.test.cjs && vitest run"
     },
     "build": {
         "appId": "com.nexigroup.tcdhub",
