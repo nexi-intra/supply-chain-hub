@@ -23,7 +23,8 @@ type Sent = { changes: StockChange[]; write: () => Promise<object>; success: str
  * (M: would refuse it because of that very action).
  */
 export function ShelfLines({ shelf, lines, stale = false, onOpen, onApply, onChanged }: { shelf: string; lines: StockLineView[]; stale?: boolean; onOpen: (target: LocationsTarget) => void; onApply: (changes: StockChange[]) => void; onChanged: () => void }) {
-  const [open, setOpen] = useState<{ action: Action; line: StockLineView } | null>(null)
+  // `stale` as the dialog opened: the dialog keeps the line it showed then, also when the read after this PC's action lands.
+  const [open, setOpen] = useState<{ action: Action; line: StockLineView; stale?: boolean } | null>(null)
   // The lines as shown now: "Gem alligevel" comes after a refusal and a re-read, so it changes what is shown then.
   const shown = useRef(lines)
   useEffect(() => { shown.current = lines })
@@ -57,12 +58,12 @@ export function ShelfLines({ shelf, lines, stale = false, onOpen, onApply, onCha
             <span className="flex gap-1.5">
               <Button size="sm" variant="outline" onClick={() => setOpen({ action: 'take', line })}><HandGrabbing size={14} /> {t('Tag', 'Take')}</Button>
               <Button size="sm" variant="outline" onClick={() => setOpen({ action: 'move', line })}><ArrowsLeftRight size={14} /> {t('Flyt', 'Move')}</Button>
-              <Button size="sm" variant="ghost" onClick={() => setOpen({ action: 'set', line })}><PencilSimple size={14} /> {t('Ret antal', 'Correct quantity')}</Button>
+              <Button size="sm" variant="ghost" onClick={() => setOpen({ action: 'set', line, stale })}><PencilSimple size={14} /> {t('Ret antal', 'Correct quantity')}</Button>
             </span>
           </div>
         ))}
       </div>
-      {open && <ShelfLineDialog shelf={shelf} action={open.action} line={open.line} onClose={() => setOpen(null)} onSend={send} onSet={(line, next, expected) => setQuantity(line, next, stale ? undefined : expected)} />}
+      {open && <ShelfLineDialog shelf={shelf} action={open.action} line={open.line} onClose={() => setOpen(null)} onSend={send} onSet={(line, next, expected) => setQuantity(line, next, open.stale || stale ? undefined : expected)} />}
     </>
   )
 }
