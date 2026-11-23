@@ -380,13 +380,21 @@ test('pauseIfRunning says when it could not pause the task, instead of keeping q
   const ctx = setup()
   const svc = ctx.service()
   assert.equal(await svc.pauseIfRunning(ANNA), null, 'no task, nothing to pause')
+  ctx.faults.aktiv = 1
+  assert.equal(await svc.pauseIfRunning(ANNA), null, 'a drive error with no task to pause is nothing to tell')
   await svc.start(ANNA, TASK)
   ctx.faults.aktiv = 1
   assert.deepEqual(await svc.pauseIfRunning(ANNA), { failed: true })
   assert.equal((await svc.status(ANNA)).running.paused, false, 'the task still runs')
+  ctx.faults.aktiv = 1
+  ctx.unreadableTeam.add(runningKeyOf(ANNA))
+  assert.deepEqual(await svc.pauseIfRunning(ANNA), { failed: true }, 'a task that cannot be read may be running')
+  ctx.unreadableTeam.clear()
   const paused = await svc.pauseIfRunning(ANNA)
   assert.deepEqual([paused.id, paused.paused], ['t1', true])
   assert.equal(await svc.pauseIfRunning(ANNA), null, 'already on a break')
+  ctx.faults.aktiv = 1
+  assert.equal(await svc.pauseIfRunning(ANNA), null, 'a drive error on a task already on a break is nothing to tell')
 })
 
 test('resuming the task stops a running Stempelkort like start does, and refuses after 10 hours', async () => {
@@ -666,7 +674,7 @@ test('up to 10 hours finishes now, and an end time inside the open pause stops t
   ctx.tick(70 * HOUR)
   svc = ctx.service()
   await assert.rejects(svc.finish(ANNA, await confirmed(ctx, ANNA)), { code: 'SOFTWARELOAD_LONG_RUN' })
-  await assert.rejects(svc.finish(ANNA, { ...await confirmed(ctx, ANNA), endAt: pausedAt - 1 }), { code: 'SOFTWARELOAD_INVALID' }, 'before the pause began')
+  await assert.rejects(svc.finish(ANNA, { ...await confirmed(ctx, ANNA), endAt: started.startedAt - 1 }), { code: 'SOFTWARELOAD_INVALID' }, 'before the task started')
   await svc.finish(ANNA, { ...await confirmed(ctx, ANNA), endAt: pausedAt + HOUR })
   const second = (await ctx.finished('2026-11'))[started.id]
   assert.deepEqual(
@@ -700,6 +708,35 @@ test('the chosen end time is frozen in the finishing mark, and a resumed finish 
   assert.equal(result.state, 'faerdig', 'no new question: the end time was chosen before')
   const task = (await ctx.finished('2026-11')).t1
   assert.deepEqual([task.endedAt, task.workedMs, task.endCorrected], [startedAt + 6 * HOUR, 6 * HOUR, true])
+})
+
+test('a forgotten task that Stempelkort paused the next morning can still end on the day it was forgotten', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
+  const ctx = setup({ sap })
+  // Friday 20 November 2026, 13:00.
+  ctx.clock.now = new Date(2026, 10, 20, 13, 0, 0).getTime()
+  const svc = await startWith(ctx, TASK, ['A'])
+  const startedAt = ctx.clock.now
+  ctx.tick(HOUR)
+  await svc.pause(ANNA)
+  ctx.tick(15 * MIN)
+  await svc.resume(ANNA)
+  const resumedAt = ctx.clock.now
+  ctx.tick(60 * HOUR - HOUR - 15 * MIN)
+  // Monday morning Stempelkort starts and pauses the task.
+  assert.equal((await svc.pauseIfRunning(ANNA)).paused, true)
+  const status = (await svc.status(ANNA)).running
+  assert.deepEqual([status.earliestEndAt, status.lastEventAt], [resumedAt, ctx.clock.now], 'the earliest end is the last resume, not the pause')
+  ctx.tick(10 * MIN)
+
+  await assert.rejects(svc.finish(ANNA, { ...await confirmed(ctx, ANNA), endAt: resumedAt - 1 }), { code: 'SOFTWARELOAD_INVALID' }, 'not inside the closed pause')
+  await svc.finish(ANNA, { ...await confirmed(ctx, ANNA), endAt: startedAt + 3 * HOUR })
+  const task = (await ctx.finished('2026-11')).t1
+  assert.deepEqual(
+    [task.endedAt, task.workedMs, task.pausedMs, task.endCorrected, task.pauses],
+    [startedAt + 3 * HOUR, 3 * HOUR - 15 * MIN, 15 * MIN, true, [{ from: startedAt + HOUR, to: resumedAt }]],
+    'only the Friday hours count, and the Monday pause is dropped',
+  )
 })
 
 test('a running file left next to a task already handed over to SAP is retired, and the task is never moved again', async () => {

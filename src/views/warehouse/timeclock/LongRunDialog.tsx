@@ -7,9 +7,11 @@ import { fromLocalInput, suggestedEnd, toLocalInput } from '@/lib/timeclock'
 import { currentWarehouseLanguage, t } from '@/lib/warehouse/text'
 
 interface LongRunDialogProps {
+  /** Kept mounted with `open`, the time the person typed survives a refusal. */
+  open?: boolean
   startedAt: number
   taskName: string
-  /** The earliest end the main process accepts: the last start, pause or resume. */
+  /** The earliest end the main process accepts: the last start or resume. */
   earliest?: number
   onCancel: () => void
   onStop: (endAt: number) => void
@@ -17,13 +19,13 @@ interface LongRunDialogProps {
 }
 
 /** The clock or the softwareload task ran for more than 10 hours: when did the work really stop? */
-export function LongRunDialog({ startedAt, taskName, earliest = startedAt, onCancel, onStop, busy }: LongRunDialogProps) {
+export function LongRunDialog({ open = true, startedAt, taskName, earliest = startedAt, onCancel, onStop, busy }: LongRunDialogProps) {
   const [value, setValue] = useState(() => toLocalInput(suggestedEnd({ startedAt, earliest, now: Date.now() })))
   const started = new Date(startedAt).toLocaleString(currentWarehouseLanguage() === 'da' ? 'da-DK' : 'en-GB', { dateStyle: 'short', timeStyle: 'short' })
   // The field has whole minutes; the minute of the earliest end means the earliest end itself.
   const chosen = () => { const at = fromLocalInput(value); return at < earliest && earliest - at < 60_000 ? earliest : at }
   return (
-    <Dialog open onOpenChange={open => { if (!open) onCancel() }}>
+    <Dialog open={open} onOpenChange={next => { if (!next) onCancel() }}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{t('Hvornår stoppede du?', 'When did you stop?')}</DialogTitle>

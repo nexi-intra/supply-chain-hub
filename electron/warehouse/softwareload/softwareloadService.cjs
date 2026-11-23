@@ -56,15 +56,20 @@ const pausedMs = (pauses, end) => pauses.reduce((sum, pause) => sum + Math.max(0
 const isPaused = task => { const open = task.pauses.at(-1); return Boolean(open && open.to == null) }
 /** The latest start, pause or resume of a task; while it is paused, when the pause began. */
 const lastEventOf = task => Math.max(task.startedAt, ...task.pauses.flatMap(pause => [pause.from, pause.to ?? pause.from]))
+/** The last start or resume: the earliest end a chosen end may have, also when the task has been paused since. */
+const earliestEndOf = task => Math.max(task.startedAt, ...task.pauses.filter(pause => pause.to != null).map(pause => pause.to))
+/** The pauses of a task ended at `end`, as in Stempelkort: those from `end` on are dropped, and an open one stops at `end`. */
+const pausesUntil = (pauses, end) => pauses.filter(pause => pause.from < end).map(pause => ({ ...pause, to: Math.min(pause.to ?? end, end) }))
 
 /**
  * When the time of a running task stops, as in Stempelkort: now, or after more than LONG_RUN_MS the `endAt` the person
- * chose. A chosen end lies between the last start, pause or resume and now.
+ * chose. A chosen end lies between the last start or resume and now; a pause begun later (e.g. by Stempelkort the next
+ * morning) is dropped, so a forgotten task can still end on the day it was forgotten.
  */
 function endOf(task, endAt, at) {
   if (endAt !== undefined && endAt !== null) {
     const wanted = Number(endAt)
-    if (!Number.isFinite(wanted) || wanted < lastEventOf(task) || wanted > at) throw codeError('SOFTWARELOAD_INVALID', 'Sluttiden skal ligge mellem seneste start eller pause og nu')
+    if (!Number.isFinite(wanted) || wanted < earliestEndOf(task) || wanted > at) throw codeError('SOFTWARELOAD_INVALID', 'Sluttiden skal ligge mellem seneste start eller pause og nu')
     return { endedAt: wanted, corrected: wanted !== at }
   }
   if (at - task.startedAt > LONG_RUN_MS) throw Object.assign(codeError('SOFTWARELOAD_LONG_RUN', 'Opgaven har kørt i over 10 timer. Vælg hvornår du stoppede'), { startedAt: task.startedAt })
@@ -292,7 +297,7 @@ function createSoftwareloadService({
       .sort((a, b) => b.at - a.at)
     return {
       id: task.id, type: task.type, kif: task.kif, target: task.target, version: task.version, startedAt: task.startedAt,
-      paused: isPaused(task), pausedMs: paused, workedMs: at - task.startedAt - paused, now: at, lastEventAt: lastEventOf(task), terminals,
+      paused: isPaused(task), pausedMs: paused, workedMs: at - task.startedAt - paused, now: at, lastEventAt: lastEventOf(task), earliestEndAt: earliestEndOf(task), terminals,
     }
   }
 
@@ -493,7 +498,8 @@ function createSoftwareloadService({
 
   /**
    * Pauses the running task when Stempelkort starts. Never throws: no task, a task already paused or being finished
-   * give null, and a drive error gives `{ failed: true }`, so Stempelkort can tell the person to pause it themselves.
+   * give null. After a drive error the running file is read again: `{ failed: true }` only when a running task is there
+   * (or it cannot be read), so Stempelkort tells the person to pause it themselves, and nobody else hears of it.
    */
   async function pauseIfRunning(user) {
     try {
@@ -505,7 +511,9 @@ function createSoftwareloadService({
       })
       return view(next)
     } catch {
-      return { failed: true }
+      const unreadable = Symbol('unreadable')
+      const current = await readRunning(user, { skipCache: true }).catch(() => unreadable)
+      return current === unreadable || (current && !isPaused(current) && !current.finishing) ? { failed: true } : null
     }
   }
 
@@ -873,7 +881,7 @@ function createSoftwareloadService({
         const { endedAt, corrected } = previous
           ? { endedAt: previous.endedAt ?? previous.at, corrected: previous.endCorrected === true }
           : endOf(task, endAt, now())
-        const pauses = task.pauses.map(pause => ({ ...pause, to: Math.min(pause.to ?? endedAt, endedAt) }))
+        const pauses = pausesUntil(task.pauses, endedAt)
         const paused = pausedMs(pauses, endedAt)
         const correctedMark = corrected ? { endCorrected: true } : {}
         ended = { ...task, pauses, endedAt, pausedMs: paused, workedMs: endedAt - task.startedAt - paused, state: 'mangler-sap', ...correctedMark }

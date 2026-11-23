@@ -46,6 +46,7 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [confirming, setConfirming] = useState(false)
   const [askEnd, setAskEnd] = useState(false)
+  const [earliest, setEarliest] = useState(() => initial?.earliestEndAt)
   const [moving, setMoving] = useState(false)
   const [result, setResult] = useState<SoftwareloadFinishResult | null>(null)
   const [finishError, setFinishError] = useState<{ text: string; stillRunning: boolean; alreadyFinished: boolean } | null>(null)
@@ -89,7 +90,12 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
       }
       // After more than 10 hours the time stops only when the person has said when the work really stopped. Nothing is moved yet.
       if (code === 'SOFTWARELOAD_LONG_RUN' || (endAt !== undefined && code === 'SOFTWARELOAD_INVALID')) {
-        if (code === 'SOFTWARELOAD_INVALID') toast.error(errorMessage(error))
+        if (code === 'SOFTWARELOAD_INVALID') {
+          toast.error(errorMessage(error))
+          // The task may have been resumed elsewhere since the screen opened; the earliest end is asked again.
+          const fresh = await window.electronWarehouse!.softwareload.status().catch(() => null)
+          if (fresh?.running && fresh.running.id === task?.id) setEarliest(fresh.running.earliestEndAt)
+        }
         setAskEnd(true)
         return
       }
@@ -196,7 +202,7 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      {askEnd && <LongRunDialog startedAt={task.startedAt} earliest={task.lastEventAt} taskName={t('softwareload-opgaven', 'the softwareload task')} onCancel={() => setAskEnd(false)} onStop={endAt => void finish(endAt)} busy={moving} />}
+      <LongRunDialog open={askEnd} startedAt={task.startedAt} earliest={earliest} taskName={t('softwareload-opgaven', 'the softwareload task')} onCancel={() => setAskEnd(false)} onStop={endAt => void finish(endAt)} busy={moving} />
     </div>
   )
 }

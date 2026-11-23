@@ -1270,8 +1270,10 @@ export interface SoftwareloadTaskView {
   pausedMs: number
   workedMs: number
   now: number
-  /** The latest start, pause or resume; while paused, when the pause began. The earliest end a finish accepts. */
+  /** The latest start, pause or resume; while paused, when the pause began. */
   lastEventAt: number
+  /** The last start or resume: the earliest end a finish accepts, also while paused. */
+  earliestEndAt: number
   terminals: { serial: string; at: number; failed?: { note: string } }[]
 }
 
