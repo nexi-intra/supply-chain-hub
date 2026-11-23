@@ -20,6 +20,7 @@ import { currentWarehouseLanguage, t } from '@/lib/warehouse/text'
 import { cn } from '@/lib/utils'
 import type { SoftwareloadChoice, SoftwareloadTaskView } from '@/types/warehouse'
 import { ErrorLine, label, SERIAL_PATTERN, cleanSerial, useReportBusy, type ReportBusy } from './common'
+import { StopLaterButton } from './SoftwareloadStop'
 
 const LAST_START_KEY = 'softwareload-last-start'
 const NOTE_MAX = 200
@@ -34,13 +35,16 @@ interface TaskProps {
   active: boolean
   onRunning: (running: SoftwareloadTaskView | null) => void
   onFinish: () => void
+  /** Softwareload may move in this SAP system; stopping the time for a later move needs it too. */
+  writeEnabled: boolean
+  onOpenPending: () => void
   reload: () => Promise<void>
   onOpenTimeclock: () => void
   onBusy?: ReportBusy
 }
 
 /** "Min opgave": the start form, or the running task with its clock and scanner. */
-export function SoftwareloadTask({ email, running, receivedAt, active, onRunning, onFinish, reload, onOpenTimeclock, onBusy }: TaskProps) {
+export function SoftwareloadTask({ email, running, receivedAt, active, onRunning, onFinish, writeEnabled, onOpenPending, reload, onOpenTimeclock, onBusy }: TaskProps) {
   const [stopped, setStopped] = useState<Stopped | null>(null)
   if (!running) return <StartForm onStarted={(view, stoppedTimeclock) => { setStopped(stoppedTimeclock ?? null); onRunning(view) }} reload={reload} onOpenTimeclock={onOpenTimeclock} />
   return (
@@ -55,6 +59,8 @@ export function SoftwareloadTask({ email, running, receivedAt, active, onRunning
       onDismissStopped={() => setStopped(null)}
       onRunning={onRunning}
       onFinish={onFinish}
+      writeEnabled={writeEnabled}
+      onOpenPending={onOpenPending}
       reload={reload}
       onOpenTimeclock={onOpenTimeclock}
       onBusy={onBusy}
@@ -217,6 +223,9 @@ interface RunningProps {
   onDismissStopped: () => void
   onRunning: (running: SoftwareloadTaskView | null) => void
   onFinish: () => void
+  /** Softwareload may move in this SAP system; stopping the time for a later move needs it too. */
+  writeEnabled: boolean
+  onOpenPending: () => void
   reload: () => Promise<void>
   onOpenTimeclock: () => void
   onBusy?: ReportBusy
@@ -232,7 +241,7 @@ function waitingScans(email: string, taskId: string): ScanJob[] {
   }
 }
 
-function RunningTask({ email, running, receivedAt, active, stopped, onStopped, onDismissStopped, onRunning, onFinish, reload, onOpenTimeclock, onBusy }: RunningProps) {
+function RunningTask({ email, running, receivedAt, active, stopped, onStopped, onDismissStopped, onRunning, onFinish, writeEnabled, onOpenPending, reload, onOpenTimeclock, onBusy }: RunningProps) {
   const [serial, setSerial] = useState('')
   const [waiting] = useState(() => waitingScans(email, running.id))
   // Scans shown before the main process has them, and serials taken out before it has removed them.
@@ -432,6 +441,18 @@ function RunningTask({ email, running, receivedAt, active, stopped, onStopped, o
               ? <Button size="lg" onClick={resume} loading={busy === 'resume'} disabled={busy !== null}><Play size={20} weight="fill" /> {t('Fortsæt', 'Resume')}</Button>
               : <Button size="lg" variant="outline" onClick={pause} loading={busy === 'pause'} disabled={busy !== null}><Pause size={20} weight="fill" /> {t('Pause', 'Break')}</Button>}
             <Button size="lg" onClick={onFinish} disabled={busy !== null || saving} title={saving ? t('Venter på at scanningerne er gemt', 'Waiting for the scans to be saved') : undefined}><CheckCircle size={20} weight="fill" /> {t('Afslut opgave', 'Finish task')}</Button>
+            {/* Stops the time without SAP, e.g. when SAP has logged out; the moves wait under Venter på SAP. */}
+            <StopLaterButton
+              task={running}
+              writeEnabled={writeEnabled}
+              disabled={busy !== null || saving}
+              onStopped={() => {
+                onRunning(null)
+                void reload()
+                toast.success(t('Tiden er stoppet. Opgaven venter under Venter på SAP', 'The time is stopped. The task waits under Waiting for SAP'), { action: { label: t('Gå til Venter på SAP', 'Go to Waiting for SAP'), onClick: onOpenPending } })
+              }}
+              onChanged={() => void reload()}
+            />
             <Button size="lg" variant="outline" onClick={() => setEditing(true)} disabled={busy !== null || saving} title={saving ? t('Venter på at scanningerne er gemt', 'Waiting for the scans to be saved') : undefined}><PencilSimple size={18} /> {t('Ret opgave', 'Edit task')}</Button>
             <Button size="lg" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => setAskCancel(true)} loading={busy === 'cancel'} disabled={busy !== null || saving}><Trash size={18} /> {t('Annullér', 'Cancel')}</Button>
           </div>

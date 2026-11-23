@@ -2,7 +2,9 @@
 // storage location and the version, then scan the serial numbers and mark the broken ones as failed. Like Stempelkort,
 // each person writes only their own running task, so colleagues never wait for each other's locks. Finishing stops the
 // time and moves the terminals in SAP; until every move is saved the task waits as `venter-<id>` and can be continued
-// by its owner or a manager, or given up by a manager. "Flyt ind i KIF" moves terminals to D005 ahead of time without
+// by its owner or a manager, or given up by a manager. "Stop tiden nu, flyt i SAP senere" stops the time without SAP
+// and leaves the task waiting the same way; continuing shows SAP's plan first and moves only the confirmed one.
+// "Flyt ind i KIF" moves terminals to D005 ahead of time without
 // a task. Every move lands in a search index shared by TRR and TCD. A manager can delete a finished task or a KIF move
 // (e.g. test data) from the app's records; SAP is never touched. The statistics and the comments that explain a period
 // are for managers only. No Electron imports: register.cjs wires it to IPC, tests drive it.
@@ -83,6 +85,7 @@ const choiceOf = task => Object.fromEntries(CHOICE_KEYS.map(key => [key, task[ke
 const sameChoice = (a, b) => Boolean(a && b) && CHOICE_KEYS.every(key => a[key] === b[key])
 const changedMeanwhile = () => codeError('SOFTWARELOAD_CHANGED', 'Opgaven er rettet imens. Se oversigten igen')
 const kifChanged = () => codeError('SOFTWARELOAD_KIF_CHANGED', 'Terminalerne er flyttet i SAP, siden du så planen. Se planen igen')
+const planChanged = () => codeError('SOFTWARELOAD_PLAN_CHANGED', 'Terminalerne står et andet sted i SAP, end da du så planen. Se planen igen')
 const beingFinished = () => codeError('SOFTWARELOAD_BUSY', 'Opgaven er ved at blive afsluttet. Vent til flytningen er færdig, eller se under "Venter på SAP"')
 const alreadyFinished = () => codeError('SOFTWARELOAD_ALREADY_FINISHED', 'Opgaven er allerede afsluttet. Se Venter på SAP eller søg på et af serienumrene')
 const upper = value => String(value ?? '').trim().toUpperCase()
@@ -122,6 +125,19 @@ const countOutcomes = results => Object.values(results).reduce((counts, { outcom
 const terminalsOf = task => Object.entries(task.terminals || {}).map(([serial, terminal]) => ({ serial, failed: Boolean(terminal.failed) }))
 /** planMoves compares sloc and material in capitals; the lookup gives them so already, this only makes sure. */
 const sapRowsOf = rows => rows.map(row => ({ ...row, material: upper(row.material), sloc: upper(row.sloc) }))
+const listOf = value => (Array.isArray(value) ? value : [])
+/**
+ * Every SAP step of a plan (`transfers` and `blocks`, as planMoves gives them), one `serial|step` each and sorted: a
+ * Transfer with its wave, from and to, or MIGO 344 with its material. Two plans move alike when these are equal.
+ */
+const planStepsOf = plan => [
+  ...listOf(plan?.transfers).flatMap(move => listOf(move?.serials).map(serial => `${normalizeSerial(serial)}|${Number(move.wave)}|${normalizeSloc(move.from)}>${normalizeSloc(move.to)}`)),
+  ...listOf(plan?.blocks).flatMap(block => listOf(block?.serials).map(serial => `${normalizeSerial(serial)}|${BLOCK_BWART}|${upper(block.material)}`)),
+].sort()
+const sameSteps = (plan, planned) => {
+  const [a, b] = [planStepsOf(plan), planStepsOf(planned)]
+  return a.length === b.length && a.every((step, index) => step === b[index])
+}
 
 /** Whether a terminal already stands where its planned outcome wants it, judged from the steps saved in this task. */
 function reached(task, result) {
@@ -708,14 +724,29 @@ function createSoftwareloadService({
   }
 
   /**
+   * Where SAP has a pending task's terminals now and the plan from there, as a run makes it: a step this task saved (or
+   * a mark SAP proves it made) counts as passing D005.
+   */
+  async function planPending(task) {
+    const serials = Object.keys(task.terminals || {})
+    const rows = serials.length ? sapRowsOf(await sap.lookup({ team: task.team, serials })) : []
+    const rowOf = new Map(rows.map(row => [row.serial, row]))
+    // A step to D005 or out of it (also one a mark proves) means the terminal passed D005; one that started on D005
+    // only ever gets the step out of it.
+    const passedD005 = new Set(serials.filter(serial => stepsWithMark(task.results?.[serial], rowOf.get(serial)).some(step => step.to === KIF || step.from === KIF)))
+    return { serials, rows, rowOf, plan: planMoves({ kif: task.kif, target: task.target, terminals: terminalsOf(task), sapRows: rows, passedD005 }) }
+  }
+
+  /**
    * Moves a pending task's terminals in SAP. Every SAP document is saved on its serials before the next call, so a
    * crash or a closed SAP leaves the task pending and a later run starts from what SAP and the saved steps say.
-   * The caller holds the claim for `runId`; the run keeps it fresh and gives it back when it fails.
+   * The caller holds the claim for `runId`; the run keeps it fresh and gives it back when it fails. With `planned` (a
+   * continue from Venter på SAP) a plan that moves otherwise than the confirmed one stops the run before SAP moves.
    */
-  async function execute(user, taskId, runId, onProgress) {
+  async function execute(user, taskId, runId, onProgress, planned) {
     const stopRenewing = renewWhileRunning(user, taskId, runId)
     try {
-      return await moveInSap(user, taskId, runId, onProgress)
+      return await moveInSap(user, taskId, runId, onProgress, planned)
     } catch (error) {
       await releaseClaim(user, taskId, runId)
       throw error
@@ -724,22 +755,17 @@ function createSoftwareloadService({
     }
   }
 
-  async function moveInSap(user, taskId, runId, onProgress) {
+  async function moveInSap(user, taskId, runId, onProgress, planned) {
     const report = (step, done, total) => { try { onProgress?.({ done, total, step }) } catch { /* the screen is gone */ } }
     const by = lower(user.email)
     await mergeJournal(user, { taskId, kif: false })
     const task = await readPending(user, taskId)
-    const serials = Object.keys(task.terminals || {})
+    const total = Object.keys(task.terminals || {}).length
 
-    report('lookup', 0, serials.length)
-    const rows = serials.length ? sapRowsOf(await sap.lookup({ team: task.team, serials })) : []
-    report('lookup', serials.length, serials.length)
-    const rowOf = new Map(rows.map(row => [row.serial, row]))
-    // A mark that put the serial on D005 counts as passing it, like a saved step.
-    // A step to D005 or out of it (also one a mark proves) means the terminal passed D005; one that started on D005
-    // only ever gets the step out of it.
-    const passedD005 = new Set(serials.filter(serial => stepsWithMark(task.results?.[serial], rowOf.get(serial)).some(step => step.to === KIF || step.from === KIF)))
-    const plan = planMoves({ kif: task.kif, target: task.target, terminals: terminalsOf(task), sapRows: rows, passedD005 })
+    report('lookup', 0, total)
+    const { serials, rowOf, plan } = await planPending(task)
+    report('lookup', total, total)
+    if (planned !== undefined && !sameSteps(plan, planned)) throw planChanged()
 
     // Another run took over a stale claim while SAP answered; it moves the task now, so this run stops before SAP.
     const takenBy = current => (current.claim && current.claim.runId !== runId ? current.claim : null)
@@ -845,81 +871,145 @@ function createSoftwareloadService({
     } catch { /* see above */ }
   }
 
-  /**
-   * Stops the time and hands the running task over to SAP; it waits as `venter-<id>` until every move is done.
-   * `taskId` and `choice` are what the preview showed and the user confirmed: a task edited since is refused with
-   * SOFTWARELOAD_CHANGED, so SAP never moves with choices nobody saw. Under the same lock the task is marked
-   * `finishing`, so an edit or scan from another PC cannot land in it and get lost when the running file is deleted.
-   * A task already handed over (pending or finished) is never handed over again: its running file is a leftover and
-   * goes, and the finish is refused with SOFTWARELOAD_ALREADY_FINISHED. After more than 10 hours the time only stops
-   * at an `endAt` the person chose (SOFTWARELOAD_LONG_RUN without it), as in Stempelkort; the end is frozen in the
-   * marker, so a finish resumed later keeps it.
-   */
-  async function finish(user, { taskId: confirmedId, choice: confirmed, endAt, onProgress } = {}) {
-    requireWrite()
+  /** Runs `work` as the person's one finish or stop in this process; a second press meanwhile is refused. */
+  async function whileFinishing(user, work) {
     const email = lower(user.email)
     if (finishing.has(email)) throw codeError('SOFTWARELOAD_BUSY', 'Opgaven er allerede ved at blive afsluttet')
     finishing.add(email)
-    let taskId = null
     try {
-      const store = storeFor(user.team)
-      const runId = newRunId()
-      const found = await readRunning(user, { skipCache: true })
-      if (found && await wasHandedOver(user, found)) {
-        await retireRunning(user, found.id).catch(() => { /* status retires it later */ })
-        throw alreadyFinished()
-      }
-      let ended = null
-      let previous = null
-      await store.mutateAsync(runningKey(user.email), current => {
-        if (!current) throw notRunning()
-        if (finishingNow(current)) throw codeError('SOFTWARELOAD_BUSY', 'Opgaven er allerede ved at blive afsluttet')
-        if (current.id !== confirmedId || !sameChoice(choiceOf(current), confirmed)) throw changedMeanwhile()
-        previous = current.finishing ?? null
-        const task = withoutFinishing(current)
-        // After a finish that stopped once marked, the time stopped then: the time it hung does not count.
-        const { endedAt, corrected } = previous
-          ? { endedAt: previous.endedAt ?? previous.at, corrected: previous.endCorrected === true }
-          : endOf(task, endAt, now())
-        const pauses = pausesUntil(task.pauses, endedAt)
-        const paused = pausedMs(pauses, endedAt)
-        const correctedMark = corrected ? { endCorrected: true } : {}
-        ended = { ...task, pauses, endedAt, pausedMs: paused, workedMs: endedAt - task.startedAt - paused, state: 'mangler-sap', ...correctedMark }
-        return { ...task, finishing: { at: now(), endedAt, runId, ...correctedMark } }
-      })
-      let handedOver = false
-      try {
-        // Under the locks of the pending file and the month file, so a continue that completes the task meanwhile is seen.
-        handedOver = await store.withLockedKeysAsync([pendingKey(ended.id), finishedKey(ended)], transaction => {
-          if (transaction.get(pendingKey(ended.id)) || inMonth(transaction.get(finishedKey(ended)), ended.id)) return true
-          transaction.set(pendingKey(ended.id), { ...ended, claim: claimOf(user, runId) })
-          return false
-        })
-      } catch (error) {
-        await restoreFinishing(user, runId, previous)
-        throw error
-      }
-      // The task is handed over now (or was already); the running file is a leftover, and status retires it if this fails.
-      await retireRunning(user, ended.id).catch(() => {})
-      if (handedOver) throw alreadyFinished()
-      inFlight.add(taskId = ended.id)
-      return await execute(user, ended.id, runId, onProgress)
+      return await work()
     } finally {
       finishing.delete(email)
-      if (taskId) inFlight.delete(taskId)
     }
   }
 
-  async function continueFinish(user, { taskId, onProgress } = {}) {
+  /**
+   * Stops the time and hands the running task over to SAP; it waits as `venter-<id>` until every move is done.
+   * `confirmedId` and `confirmedChoice` are the task and the choices the user confirmed: a task edited since is refused
+   * with SOFTWARELOAD_CHANGED, so SAP never moves with choices nobody saw. Under the same lock the task is marked
+   * `finishing`, so an edit or scan from another PC cannot land in it and get lost when the running file is deleted.
+   * A task already handed over (pending or finished) is never handed over again: its running file is a leftover and
+   * goes, and the hand-over is refused with SOFTWARELOAD_ALREADY_FINISHED. After more than 10 hours the time only stops
+   * at an `endAt` the person chose (SOFTWARELOAD_LONG_RUN without it), as in Stempelkort; the end is frozen in the
+   * marker, so a hand-over resumed later keeps it. With `runId` the pending task is claimed for the run that moves it
+   * next; without, it waits for "Fortsæt i SAP". Returns the task as handed over.
+   */
+  async function handOver(user, confirmedId, confirmedChoice, { endAt, runId } = {}) {
+    const store = storeFor(user.team)
+    const markId = runId ?? newRunId()
+    const found = await readRunning(user, { skipCache: true })
+    if (found && await wasHandedOver(user, found)) {
+      await retireRunning(user, found.id).catch(() => { /* status retires it later */ })
+      throw alreadyFinished()
+    }
+    let ended = null
+    let previous = null
+    await store.mutateAsync(runningKey(user.email), current => {
+      if (!current) throw notRunning()
+      if (finishingNow(current)) throw codeError('SOFTWARELOAD_BUSY', 'Opgaven er allerede ved at blive afsluttet')
+      if (current.id !== confirmedId || !sameChoice(choiceOf(current), confirmedChoice)) throw changedMeanwhile()
+      previous = current.finishing ?? null
+      const task = withoutFinishing(current)
+      // After a finish that stopped once marked, the time stopped then: the time it hung does not count.
+      const { endedAt, corrected } = previous
+        ? { endedAt: previous.endedAt ?? previous.at, corrected: previous.endCorrected === true }
+        : endOf(task, endAt, now())
+      const pauses = pausesUntil(task.pauses, endedAt)
+      const paused = pausedMs(pauses, endedAt)
+      const correctedMark = corrected ? { endCorrected: true } : {}
+      ended = { ...task, pauses, endedAt, pausedMs: paused, workedMs: endedAt - task.startedAt - paused, state: 'mangler-sap', ...correctedMark }
+      return { ...task, finishing: { at: now(), endedAt, runId: markId, ...correctedMark } }
+    })
+    let handedOver = false
+    try {
+      // Under the locks of the pending file and the month file, so a continue that completes the task meanwhile is seen.
+      handedOver = await store.withLockedKeysAsync([pendingKey(ended.id), finishedKey(ended)], transaction => {
+        if (transaction.get(pendingKey(ended.id)) || inMonth(transaction.get(finishedKey(ended)), ended.id)) return true
+        transaction.set(pendingKey(ended.id), runId ? { ...ended, claim: claimOf(user, runId) } : ended)
+        return false
+      })
+    } catch (error) {
+      await restoreFinishing(user, markId, previous)
+      throw error
+    }
+    // The task is handed over now (or was already); the running file is a leftover, and status retires it if this fails.
+    await retireRunning(user, ended.id).catch(() => {})
+    if (handedOver) throw alreadyFinished()
+    return ended
+  }
+
+  /**
+   * "Afslut og flyt i SAP": hands the running task over (see handOver) with the choices the preview showed, and moves
+   * it in SAP at once; on an error it waits under Venter på SAP to be continued.
+   */
+  async function finish(user, { taskId: confirmedId, choice: confirmed, endAt, onProgress } = {}) {
+    requireWrite()
+    return whileFinishing(user, async () => {
+      const runId = newRunId()
+      const ended = await handOver(user, confirmedId, confirmed, { endAt, runId })
+      inFlight.add(ended.id)
+      try {
+        return await execute(user, ended.id, runId, onProgress)
+      } finally {
+        inFlight.delete(ended.id)
+      }
+    })
+  }
+
+  /**
+   * "Stop tiden nu, flyt i SAP senere": hands the running task over exactly as finish does, but asks SAP nothing, so the
+   * time stops also when SAP is closed or logged out. The task waits under Venter på SAP, where "Fortsæt i SAP" looks
+   * the terminals up and moves them once the person has confirmed the plan.
+   */
+  async function stop(user, { taskId: confirmedId, choice: confirmed, endAt } = {}) {
+    requireWrite()
+    const ended = await whileFinishing(user, () => handOver(user, confirmedId, confirmed, { endAt }))
+    return {
+      taskId: ended.id, endedAt: ended.endedAt, workedMs: ended.workedMs, pausedMs: ended.pausedMs,
+      count: Object.keys(ended.terminals || {}).length, state: ended.state,
+    }
+  }
+
+  function requireOwnerOrManager(user, task) {
+    if (task.email !== lower(user.email) && !isManager(user)) throw codeError('MANAGER_ONLY', 'Kun ejeren eller en manager kan fortsætte opgaven i SAP')
+  }
+
+  /**
+   * The plan for a task waiting for SAP from where SAP has its terminals now, without moving anything. "Fortsæt i SAP"
+   * must be confirmed with its `transfers` and `blocks`. A terminal this task already moved shows the outcome it was
+   * moved for, as the run keeps it.
+   */
+  async function pendingPreview(user, { taskId } = {}) {
+    const waiting = await readPending(user, taskId)
+    requireOwnerOrManager(user, waiting)
+    // SAP documents this PC still holds for the task count, as they do when the run merges them first.
+    await mergeJournal(user, { taskId: waiting.id, kif: false }).catch(() => {})
+    const task = await readPending(user, waiting.id)
+    const { rows, rowOf, plan } = await planPending(task)
+    const outcomes = Object.fromEntries(Object.entries(plan.outcomes).map(([serial, outcome]) => {
+      const before = task.results?.[serial]
+      const moved = stepsWithMark(before, rowOf.get(serial)).length && before?.outcome && NOTHING_TO_MOVE.includes(outcome)
+      return [serial, moved ? before.outcome : outcome]
+    }))
+    return { taskId: task.id, choice: choiceOf(task), outcomes, transfers: plan.transfers, blocks: plan.blocks, rows }
+  }
+
+  /**
+   * "Fortsæt i SAP": looks the terminals up again and moves them. `planned` is the `transfers` and `blocks` of the
+   * preview the person confirmed; without it, or when SAP now gives a plan that moves otherwise, nothing moves and
+   * SOFTWARELOAD_PLAN_CHANGED asks for the plan to be seen again.
+   */
+  async function continueFinish(user, { taskId, planned, onProgress } = {}) {
     requireWrite()
     const task = await readPending(user, taskId)
-    if (task.email !== lower(user.email) && !isManager(user)) throw codeError('MANAGER_ONLY', 'Kun ejeren eller en manager kan fortsætte opgaven i SAP')
+    requireOwnerOrManager(user, task)
+    if (!planned || typeof planned !== 'object' || Array.isArray(planned)) throw planChanged()
     if (inFlight.has(task.id)) throw alreadyMoving()
     inFlight.add(task.id)
     try {
       const runId = newRunId()
       await takeClaim(user, task.id, runId)
-      return await execute(user, task.id, runId, onProgress)
+      return await execute(user, task.id, runId, onProgress, planned)
     } finally {
       inFlight.delete(task.id)
     }
@@ -1369,7 +1459,7 @@ function createSoftwareloadService({
   return {
     status, start, edit, scan, unscan, markFailed, unmarkFailed,
     pause: user => changePause(user, true), resume, pauseIfRunning,
-    cancel, versions, preview, finish, continueFinish, abandon, kifPreview, kifMove, search, tasks, deleteTask, deleteKifMove, isManager,
+    cancel, versions, preview, finish, stop, pendingPreview, continueFinish, abandon, kifPreview, kifMove, search, tasks, deleteTask, deleteKifMove, isManager,
     comments, addComment, updateComment, deleteComment,
   }
 }

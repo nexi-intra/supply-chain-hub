@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { commentsFor, commentsOnTask, finishTitle, isDeliberateConfirm, isProblemOutcome, kifMovePlan, outcomeLabel, previewGroups, sapRunErrorMessage, scannedDuringPause, SOFTWARELOAD_TARGETS, summarizeByMaterial, summarizeTasks, targetLabel, taskForMaterial, taskLoadCounts, TYPE_LABELS } from './softwareload'
+import { commentsFor, commentsOnTask, finishTitle, isDeliberateConfirm, isProblemOutcome, kifMovePlan, outcomeLabel, pendingMovePlan, previewGroups, sapRunErrorMessage, scannedDuringPause, SOFTWARELOAD_TARGETS, summarizeByMaterial, summarizeTasks, targetLabel, taskForMaterial, taskLoadCounts, TYPE_LABELS } from './softwareload'
 import { setWarehouseLanguage } from './warehouse/text'
 import type { SoftwareloadComment, SoftwareloadKifPreview, SoftwareloadOutcome, SoftwareloadResult, SoftwareloadTask } from '@/types/warehouse'
 
@@ -112,6 +112,27 @@ describe('kifMovePlan', () => {
 
   it('says terminal for one', () => {
     expect(kifMovePlan({ serials: ['A'], outcomes: { A: 'to-target' }, transfers: [{ wave: 1, from: 'D001', to: 'D005', serials: ['A'] }] }, '').title).toBe('Flyt 1 terminal til D005 i SAP?')
+  })
+})
+
+describe('pendingMovePlan', () => {
+  it('counts each terminal once, lists the SAP steps and confirms a copy of the plan the user saw', () => {
+    const preview = {
+      taskId: 't1',
+      transfers: [{ wave: 1 as const, from: 'D001', to: 'D005', serials: ['A', 'B'] }, { wave: 2 as const, from: 'D005', to: 'D000', serials: ['A', 'B'] }],
+      blocks: [{ material: 'M-0', serials: ['B'] }],
+    }
+    const plan = pendingMovePlan(preview)
+    expect([plan.title, plan.count]).toEqual(['Flyt 2 terminaler i SAP?', 2])
+    expect(plan.steps).toEqual([
+      { key: '1-D001-D005', from: 'D001', to: 'D005', count: 2 },
+      { key: '2-D005-D000', from: 'D005', to: 'D000', count: 2 },
+      { key: '344-M-0', material: 'M-0', count: 1 },
+    ])
+    expect(plan.request).toEqual({ taskId: 't1', planned: { transfers: preview.transfers, blocks: preview.blocks } })
+    preview.transfers[0].serials.push('C')
+    expect(plan.request.planned.transfers[0].serials).toEqual(['A', 'B'])
+    expect(pendingMovePlan({ taskId: 't2', transfers: [], blocks: [] }).title).toBe('Afslut opgaven uden at flytte noget i SAP?')
   })
 })
 

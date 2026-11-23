@@ -123,6 +123,8 @@ export function Softwareload({ user, onOpenTimeclock, onBusyChange }: { user: Wa
             active={tab === 'task'}
             onRunning={showRunning}
             onFinish={() => setFinishing(true)}
+            writeEnabled={status.writeEnabled}
+            onOpenPending={() => choose('pending')}
             reload={load}
             onOpenTimeclock={onOpenTimeclock}
             onBusy={reportBusy}

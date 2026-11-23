@@ -185,6 +185,8 @@ contextBridge.exposeInMainWorld('electronWarehouse', {
     preview: () => warehouse('softwareload:preview'),
     finish: request => warehouse('softwareload:finish', request),
     continueFinish: request => warehouse('softwareload:continue', request),
+    stop: request => warehouse('softwareload:stop', request),
+    pendingPreview: request => warehouse('softwareload:pending-preview', request),
     abandon: request => warehouse('softwareload:abandon', request),
     kifPreview: request => warehouse('softwareload:kif-preview', request),
     kifMove: request => warehouse('softwareload:kif-move', request),

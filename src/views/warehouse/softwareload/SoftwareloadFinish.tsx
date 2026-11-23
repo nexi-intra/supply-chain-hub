@@ -6,27 +6,15 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { finishTitle, previewGroups, sapRunErrorMessage, targetLabel, TYPE_LABELS, type PreviewGroups } from '@/lib/softwareload'
+import { finishTitle, previewGroups, sapRunErrorMessage, targetLabel, TYPE_LABELS } from '@/lib/softwareload'
 import { errorCode, errorMessage } from '@/lib/warehouse/errors'
+import { formatDuration } from '@/lib/timeclock'
 import { t } from '@/lib/warehouse/text'
-import { cn } from '@/lib/utils'
-import type { SoftwareloadFinishResult, SoftwareloadPreview, SoftwareloadSapRow, SoftwareloadTaskView, WarehouseUser } from '@/types/warehouse'
+import type { SoftwareloadFinishResult, SoftwareloadPreview, SoftwareloadStopResult, SoftwareloadTaskView, WarehouseUser } from '@/types/warehouse'
 import { ErrorLine, label, ProgressBlock, ResultCard, useReportBusy, useSoftwareloadProgress, WriteDisabledLine, type ReportBusy } from './common'
+import { PlanCounts, PlanSummary } from './SoftwareloadPlan'
+import { StopLaterButton } from './SoftwareloadStop'
 import { LongRunDialog } from '../timeclock/LongRunDialog'
-
-type GroupKey = keyof PreviewGroups
-
-/** The groups of the confirmation, in the order of the design; the problems are marked. */
-const GROUPS: { key: GroupKey; title: (task: { kif: boolean; target: string }) => string; problem?: boolean }[] = [
-  { key: 'toTarget', title: task => (task.kif && task.target !== 'D005' ? t(`Til målet ${targetLabel(task.target)} via D005`, `To the target ${targetLabel(task.target)} via D005`) : t(`Til målet ${targetLabel(task.target)}`, `To the target ${targetLabel(task.target)}`)) },
-  { key: 'toBlocked', title: task => (task.kif ? t('Fejlede nye (-0) til D000 og blocked stock via D005', 'Failed new (-0) to D000 and blocked stock via D005') : t('Fejlede nye (-0) til D000 og blocked stock', 'Failed new (-0) to D000 and blocked stock')) },
-  { key: 'toD002', title: task => (task.kif ? t('Fejlede brugte (-R) til D002 via D005', 'Failed used (-R) to D002 via D005') : t('Fejlede brugte (-R) til D002', 'Failed used (-R) to D002')) },
-  { key: 'notFound', title: () => t('Ikke fundet i SAP. Flyttes ikke', 'Not found in SAP. Not moved'), problem: true },
-  { key: 'blockedStock', title: () => t('Står i blocked stock og kan ikke flyttes', 'In blocked stock and cannot be moved'), problem: true },
-  { key: 'skipped', title: () => t('Står allerede på målet og springes over', 'Already on the target and skipped') },
-  { key: 'manual', title: () => t('Fejlede, men materialet er hverken -0 eller -R. Kræver manuel håndtering', 'Failed, but the material is neither -0 nor -R. Needs manual handling'), problem: true },
-  { key: 'alreadyBlocked', title: () => t('Fejlede og står allerede i blocked stock', 'Failed and already in blocked stock') },
-]
 
 interface FinishProps {
   user: WarehouseUser
@@ -50,6 +38,7 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
   const [moving, setMoving] = useState(false)
   const [result, setResult] = useState<SoftwareloadFinishResult | null>(null)
   const [finishError, setFinishError] = useState<{ text: string; stillRunning: boolean; alreadyFinished: boolean } | null>(null)
+  const [stopped, setStopped] = useState<SoftwareloadStopResult | null>(null)
   const [progress, resetProgress] = useSoftwareloadProgress(user.email)
   const inFlight = useRef(false)
   useReportBusy(onBusy, 'finish', moving)
@@ -131,6 +120,19 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
     )
   }
 
+  if (stopped) {
+    return (
+      <Card className="gap-4 px-6 py-8">
+        <h2 className="text-lg font-semibold">{t('Tiden er stoppet', 'The time is stopped')}</h2>
+        <p className="text-sm text-muted-foreground">{t(`Opgaven er gemt med ${formatDuration(stopped.workedMs, 'da')} og ${stopped.count} terminaler. Intet er flyttet i SAP endnu. Når SAP er klar, viser Fortsæt i SAP under Venter på SAP planen, før noget flyttes.`, `The task is saved with ${formatDuration(stopped.workedMs, 'en')} and ${stopped.count} terminals. Nothing is moved in SAP yet. When SAP is ready, Continue in SAP under Waiting for SAP shows the plan before anything is moved.`)}</p>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={onOpenPending}>{t('Gå til Venter på SAP', 'Go to Waiting for SAP')}</Button>
+          <Button variant="outline" onClick={onBack}><CheckCircle size={18} /> {t('Færdig', 'Done')}</Button>
+        </div>
+      </Card>
+    )
+  }
+
   if (finishError) {
     return (
       <Card className="gap-4 px-6 py-8">
@@ -166,7 +168,12 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
         {previewError && (
           <div className="space-y-2">
             <ErrorLine text={previewError} />
-            <Button variant="outline" onClick={loadPreview}><ArrowsClockwise size={18} /> {t('Prøv igen', 'Try again')}</Button>
+            <p className="text-sm text-muted-foreground">{t('Kan SAP ikke svare nu, kan du stoppe tiden og flytte terminalerne senere.', 'If SAP cannot answer now, you can stop the time and move the terminals later.')}</p>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={loadPreview}><ArrowsClockwise size={18} /> {t('Prøv igen', 'Try again')}</Button>
+              <StopLaterButton task={shown} writeEnabled={writeEnabled} onStopped={result => { setStopped(result); void onChanged() }} onChanged={onBack} />
+            </div>
+            {!writeEnabled && <WriteDisabledLine />}
           </div>
         )}
         {!preview && !previewError && <Skeleton className="h-40 rounded-xl" />}
@@ -186,16 +193,7 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
             <AlertDialogTitle>{t('Afslut og flyt i SAP?', 'Finish and move in SAP?')}</AlertDialogTitle>
             <AlertDialogDescription>{t('Tiden stopper nu, og appen flytter terminalerne i SAP. Det kan ikke fortrydes.', 'The time stops now and the app moves the terminals in SAP. It cannot be undone.')}</AlertDialogDescription>
           </AlertDialogHeader>
-          {groups && (
-            <ul className="space-y-1 text-sm">
-              {GROUPS.filter(group => groups[group.key].length).map(group => (
-                <li key={group.key} className="flex justify-between gap-4">
-                  <span className={cn(group.problem && 'text-destructive')}>{group.title(shown)}</span>
-                  <span className="font-semibold tabular-nums">{groups[group.key].length}</span>
-                </li>
-              ))}
-            </ul>
-          )}
+          {groups && <PlanCounts groups={groups} task={shown} />}
           <AlertDialogFooter>
             <AlertDialogCancel>{t('Annullér', 'Cancel')}</AlertDialogCancel>
             <AlertDialogAction onClick={() => void finish()}>{t('Afslut og flyt', 'Finish and move')}</AlertDialogAction>
@@ -203,44 +201,6 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
         </AlertDialogContent>
       </AlertDialog>
       <LongRunDialog open={askEnd} startedAt={task.startedAt} earliest={earliest} taskName={t('softwareload-opgaven', 'the softwareload task')} onCancel={() => setAskEnd(false)} onStop={endAt => void finish(endAt)} busy={moving} />
-    </div>
-  )
-}
-
-function PlanSummary({ preview, groups, task, rowOf, notes }: { preview: SoftwareloadPreview; groups: PreviewGroups; task: SoftwareloadTaskView; rowOf: Map<string, SoftwareloadSapRow>; notes: Record<string, string | undefined> }) {
-  const shown = GROUPS.filter(group => groups[group.key].length)
-  return (
-    <div className="space-y-3">
-      {shown.length === 0 && <p className="text-sm text-muted-foreground">{t('Opgaven har ingen serienumre. Der flyttes intet, og kun tiden gemmes.', 'The task has no serial numbers. Nothing is moved and only the time is saved.')}</p>}
-      {shown.map(group => (
-        <details key={group.key} className="rounded-lg border px-4 py-3" open={group.problem}>
-          <summary className="flex cursor-pointer flex-wrap items-center gap-2 text-sm font-medium">
-            <span className={cn(group.problem && 'text-destructive')}>{group.title(task)}</span>
-            <Badge variant={group.problem ? 'destructive' : 'secondary'}>{groups[group.key].length}</Badge>
-          </summary>
-          <ul className="mt-2 grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
-            {groups[group.key].map(serial => {
-              const row = rowOf.get(serial)
-              return (
-                <li key={serial} className="flex flex-wrap gap-x-2">
-                  <span className="font-mono">{serial}</span>
-                  {row && <span className="text-muted-foreground">{row.material} · {row.sloc}{row.blocked ? ' · blocked' : ''}</span>}
-                  {notes[serial] && <span className="w-full text-xs text-muted-foreground">{t('Note', 'Note')}: {notes[serial]}</span>}
-                </li>
-              )
-            })}
-          </ul>
-        </details>
-      ))}
-      {(preview.transfers.length > 0 || preview.blocks.length > 0) && (
-        <div className="space-y-1 text-xs text-muted-foreground">
-          <p className="font-medium">{t('Trin i SAP', 'Steps in SAP')}</p>
-          <ul className="flex flex-wrap gap-2">
-            {preview.transfers.map(move => <li key={`${move.wave}-${move.from}-${move.to}`} className="rounded border px-2 py-0.5">{targetLabel(move.from)} → {targetLabel(move.to)} ({move.serials.length})</li>)}
-            {preview.blocks.map(block => <li key={`344-${block.material}`} className="rounded border px-2 py-0.5 font-mono">MIGO 344 {block.material} ({block.serials.length})</li>)}
-          </ul>
-        </div>
-      )}
     </div>
   )
 }

@@ -1,4 +1,4 @@
-import type { SoftwareloadComment, SoftwareloadKifPreview, SoftwareloadOutcome, SoftwareloadResult, SoftwareloadTask, SoftwareloadType } from '@/types/warehouse'
+import type { SoftwareloadBlock, SoftwareloadComment, SoftwareloadKifPreview, SoftwareloadOutcome, SoftwareloadPreview, SoftwareloadResult, SoftwareloadTask, SoftwareloadTransfer, SoftwareloadType } from '@/types/warehouse'
 import { errorCode, errorMessage } from './warehouse/errors'
 import { t } from './warehouse/text'
 
@@ -149,6 +149,39 @@ export function kifMovePlan(preview: Pick<SoftwareloadKifPreview, 'serials' | 'o
       serials: [...preview.serials],
       ...(document ? { document } : {}),
       planned: Object.fromEntries(preview.transfers.flatMap(item => item.serials.map(serial => [serial, item.from]))),
+    },
+  }
+}
+
+export interface PendingMovePlan {
+  /** The dialog's question, e.g. "Flyt 3 terminaler i SAP?". */
+  title: string
+  /** Terminals the plan moves (a Transfer or MIGO 344), each once. */
+  count: number
+  /** "Trin i SAP": one line per Transfer (from → to) or MIGO 344 of a material, with its number of terminals. */
+  steps: { key: string; from?: string; to?: string; material?: string; count: number }[]
+  /** What "Flyt" sends to "Fortsæt i SAP": the task and the SAP steps of the plan the user saw, copied when the dialog opened. */
+  request: { taskId: string; planned: { transfers: SoftwareloadTransfer[]; blocks: SoftwareloadBlock[] } }
+}
+
+/** The confirmation of "Fortsæt i SAP" for a task waiting for SAP, made once from its preview so the dialog and "Flyt" use the same plan. */
+export function pendingMovePlan(preview: Pick<SoftwareloadPreview, 'taskId' | 'transfers' | 'blocks'>): PendingMovePlan {
+  const count = new Set([...preview.transfers, ...preview.blocks].flatMap(item => item.serials)).size
+  return {
+    title: count === 0
+      ? t('Afslut opgaven uden at flytte noget i SAP?', 'Finish the task without moving anything in SAP?')
+      : count === 1 ? t('Flyt 1 terminal i SAP?', 'Move 1 terminal in SAP?') : t(`Flyt ${count} terminaler i SAP?`, `Move ${count} terminals in SAP?`),
+    count,
+    steps: [
+      ...preview.transfers.map(item => ({ key: `${item.wave}-${item.from}-${item.to}`, from: item.from, to: item.to, count: item.serials.length })),
+      ...preview.blocks.map(item => ({ key: `344-${item.material}`, material: item.material, count: item.serials.length })),
+    ],
+    request: {
+      taskId: preview.taskId,
+      planned: {
+        transfers: preview.transfers.map(item => ({ ...item, serials: [...item.serials] })),
+        blocks: preview.blocks.map(item => ({ ...item, serials: [...item.serials] })),
+      },
     },
   }
 }

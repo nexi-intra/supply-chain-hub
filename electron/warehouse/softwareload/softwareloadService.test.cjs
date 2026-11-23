@@ -48,6 +48,10 @@ function fakeSap(stock, { writeEnabled = true } = {}) {
     },
     async lookup({ team, serials }) {
       await call('lookup', { team, serials: [...serials] })
+      return sap.peek({ serials })
+    },
+    /** What a lookup answers now, without counting as a call, holding or failing. */
+    peek({ serials }) {
       return serials.filter(serial => rows.has(serial)).map(serial => ({ serial, plant: 'D301', userStatus: 'ONHA', ...rows.get(serial) }))
     },
     async transfer({ team, serials, from, to }) {
@@ -186,10 +190,10 @@ function setup({ timeclockRunning = null, sap = { writeEnabled: false }, matdocs
     },
   }
   let ids = 0
-  const service = () => createSoftwareloadService({
+  const build = sapOf => createSoftwareloadService({
     storeFor: team => faulty(storeAt(path.join(team, 'lagerstyring', 'softwareload'))),
     indexStore: sharedIndex,
-    sap,
+    sap: sapOf,
     timeclock,
     now: () => clock.now,
     newId: () => `t${++ids}`,
@@ -198,6 +202,9 @@ function setup({ timeclockRunning = null, sap = { writeEnabled: false }, matdocs
     sleep,
     ...(renewClaimMs ? { renewClaimMs } : {}),
   })
+  const service = () => build(sap)
+  // A PC whose lookups SAP does not count, hold or fail: the Venter tab's preview in tests about the move itself.
+  const quiet = () => build({ writeEnabled: sap.writeEnabled, lookup: input => sap.peek(input) })
   const storeFor = team => storeAt(path.join(team, 'lagerstyring', 'softwareload'))
   const index = storeAt(path.join('_lagerstyring', 'softwareload'))
   /** The local journal's files: SAP documents not yet saved on M:. */
@@ -208,7 +215,17 @@ function setup({ timeclockRunning = null, sap = { writeEnabled: false }, matdocs
     const keys = (await store.keysAsync()).filter(key => key.startsWith('opgaver-') && key.endsWith(month))
     return Object.assign({}, ...await Promise.all(keys.map(async key => (await store.getAsync(key)).tasks)))
   }
-  return { root, clock, timeclock, stops, storeFor, index, indexReads, unreadableIndex, indexFaults, unreadableTeam, finished, service, faults, gates, journal, tick: ms => { clock.now += ms } }
+  return { root, clock, timeclock, stops, storeFor, index, indexReads, unreadableIndex, indexFaults, unreadableTeam, finished, service, quiet, faults, gates, journal, tick: ms => { clock.now += ms } }
+}
+
+/** What "Fortsæt i SAP" confirms: the SAP steps of the plan the Venter tab showed. */
+const planOf = preview => ({ transfers: preview.transfers, blocks: preview.blocks })
+/** A confirmed plan with nothing to move, for continues refused before SAP is asked. */
+const NO_MOVES = { transfers: [], blocks: [] }
+/** "Fortsæt i SAP" as the Venter tab does it, for tests about the move itself: the plan SAP gives now, confirmed. */
+async function continued(ctx, svc, user, taskId) {
+  const preview = await ctx.quiet().pendingPreview(user, { taskId })
+  return svc.continueFinish(user, { taskId, planned: planOf(preview) })
 }
 
 test('start saves type, KIF, target and version, and remembers the version', async () => {
@@ -764,7 +781,7 @@ test('a running file left next to a task already handed over to SAP is retired, 
   assert.equal(await savedRunning(ctx, ANNA), undefined)
 
   // Continued and finished from Venter på SAP; a leftover after that is retired too, and the documents stay.
-  const done = await svc.continueFinish(ANNA, { taskId: 't1' })
+  const done = await continued(ctx, svc, ANNA, 't1')
   assert.deepEqual(transfers(sap), [['D005', ['A']], ['D006', ['A']]])
   await leaveBehind()
   sap.calls.length = 0
@@ -902,7 +919,7 @@ test('a SAP document M: would not take is kept on this PC, named in the error an
   const saved = await ctx.storeFor('TCD').getAsync('venter-t1', { skipCache: true })
   assert.deepEqual([saved.results.A.steps.map(step => [step.to, step.doc]), 'uncertain' in saved.results.A], [[['D005', doc(1)]], false])
 
-  const result = await svc.continueFinish(ANNA, { taskId: 't1' })
+  const result = await continued(ctx, svc, ANNA, 't1')
   assert.deepEqual(transfers(sap), [['D005', ['A']], ['D006', ['A']]], 'never moved to D005 twice')
   assert.deepEqual(result.results.A.steps.map(step => [step.to, step.doc, step.unverified]), [['D005', doc(1), undefined], ['D006', doc(2), undefined]])
 })
@@ -932,7 +949,7 @@ test('continue merges the journal itself when no status came first', async () =>
   const restore = dropDriveAfterTransfer(sap, ctx, 'venter', 5)
   await assert.rejects(svc.finish(ANNA, await confirmed(ctx, ANNA)), { code: 'SOFTWARELOAD_SAVE_FAILED' })
   restore()
-  const result = await svc.continueFinish(ANNA, { taskId: 't1' })
+  const result = await continued(ctx, svc, ANNA, 't1')
   assert.deepEqual(result.results.A.steps.map(step => [step.to, step.doc, step.unverified]), [['D005', doc(1), undefined], ['D006', doc(2), undefined]])
   assert.deepEqual(ctx.journal(), [])
 })
@@ -1009,7 +1026,7 @@ test('SAP closing mid-finish leaves the task pending and continueFinish never mo
 
   sap.throwWhen = null
   sap.calls.length = 0
-  const result = await svc.continueFinish(ANNA, { taskId: 't1' })
+  const result = await continued(ctx, svc, ANNA, 't1')
   assert.deepEqual(sap.calls.map(([kind]) => kind), ['lookup', 'transfer'])
   assert.deepEqual(transfers(sap), [['D006', ['A', 'B']]])
   for (const serial of ['A', 'B']) assert.deepEqual(result.results[serial].steps.map(step => step.to), ['D005', 'D006'])
@@ -1032,7 +1049,7 @@ test('the owner can start a new task while one is pending', async () => {
   assert.deepEqual([status.running.id, status.pending.map(task => task.id)], ['t2', ['t1']])
 
   sap.throwWhen = null
-  const result = await svc.continueFinish(ANNA, { taskId: 't1' })
+  const result = await continued(ctx, svc, ANNA, 't1')
   assert.deepEqual(result.counts, { 'to-target': 1 })
   status = await svc.status(ANNA)
   assert.deepEqual([status.running.id, status.running.version, status.pending], ['t2', 'v3', []])
@@ -1047,14 +1064,14 @@ test('only the owner or a manager can continue, only a manager can abandon', asy
   sap.throwWhen = null
   sap.calls.length = 0
 
-  await assert.rejects(svc.continueFinish(BO, { taskId: 't1' }), { code: 'MANAGER_ONLY' })
+  await assert.rejects(svc.continueFinish(BO, { taskId: 't1', planned: NO_MOVES }), { code: 'MANAGER_ONLY' })
   await assert.rejects(svc.abandon(BO, { taskId: 't1', reason: 'Væk' }), { code: 'MANAGER_ONLY' })
   await assert.rejects(svc.abandon(ANNA, { taskId: 't1', reason: 'Væk' }), { code: 'MANAGER_ONLY' })
-  await assert.rejects(svc.continueFinish(MONA, { taskId: 'nope' }), { code: 'SOFTWARELOAD_NOT_PENDING' })
+  await assert.rejects(svc.continueFinish(MONA, { taskId: 'nope', planned: NO_MOVES }), { code: 'SOFTWARELOAD_NOT_PENDING' })
   assert.deepEqual(sap.calls, [], 'a refused continue never reaches SAP')
   assert.deepEqual((await svc.status(ANNA)).pending.map(task => task.id), ['t1'])
 
-  const result = await svc.continueFinish(MONA, { taskId: 't1' })
+  const result = await continued(ctx, svc, MONA, 't1')
   assert.deepEqual(result.results.A.steps.map(step => step.by), ['mona@example.test', 'mona@example.test'])
   const task = (await ctx.finished('2026-11')).t1
   assert.deepEqual([task.email, task.name, task.state], ['anna@example.test', 'Anna', 'faerdig'], 'the task still belongs to its owner')
@@ -1096,7 +1113,7 @@ test('a terminal moved before SAP closed keeps its outcome when the task continu
   await assert.rejects(svc.finish(ANNA, await confirmed(ctx, ANNA)), { code: 'SAP_NOT_READY' })
   sap.throwWhen = null
   sap.calls.length = 0
-  const result = await svc.continueFinish(ANNA, { taskId: 't1' })
+  const result = await continued(ctx, svc, ANNA, 't1')
   assert.deepEqual(sap.calls, [['lookup', { team: 'TCD', serials: ['A', 'C'] }], ['block', { material: 'M-0', serials: ['C'], bwart: '344' }]])
   assert.deepEqual(['A', 'C'].map(serial => [result.results[serial].outcome, result.results[serial].steps.length]), [['to-target', 1], ['to-blocked', 2]])
   assert.deepEqual(result.counts, { 'to-target': 1, 'to-blocked': 1 })
@@ -1111,8 +1128,8 @@ test('a KIF Transfer SAP posted without an answer is never repeated: D000, D005,
   const pending = await ctx.storeFor('TCD').getAsync('venter-t1', { skipCache: true })
   assert.deepEqual(pending.results.A.uncertain, { from: 'D000', to: 'D005', by: 'anna@example.test', at: ctx.clock.now }, 'the run marks the serial before SAP is asked')
 
-  await assert.rejects(svc.continueFinish(ANNA, { taskId: 't1' }), { code: 'SAP_TIMEOUT' })
-  const result = await svc.continueFinish(ANNA, { taskId: 't1' })
+  await assert.rejects(continued(ctx, svc, ANNA, 't1'), { code: 'SAP_TIMEOUT' })
+  const result = await continued(ctx, svc, ANNA, 't1')
   assert.deepEqual(transfers(sap), [['D005', ['A']], ['D004', ['A']]], 'no further Transfer for A')
   assert.deepEqual(result.results.A.steps, [
     { from: 'D000', to: 'D005', doc: null, unverified: true, by: 'anna@example.test', at: ctx.clock.now },
@@ -1130,7 +1147,7 @@ test('a KIF terminal that started on D005 is not moved again after a lost answer
   const svc = await startWith(ctx, TASK, ['A'])
   await assert.rejects(svc.finish(ANNA, await confirmed(ctx, ANNA)), { code: 'SAP_TIMEOUT' })
   sap.postThenThrow = null
-  const result = await svc.continueFinish(ANNA, { taskId: 't1' })
+  const result = await continued(ctx, svc, ANNA, 't1')
   assert.deepEqual(movesOf(sap, 'A'), [['D005', 'D006']], 'no further Transfer for A')
   assert.deepEqual(result.results.A.steps.map(step => [step.from, step.to, step.doc, step.unverified]), [['D005', 'D006', null, true]])
   assert.equal(result.results.A.outcome, 'to-target')
@@ -1143,7 +1160,7 @@ test('a KIF terminal that started on D005 and was saved is not moved again when 
   const svc = await startWith(ctx, TASK, ['A', 'C'], { C: 'Død' })
   await assert.rejects(svc.finish(ANNA, await confirmed(ctx, ANNA)), { code: 'SAP_NOT_READY' })
   sap.throwWhen = null
-  const result = await svc.continueFinish(ANNA, { taskId: 't1' })
+  const result = await continued(ctx, svc, ANNA, 't1')
   assert.deepEqual(movesOf(sap, 'A'), [['D005', 'D006']], 'no further Transfer for A')
   assert.deepEqual(movesOf(sap, 'C'), [['D005', 'D000']], 'no further Transfer for C')
   assert.deepEqual(result.results.A.steps.map(step => [step.from, step.to, step.doc]), [['D005', 'D006', doc(1)]])
@@ -1157,7 +1174,7 @@ test('a MIGO 344 SAP posted without an answer is recorded as unverified and neve
   const svc = await startWith(ctx, { ...TASK, kif: false }, ['A'], { A: 'Død' })
   await assert.rejects(svc.finish(ANNA, await confirmed(ctx, ANNA)), { code: 'SAP_TIMEOUT' })
   sap.calls.length = 0
-  const result = await svc.continueFinish(ANNA, { taskId: 't1' })
+  const result = await continued(ctx, svc, ANNA, 't1')
   assert.deepEqual(sap.calls.map(([kind]) => kind), ['lookup'], 'neither a Transfer nor MIGO again')
   assert.deepEqual(result.results.A.steps.map(step => [step.to ?? step.bwart, step.doc, step.unverified]), [['D000', doc(1), undefined], ['344', null, true]])
   assert.equal(result.results.A.outcome, 'to-blocked')
@@ -1170,7 +1187,7 @@ test('a serial still where it stood when SAP did not answer is moved again', asy
   const svc = await startWith(ctx, { ...TASK, kif: false }, ['A'])
   await assert.rejects(svc.finish(ANNA, await confirmed(ctx, ANNA)), { code: 'SAP_NOT_READY' })
   sap.throwWhen = null
-  const result = await svc.continueFinish(ANNA, { taskId: 't1' })
+  const result = await continued(ctx, svc, ANNA, 't1')
   assert.deepEqual(transfers(sap), [['D006', ['A']], ['D006', ['A']]])
   assert.deepEqual(result.results.A.steps.map(step => [step.to, step.doc, step.unverified]), [['D006', doc(1), undefined]])
 })
@@ -1184,7 +1201,7 @@ test('a terminal this task already moved keeps its outcome when SAP later shows 
   sap.throwWhen = null
   sap.rows.get('A').blocked = true
   sap.rows.delete('B')
-  const result = await svc.continueFinish(ANNA, { taskId: 't1' })
+  const result = await continued(ctx, svc, ANNA, 't1')
   assert.deepEqual(['A', 'B'].map(serial => [result.results[serial].outcome, result.results[serial].steps.map(step => step.to)]), [['to-target', ['D006']], ['to-target', ['D006']]])
 })
 
@@ -1198,12 +1215,12 @@ test('a second person cannot continue while the first holds a fresh claim, but c
   anna.catch(() => {})
   await until(() => sap.calls.length === 1)
 
-  await assert.rejects(otherPc.continueFinish(MONA, { taskId: 't1' }), { code: 'SOFTWARELOAD_BUSY', message: 'Anna er ved at flytte opgaven i SAP' })
+  await assert.rejects(continued(ctx, otherPc, MONA, 't1'), { code: 'SOFTWARELOAD_BUSY', message: 'Anna er ved at flytte opgaven i SAP' })
   ctx.tick(CLAIM_MS - 1)
-  await assert.rejects(otherPc.continueFinish(MONA, { taskId: 't1' }), { code: 'SOFTWARELOAD_BUSY' })
+  await assert.rejects(continued(ctx, otherPc, MONA, 't1'), { code: 'SOFTWARELOAD_BUSY' })
   ctx.tick(1)
   const monaGate = sap.hold('lookup', 2)
-  const mona = otherPc.continueFinish(MONA, { taskId: 't1' })
+  const mona = continued(ctx, otherPc, MONA, 't1')
   await until(() => sap.calls.length === 2)
 
   annaGate.open()
@@ -1245,17 +1262,17 @@ test('a claim is released when SAP fails, so the owner can continue at once', as
   const store = ctx.storeFor('TCD')
   await assert.rejects(svc.finish(ANNA, await confirmed(ctx, ANNA)), { code: 'SAP_NOT_READY' })
   assert.equal((await store.getAsync('venter-t1', { skipCache: true })).claim, undefined)
-  await assert.rejects(svc.continueFinish(MONA, { taskId: 't1' }), { code: 'SAP_NOT_READY' })
+  await assert.rejects(continued(ctx, svc, MONA, 't1'), { code: 'SAP_NOT_READY' })
   assert.equal((await store.getAsync('venter-t1', { skipCache: true })).claim, undefined, 'a manager\'s failed run lets go too')
 
   // Anna's PC died mid-run: the claim of that dead run keeps everyone out, Anna too, until it runs out.
   await store.mutateAsync('venter-t1', task => ({ ...task, claim: { by: 'anna@example.test', name: 'Anna', runId: 'dead-run', at: ctx.clock.now } }))
   sap.throwWhen = null
-  await assert.rejects(svc.continueFinish(ANNA, { taskId: 't1' }), { code: 'SOFTWARELOAD_BUSY', message: 'Anna er ved at flytte opgaven i SAP' })
+  await assert.rejects(continued(ctx, svc, ANNA, 't1'), { code: 'SOFTWARELOAD_BUSY', message: 'Anna er ved at flytte opgaven i SAP' })
   assert.deepEqual((await svc.status(ANNA)).pending.map(task => task.movingBy), [{ name: 'Anna' }], 'the screen shows who moves it')
   ctx.tick(CLAIM_MS)
   assert.equal((await svc.status(ANNA)).pending[0].movingBy, undefined)
-  const result = await svc.continueFinish(ANNA, { taskId: 't1' })
+  const result = await continued(ctx, svc, ANNA, 't1')
   assert.deepEqual([result.state, result.counts], ['faerdig', { 'to-target': 1 }])
 })
 
@@ -1269,9 +1286,9 @@ test('the same person on two PCs cannot run the same task twice', async () => {
   const pc1 = ctx.service()
   const pc2 = ctx.service()
   const held = sap.hold('lookup', 2)
-  const first = pc1.continueFinish(ANNA, { taskId: 't1' })
+  const first = continued(ctx, pc1, ANNA, 't1')
   await until(() => sap.calls.length === 1)
-  await assert.rejects(pc2.continueFinish(ANNA, { taskId: 't1' }), { code: 'SOFTWARELOAD_BUSY', message: 'Anna er ved at flytte opgaven i SAP' })
+  await assert.rejects(continued(ctx, pc2, ANNA, 't1'), { code: 'SOFTWARELOAD_BUSY', message: 'Anna er ved at flytte opgaven i SAP' })
   held.open()
   const result = await first
   assert.equal(result.state, 'faerdig')
@@ -1291,7 +1308,7 @@ test('a run renews its claim while SAP works, and a run that lost it to the same
   const claimAt = async () => (await store.getAsync('venter-t1', { skipCache: true }))?.claim?.at
   for (let i = 0; i < 300 && await claimAt() !== ctx.clock.now; i++) await new Promise(resolve => setTimeout(resolve, 10))
   assert.equal(await claimAt(), ctx.clock.now, 'the timer renewed the claim while SAP was busy')
-  await assert.rejects(ctx.service().continueFinish(MONA, { taskId: 't1' }), { code: 'SOFTWARELOAD_BUSY' }, 'the renewed claim still holds')
+  await assert.rejects(continued(ctx, ctx.service(), MONA, 't1'), { code: 'SOFTWARELOAD_BUSY' }, 'the renewed claim still holds')
   annaGate.open()
   assert.equal((await anna).state, 'faerdig')
   assert.deepEqual(transfers(sap), [['D005', ['A']], ['D006', ['A']]])
@@ -1308,7 +1325,7 @@ test('a run renews its claim while SAP works, and a run that lost it to the same
   await until(() => other.calls.length === 1)
   ctx2.tick(CLAIM_MS)
   const pc2Gate = other.hold('lookup', 2)
-  const pc2 = ctx2.service().continueFinish(BO, { taskId: 't1' })
+  const pc2 = continued(ctx2, ctx2.service(), BO, 't1')
   await until(() => other.calls.length === 2)
   stuck.open()
   await assert.rejects(hanging, { code: 'SOFTWARELOAD_BUSY', message: 'Bo er ved at flytte opgaven i SAP' })
@@ -1333,7 +1350,7 @@ test('a run that keeps failing checks its claim before each SAP call and stops w
 
   ctx.tick(CLAIM_MS)
   const monaGate = sap.hold('lookup', 2)
-  const mona = otherPc.continueFinish(MONA, { taskId: 't1' })
+  const mona = continued(ctx, otherPc, MONA, 't1')
   await until(() => sap.calls.filter(([kind]) => kind === 'lookup').length === 2)
   annaGate.open()
   await assert.rejects(anna, { code: 'SOFTWARELOAD_BUSY', message: 'Mona er ved at flytte opgaven i SAP' })
@@ -1361,7 +1378,7 @@ test('a run whose last SAP call fails after a takeover leaves the task to the ne
 
   ctx.tick(CLAIM_MS)
   const monaGate = sap.hold('lookup', 2)
-  const mona = otherPc.continueFinish(MONA, { taskId: 't1' })
+  const mona = continued(ctx, otherPc, MONA, 't1')
   await until(() => sap.calls.filter(([kind]) => kind === 'lookup').length === 2)
   annaGate.open()
   await assert.rejects(anna, { code: 'SOFTWARELOAD_BUSY', message: 'Mona er ved at flytte opgaven i SAP' })
@@ -1382,10 +1399,10 @@ test('a second continue of the same task in the same process is refused while th
   sap.throwWhen = null
 
   const held = sap.hold('lookup', 1)
-  const first = svc.continueFinish(ANNA, { taskId: 't1' })
+  const first = continued(ctx, svc, ANNA, 't1')
   await until(() => sap.calls.length === 2)
-  await assert.rejects(svc.continueFinish(ANNA, { taskId: 't1' }), { code: 'SOFTWARELOAD_BUSY', message: 'Opgaven er allerede ved at blive flyttet i SAP' })
-  await assert.rejects(svc.continueFinish(MONA, { taskId: 't1' }), { code: 'SOFTWARELOAD_BUSY' })
+  await assert.rejects(continued(ctx, svc, ANNA, 't1'), { code: 'SOFTWARELOAD_BUSY', message: 'Opgaven er allerede ved at blive flyttet i SAP' })
+  await assert.rejects(continued(ctx, svc, MONA, 't1'), { code: 'SOFTWARELOAD_BUSY' })
   held.open()
   const result = await first
   assert.equal(result.state, 'faerdig')
@@ -1403,7 +1420,7 @@ test('a double finish is refused while the first runs', async () => {
   await assert.rejects(svc.finish(ANNA, await confirmed(ctx, ANNA)), { code: 'SOFTWARELOAD_BUSY', message: 'Opgaven er allerede ved at blive afsluttet' })
   await assert.rejects(svc.edit(ANNA, { ...TASK, version: 'v3', taskId: 't1' }), { code: 'SOFTWARELOAD_BUSY', message: 'Opgaven er ved at blive afsluttet' })
   await until(() => sap.calls.length === 1)
-  await assert.rejects(svc.continueFinish(ANNA, { taskId: 't1' }), { code: 'SOFTWARELOAD_BUSY' })
+  await assert.rejects(continued(ctx, svc, ANNA, 't1'), { code: 'SOFTWARELOAD_BUSY' })
   held.open()
   const result = await first
   assert.deepEqual([result.state, transfers(sap)], ['faerdig', [['D005', ['A']], ['D006', ['A']]]])
@@ -1421,6 +1438,152 @@ test('writing disabled: finish is refused before the clock stops', async () => {
   const status = await svc.status(ANNA)
   assert.deepEqual([status.running.id, status.running.paused, status.running.workedMs, status.pending], ['t1', false, 10 * MIN, []])
   assert.deepEqual(await svc.scan(ANNA, { serial: 'B', taskId: 't1' }), { serial: 'B', count: 2 }, 'the task still runs')
+})
+
+test('"Stop tiden nu, flyt i SAP senere" hands the task over to Venter på SAP with its time stopped, and asks SAP nothing', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
+  // SAP logged the worker out at 15:55: every call fails.
+  sap.throwWhen = () => true
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, TASK, ['A'])
+  const choice = { type: 'sw+key', kif: true, target: 'D006', version: 'v2.1.3' }
+  ctx.tick(20 * MIN)
+  await svc.pause(ANNA)
+  ctx.tick(10 * MIN)
+  await svc.resume(ANNA)
+  ctx.tick(30 * MIN)
+  const endedAt = ctx.clock.now
+
+  await assert.rejects(svc.stop(ANNA, { taskId: 't1', choice: { ...choice, target: 'D004' } }), { code: 'SOFTWARELOAD_CHANGED' }, 'only the choices the person saw')
+  await assert.rejects(svc.stop(ANNA, {}), { code: 'SOFTWARELOAD_CHANGED' }, 'nothing confirmed')
+  assert.equal((await svc.status(ANNA)).running.id, 't1', 'a refused stop leaves the task running')
+  const stopped = await svc.stop(ANNA, { taskId: 't1', choice })
+  assert.deepEqual(stopped, { taskId: 't1', endedAt, workedMs: 50 * MIN, pausedMs: 10 * MIN, count: 1, state: 'mangler-sap' })
+  assert.deepEqual(sap.calls, [], 'SAP is never asked')
+
+  const status = await svc.status(ANNA)
+  assert.deepEqual([status.running, status.pending.map(task => [task.id, task.endedAt, task.count, task.movingBy])], [null, [['t1', endedAt, 1, undefined]]], 'nobody is moving it, so Fortsæt i SAP is free')
+  assert.equal(await savedRunning(ctx, ANNA), undefined, 'nothing runs any more')
+  const pending = await ctx.storeFor('TCD').getAsync('venter-t1', { skipCache: true })
+  assert.deepEqual(
+    [pending.state, pending.endedAt, pending.workedMs, pending.pausedMs, pending.claim, pending.results, 'finishing' in pending, 'endCorrected' in pending],
+    ['mangler-sap', endedAt, 50 * MIN, 10 * MIN, undefined, undefined, false, false],
+  )
+  await assert.rejects(svc.stop(ANNA, { taskId: 't1', choice }), { code: 'SOFTWARELOAD_NOT_RUNNING' })
+  await assert.rejects(svc.scan(ANNA, { serial: 'B', taskId: 't1' }), { code: 'SOFTWARELOAD_NOT_RUNNING' })
+  assert.deepEqual(await svc.tasks(MONA, { from: '2026-11-01', to: '2026-11-30' }), [], 'Statistik waits for the moves, as after an interrupted finish')
+
+  // Hours later SAP is back: "Fortsæt i SAP" moves, and the time is still the one stopped.
+  ctx.tick(3 * HOUR)
+  sap.throwWhen = null
+  const result = await continued(ctx, svc, ANNA, 't1')
+  assert.deepEqual([result.state, transfers(sap)], ['faerdig', [['D005', ['A']], ['D006', ['A']]]])
+  const [task] = await svc.tasks(MONA, { from: '2026-11-01', to: '2026-11-30' })
+  assert.deepEqual([task.id, task.endedAt, task.workedMs, task.pausedMs], ['t1', endedAt, 50 * MIN, 10 * MIN])
+  assert.equal((await allIndexLines(ctx))[0].at, endedAt)
+})
+
+test('"Stop tiden nu" hands over exactly what a finish stopped by SAP hands over', async () => {
+  const run = async stopOrFinish => {
+    const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
+    sap.throwWhen = kind => kind === 'lookup'
+    const ctx = setup({ sap })
+    const svc = await startWith(ctx, TASK, ['A'], { A: 'Død' })
+    ctx.tick(40 * MIN)
+    if (stopOrFinish === 'stop') await svc.stop(ANNA, await confirmed(ctx, ANNA))
+    else await assert.rejects(svc.finish(ANNA, await confirmed(ctx, ANNA)), { code: 'SAP_NOT_READY' })
+    return ctx.storeFor('TCD').getAsync('venter-t1', { skipCache: true })
+  }
+  assert.deepEqual(await run('stop'), await run('finish'))
+})
+
+test('"Stop tiden nu" after 10 hours needs the end time, and keeps an end time frozen by a finish that stopped', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' }, B: { material: 'M-R', sloc: 'D000' } })
+  sap.throwWhen = () => true
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, TASK, ['A'])
+  const startedAt = ctx.clock.now
+  ctx.tick(30 * HOUR)
+
+  await assert.rejects(svc.stop(ANNA, await confirmed(ctx, ANNA)), { code: 'SOFTWARELOAD_LONG_RUN', message: 'Opgaven har kørt i over 10 timer. Vælg hvornår du stoppede' })
+  for (const endAt of [startedAt - 1, ctx.clock.now + 1, 'i går']) {
+    await assert.rejects(svc.stop(ANNA, { ...await confirmed(ctx, ANNA), endAt }), { code: 'SOFTWARELOAD_INVALID' }, String(endAt))
+  }
+  assert.deepEqual([(await svc.status(ANNA)).running.id, (await savedRunning(ctx, ANNA)).finishing], ['t1', undefined], 'nothing is marked, the task still runs')
+  const stopped = await svc.stop(ANNA, { ...await confirmed(ctx, ANNA), endAt: startedAt + 6 * HOUR })
+  assert.deepEqual([stopped.endedAt, stopped.workedMs], [startedAt + 6 * HOUR, 6 * HOUR])
+  const pending = await ctx.storeFor('TCD').getAsync('venter-t1', { skipCache: true })
+  assert.deepEqual([pending.endedAt, pending.workedMs, pending.endCorrected], [startedAt + 6 * HOUR, 6 * HOUR, true])
+  assert.deepEqual(sap.calls, [])
+
+  // A finish that marked the next task and crashed froze its end; stopping later keeps that end and asks nothing.
+  const next = await svc.start(ANNA, TASK)
+  await svc.scan(ANNA, { serial: 'B', taskId: next.id })
+  ctx.tick(2 * HOUR)
+  const frozenAt = ctx.clock.now
+  await ctx.storeFor('TCD').mutateAsync(runningKeyOf(ANNA), task => ({ ...task, finishing: { at: frozenAt, endedAt: frozenAt, runId: 'crashed' } }))
+  await assert.rejects(svc.stop(ANNA, await confirmed(ctx, ANNA)), { code: 'SOFTWARELOAD_BUSY' }, 'not while that finish may still run')
+  ctx.tick(20 * HOUR)
+  const later = await svc.stop(ANNA, await confirmed(ctx, ANNA))
+  assert.deepEqual([later.taskId, later.endedAt, later.workedMs], [next.id, frozenAt, 2 * HOUR])
+  assert.equal('finishing' in await ctx.storeFor('TCD').getAsync(`venter-${next.id}`, { skipCache: true }), false)
+})
+
+test('"Fortsæt i SAP" moves only after the plan from a new lookup is confirmed, and refuses one SAP no longer gives', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' }, B: { material: 'M-0', sloc: 'D000' } })
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, { ...TASK, kif: false }, ['A', 'B'], { B: 'Skærm død' })
+  await svc.stop(ANNA, await confirmed(ctx, ANNA))
+
+  await assert.rejects(svc.continueFinish(ANNA, { taskId: 't1' }), { code: 'SOFTWARELOAD_PLAN_CHANGED' }, 'no confirmed plan')
+  await assert.rejects(svc.continueFinish(ANNA, { taskId: 't1', planned: 'alt' }), { code: 'SOFTWARELOAD_PLAN_CHANGED' })
+  assert.deepEqual(sap.calls, [], 'refused before SAP is asked')
+
+  await assert.rejects(svc.pendingPreview(BO, { taskId: 't1' }), { code: 'MANAGER_ONLY' })
+  await assert.rejects(svc.pendingPreview(ANNA, { taskId: 'nope' }), { code: 'SOFTWARELOAD_NOT_PENDING' })
+  const preview = await svc.pendingPreview(ANNA, { taskId: 't1' })
+  assert.deepEqual(
+    [preview.taskId, preview.choice, preview.outcomes, preview.transfers, preview.blocks, preview.rows.map(row => row.serial)],
+    ['t1', { type: 'sw+key', kif: false, target: 'D006', version: 'v2.1.3' }, { A: 'to-target', B: 'to-blocked' },
+      [{ wave: 1, from: 'D000', to: 'D006', serials: ['A'] }], [{ material: 'M-0', serials: ['B'] }], ['A', 'B']],
+  )
+  assert.deepEqual([sap.calls.map(([kind]) => kind), (await svc.status(ANNA)).pending.map(task => task.movingBy)], [['lookup'], [undefined]], 'the preview only looks')
+
+  // B is moved in SAP by someone else after the preview: the confirmed plan no longer holds, and nothing moves.
+  sap.rows.get('B').sloc = 'D002'
+  await assert.rejects(svc.continueFinish(ANNA, { taskId: 't1', planned: planOf(preview) }), { code: 'SOFTWARELOAD_PLAN_CHANGED', message: 'Terminalerne står et andet sted i SAP, end da du så planen. Se planen igen' })
+  assert.deepEqual(sap.calls.map(([kind]) => kind), ['lookup', 'lookup'])
+  const pending = await ctx.storeFor('TCD').getAsync('venter-t1', { skipCache: true })
+  assert.deepEqual([pending.claim, pending.results], [undefined, undefined], 'the task waits as before, free to be continued')
+
+  const again = await svc.pendingPreview(ANNA, { taskId: 't1' })
+  assert.deepEqual(again.transfers, [{ wave: 1, from: 'D000', to: 'D006', serials: ['A'] }, { wave: 1, from: 'D002', to: 'D000', serials: ['B'] }])
+  const result = await svc.continueFinish(MONA, { taskId: 't1', planned: planOf(again) })
+  assert.deepEqual(sap.calls.filter(([kind]) => kind !== 'lookup').map(([kind, call]) => [kind, call.from ?? call.material, call.to ?? call.bwart, call.serials]), [
+    ['transfer', 'D000', 'D006', ['A']], ['transfer', 'D002', 'D000', ['B']], ['block', 'M-0', '344', ['B']],
+  ])
+  assert.deepEqual([result.state, result.counts], ['faerdig', { 'to-target': 1, 'to-blocked': 1 }])
+})
+
+test('a normal finish is unchanged: it stops the time and moves at once along the preview, without a plan from Venter på SAP', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, TASK, ['A'])
+  ctx.tick(25 * MIN)
+  const preview = await svc.preview(ANNA)
+  const result = await svc.finish(ANNA, { taskId: preview.taskId, choice: preview.choice })
+  assert.deepEqual([result.state, result.counts, sap.calls.map(([kind]) => kind)], ['faerdig', { 'to-target': 1 }, ['lookup', 'lookup', 'transfer', 'transfer']])
+  const task = (await ctx.finished('2026-11')).t1
+  assert.deepEqual([task.endedAt, task.workedMs, 'claim' in task, 'finishing' in task], [ctx.clock.now, 25 * MIN, false, false])
+  assert.deepEqual((await svc.status(ANNA)).pending, [])
+})
+
+test('writing disabled: "Stop tiden nu" is refused like finish, and the time runs on', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } }, { writeEnabled: false })
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, TASK, ['A'])
+  await assert.rejects(svc.stop(ANNA, await confirmed(ctx, ANNA)), { code: 'SOFTWARELOAD_WRITE_DISABLED' })
+  assert.deepEqual([(await svc.status(ANNA)).running.id, (await svc.status(ANNA)).pending], ['t1', []])
 })
 
 test('kif move by material document moves to D005 and is found by search from the other team', async () => {

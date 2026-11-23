@@ -243,7 +243,7 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   const channels = []
   // SAP channels wait for SAP (and the user's F8) by design; everything else should answer within a few seconds.
   const SLOW_CALL_MS = 2000
-  const waitsForSap = channel => /^(sap|pidocs|sap-check):|^counts:(preview|matdoc-lookup|refetch-preview|refetch-apply|doc-fetch)$|^locations:(preview-import|lookup-document)$|^softwareload:(preview|finish|continue|kif-preview|kif-move)$/.test(channel)
+  const waitsForSap = channel => /^(sap|pidocs|sap-check):|^counts:(preview|matdoc-lookup|refetch-preview|refetch-apply|doc-fetch)$|^locations:(preview-import|lookup-document)$|^softwareload:(preview|finish|continue|pending-preview|kif-preview|kif-move)$/.test(channel)
   const handle = (channel, fn) => {
     channels.push(channel)
     ipcMain.handle(`warehouse:${channel}`, async (event, payload) => {
@@ -415,7 +415,15 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
     endAt: typeof p.endAt === 'number' ? p.endAt : undefined,
     onProgress: softwareloadProgress(user),
   }))
-  handle('softwareload:continue', (user, p) => softwareload.continueFinish(user, { taskId: p.taskId, onProgress: softwareloadProgress(user) }))
+  handle('softwareload:continue', (user, p) => softwareload.continueFinish(user, { taskId: p.taskId, planned: p.planned, onProgress: softwareloadProgress(user) }))
+  // "Stop tiden nu, flyt i SAP senere": the time stops without SAP; the moves wait under Venter på SAP, whose
+  // "Fortsæt i SAP" shows the plan from `pending-preview` and moves only the confirmed one (`planned`).
+  handle('softwareload:stop', (user, p) => softwareload.stop(user, {
+    taskId: p.taskId,
+    choice: { type: p.choice?.type, kif: p.choice?.kif, target: p.choice?.target, version: p.choice?.version },
+    endAt: typeof p.endAt === 'number' ? p.endAt : undefined,
+  }))
+  handle('softwareload:pending-preview', (user, p) => softwareload.pendingPreview(user, { taskId: p.taskId }))
   handle('softwareload:abandon', (user, p) => softwareload.abandon(user, { taskId: p.taskId, reason: p.reason }))
   handle('softwareload:kif-preview', (user, p) => softwareload.kifPreview(user, { serials: p.serials, document: p.document }))
   handle('softwareload:kif-move', (user, p) => softwareload.kifMove(user, { serials: p.serials, document: p.document, planned: p.planned }, { onProgress: softwareloadProgress(user) }))

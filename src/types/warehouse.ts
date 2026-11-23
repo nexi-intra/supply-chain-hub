@@ -1353,6 +1353,17 @@ export interface SoftwareloadFinishResult {
   state: 'faerdig'
 }
 
+/** A task whose time was stopped without SAP: it waits under Venter på SAP with this time. */
+export interface SoftwareloadStopResult {
+  taskId: string
+  endedAt: number
+  workedMs: number
+  pausedMs: number
+  /** Scanned terminals, failed ones included. */
+  count: number
+  state: 'mangler-sap'
+}
+
 export interface SoftwareloadKifPreview {
   serials: string[]
   /** The material document whose serials these are, with its year; only when one was given. */
@@ -1467,8 +1478,18 @@ export interface SoftwareloadBridge {
    * After 10 hours it fails with SOFTWARELOAD_LONG_RUN without `endAt` (when the work really stopped).
    */
   finish(request: { taskId: string; choice: SoftwareloadChoice; endAt?: number }): Promise<SoftwareloadFinishResult>
-  /** The owner or a manager. */
-  continueFinish(request: { taskId: string }): Promise<SoftwareloadFinishResult>
+  /**
+   * "Stop tiden nu, flyt i SAP senere": stops the time and leaves the task under Venter på SAP without asking SAP. The
+   * same `taskId`, `choice` and `endAt` rules as finish (SOFTWARELOAD_CHANGED, SOFTWARELOAD_LONG_RUN).
+   */
+  stop(request: { taskId: string; choice: SoftwareloadChoice; endAt?: number }): Promise<SoftwareloadStopResult>
+  /** The plan for a task waiting for SAP from a new lookup, without moving anything; the owner or a manager. */
+  pendingPreview(request: { taskId: string }): Promise<SoftwareloadPreview>
+  /**
+   * The owner or a manager. `planned` is the `transfers` and `blocks` of the pendingPreview the user confirmed; without
+   * it, or when SAP now gives another plan, nothing moves and SOFTWARELOAD_PLAN_CHANGED is thrown.
+   */
+  continueFinish(request: { taskId: string; planned: { transfers: SoftwareloadTransfer[]; blocks: SoftwareloadBlock[] } }): Promise<SoftwareloadFinishResult>
   /** Managers only. */
   abandon(request: { taskId: string; reason: string }): Promise<SoftwareloadFinishResult>
   /** The serials of `document` (a material document) when given, else `serials`. */

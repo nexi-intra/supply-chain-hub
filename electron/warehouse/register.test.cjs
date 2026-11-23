@@ -381,7 +381,7 @@ test('shelf work goes through the local queue (applied once), and racks and dele
 })
 
 const SOFTWARELOAD_CHANNELS = ['status', 'start', 'edit', 'scan', 'unscan', 'mark-failed', 'unmark-failed', 'pause', 'resume', 'cancel', 'versions',
-  'preview', 'finish', 'continue', 'abandon', 'kif-preview', 'kif-move', 'search', 'tasks']
+  'preview', 'finish', 'continue', 'stop', 'pending-preview', 'abandon', 'kif-preview', 'kif-move', 'search', 'tasks']
 
 test('softwareload channels are registered and starting Stempelkort pauses a running softwareload task', async () => {
   const { root, handlers, call } = setup()
