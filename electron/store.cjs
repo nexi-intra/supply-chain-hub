@@ -187,8 +187,9 @@ function wait(milliseconds) {
 }
 
 // preparedFiles (preparedFiles.cjs, optional): ready-made temp files for saves on M:.
-function createStore(dataDir, { externallyWatched = false, preparedFiles = null } = {}) {
-  fs.mkdirSync(dataDir, { recursive: true })
+// createDir: false when the caller has already made dataDir (async), so no mkdirSync runs on the main thread.
+function createStore(dataDir, { externallyWatched = false, preparedFiles = null, createDir = true } = {}) {
+  if (createDir) fs.mkdirSync(dataDir, { recursive: true })
   preparedFiles?.register(dataDir)
 
   // Local read cache. Invalideres af watch() pr. aendret noegle; TTL er sikkerhedsnet.

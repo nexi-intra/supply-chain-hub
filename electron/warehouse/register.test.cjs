@@ -697,3 +697,41 @@ test('a status manager past the role limit keeps the role when M: answers in tim
     await m.restore()
   }
 })
+
+// M: hanging must never freeze the Hub: stores are made with fs.promises.mkdir, never mkdirSync on the main thread.
+test('the stores on M: are opened without a synchronous mkdir, and a report is looked up without a synchronous call', async t => {
+  const { root, call } = setup()
+  const local = path.join(root, '_user')
+  const onDrive = file => !path.resolve(String(file)).startsWith(local)
+  const mkdirSync = t.mock.method(fs, 'mkdirSync')
+  const existsSync = t.mock.method(fs, 'existsSync')
+  assert.equal((await call('anna', 'me')).role, 'user')
+  await call('anna', 'timeclock:start', { taskId: 'lager', taskName: 'Lager' })
+  await call('anna', 'softwareload:status')
+  await call('mona', 'locations:create-location', { name: 'A2.4', type: 'Palle', purpose: 'reserve', capacity: 1 })
+  await call('mona', 'sap-check:overview')
+  await assert.rejects(call('mona', 'counts:open-report', { file: 'missing.xlsx' }), /REPORT_NOT_FOUND/)
+  assert.deepEqual(mkdirSync.mock.calls.map(c => c.arguments[0]).filter(onDrive), [])
+  assert.deepEqual(existsSync.mock.calls.map(c => c.arguments[0]).filter(onDrive), [])
+  for (const dir of ['TCD/lagerstyring', 'TCD/lagerstyring/stempelkort', 'TCD/lagerstyring/placeringer', '_lagerstyring']) assert.ok(fs.statSync(path.join(root, dir)).isDirectory(), dir)
+})
+
+test('a team folder that cannot be made is tried once per back-off, not on every call (the SAP indicator polls every 5 s)', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'warehouse-register-'))
+  fs.writeFileSync(path.join(root, 'blocked'), 'a file where the team folder should be')
+  const dataDir = path.join(root, 'blocked', 'TCD', 'lagerstyring')
+  t.mock.method(console, 'error', () => {})
+  const { call, registered } = setup({ root, teamDir: team => path.join(root, 'blocked', team) })
+  const mkdirSync = t.mock.method(fs, 'mkdirSync')
+  const mkdir = t.mock.method(fs.promises, 'mkdir')
+  for (let i = 0; i < 3; i++) assert.equal((await call('anna', 'me')).role, 'user', 'a roles file that cannot be read is a plain user')
+  assert.equal(mkdirSync.mock.calls.filter(c => String(c.arguments[0]).startsWith(dataDir)).length, 0)
+  assert.equal(mkdir.mock.calls.filter(c => c.arguments[0] === dataDir).length, 1)
+  // M: is back (main.cjs calls replayWrites): the folder is tried again at once, not after the back-off.
+  fs.rmSync(path.join(root, 'blocked'))
+  await registered.replayWrites()
+  await call('anna', 'me')
+  assert.equal(mkdir.mock.calls.filter(c => c.arguments[0] === dataDir).length, 2)
+  assert.ok(fs.statSync(dataDir).isDirectory())
+  await registered.closeAll()
+})

@@ -16,15 +16,16 @@ const COLUMNS = {
 }
 const REQUIRED = ['placement', 'material']
 
-function findNewestPlacementSheet(dir) {
+// Async so a slow M: never holds up the main thread.
+async function findNewestPlacementSheet(dir) {
   let names
-  try { names = fs.readdirSync(dir) } catch { return null }
+  try { names = await fs.promises.readdir(dir) } catch { return null }
+  const sheets = names.filter(name => SHEET_PATTERN.test(name))
+  const times = await Promise.all(sheets.map(async name => (await fs.promises.stat(path.join(dir, name))).mtimeMs))
   let best = null
-  for (const name of names) {
-    if (!SHEET_PATTERN.test(name)) continue
-    const time = fs.statSync(path.join(dir, name)).mtimeMs
-    if (!best || time > best.time) best = { name, time }
-  }
+  sheets.forEach((name, index) => {
+    if (!best || times[index] > best.time) best = { name, time: times[index] }
+  })
   return best ? path.join(dir, best.name) : null
 }
 

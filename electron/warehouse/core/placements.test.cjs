@@ -15,14 +15,19 @@ async function makeSheet(file, rows) {
   await workbook.xlsx.writeFile(file)
 }
 
-test('the newest placement sheet is chosen by modification time', () => {
+test('the newest placement sheet is chosen by modification time, without synchronous file calls (M:)', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'countpoint-placements-'))
   for (const [name, time] of [['Placeringsark_13_10_2026_15_08.xlsm', 1000], ['Placeringsark_15_10_2026_15_29.xlsm', 3000], ['Placeringsark_14_10_2026_14_48.xlsm', 2000], ['Andet.xlsm', 9000]]) {
     fs.writeFileSync(path.join(dir, name), 'x')
     fs.utimesSync(path.join(dir, name), time, time)
   }
-  assert.equal(path.basename(findNewestPlacementSheet(dir)), 'Placeringsark_15_10_2026_15_29.xlsm')
-  assert.equal(findNewestPlacementSheet(path.join(dir, 'missing')), null)
+  const readdirSync = t.mock.method(fs, 'readdirSync')
+  const statSync = t.mock.method(fs, 'statSync')
+  const found = findNewestPlacementSheet(dir)
+  assert.ok(found instanceof Promise, 'async')
+  assert.equal(await found, path.join(dir, 'Placeringsark_15_10_2026_15_29.xlsm'))
+  assert.equal(await findNewestPlacementSheet(path.join(dir, 'missing')), null)
+  assert.equal(readdirSync.mock.callCount() + statSync.mock.callCount(), 0)
 })
 
 test('placements are read by header; formula results are used and a missing area comes from the code', async () => {

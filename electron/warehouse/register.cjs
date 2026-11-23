@@ -15,6 +15,7 @@ const { createLocationsAssistant } = require('../assistantLocations.cjs')
 const { createFixtureRunner } = require('./sapFixtures.cjs')
 const { TEAMS, isAllowedTeam } = require('./teams.cjs')
 const { createStore, keyToFilename, parseFileContents } = require('../store.cjs')
+const { createStoreOpener } = require('./storeOpener.cjs')
 const { createCountRepository } = require('./countRepository.cjs')
 const { createCountService } = require('./countService.cjs')
 const { createRoles, createRoleCache } = require('./roles.cjs')
@@ -99,22 +100,15 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
     if (!isAllowedTeam(team)) throw codeError('WAREHOUSE_TEAM_NOT_ALLOWED')
     return path.join(teamDir(team), DATA_FOLDER)
   }
-  const stores = new Map()
-  const openStore = dir => {
-    if (!stores.has(dir)) {
-      try {
-        stores.set(dir, createStore(dir, { preparedFiles }))
-      } catch (error) {
-        console.error('Lagerstyring: storage unavailable', dir, error.code)
-        throw codeError('STORAGE_UNAVAILABLE')
-      }
-    }
-    return stores.get(dir)
-  }
-  const storeFor = team => openStore(dataDirOf(team))
+  // A store on M: is opened asynchronously (fs.promises.mkdir, never mkdirSync on the main thread) and a folder that could
+  // not be made is not tried again for 5 s (storeOpener.cjs: `opener.open(dir)` resolves the store). Services get a
+  // handle (`storeFor`) whose methods wait for the open, so a hanging M: never freezes the Hub.
+  const opener = createStoreOpener({ createStore, preparedFiles })
+  const storeAt = dir => opener.handle(dir)
+  const storeFor = team => storeAt(dataDirOf(team))
   // Another hub's folder read without opening its store, so no folder is ever made there (cf. peekRules). A store this
   // Hub has open already is read through as usual; a missing file is no value, like getAsync.
-  const peekStore = dir => stores.get(dir) || {
+  const peekStore = dir => opener.opened(dir) || {
     getAsync: async key => {
       try {
         return parseFileContents(await fs.promises.readFile(path.join(dir, keyToFilename(key)), 'utf8'))
@@ -126,10 +120,9 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
     },
   }
   const reportsDir = team => path.resolve(dataDirOf(team), 'rapporter')
-  // The platform root may not be known yet when this runs, so a shared store is opened on each use. Every method is
-  // forwarded to the real store, so a service can never call one that a hand-written wrapper forgot.
-  const lazyStore = open => new Proxy({}, { get: (_, name) => open()[name] })
-  const sharedStore = lazyStore(() => openStore(path.join(platformRoot(), SHARED_FOLDER)))
+  // The platform root may not be known yet when this runs, so a shared store's folder is looked up on each use. Every
+  // method is forwarded to the real store, so a service can never call one that a hand-written wrapper forgot.
+  const sharedStore = opener.lazy(() => path.join(platformRoot(), SHARED_FOLDER))
 
   // SAP descriptions are learned from every MB52 fetch and material document lookup (Placeringer shows them).
   const catalog = createMaterialCatalog({ sharedStore, fetcher })
@@ -167,7 +160,7 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
     fetcher: learningFetcher,
     placementSource: {
       load: async () => {
-        const file = findNewestPlacementSheet(config.placementsDir)
+        const file = await findNewestPlacementSheet(config.placementsDir)
         if (!file) throw codeError('PLACEMENTS_NOT_FOUND')
         return readPlacementSheet(file)
       },
@@ -201,7 +194,7 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   const piDocs = createPiDocService({ counts, repo: countRepo, roles, system: config.sapSystem, writeEnabled: WRITE_SYSTEMS.includes(config.sapSystem), writer: createPiDocWriter({ bridge: sap, runScript, clipboard, system: config.sapSystem }) })
   const sapViewer = createSapViewer({ bridge: sap, runScript })
   // Placeringer: one store per hub in <team>/lagerstyring/placeringer; the placement sheet is only read by the import.
-  const locationRepo = createLocationRepository({ storeFor: team => openStore(path.join(dataDirOf(team), 'placeringer')), newId: () => crypto.randomUUID() })
+  const locationRepo = createLocationRepository({ storeFor: team => storeAt(path.join(dataDirOf(team), 'placeringer')), newId: () => crypto.randomUUID() })
   const locations = createLocationService({
     repo: locationRepo,
     catalog,
@@ -216,16 +209,16 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   // A person in TCD and TRR can run Stempelkort in one hub and Softwareload in the other: each refuses to start or
   // resume while the other counts time in another hub the person belongs to (read only, never creating a folder there).
   const timeclock = createTimeclockService({
-    storeFor: team => openStore(path.join(dataDirOf(team), 'stempelkort')),
+    storeFor: team => storeAt(path.join(dataDirOf(team), 'stempelkort')),
     peekFor: team => peekStore(path.join(dataDirOf(team), 'stempelkort')),
     softwareloadElsewhere: user => softwareload.runningElsewhere(user),
   })
   // Softwareload: own tasks in <team>/lagerstyring/softwareload; the search index is shared by TCD and TRR and opened
   // lazily like the shared store above.
   const softwareload = createSoftwareloadService({
-    storeFor: team => openStore(path.join(dataDirOf(team), 'softwareload')),
+    storeFor: team => storeAt(path.join(dataDirOf(team), 'softwareload')),
     peekFor: team => peekStore(path.join(dataDirOf(team), 'softwareload')),
-    indexStore: lazyStore(() => openStore(path.join(platformRoot(), SHARED_FOLDER, 'softwareload'))),
+    indexStore: opener.lazy(() => path.join(platformRoot(), SHARED_FOLDER, 'softwareload')),
     sap: createSoftwareloadSap({ bridge: sap, runScript, clipboard, system: config.sapSystem, expected: sapExpected }),
     timeclock,
     matdocs: args => learningFetcher.fetchMatdoc(args),
@@ -242,10 +235,11 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
     drafter: fakeOutlookDir ? createFakeDrafter(fakeOutlookDir) : createOutlookDrafter({ scriptPath: unpacked(path.join(scriptsDir, 'outlook', 'draft.vbs')) }),
     emit,
   })
-  function reportFile(team, file) {
+  async function reportFile(team, file) {
     const name = String(file || '')
     const target = path.isAbsolute(name) ? path.resolve(name) : path.resolve(reportsDir(team), name)
-    if (path.dirname(target).toLowerCase() !== reportsDir(team).toLowerCase() || path.extname(target).toLowerCase() !== '.xlsx' || !fs.existsSync(target)) throw codeError('REPORT_NOT_FOUND')
+    if (path.dirname(target).toLowerCase() !== reportsDir(team).toLowerCase() || path.extname(target).toLowerCase() !== '.xlsx') throw codeError('REPORT_NOT_FOUND')
+    if (!(await fs.promises.access(target).then(() => true, () => false))) throw codeError('REPORT_NOT_FOUND')
     return target
   }
 
@@ -355,12 +349,12 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
     return { file, name: path.basename(file) }
   })
   handle('counts:open-report', async (user, p) => {
-    const failure = await shell.openPath(reportFile(user.team, p.file))
+    const failure = await shell.openPath(await reportFile(user.team, p.file))
     if (failure) throw codeError('REPORT_OPEN_FAILED')
     return { ok: true }
   })
-  handle('counts:show-report', (user, p) => {
-    shell.showItemInFolder(reportFile(user.team, p.file))
+  handle('counts:show-report', async (user, p) => {
+    shell.showItemInFolder(await reportFile(user.team, p.file))
     return { ok: true }
   })
   handle('rules:get', user => counts.getRules(user))
@@ -594,8 +588,9 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
     // next start, so closing never waits for M: (an action still in its IPC call is waited for by main.cjs).
     hasPendingWrites: () => outbox.unwritten() > 0,
     whenWritesSettled: timeoutMs => outbox.whenWritten(timeoutMs),
-    // main.cjs calls it when M: is back, so the waiting actions need not wait for the 30 s timer.
-    replayWrites: () => flushOutbox(),
+    // main.cjs calls it when M: is back, so the waiting actions need not wait for the 30 s timer, nor for the back-off
+    // of a folder that could not be made while M: was away.
+    replayWrites: () => { opener.forget(); return flushOutbox() },
     closeAll: () => { clearInterval(outboxTimer); return Promise.all([outbox.close(), counts.closeAll()]).then(([, closed]) => closed) },
   }
 }
