@@ -188,7 +188,7 @@ export function reasonLabel(reason: SlotSuggestion['reason']): string {
   return t('Ledig', 'Free')
 }
 
-/** The toast for an action kept on this PC while M: is down. */
+/** The toast for an action kept on this PC while M: is down or busy. */
 export const deferredText = (result: Deferred) => ('duplicate' in result
   ? t('Handlingen var allerede registreret.', 'The action was already registered.')
-  : t('M: kan ikke nås – handlingen er gemt på denne PC og sendes, når forbindelsen er tilbage.', 'M: cannot be reached – the action is saved on this PC and sent when the connection is back.'))
+  : t('M: kan ikke nås eller er optaget lige nu. Handlingen er gemt på denne PC og sendes af sig selv.', 'M: cannot be reached or is busy right now. The action is saved on this PC and sent automatically.'))

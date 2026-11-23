@@ -2,7 +2,8 @@
 // file on this PC and replayed in order when the folder is back. An action that is no longer possible then (the
 // pallet was taken by someone else) is kept as a failure until a window has shown it, never retried. Every action id
 // is applied at most once. After a storage error new actions are only queued for a while, so the Hub does not keep
-// hanging on a dead share; the timer's flush is the retry.
+// hanging on a dead share; the timer's flush is the retry. A busy share (the store gave up on its locks before
+// writing anything) is handled the same way with a short pause, since it is usually over in seconds.
 const fs = require('node:fs')
 const path = require('node:path')
 
@@ -11,12 +12,14 @@ const FILE = 'locations-outbox.json'
 const KEEP_APPLIED = 1000
 const KEEP_FAILURES = 200
 const PAUSE_MS = 30000
+const BUSY_PAUSE_MS = 5000
+const BUSY_JITTER_MS = 5000
 
 function codeError(code) {
   return Object.assign(new Error(code), { code })
 }
 
-function createOutbox({ dir, run, isStorageError, now = Date.now, onFailed = () => {}, pauseMs = PAUSE_MS }) {
+function createOutbox({ dir, run, isStorageError, isBusyError = () => false, now = Date.now, random = Math.random, onFailed = () => {}, pauseMs = PAUSE_MS, busyPauseMs = BUSY_PAUSE_MS, busyJitterMs = BUSY_JITTER_MS }) {
   const file = path.join(dir, FILE)
   let state = load()
   let flushing = null
@@ -48,9 +51,17 @@ function createOutbox({ dir, run, isStorageError, now = Date.now, onFailed = () 
     state.queue = state.queue.filter(action => action.id !== id)
     save()
   }
-  const wentDown = () => { downUntil = now() + pauseMs }
+  const wentDown = (ms = pauseMs) => { downUntil = now() + ms }
+  // Many PCs replay at once when M: is back; the random part keeps them from all trying again in the same instant.
+  const wasBusy = () => wentDown(busyPauseMs + Math.floor(random() * busyJitterMs))
+  /** True when the action is kept for a retry: M: is down or busy. */
+  function pausedBy(error) {
+    if (isStorageError(error)) { wentDown(); return true }
+    if (isBusyError(error)) { wasBusy(); return true }
+    return false
+  }
 
-  /** Replays the queue in order; stops at the first storage error so the order is kept. */
+  /** Replays the queue in order; stops at the first storage or busy error so the order is kept. */
   function flush() {
     if (flushing) return flushing
     flushing = (async () => {
@@ -67,7 +78,7 @@ function createOutbox({ dir, run, isStorageError, now = Date.now, onFailed = () 
           downUntil = 0
           done++
         } catch (error) {
-          if (isStorageError(error)) { wentDown(); break }
+          if (pausedBy(error)) break
           outcomes.set(action.id, { error })
           const failure = { id: action.id, method: action.method, request: action.request, label: action.label || '', email: action.user?.email || '', team: action.user?.team || '', name: action.user?.fullName || '', code: typeof error?.code === 'string' ? error.code : 'UNEXPECTED_ERROR', message: String(error?.message || ''), at: now() }
           failed.push({ action, ...failure })
@@ -91,7 +102,7 @@ function createOutbox({ dir, run, isStorageError, now = Date.now, onFailed = () 
     if (queued(action.id)) return { queued: true }
     const entry = { id: action.id, method: action.method, user: action.user, request: action.request, label: action.label || '', at: now() }
     if (now() < downUntil) {
-      // M: failed a moment ago: keep the action here and let the timer's retry find out when it is back.
+      // M: failed or was busy a moment ago: keep the action here and let a retry find out when it can be reached.
       state.queue.push(entry)
       save()
       return { queued: true }
@@ -118,8 +129,7 @@ function createOutbox({ dir, run, isStorageError, now = Date.now, onFailed = () 
       save()
       return { queued: false, result }
     } catch (error) {
-      if (!isStorageError(error)) throw error
-      wentDown()
+      if (!pausedBy(error)) throw error
       state.queue.push(entry)
       save()
       return { queued: true }

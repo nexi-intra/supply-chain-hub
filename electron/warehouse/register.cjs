@@ -438,6 +438,8 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
     dir: localDir,
     run: runLocations,
     isStorageError: error => error?.code === 'STORAGE_UNAVAILABLE' || STORAGE_ERRORS.has(error?.code),
+    // The store gives up on its locks before it writes anything, so the action is tried again a little later.
+    isBusyError: error => error?.code === 'KV_LOCK_BUSY',
     onFailed: failed => emit('locations:sync-failed', { teams: [...new Set(failed.map(item => item.team))] }),
   })
   const flushOutbox = async () => {

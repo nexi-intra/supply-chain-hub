@@ -6,9 +6,11 @@ const path = require('node:path')
 const { registerWarehouse } = require('./register.cjs')
 const { createStore } = require('../store.cjs')
 
-function setup({ clipboard = { readText: () => '', writeText: () => {} }, env = {} } = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'warehouse-register-'))
-  for (const team of ['TCD', 'TRR', 'PIM']) fs.mkdirSync(path.join(root, team))
+function setup({ clipboard = { readText: () => '', writeText: () => {} }, env = {}, root = null } = {}) {
+  if (!root) {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'warehouse-register-'))
+    for (const team of ['TCD', 'TRR', 'PIM']) fs.mkdirSync(path.join(root, team))
+  }
   const handlers = new Map()
   const ipcMain = { handle: (channel, listener) => handlers.set(channel, listener) }
   const users = { 'mona@nexi.test': { email: 'mona@nexi.test', fullName: 'Mona Berg', role: 'manager', status: 'approved' }, 'anna@nexi.test': { email: 'anna@nexi.test', fullName: 'Anna Holm', role: 'user', status: 'approved' } }
@@ -159,6 +161,26 @@ test('daily Placeringer actions go through the local queue: the same action id i
   assert.deepEqual(await call('anna', 'locations:put-away', { actionId: 'act-1', pallets: [{ location: 'A2.4', material: 'R162-0717', quantity: 50 }] }), { duplicate: true })
   assert.equal((await call('anna', 'locations:overview')).counts.pallets, 1)
   assert.deepEqual(await call('anna', 'locations:pending'), { pending: 0, failures: [] })
+})
+
+test('a daily action that finds M: busy (KV_LOCK_BUSY) is kept on this PC instead of refused, and applied once when replayed', async () => {
+  const { root, call, registered } = setup()
+  await call('mona', 'locations:create-location', { name: 'A2.4', type: 'Palle', purpose: 'reserve', capacity: 1 })
+  const { created: [pallet] } = await call('anna', 'locations:put-away', { pallets: [{ location: 'A2.4', material: 'R162-0717', quantity: 100 }] })
+  const take = registered.locations.take
+  // The store gives up on the locks before anything is written (fileLock.cjs withFileLocksAsync).
+  registered.locations.take = async () => { throw Object.assign(new Error('KV_LOCK_BUSY: Lageret er optaget af en anden klient. Prøv igen.'), { code: 'KV_LOCK_BUSY' }) }
+  assert.deepEqual(await call('anna', 'locations:take', { actionId: 'busy-1', pallet: pallet.id, quantity: 30 }), { queued: true })
+  assert.deepEqual(await call('anna', 'locations:pending'), { pending: 1, failures: [] }, 'queued, not a failure')
+  registered.locations.take = take
+  registered.closeAll()
+  // Started again on the same PC: the queue is replayed at once.
+  const again = setup({ root })
+  for (let waited = 0; (await again.call('anna', 'locations:pending')).pending && waited < 5000; waited += 20) await new Promise(resolve => setTimeout(resolve, 20))
+  assert.deepEqual(await again.call('anna', 'locations:pending'), { pending: 0, failures: [] })
+  assert.deepEqual(await again.call('anna', 'locations:take', { actionId: 'busy-1', pallet: pallet.id, quantity: 30 }), { duplicate: true })
+  assert.equal((await again.call('anna', 'locations:pallet-card', { pallet: pallet.id })).pallet.quantity, 70, 'taken once')
+  again.registered.closeAll()
 })
 
 test('a pallet edit keeps what the dialog showed (expected) through the local queue, so a stale edit is refused', async () => {
