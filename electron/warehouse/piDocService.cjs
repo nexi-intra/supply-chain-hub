@@ -65,23 +65,31 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
       planDocument({ rows, docs: live(all, startedAt), materials, sloc, stockType })
       return { all: { ...all, [reference]: { id: reference, reference, status: 'creating', startedAt, sloc: plan.sloc, stockType: plan.stockType, kind: plan.kind, lines: plan.lines, createdBy: by(user, startedAt) } } }
     })
+    // Takes the reservation back; nothing is written when it is gone already (a deleted count's files may be removed).
+    const takeBack = () => repo.changePiDocs(user.team, id, all => {
+      if (!all[reference]) return { all: undefined }
+      delete all[reference]
+      return { all }
+    }).catch(() => {})
     // Deleted meanwhile: a document made now could not be found from the app. Read past the read cache. A delete re-reads
     // the documents after its tombstone (removeCounts' recheck), so either it sees this reservation and stops, or this sees
-    // its tombstone. The reservation is left: the count's files are being removed. When the index cannot be read, SAP is
-    // not asked either (the reservation is taken back, as when SAP fails).
+    // its tombstone (both may refuse). The reservation is taken back, also when the index cannot be read: SAP is not asked.
     let deleted = false
     try {
       deleted = repo.isDeleted ? await repo.isDeleted(user.team, id, { fresh: true }) : false
     } catch (error) {
-      await repo.changePiDocs(user.team, id, all => { delete all[reference]; return { all } }).catch(() => {})
+      await takeBack()
       throw error
     }
-    if (deleted) throw codeError('COUNT_DELETED', 'Optællingen er slettet')
+    if (deleted) {
+      await takeBack()
+      throw codeError('COUNT_DELETED', 'Optællingen er slettet')
+    }
     let result
     try {
       result = await writer.createDocument({ sloc: plan.sloc, stockType: plan.stockType, reference, materials: plan.lines.map(line => line.material) })
     } catch (error) {
-      await repo.changePiDocs(user.team, id, all => { delete all[reference]; return { all } }).catch(() => {})
+      await takeBack()
       throw error
     }
     const at = now()

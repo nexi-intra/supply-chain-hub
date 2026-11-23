@@ -287,3 +287,23 @@ test('fresh reads of approvals, SAP documents and the delete mark see another PC
   assert.deepEqual(await cached(), ['approved', 'counted', false], 'the cached reads are up to 3 s old')
   assert.deepEqual([(await repo.getApprovals('TCD', id, { fresh: true })).R1.status, (await repo.getPiDocs('TCD', id, { fresh: true })).D1.status, await repo.isDeleted('TCD', id, { fresh: true })], ['posted', 'posted', true])
 })
+test('putting a deleted count back is tried again after a busy index, then given up', async () => {
+  const { storeFor } = setup()
+  const real = storeFor('TCD')
+  const failing = { left: 0 }
+  const store = { ...real, mutateAsync: (key, change) => (failing.left-- > 0 ? Promise.reject(Object.assign(new Error('KV_LOCK_BUSY'), { code: 'KV_LOCK_BUSY' })) : real.mutateAsync(key, change)) }
+  const waits = []
+  const repo = createCountRepository({ storeFor: () => store, now: () => 1000, wait: async ms => { waits.push(ms) } })
+  const entry = { id: 'count1abc', name: 'D000', status: 'open' }
+  await real.setAsync('counts-index', { count1abc: entry })
+  const marked = await repo.markDeleted('TCD', ['count1abc'], OWNER)
+  failing.left = 2
+  await repo.restoreDeleted('TCD', marked)
+  assert.deepEqual([waits, (await real.getAsync('counts-index', { skipCache: true })).count1abc], [[1000, 3000], entry])
+
+  const again = await repo.markDeleted('TCD', ['count1abc'], OWNER)
+  failing.left = 99
+  waits.length = 0
+  await assert.rejects(repo.restoreDeleted('TCD', again), { code: 'KV_LOCK_BUSY' })
+  assert.deepEqual(waits, [1000, 3000, 9000])
+})

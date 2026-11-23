@@ -1264,6 +1264,66 @@ test('a count with an SAP document not posted yet cannot be deleted; posted ones
   assert.deepEqual([entry.deleted, entry.deletedDocs], [true, [{ docNo: '105000962', year: '2026', materialDoc: '4905204901' }, { docNo: '105000963', year: '2026', materialDoc: null }]])
 })
 
+test('the delete makes sure the SAP document file exists before reading it, so a "not found" cached by Windows is never read twice', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const { id } = await newCount(ctx, anna)
+  const seen = []
+  const file = `count-${id}-sap-dokumenter`
+  const repo = { ...ctx.repo, getPiDocs: async (...args) => { seen.push(Boolean(await ctx.storeFor('TCD').statAsync(file))); return ctx.repo.getPiDocs(...args) } }
+  const svc = createCountService({ repo, storeFor: ctx.storeFor, fetcher: ctx.fetcher, placementSource: null, journalsDir: path.join(ctx.root, 'local-exists'), deviceId: 'exists', now: () => ctx.clock.now, newId: () => 'unused', journalOptions: { autoFlush: false } })
+  assert.equal(await ctx.storeFor('TCD').statAsync(file), undefined, 'a count without SAP documents has no file')
+  assert.deepEqual(await svc.deleteCount(ANNA, id), { ok: true })
+  assert.deepEqual(seen, [true, true], 'the first read and the second read after the tombstone')
+
+  // An existing file is left as it is.
+  const second = await newCount(ctx, anna)
+  await ctx.repo.changePiDocs('TCD', second.id, () => ({ all: { D2: { id: 'D2', docNo: '105000991', status: 'printed', lines: [] } } }))
+  await assert.rejects(svc.deleteCount(ANNA, second.id), { code: 'COUNT_PIDOCS_ACTIVE' })
+  assert.equal((await ctx.repo.getPiDocs('TCD', second.id, { fresh: true })).D2.status, 'printed', 'not overwritten')
+})
+
+test('a delete and a document reserved at the same moment both refuse, and no reservation is left', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const mona = ctx.service('pc3')
+  const { id } = await newCount(ctx, anna)
+  await mona.setApproval(MONA, id, { material: 'R162-0717', status: 'approved' })
+  const created = []
+  let checked
+  const tombstoneSeen = new Promise(resolve => { checked = resolve })
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  // The other PC: reserves, then reads the tombstone, and goes on only after the delete has been undone.
+  const piRepo = { ...ctx.repo, isDeleted: async (...args) => { const deleted = await ctx.repo.isDeleted(...args); checked(); await gate; return deleted } }
+  const piDocs = createPiDocService({ counts: mona, repo: piRepo, roles: { roleOf: async user => user.role }, writer: { createDocument: async request => { created.push(request); return { docs: [], missing: [] } } }, system: 'QS4', now: () => ctx.clock.now })
+  let creating
+  // This PC: the create starts right after the tombstone, so the delete's second read finds the reservation.
+  const repo = { ...ctx.repo, markDeleted: async (...args) => { const result = await ctx.repo.markDeleted(...args); creating = piDocs.create(MONA, id, { materials: ['R162-0717'], sloc: 'D000', stockType: 'unrestricted' }); await tombstoneSeen; return result } }
+  const svc = createCountService({ repo, storeFor: ctx.storeFor, fetcher: ctx.fetcher, placementSource: null, journalsDir: path.join(ctx.root, 'local-both'), deviceId: 'both', now: () => ctx.clock.now, newId: () => 'unused', journalOptions: { autoFlush: false } })
+  await assert.rejects(svc.deleteCount(ANNA, id), { code: 'COUNT_PIDOCS_ACTIVE' })
+  assert.equal(await ctx.repo.isDeleted('TCD', id, { fresh: true }), false, 'the delete is undone')
+  release()
+  await assert.rejects(creating, { code: 'COUNT_DELETED' })
+  assert.deepEqual([created, await ctx.repo.getPiDocs('TCD', id, { fresh: true })], [[], {}], 'SAP is never asked, and the reservation is taken back')
+})
+
+test('when the undone delete cannot be written back, the count id is logged and the refusal still stands', async t => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const { id } = await newCount(ctx, anna)
+  const repo = {
+    ...ctx.repo,
+    markDeleted: async (...args) => { const result = await ctx.repo.markDeleted(...args); await ctx.repo.changePiDocs('TCD', id, all => ({ all: { ...all, CPRACE2: { id: 'CPRACE2', reference: 'CPRACE2', status: 'creating', startedAt: ctx.clock.now, lines: [] } } })); return result },
+    restoreDeleted: async () => { throw Object.assign(new Error('x'), { code: 'KV_LOCK_BUSY' }) },
+  }
+  const svc = createCountService({ repo, storeFor: ctx.storeFor, fetcher: ctx.fetcher, placementSource: null, journalsDir: path.join(ctx.root, 'local-log'), deviceId: 'log', now: () => ctx.clock.now, newId: () => 'unused', journalOptions: { autoFlush: false } })
+  const logged = t.mock.method(console, 'error', () => {})
+  await assert.rejects(svc.deleteCount(ANNA, id), { code: 'COUNT_PIDOCS_ACTIVE' })
+  assert.ok(logged.mock.calls.some(call => call.arguments.join(' ').includes('tombstoned but not removed') && call.arguments.includes(id)))
+  assert.equal((await ctx.repo.getMeta('TCD', id)).id, id, 'nothing is removed')
+})
+
 test('a document reserved on another PC while the count is being deleted stops the delete, and the count comes back whole', async () => {
   const ctx = setup()
   const anna = ctx.service('pc1')

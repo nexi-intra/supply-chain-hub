@@ -215,10 +215,13 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId, wa
     return { at, deletedBy, previous }
   }
 
-  /** Undoes markDeleted before any file is removed: each entry still holding that very tombstone gets its old value back. */
+  /**
+   * Undoes markDeleted before any file is removed: each entry still holding that very tombstone gets its old value back.
+   * Tried again after a busy index (FINISH_RETRY_MS), as finishing a new count is; then the error is thrown.
+   */
   async function restoreDeleted(team, marked) {
     if (!marked) return
-    await store(team).mutateAsync(INDEX_KEY, index => {
+    const restore = () => store(team).mutateAsync(INDEX_KEY, index => {
       const next = index && typeof index === 'object' ? index : {}
       for (const [id, entry] of Object.entries(marked.previous)) {
         const current = next[id]
@@ -228,6 +231,23 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId, wa
       }
       return next
     })
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await restore()
+      } catch (error) {
+        if (attempt >= FINISH_RETRY_MS.length) throw error
+        await wait(FINISH_RETRY_MS[attempt])
+      }
+    }
+  }
+
+  /**
+   * Makes sure the SAP document file of a count exists (writes {} only when it is missing, under its lock). A delete does
+   * this before its first read: Windows caches "file not found" on M: for some seconds, and the delete's second read
+   * must not miss a first document reserved meanwhile.
+   */
+  async function ensurePiDocs(team, id) {
+    await store(team).mutateAsync(key(id, 'sap-dokumenter'), current => (current && typeof current === 'object' ? undefined : {}))
   }
 
   async function removeCountFiles(team, ids) {
@@ -447,6 +467,7 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId, wa
     deleteCounts,
     markDeleted,
     restoreDeleted,
+    ensurePiDocs,
     removeCountFiles,
     getMeta,
     updateMeta,

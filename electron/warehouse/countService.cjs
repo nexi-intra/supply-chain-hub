@@ -1550,7 +1550,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     if (lower(meta.owner.email) !== lower(user.email) && !isManager(user)) throw codeError('COUNT_OWNER_ONLY', 'Kun den ansvarlige eller en manager kan slette optællingen')
     await assertStatusOpen(team, meta)
     const counts = [{ id, name: meta.name }]
-    const posted = await sapDocTrail(team, counts)
+    const posted = await sapDocTrail(team, counts, { ensure: true })
     await removeCounts(team, [id], me(user), null, { posted, recheck: () => sapDocTrail(team, counts) })
     return { ok: true }
   }
@@ -1559,9 +1559,11 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
    * The SAP documents of counts about to be deleted. One still active in SAP (being created, created, printed or
    * counted) refuses the delete: its files are the only way to find it from the app. The posted ones are returned per
    * count for the tombstone. Read without a fallback and past the read cache: when the documents cannot be read, nothing
-   * is deleted.
+   * is deleted. `ensure` (the delete's first read) first makes sure each file exists (repo.ensurePiDocs), so the second
+   * read after the tombstone never looks up a missing file that Windows has cached as "not found".
    */
-  async function sapDocTrail(team, counts) {
+  async function sapDocTrail(team, counts, { ensure = false } = {}) {
+    if (ensure) await Promise.all(counts.map(entry => repo.ensurePiDocs(team, entry.id)))
     const all = await Promise.all(counts.map(entry => repo.getPiDocs(team, entry.id, { fresh: true })))
     const at = now()
     const active = []
@@ -1598,7 +1600,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       try {
         await recheck()
       } catch (error) {
-        await repo.restoreDeleted(team, marked)
+        // The refusal stands even when the entries cannot be put back (tried again in restoreDeleted): the files are kept.
+        await repo.restoreDeleted(team, marked).catch(failure => console.error('CountPoint: tombstoned but not removed', ...ids, failure.code || failure.message))
         throw error
       }
     }
@@ -1624,7 +1627,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const unfinished = await repo.settleStaleReservations(team, statusId)
     const counts = await statusCounts(team, statusId)
     const all = [...counts, ...unfinished.map(id => ({ id, name: '' }))]
-    const posted = await sapDocTrail(team, all)
+    const posted = await sapDocTrail(team, all, { ensure: true })
     await removeCounts(team, all.map(entry => entry.id), me(user), () => repo.deleteStatus(team, statusId), { posted, recheck: () => sapDocTrail(team, all) })
     return { ok: true, counts: counts.length }
   }
