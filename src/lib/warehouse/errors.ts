@@ -37,7 +37,7 @@ const MESSAGES: Record<string, string> = {
   AUTH_CONTEXT_CHANGED: 'Du skiftede hub undervejs. Visningen er genindlæst – tjek resultatet.',
   TEAM_NOT_ALLOWED: 'Du har ikke adgang til det team.',
   IPC_FORBIDDEN: 'Handlingen blev afvist.',
-  STORAGE_UNAVAILABLE: 'Kan ikke nå lagerstyrings-data på M:. Scanninger gemmes lokalt og sendes, når forbindelsen er tilbage.',
+  STORAGE_UNAVAILABLE: 'Kan ikke nå data på M: lige nu. Prøv igen om lidt.',
   SAP_NOT_READY: 'SAP er ikke klar. Log på SAP og luk eventuelle pop-ups (se SAP-indikatoren øverst).',
   SAP_TIMEOUT: 'SAP svarede ikke i tide. Prøv igen.',
   SAP_SCRIPT_FAILED: 'SAP-scriptet kunne ikke køre. Er SAP GUI åben?',
@@ -223,13 +223,21 @@ export function errorMessage(error: unknown, fallback?: string): string {
   return errorDetail(error) || (code && MESSAGES[code]) || fallback || MESSAGES.UNEXPECTED_ERROR
 }
 
+/** A scan in Optælling while M: is away: there the scans are kept on this PC (the journal) and sent later. */
+export function scanErrorMessage(error: unknown): string {
+  if (errorCode(error) !== 'STORAGE_UNAVAILABLE') return errorMessage(error)
+  return currentWarehouseLanguage() === 'en'
+    ? 'The data on M: cannot be reached right now. Scans are saved locally and sent when the connection is back.'
+    : 'Kan ikke nå data på M: lige nu. Scanninger gemmes lokalt og sendes, når forbindelsen er tilbage.'
+}
+
 const MESSAGES_EN: Record<string, string> = {
   WAREHOUSE_TEAM_NOT_ALLOWED: 'Work Tools is only for TCD and TRR. Open the TCD or TRR hub.',
   AUTH_REQUIRED: 'Please log in again.',
   AUTH_CONTEXT_CHANGED: 'You switched hub meanwhile. The view has been reloaded – check the result.',
   TEAM_NOT_ALLOWED: 'You do not have access to that team.',
   IPC_FORBIDDEN: 'The action was refused.',
-  STORAGE_UNAVAILABLE: 'The warehouse data on M: cannot be reached. Scans are saved locally and sent when the connection is back.',
+  STORAGE_UNAVAILABLE: 'The data on M: cannot be reached right now. Try again shortly.',
   SAP_NOT_READY: 'SAP is not ready. Log on to SAP and close any pop-ups (see the SAP indicator at the top).',
   SAP_TIMEOUT: 'SAP did not answer in time. Try again.',
   SAP_SCRIPT_FAILED: 'The SAP script could not run. Is SAP GUI open?',

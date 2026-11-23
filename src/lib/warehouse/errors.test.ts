@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { danishCodes, errorCode, errorMaterials, errorMessage } from './errors'
+import { danishCodes, errorCode, errorMaterials, errorMessage, scanErrorMessage } from './errors'
 import { setWarehouseLanguage } from './text'
 
 describe('errorMaterials', () => {
@@ -40,9 +40,23 @@ describe('errorMessage', () => {
   })
 
   it('explains storage and SAP problems', () => {
-    expect(errorMessage(new Error('Error: STORAGE_UNAVAILABLE'))).toMatch(/M:/)
+    expect(errorMessage(new Error('Error: STORAGE_UNAVAILABLE'))).toBe('Kan ikke nå data på M: lige nu. Prøv igen om lidt.')
     expect(errorMessage(new Error('Error: SAP_NOT_READY: SAP er ikke klar'))).toBe('SAP er ikke klar')
     expect(errorMessage(new Error('Error: SAP_TIMEOUT'))).toMatch(/SAP/)
+  })
+
+  it('only a scan in Optælling says scans are saved locally when M: is away', () => {
+    const away = new Error("Error invoking remote method 'warehouse:counts:scan': Error: STORAGE_UNAVAILABLE")
+    expect(errorMessage(away)).not.toMatch(/lokalt/)
+    expect(scanErrorMessage(away)).toBe('Kan ikke nå data på M: lige nu. Scanninger gemmes lokalt og sendes, når forbindelsen er tilbage.')
+    expect(scanErrorMessage(new Error('Error: COUNT_CLOSED: Optællingen er afsluttet'))).toBe('Optællingen er afsluttet')
+    setWarehouseLanguage('en')
+    try {
+      expect(errorMessage(away)).toBe('The data on M: cannot be reached right now. Try again shortly.')
+      expect(scanErrorMessage(away)).toBe('The data on M: cannot be reached right now. Scans are saved locally and sent when the connection is back.')
+    } finally {
+      setWarehouseLanguage('da')
+    }
   })
 
   it('a refused clipboard says nothing was copied, in Danish and English', () => {

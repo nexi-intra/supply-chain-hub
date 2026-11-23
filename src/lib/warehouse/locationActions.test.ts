@@ -54,6 +54,18 @@ describe('sendLocationAction', () => {
     expect(settled).toHaveBeenCalledTimes(1)
   })
 
+  it('M: away on an action that is not kept on this PC (admin, rack) says the change is not saved', async () => {
+    const rollback = vi.fn()
+    const away = new Error("Error invoking remote method 'warehouse:locations:create-rack': Error: STORAGE_UNAVAILABLE")
+    await expect(sendLocationAction(() => Promise.reject(away), { rollback, settled: () => {} })).resolves.toBe(false)
+    expect(rollback).toHaveBeenCalledWith(away)
+    expect(toast.error).toHaveBeenCalledWith('M: kan ikke nås. Ændringen er ikke gemt. Prøv igen, når forbindelsen er tilbage.')
+    setWarehouseLanguage('en')
+    await sendLocationAction(() => Promise.reject(away), { settled: () => {} })
+    expect(toast.error).toHaveBeenLastCalledWith('M: cannot be reached. The change was not saved. Try again when the connection is back.')
+    expect(toast.error.mock.calls.flat().join(' ')).not.toMatch(/lokalt|locally|denne PC|this PC/)
+  })
+
   it('a refusal can offer to send again: the screen is rolled back and the error toast gets the button', async () => {
     const rollback = vi.fn()
     const again = vi.fn()

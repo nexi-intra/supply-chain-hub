@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { errorMessage } from '@/lib/warehouse/errors'
+import { errorMessage, scanErrorMessage } from '@/lib/warehouse/errors'
 import { formatNumber, formatTime, kindLabel, outcomeView, type Tone } from '@/lib/warehouse/format'
 import { isSoundOn, playTone, setSoundOn } from '@/lib/warehouse/sound'
 import { cn } from '@/lib/utils'
@@ -85,7 +85,7 @@ export function ScanPanel({ id, open, state, refresh, optimistic, person }: Pane
           setSession(current => [entry, ...current].slice(0, 200))
         } catch (error) {
           playTone('error')
-          toast.error(errorMessage(error))
+          toast.error(scanErrorMessage(error))
         }
       }
     } finally {

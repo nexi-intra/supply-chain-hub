@@ -1,7 +1,7 @@
 import { toast } from 'sonner'
 import { trackPendingWrite } from '@/lib/pendingWrites'
 import type { Deferred, DocumentLookup, LocationList, MapContents, MaterialCard, PalletInput, RackCard, StockLineView } from '@/types/warehouse'
-import { errorMessage } from './errors'
+import { errorCode, errorMessage } from './errors'
 import { deferredText, formatDate, isDeferred, isShelfPlace, locationKeyOf, palletLimitOf } from './locations'
 import { t } from './text'
 
@@ -57,6 +57,15 @@ export interface LocationActionOptions<T> {
 }
 
 /**
+ * Why an action was refused. A daily action that finds M: away is kept on this PC (`queued`, see deferredText), so
+ * STORAGE_UNAVAILABLE here is an action that is never kept (places, racks, tags): it is not saved anywhere.
+ */
+function writeFailureText(error: unknown): string {
+  if (errorCode(error) === 'STORAGE_UNAVAILABLE') return t('M: kan ikke nås. Ændringen er ikke gemt. Prøv igen, når forbindelsen er tilbage.', 'M: cannot be reached. The change was not saved. Try again when the connection is back.')
+  return errorMessage(error)
+}
+
+/**
  * Sends one action in the background: the caller has already shown its result. A refusal rolls back and shows why; an
  * action kept on this PC (M: down) shows that. Resolves to whether M: took it; never rejects.
  */
@@ -78,7 +87,7 @@ export function sendLocationAction<T>(write: () => Promise<T>, options: Location
     },
     error => {
       try { options.rollback?.(error) } finally {
-        const message = options.failure ? options.failure(error) : errorMessage(error)
+        const message = options.failure ? options.failure(error) : writeFailureText(error)
         const action = options.offer?.(error)
         // The choice stays a while (the person may count again first), and can be closed.
         if (action) toast.error(message, { action, duration: 60000, closeButton: true })

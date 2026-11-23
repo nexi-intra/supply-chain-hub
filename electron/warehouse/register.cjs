@@ -51,9 +51,25 @@ function confirmedList(value) {
   return Array.isArray(value) ? value.filter(item => typeof item === 'string' && item.length <= 80).slice(0, 2000) : []
 }
 
-/** IPC errors carry "CODE" or "CODE: Danish detail"; internal details (paths, stacks) never reach the window. */
-function toIpcError(error) {
-  const code = typeof error?.code === 'string' && CODE.test(error.code) ? error.code : STORAGE_ERRORS.has(error?.code) ? 'STORAGE_UNAVAILABLE' : 'UNEXPECTED_ERROR'
+function isUnder(file, root) {
+  if (typeof file !== 'string' || !file || typeof root !== 'string' || !root) return false
+  const relative = path.relative(path.resolve(root), path.resolve(file))
+  return relative === '' || (relative.split(path.sep)[0] !== '..' && !path.isAbsolute(relative))
+}
+
+/** A file error is M: being away; a missing file only when it was looked for on M: (not an SAP export in the temp folder). */
+function isStorageFailure(error, root) {
+  if (!STORAGE_ERRORS.has(error?.code)) return false
+  return error.code !== 'ENOENT' || isUnder(error.path, root)
+}
+
+/**
+ * IPC errors carry "CODE" or "CODE: Danish detail"; internal details (paths, stacks) never reach the window. Node's own
+ * codes (ERR_*) are not ours, so they are an unexpected error.
+ */
+function toIpcError(error, root) {
+  const own = typeof error?.code === 'string' && CODE.test(error.code) && !error.code.startsWith('ERR_')
+  const code = own ? error.code : isStorageFailure(error, root) ? 'STORAGE_UNAVAILABLE' : 'UNEXPECTED_ERROR'
   if (code === 'UNEXPECTED_ERROR' || code === 'STORAGE_UNAVAILABLE') console.error('Lagerstyring: request failed', error)
   const detail = !['UNEXPECTED_ERROR', 'STORAGE_UNAVAILABLE'].includes(code) && error.message && error.message !== code ? String(error.message).replace(new RegExp(`^${code}:\\s*`), '') : ''
   return new Error(detail ? `${code}: ${detail}` : code)
@@ -269,7 +285,9 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
         userMs = Date.now() - startedAt
         return await fn(user, payload && typeof payload === 'object' ? payload : {}, event)
       } catch (error) {
-        throw toIpcError(error)
+        let root = ''
+        try { root = platformRoot() } catch {}
+        throw toIpcError(error, root)
       } finally {
         const elapsedMs = Date.now() - startedAt
         if (elapsedMs >= SLOW_CALL_MS && !waitsForSap(channel)) console.warn(`Lagerstyring: LANGSOM ${channel} ${elapsedMs} ms (heraf bruger ${userMs} ms)`)

@@ -7,7 +7,7 @@ const { registerWarehouse } = require('./register.cjs')
 const { createStore } = require('../store.cjs')
 const { createArrivalOrder } = require('../ipcArrivals.cjs')
 
-function setup({ clipboard = { readText: () => '', writeText: () => {} }, env = {}, root = null, arrivals, outboxOptions, teamUsers, teamDir, storageConnected } = {}) {
+function setup({ clipboard = { readText: () => '', writeText: () => {} }, env = {}, root = null, arrivals, outboxOptions, teamUsers, teamDir, storageConnected, currentActor } = {}) {
   if (!root) {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'warehouse-register-'))
     for (const team of ['TCD', 'TRR', 'PIM']) fs.mkdirSync(path.join(root, team))
@@ -30,7 +30,7 @@ function setup({ clipboard = { readText: () => '', writeText: () => {} }, env = 
   const registered = registerWarehouse({
     ipcMain,
     // `delay`: this call's user lookup is slow (read from M:).
-    currentActor: async event => { if (event.delay) await new Promise(resolve => setTimeout(resolve, event.delay)); return actors[event.who] },
+    currentActor: currentActor || (async event => { if (event.delay) await new Promise(resolve => setTimeout(resolve, event.delay)); return actors[event.who] }),
     teamUsers: teamUsers || (async () => users),
     teamDir: teamDir || (team => path.join(root, team)),
     platformRoot: () => root,
@@ -87,6 +87,23 @@ test('the open hub is the team: a TCD user gets TCD and its storage locations, o
   assert.deepEqual(await call('anna', 'me'), { email: 'anna@nexi.test', fullName: 'Anna Holm', role: 'user', team: 'TCD', storageLocations: ['D000', 'D004', 'D005', 'D006', 'D102', 'D103', 'D104', 'D105', 'D106'] })
   await assert.rejects(call('pim', 'me'), /^Error: WAREHOUSE_TEAM_NOT_ALLOWED$/)
   await assert.rejects(call('pim', 'counts:list'), /WAREHOUSE_TEAM_NOT_ALLOWED/)
+})
+
+test('the window gets only our own codes: Node\'s ERR_* is unexpected, and a missing file is M: only when it is under the platform root', async t => {
+  t.mock.method(console, 'error', () => {})
+  let thrown = null
+  const { root, call } = setup({ currentActor: async () => { throw thrown } })
+  const failing = error => { thrown = error; return call('anna', 'me') }
+  const missing = file => Object.assign(new Error(`ENOENT: no such file or directory, open '${file}'`), { code: 'ENOENT', path: file })
+
+  await assert.rejects(failing(Object.assign(new TypeError('The "path" argument must be of type string. Received undefined'), { code: 'ERR_INVALID_ARG_TYPE' })), /^Error: UNEXPECTED_ERROR$/)
+  await assert.rejects(failing(Object.assign(new Error('Cannot create a string longer than 0x1fffffe8 characters'), { code: 'ERR_STRING_TOO_LONG' })), /^Error: UNEXPECTED_ERROR$/)
+  await assert.rejects(failing(missing(path.join(root, 'TCD', 'lagerstyring', 'roller.json'))), /^Error: STORAGE_UNAVAILABLE$/)
+  await assert.rejects(failing(missing(path.join(os.tmpdir(), 'countpoint-sap-1', 'mb52.txt'))), /^Error: UNEXPECTED_ERROR$/, 'an SAP export without its file is not M:')
+  await assert.rejects(failing(missing(`${root}-other${path.sep}x.json`)), /^Error: UNEXPECTED_ERROR$/, 'a folder next to the root is not under it')
+  await assert.rejects(failing(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })), /^Error: UNEXPECTED_ERROR$/, 'no path: not known to be M:')
+  await assert.rejects(failing(Object.assign(new Error('EBUSY: resource busy'), { code: 'EBUSY' })), /^Error: STORAGE_UNAVAILABLE$/)
+  await assert.rejects(failing(Object.assign(new Error('LOCATION_FULL: A1.1 er fuld'), { code: 'LOCATION_FULL' })), /^Error: LOCATION_FULL: A1\.1 er fuld$/)
 })
 
 test('copying answers only when the text is on the (async, Electron 44) clipboard', async () => {
