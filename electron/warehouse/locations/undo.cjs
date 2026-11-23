@@ -123,11 +123,16 @@ function drawingBlock(change, state) {
 }
 
 /**
- * The places a recorded change used: those whose record it changed (`changed`), and those it brought a pallet onto
- * (`arrived`). A place in either may no longer take back a pallet an earlier action took away from it.
+ * The places a recorded change used: those it created, deleted or changed in what decides whether a pallet may stand
+ * there (`changed`: active, purpose, type, capacity; not a note), and those it brought a pallet onto (`arrived`). A place
+ * in either may no longer take back a pallet an earlier action took away from it.
  */
 function placesUsedBy(change) {
-  const changed = Object.keys(change?.after?.locations || {})
+  const changed = Object.entries(change?.after?.locations || {}).filter(([id, after]) => {
+    const before = change.before?.locations?.[id] ?? null
+    if (!before || !after) return before !== after
+    return (before.active !== false) !== (after.active !== false) || ['purpose', 'type', 'capacity'].some(field => (before[field] ?? null) !== (after[field] ?? null))
+  }).map(([id]) => id)
   const arrived = Object.entries(change?.after?.pallets || {}).filter(([id, after]) => after && change.before?.pallets?.[id]?.location !== after.location).map(([, after]) => after.location)
   return { changed, arrived }
 }

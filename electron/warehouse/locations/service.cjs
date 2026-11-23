@@ -967,13 +967,19 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
 
   async function undo(user, { eventId, at, actionId } = {}) {
     const team = await requireAdmin(user)
-    // The places later actions used (an undo needs room only there): from the log, read before; the repository adds what
-    // it sees under its lock. The event itself is looked up under the repository's lock: with M: down that fails as a
-    // storage error, so it is queued. Its time (from the log line) picks the month file, so only that one is locked.
-    const read = await repo.history(team, { months: 4 })
-    const found = read.find(item => item.id === eventId)
-    const group = found?.tx ? read.filter(item => item.tx === found.tx) : []
-    const used = group.length ? placesUsedSince(read, group[group.length - 1]) : new Set()
+    // The places later actions used (an undo needs room only there). The repository sees them in the months it locks: the
+    // action's month and this one, or the last months when the time is not known. Only an action two or more months back
+    // has months in between, and those are read from the log here first. The event itself is looked up under the
+    // repository's lock: with M: down that fails as a storage error, so it is queued.
+    const monthOf = ms => { const date = new Date(ms); return date.getUTCFullYear() * 12 + date.getUTCMonth() }
+    const back = Number.isFinite(at) ? monthOf(now()) - monthOf(at) : 0
+    let used = new Set()
+    if (back >= 2) {
+      const read = await repo.history(team, { months: back + 1 })
+      const found = read.find(item => item.id === eventId)
+      const group = found?.tx ? read.filter(item => item.tx === found.tx) : []
+      if (group.length) used = placesUsedSince(read, group[group.length - 1])
+    }
     try {
       return await repo.undo(team, { eventId, ...(Number.isFinite(at) ? { at } : {}), by: by(user), actionId, used })
     } catch (error) {

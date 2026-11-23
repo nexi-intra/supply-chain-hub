@@ -517,6 +517,42 @@ test('a whole take from a place that was already deactivated can be undone: the 
   assert.deepEqual((await pc1.repo.read('TCD')).pallets.P, kept)
 })
 
+test('a note edit on a place that was already deactivated does not block the undo of a take from it', async () => {
+  const { pc1, clock, seed } = setup()
+  await seed([place('A3.1', { active: false })], [{ id: 'P', location: 'A3.1', material: 'R162-0717', quantity: 10, receivedAt: 7 }])
+  await pc1.service.take(BO, { actionId: 'bo-take', pallet: 'P' })
+  clock.now += 60000
+  await pc1.service.editLocation(ADA, { location: 'A3.1', changes: { note: 'Reparation' } })
+  const take = (await pc1.service.log(ADA, { type: 'take' })).events[0]
+  assert.equal(take.canUndo, true)
+  await pc1.service.undo(ADA, { eventId: take.id, at: take.at, actionId: 'u1' })
+  assert.equal((await pc1.repo.read('TCD')).pallets.P.location, 'A3.1')
+})
+
+test('an undo reads the log beforehand only for the months between the action and now, which it does not lock', async () => {
+  const { pc1, clock, seed } = setup()
+  const LIS = { email: 'lis@x.test', fullName: 'Lis', role: 'user', team: 'TCD' }
+  const reads = []
+  const history = pc1.repo.history
+  pc1.repo.history = (team, options) => { reads.push(options?.months); return history(team, options) }
+  await seed([place('A2.4'), place('A2.5'), place('B1.1', { type: 'Gulv', capacity: 0 })], [{ id: 'P', location: 'A2.4', material: 'R162-0717', quantity: 10, receivedAt: 1 }, { id: 'Q', location: 'A2.5', material: 'R162-0717', quantity: 10, receivedAt: 1 }])
+  await pc1.service.move(BO, { actionId: 'bo-move', pallet: 'P', to: 'B1.1' })
+  await pc1.service.move(BO, { actionId: 'bo-move-q', pallet: 'Q', to: 'B1.1' })
+  const [moveQ, move] = await history('TCD', { type: 'move' })
+  // An action this month: the repository locks this month and sees everything since; nothing is read beforehand.
+  reads.length = 0
+  await pc1.service.undo(ADA, { eventId: moveQ.id, at: moveQ.at, actionId: 'u0' })
+  assert.deepEqual(reads, [])
+  // Next month Lis uses A2.4; the month after, the undo locks only the first and the last month: the one between is read.
+  clock.now = day(2026, 11, 15)
+  await pc1.service.putAway(LIS, { actionId: 'lis-put', pallets: [{ location: 'A2.4', material: 'R162-0717', quantity: 1 }] })
+  clock.now = day(2026, 12, 15)
+  reads.length = 0
+  await assert.rejects(pc1.service.undo(ADA, { eventId: move.id, at: move.at, actionId: 'u1' }), { code: 'UNDO_CONFLICT', message: /^Kan ikke fortrydes\. Lis satte 1 stk\. R162-0717 på A2\.4 kl\. / })
+  assert.equal(reads[0], 3)
+  assert.equal((await pc1.repo.read('TCD')).pallets.P.location, 'B1.1')
+})
+
 test('a take from a place over its capacity since the capacity was cut can be undone', async () => {
   const { pc1, clock, seed } = setup()
   await seed([place('S0', { type: 'Bord', capacity: 2 })], [{ id: 'p1', location: 'S0', material: 'R162-0717', quantity: 10, receivedAt: 1 }, { id: 'p2', location: 'S0', material: 'R162-0717', quantity: 10, receivedAt: 2 }])

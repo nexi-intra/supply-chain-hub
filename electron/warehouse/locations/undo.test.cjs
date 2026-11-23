@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { changeOf, undoPlan, placesUsedSince } = require('./undo.cjs')
+const { changeOf, undoPlan, placesUsedBy, placesUsedSince } = require('./undo.cjs')
 
 const place = (name, extra = {}) => ({ id: name, name, area: name.replace(/[\d. ].*$/, ''), type: 'Palle', purpose: 'reserve', capacity: 1, fixedMaterials: [], active: true, note: '', ...extra })
 const pallet = (id, location, extra = {}) => ({ id, location, material: 'R162-0717', quantity: 100, receivedAt: 1, document: null, serials: [], sloc: 'D000', tags: [], note: '', createdAt: 1, ...extra })
@@ -127,6 +127,20 @@ test('without the places used since, no place is checked for room (as before)', 
   const reused = clone(after)
   reused.pallets.L = pallet('L', 'A2.4')
   assert.equal(undoPlan(changeOf(start, after), reused).ok, true)
+})
+
+test('a place counts as used only when it was created, deleted, or its active, purpose, type or capacity changed', () => {
+  const edit = (before, after) => ({ before: { pallets: {}, locations: { A1: before } }, after: { pallets: {}, locations: { A1: after } } })
+  const base = place('A1', { active: false })
+  assert.deepEqual(placesUsedBy(edit(base, { ...base, note: 'Reparation' })).changed, [], 'a note')
+  assert.deepEqual(placesUsedBy(edit(base, { ...base, fixedMaterials: ['M1'], updatedAt: 5 })).changed, [], 'materials and edit time')
+  for (const after of [null, { ...base, active: true }, { ...base, purpose: 'reserved' }, { ...base, type: 'Bord' }, { ...base, capacity: 2 }]) {
+    assert.deepEqual(placesUsedBy(edit(base, after)).changed, ['A1'], JSON.stringify(after))
+  }
+  assert.deepEqual(placesUsedBy(edit(null, base)).changed, ['A1'], 'created')
+  // A place without `active` is active.
+  const { active, ...unset } = place('A1')
+  assert.deepEqual(placesUsedBy(edit(unset, { ...unset, active: true })).changed, [])
 })
 
 test('the places used by later actions: a place changed or a pallet brought onto it, also by an undo; the action itself and earlier ones are not', () => {
