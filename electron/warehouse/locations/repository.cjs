@@ -4,6 +4,7 @@
 // action can be undone later – one action at a time, and only while nothing it touched has changed since.
 const { KEYS, STATE_KEYS, LAYOUT_KEYS } = require('./model.cjs')
 const { changeOf, undoPlan, drawingBlock } = require('./undo.cjs')
+const { JOURNAL_KEY, createStage, finishLeftover, commitStage } = require('./txJournal.cjs')
 
 const EMPTY = { locations: {}, pallets: {}, stock: {}, tags: [], meta: {} }
 // The drawing's keys by their name on `tx` (only with `withLayout`).
@@ -18,8 +19,58 @@ const placesOf = state => ({ locations: state.locations, pallets: state.pallets,
 
 // How far back an action can be undone (the log shows 3 months).
 const UNDO_MONTHS = 4
+// How often a leftover journal that needs other locks is finished on its own before the action gives up (as busy).
+const JOURNAL_ROUNDS = 3
+class Thrown { constructor(error) { this.error = error } }
 
 function createLocationRepository({ storeFor, now = Date.now, newId }) {
+  /**
+   * Runs `work(locked, prepared)` under the locks of `keys` and the journal (see txJournal.cjs): a journal left by a
+   * transaction that M: dropped halfway is finished first. `work` gets the same get/set/delete as a store transaction;
+   * a throw writes nothing of it – the finished journal is still written. A journal that needs keys `keys` lacks is
+   * finished in a transaction of its own first; `prepare` (reads before the locks) runs again after that.
+   */
+  async function inTransaction(store, keys, work, prepare = async () => null) {
+    const at = Date.now()
+    for (let round = 0; ; round++) {
+      try {
+        const prepared = await prepare()
+        const allowed = new Set([...keys, JOURNAL_KEY])
+        const out = await store.withLockedKeysAsync([...allowed], locked => {
+          const stage = createStage(locked)
+          const hadJournal = finishLeftover(stage, allowed, { keepApplied: KEEP_APPLIED })
+          const finished = stage.mark()
+          let result
+          try {
+            result = work(stage, prepared)
+          } catch (error) {
+            if (!hadJournal) throw error
+            stage.reset(finished)
+            commitStage(locked, stage, { at, hadJournal })
+            return new Thrown(error)
+          }
+          commitStage(locked, stage, { at, hadJournal })
+          return result
+        })
+        if (out instanceof Thrown) throw out.error
+        return out
+      } catch (error) {
+        if (error?.code !== 'TX_JOURNAL_KEYS') throw error
+        if (round >= JOURNAL_ROUNDS) throw codeError('KV_LOCK_BUSY', 'Lageret er optaget lige nu. Prøv igen om et øjeblik.')
+        await finishAlone(store, error.keys, at).catch(failure => { if (failure?.code !== 'TX_JOURNAL_KEYS') throw failure })
+      }
+    }
+  }
+
+  async function finishAlone(store, keys, at) {
+    const allowed = new Set([...keys, KEYS.meta, JOURNAL_KEY])
+    return store.withLockedKeysAsync([...allowed], locked => {
+      const stage = createStage(locked)
+      const hadJournal = finishLeftover(stage, allowed, { keepApplied: KEEP_APPLIED })
+      commitStage(locked, stage, { at, hadJournal })
+    })
+  }
+
   async function read(team) {
     const store = storeFor(team)
     const values = await Promise.all(STATE_KEYS.map(name => store.getAsync(KEYS[name])))
@@ -73,6 +124,8 @@ function createLocationRepository({ storeFor, now = Date.now, newId }) {
    * `writes` (a daily action: e.g. ['pallets']) locks only those keys, the places, meta and the history: every lock file
    * costs seconds on M:. The other keys (which such an action never reads to decide) are read without a lock, and
    * changing one of them fails the transaction.
+   * A transaction that writes more than one file goes through the journal (txJournal.cjs), so M: dropping halfway never
+   * leaves half an action: the next transaction finishes it, and its replay is then recognised by its action id.
    */
   async function transact(team, options, fn) {
     if (typeof options === 'function') [fn, options] = [options, {}]
@@ -84,9 +137,11 @@ function createLocationRepository({ storeFor, now = Date.now, newId }) {
     const layoutKeys = withLayout ? Object.values(LAYOUT_TX) : []
     const lockedNames = Array.isArray(options?.writes) ? STATE_KEYS.filter(name => name === 'meta' || name === 'locations' || options.writes.includes(name)) : STATE_KEYS
     const readOnly = STATE_KEYS.filter(name => !lockedNames.includes(name))
-    const unlocked = await Promise.all(readOnly.map(name => store.getAsync(KEYS[name], { skipCache: true })))
-    const outside = Object.fromEntries(readOnly.map((name, index) => [name, unlocked[index] ?? structuredClone(EMPTY[name])]))
-    return store.withLockedKeysAsync([...lockedNames.map(name => KEYS[name]), ...layoutKeys, historyKey], locked => {
+    const readOutside = async () => {
+      const unlocked = await Promise.all(readOnly.map(name => store.getAsync(KEYS[name], { skipCache: true })))
+      return Object.fromEntries(readOnly.map((name, index) => [name, unlocked[index] ?? structuredClone(EMPTY[name])]))
+    }
+    return inTransaction(store, [...lockedNames.map(name => KEYS[name]), ...layoutKeys, historyKey], (locked, outside) => {
       const state = { ...readLocked(locked, lockedNames), ...outside }
       const before = withLayout ? { ...state, ...readLayoutLocked(locked) } : state
       if (actionId && (before.meta.applied || []).includes(actionId)) return { duplicate: true }
@@ -102,7 +157,7 @@ function createLocationRepository({ storeFor, now = Date.now, newId }) {
       if (withLayout) writeLayout(locked, before, tx)
       if (events.length) locked.set(historyKey, [...(locked.get(historyKey) || []), ...events])
       return result
-    })
+    }, readOutside)
   }
 
   /**
@@ -119,7 +174,7 @@ function createLocationRepository({ storeFor, now = Date.now, newId }) {
     const start = new Date(undoneAt)
     const recent = Array.from({ length: UNDO_MONTHS }, (_, back) => monthKey(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() - back, 1)))
     const months = !eventId ? [monthKey(at)] : Number.isFinite(at) && recent.includes(monthKey(at)) ? [monthKey(at)] : recent
-    return store.withLockedKeysAsync([...STATE_KEYS.map(name => KEYS[name]), ...months, currentKey], locked => {
+    return inTransaction(store, [...STATE_KEYS.map(name => KEYS[name]), ...months, currentKey], locked => {
       const before = readLocked(locked)
       if (actionId && (before.meta.applied || []).includes(actionId)) return { duplicate: true }
       const originKey = eventId ? months.find(key => (locked.get(key) || []).some(event => event.id === eventId)) : months[0]

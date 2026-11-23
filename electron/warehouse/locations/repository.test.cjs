@@ -13,7 +13,7 @@ function setup() {
   const storeFor = team => { if (!stores.has(team)) stores.set(team, createStore(path.join(root, team))); return stores.get(team) }
   const clock = { now: Date.UTC(2026, 9, 20, 8) }
   let ids = 0
-  return { clock, repo: createLocationRepository({ storeFor, now: () => clock.now, newId: () => `id${++ids}` }) }
+  return { clock, storeFor, repo: createLocationRepository({ storeFor, now: () => clock.now, newId: () => `id${++ids}` }) }
 }
 
 test('locationKey treats case and spaces as the same place', () => {
@@ -59,7 +59,7 @@ test('a daily action locks only what it writes, the places, meta and the history
     tx.stock['E9 H1|M1'] = { id: 'E9 H1|M1', location: 'E9 H1', material: 'M1', quantity: 3 }
     tx.tags = ['Brandskab']
   })
-  assert.deepEqual(locks[0], ['history-2026-10', 'locations', 'meta', 'pallets', 'stock', 'tags'], 'without `writes` every key is locked')
+  assert.deepEqual(locks[0], ['history-2026-10', 'locations', 'meta', 'pallets', 'stock', 'tags', 'tx-pending'], 'without `writes` every key is locked')
 
   const result = await repo.transact('TCD', { actionId: 'a1', writes: ['pallets'] }, tx => {
     assert.deepEqual([tx.locations['A2.4'].name, tx.stock['E9 H1|M1'].quantity, tx.tags], ['A2.4', 3, ['Brandskab']], 'the other keys are read as they are')
@@ -68,7 +68,8 @@ test('a daily action locks only what it writes, the places, meta and the history
     return 'done'
   })
   assert.equal(result, 'done')
-  assert.deepEqual(locks[1], ['history-2026-10', 'locations', 'meta', 'pallets'])
+  assert.deepEqual(locks[1], ['history-2026-10', 'locations', 'meta', 'pallets', 'tx-pending'])
+  assert.equal(await store.getAsync('tx-pending'), undefined, 'the journal is gone once the action is written')
   const state = await repo.read('TCD')
   assert.deepEqual([state.pallets.p1.location, state.meta.applied], ['A2.4', ['a1']])
   assert.ok((await repo.history('TCD'))[0].change, 'the change is still recorded for undo')
@@ -232,6 +233,157 @@ test('a stock change is written, recorded and undone like pallets', async () => 
   assert.equal(put.change.after.stock['E9 H5|R162-0717'].quantity, 40)
   assert.deepEqual(await repo.undo('TCD', { eventId: put.id, by: { email: 'a@x', name: 'A' } }), { undone: 1 })
   assert.deepEqual((await repo.read('TCD')).stock, {})
+})
+
+// M: drops while a transaction replaces its files: the rename of `file` fails once (the files before it are written).
+// `landed`: the rename reached M:, only the answer was lost.
+const dropAt = (t, file, { landed = false } = {}) => {
+  const rename = fs.promises.rename
+  let armed = true
+  t.mock.method(fs.promises, 'rename', async (from, to) => {
+    if (!armed || path.basename(String(to)) !== file) return rename(from, to)
+    armed = false
+    if (landed) await rename(from, to)
+    throw Object.assign(new Error('EIO: M: er væk'), { code: 'EIO' })
+  })
+}
+const takeTen = (repo, actionId, id = 'p1') => repo.transact('TCD', { actionId, writes: ['pallets'] }, tx => {
+  tx.pallets[id].quantity -= 10
+  tx.event({ type: 'take', by: ANNA, pallet: id, location: 'A2.4', material: 'R162-0717', quantity: 10 })
+})
+// What a 1.6.6/1.6.7 Hub does: the same keys under the same locks, without knowing the journal.
+const oldHub = (store, actionId, change) => store.withLockedKeysAsync(['history-2026-10', 'locations', 'meta', 'pallets'], locked => {
+  const pallets = locked.get('pallets') || {}
+  change(pallets)
+  locked.set('pallets', pallets)
+  const meta = locked.get('meta') || {}
+  locked.set('meta', { ...meta, applied: [...(meta.applied || []), actionId], changedAt: Date.UTC(2026, 9, 20, 9) })
+  locked.set('history-2026-10', [...(locked.get('history-2026-10') || []), { id: `e-${actionId}`, at: Date.UTC(2026, 9, 20, 9), tx: actionId, actionId, type: 'edit-pallet', by: MONA }])
+})
+const seeded = async () => {
+  const context = setup()
+  await context.repo.transact('TCD', tx => { tx.locations['A2.4'] = place('A2.4'); tx.locations['A2.5'] = place('A2.5') })
+  await putPallet(context.repo, 'p1')
+  await putPallet(context.repo, 'p2', { location: 'A2.5' })
+  return { ...context, store: context.storeFor('TCD') }
+}
+
+test('an action M: dropped before its log line is finished by the next action: the line is there, the replay is recognised and it can be undone', async t => {
+  const { repo, store } = await seeded()
+  dropAt(t, 'history-2026-10.json')
+  await assert.rejects(takeTen(repo, 'take-1'), { code: 'EIO' })
+  t.mock.restoreAll()
+  await takeTen(repo, 'take-2', 'p2')
+  const [take] = await repo.history('TCD', { type: 'take', pallet: 'p1' })
+  assert.equal(take?.actionId, 'take-1', 'the log line of the dropped action is there')
+  assert.deepEqual(await takeTen(repo, 'take-1'), { duplicate: true })
+  const state = await repo.read('TCD')
+  assert.deepEqual([state.pallets.p1.quantity, state.pallets.p2.quantity], [90, 90])
+  assert.deepEqual(await repo.undo('TCD', { eventId: take.id, by: MONA, actionId: 'undo-1' }), { undone: 1 })
+  assert.equal((await repo.read('TCD')).pallets.p1.quantity, 100)
+  assert.equal(await store.getAsync('tx-pending', { skipCache: true }), undefined)
+})
+
+test('a dropped action is finished once however often M: drops again, also when a rename landed but its answer was lost', async t => {
+  const { repo, store } = await seeded()
+  dropAt(t, 'meta.json')
+  await assert.rejects(takeTen(repo, 'take-1'), { code: 'EIO' })
+  t.mock.restoreAll()
+  dropAt(t, 'meta.json', { landed: true })
+  await assert.rejects(takeTen(repo, 'take-2'), { code: 'EIO' })
+  t.mock.restoreAll()
+  dropAt(t, 'pallets.json')
+  await assert.rejects(takeTen(repo, 'take-3', 'p2'), { code: 'EIO' })
+  t.mock.restoreAll()
+  for (const actionId of ['take-1', 'take-2']) assert.deepEqual(await takeTen(repo, actionId), { duplicate: true }, actionId)
+  assert.deepEqual(await takeTen(repo, 'take-3', 'p2'), { duplicate: true }, 'its journal was on M:, so the action is done')
+  const state = await repo.read('TCD')
+  assert.deepEqual([state.pallets.p1.quantity, state.pallets.p2.quantity], [80, 90])
+  assert.deepEqual((await repo.history('TCD', { type: 'take' })).map(event => event.actionId).sort(), ['take-1', 'take-2', 'take-3'])
+  assert.deepEqual(state.meta.applied.filter(id => id.startsWith('take-')), ['take-1', 'take-2', 'take-3'])
+  assert.equal(await store.getAsync('tx-pending', { skipCache: true }), undefined)
+})
+
+test('an older Hub that wrote after the drop is never overwritten by the leftover journal', async t => {
+  const { repo, store } = await seeded()
+  dropAt(t, 'pallets.json')
+  await assert.rejects(takeTen(repo, 'take-1'), { code: 'EIO' })
+  t.mock.restoreAll()
+  const warn = t.mock.method(console, 'warn', () => {})
+  assert.ok(await store.getAsync('tx-pending', { skipCache: true }), 'the journal is on M:, nothing else of the action')
+  await oldHub(store, 'old-1', pallets => { pallets.p1.quantity = 55 })
+  await takeTen(repo, 'take-2', 'p2')
+  const state = await repo.read('TCD')
+  assert.deepEqual([state.pallets.p1.quantity, state.pallets.p2.quantity], [55, 90], 'the older Hub\'s count stands')
+  assert.equal((await repo.history('TCD', { type: 'take', pallet: 'p1' })).length, 0, 'the dropped action is not logged as done')
+  assert.equal(await store.getAsync('tx-pending', { skipCache: true }), undefined, 'the journal is given up')
+  assert.equal(warn.mock.callCount(), 1, 'and that is logged')
+})
+
+test('an older Hub that wrote after a drop behind the log line: the action is recorded as done, its write stands', async t => {
+  const { repo, store } = await seeded()
+  dropAt(t, 'meta.json')
+  await assert.rejects(takeTen(repo, 'take-1'), { code: 'EIO' })
+  t.mock.restoreAll()
+  await oldHub(store, 'old-1', pallets => { pallets.p2.note = 'Bøjet hjørne' })
+  assert.deepEqual(await takeTen(repo, 'take-1'), { duplicate: true })
+  const state = await repo.read('TCD')
+  assert.deepEqual([state.pallets.p1.quantity, state.pallets.p2.note], [90, 'Bøjet hjørne'])
+  assert.deepEqual(state.meta.applied.slice(-2), ['old-1', 'take-1'])
+})
+
+test('an undo finishes a leftover journal first, also when it is refused, and a dropped undo is applied once', async t => {
+  const { repo, clock, store } = await seeded()
+  const [put] = await repo.history('TCD', { type: 'putaway', pallet: 'p1' })
+  dropAt(t, 'history-2026-10.json')
+  await assert.rejects(takeTen(repo, 'take-1'), { code: 'EIO' })
+  t.mock.restoreAll()
+  clock.now += 60000
+  await assert.rejects(repo.undo('TCD', { eventId: put.id, by: MONA, actionId: 'undo-put' }), { code: 'UNDO_CONFLICT' })
+  const [take] = await repo.history('TCD', { type: 'take' })
+  assert.equal(take?.actionId, 'take-1', 'the journal was finished although the undo was refused')
+  assert.equal(await store.getAsync('tx-pending', { skipCache: true }), undefined)
+  dropAt(t, 'meta.json')
+  await assert.rejects(repo.undo('TCD', { eventId: take.id, by: MONA, actionId: 'undo-take' }), { code: 'EIO' })
+  t.mock.restoreAll()
+  assert.deepEqual(await repo.undo('TCD', { eventId: take.id, by: MONA, actionId: 'undo-take' }), { duplicate: true })
+  assert.equal((await repo.read('TCD')).pallets.p1.quantity, 100)
+  assert.equal((await repo.history('TCD', { type: 'undo' })).length, 1)
+  assert.equal((await repo.history('TCD')).find(event => event.id === take.id).undoneBy.name, 'Mona')
+})
+
+test('a leftover journal with keys the next action does not lock is finished on its own first', async t => {
+  const { repo, clock } = await seeded()
+  await repo.transact('TCD', tx => { tx.locations['E9 H5'] = { ...place('E9 H5'), type: 'Hylde', rack: 'E9', shelf: 5 } })
+  dropAt(t, 'history-2026-10.json')
+  await assert.rejects(repo.transact('TCD', { actionId: 'shelf-1', writes: ['stock'] }, tx => {
+    tx.stock['E9 H5|R162-0717'] = { id: 'E9 H5|R162-0717', location: 'E9 H5', material: 'R162-0717', quantity: 40 }
+    tx.event({ type: 'shelf-put', by: ANNA, location: 'E9 H5', material: 'R162-0717', quantity: 40 })
+  }), { code: 'EIO' })
+  t.mock.restoreAll()
+  clock.now = Date.UTC(2026, 10, 2, 8)
+  await takeTen(repo, 'take-1')
+  const state = await repo.read('TCD')
+  assert.deepEqual([state.stock['E9 H5|R162-0717'].quantity, state.pallets.p1.quantity], [40, 90])
+  assert.deepEqual((await repo.history('TCD', { months: 2 })).filter(event => event.actionId).map(event => event.actionId).sort(), ['act-p1', 'act-p2', 'shelf-1', 'take-1'])
+  assert.ok(state.meta.applied.includes('shelf-1'))
+})
+
+test('a leftover drawing publish is finished on its own, and a draft the admin saved since is kept', async t => {
+  const { repo } = setup()
+  const layout = { version: 0, hall: { w: 60000, h: 30000 }, notes: '', items: [] }
+  await repo.writeDraft('TCD', () => ({ ...layout, basedOn: 0, editedBy: MONA }))
+  dropAt(t, 'layout.json')
+  await assert.rejects(repo.transact('TCD', { withLayout: true, snapshot: false }, tx => {
+    tx.layout = { ...layout, version: 1 }; tx.draft = null; tx.event({ type: 'layout', by: MONA })
+  }), { code: 'EIO' })
+  t.mock.restoreAll()
+  const later = { ...layout, notes: 'Ny kladde', basedOn: 0, editedBy: MONA }
+  await repo.writeDraft('TCD', () => later)
+  await repo.transact('TCD', tx => { tx.locations['A2.4'] = place('A2.4') })
+  const after = await repo.readLayout('TCD')
+  assert.deepEqual([after.layout?.version, after.draft], [1, later])
+  assert.equal((await repo.history('TCD', { type: 'layout' })).length, 1)
 })
 
 // One team's drawing, step by step: the tests build on each other.

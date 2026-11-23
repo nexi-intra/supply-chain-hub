@@ -722,7 +722,7 @@ function createStore(dataDir, { externallyWatched = false, preparedFiles = null 
   // fryste HELE appen i 32-42 s, fordi hver ny fil (laas, tmp) koster 3-4 s at
   // oprette. Her oprettes laase og tmp-filer parallelt; callbacken er stadig
   // synkron og koerer mod vaerdierne i hukommelsen. Kaster den, skrives intet.
-  // Noeglerne erstattes i den raekkefoelge de blev sat.
+  // Noeglerne erstattes i den raekkefoelge de blev sat; en noegle givet til deleteAfterCommit slettes til sidst.
   function withLockedKeysAsync(keys, callback) {
     if (typeof callback !== 'function' || require('node:util').types.isAsyncFunction(callback)) return Promise.reject(new Error('KV_INVALID_OPERATION: Transaction must be synchronous'))
     if (!Array.isArray(keys) || keys.some(key => typeof key !== 'string' || !key)) return Promise.reject(new Error('KV_INVALID_OPERATION: Invalid transaction keys'))
@@ -733,12 +733,15 @@ function createStore(dataDir, { externallyWatched = false, preparedFiles = null 
       const values = await Promise.all(ordered.map(key => getAsync(key, { skipCache: true, unthrottled: true })))
       const current = new Map(ordered.map((key, index) => [key, values[index]]))
       const writes = new Map()
+      // Keys deleted once every write has landed (a journal written first by the same transaction).
+      const afterCommit = new Set()
       let active = true
       const check = key => { if (!active || !allowed.has(key)) throw new Error('KV_INVALID_OPERATION: Invalid transaction capability') }
       const transaction = {
         get(key) { check(key); return structuredClone(current.get(key)) },
         set(key, value) { check(key); const json = jsonOf(value); current.set(key, structuredClone(value)); writes.delete(key); writes.set(key, { value, json }) },
         delete(key) { check(key); current.set(key, undefined); writes.delete(key); writes.set(key, { deleted: true }) },
+        deleteAfterCommit(key) { check(key); afterCommit.add(key) },
       }
       let result
       try {
@@ -765,6 +768,11 @@ function createStore(dataDir, { externallyWatched = false, preparedFiles = null 
         }
       } finally {
         await Promise.all(pending.filter(item => item.tmp).map(item => fs.promises.unlink(item.tmp).catch(() => {})))
+      }
+      // Best effort: what is left is a journal whose writes all landed, and its owner finishes it next time.
+      for (const key of afterCommit) {
+        try { await fs.promises.unlink(filePath(key)) } catch {}
+        readCache.delete(key)
       }
       return result
     }, ASYNC_WRITE_LOCK)

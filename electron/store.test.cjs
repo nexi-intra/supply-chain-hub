@@ -60,6 +60,27 @@ test('withLockedKeysAsync: a failing or asynchronous transaction writes nothing 
   assert.deepEqual(fs.readdirSync(directory).filter(name => name.endsWith('.lock') || name.endsWith('.tmp')), [])
 })
 
+test('withLockedKeysAsync: deleteAfterCommit removes a key (a journal) only after every write landed, in the set order', async t => {
+  const { store } = temporaryStore(t)
+  const renamed = []
+  const rename = fs.promises.rename
+  t.mock.method(fs.promises, 'rename', async (from, to) => { renamed.push(path.basename(String(to))); return rename(from, to) })
+  const journal = { a: 1, b: 1 }
+  await store.withLockedKeysAsync(['a', 'b', 'journal'], tx => {
+    tx.set('journal', journal); tx.set('b', 1); tx.set('a', 1); tx.deleteAfterCommit('journal')
+    assert.deepEqual(tx.get('journal'), journal, 'still readable in the transaction')
+  })
+  assert.deepEqual(renamed, ['journal.json', 'b.json', 'a.json'])
+  assert.equal(store.get('journal', { skipCache: true }), undefined)
+  t.mock.method(fs.promises, 'rename', async (from, to) => {
+    if (path.basename(String(to)) === 'a.json') throw Object.assign(new Error('EIO'), { code: 'EIO' })
+    return rename(from, to)
+  })
+  await assert.rejects(store.withLockedKeysAsync(['a', 'b', 'journal'], tx => { tx.set('journal', { a: 2, b: 2 }); tx.set('b', 2); tx.set('a', 2); tx.deleteAfterCommit('journal') }), { code: 'EIO' })
+  assert.deepEqual([store.get('journal', { skipCache: true }), store.get('b', { skipCache: true }), store.get('a', { skipCache: true })], [{ a: 2, b: 2 }, 2, 1], 'a failed write keeps the journal')
+  await assert.rejects(store.withLockedKeysAsync(['a'], tx => tx.deleteAfterCommit('other')), /Invalid transaction capability/)
+})
+
 test('withLockedKeysAsync keeps the event loop running: a write to M: takes seconds and must not freeze the app', async t => {
   const { store } = temporaryStore(t)
   let ticked = false

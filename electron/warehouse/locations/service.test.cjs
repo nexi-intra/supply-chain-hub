@@ -56,14 +56,14 @@ test('a daily action locks only what it changes (pallets or shelf stock), the pl
   await service.changeSloc(ANNA, { pallet: pallet.id, sloc: 'D004', actionId: 'a2' })
   await service.shelfPut(ANNA, { location: 'E9 H1', material: 'R162-0717', quantity: 3, actionId: 'a3' })
   assert.deepEqual(locks, [
-    ['history-2026-10', 'locations', 'meta', 'pallets'],
-    ['history-2026-10', 'locations', 'meta', 'pallets'],
-    ['history-2026-10', 'locations', 'meta', 'stock'],
+    ['history-2026-10', 'locations', 'meta', 'pallets', 'tx-pending'],
+    ['history-2026-10', 'locations', 'meta', 'pallets', 'tx-pending'],
+    ['history-2026-10', 'locations', 'meta', 'stock', 'tx-pending'],
   ])
   const [put] = await repo.history('TCD', { type: 'shelf-put' })
   locks.length = 0
   assert.deepEqual(await service.undo(ADA, { eventId: put.id, at: put.at }), { undone: 1 })
-  assert.deepEqual(locks, [['history-2026-10', 'locations', 'meta', 'pallets', 'stock', 'tags']], 'an undo with the event time locks only its month')
+  assert.deepEqual(locks, [['history-2026-10', 'locations', 'meta', 'pallets', 'stock', 'tags', 'tx-pending']], 'an undo with the event time locks only its month')
 })
 
 test('a whole goods receipt is put away in one go; a pallet on a pick place is used up there', async () => {
@@ -349,6 +349,19 @@ test('a put-away replayed after M: dropped between the pallets and the rest make
   if (!replayed.duplicate) assert.deepEqual(replayed.created.map(pallet => pallet.id), ['put-1:0', 'put-1:1'])
   assert.deepEqual(await pc1.service.putAway(ANNA, request), { duplicate: true })
   assert.deepEqual((await pc1.repo.history('TCD', { type: 'putaway' })).map(event => event.pallet).sort(), ['put-1:0', 'put-1:1'], 'one log line per pallet')
+})
+
+test('a partial take replayed after M: dropped before the action id was written is subtracted once, also from another PC', async t => {
+  const { pc1, pc2, seed } = setup()
+  await seed([place('A2.1')], [{ id: 'p1', location: 'A2.1', material: 'R162-0717', quantity: 100, receivedAt: 1 }])
+  const request = { actionId: 'take-1', pallet: 'p1', quantity: 30 }
+  dropAt(t, 'meta.json')
+  await assert.rejects(pc1.service.take(ANNA, request), { code: 'EIO' })
+  t.mock.restoreAll()
+  assert.deepEqual(await pc2.service.take(ANNA, request), { duplicate: true }, 'the other PC finishes the action first and sees it is done')
+  assert.deepEqual(await pc1.service.take(ANNA, request), { duplicate: true })
+  assert.equal((await pc1.repo.read('TCD')).pallets.p1.quantity, 70)
+  assert.equal((await pc1.repo.history('TCD', { type: 'take' })).length, 1)
 })
 
 test('a pallet put or moved straight onto a pick place is used up there and leaves no pallet behind, also the second time', async () => {
