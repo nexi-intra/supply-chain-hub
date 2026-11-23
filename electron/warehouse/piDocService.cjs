@@ -20,6 +20,8 @@ const changed = () => codeError('PIDOC_CHANGED', 'Dokumentet er ændret i mellem
 const DOC_NO = /^\d{9,10}$/
 const RESOLUTIONS = new Set(['saved', 'missing'])
 const clean = (value, max) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
+/** The status each step of a PI document leads to. */
+const LEADS_TO = Object.freeze({ create: 'created', count: 'counted', post: 'posted' })
 
 /**
  * Applies what a step did to the stored documents. Used for the write right after SAP and again when this PC's journal is
@@ -28,7 +30,8 @@ const clean = (value, max) => String(value ?? '').replace(/\s+/g, ' ').trim().sl
  * - unknown-create: the reservation becomes a kept entry SAP may have created (when it is still the reservation).
  * - unknown: the step on an existing document may have happened (when it still has the status it had).
  * - step: fields of a step on one document, `from` the stored statuses it may have (null: any); `entered` adds materials
- *   entered. A step that moves the status settles an unknown mark made at that status (logged in `sapResolutions`).
+ *   entered. A step that moves the status to the one an unknown mark's step leads to settles the mark; any other status
+ *   move leaves the mark (no longer in force) and logs it as superseded. Both are logged in `sapResolutions`.
  */
 function applyChanges(all, changes) {
   for (const change of changes) {
@@ -43,13 +46,19 @@ function applyChanges(all, changes) {
     } else if (change.kind === 'step') {
       // The stored status decides, not the unknown mark: SAP's real answer replaces a mark made since (another try, another PC).
       if (!current || (change.from && !change.from.includes(current.status))) continue
-      const settles = Boolean(change.set?.status) && current.sapUnknown && current.sapUnknown.status === current.status
+      const marked = Boolean(change.set?.status) && current.sapUnknown && current.sapUnknown.status === current.status
+      // Only the status the unknown step leads to says SAP did it; another step (a delete) supersedes the mark, which stays.
+      const settles = marked && LEADS_TO[current.sapUnknown.step] === change.set.status
       const { sapUnknown, ...rest } = current
+      const log = marked ? {
+        ...sapUnknown, outcome: settles ? 'saved' : 'superseded', ...(settles ? {} : { status: change.set.status }), docNo: current.docNo || null,
+        reason: 'løst af journalen', resolvedBy: change.by || sapUnknown.by || null,
+      } : null
       all[change.docId] = {
         ...(settles ? rest : current),
         ...change.set,
         ...(change.entered ? { entered: { ...(current.entered || {}), ...change.entered } } : {}),
-        ...(settles ? { sapResolutions: [...(current.sapResolutions || []), { ...sapUnknown, outcome: 'saved', docNo: current.docNo || null, reason: 'løst af journalen', resolvedBy: change.by || null }] } : {}),
+        ...(log ? { sapResolutions: [...(current.sapResolutions || []), log] } : {}),
       }
     }
   }

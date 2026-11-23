@@ -464,12 +464,15 @@ export type PiDocStep = 'create' | 'count' | 'post'
 /** A manager's decision on an unknown document: found in SAP (`saved`) or not (`missing`), and why. */
 export interface PiDocResolution {
   step: PiDocStep
-  outcome: 'saved' | 'missing'
+  /** `superseded`: the journal brought another step (e.g. a delete), so whether SAP took this one was never settled. */
+  outcome: 'saved' | 'missing' | 'superseded'
+  /** With `superseded`: the status the document got. */
+  status?: PiDocStatus
   docNo: string | null
   reason: string
   /** Who took the step in SAP. */
   by?: { email: string; name: string; at: number }
-  resolvedBy: { email: string; name: string; at: number }
+  resolvedBy: { email: string; name: string; at: number } | null
 }
 
 /** A physical inventory document in SAP, created from CountPoint. */

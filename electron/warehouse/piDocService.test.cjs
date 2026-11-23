@@ -676,3 +676,16 @@ test('looking at any count\'s documents writes every journalled count of the tea
   await service.list(MONA, 'c2')
   assert.deepEqual(state.writes, [], 'an empty journal writes nothing')
 })
+test('a journalled delete does not settle an unknown count as saved: the mark stays and is logged as superseded', async t => {
+  const { state, service, journal, heal } = flow(t, { docs: { 105000901: sapDoc('105000901', 'printed') }, rows: COUNT_ROWS })
+  state.failAfterSap = true
+  await assert.rejects(service.remove(MONA, 'c1', '105000901'), { code: 'PIDOC_SAVE_FAILED' })
+  heal()
+  const mark = { step: 'count', status: 'printed', by: { email: 'anna@x', name: 'Anna', at: 1 }, detail: 'verify-failed' }
+  state.stored['105000901'].sapUnknown = mark
+  const [doc] = (await service.list(MONA, 'c1')).docs
+  const stored = state.stored['105000901']
+  assert.deepEqual([doc.status, stored.status, stored.sapUnknown], ['deleted', 'deleted', mark])
+  assert.deepEqual(stored.sapResolutions.map(item => [item.step, item.outcome, item.status, item.resolvedBy.email]), [['count', 'superseded', 'deleted', 'mona@x']])
+  assert.deepEqual(journal(), [])
+})

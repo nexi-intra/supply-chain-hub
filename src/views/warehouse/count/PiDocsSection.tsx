@@ -20,7 +20,9 @@ const statusMap = (): Record<PiDocStatus, { label: string; className: string }> 
 const stepText = (): Record<string, string> => ({ create: t('oprettelsen (MI31)', 'the creation (MI31)'), count: t('antallet (MI04/ZMS_COUNT_SERIAL)', 'the quantity (MI04/ZMS_COUNT_SERIAL)'), post: t('bogføringen (MI20)', 'the posting (MI20)') })
 const outcomeText = (resolution: PiDocResolution) => resolution.outcome === 'saved'
   ? t(`fandtes i SAP${resolution.docNo ? ` (${resolution.docNo})` : ''}`, `was in SAP${resolution.docNo ? ` (${resolution.docNo})` : ''}`)
-  : t('fandtes ikke i SAP', 'was not in SAP')
+  : resolution.outcome === 'superseded'
+    ? t(`blev aldrig afklaret, fordi dokumentet blev ${resolution.status ? statusMap()[resolution.status]?.label.toLowerCase() ?? resolution.status : 'ændret'}`, `was never resolved, because the document became ${resolution.status ? statusMap()[resolution.status]?.label.toLowerCase() ?? resolution.status : 'changed'}`)
+    : t('fandtes ikke i SAP', 'was not in SAP')
 
 const waitingFor = (): Record<string, string> => ({ print: t('Venter på print (manager)', 'Waiting for print (manager)'), count: t('Venter på en admin', 'Waiting for an admin'), post: t('Venter på bogføring (manager)', 'Waiting for posting (manager)') })
 
@@ -130,11 +132,15 @@ export function PiDocsSection({ list, selected, busy, figuresAt, onCreate, onPri
                     : <span className="text-xs text-muted-foreground">{t('Venter på en manager', 'Waiting for a manager')}</span>}
                 </span>
               )}
-              {doc.sapResolutions?.map(item => (
-                <span key={`${item.resolvedBy.at}-${item.step}`} className="basis-full text-xs text-muted-foreground">
-                  {t(`Afklaret af ${item.resolvedBy.name} ${formatDateTime(item.resolvedBy.at)}: ${stepText()[item.step]} ${outcomeText(item)}. ${item.reason}`, `Resolved by ${item.resolvedBy.name} ${formatDateTime(item.resolvedBy.at)}: ${stepText()[item.step]} ${outcomeText(item)}. ${item.reason}`)}
-                </span>
-              ))}
+              {doc.sapResolutions?.map((item, index) => {
+                const who = item.resolvedBy?.name ? t(` af ${item.resolvedBy.name}`, ` by ${item.resolvedBy.name}`) : ''
+                const when = item.resolvedBy?.at ? ` ${formatDateTime(item.resolvedBy.at)}` : ''
+                return (
+                  <span key={`${index}-${item.step}`} className="basis-full text-xs text-muted-foreground">
+                    {t(`Afklaret${who}${when}: ${stepText()[item.step]} ${outcomeText(item)}. ${item.reason}`, `Resolved${who}${when}: ${stepText()[item.step]} ${outcomeText(item)}. ${item.reason}`)}
+                  </span>
+                )
+              })}
               {doc.status !== 'deleted' && (
                 <table className="mt-1 w-full basis-full text-xs">
                   <tbody>
