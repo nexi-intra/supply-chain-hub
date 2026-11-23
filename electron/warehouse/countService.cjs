@@ -12,7 +12,7 @@ const { docLinesFromSnapshot, missingAtApproval, linesAtApproval, approvedWithLi
 const { normalizeMatdoc } = require('./core/sapParsers.cjs')
 const { differenceTotals, archiveLines } = require('./core/archive.cjs')
 const { ACTIVE: ACTIVE_PIDOC, RESERVATION_MS } = require('./core/piDocs.cjs')
-const { createJournal, readJournals, unsentWriters } = require('./journal.cjs')
+const { createJournal, readJournals, unsentWriters, KEEPALIVE_MS } = require('./journal.cjs')
 
 const CLAIM_IDLE_MS = 30 * 60 * 1000
 // A material lock lapses after an hour without a line or scan by its holder on the material.
@@ -348,9 +348,33 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       await journal.load()
       state = { team, id, meta, snapshot, index, placements, members, countLists: buildCountLists({ snapshot, index, placements }), journal, chunkCache: new Map(), remoteEvents: [], aggregate: null, aggregateKey: '', found: new Map(), refreshedAt: 0, claimTouched: new Map(), othersAt: 0, othersKey: '[]' }
       opened.set(key, state)
+      startKeepAlive()
       await refresh(state, true)
     }
     return state
+  }
+
+  /**
+   * While a count is open and nothing waits, this PC sends a heartbeat at least every KEEPALIVE_MS (one small write,
+   * no reads), so the others can tell a PC that is idle from one that has lost M:. Not awaited: a write to M: can take long.
+   */
+  function keepAlive(state) {
+    if (state.meta.status !== 'open') return
+    const status = state.journal.status()
+    if (status.pending !== 0 || now() - Math.max(status.lastFlushAt || 0, state.keepAliveAt || 0) < KEEPALIVE_MS) return
+    state.keepAliveAt = now()
+    state.journal.flush().catch(() => {})
+  }
+
+  // Also when the count is not on screen (nothing calls refresh then).
+  let keepAliveTimer = null
+  function startKeepAlive() {
+    if (keepAliveTimer) return
+    keepAliveTimer = startTimer(() => {
+      keepAliveTimer = null
+      for (const state of opened.values()) keepAlive(state)
+      if (opened.size) startKeepAlive()
+    }, KEEPALIVE_MS)
   }
 
   async function refresh(state, force = false) {
@@ -364,6 +388,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       state.meta = value
     }).catch(() => {})
     await Promise.all([throwIfDeleted(state), journals, meta])
+    keepAlive(state)
     await adoptNewSnapshot(state)
     await refreshOthers(state)
     const events = mergedEvents(state)
@@ -574,7 +599,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       approvedWithSerialLines: [...approvedWithLines(state, approvals)].sort(),
       journal: state.journal.status(),
       // Other PCs that may still hold scans (from the heartbeats in the journals just read): a warning when closing and approving.
-      unsentPcs: unsentWriters(state.journalWriters || [], { now: now(), exclude: [state.journal.writer] }).map(({ email, name, since, pending }) => ({ email, name, since, pending })),
+      // A closed count judges them at the close.
+      unsentPcs: unsentWriters(state.journalWriters || [], { now: now(), exclude: [state.journal.writer], closedAt: state.meta.status === 'closed' ? state.meta.closedAt : null }).map(({ email, name, since, pending }) => ({ email, name, since, pending })),
       myLastEvents: state.journal.events().filter(event => event.type !== 'undo').slice(-20).reverse(),
     }
   }
@@ -991,7 +1017,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   const lockView = (state, material, lock) => ({ material, holder: { email: lock.email, name: lock.name }, at: lock.at, idleSince: lockExpired(state, material, lock) ? lockActivity(state, material, lock) : null, helpers: peopleOf(lock.helpers), requests: peopleOf(lock.requests) })
   const materialLocks = state => repo.getMaterialLocks(state.team, state.id).catch(() => ({}))
 
-  /** The holder's latest line or scan per material, from the count's events; worked out again only when they change. */
+  /** Each person's latest line or scan per material, from the count's events; worked out again only when they change. */
   function lockActivities(state) {
     if (state.lockActivity?.events === state.events) return state.lockActivity.latest
     const latest = new Map()
@@ -1009,8 +1035,12 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     return latest
   }
 
-  const lockActivity = (state, material, lock) => Math.max(lock.at || 0, lockActivities(state).get(`${lower(lock.email)}|${material}`) || 0)
-  /** A lock lapses when its holder has made no line or scan on the material for LOCK_IDLE_MS: the material is free again. */
+  /** Newest line or scan on the material by the holder or one of the helpers: anyone counting on the lock keeps it. */
+  const lockActivity = (state, material, lock) => {
+    const latest = lockActivities(state)
+    return Math.max(lock.at || 0, ...[lock.email, ...Object.keys(lock.helpers || {})].map(email => latest.get(`${lower(email)}|${material}`) || 0))
+  }
+  /** A lock lapses when its holder and helpers have made no line or scan on the material for LOCK_IDLE_MS: the material is free again. */
   const lockExpired = (state, material, lock) => now() - lockActivity(state, material, lock) >= LOCK_IDLE_MS
 
   /** The lock that keeps `email` from counting the material, or null. One that looks idle is checked against fresh events first. */
@@ -1055,6 +1085,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const { state } = await requireWriter(user, id)
     const code = materialCode(state, material)
     const email = lower(user.email)
+    // A lock that looks idle is checked against fresh events first, so a request never becomes a takeover by mistake.
+    if (!(await blockingLock(state, code, (await materialLocks(state))[code], email))) return takeMaterial(user, state, code)
     const result = await repo.changeMaterialLocks(state.team, state.id, all => {
       const lock = all[code]
       if (!lock || mayCount(lock, email) || lockExpired(state, code, lock)) return { all, result: null }
@@ -1669,6 +1701,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   }
 
   async function closeAll() {
+    clearTimer(keepAliveTimer)
+    keepAliveTimer = null
     for (const state of opened.values()) {
       stopScanWarm(state)
       await state.journal.close().catch(() => {})

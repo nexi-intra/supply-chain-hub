@@ -970,6 +970,38 @@ test('a material lock expires after 60 minutes without a line or scan by its hol
   await assert.rejects(anna.saveLine(ANNA, id, { place: 'A1.1', material: 'R162-0717', qty: 1 }), { code: 'MATERIAL_LOCKED' }, 'the former holder asks like everyone else')
 })
 
+test('a helper counting keeps the lock alive; looking idle, a request reads the events again before it takes over', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const bo = ctx.service('pc2')
+  const CARA = { email: 'cara@example.test', fullName: 'Cara', role: 'user', team: 'TCD' }
+  const cara = ctx.service('pc5')
+  const { id } = await newCount(ctx, anna)
+  for (const [svc, user] of [[bo, BO], [cara, CARA]]) {
+    await svc.requestJoin(user, id)
+    await anna.decideMember(ANNA, id, { email: user.email, approve: true })
+  }
+  const MIN = 60 * 1000
+  await anna.saveLine(ANNA, id, { place: 'A1.1', material: 'R162-0717', qty: 5 })
+  await bo.requestMaterial(BO, id, { material: 'R162-0717' })
+  await anna.answerMaterialRequest(ANNA, id, { material: 'R162-0717', email: BO.email, allow: true })
+  await anna.flush(ANNA, id)
+  await cara.getState(CARA, id)
+
+  ctx.tick(59 * MIN)
+  await bo.saveLine(BO, id, { place: 'A1.2', material: 'R162-0717', qty: 3 })
+  await bo.flush(BO, id)
+  ctx.tick(59 * MIN)
+  // Cara's PC read the events before Bo's line: they make the lock look idle, so the request must read them again.
+  assert.deepEqual((await cara.requestMaterial(CARA, id, { material: 'R162-0717' })).requests.map(item => item.name), ['Cara'], 'a request, not a takeover')
+  await assert.rejects(cara.saveLine(CARA, id, { place: 'A1.1', material: 'R162-0717', qty: 1 }), { code: 'MATERIAL_LOCKED' }, 'Bo\'s line 59 minutes ago keeps Anna\'s lock')
+  assert.equal((await cara.getState(CARA, id)).materialLocks[0].idleSince, null)
+
+  ctx.tick(2 * MIN)
+  await cara.saveLine(CARA, id, { place: 'A1.1', material: 'R162-0717', qty: 1 })
+  assert.equal((await ctx.repo.getMaterialLocks('TCD', id))['R162-0717'].name, 'Cara')
+})
+
 test('a manager or an Optælling admin answers requests and releases materials of others; a plain participant cannot', async () => {
   const ctx = setup()
   const anna = ctx.service('pc1')
@@ -1032,6 +1064,58 @@ test('closing and approving list the PCs that have not sent their latest scans, 
   await bo.flush(BO, id)
   ctx.tick(2000)
   assert.deepEqual((await mona.getState(MONA, id)).unsentPcs, [], 'gone once Bo\'s PC has sent')
+})
+
+test('an open count keeps sending a heartbeat while nothing waits, and a clean exit is not a warning', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const bo = ctx.service('pc2')
+  const mona = ctx.service('pc3')
+  const { id } = await newCount(ctx, anna)
+  await bo.requestJoin(BO, id)
+  await anna.decideMember(ANNA, id, { email: BO.email, approve: true })
+  const MIN = 60 * 1000
+  await bo.scan(BO, id, { serial: 'N1', place: 'A1.1' })
+  await bo.flush(BO, id)
+  const store = ctx.storeFor('TCD')
+  const heartbeat = async () => {
+    const key = (await store.keysAsync()).filter(name => name.startsWith(`count-${id}-j-`)).sort().at(-1)
+    return (await store.getAsync(key, { skipCache: true })).uploadedAt
+  }
+
+  ctx.tick(6 * MIN)
+  await bo.getState(BO, id)
+  for (let tries = 0; tries < 200 && await heartbeat() !== ctx.clock.now; tries++) await new Promise(resolve => setTimeout(resolve, 5))
+  assert.equal(await heartbeat(), ctx.clock.now, 'Bo\'s idle PC sent a heartbeat without new scans')
+  ctx.tick(6 * MIN)
+  assert.deepEqual((await mona.getState(MONA, id)).unsentPcs, [], '12 minutes after the last scan, but alive')
+
+  await bo.closeAll()
+  ctx.tick(60 * MIN)
+  assert.deepEqual((await mona.getState(MONA, id)).unsentPcs, [], 'Bo closed the Hub cleanly')
+})
+
+test('after closing, approval judges each PC at the close: in sync then is no warning, behind then still is', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const bo = ctx.service('pc2')
+  const mona = ctx.service('pc3')
+  const { id } = await newCount(ctx, anna)
+  await bo.requestJoin(BO, id)
+  await anna.decideMember(ANNA, id, { email: BO.email, approve: true })
+  const MIN = 60 * 1000
+  await anna.scan(ANNA, id, { serial: 'U1', place: 'A1.1' })
+  await bo.scan(BO, id, { serial: 'N1', place: 'A1.1' })
+  await bo.flush(BO, id)
+  // Cara's PC sent while it still held two scans, and was not heard from again.
+  const caraAt = ctx.clock.now
+  const event = { type: 'scan', serial: 'N2', place: 'A1.1', area: 'A', id: 'cara-1', at: caraAt, by: 'cara@example.test', byName: 'Cara' }
+  await ctx.storeFor('TCD').setAsync(`count-${id}-j-carapc000000-0000`, { writer: 'carapc000000', by: 'cara@example.test', full: false, events: [event], uploadedAt: caraAt, pendingAtUpload: 2, lastEventAt: caraAt })
+
+  ctx.tick(4 * MIN)
+  await anna.closeCount(ANNA, id)
+  ctx.tick(15 * MIN)
+  assert.deepEqual((await mona.getState(MONA, id)).unsentPcs, [{ email: 'cara@example.test', name: 'Cara', since: caraAt, pending: 2 }], 'Bo and Anna were in sync at the close')
 })
 
 test('a quantity line on a serial-managed material is refused; a material counted by quantity is still allowed', async () => {
