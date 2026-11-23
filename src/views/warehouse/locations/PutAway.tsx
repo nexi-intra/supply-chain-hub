@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils'
 import { errorCode, errorMessage } from '@/lib/warehouse/errors'
 import { contextOf, type MapContext } from '@/lib/warehouse/layout/map'
 import { peekOf } from '@/lib/warehouse/layout/peek'
-import { placedFor, placedSummary, sendLocationAction, startLocationsRead, withPutAway, type PlacedFound } from '@/lib/warehouse/locationActions'
+import { placedFor, placedSummary, putAwayPlaceChecks, sendLocationAction, startLocationsRead, withoutPutAway, withPutAway, type PlacedFound } from '@/lib/warehouse/locationActions'
 import { locationKeyOf, newActionId, reasonLabel, type LocationsTarget } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
 import type { LocationList, MapContents, PalletInput, SlotSuggestion, WarehouseLayout, WarehouseUser } from '@/types/warehouse'
@@ -55,7 +55,8 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
 }) {
   const [drafts, setDrafts] = useState<Draft[]>([blank()])
   const [layout, setLayout] = useState<WarehouseLayout | null | undefined>(undefined)
-  const [data, setData] = useState<{ list: LocationList; contents: MapContents } | null>(null)
+  // The places (always, for the check under each place field) and, with a drawing, what stands on them for the map.
+  const [data, setData] = useState<{ list: LocationList; contents: MapContents | null } | null>(null)
   const [layoutFailed, setLayoutFailed] = useState(false)
   const [dataFailed, setDataFailed] = useState(false)
   const [layoutTry, setLayoutTry] = useState(0)
@@ -75,8 +76,8 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
   draftsNow.current = drafts
   const bridge = window.electronWarehouse!.locations
 
-  // As on the map: the drawing is read when it changes, what stands on the places when Placeringer changes. A failed
-  // re-read keeps the last good data, so the view never vanishes mid-registration.
+  // As on the map: the drawing is read when it changes, the places (and with a drawing what stands on them) when
+  // Placeringer changes. A failed re-read keeps the last good data, so the view never vanishes mid-registration.
   const drawingVersion = drawing?.version ?? null
   const published = drawingVersion !== null
   useEffect(() => {
@@ -97,20 +98,26 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
   const alive = useRef(true)
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   useEffect(() => {
-    if (!published) return
     const reads = dataRead.current
     const seq = ++reads.started
     const api = window.electronWarehouse!.locations
-    // A read during a put-away on its way to M: is older than the view, which already shows the pallets.
+    // A read during a put-away on its way to M: is older than the view, which already shows the pallets. The list is a
+    // cached read on this PC (as in Flyt and the pallet card); the map's contents only when there is a map.
     const fresh = startLocationsRead()
-    Promise.all([api.list(), api.mapContents()])
+    Promise.all([api.list(), published ? api.mapContents() : null])
       .then(([list, contents]) => { if (alive.current && seq > reads.landed) { reads.landed = seq; setData(value => (value && !fresh() ? value : { list, contents })); setDataFailed(false) } })
       .catch(() => { if (alive.current && seq > reads.landed) setDataFailed(true) })
   }, [published, version])
 
-  const map = useMemo<PeekMap | null>(() => (published && layout && data ? { layout, ctx: contextOf(data.list, data.contents, user.team) } : null), [published, layout, data, user.team])
+  const map = useMemo<PeekMap | null>(() => (published && layout && data?.contents ? { layout, ctx: contextOf(data.list, data.contents, user.team) } : null), [published, layout, data, user.team])
   // The quiet failure line only while nothing could be loaded at all.
-  const mapFailed = published && ((layout === undefined && layoutFailed) || (!data && dataFailed))
+  const mapFailed = published && ((layout === undefined && layoutFailed) || (!data?.contents && dataFailed))
+
+  // Each place is checked here as M: will (exists, active, a pallet place, room), with the pallets before it in the form
+  // counted, so a full place is changed now instead of the whole put-away coming back 15-40 s later.
+  const places = useMemo(() => (data ? Object.fromEntries(data.list.locations.map(location => [location.id, location])) : null), [data])
+  const checks = useMemo(() => putAwayPlaceChecks(drafts.map(item => item.location), places), [drafts, places])
+  const blocked = checks.some(check => check.blocked)
 
   function showOnMap(placeId: string) {
     const typed = drafts.some(item => item.material.trim() || item.location.trim() || item.document.trim())
@@ -151,7 +158,7 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
 
   function save() {
     const ready = drafts.filter(item => item.material || item.location)
-    if (invalidDrafts(ready)) return
+    if (invalidDrafts(ready) || blocked) return
     // The same delivery put away again: asked first. A partial delivery with the same 49/50 number is saved anyway.
     const warned = ready.map(item => ({ item, text: placedSummary(item.placed) })).filter(entry => entry.text)
     let allowDuplicate = false
@@ -191,7 +198,11 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
       success: pallets.length > 1 ? t(`${pallets.length} paller er sat på plads`, `${pallets.length} pallets put away`)
         : pick ? t(`${where} er fyldt op`, `${where} has been refilled`)
         : t(`Pallen står nu på ${where}`, `The pallet is now on ${where}`),
-      rollback: () => setDrafts(list => [...kept, ...list.filter(item => item.material || item.location || item.document)]),
+      rollback: () => {
+        setDrafts(list => [...kept, ...list.filter(item => item.material || item.location || item.document)])
+        // Its places are free again, so the pallets back in the form are not checked against themselves.
+        setData(value => value && withoutPutAway(value, pallets))
+      },
       offer: error => (!allowDuplicate && errorCode(error) === 'SERIAL_ON_PALLET' ? { label: t('Gem alligevel', 'Save anyway'), onClick: again } : null),
       settled: onDone,
     })
@@ -204,20 +215,20 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
         <p className="text-sm text-muted-foreground">{t('Scan 49/50-nummeret, så henter Hubben materiale, antal og serienumre fra SAP. Uden SAP: skriv materiale og antal.', 'Scan the 49/50 number and the Hub fetches material, quantity and serial numbers from SAP. Without SAP: type material and quantity.')}</p>
       </div>
       {drafts.map((draft, index) => (
-        <DraftCard key={draft.key} draft={draft} index={index} tags={tags} canRemove={drafts.length > 1} map={map} mapFailed={mapFailed} onShowOnMap={showOnMap}
+        <DraftCard key={draft.key} draft={draft} index={index} tags={tags} canRemove={drafts.length > 1} map={map} mapFailed={mapFailed} check={checks[index]} onShowOnMap={showOnMap}
           onChange={patch => update(draft.key, patch)} onLookup={() => lookup(draft)} onDescribe={material => void describe(draft.key, material)}
           onRemove={() => setDrafts(list => list.filter(item => item.key !== draft.key))} />
       ))}
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" onClick={() => setDrafts(list => [...list, { ...blank(), sloc: list[list.length - 1]?.sloc || 'D000', date: list[list.length - 1]?.date || today() }])}><Plus size={16} /> {t('Tilføj næste palle', 'Add next pallet')}</Button>
-        <Button className="ml-auto" onClick={() => save()}><FloppyDisk size={16} /> {drafts.length > 1 ? t('Gem alle', 'Save all') : t('Gem', 'Save')}</Button>
+        <Button className="ml-auto" disabled={blocked} onClick={() => save()}><FloppyDisk size={16} /> {drafts.length > 1 ? t('Gem alle', 'Save all') : t('Gem', 'Save')}</Button>
       </div>
     </div>
   )
 }
 
-function DraftCard({ draft, index, tags, canRemove, map, mapFailed, onShowOnMap, onChange, onLookup, onDescribe, onRemove }: {
-  draft: Draft; index: number; tags: string[]; canRemove: boolean; map: PeekMap | null; mapFailed: boolean; onShowOnMap: (placeId: string) => void
+function DraftCard({ draft, index, tags, canRemove, map, mapFailed, check, onShowOnMap, onChange, onLookup, onDescribe, onRemove }: {
+  draft: Draft; index: number; tags: string[]; canRemove: boolean; map: PeekMap | null; mapFailed: boolean; check: { note: string | null; blocked: boolean }; onShowOnMap: (placeId: string) => void
   onChange: (patch: Partial<Draft>) => void; onLookup: () => Promise<void>; onDescribe: (material: string) => void; onRemove: () => void
 }) {
   const id = (name: string) => `putaway-${draft.key}-${name}`
@@ -304,6 +315,7 @@ function DraftCard({ draft, index, tags, canRemove, map, mapFailed, onShowOnMap,
             })}
             {draft.checked && !draft.slots.length && <span className="text-xs text-muted-foreground">{t('Ingen ledige pladser at foreslå', 'No free places to suggest')}</span>}
           </div>
+          {check.note && settled === draft.location && <p className={cn('flex items-center gap-1.5 text-xs', check.blocked ? 'text-destructive' : 'text-amber-700 dark:text-amber-400')}><Warning size={14} className="shrink-0" /> {check.note}</p>}
           {mapFailed && draft.location.trim() && <p className="text-xs text-muted-foreground">{t('Kortet kunne ikke hentes', 'The map could not be loaded')}</p>}
           {map && looked.trim() && (
             <div className={cn(pending && 'invisible')} aria-hidden={pending || undefined}>

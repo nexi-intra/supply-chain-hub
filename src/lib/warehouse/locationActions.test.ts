@@ -6,8 +6,8 @@ vi.mock('sonner', () => ({ toast }))
 
 import { pendingWriteCount } from '@/lib/pendingWrites'
 import {
-  addToStock, countedInCard, isPlaceHidden, locationActionsInFlight, matdocOf, movedInList, moveTargetCheck, palletEdit, placedFor, placedSummary, predictedRack, replayFailureText, sendLocationAction, startLocationsRead,
-  takeFromCard, takeFromCardShelf, withPutAway, withStockQuantity,
+  addToStock, countedInCard, isPlaceHidden, locationActionsInFlight, matdocOf, movedInList, moveTargetCheck, palletEdit, placedFor, placedSummary, predictedRack, putAwayPlaceChecks, replayFailureText, sendLocationAction, startLocationsRead,
+  takeFromCard, takeFromCardShelf, withoutPutAway, withPutAway, withStockQuantity,
 } from './locationActions'
 import { errorCode } from './errors'
 import { formatDate } from './locations'
@@ -236,6 +236,26 @@ describe('optimistic changes', () => {
     expect(next.contents.places.G1.materials[0]).toMatchObject({ pallets: 2, quantity: 8, oldestAt: 40, description: 'Kabel' })
     expect(next.contents.places.H26).toBeUndefined()
     expect(data.list.locations[0].used, 'the old view is left as it was').toBe(0)
+  })
+
+  it('withPutAway without map contents (no drawing) counts the list; withoutPutAway gives the places back after a refusal', () => {
+    const data = { list: { locations: [listed('A1.1'), listed('H26', { purpose: 'pick' })], tags: [], canAdmin: false, imported: true, live: true, drawing: null } as LocationList, contents: null }
+    const pallets = [{ location: 'a1.1', material: 'M1' }, { location: 'H26', material: 'M1' }]
+    const next = withPutAway(data, pallets)
+    expect(next.list.locations.map(location => location.used)).toEqual([1, 0])
+    expect(next.contents).toBeNull()
+    expect(withoutPutAway(next, pallets).list.locations.map(location => location.used)).toEqual([0, 0])
+    expect(withoutPutAway(data, pallets).list.locations[0].used, 'never below 0').toBe(0)
+  })
+
+  it('putAwayPlaceChecks checks each pallet\'s place as the backend would, counting the pallets before it in the form', () => {
+    const places = { 'A1.1': listed('A1.1'), 'A1.2': listed('A1.2', { type: 'Reol', capacity: 2 }), H26: listed('H26', { purpose: 'pick' }), 'E9 H1': listed('E9 H1', { type: 'Hylde' }) }
+    const checks = putAwayPlaceChecks(['a1.1', 'A1.1', '', 'Z9', 'H26', 'H26', 'E9 H1', 'A1.2', 'A1.2'], places)
+    expect(checks.map(check => check.blocked)).toEqual([false, true, false, true, false, false, true, false, false])
+    expect(checks[1].note).toBe('A1.1 er fuld – vælg en anden plads')
+    expect(checks[2], 'an empty place is left to Gem\'s own message').toEqual({ note: null, blocked: false })
+    expect(checks[3].note).toBe('Z9 findes ikke')
+    expect(putAwayPlaceChecks(['Z9'], null), 'without the list M: checks it').toEqual([{ note: null, blocked: false }])
   })
 
   it('matdocOf reads a 49/50 number like the backend', () => {

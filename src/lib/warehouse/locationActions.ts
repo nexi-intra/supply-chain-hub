@@ -241,10 +241,13 @@ export function movedInList(places: Record<string, Listed>, from: string | null,
   return next
 }
 
-/** The places and what stands on them after pallets were put away (a pick place uses its pallet up: nothing is added there). */
-export function withPutAway<T extends { list: LocationList; contents: MapContents }>(data: T, pallets: PalletInput[]): T {
+/**
+ * The places and what stands on them after pallets were put away (a pick place uses its pallet up: nothing is added there).
+ * Without the map's contents (no drawing) only the list is counted.
+ */
+export function withPutAway<T extends { list: LocationList; contents: MapContents | null }>(data: T, pallets: PalletInput[]): T {
   const byId = new Map(data.list.locations.map(location => [location.id, location]))
-  const places = { ...data.contents.places }
+  const places = { ...data.contents?.places }
   const added = new Map<string, number>()
   for (const input of pallets) {
     const place = byId.get(locationKeyOf(input.location))
@@ -264,6 +267,35 @@ export function withPutAway<T extends { list: LocationList; contents: MapContent
   return {
     ...data,
     list: { ...data.list, locations: data.list.locations.map(location => (added.has(location.id) ? { ...location, used: location.used + added.get(location.id)! } : location)) },
-    contents: { ...data.contents, places },
+    contents: data.contents && { ...data.contents, places },
   }
+}
+
+/** The list after a put-away M: refused: its pallets are no longer counted on their places (the map follows at the next read). */
+export function withoutPutAway<T extends { list: LocationList }>(data: T, pallets: PalletInput[]): T {
+  const byId = new Map(data.list.locations.map(location => [location.id, location]))
+  const removed = new Map<string, number>()
+  for (const input of pallets) {
+    const place = byId.get(locationKeyOf(input.location))
+    if (place && place.purpose !== 'pick') removed.set(place.id, (removed.get(place.id) || 0) + 1)
+  }
+  return { ...data, list: { ...data.list, locations: data.list.locations.map(location => (removed.has(location.id) ? { ...location, used: Math.max(0, location.used - removed.get(location.id)!) } : location)) } }
+}
+
+/**
+ * Each pallet's place in Sæt palle på plads checked as the backend's roomIn would, with the pallets before it in the form
+ * counted on their places. An empty place is left to Gem's own message; without the list (not read) M: checks it.
+ */
+export function putAwayPlaceChecks(locations: string[], places: Record<string, Listed> | null): { note: string | null; blocked: boolean }[] {
+  const unchecked = { note: null, blocked: false }
+  if (!places) return locations.map(() => unchecked)
+  const before = new Map<string, number>()
+  return locations.map(location => {
+    if (!location.trim()) return unchecked
+    const place = places[locationKeyOf(location)] || null
+    if (!place) return moveTargetCheck(location, null, undefined)
+    const counted = before.get(place.id) || 0
+    before.set(place.id, counted + 1)
+    return moveTargetCheck(location, { ...place, used: place.used + counted }, undefined)
+  })
 }
