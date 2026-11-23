@@ -166,6 +166,20 @@ test('a material document without year that neither year finds gives no rows and
   assert.deepEqual(fs.readdirSync(sap.tempRoot), [])
 })
 
+test('a failed script on the first year of a material document without year stops the lookup', async () => {
+  const asked = []
+  const runScript = async (name, args = []) => {
+    if (name === 'status') return READY
+    asked.push(args[3])
+    return '{"ok":false,"error":"x"}'
+  }
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'countpoint-matdoc-fail-test-'))
+  const fetcher = createSapFetcher({ bridge: createSapBridge({ runScript }), runScript, tempRoot, now: () => new Date(2026, 0, 5, 8, 0).getTime() })
+  await assert.rejects(fetcher.fetchMatdoc({ team: 'TCD', document: '4905204948' }), { code: 'SAP_EXPORT_FAILED' })
+  assert.deepEqual(asked, ['4905204948 2026'], 'no second year is tried')
+  assert.deepEqual(fs.readdirSync(tempRoot), [])
+})
+
 test('long serial numbers: material + short serials via the clipboard, in chunks; never a lookup without serials', async () => {
   const calls = []
   const clip = []

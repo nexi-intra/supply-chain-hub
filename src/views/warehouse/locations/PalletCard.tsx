@@ -140,7 +140,7 @@ function EditDialog({ pallet, tags, onClose, onSend }: { pallet: PalletView; tag
           <div className="space-y-1.5"><Label htmlFor="edit-date">{t('Dato', 'Date')}</Label><Input id="edit-date" type="date" value={date} onChange={event => setDate(event.target.value || date)} /></div>
           <div className="space-y-1.5">
             <Label htmlFor="edit-document">{t('49/50-nummer', '49/50 number')}</Label><Input id="edit-document" className="font-mono" value={document} aria-invalid={documentInvalid} onChange={event => setDocument(event.target.value)} />
-            {documentInvalid && <p className="text-xs text-destructive">{t('Skriv 49/50-nummeret som fx "5000032337 2026 0001"', 'Type the 49/50 number like "5000032337 2026 0001"')}</p>}
+            {documentInvalid && <p className="text-xs text-destructive">{t('Skriv 49/50-nummeret som fx "5000032337" eller "5000032337 2026 0001"', 'Type the 49/50 number like "5000032337" or "5000032337 2026 0001"')}</p>}
           </div>
         </div>
         <div className="space-y-1.5"><Label htmlFor="edit-serials">{t('Serienumre (et pr. linje)', 'Serial numbers (one per line)')}</Label><Textarea id="edit-serials" className="font-mono text-xs" value={serials} onChange={event => setSerials(event.target.value)} /></div>
