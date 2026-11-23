@@ -7,10 +7,11 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { formatNumber } from '@/lib/warehouse/format'
-import { sendLocationAction, startLocationsRead, takeFromCard, takeFromCardShelf } from '@/lib/warehouse/locationActions'
+import { countedInCard, sendLocationAction, startLocationsRead, takeFromCard, takeFromCardShelf } from '@/lib/warehouse/locationActions'
 import { formatAge, formatDate, materialLabel, newActionId } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
 import type { MaterialCard } from '@/types/warehouse'
+import { CountPallet } from './CountPallet'
 
 type Reserve = MaterialCard['reserve'][number]
 
@@ -52,11 +53,14 @@ export function TakePallet({ material: initial, version, onDone }: { material?: 
     const oldest = card?.reserve[0]
     if (!sure && oldest && oldest.id !== pallet.id && oldest.receivedAt < pallet.receivedAt) { setConfirm({ pallet, quantity }); return }
     setConfirm(null)
-    const whole = quantity === undefined || pallet.quantity === null || quantity >= pallet.quantity
+    const whole = quantity === undefined || (pallet.quantity !== null && quantity >= pallet.quantity)
     setCard(value => (value ? takeFromCard(value, pallet.id, quantity) : value))
     setAmounts(value => ({ ...value, [pallet.id]: '' }))
+    const partText = pallet.quantity === null
+      ? t(`${formatNumber(quantity ?? 0)} stk. taget fra ${pallet.location} (pallen bliver stående)`, `${formatNumber(quantity ?? 0)} taken from ${pallet.location} (the pallet stays)`)
+      : t(`${formatNumber(quantity ?? 0)} stk. taget fra ${pallet.location}`, `${formatNumber(quantity ?? 0)} taken from ${pallet.location}`)
     void sendLocationAction(() => bridge.take({ actionId: newActionId(), label: t(`Tag ${pallet.material} fra ${pallet.location}`, `Take ${pallet.material} from ${pallet.location}`), pallet: pallet.id, quantity }), {
-      success: whole ? t(`Pallen på ${pallet.location} er taget`, `The pallet on ${pallet.location} has been taken`) : t(`${formatNumber(quantity ?? 0)} stk. taget fra ${pallet.location}`, `${formatNumber(quantity ?? 0)} taken from ${pallet.location}`),
+      success: whole ? t(`Pallen på ${pallet.location} er taget`, `The pallet on ${pallet.location} has been taken`) : partText,
       settled: onDone,
     })
   }
@@ -107,11 +111,13 @@ export function TakePallet({ material: initial, version, onDone }: { material?: 
                   <span className="text-muted-foreground">{formatAge(pallet.ageDays)} · {formatDate(pallet.receivedAt)}</span>
                   <span>{pallet.quantity === null ? t('antal ukendt', 'quantity unknown') : t(`${formatNumber(pallet.quantity)} stk.`, `${formatNumber(pallet.quantity)} pcs`)}</span>
                   {pallet.document && <span className="font-mono text-xs text-muted-foreground">{pallet.document}</span>}
-                  <span className="ml-auto flex items-center gap-2">
-                    <Input inputMode="numeric" value={amounts[pallet.id] || ''} placeholder={t('stk.', 'pcs')} className="h-9 w-20" aria-label={t('Antal at tage', 'Quantity to take')}
+                  <span className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                    {pallet.quantity === null && <span className="text-xs text-muted-foreground">{t('stk. taget (pallen bliver stående)', 'pcs taken (the pallet stays)')}</span>}
+                    <Input inputMode="numeric" value={amounts[pallet.id] || ''} placeholder={t('stk.', 'pcs')} className="h-9 w-20" aria-label={pallet.quantity === null ? t('stk. taget (pallen bliver stående)', 'pcs taken (the pallet stays)') : t('Antal at tage', 'Quantity to take')}
                       onChange={event => setAmounts(value => ({ ...value, [pallet.id]: event.target.value.replace(/\D/g, '') }))} />
                     <Button size="sm" variant="outline" disabled={!amounts[pallet.id]} onClick={() => take(pallet, Number(amounts[pallet.id]))}>{t(`Tag ${amounts[pallet.id] || 'X'} stk.`, `Take ${amounts[pallet.id] || 'X'}`)}</Button>
                     <Button size="sm" onClick={() => take(pallet)}><HandGrabbing size={16} /> {t('Tag hele pallen', 'Take the whole pallet')}</Button>
+                    {pallet.quantity === null && <CountPallet pallet={pallet} onCounted={quantity => setCard(value => (value ? countedInCard(value, pallet.id, quantity) : value))} onDone={onDone} />}
                   </span>
                   {confirm?.pallet.id === pallet.id && (
                     <div className="flex w-full flex-wrap items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2">

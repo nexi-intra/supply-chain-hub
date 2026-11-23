@@ -104,6 +104,24 @@ test('take: whole pallet, X pcs, X >= quantity takes all, X <= 0 or 1.5 is QUANT
   assert.deepEqual(takes, [30, 50, 70])
 })
 
+test('a pallet with an unknown quantity stays on its place after a take or refill of some pieces; only "take all" removes it', async () => {
+  const { pc1, seed } = setup()
+  await seed([place('A2.4'), place('H26', { purpose: 'pick', type: 'Hylde', fixedMaterials: ['R162-0717'] })], [{ id: 'p1', location: 'A2.4', material: 'R162-0717', quantity: null, receivedAt: 1 }])
+  const taken = await pc1.service.take(ANNA, { pallet: 'p1', quantity: 5 })
+  assert.equal(taken.pallet.id, 'p1')
+  assert.equal(taken.pallet.quantity, null, 'the quantity stays unknown')
+  const refilled = await pc1.service.refill(ANNA, { location: 'H26', pallet: 'p1', quantity: 20 })
+  assert.equal(refilled.pallet.quantity, null)
+  assert.deepEqual((await pc1.repo.read('TCD')).pallets.p1, { id: 'p1', location: 'A2.4', material: 'R162-0717', quantity: null, receivedAt: 1, document: null, serials: [], sloc: 'D000', tags: [], note: '', createdAt: 1 }, 'the pallet is unchanged')
+  await assert.rejects(pc1.service.putAway(ANNA, { pallets: [{ location: 'A2.4', material: 'X', quantity: 1 }] }), { code: 'LOCATION_FULL' }, 'the place is still taken')
+  assert.equal((await pc1.service.take(ANNA, { pallet: 'p1' })).pallet, null)
+  assert.deepEqual((await pc1.repo.read('TCD')).pallets, {})
+  const log = (await pc1.repo.history('TCD')).filter(event => event.type === 'take' || event.type === 'refill').sort((a, b) => a.id.localeCompare(b.id, 'en', { numeric: true }))
+  assert.deepEqual(log.map(event => `${event.type}:${event.pallet}:${event.quantity}`), ['take:p1:5', 'refill:p1:20', 'take:p1:null'], 'the log has the pieces taken')
+  const line = (await pc1.service.log(ADA, {})).events.find(event => event.type === 'take' && event.quantity === 5)
+  assert.deepEqual([line.canUndo, line.reason], [false, 'Pallens antal er ukendt, så der er intet at fortryde'], 'nothing was changed, and the log says why')
+})
+
 test('two people take the same pallet: the first wins, the second gets PALLET_GONE and nothing is counted twice', async () => {
   const { pc1, pc2, seed } = setup()
   await seed([place('A2.1')], [{ id: 'p1', location: 'A2.1', material: 'R162-0717', quantity: 100, receivedAt: 1 }])

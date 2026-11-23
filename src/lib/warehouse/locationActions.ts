@@ -90,16 +90,31 @@ export function matdocOf(value: string): string | null {
   return /^\d{10}( \d{4}( \d{1,4})?)?$/.test(text) ? text : null
 }
 
-/** A material card after taking all (`quantity` left out or at least what is there) or part of one of its pallets. */
+/**
+ * A material card after taking all (`quantity` left out or at least what is there) or part of one of its pallets. A
+ * pallet with an unknown quantity stays after a part (still unknown, and it never counted in the total). Mirrors takeFrom.
+ */
 export function takeFromCard(card: MaterialCard, pallet: string, quantity?: number): MaterialCard {
   const found = card.reserve.find(item => item.id === pallet)
   if (!found) return card
-  const whole = quantity === undefined || found.quantity === null || quantity >= found.quantity
+  if (quantity !== undefined && found.quantity === null) return card
+  const whole = quantity === undefined || (found.quantity !== null && quantity >= found.quantity)
   const taken = whole ? (found.quantity ?? 0) : quantity
   return {
     ...card,
     reserve: whole ? card.reserve.filter(item => item.id !== pallet) : card.reserve.map(item => (item.id === pallet ? { ...item, quantity: (item.quantity ?? 0) - taken } : item)),
     total: Math.max(0, card.total - taken),
+  }
+}
+
+/** A material card after a pallet with an unknown quantity was counted: it has the quantity, and the total counts it. */
+export function countedInCard(card: MaterialCard, pallet: string, quantity: number): MaterialCard {
+  const found = card.reserve.find(item => item.id === pallet)
+  if (!found) return card
+  return {
+    ...card,
+    reserve: card.reserve.map(item => (item.id === pallet ? { ...item, quantity } : item)),
+    total: card.total - (found.quantity ?? 0) + quantity,
   }
 }
 

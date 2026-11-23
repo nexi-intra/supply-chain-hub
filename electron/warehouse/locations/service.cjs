@@ -88,13 +88,17 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
     if (!fixed.includes(wanted)) throw codeError('MATERIAL_MISMATCH', `${wanted} hører ikke til pluk-pladsen ${location.name}`)
     return wanted
   }
-  /** Takes all or part of a pallet; returns what is left (null when it is gone) and how much was taken. */
+  /**
+   * Takes all or part of a pallet; returns what is left (null when it is gone) and how much was taken. A pallet with an
+   * unknown quantity is only gone when all of it is taken: after some pieces it stays, still unknown, and the log has them.
+   */
   function takeFrom(tx, pallet, quantity) {
     const amount = quantityOf(quantity, { optional: true })
-    if (amount === null || pallet.quantity === null || amount >= pallet.quantity) {
+    if (amount === null || (pallet.quantity !== null && amount >= pallet.quantity)) {
       delete tx.pallets[pallet.id]
       return { left: null, taken: pallet.quantity }
     }
+    if (pallet.quantity === null) return { left: pallet, taken: amount }
     pallet.quantity -= amount
     return { left: pallet, taken: amount }
   }
@@ -861,7 +865,7 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
       let result
       if (group.some(item => item.type === 'import' || item.type === 'undo' || item.type === 'migrate' || item.type === 'layout')) result = { canUndo: false, reason: 'Kan ikke fortrydes' }
       else if (group.some(item => item.undoneAt)) result = { canUndo: false, reason: 'Allerede fortrudt' }
-      else if (!change) result = { canUndo: false, reason: 'Fra før loggen kunne fortryde' }
+      else if (!change) result = { canUndo: false, reason: group.some(item => (item.type === 'take' || item.type === 'refill') && item.pallet) ? 'Pallens antal er ukendt, så der er intet at fortryde' : 'Fra før loggen kunne fortryde' }
       else {
         const check = undoCheck(change, state)
         const drawn = check.ok && drawingBlock(change, state)

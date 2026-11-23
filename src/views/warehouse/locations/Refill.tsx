@@ -8,10 +8,11 @@ import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { formatNumber } from '@/lib/warehouse/format'
-import { sendLocationAction, startLocationsRead, takeFromCard, takeFromCardShelf } from '@/lib/warehouse/locationActions'
+import { countedInCard, sendLocationAction, startLocationsRead, takeFromCard, takeFromCardShelf } from '@/lib/warehouse/locationActions'
 import { formatAge, materialLabel, newActionId } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
 import type { Location, MaterialCard } from '@/types/warehouse'
+import { CountPallet } from './CountPallet'
 
 /** Refill a pick place: choose the place (and its material), and fetch from the oldest reserve pallet (FIFO). */
 export function Refill({ id, version, onDone }: { id?: string; version: number; onDone: () => void }) {
@@ -65,7 +66,9 @@ export function Refill({ id, version, onDone }: { id?: string; version: number; 
     setCard(value => (value ? takeFromCard(value, pallet.id, amount) : value))
     setQuantity('')
     void sendLocationAction(() => bridge.refill({ actionId: newActionId(), label: t(`Fyld ${selected.name} op fra ${pallet.location}`, `Refill ${selected.name} from ${pallet.location}`), location: selected.id, pallet: pallet.id, quantity: amount }), {
-      success: t(`${selected.name} er fyldt op fra ${pallet.location}`, `${selected.name} has been refilled from ${pallet.location}`),
+      success: amount !== undefined && pallet.quantity === null
+        ? t(`${selected.name} er fyldt op fra ${pallet.location} (pallen bliver stående)`, `${selected.name} has been refilled from ${pallet.location} (the pallet stays)`)
+        : t(`${selected.name} er fyldt op fra ${pallet.location}`, `${selected.name} has been refilled from ${pallet.location}`),
       settled: onDone,
     })
   }
@@ -145,10 +148,14 @@ export function Refill({ id, version, onDone }: { id?: string; version: number; 
                           {index === 0 && <Badge>{t('Forslag', 'Suggested')}</Badge>}
                           <span className="font-mono font-semibold">{pallet.location}</span>
                           <span className="text-muted-foreground">{formatAge(pallet.ageDays)}</span>
-                          <span>{pallet.quantity === null ? '' : t(`${formatNumber(pallet.quantity)} stk.`, `${formatNumber(pallet.quantity)} pcs`)}</span>
-                          <Button size="sm" className="ml-auto" variant={index === 0 ? 'default' : 'outline'} onClick={() => refill(pallet)}>
-                            <ArrowsClockwise size={16} /> {t(`Fyldt op fra ${pallet.location}`, `Refilled from ${pallet.location}`)}
-                          </Button>
+                          <span>{pallet.quantity === null ? t('antal ukendt', 'quantity unknown') : t(`${formatNumber(pallet.quantity)} stk.`, `${formatNumber(pallet.quantity)} pcs`)}</span>
+                          {pallet.quantity === null && quantity.trim() && <span className="text-xs text-muted-foreground">{t(`${formatNumber(Number(quantity))} stk. taget (pallen bliver stående)`, `${formatNumber(Number(quantity))} pcs taken (the pallet stays)`)}</span>}
+                          <span className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                            {pallet.quantity === null && <CountPallet pallet={pallet} onCounted={count => setCard(value => (value ? countedInCard(value, pallet.id, count) : value))} onDone={onDone} />}
+                            <Button size="sm" variant={index === 0 ? 'default' : 'outline'} onClick={() => refill(pallet)}>
+                              <ArrowsClockwise size={16} /> {t(`Fyldt op fra ${pallet.location}`, `Refilled from ${pallet.location}`)}
+                            </Button>
+                          </span>
                         </div>
                       ))}
                     </div>

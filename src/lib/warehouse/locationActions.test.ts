@@ -6,7 +6,7 @@ vi.mock('sonner', () => ({ toast }))
 
 import { pendingWriteCount } from '@/lib/pendingWrites'
 import {
-  addToStock, isPlaceHidden, locationActionsInFlight, matdocOf, movedInList, moveTargetCheck, predictedRack, sendLocationAction, startLocationsRead,
+  addToStock, countedInCard, isPlaceHidden, locationActionsInFlight, matdocOf, movedInList, moveTargetCheck, predictedRack, sendLocationAction, startLocationsRead,
   takeFromCard, takeFromCardShelf, withPutAway, withStockQuantity,
 } from './locationActions'
 import { setWarehouseLanguage } from './text'
@@ -120,8 +120,17 @@ describe('optimistic changes', () => {
     expect(takeFromCard(card, 'p1', 30)).toMatchObject({ total: 130, reserve: [{ id: 'p1', quantity: 70 }, { id: 'p2' }] })
     expect(takeFromCard(card, 'p1')).toMatchObject({ total: 60, reserve: [{ id: 'p2' }] })
     expect(takeFromCard(card, 'p1', 100).reserve.map(item => item.id)).toEqual(['p2'])
-    expect(takeFromCard(card, 'p2', 5).reserve.map(item => item.id), 'a pallet without a quantity is taken whole').toEqual(['p1'])
+    expect(takeFromCard(card, 'p2').reserve.map(item => item.id), 'a pallet without a quantity is taken whole on "take all"').toEqual(['p1'])
     expect(takeFromCard(card, 'gone')).toBe(card)
+  })
+
+  it('takeFromCard keeps a pallet with an unknown quantity when some pieces are taken (mirrors takeFrom)', () => {
+    expect(takeFromCard(card, 'p2', 5)).toMatchObject({ total: 160, reserve: [{ id: 'p1', quantity: 100 }, { id: 'p2', quantity: null }] })
+  })
+
+  it('countedInCard gives a pallet with an unknown quantity its count and adds it to the total', () => {
+    expect(countedInCard(card, 'p2', 40)).toMatchObject({ total: 200, reserve: [{ id: 'p1', quantity: 100 }, { id: 'p2', quantity: 40 }] })
+    expect(countedInCard(card, 'gone', 40)).toBe(card)
   })
 
   it('takeFromCardShelf lowers the line and drops it at 0', () => {
