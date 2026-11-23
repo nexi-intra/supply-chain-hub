@@ -78,8 +78,9 @@ function loadDeviceId(dir) {
  * @param {() => string} deps.platformRoot
  * @param {ReturnType<import('../ipcArrivals.cjs')['createArrivalOrder']>} [deps.arrivals] the order IPC calls arrived in (main.cjs)
  * @param {object} [deps.outboxOptions] timing of the local queue (tests)
+ * @param {() => boolean} [deps.storageConnected] false while M: is away (also when the Hub started on its local folder)
  */
-function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platformRoot, userDataDir, electron, broadcast, isPackaged, configDirs = [], scriptsDir = __dirname, env = process.env, preparedFiles = null, arrivals = null, outboxOptions = {} }) {
+function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platformRoot, userDataDir, electron, broadcast, isPackaged, configDirs = [], scriptsDir = __dirname, env = process.env, preparedFiles = null, arrivals = null, outboxOptions = {}, storageConnected = () => true }) {
   const { clipboard, dialog, shell, BrowserWindow } = electron
   const config = resolveWarehouseConfig({ env, configDirs })
   const localDir = path.join(userDataDir, 'warehouse')
@@ -472,6 +473,8 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   const outbox = createOutbox({
     dir: localDir,
     run: async action => {
+      // Without M: the Hub reads its local folder, where no team is registered: the action would be refused and lost.
+      if (!storageConnected()) throw codeError('STORAGE_UNAVAILABLE')
       const earlier = runsAfter.get(action.id)
       if (earlier) {
         await earlier
@@ -488,7 +491,7 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
     ...outboxOptions,
   })
   const flushOutbox = async () => {
-    if (outbox.pending()) await outbox.flush().catch(() => {})
+    if (outbox.pending() && storageConnected()) await outbox.flush().catch(() => {})
   }
   const outboxTimer = setInterval(flushOutbox, 30000)
   outboxTimer.unref?.()
@@ -559,6 +562,8 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
     // next start, so closing never waits for M: (an action still in its IPC call is waited for by main.cjs).
     hasPendingWrites: () => outbox.unwritten() > 0,
     whenWritesSettled: timeoutMs => outbox.whenWritten(timeoutMs),
+    // main.cjs calls it when M: is back, so the waiting actions need not wait for the 30 s timer.
+    replayWrites: () => flushOutbox(),
     closeAll: () => { clearInterval(outboxTimer); return Promise.all([outbox.close(), counts.closeAll()]).then(([, closed]) => closed) },
   }
 }

@@ -4,7 +4,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { createStore } = require('./store.cjs')
-const { createTeamReader, registeredTeamDir } = require('./teamReadPolicy.cjs')
+const { createTeamReader, registeredTeamDir, registeredWarehouseTeamDir } = require('./teamReadPolicy.cjs')
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sch-team-policy-test-'))
   t.after(() => fs.rmSync(root, { recursive: true, force: true }))
@@ -93,6 +93,13 @@ test('unknown keys, internal session keys and arbitrary paths are denied', async
   for (const folder of ['../B', '_shared', 'unknown', path.join(f.root, 'B')]) await assert.rejects(f.reader.readTeam(f.actor, folder, 'users'), code('AUTH_FORBIDDEN'))
   f.teams.push({ teamId: 'malformed', folderName: '../escape' })
   assert.throws(() => registeredTeamDir(f.root, f.teams, '../escape'), code('AUTH_FORBIDDEN'))
+})
+test('a warehouse team folder is unavailable storage (kept for a retry) when no team is registered at all, refused otherwise', t => {
+  const f = fixture(t)
+  assert.equal(registeredWarehouseTeamDir(f.root, f.teams, 'B').directory, path.join(f.root, 'B'))
+  assert.throws(() => registeredWarehouseTeamDir(f.root, f.teams, 'unknown'), code('AUTH_FORBIDDEN'))
+  // The Hub's local fallback folder (M: away at start) has no teams.json.
+  assert.throws(() => registeredWarehouseTeamDir(f.root, [], 'B'), code('STORAGE_UNAVAILABLE'))
 })
 test('cross-team overviews keep directory contacts and presence but remove passwords, notes and sickness reasons', async t => {
   const f = fixture(t)

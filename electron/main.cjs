@@ -83,7 +83,7 @@ const { publicUsers, updateUsersAsync } = require('./userPolicy.cjs')
 const { isPrivateKey, readView, planWrite } = require('./privateViews.cjs')
 const { eraseUserData } = require('./userErasure.cjs')
 const { eraseSharedUserData } = require('./sharedErasure.cjs')
-const { createTeamReader, registeredTeamDir } = require('./teamReadPolicy.cjs')
+const { createTeamReader, registeredTeamDir, registeredWarehouseTeamDir } = require('./teamReadPolicy.cjs')
 const { isSameTeamTarget } = require('./teamSwitch.cjs')
 const { PLATFORM_SHARED_KV_KEYS } = require('./libraryKeys.cjs')
 const { createTrustedWindow } = require('./trustedWindow.cjs')
@@ -448,6 +448,8 @@ function setStorageConnected(connected) {
   storageConnected = connected
   storageConnectionSince = Date.now()
   broadcast('storage:connection-changed', getStorageConnectionStatus())
+  // M: is back: Placeringer's waiting actions are replayed now instead of at the next 30 s check.
+  if (connected) warehouse?.replayWrites()
 }
 
 /** Kaldes af den resiliente store når en offline-kø er (delvist) afspillet mod netværksstien. */
@@ -1027,7 +1029,7 @@ app.whenReady().then(() => {
   ipcMain.handle('links:command', async (event, input) => links.command((await sharedActor(event)), input))
   ipcMain.handle('links:open', async (event, linkId) => links.open((await sharedActor(event)), linkId))
   // Warehouse Management (Optælling) for TCD and TRR: the open hub is the team, data in "<team>\lagerstyring".
-  const warehouseTeamDir = team => registeredTeamDir(platformRoot, registry.listTeams(platformRoot), team).directory
+  const warehouseTeamDir = team => registeredWarehouseTeamDir(platformRoot, registry.listTeams(platformRoot), team).directory
   const warehouseUserStores = new Map()
   warehouse = registerWarehouse({
     ipcMain,
@@ -1040,6 +1042,8 @@ app.whenReady().then(() => {
       return publicUsers(await warehouseUserStores.get(directory).getAsync('users')) || {}
     },
     teamDir: warehouseTeamDir,
+    // Started on the local fallback folder, M: is away for the whole run: Placeringer's queue waits for the next start.
+    storageConnected: () => !storageStartedDisconnected && storageConnected,
     platformRoot: () => platformRoot,
     userDataDir: app.getPath('userData'),
     electron: { clipboard, dialog, shell, BrowserWindow },

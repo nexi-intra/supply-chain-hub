@@ -18,6 +18,12 @@ function registeredTeamDir(root, teams, folderName) {
   if (path.dirname(target) !== parent) fail()
   return { team, directory: target }
 }
+// Lagerstyring's folders: a registry without a single team is the Hub's local fallback folder (M: was away at the
+// start), so that is unavailable storage, kept for a retry; an unknown team in a real registry is still refused.
+function registeredWarehouseTeamDir(root, teams, folderName) {
+  if (!teams.length) fail('STORAGE_UNAVAILABLE')
+  return registeredTeamDir(root, teams, folderName)
+}
 function overview(key, value) {
   if (key === 'users') return Object.fromEntries(Object.entries(value || {}).map(([email, user]) => [email, pick(user || {}, ['email', 'fullName', 'phone', 'role', 'isManager', 'status'])]))
   if (key === 'vacation-entries') return (value || []).filter(row => row.status === 'approved').map(row => pick(row, ['id', 'userId', 'userEmail', 'startDate', 'endDate', 'status', 'isSingleDay', 'type']))
@@ -149,4 +155,4 @@ function createTeamReader({ getRoot, listTeams, openStore, now = Date.now }) {
 function ownsFile(guide, id) {
   return guide.fileUrl === `kv://${id}` || guide.previewPdfUrl === `kv://${id}` || guide.originalPdfUrl === `kv://${id}` || guide.coverImageId === id || (guide.sections || []).some(section => (section.steps || []).some(step => (step.imageIds || []).includes(id)))
 }
-module.exports = { createTeamReader, registeredTeamDir, overview }
+module.exports = { createTeamReader, registeredTeamDir, registeredWarehouseTeamDir, overview }

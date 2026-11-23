@@ -7,7 +7,7 @@ const { registerWarehouse } = require('./register.cjs')
 const { createStore } = require('../store.cjs')
 const { createArrivalOrder } = require('../ipcArrivals.cjs')
 
-function setup({ clipboard = { readText: () => '', writeText: () => {} }, env = {}, root = null, arrivals, outboxOptions, teamUsers } = {}) {
+function setup({ clipboard = { readText: () => '', writeText: () => {} }, env = {}, root = null, arrivals, outboxOptions, teamUsers, teamDir, storageConnected } = {}) {
   if (!root) {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'warehouse-register-'))
     for (const team of ['TCD', 'TRR', 'PIM']) fs.mkdirSync(path.join(root, team))
@@ -26,8 +26,9 @@ function setup({ clipboard = { readText: () => '', writeText: () => {} }, env = 
     // `delay`: this call's user lookup is slow (read from M:).
     currentActor: async event => { if (event.delay) await new Promise(resolve => setTimeout(resolve, event.delay)); return actors[event.who] },
     teamUsers: teamUsers || (async () => users),
-    teamDir: team => path.join(root, team),
+    teamDir: teamDir || (team => path.join(root, team)),
     platformRoot: () => root,
+    ...(storageConnected ? { storageConnected } : {}),
     userDataDir: path.join(root, '_user'),
     electron: { clipboard, dialog: {}, shell: {}, BrowserWindow: {} },
     broadcast: (channel, payload) => broadcasts.push([channel, payload]),
@@ -223,6 +224,35 @@ test('a daily action that finds M: busy (KV_LOCK_BUSY) is kept on this PC instea
   assert.deepEqual(await again.call('anna', 'locations:take', { actionId: 'busy-1', pallet: pallet.id, quantity: 30 }), { duplicate: true })
   assert.equal((await again.call('anna', 'locations:pallet-card', { pallet: pallet.id })).pallet.quantity, 70, 'taken once')
   again.registered.closeAll()
+})
+
+test('a Hub started before M: is reachable keeps the waiting Placeringer actions and replays them once M: is back', async () => {
+  const { root, call, registered } = setup()
+  await call('mona', 'locations:create-location', { name: 'A2.4', type: 'Palle', purpose: 'reserve', capacity: 1 })
+  const { created: [pallet] } = await call('anna', 'locations:put-away', { pallets: [{ location: 'A2.4', material: 'R162-0717', quantity: 100 }] })
+  const take = registered.locations.take
+  registered.locations.take = async () => { throw Object.assign(new Error('KV_LOCK_BUSY'), { code: 'KV_LOCK_BUSY' }) }
+  assert.deepEqual(await call('anna', 'locations:take', { actionId: 'kept-1', pallet: pallet.id, quantity: 30 }), { queued: true })
+  registered.locations.take = take
+  await registered.closeAll()
+  // Started again with M: away: the Hub fell back to its local data folder, which has no team registry.
+  let connected = false
+  const fallback = team => {
+    if (!connected) throw Object.assign(new Error('AUTH_FORBIDDEN'), { code: 'AUTH_FORBIDDEN' })
+    return path.join(root, team)
+  }
+  const again = setup({ root, teamDir: fallback, storageConnected: () => connected })
+  await new Promise(resolve => setTimeout(resolve, 100))
+  assert.deepEqual(await again.call('anna', 'locations:pending'), { pending: 1, failures: [] }, 'still waiting, not thrown away')
+  // An action handed in meanwhile waits behind it instead of running the queue against the local folder.
+  assert.deepEqual(await again.call('anna', 'locations:take', { actionId: 'kept-2', pallet: pallet.id, quantity: 10 }), { queued: true })
+  assert.deepEqual(await again.call('anna', 'locations:pending'), { pending: 2, failures: [] })
+  connected = true
+  again.registered.replayWrites()
+  for (let waited = 0; (await again.call('anna', 'locations:pending')).pending && waited < 5000; waited += 20) await new Promise(resolve => setTimeout(resolve, 20))
+  assert.deepEqual(await again.call('anna', 'locations:pending'), { pending: 0, failures: [] })
+  assert.equal((await again.call('anna', 'locations:pallet-card', { pallet: pallet.id })).pallet.quantity, 60, 'both applied once')
+  await again.registered.closeAll()
 })
 
 test('Placeringer actions sent at once run in the order the window sent them, also when an earlier one waits longer for its user', async () => {
