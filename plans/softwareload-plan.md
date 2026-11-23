@@ -625,3 +625,36 @@ Jacob: testdata må ikke påvirke statistikken i drift, og man skal kunne slette
 - Test: 'a manager deletes a finished task: it leaves the task list, the statistics and the search', 'a manager deletes a KIF move and its search lines', 'an employee cannot delete', 'a running or pending task cannot be deleted', 'deletion is logged'
 
 - [x] Tests først, se dem fejle, implementér, se dem bestå, tsc, vitest, commit `feat(softwareload): slet afsluttede opgaver og KIF-flytninger`
+### Task 16: Kommentarer til perioder i Statistik, og Statistik kun for managere (Jacobs ønske 23.11)
+
+**Hvorfor:** Jacob vil kunne forklare, hvorfor tallene i en periode afviger, fx at ny software til et bestemt materiale tog længere tid at loade i november.
+
+**Besluttet med Jacob:**
+- En kommentar har en periode (som udgangspunkt en hel måned, egne fra/til-datoer kan vælges), kan knyttes til et materialenummer, en softwareversion, begge eller ingen (så gælder den hele perioden).
+- Kun managere kan skrive, rette og slette kommentarer.
+- Statistik er kun for managere. Fanen vises ikke for medarbejdere, og backenden afviser dem (`MANAGER_ONLY`). Søg serienummer forbliver åben for alle i TCD og TRR.
+- Statistik får filter og opdeling på materiale ud over person, type og version.
+- Kommentarer der overlapper den valgte periode og passer til filtrene vises over tallene; rækker de handler om får et lille mærke. Hver kommentar gemmer hvem og hvornår, også ved rettelse.
+- Kommentarer gælder pr. team.
+
+**Tilgang (eneste fornuftige):** én fil `kommentarer` pr. team i `<team>\lagerstyring\softwareload`, `{ comments: { [id]: Comment } }`, skrevet med `mutateAsync`. Fravalgt: kommentar på opgaverne (en periode kan være uden opgaver) og én fælles fil (Jacob vil have dem pr. team).
+
+**Mine beslutninger:**
+- `Comment = { id, from: 'YYYY-MM-DD', to: 'YYYY-MM-DD', material?: string, version?: string, text, by: {email,name}, at, editedBy?, editedAt? }`. Tekst højst 1000 tegn, ikke tom. Perioden valideres som Stempelkorts `monthsBetween` (fra ≤ til, højst 370 dage). Materiale normaliseres med store bogstaver og skal matche `MATERIAL_PATTERN`; version renses som ved start.
+- En kommentar passer til filtrene, når dens materiale er tomt eller lig det valgte (eller materialet findes i de viste tal), og tilsvarende for version.
+- Opdeling pr. materiale: antal terminaler (ikke fejlede), fejlede og terminaler i timen. Tiden fordeles på materialerne i en opgave i forhold til antal terminaler, fordi én opgave kan have flere materialer.
+
+**Files:**
+- Modify: `electron/warehouse/softwareload/softwareloadService.cjs` (`comments(user,{from,to})`, `addComment(user,input)`, `updateComment(user,{id,...})`, `deleteComment(user,{id})`; `tasks()` kun for managere), `register.cjs` (`softwareload:comments`, `:add-comment`, `:update-comment`, `:delete-comment`), `preload.cjs`, `src/types/warehouse.ts`
+- Modify: `src/lib/softwareload.ts` (`summarizeByMaterial(tasks)`, `commentsFor(comments, {material, version})`), `src/views/warehouse/softwareload/Softwareload.tsx` (fanen Statistik kun for managere), `SoftwareloadStats.tsx` (materialefilter, tabel pr. materiale, kommentarer med tilføj/ret/slet og bekræftelse ved slet)
+- Modify: Hubert-guiden (fire sprog: tilføj en kommentar til en periode; Statistik kun for managere) og changelog 1.6.8
+- Test: `softwareloadService.test.cjs`:
+  - 'a manager adds, edits and deletes a period comment and the history is kept'
+  - 'comments are returned when they overlap the period'
+  - 'an employee cannot read the statistics or write comments'
+  - 'a comment with an empty text, a reversed period or an invalid material is refused'
+- Test: `src/lib/softwareload.test.ts`:
+  - 'summarizeByMaterial splits time by terminal count'
+  - 'commentsFor matches material and version, and empty fields match everything'
+
+- [ ] Tests først, se dem fejle, implementér, se dem bestå, tsc, vitest, commit `feat(softwareload): kommentarer til perioder i statistikken`
