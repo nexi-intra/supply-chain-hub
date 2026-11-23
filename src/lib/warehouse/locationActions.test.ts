@@ -6,7 +6,7 @@ vi.mock('sonner', () => ({ toast }))
 
 import { pendingWriteCount } from '@/lib/pendingWrites'
 import {
-  addToStock, countedInCard, isPlaceHidden, locationActionsInFlight, matdocOf, movedInList, moveTargetCheck, palletEdit, holdSerials, holdUntilSent, placedFor, placedSummary, predictedRack, putAwayPlaceChecks, replayFailureText, sendLocationAction, serialOverlapNotes, serialsOnTheirWay, startLocationsRead, startPendingRead,
+  addToStock, countedInCard, isPlaceHidden, keepsPlaces, landedRead, locationActionsInFlight, matdocOf, movedInList, moveTargetCheck, palletEdit, holdSerials, holdUntilSent, placedFor, placedSummary, predictedRack, putAwayPlaceChecks, replayFailureText, sendLocationAction, serialOverlapNotes, serialsOnTheirWay, startLocationsRead, startPendingRead,
   takeFromCard, takeFromCardShelf, withoutPutAway, withPutAway, withStockQuantity,
 } from './locationActions'
 import { errorCode } from './errors'
@@ -285,6 +285,23 @@ describe('optimistic changes', () => {
     expect(checks[2], 'an empty place is left to Gem\'s own message').toEqual({ note: null, blocked: false })
     expect(checks[3], 'a place made since the list was read is a warning').toEqual({ note: 'Z9 findes ikke', blocked: false })
     expect(putAwayPlaceChecks(['Z9'], null), 'without the list M: checks it').toEqual([{ note: null, blocked: false }])
+    expect(putAwayPlaceChecks(['Z9', 'A1.1'], {}), 'an empty list (a failed read with M: down) is no list').toEqual([{ note: null, blocked: false }, { note: null, blocked: false }])
+  })
+
+  it('keepsPlaces: a read with no places never replaces a list that has places', () => {
+    const list = (...ids: string[]) => ({ locations: ids.map(id => listed(id)) }) as unknown as LocationList
+    expect(keepsPlaces(list('A1.1'), list())).toBe(true)
+    expect(keepsPlaces(list('A1.1'), list('A1.2'))).toBe(false)
+    expect(keepsPlaces(list(), list())).toBe(false)
+    expect(keepsPlaces(null, list())).toBe(false)
+  })
+
+  it('landedRead: a card read that overlapped this PC\'s own action keeps what is shown, or is marked stale when nothing was', () => {
+    const shown = { value: 'shown', stale: false }
+    expect(landedRead(shown, 'read', true)).toEqual({ value: 'read', stale: false })
+    expect(landedRead(shown, 'read', false)).toBe(shown)
+    expect(landedRead(null, 'read', false), 'the first read is taken, but may be older than this PC\'s own action').toEqual({ value: 'read', stale: true })
+    expect(landedRead({ value: 'read', stale: true }, 'again', true), 'the read after the action settled clears it').toEqual({ value: 'again', stale: false })
   })
 
   it('serialOverlapNotes tells apart serials on an earlier pallet of the form and serials on their way to M: from this window', () => {

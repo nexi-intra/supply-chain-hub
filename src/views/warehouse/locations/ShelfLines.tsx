@@ -18,9 +18,11 @@ type Sent = { changes: StockChange[]; write: () => Promise<object>; success: str
 
 /**
  * A lagerhylde's lines (material + quantity) with "Tag", "Flyt" and "Ret antal" (everyone in the team). The dialog closes
- * and `onApply` shows the change at once; M: gets it in the background (15-40 s), a refusal applies it back.
+ * and `onApply` shows the change at once; M: gets it in the background (15-40 s), a refusal applies it back. `stale`:
+ * the lines came from a read that may be older than this PC's own action on its way, so "Ret antal" sends no `expected`
+ * (M: would refuse it because of that very action).
  */
-export function ShelfLines({ shelf, lines, onOpen, onApply, onChanged }: { shelf: string; lines: StockLineView[]; onOpen: (target: LocationsTarget) => void; onApply: (changes: StockChange[]) => void; onChanged: () => void }) {
+export function ShelfLines({ shelf, lines, stale = false, onOpen, onApply, onChanged }: { shelf: string; lines: StockLineView[]; stale?: boolean; onOpen: (target: LocationsTarget) => void; onApply: (changes: StockChange[]) => void; onChanged: () => void }) {
   const [open, setOpen] = useState<{ action: Action; line: StockLineView } | null>(null)
   // The lines as shown now: "Gem alligevel" comes after a refusal and a re-read, so it changes what is shown then.
   const shown = useRef(lines)
@@ -60,7 +62,7 @@ export function ShelfLines({ shelf, lines, onOpen, onApply, onChanged }: { shelf
           </div>
         ))}
       </div>
-      {open && <ShelfLineDialog shelf={shelf} action={open.action} line={open.line} onClose={() => setOpen(null)} onSend={send} onSet={setQuantity} />}
+      {open && <ShelfLineDialog shelf={shelf} action={open.action} line={open.line} onClose={() => setOpen(null)} onSend={send} onSet={(line, next, expected) => setQuantity(line, next, stale ? undefined : expected)} />}
     </>
   )
 }

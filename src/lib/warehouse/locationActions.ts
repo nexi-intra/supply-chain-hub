@@ -35,6 +35,19 @@ export function startLocationsRead(): () => boolean {
 
 export const locationActionsInFlight = () => inFlight
 
+/** Whether the place list shown is kept over a read: a read with no places (M: down) never replaces one that has places. */
+export const keepsPlaces = (shown: LocationList | null | undefined, read: LocationList) => !read.locations.length && Boolean(shown?.locations.length)
+
+/**
+ * What a card shows after a read lands (`fresh`: no action of this PC was on its way during the read). A read that
+ * overlapped one keeps what is shown; with nothing shown it is taken, marked `stale`: it may be older than this PC's own
+ * action, so "Ret antal" does not send what it shows as `expected`. The read after the action settled clears it.
+ */
+export function landedRead<T>(shown: { value: T; stale: boolean } | null, read: T, fresh: boolean): { value: T; stale: boolean } {
+  if (fresh) return { value: read, stale: false }
+  return shown ?? { value: read, stale: true }
+}
+
 export interface LocationActionOptions<T> {
   /** Shown at once: the screen already shows the result. */
   success?: string
@@ -301,7 +314,8 @@ export function withoutPutAway<T extends { list: LocationList }>(data: T, pallet
  */
 export function putAwayPlaceChecks(locations: string[], places: Record<string, Listed> | null): { note: string | null; blocked: boolean }[] {
   const unchecked = { note: null, blocked: false }
-  if (!places) return locations.map(() => unchecked)
+  // No list, or an empty one (a failed read while M: is down): M: checks the places itself.
+  if (!places || !Object.keys(places).length) return locations.map(() => unchecked)
   const before = new Map<string, number>()
   return locations.map(location => {
     if (!location.trim()) return unchecked

@@ -8,7 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { formatNumber } from '@/lib/warehouse/format'
 import { canShowOnMap } from '@/lib/warehouse/layout/map'
-import { addToStock, sendLocationAction, startLocationsRead } from '@/lib/warehouse/locationActions'
+import { addToStock, landedRead, sendLocationAction, startLocationsRead } from '@/lib/warehouse/locationActions'
 import { formatAge, formatDate, isShelfPlace, materialLabel, purposeLabel, typeLabel, type LocationsTarget } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
 import type { LocationCard as LocationCardData, LocationList } from '@/types/warehouse'
@@ -17,12 +17,15 @@ import { ShelfLines, type StockChange } from './ShelfLines'
 
 /** One place: what it is for, what stands there and what happened there. */
 export function LocationCard({ location, version, canAdmin, drawing, onOpen, onChanged }: { location: string; version: number; canAdmin: boolean; drawing: LocationList['drawing']; onOpen: (target: LocationsTarget) => void; onChanged: () => void }) {
-  const [card, setCard] = useState<LocationCardData | null>(null)
+  // `stale`: the card came from a read that overlapped this PC's own action (see landedRead).
+  const [read, setRead] = useState<{ value: LocationCardData; stale: boolean } | null>(null)
+  const card = read?.value ?? null
+  const setCard = (change: (value: LocationCardData) => LocationCardData) => setRead(value => value && { ...value, value: change(value.value) })
   useEffect(() => {
     let current = true
     // A re-read during this PC's own change on its way to M: is older than the card, which already shows the change.
     const fresh = startLocationsRead()
-    window.electronWarehouse!.locations.locationCard({ location }).then(result => { if (current) setCard(value => (value && !fresh() ? value : result)) }).catch(error => toast.error(errorMessage(error)))
+    window.electronWarehouse!.locations.locationCard({ location }).then(result => { if (current) { const quiet = fresh(); setRead(value => landedRead(value, result, quiet)) } }).catch(error => toast.error(errorMessage(error)))
     return () => { current = false }
   }, [location, version])
 
@@ -42,7 +45,6 @@ export function LocationCard({ location, version, canAdmin, drawing, onOpen, onC
     })
   }
   const applyStock = (changes: StockChange[]) => setCard(value => {
-    if (!value) return value
     const stock = changes.filter(change => change.line.location === value.location.id).reduce((lines, change) => addToStock(lines, change.line, change.delta), value.stock)
     return { ...value, stock }
   })
@@ -91,7 +93,7 @@ export function LocationCard({ location, version, canAdmin, drawing, onOpen, onC
             <CardTitle className="text-base">{t('På hylden', 'On the shelf')}</CardTitle>
             <Button size="sm" variant="outline" onClick={() => onOpen({ kind: 'shelf', id: place.name })}>{t('Læg på hylde', 'Put on shelf')}</Button>
           </CardHeader>
-          <CardContent><ShelfLines shelf={place.name} lines={card.stock} onOpen={onOpen} onApply={applyStock} onChanged={onChanged} /></CardContent>
+          <CardContent><ShelfLines shelf={place.name} lines={card.stock} stale={read?.stale ?? false} onOpen={onOpen} onApply={applyStock} onChanged={onChanged} /></CardContent>
         </Card>
       )}
 

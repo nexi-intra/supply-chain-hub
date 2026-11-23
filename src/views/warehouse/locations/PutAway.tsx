@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils'
 import { errorCode, errorMessage } from '@/lib/warehouse/errors'
 import { contextOf, type MapContext } from '@/lib/warehouse/layout/map'
 import { peekOf } from '@/lib/warehouse/layout/peek'
-import { holdSerials, holdUntilSent, placedFor, placedSummary, putAwayPlaceChecks, sendLocationAction, serialOverlapNotes, serialsOnTheirWay, startLocationsRead, withoutPutAway, withPutAway, type PlacedFound } from '@/lib/warehouse/locationActions'
+import { holdSerials, holdUntilSent, keepsPlaces, placedFor, placedSummary, putAwayPlaceChecks, sendLocationAction, serialOverlapNotes, serialsOnTheirWay, startLocationsRead, withoutPutAway, withPutAway, type PlacedFound } from '@/lib/warehouse/locationActions'
 import { locationKeyOf, newActionId, reasonLabel, type LocationsTarget } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
 import type { LocationList, MapContents, PalletInput, SlotSuggestion, WarehouseLayout, WarehouseUser } from '@/types/warehouse'
@@ -105,7 +105,7 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
     // cached read on this PC (as in Flyt and the pallet card); the map's contents only when there is a map.
     const fresh = startLocationsRead()
     Promise.all([api.list(), published ? api.mapContents() : null])
-      .then(([list, contents]) => { if (alive.current && seq > reads.landed) { reads.landed = seq; setData(value => (value && !fresh() ? value : { list, contents })); setDataFailed(false) } })
+      .then(([list, contents]) => { if (alive.current && seq > reads.landed) { reads.landed = seq; setData(value => (value && (!fresh() || keepsPlaces(value.list, list)) ? value : { list, contents })); setDataFailed(false) } })
       .catch(() => { if (alive.current && seq > reads.landed) setDataFailed(true) })
   }, [published, version])
 
