@@ -185,7 +185,7 @@ test('shelf work goes through the local queue (applied once), and racks and dele
   assert.deepEqual(await call('mona', 'locations:set-active-many', { locations: ['E9 H1'], active: false }), { changed: 1 })
 })
 
-const SOFTWARELOAD_CHANNELS = ['status', 'start', 'scan', 'unscan', 'mark-failed', 'unmark-failed', 'pause', 'resume', 'cancel', 'versions',
+const SOFTWARELOAD_CHANNELS = ['status', 'start', 'edit', 'scan', 'unscan', 'mark-failed', 'unmark-failed', 'pause', 'resume', 'cancel', 'versions',
   'preview', 'finish', 'continue', 'abandon', 'kif-preview', 'kif-move', 'search', 'tasks']
 
 test('softwareload channels are registered and starting Stempelkort pauses a running softwareload task', async () => {
@@ -196,6 +196,9 @@ test('softwareload channels are registered and starting Stempelkort pauses a run
   assert.deepEqual(await call('anna', 'softwareload:scan', { serial: 'ncc1', taskId: started.id }), { serial: 'NCC1', count: 1 })
   await assert.rejects(call('anna', 'softwareload:scan', { serial: 'NCC1', taskId: started.id }), /^Error: SOFTWARELOAD_DUPLICATE: /)
   await assert.rejects(call('anna', 'softwareload:scan', { serial: 'NCC2', taskId: 'an-old-task' }), /^Error: SOFTWARELOAD_NOT_RUNNING: /)
+  const edited = await call('anna', 'softwareload:edit', { type: 'key', kif: 'yes', target: 'd004', version: '4.2.2', taskId: started.id })
+  assert.deepEqual([edited.type, edited.kif, edited.target, edited.version], ['key', false, 'D004', '4.2.2'], 'only kif: true puts the task in KIF')
+  await assert.rejects(call('anna', 'softwareload:edit', { type: 'key', target: 'D004', version: '4.2.2', taskId: 'an-old-task' }), /^Error: SOFTWARELOAD_NOT_RUNNING: /)
   const clock = await call('anna', 'timeclock:start', { taskId: 'lager', taskName: 'Lager' })
   assert.equal(clock.taskName, 'Lager')
   const { running } = await call('anna', 'softwareload:status')
@@ -205,7 +208,7 @@ test('softwareload channels are registered and starting Stempelkort pauses a run
   // PS4 (the default system) may move terminals since 2026-11-23.
   assert.equal((await call('anna', 'softwareload:status')).writeEnabled, true)
   assert.deepEqual(await call('anna', 'softwareload:search', { serial: 'NCC1' }), { lines: [], unreadable: 0 })
-  assert.deepEqual(await call('anna', 'softwareload:versions'), ['4.2.1'])
+  assert.deepEqual(await call('anna', 'softwareload:versions'), ['4.2.2', '4.2.1'])
   await assert.rejects(call('pim', 'softwareload:status'), /WAREHOUSE_TEAM_NOT_ALLOWED/)
 })
 

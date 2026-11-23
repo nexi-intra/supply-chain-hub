@@ -1352,7 +1352,12 @@ export interface SoftwareloadTask {
   state: 'faerdig'
   /** `by` is the manager's email. */
   abandoned?: { by: string; reason: string; at: number }
+  /** Corrections of the choices while the task ran, oldest first; `by` is the owner's email. */
+  edits?: SoftwareloadEdit[]
 }
+
+export type SoftwareloadChoice = { type: SoftwareloadType; kif: boolean; target: string; version: string }
+export interface SoftwareloadEdit { at: number; by: string; from: SoftwareloadChoice; to: SoftwareloadChoice }
 
 export type SoftwareloadProgressStep = 'lookup' | 'transfer' | 'block'
 
@@ -1363,6 +1368,11 @@ export interface SoftwareloadBridge {
   status(): Promise<{ running: SoftwareloadTaskView | null; pending: SoftwareloadPending[]; isManager: boolean; writeEnabled: boolean }>
   /** Stops a running Stempelkort first (`stoppedTimeclock`); fails with SOFTWARELOAD_TIMECLOCK_LONG_RUN after 10 hours. */
   start(request: { type: SoftwareloadType; kif?: boolean; target: string; version: string }): Promise<SoftwareloadTaskView & { stoppedTimeclock?: { taskName: string; workedMs: number } }>
+  /**
+   * Corrects the own running task's choices with the same rules as start; the change is kept in the task's `edits`.
+   * `taskId` is the task shown; another (or none) running refuses it with SOFTWARELOAD_NOT_RUNNING.
+   */
+  edit(request: { type: SoftwareloadType; kif?: boolean; target: string; version: string; taskId: string }): Promise<SoftwareloadTaskView>
   /** `taskId` is the task the scan belongs to; another running task refuses it with SOFTWARELOAD_NOT_RUNNING. */
   scan(request: { serial: string; taskId: string }): Promise<{ serial: string; count: number }>
   unscan(request: { serial: string; taskId: string }): Promise<{ serial: string; count: number }>

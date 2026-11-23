@@ -172,6 +172,7 @@ contextBridge.exposeInMainWorld('electronWarehouse', {
   softwareload: {
     status: () => warehouse('softwareload:status'),
     start: request => warehouse('softwareload:start', request),
+    edit: request => warehouse('softwareload:edit', request),
     scan: request => warehouse('softwareload:scan', request),
     unscan: request => warehouse('softwareload:unscan', request),
     markFailed: request => warehouse('softwareload:mark-failed', request),

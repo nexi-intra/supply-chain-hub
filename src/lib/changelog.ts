@@ -18,6 +18,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Lagerstyring hedder nu Arbejdsværktøjer og samler Stempelkort, Placeringer, Optælling og Softwareload',
       'Nyt værktøj i TCD og TRR: Softwareload. Vælg type (Softwareload + keyload, Softwareload eller Keyload), I KIF eller uden for KIF, mål og softwareversion, og scan de terminaler, du loader. Når du afslutter, viser appen grupperne, og efter din bekræftelse flytter den alle terminalerne i SAP i én omgang',
       'Softwareload: markér en terminal som fejlet med en note. Ved afslutningen går en ny terminal (-0) til D000 og blocked stock, og en brugt (-R) går til D002. I KIF går alt via D005',
+      'Softwareload: er en opgave oprettet forkert, retter du type, KIF, mål og softwareversion med "Ret opgave", mens den kører. Afslutningen bruger de nye valg, og rettelsen står ved opgaven i statistikken',
       'Softwareload: "Flyt ind i KIF" flytter terminaler til D005 i forvejen, ud fra serienumre eller et materialedokument',
       'Softwareload: søg på et serienummer på tværs af TCD og TRR og se, hvem der loadede det og hvornår, type, software, KIF og materialedokumenterne. Statistikken viser tider og terminaler i timen. Managere ser hele teamet, og medarbejdere ser sig selv',
       'Softwareload: bliver SAP lukket under en afslutning, venter opgaven under "Venter på SAP" og kan fortsættes derfra. En manager kan opgive den med en begrundelse',

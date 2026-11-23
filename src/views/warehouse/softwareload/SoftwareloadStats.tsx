@@ -13,7 +13,7 @@ import { errorMessage } from '@/lib/warehouse/errors'
 import { formatDateTime, formatTime } from '@/lib/warehouse/format'
 import { currentWarehouseLanguage, t, warehouseLocale } from '@/lib/warehouse/text'
 import { cn } from '@/lib/utils'
-import type { SoftwareloadTask } from '@/types/warehouse'
+import type { SoftwareloadChoice, SoftwareloadTask } from '@/types/warehouse'
 import { ErrorLine, isProblem, label } from './common'
 
 type Period = PeriodKind | 'custom'
@@ -233,6 +233,9 @@ function TaskList({ tasks }: { tasks: SoftwareloadTask[] }) {
                       <td />
                       <td colSpan={8} className="px-4 py-3">
                         {task.abandoned && <p className="mb-2 text-xs text-destructive">{t(`Flytningerne blev opgivet af ${task.abandoned.by}: ${task.abandoned.reason}`, `The moves were given up by ${task.abandoned.by}: ${task.abandoned.reason}`)}</p>}
+                        {task.edits?.map(item => (
+                          <p key={item.at} className="mb-2 text-xs text-muted-foreground">{t(`Rettet kl. ${formatTime(item.at)}: ${choiceText(item.from)} → ${choiceText(item.to)}`, `Edited at ${formatTime(item.at)}: ${choiceText(item.from)} → ${choiceText(item.to)}`)}</p>
+                        ))}
                         <SerialList task={task} />
                       </td>
                     </tr>
@@ -246,6 +249,9 @@ function TaskList({ tasks }: { tasks: SoftwareloadTask[] }) {
     </Card>
   )
 }
+
+/** One set of choices in a line, e.g. "Softwareload, I KIF, D006 · Forecast Prep (TCD), 2.4.1". */
+const choiceText = (choice: SoftwareloadChoice) => [label(TYPE_LABELS[choice.type]), choice.kif ? t('I KIF', 'In KIF') : t('uden for KIF', 'outside KIF'), targetLabel(choice.target), choice.version].join(', ')
 
 function SerialList({ task }: { task: SoftwareloadTask }) {
   const serials = Object.keys(task.terminals).sort((a, b) => task.terminals[a].at - task.terminals[b].at)

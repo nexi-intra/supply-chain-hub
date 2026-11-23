@@ -395,6 +395,94 @@ test('preview plans the moves without changing anything', async () => {
   assert.deepEqual([status.running.id, status.running.terminals.length, status.pending], ['t1', 2, []])
 })
 
+/** The person's running task as saved on M:. */
+const savedRunning = (ctx, user) => ctx.storeFor(user.team).getAsync(`aktiv-${crypto.createHash('sha256').update(user.email.toLowerCase()).digest('hex').slice(0, 16)}`, { skipCache: true })
+
+test('edit changes type, KIF, target and version of the running task and keeps the history', async () => {
+  const ctx = setup()
+  const svc = await startWith(ctx, TASK, ['A'])
+  ctx.tick(5 * MIN)
+  const editedAt = ctx.clock.now
+  const edited = await svc.edit(ANNA, { type: 'sw', kif: false, target: ' d002 ', version: ' v3.0 ', taskId: 't1' })
+  assert.deepEqual(
+    [edited.id, edited.type, edited.kif, edited.target, edited.version, edited.startedAt, edited.terminals.map(terminal => terminal.serial)],
+    ['t1', 'sw', false, 'D002', 'v3.0', editedAt - 5 * MIN, ['A']],
+  )
+  const { running } = await svc.status(ANNA)
+  assert.deepEqual([running.type, running.kif, running.target, running.version], ['sw', false, 'D002', 'v3.0'])
+  assert.deepEqual((await savedRunning(ctx, ANNA)).edits, [{
+    at: editedAt, by: 'anna@example.test',
+    from: { type: 'sw+key', kif: true, target: 'D006', version: 'v2.1.3' },
+    to: { type: 'sw', kif: false, target: 'D002', version: 'v3.0' },
+  }])
+  assert.deepEqual(await svc.versions(ANNA), ['v3.0', 'v2.1.3'], 'the new version is a suggestion too')
+
+  ctx.tick(MIN)
+  const same = await svc.edit(ANNA, { type: 'sw', target: 'D002', version: 'v3.0', taskId: 't1' })
+  assert.equal(same.target, 'D002')
+  assert.equal((await savedRunning(ctx, ANNA)).edits.length, 1, 'no change writes nothing')
+
+  await svc.edit(ANNA, { type: 'key', kif: true, target: 'D002', version: 'v3.0', taskId: 't1' })
+  const { edits } = await savedRunning(ctx, ANNA)
+  assert.deepEqual(edits.map(item => [item.at, item.from.type, item.from.kif, item.to.type, item.to.kif]), [[editedAt, 'sw+key', true, 'sw', false], [ctx.clock.now, 'sw', false, 'key', true]])
+})
+
+test('edit refuses a target outside the list and an empty version', async () => {
+  const ctx = setup()
+  const svc = await startWith(ctx, TASK, [])
+  for (const target of ['D102', 'D5', '']) {
+    await assert.rejects(svc.edit(ANNA, { ...TASK, target, taskId: 't1' }), { code: 'SOFTWARELOAD_INVALID', message: 'Vælg en lokation fra listen' })
+  }
+  await assert.rejects(svc.edit(ANNA, { ...TASK, version: '   ', taskId: 't1' }), { code: 'SOFTWARELOAD_INVALID', message: 'Skriv softwareversionen' })
+  await assert.rejects(svc.edit(ANNA, { ...TASK, type: 'firmware', taskId: 't1' }), { code: 'SOFTWARELOAD_INVALID' })
+  const saved = await savedRunning(ctx, ANNA)
+  assert.deepEqual([saved.type, saved.kif, saved.target, saved.version, saved.edits], ['sw+key', true, 'D006', 'v2.1.3', undefined])
+  assert.deepEqual(await svc.versions(ANNA), ['v2.1.3'])
+})
+
+test('edit without a running task is refused, and a pending task cannot be edited', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
+  sap.throwWhen = kind => kind === 'lookup'
+  const ctx = setup({ sap })
+  const svc = ctx.service()
+  await assert.rejects(svc.edit(ANNA, { ...TASK, version: 'v3' }), { code: 'SOFTWARELOAD_NOT_RUNNING' })
+  await svc.start(BO, TASK)
+  await assert.rejects(svc.edit(ANNA, { ...TASK, version: 'v3' }), { code: 'SOFTWARELOAD_NOT_RUNNING' }, 'another person\'s task is not mine to edit')
+  assert.equal((await svc.status(BO)).running.version, 'v2.1.3')
+
+  await svc.start(ANNA, TASK)
+  await svc.scan(ANNA, { serial: 'A', taskId: 't2' })
+  await assert.rejects(svc.finish(ANNA, {}), { code: 'SAP_NOT_READY' })
+  await assert.rejects(svc.edit(ANNA, { ...TASK, target: 'D004', taskId: 't2' }), { code: 'SOFTWARELOAD_NOT_RUNNING' })
+  const pending = await ctx.storeFor('TCD').getAsync('venter-t2', { skipCache: true })
+  assert.deepEqual([pending.target, pending.edits], ['D006', undefined])
+
+  await svc.start(ANNA, { ...TASK, version: 'v4' })
+  await assert.rejects(svc.edit(ANNA, { ...TASK, target: 'D004', taskId: 't2' }), { code: 'SOFTWARELOAD_NOT_RUNNING' }, 'an edit for an ended task never lands in the next one')
+  assert.equal((await svc.status(ANNA)).running.target, 'D006')
+})
+
+test('finish uses the edited target and KIF', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' }, B: { material: 'M-R', sloc: 'D000' } })
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, TASK, ['A'])
+  await svc.edit(ANNA, { type: 'sw', kif: false, target: 'D004', version: 'v3', taskId: 't1' })
+  const result = await svc.finish(ANNA, {})
+  assert.deepEqual(transfers(sap), [['D004', ['A']]], 'outside KIF: straight to the new target, not via D005')
+  assert.deepEqual(result.counts, { 'to-target': 1 })
+  const task = (await ctx.finished('2026-11')).t1
+  assert.deepEqual([task.type, task.kif, task.target, task.version, task.edits.length], ['sw', false, 'D004', 'v3', 1])
+  const [line] = await allIndexLines(ctx)
+  assert.deepEqual([line.type, line.kif, line.version, line.to], ['sw', false, 'v3', 'D004'])
+
+  sap.calls.length = 0
+  const started = await svc.start(ANNA, { ...TASK, kif: false })
+  await svc.scan(ANNA, { serial: 'B', taskId: started.id })
+  await svc.edit(ANNA, { ...TASK, kif: true, taskId: started.id })
+  await svc.finish(ANNA, {})
+  assert.deepEqual(transfers(sap), [['D005', ['B']], ['D006', ['B']]], 'put in KIF afterwards: the whole task goes via D005')
+})
+
 test('finish in KIF moves via D005 and records every document per serial', async () => {
   const sap = fakeSap({ A: { material: 'M-0', sloc: 'D000' }, B: { material: 'M-R', sloc: 'D000' } })
   const ctx = setup({ sap })

@@ -314,6 +314,17 @@ const WAREHOUSE_MODULE = {
       notes: 'Når opgaven afsluttes, går en ny terminal (materialet ender på -0) til D000 og blocked stock, og en brugt (-R) går til D002. I KIF går de via D005. Er materialet hverken -0 eller -R, skal terminalen håndteres manuelt.',
     },
     {
+      id: 'softwareload-edit',
+      title: 'Ret en kørende opgave',
+      keywords: ['ret en koerende', 'rette en koerende', 'retter en koerende', 'koerende softwareload', 'koerende softwareload opgave', 'ret typen', 'rette typen', 'retter typen', 'ret maalet', 'rette maalet', 'retter maalet', 'ret versionen', 'rette versionen', 'retter versionen', 'ret softwareversionen', 'rette softwareversionen', 'retter softwareversionen', 'aendr maalet', 'aendre maalet', 'aendrer maalet', 'oprettet forkert', 'startet forkert', 'forkert maal', 'forkert softwareversion', 'correct a running', 'correct the running', 'edit a running', 'edit the running', 'running softwareload', 'running softwareload task', 'change the target', 'wrong target', 'created wrong', 'started wrong', 'korjaa kaeynnissae', 'korjaan kaeynnissae', 'korjata kaeynnissae', 'korjaan kaeynnissae olevan', 'korjaa kaeynnissae oleva', 'kaeynnissae olevan softwareload', 'kaeynnissae oleva softwareload', 'kaeynnissae olevaa softwareload', 'olevan softwareload tehtaevaen', 'oleva softwareload tehtaevae', 'korjaa softwareload', 'korjaan softwareload', 'korjata softwareload', 'muuta kohde', 'muutan kohteen', 'muuttaa kohteen', 'vaeaerae kohde', 'vaeaeraen kohteen', 'luotu vaeaerin', 'luotiin vaeaerin', 'raetta en paagaaende', 'raettar en paagaaende', 'paagaaende softwareload', 'paagaaende softwareload uppgift', 'raetta softwareload', 'raettar softwareload', 'aendra maalet', 'aendrar maalet', 'fel maal', 'skapad fel', 'skapades fel'],
+      steps: [
+        'Klik "Ret opgave" på din igangværende opgave under "Min opgave". Knappen virker, når alle scanninger er gemt.',
+        'Ret typen, "I KIF" eller "Uden for KIF", målet og softwareversionen. Felterne er de samme som ved start og er udfyldt med det, du valgte.',
+        'Klik "Gem rettelsen". Opgaven viser de nye valg, og tiden og de scannede serienumre bliver stående.',
+      ],
+      notes: 'Du kan rette, så længe opgaven kører, og indtil du klikker "Afslut opgave". Intet er flyttet i SAP før da, så afslutningen bruger de nye valg. Vælger du "I KIF" ved rettelsen, går hele opgaven via D005. En opgave, der venter på SAP, kan ikke rettes. Rettelsen står i statistikken ved opgaven.',
+    },
+    {
       id: 'softwareload-finish',
       title: 'Afslut og flyt i SAP',
       // Continuing in SAP is only matched with a Softwareload word ("venter på SAP", the button "Fortsæt i SAP"); Optælling also continues in SAP.

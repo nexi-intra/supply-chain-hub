@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowCounterClockwise, Barcode, CheckCircle, Clock, Pause, Play, Trash, Warning, X } from '@phosphor-icons/react'
+import { ArrowCounterClockwise, Barcode, CheckCircle, Clock, Pause, PencilSimple, Play, Trash, Warning, X } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
@@ -18,7 +18,7 @@ import { formatTime, type Tone } from '@/lib/warehouse/format'
 import { playTone } from '@/lib/warehouse/sound'
 import { currentWarehouseLanguage, t } from '@/lib/warehouse/text'
 import { cn } from '@/lib/utils'
-import type { SoftwareloadTaskView, SoftwareloadType } from '@/types/warehouse'
+import type { SoftwareloadChoice, SoftwareloadTaskView } from '@/types/warehouse'
 import { ErrorLine, label, SERIAL_PATTERN, cleanSerial, useReportBusy, type ReportBusy } from './common'
 
 const LAST_START_KEY = 'softwareload-last-start'
@@ -62,7 +62,9 @@ export function SoftwareloadTask({ email, running, receivedAt, active, onRunning
   )
 }
 
-type LastStart = { type: SoftwareloadType; kif: boolean; target: string }
+/** The choices of a task: chosen at start and corrected with "Ret opgave" while it runs. */
+type Choice = SoftwareloadChoice
+type LastStart = Omit<Choice, 'version'>
 
 function readLastStart(): LastStart {
   try {
@@ -74,33 +76,86 @@ function readLastStart(): LastStart {
   }
 }
 
-function StartForm({ onStarted, reload, onOpenTimeclock }: { onStarted: (view: SoftwareloadTaskView, stopped?: Stopped) => void; reload: () => Promise<void>; onOpenTimeclock: () => void }) {
-  const [last] = useState(readLastStart)
-  const [type, setType] = useState<SoftwareloadType>(last.type)
-  const [kif, setKif] = useState(last.kif)
-  const [target, setTarget] = useState(last.target)
-  const [version, setVersion] = useState('')
-  const [versions, setVersions] = useState<string[]>([])
-  const [busy, setBusy] = useState(false)
-  const [problem, setProblem] = useState<string | null>(null)
-  const [longRun, setLongRun] = useState<string | null>(null)
+function rememberLastStart({ type, kif, target }: Choice) {
+  try { localStorage.setItem(LAST_START_KEY, JSON.stringify({ type, kif, target })) } catch { /* only a convenience */ }
+}
 
+/** What is missing before the choices can be sent, or null. */
+function choiceProblem({ target, version }: Choice): string | null {
+  if (!target) return t('Vælg målet.', 'Choose the target.')
+  if (!version.trim()) return t('Skriv softwareversionen.', 'Write the software version.')
+  return null
+}
+
+/** The hub's latest versions, newest first, as suggestions for the version field. */
+function useVersions() {
+  const [versions, setVersions] = useState<string[]>([])
   useEffect(() => {
     let current = true
     window.electronWarehouse!.softwareload.versions().then(list => { if (current) setVersions(list) }).catch(() => {})
     return () => { current = false }
   }, [])
+  return versions
+}
+
+/** Type, I KIF or Uden for KIF, the target and the version; the same fields at start and in "Ret opgave". */
+function ChoiceFields({ value, onChange, versions, idPrefix, onEnter }: { value: Choice; onChange: (value: Choice) => void; versions: string[]; idPrefix: string; onEnter: () => void }) {
+  const set = (change: Partial<Choice>) => onChange({ ...value, ...change })
+  return (
+    <>
+      <div className="space-y-2">
+        <Label>{t('Type', 'Type')}</Label>
+        <div className="flex flex-wrap gap-1 rounded-lg border bg-muted/40 p-1" role="radiogroup" aria-label={t('Type', 'Type')}>
+          {TYPES.map(item => (
+            <Button key={item} size="sm" role="radio" aria-checked={value.type === item} variant={value.type === item ? 'default' : 'ghost'} onClick={() => set({ type: item })}>{label(TYPE_LABELS[item])}</Button>
+          ))}
+        </div>
+      </div>
+      <div className="space-y-2">
+        <Label>{t('KIF', 'KIF')}</Label>
+        <div className="flex flex-wrap gap-1 rounded-lg border bg-muted/40 p-1" role="radiogroup" aria-label={t('KIF', 'KIF')}>
+          <Button size="sm" role="radio" aria-checked={value.kif} variant={value.kif ? 'default' : 'ghost'} onClick={() => set({ kif: true })}>{t('I KIF', 'In KIF')}</Button>
+          <Button size="sm" role="radio" aria-checked={!value.kif} variant={!value.kif ? 'default' : 'ghost'} onClick={() => set({ kif: false })}>{t('Uden for KIF', 'Outside KIF')}</Button>
+        </div>
+        <p className="text-xs text-muted-foreground">{value.kif
+          ? t('Alle terminaler flyttes via D005, før de kommer til målet.', 'Every terminal is moved via D005 before it reaches the target.')
+          : t('Terminalerne flyttes direkte til målet. Dem der allerede står der, springes over.', 'The terminals are moved straight to the target. Those already there are skipped.')}</p>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-2">
+          <Label htmlFor={`${idPrefix}-target`}>{t('Mål (storage location)', 'Target (storage location)')}</Label>
+          <NativeSelect id={`${idPrefix}-target`} value={value.target} onChange={event => set({ target: event.target.value })} className="w-full">
+            <option value="" disabled>{t('Vælg en lokation', 'Choose a location')}</option>
+            {SOFTWARELOAD_TARGETS.map(item => <option key={item.sloc} value={item.sloc}>{targetLabel(item.sloc)}</option>)}
+          </NativeSelect>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor={`${idPrefix}-version`}>{t('Softwareversion', 'Software version')}</Label>
+          <Input id={`${idPrefix}-version`} list={`${idPrefix}-versions`} value={value.version} maxLength={60} autoComplete="off" onChange={event => set({ version: event.target.value })} onKeyDown={event => { if (event.key === 'Enter') onEnter() }} placeholder={versions[0] || t('Fx 2.4.1', 'E.g. 2.4.1')} />
+          <datalist id={`${idPrefix}-versions`}>{versions.map(item => <option key={item} value={item} />)}</datalist>
+        </div>
+      </div>
+    </>
+  )
+}
+
+function StartForm({ onStarted, reload, onOpenTimeclock }: { onStarted: (view: SoftwareloadTaskView, stopped?: Stopped) => void; reload: () => Promise<void>; onOpenTimeclock: () => void }) {
+  const [choice, setChoice] = useState<Choice>(() => ({ ...readLastStart(), version: '' }))
+  const versions = useVersions()
+  const [busy, setBusy] = useState(false)
+  const [problem, setProblem] = useState<string | null>(null)
+  const [longRun, setLongRun] = useState<string | null>(null)
 
   const start = async () => {
     if (busy) return
-    if (!target) { setProblem(t('Vælg målet.', 'Choose the target.')); return }
-    if (!version.trim()) { setProblem(t('Skriv softwareversionen.', 'Write the software version.')); return }
-    setProblem(null)
+    const missing = choiceProblem(choice)
+    setProblem(missing)
+    if (missing) return
     setLongRun(null)
     setBusy(true)
     try {
-      const { stoppedTimeclock, ...view } = await window.electronWarehouse!.softwareload.start({ type, kif, target, version: version.trim() })
-      try { localStorage.setItem(LAST_START_KEY, JSON.stringify({ type, kif, target })) } catch { /* only a convenience */ }
+      const { stoppedTimeclock, ...view } = await window.electronWarehouse!.softwareload.start({ ...choice, version: choice.version.trim() })
+      rememberLastStart(choice)
       onStarted(view, stoppedTimeclock)
     } catch (error) {
       const code = errorCode(error)
@@ -122,38 +177,7 @@ function StartForm({ onStarted, reload, onOpenTimeclock }: { onStarted: (view: S
       </div>
 
       <div className="mx-auto grid w-full max-w-2xl gap-5">
-        <div className="space-y-2">
-          <Label>{t('Type', 'Type')}</Label>
-          <div className="flex flex-wrap gap-1 rounded-lg border bg-muted/40 p-1" role="radiogroup" aria-label={t('Type', 'Type')}>
-            {TYPES.map(item => (
-              <Button key={item} size="sm" role="radio" aria-checked={type === item} variant={type === item ? 'default' : 'ghost'} onClick={() => setType(item)}>{label(TYPE_LABELS[item])}</Button>
-            ))}
-          </div>
-        </div>
-        <div className="space-y-2">
-          <Label>{t('KIF', 'KIF')}</Label>
-          <div className="flex flex-wrap gap-1 rounded-lg border bg-muted/40 p-1" role="radiogroup" aria-label={t('KIF', 'KIF')}>
-            <Button size="sm" role="radio" aria-checked={kif} variant={kif ? 'default' : 'ghost'} onClick={() => setKif(true)}>{t('I KIF', 'In KIF')}</Button>
-            <Button size="sm" role="radio" aria-checked={!kif} variant={!kif ? 'default' : 'ghost'} onClick={() => setKif(false)}>{t('Uden for KIF', 'Outside KIF')}</Button>
-          </div>
-          <p className="text-xs text-muted-foreground">{kif
-            ? t('Alle terminaler flyttes via D005, før de kommer til målet.', 'Every terminal is moved via D005 before it reaches the target.')
-            : t('Terminalerne flyttes direkte til målet. Dem der allerede står der, springes over.', 'The terminals are moved straight to the target. Those already there are skipped.')}</p>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-2">
-            <Label htmlFor="sl-target">{t('Mål (storage location)', 'Target (storage location)')}</Label>
-            <NativeSelect id="sl-target" value={target} onChange={event => setTarget(event.target.value)} className="w-full">
-              <option value="" disabled>{t('Vælg en lokation', 'Choose a location')}</option>
-              {SOFTWARELOAD_TARGETS.map(item => <option key={item.sloc} value={item.sloc}>{targetLabel(item.sloc)}</option>)}
-            </NativeSelect>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="sl-version">{t('Softwareversion', 'Software version')}</Label>
-            <Input id="sl-version" list="sl-versions" value={version} maxLength={60} autoComplete="off" onChange={event => setVersion(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') void start() }} placeholder={versions[0] || t('Fx 2.4.1', 'E.g. 2.4.1')} />
-            <datalist id="sl-versions">{versions.map(item => <option key={item} value={item} />)}</datalist>
-          </div>
-        </div>
+        <ChoiceFields value={choice} onChange={setChoice} versions={versions} idPrefix="sl" onEnter={() => void start()} />
         {problem && <p role="alert" className="text-sm text-destructive">{problem}</p>}
         {longRun && (
           <div className="space-y-2">
@@ -223,6 +247,7 @@ function RunningTask({ email, running, receivedAt, active, stopped, onStopped, o
   const [busy, setBusy] = useState<string | null>(null)
   const [failing, setFailing] = useState<string | null>(null)
   const [askCancel, setAskCancel] = useState(false)
+  const [editing, setEditing] = useState(false)
   const [, setTick] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
   const queue = useRef<ScanJob[]>(waiting)
@@ -403,6 +428,7 @@ function RunningTask({ email, running, receivedAt, active, stopped, onStopped, o
               ? <Button size="lg" onClick={resume} loading={busy === 'resume'} disabled={busy !== null}><Play size={20} weight="fill" /> {t('Fortsæt', 'Resume')}</Button>
               : <Button size="lg" variant="outline" onClick={pause} loading={busy === 'pause'} disabled={busy !== null}><Pause size={20} weight="fill" /> {t('Pause', 'Break')}</Button>}
             <Button size="lg" onClick={onFinish} disabled={busy !== null || saving} title={saving ? t('Venter på at scanningerne er gemt', 'Waiting for the scans to be saved') : undefined}><CheckCircle size={20} weight="fill" /> {t('Afslut opgave', 'Finish task')}</Button>
+            <Button size="lg" variant="outline" onClick={() => setEditing(true)} disabled={busy !== null || saving} title={saving ? t('Venter på at scanningerne er gemt', 'Waiting for the scans to be saved') : undefined}><PencilSimple size={18} /> {t('Ret opgave', 'Edit task')}</Button>
             <Button size="lg" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => setAskCancel(true)} loading={busy === 'cancel'} disabled={busy !== null || saving}><Trash size={18} /> {t('Annullér', 'Cancel')}</Button>
           </div>
         </div>
@@ -462,6 +488,7 @@ function RunningTask({ email, running, receivedAt, active, stopped, onStopped, o
       </Card>
 
       {failing && <FailDialog serial={failing} onClose={() => { setFailing(null); inputRef.current?.focus() }} onSaved={view => { setFailing(null); onRunning(view); inputRef.current?.focus() }} />}
+      {editing && <EditDialog running={running} reload={reload} onClose={() => { setEditing(false); inputRef.current?.focus() }} onSaved={view => { setEditing(false); onRunning(view); inputRef.current?.focus() }} />}
 
       <AlertDialog open={askCancel} onOpenChange={setAskCancel}>
         <AlertDialogContent>
@@ -507,6 +534,49 @@ function FailDialog({ serial, onClose, onSaved }: { serial: string; onClose: () 
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={saving}>{t('Annullér', 'Cancel')}</Button>
           <Button onClick={save} loading={saving} disabled={!note.trim()}><Warning size={16} /> {t('Markér som fejlet', 'Mark as failed')}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/** Corrects the running task's type, KIF, target and version. Nothing is moved in SAP before "Afslut", so all four may change. */
+function EditDialog({ running, reload, onClose, onSaved }: { running: SoftwareloadTaskView; reload: () => Promise<void>; onClose: () => void; onSaved: (view: SoftwareloadTaskView) => void }) {
+  const [choice, setChoice] = useState<Choice>({ type: running.type, kif: running.kif, target: running.target, version: running.version })
+  const versions = useVersions()
+  const [saving, setSaving] = useState(false)
+  const [problem, setProblem] = useState<string | null>(null)
+  const save = async () => {
+    if (saving) return
+    const missing = choiceProblem(choice)
+    setProblem(missing)
+    if (missing) return
+    setSaving(true)
+    try {
+      const view = await window.electronWarehouse!.softwareload.edit({ ...choice, version: choice.version.trim(), taskId: running.id })
+      rememberLastStart(choice)
+      onSaved(view)
+      toast.success(t('Opgaven er rettet', 'The task is corrected'))
+    } catch (error) {
+      toast.error(errorMessage(error))
+      setSaving(false)
+      void reload()
+    }
+  }
+  return (
+    <Dialog open onOpenChange={open => { if (!open && !saving) onClose() }}>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{t('Ret opgaven', 'Edit the task')}</DialogTitle>
+          <DialogDescription>{t('Ret det, der blev valgt forkert. Intet er flyttet i SAP endnu, så afslutningen bruger de nye valg. Tiden og de scannede serienumre bliver stående.', 'Correct what was chosen wrong. Nothing is moved in SAP yet, so finishing uses the new choices. The time and the scanned serial numbers stay.')}</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-5">
+          <ChoiceFields value={choice} onChange={setChoice} versions={versions} idPrefix="sl-edit" onEnter={() => void save()} />
+          {problem && <p role="alert" className="text-sm text-destructive">{problem}</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} disabled={saving}>{t('Annullér', 'Cancel')}</Button>
+          <Button onClick={save} loading={saving}><PencilSimple size={16} /> {t('Gem rettelsen', 'Save the correction')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

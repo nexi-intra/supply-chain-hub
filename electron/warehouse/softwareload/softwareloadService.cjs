@@ -319,6 +319,28 @@ function createSoftwareloadService({
   }
 
   /**
+   * Corrects the choices of the person's own running task: the same rules as at start, and every change is kept in
+   * `edits` with what it was before. Nothing is moved in SAP yet, so finishing uses the corrected values. A task that
+   * waits for SAP is no longer running and cannot be edited; with `taskId` an edit for an ended task is refused.
+   */
+  async function edit(user, input = {}) {
+    const chosen = choice(input)
+    if (finishing.has(lower(user.email))) throw codeError('SOFTWARELOAD_BUSY', 'Opgaven er ved at blive afsluttet')
+    let before = null
+    const edited = await changeRunning(user, current => {
+      if (input.taskId !== undefined && current.id !== input.taskId) throw codeError('SOFTWARELOAD_NOT_RUNNING', 'Opgaven kører ikke længere')
+      before = current
+      const from = { type: current.type, kif: current.kif, target: current.target, version: current.version }
+      if (Object.keys(chosen).every(key => chosen[key] === from[key])) return undefined
+      return { ...current, ...chosen, edits: [...(current.edits || []), { at: now(), by: lower(user.email), from, to: chosen }] }
+    })
+    if (edited && chosen.version !== before.version) {
+      await rememberVersion(user, chosen.version).catch(() => { /* only suggestions; the edit is saved */ })
+    }
+    return view(edited || before)
+  }
+
+  /**
    * Scans and unscans name their task: a scan the screen kept for a task that has since ended must never land in the
    * next one, so another id (or none) is refused as not running.
    */
@@ -949,7 +971,7 @@ function createSoftwareloadService({
   }
 
   return {
-    status, start, scan, unscan, markFailed, unmarkFailed,
+    status, start, edit, scan, unscan, markFailed, unmarkFailed,
     pause: user => changePause(user, true), resume, pauseIfRunning,
     cancel, versions, preview, finish, continueFinish, abandon, kifPreview, kifMove, search, tasks, isManager,
   }

@@ -393,6 +393,7 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   const softwareloadProgress = user => progress => emit('softwareload-progress', { email: user.email, ...progress })
   handle('softwareload:status', user => softwareload.status(user))
   handle('softwareload:start', (user, p) => softwareload.start(user, { type: p.type, kif: p.kif === true, target: p.target, version: p.version }))
+  handle('softwareload:edit', (user, p) => softwareload.edit(user, { type: p.type, kif: p.kif === true, target: p.target, version: p.version, taskId: p.taskId }))
   handle('softwareload:scan', (user, p) => softwareload.scan(user, { serial: p.serial, taskId: p.taskId }))
   handle('softwareload:unscan', (user, p) => softwareload.unscan(user, { serial: p.serial, taskId: p.taskId }))
   handle('softwareload:mark-failed', (user, p) => softwareload.markFailed(user, { serial: p.serial, note: p.note }))
