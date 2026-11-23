@@ -84,12 +84,18 @@ test('Optælling tasks follow Optælling\'s own roles: an admin gets "Læg antal
     assert.doesNotMatch(asked('hvordan lægger jeg antal på SAP-dokumentet?', countRole), SAP_DOC, String(countRole))
     assert.doesNotMatch(asked('hvordan starter jeg en status?', countRole), START, String(countRole))
   }
-  // Who may enter quantities: a plain user gets the roles answer, never the managers' SAP document steps; an admin or a
-  // status manager, who may read those steps, gets them.
-  const roles = asked('hvem må lægge antal på?', 'user')
-  assert.doesNotMatch(roles, SAP_DOC)
-  assert.match(roles, /^Roller og hvem der kan hvad/)
-  for (const countRole of ['admin', 'status-manager']) assert.match(asked('hvem må lægge antal på?', countRole), SAP_DOC, countRole)
+  // Who may enter quantities, and appointing a role (only managers do it): everyone else gets the roles in Optælling and
+  // Placeringer, never the managers' SAP document steps.
+  const INFO = /^Arbejdsværktøjer - Roller i Optælling og Placeringer\n[\s\S]*"Læg antal på"[\s\S]*Kun managere udnævner/
+  for (const question of ['hvem må lægge antal på?', 'hvordan udnævner jeg en status manager?', 'hvordan udnævner jeg en admin?']) {
+    for (const countRole of ['user', 'admin', 'status-manager']) {
+      const text = asked(question, countRole)
+      assert.match(text, INFO, `${countRole}: ${question}`)
+      assert.doesNotMatch(text, SAP_DOC, `${countRole}: ${question}`)
+    }
+    assert.match(asked(question, null, 'boss'), /^Arbejdsværktøjer - Udnævn admin, status manager eller Placerings admin/, `Hub manager: ${question}`)
+  }
+  assert.match(asked('hvordan låser jeg et materiale?', 'user'), /^Arbejdsværktøjer - Tæl et materiale og send det til godkendelse/)
 })
 
 test('everyday phrasings of locking a status and posting the difference reach their task, for a status manager and a Hub manager', () => {

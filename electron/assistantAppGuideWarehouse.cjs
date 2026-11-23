@@ -96,7 +96,7 @@ const WAREHOUSE_MODULE = {
     {
       id: 'submit-material',
       title: 'Tæl et materiale og send det til godkendelse',
-      keywords: ['send til godkendelse', 'sende til godkendelse', 'sender til godkendelse', 'materiale i fokus', 'laas et materiale', 'laase et materiale', 'taelles af', 'submit for approval', 'send for approval', 'material in focus', 'lock a material', 'laehetae hyvaeksyttaevaeksi', 'laehetaen hyvaeksyttaevaeksi', 'skicka foer godkaennande', 'skickar foer godkaennande'],
+      keywords: ['send til godkendelse', 'sende til godkendelse', 'sender til godkendelse', 'materiale i fokus', 'laas et materiale', 'laase et materiale', 'laaser jeg et materiale', 'taelles af', 'submit for approval', 'send for approval', 'material in focus', 'lock a material', 'laehetae hyvaeksyttaevaeksi', 'laehetaen hyvaeksyttaevaeksi', 'skicka foer godkaennande', 'skickar foer godkaennande'],
       steps: [
         'Vælg materialet under "Materiale i fokus". Materialet låses til dig, så ingen andre tæller det samtidig.',
         'Scan eller tæl materialet færdigt. Vil du hjælpe en kollega, klik "Anmod om at tælle med".',
@@ -183,14 +183,26 @@ const WAREHOUSE_MODULE = {
       title: 'Udnævn admin, status manager eller Placerings admin',
       requires: MANAGER,
       preferred: true,
-      userTask: 'sap-documents',
-      keywords: ['udnaevn en admin', 'udnaevne en admin', 'status manager', 'admin i optaelling', 'optaellingsroller', 'hvem maa laegge antal paa', 'appoint an admin', 'appoint a status manager', 'stock count roles', 'who can enter quantities', 'nimeae admin', 'nimitaen adminin', 'inventoinnin roolit', 'utse en admin', 'utser en admin', 'inventeringsroller', 'placerings admin', 'placeringsadmin', 'lagerstyringsroller', 'location admin', 'warehouse roles', 'sijaintien admin', 'varastonhallinnan roolit', 'lagerstyrningsroller'],
+      userTask: 'warehouse-roles-info',
+      keywords: ['udnaevn en admin', 'udnaevne en admin', 'udnaevner jeg en admin', 'status manager', 'admin i optaelling', 'optaellingsroller', 'hvem maa laegge antal paa', 'appoint an admin', 'appoint a status manager', 'stock count roles', 'who can enter quantities', 'nimeae admin', 'nimitaen adminin', 'inventoinnin roolit', 'utse en admin', 'utser en admin', 'inventeringsroller', 'placerings admin', 'placeringsadmin', 'lagerstyringsroller', 'location admin', 'warehouse roles', 'sijaintien admin', 'varastonhallinnan roolit', 'lagerstyrningsroller'],
       steps: [
         'Åbn "Manager Panel" og vælg fanen "Rettigheder". Kortet "Roller i Arbejdsværktøjer" vises kun i TCD- og TRR-hubben.',
         'Under "Optælling": vælg "Admin" ved en kollega, der skal være med i alle optællinger uden at anmode, godkende deltagere og lægge antal og serienumre på SAP-dokumenter, eller "Status manager" ved en, der skal have samme rettigheder som en manager i Optælling.',
         'Under "Placeringer": vælg "Placerings admin" ved en kollega, der må vedligeholde placeringer og fortryde handlinger i loggen.',
       ],
       notes: 'Kun managere kan ændre rollerne, og managere har altid alle rettigheder. Den, der opretter et SAP-dokument, kan aldrig selv lægge antal på det. En status manager er ikke Placerings admin af den grund.',
+    },
+    {
+      // What an employee, admin or status manager is told when asking about the roles (only managers appoint them).
+      id: 'warehouse-roles-info',
+      title: 'Roller i Optælling og Placeringer',
+      keywords: ['roller i optaelling', 'roller i optaellingen', 'roller i placeringer', 'hvad maa en admin', 'hvad maa en status manager', 'what can an admin do', 'what can a status manager do', 'mitae admin saa tehdae', 'mitae status manager saa tehdae', 'vad faar en admin goera', 'vad faar en status manager goera'],
+      steps: [
+        'Admin i Optælling: er med i alle optællinger uden at anmode, godkender deltagere og lægger antal og serienumre på SAP-dokumenter med "Læg antal på". Det er altid en anden end den, der oprettede dokumentet.',
+        'Status manager: har samme rettigheder som en manager i Optælling, fx at starte, låse og slette en status, godkende materialer og bogføre SAP-dokumenter.',
+        'Placerings admin: må vedligeholde placeringer og fortryde handlinger i loggen i Placeringer.',
+      ],
+      notes: 'Kun managere udnævner de tre roller (i "Manager Panel" under "Rettigheder"). Spørg din manager, hvis du skal have en af dem.',
     },
     {
       id: 'locations-put-away',
