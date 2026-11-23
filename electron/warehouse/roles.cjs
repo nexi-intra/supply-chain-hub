@@ -38,14 +38,16 @@ function createRoles({ storeFor, listTeamUsers, now = Date.now }) {
     return next
   }
 
-  /** 'manager' (from the Hub), 'status-manager' or 'admin' (appointed in CountPoint) or 'user'. */
-  async function roleOf(user) {
+  /**
+   * 'manager' (from the Hub), 'status-manager' or 'admin' (appointed in CountPoint) or 'user'. `unthrottled`: only for
+   * the role cache (register.cjs), which reads at most once per person at a time and gives a slow read 1 s; a queue
+   * for one of the store's shared read slots on a busy but working M: must not turn an admin into a plain user there.
+   * Other callers (roles:me, PI documents) have no such cap, so they stay in the queue.
+   */
+  async function roleOf(user, { unthrottled = false } = {}) {
     if (user.statusManager) return 'status-manager'
     if (isManager(user)) return 'manager'
-    // Not queued behind other reads for one of the store's shared read slots: the role cache gives a slow read 1 s
-    // (createRoleCache), and a queue on a busy but working M: must not turn an admin into a plain user. It is one small
-    // file, and the role cache reads it at most once per person at a time.
-    const { admins, statusManagers } = await read(user.team, { unthrottled: true })
+    const { admins, statusManagers } = await read(user.team, unthrottled ? { unthrottled: true } : undefined)
     const email = lower(user.email)
     return statusManagers[email] ? 'status-manager' : admins[email] ? 'admin' : 'user'
   }

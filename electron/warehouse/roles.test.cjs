@@ -266,3 +266,11 @@ test('role cache: the first read fails closed', async () => {
   source.fail = true
   assert.equal(await cache.roleOf(ANNA), 'user')
 })
+test('only the role cache reads the roles file outside the shared read slots; other callers stay throttled', async () => {
+  const seen = []
+  const store = { getAsync: async (key, options) => { seen.push(Boolean(options?.unthrottled)); return { admins: { 'anna@example.test': {} } } } }
+  const roles = createRoles({ storeFor: () => store, listTeamUsers: async team => TEAM_USERS[team] })
+  assert.equal(await roles.roleOf(ANNA), 'admin')
+  assert.equal(await roles.roleOf(ANNA, { unthrottled: true }), 'admin')
+  assert.deepEqual(seen, [false, true])
+})

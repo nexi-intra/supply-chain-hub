@@ -212,7 +212,7 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   const roles = createRoles({ storeFor, listTeamUsers })
   // The CountPoint role is cached 30 s like the user list, but fails closed: never older than 60 s (roles.cjs).
   // Date.now is read per call, so tests can move the clock.
-  const roleCache = createRoleCache({ roleOf: user => roles.roleOf(user), now: () => Date.now() })
+  const roleCache = createRoleCache({ roleOf: user => roles.roleOf(user, { unthrottled: true }), now: () => Date.now() })
   const cachedRoleOf = user => roleCache.roleOf(user)
   const dropRoles = () => roleCache.drop()
   const piDocs = createPiDocService({
