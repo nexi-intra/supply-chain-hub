@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, ArrowsClockwise, CheckCircle } from '@phosphor-icons/react'
+import { toast } from 'sonner'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { finishTitle, previewGroups, sapRunErrorMessage, targetLabel, TYPE_LABELS, type PreviewGroups } from '@/lib/softwareload'
-import { errorMessage } from '@/lib/warehouse/errors'
+import { errorCode, errorMessage } from '@/lib/warehouse/errors'
 import { t } from '@/lib/warehouse/text'
 import { cn } from '@/lib/utils'
 import type { SoftwareloadFinishResult, SoftwareloadPreview, SoftwareloadSapRow, SoftwareloadTaskView, WarehouseUser } from '@/types/warehouse'
@@ -68,14 +69,20 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
   const finish = async () => {
     setConfirming(false)
     // The dialog closes with an animation, so its button can be pressed twice; the second press must not touch this run.
-    if (inFlight.current) return
+    if (inFlight.current || !preview) return
     inFlight.current = true
     setFinishError(null)
     resetProgress()
     setMoving(true)
     try {
-      setResult(await window.electronWarehouse!.softwareload.finish())
+      // Only what this preview showed may be moved; a task edited since is refused, and the new plan is shown instead.
+      setResult(await window.electronWarehouse!.softwareload.finish({ taskId: preview.taskId, choice: preview.choice }))
     } catch (error) {
+      if (errorCode(error) === 'SOFTWARELOAD_CHANGED') {
+        toast.warning(errorMessage(error))
+        void loadPreview()
+        return
+      }
       // Some refusals come before the time stops; anything later leaves the task waiting for SAP. The status tells which.
       const now = await window.electronWarehouse!.softwareload.status().catch(() => null)
       setFinishError({ text: sapRunErrorMessage(error), stillRunning: now?.running?.id === task?.id })
@@ -94,12 +101,14 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
       </Card>
     )
   }
+  // The plan was made with the choices the task had when SAP was asked; those are shown, confirmed and moved with.
+  const shown = preview ? { ...task, ...preview.choice } : task
 
   if (result) {
     return (
       <div className="space-y-4">
         <ResultCard title={finishTitle(result.results)} counts={result.counts} results={result.results} notes={notes}>
-          <p className="text-sm text-muted-foreground">{label(TYPE_LABELS[task.type])} · {task.kif ? t('I KIF', 'In KIF') : t('Uden for KIF', 'Outside KIF')} · {t('Mål', 'Target')} {targetLabel(task.target)} · {t('Version', 'Version')} {task.version}</p>
+          <p className="text-sm text-muted-foreground">{label(TYPE_LABELS[shown.type])} · {shown.kif ? t('I KIF', 'In KIF') : t('Uden for KIF', 'Outside KIF')} · {t('Mål', 'Target')} {targetLabel(shown.target)} · {t('Version', 'Version')} {shown.version}</p>
         </ResultCard>
         <Button onClick={onBack}><CheckCircle size={18} /> {t('Færdig', 'Done')}</Button>
       </div>
@@ -129,9 +138,10 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
           <Button variant="outline" onClick={onBack} disabled={moving}><ArrowLeft size={18} /> {t('Tilbage til opgaven', 'Back to the task')}</Button>
           <h2 className="text-lg font-semibold">{t('Afslut opgaven', 'Finish the task')}</h2>
           <span className="flex flex-wrap gap-2">
-            <Badge variant="secondary">{label(TYPE_LABELS[task.type])}</Badge>
-            <Badge variant="outline">{task.kif ? t('I KIF', 'In KIF') : t('Uden for KIF', 'Outside KIF')}</Badge>
-            <Badge variant="outline">{t('Mål', 'Target')} {targetLabel(task.target)}</Badge>
+            <Badge variant="secondary">{label(TYPE_LABELS[shown.type])}</Badge>
+            <Badge variant="outline">{shown.kif ? t('I KIF', 'In KIF') : t('Uden for KIF', 'Outside KIF')}</Badge>
+            <Badge variant="outline">{t('Mål', 'Target')} {targetLabel(shown.target)}</Badge>
+            <Badge variant="outline">{t('Version', 'Version')} {shown.version}</Badge>
           </span>
         </div>
         <p className="text-sm text-muted-foreground">{t('Appen har slået terminalerne op i SAP. Sådan bliver de flyttet. Intet er flyttet endnu, og tiden kører stadig.', 'The app has looked up the terminals in SAP. This is how they will be moved. Nothing is moved yet and the time is still running.')}</p>
@@ -142,7 +152,7 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
           </div>
         )}
         {!preview && !previewError && <Skeleton className="h-40 rounded-xl" />}
-        {preview && groups && <PlanSummary preview={preview} groups={groups} task={task} rowOf={rowOf} notes={notes} />}
+        {preview && groups && <PlanSummary preview={preview} groups={groups} task={shown} rowOf={rowOf} notes={notes} />}
         {moving && <ProgressBlock progress={progress} />}
         {preview && !moving && (
           <div className="space-y-2">
@@ -162,7 +172,7 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
             <ul className="space-y-1 text-sm">
               {GROUPS.filter(group => groups[group.key].length).map(group => (
                 <li key={group.key} className="flex justify-between gap-4">
-                  <span className={cn(group.problem && 'text-destructive')}>{group.title(task)}</span>
+                  <span className={cn(group.problem && 'text-destructive')}>{group.title(shown)}</span>
                   <span className="font-semibold tabular-nums">{groups[group.key].length}</span>
                 </li>
               ))}

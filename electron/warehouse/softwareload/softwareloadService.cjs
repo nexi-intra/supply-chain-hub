@@ -47,6 +47,12 @@ const pausedMs = (pauses, end) => pauses.reduce((sum, pause) => sum + Math.max(0
 const isPaused = task => { const open = task.pauses.at(-1); return Boolean(open && open.to == null) }
 const notRunning = () => codeError('SOFTWARELOAD_NOT_RUNNING', 'Der kører ikke nogen softwareload-opgave')
 const notPending = () => codeError('SOFTWARELOAD_NOT_PENDING', 'Opgaven venter ikke på SAP')
+/** The four choices of a task; finishing moves with exactly the ones the user confirmed in the preview. */
+const CHOICE_KEYS = ['type', 'kif', 'target', 'version']
+const choiceOf = task => Object.fromEntries(CHOICE_KEYS.map(key => [key, task[key]]))
+const sameChoice = (a, b) => Boolean(a && b) && CHOICE_KEYS.every(key => a[key] === b[key])
+const changedMeanwhile = () => codeError('SOFTWARELOAD_CHANGED', 'Opgaven er rettet imens. Se oversigten igen')
+const beingFinished = () => codeError('SOFTWARELOAD_BUSY', 'Opgaven er ved at blive afsluttet. Er afslutningen gået i stå, så afslut opgaven igen')
 const upper = value => String(value ?? '').trim().toUpperCase()
 const pad = number => String(number).padStart(2, '0')
 /** The local month of a moment (the PCs run Danish time). */
@@ -111,6 +117,7 @@ function stepsWithMark(result, row) {
 }
 
 const withoutMark = ({ uncertain, ...result } = {}) => result
+const withoutFinishing = ({ finishing, ...task }) => task
 const sameMove = (a, b) => Boolean(a && b) && (a.bwart ? a.bwart === b.bwart : a.from === b.from && a.to === b.to)
 
 /** A KIF move stopped midway: a terminal it still meant to move but never did is `interrupted`. */
@@ -249,11 +256,15 @@ function createSoftwareloadService({
 
   const readRunning = (user, options) => storeFor(user.team).getAsync(runningKey(user.email), options)
 
-  /** Changes the person's running task under its lock; `change` returns the new task. */
+  /**
+   * Changes the person's running task under its lock; `change` returns the new task. A task marked `finishing` is on its
+   * way to SAP, so nothing more may land in it: a change would be lost when the running file is deleted.
+   */
   async function changeRunning(user, change) {
     let next = null
     await storeFor(user.team).mutateAsync(runningKey(user.email), current => {
       if (!current) throw notRunning()
+      if (current.finishing) throw beingFinished()
       next = change(current)
       return next
     })
@@ -321,17 +332,17 @@ function createSoftwareloadService({
   /**
    * Corrects the choices of the person's own running task: the same rules as at start, and every change is kept in
    * `edits` with what it was before. Nothing is moved in SAP yet, so finishing uses the corrected values. A task that
-   * waits for SAP is no longer running and cannot be edited; with `taskId` an edit for an ended task is refused.
+   * waits for SAP is no longer running and cannot be edited; `taskId` names the task, so an edit for an ended task is refused.
    */
   async function edit(user, input = {}) {
     const chosen = choice(input)
     if (finishing.has(lower(user.email))) throw codeError('SOFTWARELOAD_BUSY', 'Opgaven er ved at blive afsluttet')
     let before = null
     const edited = await changeRunning(user, current => {
-      if (input.taskId !== undefined && current.id !== input.taskId) throw codeError('SOFTWARELOAD_NOT_RUNNING', 'Opgaven kører ikke længere')
+      if (current.id !== input.taskId) throw codeError('SOFTWARELOAD_NOT_RUNNING', 'Opgaven kører ikke længere')
       before = current
-      const from = { type: current.type, kif: current.kif, target: current.target, version: current.version }
-      if (Object.keys(chosen).every(key => chosen[key] === from[key])) return undefined
+      const from = choiceOf(current)
+      if (sameChoice(from, chosen)) return undefined
       return { ...current, ...chosen, edits: [...(current.edits || []), { at: now(), by: lower(user.email), from, to: chosen }] }
     })
     if (edited && chosen.version !== before.version) {
@@ -420,7 +431,7 @@ function createSoftwareloadService({
     try {
       let next = null
       await storeFor(user.team).mutateAsync(runningKey(user.email), current => {
-        if (!current || isPaused(current)) return undefined
+        if (!current || isPaused(current) || current.finishing) return undefined
         next = withPause(current, true)
         return next
       })
@@ -430,8 +441,13 @@ function createSoftwareloadService({
     }
   }
 
+  /** A finish marks the running task before it hands it to SAP; a marker older than CLAIM_MS is left by a finish that stopped. */
+  const finishingNow = task => Boolean(task.finishing) && now() - task.finishing.at < CLAIM_MS
+
   async function cancel(user) {
-    if (!await readRunning(user, { skipCache: true })) throw notRunning()
+    const current = await readRunning(user, { skipCache: true })
+    if (!current) throw notRunning()
+    if (finishingNow(current)) throw beingFinished()
     await storeFor(user.team).deleteAsync(runningKey(user.email))
     return { ok: true }
   }
@@ -460,14 +476,14 @@ function createSoftwareloadService({
     })
   }
 
-  /** The plan for the running task, without moving anything. */
+  /** The plan for the running task, without moving anything. `taskId` and `choice` are what finishing must be confirmed with. */
   async function preview(user) {
     const task = await readRunning(user, { skipCache: true })
     if (!task) throw notRunning()
     const serials = Object.keys(task.terminals)
     const rows = serials.length ? sapRowsOf(await sap.lookup({ team: task.team, serials })) : []
     const { outcomes, transfers, blocks } = planMoves({ kif: task.kif, target: task.target, terminals: terminalsOf(task), sapRows: rows, passedD005: new Set() })
-    return { outcomes, transfers, blocks, rows }
+    return { taskId: task.id, choice: choiceOf(task), outcomes, transfers, blocks, rows }
   }
 
   const claimOf = (user, runId) => ({ by: lower(user.email), name: user.fullName || user.email, runId, at: now() })
@@ -730,8 +746,26 @@ function createSoftwareloadService({
     })
   }
 
-  /** Stops the time and hands the running task over to SAP; it waits as `venter-<id>` until every move is done. */
-  async function finish(user, { onProgress } = {}) {
+  /**
+   * Takes a finish's marker off the running task when the finish stopped before the task waited for SAP, so the user
+   * can go on scanning. Best effort: a marker left behind no longer stops finish or cancel after CLAIM_MS.
+   */
+  async function clearFinishing(user, runId) {
+    try {
+      await storeFor(user.team).mutateAsync(runningKey(user.email), current => {
+        if (current?.finishing?.runId !== runId) return undefined
+        return withoutFinishing(current)
+      })
+    } catch { /* see above */ }
+  }
+
+  /**
+   * Stops the time and hands the running task over to SAP; it waits as `venter-<id>` until every move is done.
+   * `taskId` and `choice` are what the preview showed and the user confirmed: a task edited since is refused with
+   * SOFTWARELOAD_CHANGED, so SAP never moves with choices nobody saw. Under the same lock the task is marked
+   * `finishing`, so an edit or scan from another PC cannot land in it and get lost when the running file is deleted.
+   */
+  async function finish(user, { taskId: confirmedId, choice: confirmed, onProgress } = {}) {
     requireWrite()
     const email = lower(user.email)
     if (finishing.has(email)) throw codeError('SOFTWARELOAD_BUSY', 'Opgaven er allerede ved at blive afsluttet')
@@ -739,24 +773,32 @@ function createSoftwareloadService({
     let taskId = null
     try {
       const store = storeFor(user.team)
+      const runId = newRunId()
       let ended = null
       await store.mutateAsync(runningKey(user.email), current => {
         if (!current) throw notRunning()
+        if (finishingNow(current)) throw codeError('SOFTWARELOAD_BUSY', 'Opgaven er allerede ved at blive afsluttet')
+        if (current.id !== confirmedId || !sameChoice(choiceOf(current), confirmed)) throw changedMeanwhile()
+        const task = withoutFinishing(current)
         const endedAt = now()
-        const pauses = current.pauses.map(pause => (pause.to == null ? { ...pause, to: endedAt } : pause))
+        const pauses = task.pauses.map(pause => (pause.to == null ? { ...pause, to: endedAt } : pause))
         const paused = pausedMs(pauses, endedAt)
-        ended = { ...current, pauses, endedAt, pausedMs: paused, workedMs: endedAt - current.startedAt - paused, state: 'mangler-sap' }
-        return undefined
+        ended = { ...task, pauses, endedAt, pausedMs: paused, workedMs: endedAt - task.startedAt - paused, state: 'mangler-sap' }
+        return { ...task, finishing: { at: endedAt, runId } }
       })
-      if (inFlight.has(ended.id)) throw alreadyMoving()
-      inFlight.add(taskId = ended.id)
-      const runId = newRunId()
-      // After a crash between these two writes both files exist; the pending one wins, so saved steps are never lost.
-      await store.mutateAsync(pendingKey(ended.id), current => {
-        const task = current ?? ended
-        requireFreeClaim(task, runId)
-        return { ...task, claim: claimOf(user, runId) }
-      })
+      try {
+        if (inFlight.has(ended.id)) throw alreadyMoving()
+        inFlight.add(taskId = ended.id)
+        // After a crash between these two writes both files exist; the pending one wins, so saved steps are never lost.
+        await store.mutateAsync(pendingKey(ended.id), current => {
+          const task = current ?? ended
+          requireFreeClaim(task, runId)
+          return { ...task, claim: claimOf(user, runId) }
+        })
+      } catch (error) {
+        await clearFinishing(user, runId)
+        throw error
+      }
       await store.deleteAsync(runningKey(user.email))
       return await execute(user, ended.id, runId, onProgress)
     } finally {

@@ -182,7 +182,7 @@ contextBridge.exposeInMainWorld('electronWarehouse', {
     cancel: () => warehouse('softwareload:cancel'),
     versions: () => warehouse('softwareload:versions'),
     preview: () => warehouse('softwareload:preview'),
-    finish: () => warehouse('softwareload:finish'),
+    finish: request => warehouse('softwareload:finish', request),
     continueFinish: request => warehouse('softwareload:continue', request),
     abandon: request => warehouse('softwareload:abandon', request),
     kifPreview: request => warehouse('softwareload:kif-preview', request),

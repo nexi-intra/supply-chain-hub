@@ -1286,6 +1286,9 @@ export interface SoftwareloadResult {
 export type SoftwareloadCounts = Partial<Record<SoftwareloadOutcome, number>>
 
 export interface SoftwareloadPreview {
+  /** The task and the choices the plan was made with; finishing must be confirmed with exactly these. */
+  taskId: string
+  choice: SoftwareloadChoice
   outcomes: Record<string, SoftwareloadOutcome>
   transfers: SoftwareloadTransfer[]
   blocks: SoftwareloadBlock[]
@@ -1386,8 +1389,11 @@ export interface SoftwareloadBridge {
   versions(): Promise<string[]>
   /** The plan for the running task, without moving anything. */
   preview(): Promise<SoftwareloadPreview>
-  /** Stops the time and moves the terminals in SAP; on an error the task waits in `pending` to be continued. */
-  finish(): Promise<SoftwareloadFinishResult>
+  /**
+   * Stops the time and moves the terminals in SAP; on an error the task waits in `pending` to be continued. `taskId` and
+   * `choice` come from the preview the user confirmed: a task edited since is refused with SOFTWARELOAD_CHANGED.
+   */
+  finish(request: { taskId: string; choice: SoftwareloadChoice }): Promise<SoftwareloadFinishResult>
   /** The owner or a manager. */
   continueFinish(request: { taskId: string }): Promise<SoftwareloadFinishResult>
   /** Managers only. */
