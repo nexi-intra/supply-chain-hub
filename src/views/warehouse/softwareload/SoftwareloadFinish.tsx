@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { finishTitle, previewGroups, sapRunErrorMessage, targetLabel, TYPE_LABELS } from '@/lib/softwareload'
+import { confirmedSteps, finishTitle, isDeliberateConfirm, previewGroups, sapRunErrorMessage, targetLabel, TYPE_LABELS } from '@/lib/softwareload'
 import { errorCode, errorMessage } from '@/lib/warehouse/errors'
 import { formatDuration } from '@/lib/timeclock'
 import { t } from '@/lib/warehouse/text'
@@ -39,19 +39,25 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
   const [result, setResult] = useState<SoftwareloadFinishResult | null>(null)
   const [finishError, setFinishError] = useState<{ text: string; stillRunning: boolean; alreadyFinished: boolean } | null>(null)
   const [stopped, setStopped] = useState<SoftwareloadStopResult | null>(null)
+  // A finish refused because SAP had the terminals elsewhere has stopped the time: the task waits for SAP, and the screen
+  // shows SAP's new plan, moved with "Fortsæt i SAP" once confirmed.
+  const [handedOver, setHandedOver] = useState(false)
+  const [openedAt, setOpenedAt] = useState(0)
   const [progress, resetProgress] = useSoftwareloadProgress(user.email)
   const inFlight = useRef(false)
   useReportBusy(onBusy, 'finish', moving)
 
-  const loadPreview = useCallback(async () => {
+  const loadPreview = useCallback(async (waiting = false) => {
     setPreviewError(null)
     setPreview(null)
     try {
-      setPreview(await window.electronWarehouse!.softwareload.preview())
+      setPreview(waiting && task
+        ? await window.electronWarehouse!.softwareload.pendingPreview({ taskId: task.id })
+        : await window.electronWarehouse!.softwareload.preview())
     } catch (error) {
       setPreviewError(errorMessage(error))
     }
-  }, [])
+  }, [task])
   useEffect(() => { void loadPreview() }, [loadPreview])
 
   const groups = useMemo(() => (preview ? previewGroups(preview.outcomes) : null), [preview])
@@ -68,13 +74,24 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
     resetProgress()
     setMoving(true)
     try {
-      // Only what this preview showed may be moved; a task edited since is refused, and the new plan is shown instead.
-      setResult(await window.electronWarehouse!.softwareload.finish({ taskId: preview.taskId, choice: preview.choice, ...(endAt === undefined ? {} : { endAt }) }))
+      // Only what this preview showed may be moved: the task, its choices and its SAP steps. A task edited since, or a plan
+      // SAP no longer gives, is refused, and the new plan is shown instead.
+      const planned = confirmedSteps(preview)
+      setResult(handedOver
+        ? await window.electronWarehouse!.softwareload.continueFinish({ taskId: preview.taskId, planned })
+        : await window.electronWarehouse!.softwareload.finish({ taskId: preview.taskId, choice: preview.choice, planned, ...(endAt === undefined ? {} : { endAt }) }))
     } catch (error) {
       const code = errorCode(error)
       if (code === 'SOFTWARELOAD_CHANGED') {
         toast.warning(errorMessage(error))
         void loadPreview()
+        return
+      }
+      if (code === 'SOFTWARELOAD_PLAN_CHANGED') {
+        // Nothing moved. The time stopped at the confirmation and the task waits for SAP; its new plan is shown to be confirmed.
+        toast.warning(errorMessage(error))
+        setHandedOver(true)
+        void loadPreview(true)
         return
       }
       // After more than 10 hours the time stops only when the person has said when the work really stopped. Nothing is moved yet.
@@ -155,7 +172,9 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
     <div className="space-y-4">
       <Card className="gap-4 px-6 py-6">
         <div className="flex flex-wrap items-center gap-3">
-          <Button variant="outline" onClick={onBack} disabled={moving}><ArrowLeft size={18} /> {t('Tilbage til opgaven', 'Back to the task')}</Button>
+          {handedOver
+            ? <Button variant="outline" onClick={onOpenPending} disabled={moving}><ArrowLeft size={18} /> {t('Gå til Venter på SAP', 'Go to Waiting for SAP')}</Button>
+            : <Button variant="outline" onClick={onBack} disabled={moving}><ArrowLeft size={18} /> {t('Tilbage til opgaven', 'Back to the task')}</Button>}
           <h2 className="text-lg font-semibold">{t('Afslut opgaven', 'Finish the task')}</h2>
           <span className="flex flex-wrap gap-2">
             <Badge variant="secondary">{label(TYPE_LABELS[shown.type])}</Badge>
@@ -164,14 +183,16 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
             <Badge variant="outline">{t('Version', 'Version')} {shown.version}</Badge>
           </span>
         </div>
-        <p className="text-sm text-muted-foreground">{t('Appen har slået terminalerne op i SAP. Sådan bliver de flyttet. Intet er flyttet endnu, og tiden kører stadig.', 'The app has looked up the terminals in SAP. This is how they will be moved. Nothing is moved yet and the time is still running.')}</p>
+        <p className="text-sm text-muted-foreground">{handedOver
+          ? t('Tiden er stoppet, og opgaven venter på SAP. SAP havde terminalerne et andet sted end i planen, du så, så intet er flyttet. Sådan bliver de flyttet nu.', 'The time is stopped and the task waits for SAP. SAP had the terminals elsewhere than in the plan you saw, so nothing was moved. This is how they will be moved now.')
+          : t('Appen har slået terminalerne op i SAP. Sådan bliver de flyttet. Intet er flyttet endnu, og tiden kører stadig.', 'The app has looked up the terminals in SAP. This is how they will be moved. Nothing is moved yet and the time is still running.')}</p>
         {previewError && (
           <div className="space-y-2">
             <ErrorLine text={previewError} />
-            <p className="text-sm text-muted-foreground">{t('Kan SAP ikke svare nu, kan du stoppe tiden og flytte terminalerne senere.', 'If SAP cannot answer now, you can stop the time and move the terminals later.')}</p>
+            {!handedOver && <p className="text-sm text-muted-foreground">{t('Kan SAP ikke svare nu, kan du stoppe tiden og flytte terminalerne senere.', 'If SAP cannot answer now, you can stop the time and move the terminals later.')}</p>}
             <div className="flex flex-wrap gap-2">
-              <Button variant="outline" onClick={loadPreview}><ArrowsClockwise size={18} /> {t('Prøv igen', 'Try again')}</Button>
-              <StopLaterButton task={shown} writeEnabled={writeEnabled} onStopped={result => { setStopped(result); void onChanged() }} onChanged={onBack} />
+              <Button variant="outline" onClick={() => void loadPreview(handedOver)}><ArrowsClockwise size={18} /> {t('Prøv igen', 'Try again')}</Button>
+              {!handedOver && <StopLaterButton task={shown} writeEnabled={writeEnabled} onStopped={result => { setStopped(result); void onChanged() }} onChanged={onBack} />}
             </div>
             {!writeEnabled && <WriteDisabledLine />}
           </div>
@@ -181,7 +202,9 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
         {moving && <ProgressBlock progress={progress} />}
         {preview && !moving && (
           <div className="space-y-2">
-            <Button size="lg" onClick={() => setConfirming(true)} disabled={!writeEnabled}><CheckCircle size={20} weight="fill" /> {t('Afslut og flyt i SAP', 'Finish and move in SAP')}</Button>
+            {handedOver
+              ? <Button size="lg" variant="outline" onClick={() => { setOpenedAt(Date.now()); setConfirming(true) }} disabled={!writeEnabled}><CheckCircle size={20} weight="fill" /> {t('Flyt i SAP', 'Move in SAP')}</Button>
+              : <Button size="lg" onClick={() => { setOpenedAt(Date.now()); setConfirming(true) }} disabled={!writeEnabled}><CheckCircle size={20} weight="fill" /> {t('Afslut og flyt i SAP', 'Finish and move in SAP')}</Button>}
             {!writeEnabled && <WriteDisabledLine />}
           </div>
         )}
@@ -190,13 +213,19 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t('Afslut og flyt i SAP?', 'Finish and move in SAP?')}</AlertDialogTitle>
-            <AlertDialogDescription>{t('Tiden stopper nu, og appen flytter terminalerne i SAP. Det kan ikke fortrydes.', 'The time stops now and the app moves the terminals in SAP. It cannot be undone.')}</AlertDialogDescription>
+            <AlertDialogTitle>{handedOver ? t('Flyt i SAP efter den nye plan?', 'Move in SAP along the new plan?') : t('Afslut og flyt i SAP?', 'Finish and move in SAP?')}</AlertDialogTitle>
+            <AlertDialogDescription>{handedOver
+              ? t('Tiden er allerede stoppet. Appen flytter terminalerne i SAP, som den nye plan viser. Det kan ikke fortrydes.', 'The time is already stopped. The app moves the terminals in SAP as the new plan shows. It cannot be undone.')
+              : t('Tiden stopper nu, og appen flytter terminalerne i SAP. Det kan ikke fortrydes.', 'The time stops now and the app moves the terminals in SAP. It cannot be undone.')}</AlertDialogDescription>
           </AlertDialogHeader>
           {groups && <PlanCounts groups={groups} task={shown} />}
           <AlertDialogFooter>
             <AlertDialogCancel>{t('Annullér', 'Cancel')}</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void finish()}>{t('Afslut og flyt', 'Finish and move')}</AlertDialogAction>
+            <AlertDialogAction onClick={event => {
+              // As in Venter på SAP: the second click of the double click that opened the dialog is not a confirmation of the new plan.
+              if (handedOver && !isDeliberateConfirm({ detail: event.detail, sinceOpenMs: Date.now() - openedAt })) { event.preventDefault(); return }
+              void finish()
+            }}>{handedOver ? t('Flyt', 'Move') : t('Afslut og flyt', 'Finish and move')}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

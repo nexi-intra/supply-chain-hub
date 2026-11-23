@@ -1475,9 +1475,11 @@ export interface SoftwareloadBridge {
   /**
    * Stops the time and moves the terminals in SAP; on an error the task waits in `pending` to be continued. `taskId` and
    * `choice` come from the preview the user confirmed: a task edited since is refused with SOFTWARELOAD_CHANGED.
-   * After 10 hours it fails with SOFTWARELOAD_LONG_RUN without `endAt` (when the work really stopped).
+   * `planned` is that preview's `transfers` and `blocks`: when SAP now gives another plan, nothing moves, the task waits
+   * in `pending` with its time stopped, and SOFTWARELOAD_PLAN_CHANGED is thrown (also when `planned` is missing, then
+   * before the time stops). After 10 hours it fails with SOFTWARELOAD_LONG_RUN without `endAt` (when the work really stopped).
    */
-  finish(request: { taskId: string; choice: SoftwareloadChoice; endAt?: number }): Promise<SoftwareloadFinishResult>
+  finish(request: { taskId: string; choice: SoftwareloadChoice; planned: { transfers: SoftwareloadTransfer[]; blocks: SoftwareloadBlock[] }; endAt?: number }): Promise<SoftwareloadFinishResult>
   /**
    * "Stop tiden nu, flyt i SAP senere": stops the time and leaves the task under Venter på SAP without asking SAP. The
    * same `taskId`, `choice` and `endAt` rules as finish (SOFTWARELOAD_CHANGED, SOFTWARELOAD_LONG_RUN).

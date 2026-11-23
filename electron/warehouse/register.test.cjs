@@ -411,9 +411,10 @@ test('softwareload channels are registered and starting Stempelkort pauses a run
 test('softwareload:finish passes the chosen end time on, and only a number', async () => {
   const { call } = setup()
   const started = await call('anna', 'softwareload:start', { type: 'sw', target: 'd006', version: '4.2.1' })
-  const confirmed = { taskId: started.id, choice: { type: 'sw', kif: false, target: 'D006', version: '4.2.1' } }
+  const confirmed = { taskId: started.id, choice: { type: 'sw', kif: false, target: 'D006', version: '4.2.1' }, planned: { transfers: [], blocks: [] } }
   await assert.rejects(call('anna', 'softwareload:finish', { ...confirmed, endAt: started.startedAt - 1 }), /^Error: SOFTWARELOAD_INVALID: Sluttiden skal ligge mellem/)
   assert.equal((await call('anna', 'softwareload:status')).running.id, started.id, 'the task still runs')
+  await assert.rejects(call('anna', 'softwareload:finish', { taskId: confirmed.taskId, choice: confirmed.choice }), /^Error: SOFTWARELOAD_PLAN_CHANGED: /, 'the SAP steps the user saw are passed on')
   const finished = await call('anna', 'softwareload:finish', { ...confirmed, endAt: 'i går' })
   assert.equal(finished.state, 'faerdig', 'an end time that is not a number is left out')
 })

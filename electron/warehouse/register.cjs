@@ -407,12 +407,14 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   handle('softwareload:cancel', user => softwareload.cancel(user))
   handle('softwareload:versions', user => softwareload.versions(user))
   handle('softwareload:preview', user => softwareload.preview(user))
-  // Finishing names the task and the choices the user confirmed in the preview; a task edited since is refused. After
+  // Finishing names the task, the choices and the SAP steps (`planned`) the user confirmed in the preview; a task edited
+  // since is refused, and a plan SAP no longer gives moves nothing. After
   // 10 hours `endAt` says when the work really stopped, as in Stempelkort.
   handle('softwareload:finish', (user, p) => softwareload.finish(user, {
     taskId: p.taskId,
     choice: { type: p.choice?.type, kif: p.choice?.kif, target: p.choice?.target, version: p.choice?.version },
     endAt: typeof p.endAt === 'number' ? p.endAt : undefined,
+    planned: p.planned,
     onProgress: softwareloadProgress(user),
   }))
   handle('softwareload:continue', (user, p) => softwareload.continueFinish(user, { taskId: p.taskId, planned: p.planned, onProgress: softwareloadProgress(user) }))

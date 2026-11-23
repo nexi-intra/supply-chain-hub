@@ -92,10 +92,15 @@ async function allIndexLines(ctx) {
 const runningKeyOf = user => `aktiv-${crypto.createHash('sha256').update(user.email.toLowerCase()).digest('hex').slice(0, 16)}`
 /** The person's running task as saved on M:. */
 const savedRunning = (ctx, user) => ctx.storeFor(user.team).getAsync(runningKeyOf(user), { skipCache: true })
-/** What the finish screen confirms: the running task and its choices as the preview showed them. */
+/**
+ * What the finish screen confirms: the running task, its choices and the SAP steps as the preview showed them. The
+ * preview comes from a PC whose lookups SAP does not count (`ctx.quiet()`); without a fake SAP there is no plan to send.
+ */
 async function confirmed(ctx, user) {
   const task = await savedRunning(ctx, user)
-  return task ? { taskId: task.id, choice: { type: task.type, kif: task.kif, target: task.target, version: task.version } } : {}
+  if (!task) return {}
+  const shown = { taskId: task.id, choice: { type: task.type, kif: task.kif, target: task.target, version: task.version } }
+  return ctx.canPeek ? { ...shown, planned: planOf(await ctx.quiet().preview(user)) } : shown
 }
 /** What the KIF screen confirms: the from-location of every serial its preview moves to D005. */
 const plannedOf = preview => Object.fromEntries(preview.transfers.flatMap(move => move.serials.map(serial => [serial, move.from])))
@@ -190,7 +195,7 @@ function setup({ timeclockRunning = null, sap = { writeEnabled: false }, matdocs
     },
   }
   let ids = 0
-  const build = sapOf => createSoftwareloadService({
+  const build = (sapOf, journalAt = journalDir) => createSoftwareloadService({
     storeFor: team => faulty(storeAt(path.join(team, 'lagerstyring', 'softwareload'))),
     indexStore: sharedIndex,
     sap: sapOf,
@@ -198,13 +203,14 @@ function setup({ timeclockRunning = null, sap = { writeEnabled: false }, matdocs
     now: () => clock.now,
     newId: () => `t${++ids}`,
     matdocs,
-    journalDir,
+    journalDir: journalAt,
     sleep,
     ...(renewClaimMs ? { renewClaimMs } : {}),
   })
   const service = () => build(sap)
-  // A PC whose lookups SAP does not count, hold or fail: the Venter tab's preview in tests about the move itself.
-  const quiet = () => build({ writeEnabled: sap.writeEnabled, lookup: input => sap.peek(input) })
+  // Another PC whose lookups SAP does not count, hold or fail: the screen's preview in tests about the move itself. It
+  // has its own journal, so it never merges this PC's SAP documents ahead of the run that should.
+  const quiet = () => build({ writeEnabled: sap.writeEnabled, lookup: input => sap.peek(input) }, path.join(root, 'journal-quiet'))
   const storeFor = team => storeAt(path.join(team, 'lagerstyring', 'softwareload'))
   const index = storeAt(path.join('_lagerstyring', 'softwareload'))
   /** The local journal's files: SAP documents not yet saved on M:. */
@@ -215,7 +221,7 @@ function setup({ timeclockRunning = null, sap = { writeEnabled: false }, matdocs
     const keys = (await store.keysAsync()).filter(key => key.startsWith('opgaver-') && key.endsWith(month))
     return Object.assign({}, ...await Promise.all(keys.map(async key => (await store.getAsync(key)).tasks)))
   }
-  return { root, clock, timeclock, stops, storeFor, index, indexReads, unreadableIndex, indexFaults, unreadableTeam, finished, service, quiet, faults, gates, journal, tick: ms => { clock.now += ms } }
+  return { root, clock, timeclock, stops, storeFor, index, indexReads, unreadableIndex, indexFaults, unreadableTeam, finished, service, quiet, canPeek: typeof sap.peek === 'function', faults, gates, journal, tick: ms => { clock.now += ms } }
 }
 
 /** What "Fortsæt i SAP" confirms: the SAP steps of the plan the Venter tab showed. */
@@ -579,7 +585,7 @@ test('an edit between the preview and the confirmation is refused at finish, and
   await assert.rejects(svc.finish(ANNA, {}), { code: 'SOFTWARELOAD_CHANGED' }, 'nothing confirmed')
 
   const again = await svc.preview(ANNA)
-  const result = await svc.finish(ANNA, { taskId: again.taskId, choice: again.choice })
+  const result = await svc.finish(ANNA, { taskId: again.taskId, choice: again.choice, planned: planOf(again) })
   assert.deepEqual([result.state, transfers(sap)], ['faerdig', [['D004', ['A']]]])
 })
 
@@ -1565,17 +1571,60 @@ test('"Fortsæt i SAP" moves only after the plan from a new lookup is confirmed,
   assert.deepEqual([result.state, result.counts], ['faerdig', { 'to-target': 1, 'to-blocked': 1 }])
 })
 
-test('a normal finish is unchanged: it stops the time and moves at once along the preview, without a plan from Venter på SAP', async () => {
+test('an unchanged finish stops the time and moves at once along the preview the person confirmed', async () => {
   const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
   const ctx = setup({ sap })
   const svc = await startWith(ctx, TASK, ['A'])
   ctx.tick(25 * MIN)
   const preview = await svc.preview(ANNA)
-  const result = await svc.finish(ANNA, { taskId: preview.taskId, choice: preview.choice })
+  const result = await svc.finish(ANNA, { taskId: preview.taskId, choice: preview.choice, planned: planOf(preview) })
   assert.deepEqual([result.state, result.counts, sap.calls.map(([kind]) => kind)], ['faerdig', { 'to-target': 1 }, ['lookup', 'lookup', 'transfer', 'transfer']])
   const task = (await ctx.finished('2026-11')).t1
   assert.deepEqual([task.endedAt, task.workedMs, 'claim' in task, 'finishing' in task], [ctx.clock.now, 25 * MIN, false, false])
   assert.deepEqual((await svc.status(ANNA)).pending, [])
+})
+
+test('a finish whose terminals SAP has elsewhere than in the preview is refused, nothing moves, and the new plan moves from Venter på SAP', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' }, B: { material: 'M-R', sloc: 'D000' } })
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, { ...TASK, kif: false }, ['A', 'B'])
+  ctx.tick(20 * MIN)
+  const preview = await svc.preview(ANNA)
+  const shown = { taskId: preview.taskId, choice: preview.choice }
+
+  await assert.rejects(svc.finish(ANNA, shown), { code: 'SOFTWARELOAD_PLAN_CHANGED' }, 'no plan confirmed')
+  await assert.rejects(svc.finish(ANNA, { ...shown, planned: [] }), { code: 'SOFTWARELOAD_PLAN_CHANGED' })
+  assert.deepEqual([(await svc.status(ANNA)).running.id, (await savedRunning(ctx, ANNA)).finishing, (await svc.status(ANNA)).pending], ['t1', undefined, []], 'refused before the time stops')
+
+  // Someone moves B in SAP between the preview and the confirmation.
+  sap.rows.get('B').sloc = 'D002'
+  const confirmedAt = ctx.clock.now
+  await assert.rejects(svc.finish(ANNA, { ...shown, planned: planOf(preview) }), { code: 'SOFTWARELOAD_PLAN_CHANGED', message: 'Terminalerne står et andet sted i SAP, end da du så planen. Se planen igen' })
+  assert.deepEqual(transfers(sap), [], 'nothing moves')
+  const status = await svc.status(ANNA)
+  assert.deepEqual([status.running, status.pending.map(task => [task.id, task.movingBy])], [null, [['t1', undefined]]], 'the time stopped at the confirmation; the task waits, free to be continued')
+  const pending = await ctx.storeFor('TCD').getAsync('venter-t1', { skipCache: true })
+  assert.deepEqual([pending.endedAt, pending.workedMs, pending.claim, pending.results], [confirmedAt, 20 * MIN, undefined, undefined])
+
+  const again = await svc.pendingPreview(ANNA, { taskId: 't1' })
+  const result = await svc.continueFinish(ANNA, { taskId: 't1', planned: planOf(again) })
+  assert.deepEqual([result.state, transfers(sap)], ['faerdig', [['D006', ['A']], ['D006', ['B']]]])
+})
+
+test('a finish that resumes one stopped after marking the task still completes, with the time that one froze', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, TASK, ['A'])
+  ctx.tick(15 * MIN)
+  const frozenAt = ctx.clock.now
+  // The earlier finish marked the task and its PC died before the hand-over: nothing was moved.
+  await ctx.storeFor('TCD').mutateAsync(runningKeyOf(ANNA), task => ({ ...task, finishing: { at: frozenAt, endedAt: frozenAt, runId: 'crashed' } }))
+  ctx.tick(CLAIM_MS)
+  const preview = await svc.preview(ANNA)
+  const result = await svc.finish(ANNA, { taskId: preview.taskId, choice: preview.choice, planned: planOf(preview) })
+  assert.deepEqual([result.state, transfers(sap)], ['faerdig', [['D005', ['A']], ['D006', ['A']]]])
+  const task = (await ctx.finished('2026-11')).t1
+  assert.deepEqual([task.endedAt, task.workedMs, 'finishing' in task], [frozenAt, 15 * MIN, false])
 })
 
 test('writing disabled: "Stop tiden nu" is refused like finish, and the time runs on', async () => {

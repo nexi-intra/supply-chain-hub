@@ -164,6 +164,14 @@ export interface PendingMovePlan {
   request: { taskId: string; planned: { transfers: SoftwareloadTransfer[]; blocks: SoftwareloadBlock[] } }
 }
 
+/** The SAP steps of a preview as "Afslut og flyt i SAP" and "Fortsæt i SAP" confirm them: a copy, so a later change to the preview never changes what was confirmed. */
+export function confirmedSteps(preview: Pick<SoftwareloadPreview, 'transfers' | 'blocks'>): { transfers: SoftwareloadTransfer[]; blocks: SoftwareloadBlock[] } {
+  return {
+    transfers: preview.transfers.map(item => ({ ...item, serials: [...item.serials] })),
+    blocks: preview.blocks.map(item => ({ ...item, serials: [...item.serials] })),
+  }
+}
+
 /** The confirmation of "Fortsæt i SAP" for a task waiting for SAP, made once from its preview so the dialog and "Flyt" use the same plan. */
 export function pendingMovePlan(preview: Pick<SoftwareloadPreview, 'taskId' | 'transfers' | 'blocks'>): PendingMovePlan {
   const count = new Set([...preview.transfers, ...preview.blocks].flatMap(item => item.serials)).size
@@ -176,13 +184,7 @@ export function pendingMovePlan(preview: Pick<SoftwareloadPreview, 'taskId' | 't
       ...preview.transfers.map(item => ({ key: `${item.wave}-${item.from}-${item.to}`, from: item.from, to: item.to, count: item.serials.length })),
       ...preview.blocks.map(item => ({ key: `344-${item.material}`, material: item.material, count: item.serials.length })),
     ],
-    request: {
-      taskId: preview.taskId,
-      planned: {
-        transfers: preview.transfers.map(item => ({ ...item, serials: [...item.serials] })),
-        blocks: preview.blocks.map(item => ({ ...item, serials: [...item.serials] })),
-      },
-    },
+    request: { taskId: preview.taskId, planned: confirmedSteps(preview) },
   }
 }
 

@@ -138,6 +138,8 @@ const sameSteps = (plan, planned) => {
   const [a, b] = [planStepsOf(plan), planStepsOf(planned)]
   return a.length === b.length && a.every((step, index) => step === b[index])
 }
+/** A confirmed plan as the screen sends it: an object with `transfers` and `blocks`. */
+const isPlan = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 
 /** Whether a terminal already stands where its planned outcome wants it, judged from the steps saved in this task. */
 function reached(task, result) {
@@ -892,9 +894,11 @@ function createSoftwareloadService({
    * goes, and the hand-over is refused with SOFTWARELOAD_ALREADY_FINISHED. After more than 10 hours the time only stops
    * at an `endAt` the person chose (SOFTWARELOAD_LONG_RUN without it), as in Stempelkort; the end is frozen in the
    * marker, so a hand-over resumed later keeps it. With `runId` the pending task is claimed for the run that moves it
-   * next; without, it waits for "Fortsæt i SAP". Returns the task as handed over.
+   * next; without, it waits for "Fortsæt i SAP". With `needsPlan` (finish) a missing `planned` is refused with
+   * SOFTWARELOAD_PLAN_CHANGED after every other check and before the task is marked. Returns the task as handed over
+   * and whether this resumed the hand-over of an earlier finish that stopped after marking it.
    */
-  async function handOver(user, confirmedId, confirmedChoice, { endAt, runId } = {}) {
+  async function handOver(user, confirmedId, confirmedChoice, { endAt, runId, needsPlan = false, planned } = {}) {
     const store = storeFor(user.team)
     const markId = runId ?? newRunId()
     const found = await readRunning(user, { skipCache: true })
@@ -914,6 +918,7 @@ function createSoftwareloadService({
       const { endedAt, corrected } = previous
         ? { endedAt: previous.endedAt ?? previous.at, corrected: previous.endCorrected === true }
         : endOf(task, endAt, now())
+      if (needsPlan && !isPlan(planned)) throw planChanged()
       const pauses = pausesUntil(task.pauses, endedAt)
       const paused = pausedMs(pauses, endedAt)
       const correctedMark = corrected ? { endCorrected: true } : {}
@@ -935,21 +940,24 @@ function createSoftwareloadService({
     // The task is handed over now (or was already); the running file is a leftover, and status retires it if this fails.
     await retireRunning(user, ended.id).catch(() => {})
     if (handedOver) throw alreadyFinished()
-    return ended
+    return { ended, resumed: Boolean(previous) }
   }
 
   /**
    * "Afslut og flyt i SAP": hands the running task over (see handOver) with the choices the preview showed, and moves
-   * it in SAP at once; on an error it waits under Venter på SAP to be continued.
+   * it in SAP at once; on an error it waits under Venter på SAP to be continued. `planned` is the `transfers` and
+   * `blocks` of that preview: when the run's fresh lookup gives a plan that moves otherwise, nothing moves, the task
+   * waits under Venter på SAP with its time stopped, and SOFTWARELOAD_PLAN_CHANGED asks for the new plan to be seen.
+   * A finish that resumes the hand-over of an earlier one (its marker) is not compared, as ruled for 4.5.
    */
-  async function finish(user, { taskId: confirmedId, choice: confirmed, endAt, onProgress } = {}) {
+  async function finish(user, { taskId: confirmedId, choice: confirmed, endAt, planned, onProgress } = {}) {
     requireWrite()
     return whileFinishing(user, async () => {
       const runId = newRunId()
-      const ended = await handOver(user, confirmedId, confirmed, { endAt, runId })
+      const { ended, resumed } = await handOver(user, confirmedId, confirmed, { endAt, runId, needsPlan: true, planned })
       inFlight.add(ended.id)
       try {
-        return await execute(user, ended.id, runId, onProgress)
+        return await execute(user, ended.id, runId, onProgress, resumed ? undefined : planned)
       } finally {
         inFlight.delete(ended.id)
       }
@@ -963,7 +971,7 @@ function createSoftwareloadService({
    */
   async function stop(user, { taskId: confirmedId, choice: confirmed, endAt } = {}) {
     requireWrite()
-    const ended = await whileFinishing(user, () => handOver(user, confirmedId, confirmed, { endAt }))
+    const { ended } = await whileFinishing(user, () => handOver(user, confirmedId, confirmed, { endAt }))
     return {
       taskId: ended.id, endedAt: ended.endedAt, workedMs: ended.workedMs, pausedMs: ended.pausedMs,
       count: Object.keys(ended.terminals || {}).length, state: ended.state,
@@ -1003,7 +1011,7 @@ function createSoftwareloadService({
     requireWrite()
     const task = await readPending(user, taskId)
     requireOwnerOrManager(user, task)
-    if (!planned || typeof planned !== 'object' || Array.isArray(planned)) throw planChanged()
+    if (!isPlan(planned)) throw planChanged()
     if (inFlight.has(task.id)) throw alreadyMoving()
     inFlight.add(task.id)
     try {
