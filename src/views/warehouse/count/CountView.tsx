@@ -22,6 +22,7 @@ import { OverviewPanel } from './OverviewPanel'
 import { ProgressPanel } from './ProgressPanel'
 import { RefetchDialog } from './RefetchDialog'
 import { ScanPanel } from './ScanPanel'
+import { unsentHint, unsentPcText } from './since'
 import { currentWarehouseLanguage, t } from '@/lib/warehouse/text'
 
 const POLL_MS = 5000
@@ -205,6 +206,12 @@ export function CountView({ id, user, initialTab, onBack }: { id: string; user: 
     setTab(current => (current === 'scan' || current === 'import' ? 'overview' : current))
     change(withMeta({ status: 'closed' }, { canWrite: false }), () => window.electronWarehouse!.counts.close(id), t('Optællingen er afsluttet', 'The count is closed'))
   }
+  // Other PCs that may still hold scans are named in the question: a warning only, closing goes on if confirmed.
+  const confirmClose = () => {
+    const unsent = state?.unsentPcs || []
+    const warning = unsent.length ? `\n\n${unsent.map(pc => unsentPcText(pc)).join('\n')}\n${unsentHint()}` : ''
+    if (window.confirm(t('Afslut optællingen? Ingen kan scanne eller tælle, før du genåbner den.', 'Close the count? Nobody can scan or count until you reopen it.') + warning)) closeCount()
+  }
   const reopenCount = () => change(withMeta({ status: 'open' }, { canWrite: state?.me.status === 'approved' }), () => window.electronWarehouse!.counts.reopen(id), t('Optællingen er genåbnet', 'The count is reopened'))
 
   const makeReport = async () => {
@@ -284,7 +291,7 @@ export function CountView({ id, user, initialTab, onBack }: { id: string; user: 
             <SapActionButton variant="outline" onAction={() => setRefetchOpen(true)}><ArrowsClockwise size={18} /> {t('Hent SAP igen', 'Fetch SAP again')}</SapActionButton>
           )}
           {me.isOwner && meta.status === 'open' && !locked && (
-            <Button variant="secondary" onClick={() => { if (window.confirm(t('Afslut optællingen? Ingen kan scanne eller tælle, før du genåbner den.', 'Close the count? Nobody can scan or count until you reopen it.'))) closeCount() }}>
+            <Button variant="secondary" onClick={confirmClose}>
               <LockSimple size={18} /> {t('Afslut', 'Close')}
             </Button>
           )}

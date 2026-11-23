@@ -640,7 +640,18 @@ export interface CountState {
   /** Approved or posted serial-managed materials whose approval held quantity lines (from the journal, so also after the lines are deleted). */
   approvedWithSerialLines?: string[]
   journal: JournalStatus
+  /** Other PCs that may hold scans not on M: yet (from their journals' heartbeats). Only a warning. */
+  unsentPcs?: UnsentPc[]
   myLastEvents: JournalEvent[]
+}
+
+export interface UnsentPc {
+  email: string
+  name: string
+  /** When the PC last sent to M:. */
+  since: number
+  /** What it still held when it sent. */
+  pending: number
 }
 
 export type ScanOutcome = 'found' | 'duplicate' | 'other-sloc' | 'other-count' | 'outside' | 'unknown' | 'invalid'

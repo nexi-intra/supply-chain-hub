@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils'
 import type { Approval, Kind, Unpost } from '@/types/warehouse'
 import type { PanelProps } from './CountView'
 import { withApprovals } from './optimisticState'
+import { UnsentPcsNotice } from './UnsentPcs'
 import { t } from '@/lib/warehouse/text'
 
 interface MaterialSummary {
@@ -113,6 +114,7 @@ export function ApprovalPanel({ id, state, optimistic, person }: PanelProps) {
         <CardDescription>{t('Managers godkender slutresultatet og markerer, når differencen er bogført i SAP. Ved godkendelse låses SAP, talt og difference, så nye SAP-tal ikke ændrer dem. Markeringen er kun en note – Optælling bogfører intet.', 'Managers approve the final result and mark when the difference has been posted in SAP. Approval locks SAP, counted and difference, so new SAP figures do not change them. The mark is only a note – Stock count posts nothing.')}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        <UnsentPcsNotice pcs={state.unsentPcs || []} />
         <div className="flex flex-wrap items-center gap-4">
           <Input value={query} onChange={event => setQuery(event.target.value)} placeholder={t('Søg materiale', 'Search material')} className="max-w-xs" />
           <label className="flex items-center gap-2 text-sm"><Checkbox checked={onlyOpen} onCheckedChange={value => setOnlyOpen(value === true)} /> {t('Kun ikke-godkendte', 'Only not approved')}</label>

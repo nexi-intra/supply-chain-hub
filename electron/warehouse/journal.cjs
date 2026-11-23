@@ -9,6 +9,10 @@ const { encryptPayload, parseFileContents } = require('../store.cjs')
 const DEFAULT_CHUNK_SIZE = 500
 const DEFAULT_FLUSH_MS = 2000
 const RETRY_MS = 10000
+// Who may still hold scans that are not on M: (see unsentWriters).
+const UNSENT_GRACE_MS = 60 * 1000
+const UNSENT_AFTER_MS = 10 * 60 * 1000
+const RECENT_EVENTS_MS = 60 * 60 * 1000
 
 function writerKey(email, deviceId) {
   return crypto.createHash('sha256').update(`${String(email).toLowerCase()}|${deviceId}`).digest('hex').slice(0, 12)
@@ -20,19 +24,57 @@ const byTime = (a, b) => a.at - b.at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
 
 /** Every writer's events for a count, oldest first. Full chunks never change, so `cache` keeps them. */
 async function readAllJournals({ remote, countId, cache = new Map() }) {
+  return (await readJournals({ remote, countId, cache })).events
+}
+
+/**
+ * Every writer's events, oldest first, and per writer the heartbeat of its newest upload (`uploadedAt`, `pendingAtUpload`,
+ * `lastEventAt`; null for chunks written before the heartbeat, by 1.6.7). Read from the same chunks, so it costs no extra read.
+ */
+async function readJournals({ remote, countId, cache = new Map() }) {
   const prefix = chunkPrefix(countId)
   const keys = (await remote.keysAsync()).filter(name => name.startsWith(prefix)).sort()
   const events = []
+  const writers = new Map()
   for (const name of keys) {
-    let chunkEvents = cache.get(name)
-    if (!chunkEvents) {
+    let entry = cache.get(name)
+    if (!entry) {
       const chunk = await remote.getAsync(name)
-      chunkEvents = Array.isArray(chunk?.events) ? chunk.events : []
-      if (chunk?.full) cache.set(name, chunkEvents)
+      const chunkEvents = Array.isArray(chunk?.events) ? chunk.events : []
+      entry = { events: chunkEvents, writer: chunk?.writer || name.slice(prefix.length, -5), by: chunk?.by || '', heartbeat: heartbeatOf(chunk) }
+      if (chunk?.full) cache.set(name, entry)
     }
-    events.push(...chunkEvents)
+    events.push(...entry.events)
+    const latestName = entry.events.at(-1)?.byName
+    const writer = writers.get(entry.writer) || { writer: entry.writer, email: entry.by, name: entry.by, uploadedAt: null, pendingAtUpload: null, lastEventAt: null }
+    if (latestName) writer.name = latestName
+    if (entry.heartbeat && !(writer.uploadedAt > entry.heartbeat.uploadedAt)) Object.assign(writer, entry.heartbeat)
+    writers.set(entry.writer, writer)
   }
-  return events.sort(byTime)
+  return { events: events.sort(byTime), writers: [...writers.values()] }
+}
+
+function heartbeatOf(chunk) {
+  if (typeof chunk?.uploadedAt !== 'number') return null
+  const number = value => (typeof value === 'number' ? value : null)
+  return { uploadedAt: chunk.uploadedAt, pendingAtUpload: number(chunk.pendingAtUpload), lastEventAt: number(chunk.lastEventAt) }
+}
+
+/**
+ * The other PCs that may hold scans not on M: yet: behind at their last upload (more than a minute ago), or quiet for over
+ * 10 minutes after events in the last hour. Only a warning: what such a PC holds locally cannot be seen from here.
+ */
+function unsentWriters(writers, { now, exclude = [] }) {
+  return writers
+    .filter(item => typeof item.uploadedAt === 'number' && !exclude.includes(item.writer))
+    .filter(item => {
+      const quietFor = now - item.uploadedAt
+      const behind = (item.pendingAtUpload > 0 || item.lastEventAt > item.uploadedAt) && quietFor > UNSENT_GRACE_MS
+      const quiet = quietFor > UNSENT_AFTER_MS && typeof item.lastEventAt === 'number' && now - item.lastEventAt < RECENT_EVENTS_MS
+      return behind || quiet
+    })
+    .map(item => ({ writer: item.writer, email: item.email, name: item.name, since: item.uploadedAt, pending: item.pendingAtUpload || 0 }))
+    .sort((a, b) => a.since - b.since)
 }
 
 function createJournal({ countId, team, user, deviceId, localDir, remote, chunkSize = DEFAULT_CHUNK_SIZE, now = Date.now, newId = () => crypto.randomUUID(), autoFlush = true, flushMs = DEFAULT_FLUSH_MS, onStatus }) {
@@ -156,7 +198,9 @@ function createJournal({ countId, team, user, deviceId, localDir, remote, chunkS
           // Stopped (the count was deleted): no further chunks, or they would be left on M: after its files are removed.
           if (stopped) break
           const slice = snapshot.slice(index * chunkSize, Math.min((index + 1) * chunkSize, target))
-          await remote.setAsync(chunkKey(countId, writer, index), { writer, by: user.email, full: slice.length === chunkSize, events: slice })
+          // Heartbeat (add-only fields, 1.6.7 reads `events` and `full` only): when this PC last sent, what it still held, and its newest event.
+          const heartbeat = { uploadedAt: now(), pendingAtUpload: events.length - index * chunkSize - slice.length, lastEventAt: events.at(-1)?.at ?? null }
+          await remote.setAsync(chunkKey(countId, writer, index), { writer, by: user.email, full: slice.length === chunkSize, events: slice, ...heartbeat })
         }
         uploaded = target
         lastError = null
@@ -195,4 +239,4 @@ function createJournal({ countId, team, user, deviceId, localDir, remote, chunkS
   return { load, append, flush, close, stop, status, events: () => events.slice(), writer }
 }
 
-module.exports = { createJournal, readAllJournals, writerKey, chunkKey, DEFAULT_CHUNK_SIZE }
+module.exports = { createJournal, readAllJournals, readJournals, unsentWriters, writerKey, chunkKey, DEFAULT_CHUNK_SIZE }

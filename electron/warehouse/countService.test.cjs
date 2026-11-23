@@ -1002,6 +1002,38 @@ test('a manager or an Optælling admin answers requests and releases materials o
   assert.deepEqual(await ctx.repo.getMaterialLocks('TCD', id), {})
 })
 
+test('closing and approving list the PCs that have not sent their latest scans, as a warning only', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const bo = ctx.service('pc2')
+  const mona = ctx.service('pc3')
+  const { id } = await newCount(ctx, anna)
+  await bo.requestJoin(BO, id)
+  await anna.decideMember(ANNA, id, { email: BO.email, approve: true })
+  const MIN = 60 * 1000
+  await bo.scan(BO, id, { serial: 'N1', place: 'A1.1' })
+  await bo.flush(BO, id)
+  const sentAt = ctx.clock.now
+  // Written by 1.6.7: no heartbeat, so nothing can be said about that PC.
+  const old = { type: 'scan', serial: 'U1', place: 'A1.1', area: 'A', id: 'old-1', at: ctx.clock.now, by: 'cara@example.test', byName: 'Cara' }
+  await ctx.storeFor('TCD').setAsync(`count-${id}-j-oldclient000-0000`, { writer: 'oldclient000', by: 'cara@example.test', full: false, events: [old] })
+  ctx.tick(2 * MIN)
+  assert.deepEqual((await mona.getState(MONA, id)).unsentPcs, [], 'Bo sent a moment ago')
+
+  // Bo's PC loses M: and keeps the next scan locally.
+  await bo.scan(BO, id, { serial: 'N2', place: 'A1.1' })
+  ctx.tick(10 * MIN)
+  const expected = [{ email: 'bo@example.test', name: 'Bo', since: sentAt, pending: 0 }]
+  assert.deepEqual((await mona.getState(MONA, id)).unsentPcs, expected, 'the approval sees it')
+  assert.deepEqual((await anna.getState(ANNA, id)).unsentPcs, expected, 'so does the owner before closing')
+  assert.deepEqual((await bo.getState(BO, id)).unsentPcs, [], 'this PC is not listed: its own badge shows what waits')
+  assert.equal((await anna.closeCount(ANNA, id)).status, 'closed', 'it does not block closing')
+
+  await bo.flush(BO, id)
+  ctx.tick(2000)
+  assert.deepEqual((await mona.getState(MONA, id)).unsentPcs, [], 'gone once Bo\'s PC has sent')
+})
+
 test('a quantity line on a serial-managed material is refused; a material counted by quantity is still allowed', async () => {
   const ctx = setup()
   const anna = ctx.service('pc1')

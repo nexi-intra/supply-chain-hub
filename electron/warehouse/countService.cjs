@@ -12,7 +12,7 @@ const { docLinesFromSnapshot, missingAtApproval, linesAtApproval, approvedWithLi
 const { normalizeMatdoc } = require('./core/sapParsers.cjs')
 const { differenceTotals, archiveLines } = require('./core/archive.cjs')
 const { ACTIVE: ACTIVE_PIDOC, RESERVATION_MS } = require('./core/piDocs.cjs')
-const { createJournal, readAllJournals } = require('./journal.cjs')
+const { createJournal, readJournals, unsentWriters } = require('./journal.cjs')
 
 const CLAIM_IDLE_MS = 30 * 60 * 1000
 // A material lock lapses after an hour without a line or scan by its holder on the material.
@@ -356,8 +356,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   async function refresh(state, force = false) {
     if (!force && now() - state.refreshedAt < REFRESH_MIN_MS) return state
     state.refreshedAt = now()
-    const journals = readAllJournals({ remote: storeFor(state.team), countId: state.id, cache: state.chunkCache })
-      .then(events => { state.remoteEvents = events })
+    const journals = readJournals({ remote: storeFor(state.team), countId: state.id, cache: state.chunkCache })
+      .then(({ events, writers }) => { state.remoteEvents = events; state.journalWriters = writers })
       .catch(error => console.error('CountPoint: journals unavailable', error.code || error.message))
     const meta = repo.getMeta(state.team, state.id).then(value => {
       if (localCache && JSON.stringify(value) !== JSON.stringify(state.meta)) localCache.save(state.team, state.id, 'meta', value).catch(() => {})
@@ -573,6 +573,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       approvals,
       approvedWithSerialLines: [...approvedWithLines(state, approvals)].sort(),
       journal: state.journal.status(),
+      // Other PCs that may still hold scans (from the heartbeats in the journals just read): a warning when closing and approving.
+      unsentPcs: unsentWriters(state.journalWriters || [], { now: now(), exclude: [state.journal.writer] }).map(({ email, name, since, pending }) => ({ email, name, since, pending })),
       myLastEvents: state.journal.events().filter(event => event.type !== 'undo').slice(-20).reverse(),
     }
   }

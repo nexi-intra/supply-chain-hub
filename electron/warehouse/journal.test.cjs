@@ -4,7 +4,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { createStore } = require('../store.cjs')
-const { createJournal, readAllJournals, writerKey } = require('./journal.cjs')
+const { createJournal, readAllJournals, readJournals, unsentWriters, writerKey } = require('./journal.cjs')
 
 function setup() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'countpoint-journal-'))
@@ -199,6 +199,67 @@ test('stop() resolves only after an upload already on its way, and writes no fur
   await flushing
   const keys = (await remote.keysAsync()).filter(name => name.startsWith('count-count1abc-j-'))
   assert.deepEqual(keys.length, 1, 'the second chunk is not written after stop')
+})
+
+test('every upload writes a heartbeat in the chunk, and readJournals returns it per writer', async () => {
+  const { root, remote } = setup()
+  let clock = 50_000
+  let ids = 0
+  const journal = createJournal({
+    countId: 'count1abc', team: 'TCD', user: { email: 'bo@example.test', name: 'Bo' }, deviceId: 'pc2', localDir: path.join(root, 'local-hb'), remote, chunkSize: 3,
+    now: () => clock, newId: () => `h${++ids}`, autoFlush: false,
+  })
+  await journal.load()
+  for (const serial of ['N1', 'N2', 'N3', 'N4']) { await journal.append({ type: 'scan', serial }); clock += 1000 }
+  clock = 60_000
+  await journal.flush()
+  const last = await remote.getAsync(`count-count1abc-j-${journal.writer}-0001`, { skipCache: true })
+  assert.deepEqual([last.uploadedAt, last.pendingAtUpload, last.lastEventAt], [60_000, 0, 53_000])
+  assert.deepEqual(last.events.map(event => event.serial), ['N4'], 'the events are as before')
+
+  const cache = new Map()
+  const read = await readJournals({ remote, countId: 'count1abc', cache })
+  assert.deepEqual(read.events.map(event => event.serial), ['N1', 'N2', 'N3', 'N4'])
+  assert.deepEqual(read.writers, [{ writer: journal.writer, email: 'bo@example.test', name: 'Bo', uploadedAt: 60_000, pendingAtUpload: 0, lastEventAt: 53_000 }])
+
+  await journal.append({ type: 'scan', serial: 'N5' })
+  await journal.append({ type: 'scan', serial: 'N6' })
+  clock = 70_000
+  await journal.flush()
+  const again = await readJournals({ remote, countId: 'count1abc', cache })
+  assert.deepEqual([again.writers[0].uploadedAt, again.writers[0].lastEventAt], [70_000, 60_000], 'the newest upload wins')
+  const cached = await readJournals({ remote, countId: 'count1abc', cache })
+  assert.equal(cached.writers[0].uploadedAt, 70_000, 'a full chunk from the cache keeps its heartbeat')
+  assert.deepEqual((await readAllJournals({ remote, countId: 'count1abc' })).length, 6, 'readAllJournals still returns the events only')
+})
+
+test('a journal written without a heartbeat (1.6.7) is read as before and has no heartbeat', async () => {
+  const { remote } = setup()
+  await remote.setAsync('count-count1abc-j-oldclient000-0000', { writer: 'oldclient000', by: 'bo@example.test', full: false, events: [{ id: 'o1', type: 'scan', serial: 'N1', at: 5, by: 'bo@example.test', byName: 'Bo' }] })
+  const read = await readJournals({ remote, countId: 'count1abc' })
+  assert.deepEqual(read.events.map(event => event.id), ['o1'])
+  assert.deepEqual(read.writers, [{ writer: 'oldclient000', email: 'bo@example.test', name: 'Bo', uploadedAt: null, pendingAtUpload: null, lastEventAt: null }])
+  assert.deepEqual(unsentWriters(read.writers, { now: 10 * 60 * 60 * 1000 }), [], 'without a heartbeat nothing can be said')
+})
+
+test('unsentWriters: behind at its last upload, or quiet for over 10 minutes after events in the last hour', () => {
+  const MIN = 60 * 1000
+  const now = 600 * MIN
+  const writer = (name, fields) => ({ writer: `w-${name}`, email: `${name}@example.test`, name, ...fields })
+  const writers = [
+    writer('synced', { uploadedAt: now - 2 * MIN, pendingAtUpload: 0, lastEventAt: now - 2 * MIN }),
+    writer('behind', { uploadedAt: now - 5 * MIN, pendingAtUpload: 3, lastEventAt: now - 5 * MIN }),
+    writer('fresh', { uploadedAt: now - 10 * 1000, pendingAtUpload: 2, lastEventAt: now - 10 * 1000 }),
+    writer('quiet', { uploadedAt: now - 18 * MIN, pendingAtUpload: 0, lastEventAt: now - 18 * MIN }),
+    writer('old', { uploadedAt: now - 90 * MIN, pendingAtUpload: 0, lastEventAt: now - 90 * MIN }),
+    writer('me', { uploadedAt: now - 30 * MIN, pendingAtUpload: 4, lastEventAt: now - 30 * MIN }),
+    writer('legacy', { uploadedAt: null, pendingAtUpload: null, lastEventAt: null }),
+  ]
+  const result = unsentWriters(writers, { now, exclude: ['w-me'] })
+  assert.deepEqual(result, [
+    { writer: 'w-quiet', email: 'quiet@example.test', name: 'quiet', since: now - 18 * MIN, pending: 0 },
+    { writer: 'w-behind', email: 'behind@example.test', name: 'behind', since: now - 5 * MIN, pending: 3 },
+  ], 'oldest first; a just finished upload and this PC are left out')
 })
 
 test('writer keys are stable, short and do not reveal the e-mail address', () => {
