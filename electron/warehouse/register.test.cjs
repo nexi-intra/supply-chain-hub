@@ -6,7 +6,7 @@ const path = require('node:path')
 const { registerWarehouse } = require('./register.cjs')
 const { createStore } = require('../store.cjs')
 
-function setup({ clipboard = { readText: () => '', writeText: () => {} } } = {}) {
+function setup({ clipboard = { readText: () => '', writeText: () => {} }, env = {} } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'warehouse-register-'))
   for (const team of ['TCD', 'TRR', 'PIM']) fs.mkdirSync(path.join(root, team))
   const handlers = new Map()
@@ -29,7 +29,7 @@ function setup({ clipboard = { readText: () => '', writeText: () => {} } } = {})
     broadcast: (channel, payload) => broadcasts.push([channel, payload]),
     // Fake SAP (fixture files): background description lookups must never reach a real SAP from a test.
     isPackaged: false,
-    env: { TCD_HUB_SAP_FIXTURES_DIR: path.join(__dirname, 'fixtures', 'sap') },
+    env: { TCD_HUB_SAP_FIXTURES_DIR: path.join(__dirname, 'fixtures', 'sap'), ...env },
   })
   const call = (who, channel, payload) => handlers.get(`warehouse:${channel}`)({ who, sender: { id: 1 } }, payload)
   return { root, handlers, registered, call, broadcasts }
@@ -41,6 +41,26 @@ test('every Optælling channel is registered once under "warehouse:"', () => {
   assert.ok(registered.channels.length >= 65, `${registered.channels.length} channels`)
   for (const channel of ['me', 'counts:list', 'statuses:archive', 'pidocs:post', 'sap-check:run', 'sap:show-doc']) assert.ok(handlers.has(`warehouse:${channel}`), channel)
   assert.equal([...handlers.keys()].some(channel => /^warehouse:(auth|updates|app):/.test(channel)), false, 'no own login or updates inside the Hub')
+})
+
+test('"Tjek SAP-fejl" over IPC: the check is saved in the shared store and the mail to the SAP team is recorded', async () => {
+  const outlookDir = fs.mkdtempSync(path.join(os.tmpdir(), 'warehouse-register-outlook-'))
+  const { root, call } = setup({ env: { TCD_HUB_OUTLOOK_FAKE_DIR: outlookDir } })
+  const check = await call('mona', 'sap-check:run', { scope: 'TCD' })
+  assert.ok(check.errors.length > 0, 'the fixture SAP data has errors to mail')
+  const overview = await call('mona', 'sap-check:overview')
+  assert.equal(overview.latest.id, check.id)
+  assert.deepEqual(overview.history.map(entry => entry.id), [check.id])
+  assert.ok(fs.existsSync(path.join(root, '_lagerstyring')), 'the check lives in the shared folder of the platform root')
+
+  await call('mona', 'sap-check:settings', { to: 'sap-team@nexi.test', cc: '', language: 'da' })
+  const mail = await call('mona', 'sap-check:mail', { id: check.id, mode: 'all', scope: 'D301' })
+  assert.equal(mail.count, check.errors.length)
+  assert.equal(fs.readdirSync(outlookDir).length, 1, 'one draft')
+  const after = await call('mona', 'sap-check:overview')
+  assert.equal(after.latest.mail.count, mail.count)
+  assert.equal(after.latest.mails.length, 1, 'the mail is recorded once')
+  assert.equal(after.history[0].mail.file, mail.file)
 })
 
 test('the open hub is the team: a TCD user gets TCD and its storage locations, other hubs are refused', async () => {

@@ -103,12 +103,10 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   }
   const storeFor = team => openStore(dataDirOf(team))
   const reportsDir = team => path.resolve(dataDirOf(team), 'rapporter')
-  const sharedStore = {
-    getAsync: (...args) => openStore(path.join(platformRoot(), SHARED_FOLDER)).getAsync(...args),
-    setAsync: (...args) => openStore(path.join(platformRoot(), SHARED_FOLDER)).setAsync(...args),
-    updateAsync: (...args) => openStore(path.join(platformRoot(), SHARED_FOLDER)).updateAsync(...args),
-    deleteAsync: (...args) => openStore(path.join(platformRoot(), SHARED_FOLDER)).deleteAsync(...args),
-  }
+  // The platform root may not be known yet when this runs, so the shared store is opened on each use. Every method is
+  // forwarded to the real store, so a service can never call one that a hand-written wrapper forgot.
+  const sharedStoreOf = () => openStore(path.join(platformRoot(), SHARED_FOLDER))
+  const sharedStore = new Proxy({}, { get: (_, name) => sharedStoreOf()[name] })
 
   // SAP descriptions are learned from every MB52 fetch and material document lookup (Placeringer shows them).
   const catalog = createMaterialCatalog({ sharedStore, fetcher })
