@@ -37,6 +37,7 @@ const { writeReport, writeStatusReport, writeSapCheckReport } = require('./repor
 const DATA_FOLDER = 'lagerstyring'
 const SHARED_FOLDER = '_lagerstyring'
 const USERS_TTL_MS = 30000
+const ASSISTANT_ROLE_LIMIT_MS = 1000
 const CODE = /^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$/
 const STORAGE_ERRORS = new Set(['ENOENT', 'EIO', 'EBUSY', 'ETIMEDOUT', 'EACCES', 'EPERM', 'ENETUNREACH', 'EHOSTUNREACH', 'ECONNRESET', 'EAGAIN', 'UNKNOWN'])
 
@@ -547,7 +548,17 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   const stockAssistant = createWarehouseAssistant({ userFor: serviceUser, counts, piDocs })
   const locationsAssistant = createLocationsAssistant({ userFor: serviceUser, service: locations })
   // Placeringer first ("hvor står R162-0717?"); questions about Optælling are left to it.
-  const assistant = { answer: async request => (await locationsAssistant.answer(request)) || stockAssistant.answer(request) }
+  // `countRole`: the person's role in Optælling for Hubert's guide ('manager', 'status-manager', 'admin' or 'user'; null
+  // outside TCD/TRR). It is the module's serviceUser with its role cache, and Hubert never waits more than 1 s for it
+  // (then the guide shows the tasks of a plain user).
+  const countRole = event => new Promise(resolve => {
+    const timer = setTimeout(() => resolve(null), ASSISTANT_ROLE_LIMIT_MS)
+    timer.unref?.()
+    serviceUser(event)
+      .then(user => user.statusManager ? 'status-manager' : user.countAdmin ? 'admin' : user.role === 'user' ? 'user' : 'manager', () => null)
+      .then(role => { clearTimeout(timer); resolve(role) })
+  })
+  const assistant = { answer: async request => (await locationsAssistant.answer(request)) || stockAssistant.answer(request), countRole }
   return {
     channels, counts, locations, assistant,
     // For the close guard: Placeringer actions not yet on this PC's disk. One written ahead is safe and replayed at the

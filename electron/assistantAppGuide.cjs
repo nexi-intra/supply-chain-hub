@@ -1056,14 +1056,18 @@ const GENERIC = new Set(['ret', 'rediger', 'aendre', 'slet', 'opret', 'tilfoej',
 // "Hvor finder jeg ...?" spoerger efter et sted i appen, ikke efter trin.
 const WHERE = /\b(?:hvor (?:finder|ser|kan) jeg|hvordan (?:finder|ser) jeg|where (?:do|can) i (?:find|see)|where (?:is|are)|mistae (?:loeydaen|naeen)|missae naeen|missae (?:[a-z0-9]+ ){0,3}on|var (?:hittar|ser|kan) jag|hur (?:hittar|ser) jag)\b/
 
-const allowed = (entry, role) => !entry.requires || entry.requires === role || (entry.requires === MANAGER && role === CREATOR)
+// Optælling's own roles ('status-manager', 'admin', from its roles file) only open Arbejdsværktøjer's tasks:
+// 'count-manager' is a Hub manager or a status manager, 'count-admin' an Optælling admin. `requires` may list several.
+const COUNT_KINDS = { 'count-manager': (role, countRole) => role === MANAGER || role === CREATOR || countRole === 'status-manager', 'count-admin': (role, countRole) => countRole === 'admin' }
+const grants = (need, role, countRole, moduleId) => COUNT_KINDS[need] ? moduleId === 'warehouse' && COUNT_KINDS[need](role, countRole) : need === role || (need === MANAGER && role === CREATOR)
+const allowed = (entry, role, countRole, moduleId) => !entry.requires || [entry.requires].flat().some(need => grants(need, role, countRole, moduleId))
 
 /**
  * Finder den app-viden der bedst matcher spoergsmaalet.
  * `keepRestricted` beholder traef brugeren ikke har adgang til, saa kalderen kan
  * forklare HVORFOR i stedet for at tilbyde en tilfaeldig anden opgave.
  */
-function matchAppGuide(question, { role = 'user', limit = 3, keepRestricted = false } = {}) {
+function matchAppGuide(question, { role = 'user', countRole, limit = 3, keepRestricted = false } = {}) {
   const haystack = matchFold(question)
   if (!haystack) return []
   const matches = []
@@ -1080,7 +1084,7 @@ function matchAppGuide(question, { role = 'user', limit = 3, keepRestricted = fa
       if (task.needsModule && !moduleScore) continue
       if (task.needsAny && !task.needsAny.some(word => wordStartPattern(word).regex.test(haystack))) continue
       if (task.excludes?.some(word => wordStartPattern(word).regex.test(haystack))) continue
-      const isAllowed = allowed(task, role) && allowed(module, role)
+      const isAllowed = allowed(task, role, countRole, module.id) && allowed(module, role)
       // A `preferred` role task beats the general explanation of the same topic when the asker holds the role.
       matches.push({ kind: 'task', module, task, score: moduleScore + taskScore * 2 + (task.preferred && isAllowed ? 6 : 0), taskScore, allowed: isAllowed })
     }
@@ -1124,8 +1128,8 @@ const DIRECT_SCORE = 3
  * `unmatched` markerer at intet kendt emne blev ramt, saa det stadig kan
  * logges, maales og sendes videre til den semantiske planlaegger.
  */
-function appGuidance(question, { role = 'user', requireTask = false, language = 'da', directOnly = false } = {}) {
-  const matches = matchAppGuide(question, { role, limit: 12, keepRestricted: true })
+function appGuidance(question, { role = 'user', countRole, requireTask = false, language = 'da', directOnly = false } = {}) {
+  const matches = matchAppGuide(question, { role, countRole, limit: 12, keepRestricted: true })
   // Tasks flagged `direct` describe things only this app has (chess, "Dine opgør", the blue dot ...): a plain question about them is answered without "how do I".
   if (directOnly) {
     const direct = matches.find(match => match.kind === 'task' && match.task.direct && match.allowed && match.taskScore >= DIRECT_SCORE)
@@ -1148,7 +1152,7 @@ function appGuidance(question, { role = 'user', requireTask = false, language = 
   // at tilbyde en tilfaeldig anden opgave fra samme modul.
   if (top && !top.allowed) {
     // A manager-only task can point to the explanation an employee may read instead.
-    const open = top.task?.userTask && APP_GUIDE.flatMap(module => module.tasks.map(task => ({ kind: 'task', module, task }))).find(match => match.task.id === top.task.userTask)
+    const open = top.task?.userTask && APP_GUIDE.flatMap(module => module.tasks.map(task => ({ kind: 'task', module, task }))).find(match => match.task.id === top.task.userTask && allowed(match.task, role, countRole, match.module.id) && allowed(match.module, role))
     if (open) return { text: formatAppGuide([open], language), title: titleOf(open, language), moduleId: open.module.id }
     return rolesAnswer(language)
   }

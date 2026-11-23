@@ -1291,7 +1291,10 @@ app.whenReady().then(() => {
         const stock = await warehouse.assistant.answer({ event, question: request.question, language: stockLanguage })
         if (stock) return stock
       }
-      const evidence = await resolveAssistantAnswer(assistant, localAI, request)
+      // Optælling's own role (status manager, admin) decides which of Arbejdsværktøjer's guide tasks Hubert shows; set here
+      // only, so the window can never claim one.
+      const countRole = warehouse?.assistant?.countRole ? await warehouse.assistant.countRole(event) : null
+      const evidence = await resolveAssistantAnswer(assistant, localAI, { ...request, countRole: countRole || undefined })
       const resolvedRequest = { ...request, question: evidence.contextQuestion || request.question }
       const answer = conciseGuideFact(evidence, resolvedRequest) || evidence
       // Best-effort log af spoergsmaal uden daekning til senere at forbedre

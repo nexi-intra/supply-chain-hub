@@ -53,6 +53,8 @@ const MAX_STORED_IMAGE_BYTES = 48 * 1024 ** 2
 const MAX_STORED_IMAGE_BASE64 = 64 * 1024 ** 2
 const MAX_LEGACY_IMAGE_CHUNKS = 256
 const normalize = value => String(value || '').trim().toLowerCase()
+// Optælling's own roles main.cjs may pass on; anything else (also from the window) is ignored.
+const COUNT_ROLES = new Set(['status-manager', 'admin'])
 const dateString = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 const addDays = (date, days) => { const copy = new Date(date); copy.setDate(copy.getDate() + days); return copy }
 // Finnish case endings on a game name ("Chicken Invadersissa", "Route Runnerin").
@@ -409,12 +411,14 @@ function createAssistantContext({ listTeams, lookupTeam, managerTeams = () => []
     return { mode: 'data', text: sections.join('\n\n'), sources }
   }
 
-  function queryOne({ token, question, language = 'da', image, selectedPerson, previousQuestion, conversation, searchPlan, page }, now = new Date()) {
+  function queryOne({ token, question, language = 'da', image, selectedPerson, previousQuestion, conversation, searchPlan, page, countRole }, now = new Date()) {
     if (typeof question !== 'string' || !question.trim() || question.length > 1000) throw new Error('Spørgsmålet skal være mellem 1 og 1000 tegn')
     if (previousQuestion !== undefined && (typeof previousQuestion !== 'string' || previousQuestion.length > 1000)) throw new Error('Det forrige spørgsmål må højst være 1000 tegn')
     const history = validateConversation(conversation)
     previousQuestion = previousQuestion || history.at(-1)
     const principal = authorize(token)
+    // Optælling's own role, looked up by main.cjs through the warehouse module; it only opens Arbejdsværktøjer's tasks.
+    const guideRole = { role: principal.role, ...(COUNT_ROLES.has(countRole) ? { countRole } : {}) }
     // The user's own words: a message, note or high-five is proposed exactly as typed (emoji included), not as tidied below.
     const original = question
     const plan = searchPlan === undefined ? undefined : validatePlan(searchPlan)
@@ -492,12 +496,12 @@ function createAssistantContext({ listTeams, lookupTeam, managerTeams = () => []
       // A guide about a named product/system ("PUUILO", "SAP") beats the app's own how-to.
       const guided = knowledge.matchedModules(question).length ? moduleSafeGuide(principal, principal.teams, question) : guideSearch(principal, principal.teams, question)
       if (guided?.hits[0]?.strong) return guideAnswer(guided, question, language)
-      const guidance = appGuidance(question, { role: principal.role, requireTask: true, language })
+      const guidance = appGuidance(question, { ...guideRole, requireTask: true, language })
       if (guidance) return { mode: 'app-guide', text: guidance.text, sources: [{ kind: 'app-guide', title: guidance.title }], contextQuestion: question }
     }
     // Chess, "Dine opgør", the blue dot ...: asked plainly ("is there a clock in chess?"), these still get their task.
     if (!plan && !image && page === undefined) {
-      const direct = appGuidance(question, { role: principal.role, language, directOnly: true })
+      const direct = appGuidance(question, { ...guideRole, language, directOnly: true })
       if (direct) return { mode: 'app-guide', text: direct.text, sources: [{ kind: 'app-guide', title: direct.title }], contextQuestion: question }
     }
     const gameAsked = GAMES.find(game => game.pattern.test(q))
@@ -759,7 +763,7 @@ function createAssistantContext({ listTeams, lookupTeam, managerTeams = () => []
       // Blindgyden er vaek: i stedet for en blank afvisning svarer vi ud fra
       // app-viden. Rammer spoergsmaalet intet kendt emne, fortaeller vi hvad
       // Hubert KAN - og `unmatched` bevarer signalet til daeknings-loggen.
-      const guidance = appGuidance(question, { role: principal.role, language })
+      const guidance = appGuidance(question, { ...guideRole, language })
       return { mode: 'app-guide', text: guidance.text, sources: [{ kind: 'app-guide', title: guidance.title }], contextQuestion: question, ...(guidance.unmatched ? { unmatched: true } : {}) }
     }
     if (!result.hits.length) return { mode: 'retrieval', text: t.noHits, sources: [], contextQuestion: question }

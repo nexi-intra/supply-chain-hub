@@ -2,6 +2,9 @@
 // Danish base text and keywords (all languages' keywords, folded: æ->ae, ø->oe, å->aa); en/fi/sv texts are in assistantAppGuideWarehouseI18n.cjs.
 // The English UI labels quoted in en/fi/sv are the ones Optælling shows in English (fi/sv users get the English UI).
 const MANAGER = 'manager'
+// Optælling's own roles (assistantAppGuide.cjs): a Hub manager or status manager, and an Optælling admin.
+const COUNT_MANAGER = 'count-manager'
+const COUNT_ADMIN = 'count-admin'
 
 const WAREHOUSE_MODULE = {
   id: 'warehouse',
@@ -44,7 +47,7 @@ const WAREHOUSE_MODULE = {
     {
       id: 'start-status',
       title: 'Start en status',
-      requires: MANAGER,
+      requires: COUNT_MANAGER,
       preferred: true,
       userTask: 'create-count',
       keywords: ['start en status', 'starte en status', 'starter en status', 'start ny status', 'ny status', 'nyt kvartal', 'start a status', 'start a new status', 'new status', 'start the quarterly count', 'aloita uusi status', 'aloitan uuden statuksen', 'uusi status', 'starta en status', 'startar en ny status', 'ny status foer kvartalet'],
@@ -104,7 +107,7 @@ const WAREHOUSE_MODULE = {
     {
       id: 'approve-materials',
       title: 'Godkend materialer og afslut en optælling',
-      requires: MANAGER,
+      requires: COUNT_MANAGER,
       preferred: true,
       userTask: 'submit-material',
       keywords: ['godkend materialer', 'godkende materialer', 'godkender materialer', 'godkend alle uden difference', 'afslut optaellingen', 'afslutte en optaelling', 'send retur', 'approve materials', 'approve all without difference', 'close the count', 'finish a count', 'hyvaeksy materiaalit', 'hyvaeksyn materiaalit', 'paeaetae inventointi', 'godkaenn material', 'godkaenner material', 'avsluta inventeringen'],
@@ -118,7 +121,7 @@ const WAREHOUSE_MODULE = {
     {
       id: 'sap-documents',
       title: 'Opret og bogfør SAP-optællingsdokumenter',
-      requires: MANAGER,
+      requires: [COUNT_MANAGER, COUNT_ADMIN],
       preferred: true,
       userTask: 'submit-material',
       keywords: ['optaellingsdokument', 'optaellingsdokumenter', 'sap-dokument', 'sap dokument', 'opret sap-dokument', 'laeg antal paa', 'bogfoer differencen', 'bogfoere differencen', 'bogfoer i sap', 'mi31', 'mi21', 'mi20', 'mi04', 'zms_count_serial', 'physical inventory document', 'sap document', 'create a sap document', 'enter quantities', 'post the difference', 'inventointiasiakirja', 'sap-asiakirja', 'kirjaa erotus', 'inventeringsdokument', 'sap-dokument skapa', 'bokfoer differensen'],
@@ -144,7 +147,7 @@ const WAREHOUSE_MODULE = {
     {
       id: 'lock-status',
       title: 'Godkend og lås statussen',
-      requires: MANAGER,
+      requires: COUNT_MANAGER,
       preferred: true,
       userTask: 'archive',
       keywords: ['laas statussen', 'laase statussen', 'godkend og laas', 'godkende og laase', 'laas status op', 'endelig rapport', 'lock the status', 'approve and lock', 'unlock the status', 'final report', 'lukitse status', 'lukitsen statuksen', 'lopullinen raportti', 'laas statusen', 'godkaenn och laas', 'slutrapport'],
@@ -180,7 +183,6 @@ const WAREHOUSE_MODULE = {
       title: 'Udnævn admin, status manager eller Placerings admin',
       requires: MANAGER,
       preferred: true,
-      userTask: 'sap-documents',
       keywords: ['udnaevn en admin', 'udnaevne en admin', 'status manager', 'admin i optaelling', 'optaellingsroller', 'hvem maa laegge antal paa', 'appoint an admin', 'appoint a status manager', 'stock count roles', 'who can enter quantities', 'nimeae admin', 'nimitaen adminin', 'inventoinnin roolit', 'utse en admin', 'utser en admin', 'inventeringsroller', 'placerings admin', 'placeringsadmin', 'lagerstyringsroller', 'location admin', 'warehouse roles', 'sijaintien admin', 'varastonhallinnan roolit', 'lagerstyrningsroller'],
       steps: [
         'Åbn "Manager Panel" og vælg fanen "Rettigheder". Kortet "Roller i Arbejdsværktøjer" vises kun i TCD- og TRR-hubben.',

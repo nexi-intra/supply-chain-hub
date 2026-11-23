@@ -1,8 +1,8 @@
 // Hubert's how-to answers for Arbejdsværktøjer (Optælling, Placeringer, Stempelkort and Softwareload, TCD/TRR), in all four languages.
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { ask, DANISH_GUIDE } = require('./assistantTrainingBank.cjs')
-const { APP_GUIDE, APP_TOPICS } = require('./assistantAppGuide.cjs')
+const { ask, createFixture, NOW, DANISH_GUIDE } = require('./assistantTrainingBank.cjs')
+const { APP_GUIDE, APP_TOPICS, matchAppGuide } = require('./assistantAppGuide.cjs')
 const { LOCALIZED } = require('./assistantAppGuideI18n.cjs')
 
 const MODULE = { da: 'Arbejdsværktøjer', en: 'Work Tools', fi: 'Työkalut', sv: 'Arbetsverktyg' }
@@ -65,6 +65,40 @@ test('the guide tells a manager how to make a colleague Placerings admin, in fou
     assert.match(answer.text, card, language)
     if (language !== 'da') assert.doesNotMatch(answer.text, DANISH_GUIDE, language)
   }
+})
+
+test('Optælling tasks follow Optælling\'s own roles: an admin gets "Læg antal på", a status manager gets the status tasks', () => {
+  const api = createFixture()
+  const asked = (question, countRole, token = 'valid') => api.query({ token, question, language: 'da', ...(countRole ? { countRole } : {}) }, NOW).text
+  const SAP_DOC = /^Arbejdsværktøjer - Opret og bogfør SAP-optællingsdokumenter/
+  const START = /^Arbejdsværktøjer - Start en status/
+  assert.match(asked('hvordan lægger jeg antal på SAP-dokumentet?', 'admin'), SAP_DOC)
+  assert.match(asked('hvordan lægger jeg antal på SAP-dokumentet?', 'status-manager'), SAP_DOC)
+  assert.match(asked('hvordan starter jeg en status?', 'status-manager'), START)
+  assert.match(asked('hvordan godkender jeg materialer?', 'status-manager'), /^Arbejdsværktøjer - Godkend materialer og afslut en optælling/)
+  assert.match(asked('hvordan godkender og låser jeg statussen?', 'status-manager'), /^Arbejdsværktøjer - Godkend og lås statussen/)
+  assert.match(asked('hvordan starter jeg en status?', null, 'boss'), START, 'a Hub manager still sees it without a role from Optælling')
+  // An admin may enter quantities, not start or lock a status; a plain user does neither.
+  assert.doesNotMatch(asked('hvordan starter jeg en status?', 'admin'), START)
+  for (const countRole of ['user', null, 'manager', 'creator', 'bogus']) {
+    assert.doesNotMatch(asked('hvordan lægger jeg antal på SAP-dokumentet?', countRole), SAP_DOC, String(countRole))
+    assert.doesNotMatch(asked('hvordan starter jeg en status?', countRole), START, String(countRole))
+  }
+  // Who may enter quantities is explained by the roles answer, never by the managers' SAP document steps.
+  const roles = asked('hvem må lægge antal på?', 'user')
+  assert.doesNotMatch(roles, SAP_DOC)
+  assert.match(roles, /^Roller og hvem der kan hvad/)
+})
+
+test('Optælling\'s roles open nothing outside Arbejdsværktøjer', () => {
+  const api = createFixture()
+  for (const countRole of ['admin', 'status-manager']) {
+    const text = api.query({ token: 'valid', question: 'hvordan godkender jeg en ferieanmodning?', language: 'da', countRole }, NOW).text
+    assert.match(text, /^Roller og hvem der kan hvad/, countRole)
+    assert.ok(!matchAppGuide('hvordan godkender jeg ferie?', { role: 'user', countRole }).some(match => match.task?.id === 'approve-vacation'), countRole)
+  }
+  const outside = APP_GUIDE.filter(module => module.id !== 'warehouse').flatMap(module => [module, ...module.tasks]).filter(entry => [entry.requires].flat().some(need => String(need).startsWith('count-')))
+  assert.deepEqual(outside, [])
 })
 
 test('the guide answers how to put on a shelf, create a rack and delete locations, in four languages', () => {
