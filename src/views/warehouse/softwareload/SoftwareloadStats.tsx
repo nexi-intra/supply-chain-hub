@@ -522,7 +522,7 @@ function TaskList({ tasks, comments, onDelete }: { tasks: SoftwareloadTask[]; co
                         {isOpen ? <CaretDown size={14} /> : <CaretRight size={14} />}
                       </Button>
                     </td>
-                    <td className="whitespace-nowrap px-4 py-2 tabular-nums">{formatDateTime(task.startedAt)}<span className="text-muted-foreground"> → {formatTime(task.endedAt)}</span><CommentMarker comments={commentsOnTask(comments, task)} /></td>
+                    <td className="whitespace-nowrap px-4 py-2 tabular-nums">{formatDateTime(task.startedAt)}<span className="text-muted-foreground"> → {formatTime(task.endedAt)}</span>{task.endCorrected && <Badge variant="outline" className="ml-2">{t('sluttid valgt', 'end chosen')}</Badge>}<CommentMarker comments={commentsOnTask(comments, task)} /></td>
                     <td className="px-4 py-2">{task.name}</td>
                     <td className="px-4 py-2">{label(TYPE_LABELS[task.type])}{task.kif && <Badge variant="outline" className="ml-2">KIF</Badge>}</td>
                     <td className="px-4 py-2">{task.version}</td>

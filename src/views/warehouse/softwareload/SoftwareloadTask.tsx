@@ -12,7 +12,7 @@ import { NativeSelect, Textarea } from '@/components/warehouse/ui'
 import { trackPendingWrite } from '@/lib/pendingWrites'
 import { SOFTWARELOAD_TARGETS, SOFTWARELOAD_TYPES as TYPES, targetLabel, TYPE_LABELS } from '@/lib/softwareload'
 import { drainScanQueue, dropOtherScanQueues, readScanQueue, writeScanQueue, type ScanJob } from '@/lib/softwareloadScanQueue'
-import { formatClock, formatDuration } from '@/lib/timeclock'
+import { formatClock, formatDuration, ranTooLong } from '@/lib/timeclock'
 import { errorCode, errorMessage } from '@/lib/warehouse/errors'
 import { formatTime, type Tone } from '@/lib/warehouse/format'
 import { playTone } from '@/lib/warehouse/sound'
@@ -423,6 +423,7 @@ function RunningTask({ email, running, receivedAt, active, stopped, onStopped, o
             {running.paused ? t('Pause', 'On a break') : t('I gang', 'Running')} · {t('startet', 'started')} {formatTime(running.startedAt)}
             {pausedNow >= 60_000 && ` · ${t('pause i alt', 'breaks in total')} ${formatDuration(pausedNow, language)}`}
           </p>
+          {ranTooLong(running, sinceAnswer) && <p className="text-sm font-medium text-amber-600">{t('Opgaven har kørt i over 10 timer. Glemte du at afslutte den?', 'The task has run for more than 10 hours. Did you forget to finish it?')}</p>}
           <div className="mt-2 flex flex-wrap justify-center gap-3">
             {running.paused
               ? <Button size="lg" onClick={resume} loading={busy === 'resume'} disabled={busy !== null}><Play size={20} weight="fill" /> {t('Fortsæt', 'Resume')}</Button>

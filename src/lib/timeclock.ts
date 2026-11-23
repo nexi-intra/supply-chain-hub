@@ -8,6 +8,17 @@ export const isoDay = (date: Date) => `${date.getFullYear()}-${pad(date.getMonth
 export const toLocalInput = (ms: number) => { const date = new Date(ms); return `${isoDay(date)}T${pad(date.getHours())}:${pad(date.getMinutes())}` }
 export const fromLocalInput = (value: string) => new Date(value).getTime()
 
+/** After this long, Stempelkort and a softwareload task ask when the work really stopped. */
+export const LONG_RUN_MS = 10 * 60 * 60 * 1000
+const SUGGESTED_RUN_MS = 8 * 60 * 60 * 1000
+
+/** Whether a running clock or task has run past LONG_RUN_MS, counted on from the main process's answer by this PC's clock. */
+export const ranTooLong = (running: { startedAt: number; now: number }, sinceAnswer: number) => running.now - running.startedAt + sinceAnswer > LONG_RUN_MS
+
+/** The end the "Hvornår stoppede du?" dialog suggests: 8 hours after the start, never before `earliest` nor after now. */
+export const suggestedEnd = ({ startedAt, earliest = startedAt, now }: { startedAt: number; earliest?: number; now: number }) =>
+  Math.max(earliest, Math.min(now, startedAt + SUGGESTED_RUN_MS))
+
 /** "1 t 23 min" (Danish) or "1 h 23 min"; under an hour only minutes. */
 export function formatDuration(ms: number, language: 'da' | 'en'): string {
   const minutes = Math.floor(Math.max(0, ms) / 60_000)

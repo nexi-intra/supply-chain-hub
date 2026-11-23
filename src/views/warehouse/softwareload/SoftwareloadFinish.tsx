@@ -12,6 +12,7 @@ import { t } from '@/lib/warehouse/text'
 import { cn } from '@/lib/utils'
 import type { SoftwareloadFinishResult, SoftwareloadPreview, SoftwareloadSapRow, SoftwareloadTaskView, WarehouseUser } from '@/types/warehouse'
 import { ErrorLine, label, ProgressBlock, ResultCard, useReportBusy, useSoftwareloadProgress, WriteDisabledLine, type ReportBusy } from './common'
+import { LongRunDialog } from '../timeclock/LongRunDialog'
 
 type GroupKey = keyof PreviewGroups
 
@@ -44,6 +45,7 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
   const [preview, setPreview] = useState<SoftwareloadPreview | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [confirming, setConfirming] = useState(false)
+  const [askEnd, setAskEnd] = useState(false)
   const [moving, setMoving] = useState(false)
   const [result, setResult] = useState<SoftwareloadFinishResult | null>(null)
   const [finishError, setFinishError] = useState<{ text: string; stillRunning: boolean; alreadyFinished: boolean } | null>(null)
@@ -66,8 +68,9 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
   const rowOf = useMemo(() => new Map((preview?.rows ?? []).map(row => [row.serial, row])), [preview])
   const notes = useMemo(() => Object.fromEntries((task?.terminals ?? []).map(terminal => [terminal.serial, terminal.failed?.note])), [task])
 
-  const finish = async () => {
+  const finish = async (endAt?: number) => {
     setConfirming(false)
+    setAskEnd(false)
     // The dialog closes with an animation, so its button can be pressed twice; the second press must not touch this run.
     if (inFlight.current || !preview) return
     inFlight.current = true
@@ -76,11 +79,18 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
     setMoving(true)
     try {
       // Only what this preview showed may be moved; a task edited since is refused, and the new plan is shown instead.
-      setResult(await window.electronWarehouse!.softwareload.finish({ taskId: preview.taskId, choice: preview.choice }))
+      setResult(await window.electronWarehouse!.softwareload.finish({ taskId: preview.taskId, choice: preview.choice, ...(endAt === undefined ? {} : { endAt }) }))
     } catch (error) {
-      if (errorCode(error) === 'SOFTWARELOAD_CHANGED') {
+      const code = errorCode(error)
+      if (code === 'SOFTWARELOAD_CHANGED') {
         toast.warning(errorMessage(error))
         void loadPreview()
+        return
+      }
+      // After more than 10 hours the time stops only when the person has said when the work really stopped. Nothing is moved yet.
+      if (code === 'SOFTWARELOAD_LONG_RUN' || (endAt !== undefined && code === 'SOFTWARELOAD_INVALID')) {
+        if (code === 'SOFTWARELOAD_INVALID') toast.error(errorMessage(error))
+        setAskEnd(true)
         return
       }
       // Some refusals come before the time stops; anything later leaves the task waiting for SAP. The status tells which.
@@ -186,6 +196,7 @@ export function SoftwareloadFinish({ user, task: initial, writeEnabled, onBack, 
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {askEnd && <LongRunDialog startedAt={task.startedAt} earliest={task.lastEventAt} taskName={t('softwareload-opgaven', 'the softwareload task')} onCancel={() => setAskEnd(false)} onStop={endAt => void finish(endAt)} busy={moving} />}
     </div>
   )
 }

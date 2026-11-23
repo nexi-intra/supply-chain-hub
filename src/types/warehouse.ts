@@ -1259,6 +1259,8 @@ export interface SoftwareloadTaskView {
   pausedMs: number
   workedMs: number
   now: number
+  /** The latest start, pause or resume; while paused, when the pause began. The earliest end a finish accepts. */
+  lastEventAt: number
   terminals: { serial: string; at: number; failed?: { note: string } }[]
 }
 
@@ -1383,6 +1385,8 @@ export interface SoftwareloadTask {
   abandoned?: { by: string; reason: string; at: number }
   /** Corrections of the choices while the task ran, oldest first; `by` is the owner's email. */
   edits?: SoftwareloadEdit[]
+  /** The owner chose the end time after the task had run for more than 10 hours. */
+  endCorrected?: boolean
 }
 
 export type SoftwareloadChoice = { type: SoftwareloadType; kif: boolean; target: string; version: string }
@@ -1437,8 +1441,9 @@ export interface SoftwareloadBridge {
   /**
    * Stops the time and moves the terminals in SAP; on an error the task waits in `pending` to be continued. `taskId` and
    * `choice` come from the preview the user confirmed: a task edited since is refused with SOFTWARELOAD_CHANGED.
+   * After 10 hours it fails with SOFTWARELOAD_LONG_RUN without `endAt` (when the work really stopped).
    */
-  finish(request: { taskId: string; choice: SoftwareloadChoice }): Promise<SoftwareloadFinishResult>
+  finish(request: { taskId: string; choice: SoftwareloadChoice; endAt?: number }): Promise<SoftwareloadFinishResult>
   /** The owner or a manager. */
   continueFinish(request: { taskId: string }): Promise<SoftwareloadFinishResult>
   /** Managers only. */

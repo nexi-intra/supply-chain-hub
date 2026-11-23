@@ -17,6 +17,7 @@ const { KIF, BLOCKED_SLOC, USED_FAILED_SLOC, normalizeSloc, planMoves } = requir
 const { bisect } = require('./core/bisect.cjs')
 const { isSoftwareloadTarget } = require('./core/targets.cjs')
 const { TRANSFER_CHUNK, BLOCK_CHUNK } = require('./softwareloadSap.cjs')
+const { LONG_RUN_MS } = require('../timeclockService.cjs')
 
 const TYPES = ['sw+key', 'sw', 'key']
 const VERSION_MAX = 60
@@ -53,6 +54,22 @@ const writerOf = email => crypto.createHash('sha256').update(lower(email)).diges
 const runningKey = email => `${RUNNING_PREFIX}${writerOf(email)}`
 const pausedMs = (pauses, end) => pauses.reduce((sum, pause) => sum + Math.max(0, Math.min(pause.to ?? end, end) - pause.from), 0)
 const isPaused = task => { const open = task.pauses.at(-1); return Boolean(open && open.to == null) }
+/** The latest start, pause or resume of a task; while it is paused, when the pause began. */
+const lastEventOf = task => Math.max(task.startedAt, ...task.pauses.flatMap(pause => [pause.from, pause.to ?? pause.from]))
+
+/**
+ * When the time of a running task stops, as in Stempelkort: now, or after more than LONG_RUN_MS the `endAt` the person
+ * chose. A chosen end lies between the last start, pause or resume and now.
+ */
+function endOf(task, endAt, at) {
+  if (endAt !== undefined && endAt !== null) {
+    const wanted = Number(endAt)
+    if (!Number.isFinite(wanted) || wanted < lastEventOf(task) || wanted > at) throw codeError('SOFTWARELOAD_INVALID', 'Sluttiden skal ligge mellem seneste start eller pause og nu')
+    return { endedAt: wanted, corrected: wanted !== at }
+  }
+  if (at - task.startedAt > LONG_RUN_MS) throw Object.assign(codeError('SOFTWARELOAD_LONG_RUN', 'Opgaven har kørt i over 10 timer. Vælg hvornår du stoppede'), { startedAt: task.startedAt })
+  return { endedAt: at, corrected: false }
+}
 const notRunning = () => codeError('SOFTWARELOAD_NOT_RUNNING', 'Der kører ikke nogen softwareload-opgave')
 const notPending = () => codeError('SOFTWARELOAD_NOT_PENDING', 'Opgaven venter ikke på SAP')
 /** The four choices of a task; finishing moves with exactly the ones the user confirmed in the preview. */
@@ -275,7 +292,7 @@ function createSoftwareloadService({
       .sort((a, b) => b.at - a.at)
     return {
       id: task.id, type: task.type, kif: task.kif, target: task.target, version: task.version, startedAt: task.startedAt,
-      paused: isPaused(task), pausedMs: paused, workedMs: at - task.startedAt - paused, now: at, terminals,
+      paused: isPaused(task), pausedMs: paused, workedMs: at - task.startedAt - paused, now: at, lastEventAt: lastEventOf(task), terminals,
     }
   }
 
@@ -823,9 +840,11 @@ function createSoftwareloadService({
    * SOFTWARELOAD_CHANGED, so SAP never moves with choices nobody saw. Under the same lock the task is marked
    * `finishing`, so an edit or scan from another PC cannot land in it and get lost when the running file is deleted.
    * A task already handed over (pending or finished) is never handed over again: its running file is a leftover and
-   * goes, and the finish is refused with SOFTWARELOAD_ALREADY_FINISHED.
+   * goes, and the finish is refused with SOFTWARELOAD_ALREADY_FINISHED. After more than 10 hours the time only stops
+   * at an `endAt` the person chose (SOFTWARELOAD_LONG_RUN without it), as in Stempelkort; the end is frozen in the
+   * marker, so a finish resumed later keeps it.
    */
-  async function finish(user, { taskId: confirmedId, choice: confirmed, onProgress } = {}) {
+  async function finish(user, { taskId: confirmedId, choice: confirmed, endAt, onProgress } = {}) {
     requireWrite()
     const email = lower(user.email)
     if (finishing.has(email)) throw codeError('SOFTWARELOAD_BUSY', 'Opgaven er allerede ved at blive afsluttet')
@@ -848,11 +867,14 @@ function createSoftwareloadService({
         previous = current.finishing ?? null
         const task = withoutFinishing(current)
         // After a finish that stopped once marked, the time stopped then: the time it hung does not count.
-        const endedAt = previous?.endedAt ?? previous?.at ?? now()
-        const pauses = task.pauses.map(pause => (pause.to == null ? { ...pause, to: endedAt } : pause))
+        const { endedAt, corrected } = previous
+          ? { endedAt: previous.endedAt ?? previous.at, corrected: previous.endCorrected === true }
+          : endOf(task, endAt, now())
+        const pauses = task.pauses.map(pause => ({ ...pause, to: Math.min(pause.to ?? endedAt, endedAt) }))
         const paused = pausedMs(pauses, endedAt)
-        ended = { ...task, pauses, endedAt, pausedMs: paused, workedMs: endedAt - task.startedAt - paused, state: 'mangler-sap' }
-        return { ...task, finishing: { at: now(), endedAt, runId } }
+        const correctedMark = corrected ? { endCorrected: true } : {}
+        ended = { ...task, pauses, endedAt, pausedMs: paused, workedMs: endedAt - task.startedAt - paused, state: 'mangler-sap', ...correctedMark }
+        return { ...task, finishing: { at: now(), endedAt, runId, ...correctedMark } }
       })
       let handedOver = false
       try {

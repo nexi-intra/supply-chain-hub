@@ -605,6 +605,90 @@ test('a finish that stops before the task waits for SAP takes its mark off, and 
   assert.deepEqual([task.endedAt, task.workedMs, 'finishing' in task], [markedAt, markedAt - task.startedAt, false], 'the time stopped when the first finish marked the task')
 })
 
+const HOUR = 60 * MIN
+
+test('a task forgotten for over 10 hours is refused without an end time, and finishes with the time the person chose', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, TASK, ['A'])
+  const startedAt = ctx.clock.now
+  ctx.tick(3 * HOUR)
+  await svc.pause(ANNA)
+  ctx.tick(30 * MIN)
+  await svc.resume(ANNA)
+  assert.equal((await svc.status(ANNA)).running.lastEventAt, startedAt + 3.5 * HOUR, 'the screen knows the earliest end time')
+  ctx.tick(63 * HOUR)
+
+  await assert.rejects(svc.finish(ANNA, await confirmed(ctx, ANNA)), { code: 'SOFTWARELOAD_LONG_RUN', message: 'Opgaven har kørt i over 10 timer. Vælg hvornår du stoppede' })
+  assert.deepEqual([sap.calls, (await savedRunning(ctx, ANNA)).finishing], [[], undefined], 'nothing is asked, moved or marked')
+  for (const endAt of [startedAt + 3 * HOUR, ctx.clock.now + 1, 'i går', Number.NaN]) {
+    await assert.rejects(svc.finish(ANNA, { ...await confirmed(ctx, ANNA), endAt }), { code: 'SOFTWARELOAD_INVALID', message: 'Sluttiden skal ligge mellem seneste start eller pause og nu' }, String(endAt))
+  }
+  assert.equal((await svc.status(ANNA)).running.id, 't1', 'the task still runs')
+
+  const result = await svc.finish(ANNA, { ...await confirmed(ctx, ANNA), endAt: startedAt + 5 * HOUR })
+  assert.deepEqual([result.state, transfers(sap)], ['faerdig', [['D005', ['A']], ['D006', ['A']]]])
+  const task = (await ctx.finished('2026-11')).t1
+  assert.deepEqual(
+    [task.endedAt, task.workedMs, task.pausedMs, task.endCorrected, task.pauses],
+    [startedAt + 5 * HOUR, 4.5 * HOUR, 30 * MIN, true, [{ from: startedAt + 3 * HOUR, to: startedAt + 3.5 * HOUR }]],
+  )
+  assert.equal((await allIndexLines(ctx))[0].at, startedAt + 5 * HOUR, 'the search shows the chosen end time')
+})
+
+test('up to 10 hours finishes now, and an end time inside the open pause stops the time where the pause began', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' }, B: { material: 'M-R', sloc: 'D000' } })
+  const ctx = setup({ sap })
+  let svc = await startWith(ctx, TASK, ['A'])
+  ctx.tick(10 * HOUR)
+  await svc.finish(ANNA, await confirmed(ctx, ANNA))
+  const first = (await ctx.finished('2026-11')).t1
+  assert.deepEqual([first.workedMs, 'endCorrected' in first], [10 * HOUR, false])
+
+  const started = await svc.start(ANNA, TASK)
+  await svc.scan(ANNA, { serial: 'B', taskId: started.id })
+  ctx.tick(2 * HOUR)
+  const pausedAt = ctx.clock.now
+  await svc.pause(ANNA)
+  ctx.tick(70 * HOUR)
+  svc = ctx.service()
+  await assert.rejects(svc.finish(ANNA, await confirmed(ctx, ANNA)), { code: 'SOFTWARELOAD_LONG_RUN' })
+  await assert.rejects(svc.finish(ANNA, { ...await confirmed(ctx, ANNA), endAt: pausedAt - 1 }), { code: 'SOFTWARELOAD_INVALID' }, 'before the pause began')
+  await svc.finish(ANNA, { ...await confirmed(ctx, ANNA), endAt: pausedAt + HOUR })
+  const second = (await ctx.finished('2026-11'))[started.id]
+  assert.deepEqual(
+    [second.endedAt, second.workedMs, second.pausedMs, second.endCorrected, second.pauses],
+    [pausedAt + HOUR, 2 * HOUR, HOUR, true, [{ from: pausedAt, to: pausedAt + HOUR }]],
+  )
+})
+
+test('the chosen end time is frozen in the finishing mark, and a resumed finish keeps it', async () => {
+  const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
+  const ctx = setup({ sap })
+  const svc = await startWith(ctx, TASK, ['A'])
+  const startedAt = ctx.clock.now
+  ctx.tick(30 * HOUR)
+  const slowDrive = gate()
+  ctx.gates.venter = slowDrive
+  const finishing = svc.finish(ANNA, { ...await confirmed(ctx, ANNA), endAt: startedAt + 6 * HOUR })
+  for (let i = 0; i < 300 && !(await savedRunning(ctx, ANNA)).finishing; i++) await new Promise(resolve => setTimeout(resolve, 5))
+  const { finishing: mark } = await savedRunning(ctx, ANNA)
+  assert.deepEqual([mark.endedAt, mark.endCorrected], [startedAt + 6 * HOUR, true])
+  // The PC stops here: the hand-over fails, so the mark is taken off again and nothing was handed over.
+  ctx.faults.venter = 1
+  delete ctx.gates.venter
+  slowDrive.open()
+  await assert.rejects(finishing, { code: 'STORAGE_UNAVAILABLE' })
+
+  // A PC that crashed between the mark and the hand-over leaves the mark with the chosen time.
+  await ctx.storeFor('TCD').mutateAsync(runningKeyOf(ANNA), task => ({ ...task, finishing: { ...mark, runId: 'crashed' } }))
+  ctx.tick(CLAIM_MS)
+  const result = await ctx.service().finish(ANNA, await confirmed(ctx, ANNA))
+  assert.equal(result.state, 'faerdig', 'no new question: the end time was chosen before')
+  const task = (await ctx.finished('2026-11')).t1
+  assert.deepEqual([task.endedAt, task.workedMs, task.endCorrected], [startedAt + 6 * HOUR, 6 * HOUR, true])
+})
+
 test('a running file left next to a task already handed over to SAP is retired, and the task is never moved again', async () => {
   const sap = fakeSap({ A: { material: 'M-R', sloc: 'D000' } })
   sap.throwWhen = kind => kind === 'lookup'

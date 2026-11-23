@@ -4,26 +4,24 @@ import { toast } from 'sonner'
 import { ShiftRoleDialog } from '@/components/ShiftRoleDialog'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { NativeSelect, Tabs } from '@/components/warehouse/ui'
 import { useKV } from '@/hooks/useKV'
 import { saveListChange } from '@/lib/kvChanges'
 import { saveInBackground } from '@/lib/saveInBackground'
-import { formatClock, formatDuration, fromLocalInput, isoDay, toLocalInput, todaysTasks } from '@/lib/timeclock'
+import { formatClock, formatDuration, isoDay, ranTooLong, todaysTasks } from '@/lib/timeclock'
 import { errorCode, errorMessage } from '@/lib/warehouse/errors'
 import { formatTime } from '@/lib/warehouse/format'
 import { currentWarehouseLanguage, t } from '@/lib/warehouse/text'
 import type { ShiftAssignment, ShiftPatternRule, ShiftRole } from '@/lib/types'
 import type { TimeclockRunning, TimeclockTask, WarehouseUser } from '@/types/warehouse'
+import { LongRunDialog } from './LongRunDialog'
 import { TimeclockOverview } from './TimeclockOverview'
 
 const READ_ONLY = { initializeIfMissing: false } as const
 // The clock can be stopped on another PC; the screen asks again now and then and when the window comes back.
 const STATUS_POLL_MS = 30_000
-const LONG_RUN_MS = 10 * 60 * 60 * 1000
 
 type Tab = 'clock' | 'overview'
 
@@ -145,7 +143,7 @@ function ClockCard({ user, onManager }: { user: WarehouseUser; onManager: (isMan
   const sinceAnswer = Date.now() - received.current
   const worked = running ? running.workedMs + (running.paused ? 0 : sinceAnswer) : 0
   const pausedNow = running ? running.pausedMs + (running.paused ? sinceAnswer : 0) : 0
-  const longRun = running ? running.now - running.startedAt + sinceAnswer > LONG_RUN_MS : false
+  const longRun = running ? ranTooLong(running, sinceAnswer) : false
   const language = currentWarehouseLanguage()
 
   return (
@@ -212,31 +210,8 @@ function ClockCard({ user, onManager }: { user: WarehouseUser; onManager: (isMan
       </Card>
 
       <ShiftRoleDialog open={roleDialog} onOpenChange={setRoleDialog} role={null} onSave={createRole} />
-      {askEnd && running && <LongRunDialog running={running} onCancel={() => setAskEnd(false)} onStop={stop} busy={busy === 'stop'} />}
+      {askEnd && running && <LongRunDialog startedAt={running.startedAt} taskName={running.taskName} onCancel={() => setAskEnd(false)} onStop={stop} busy={busy === 'stop'} />}
     </div>
   )
 }
 
-/** The clock ran for more than 10 hours: when did the work really stop? */
-function LongRunDialog({ running, onCancel, onStop, busy }: { running: TimeclockRunning; onCancel: () => void; onStop: (endAt?: number) => void; busy: boolean }) {
-  const [value, setValue] = useState(() => toLocalInput(Math.min(Date.now(), running.startedAt + 8 * 60 * 60 * 1000)))
-  const started = new Date(running.startedAt).toLocaleString(currentWarehouseLanguage() === 'da' ? 'da-DK' : 'en-GB', { dateStyle: 'short', timeStyle: 'short' })
-  return (
-    <Dialog open onOpenChange={open => { if (!open) onCancel() }}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{t('Hvornår stoppede du?', 'When did you stop?')}</DialogTitle>
-          <DialogDescription>{t(`Uret startede ${started} på ${running.taskName} og har kørt i over 10 timer. Vælg hvornår arbejdet reelt stoppede.`, `The clock started ${started} on ${running.taskName} and has run for more than 10 hours. Choose when the work really stopped.`)}</DialogDescription>
-        </DialogHeader>
-        <div className="space-y-1">
-          <Label htmlFor="timeclock-end">{t('Sluttidspunkt', 'End time')}</Label>
-          <Input id="timeclock-end" type="datetime-local" value={value} min={toLocalInput(running.startedAt)} max={toLocalInput(Date.now())} onChange={event => setValue(event.target.value)} />
-        </div>
-        <DialogFooter className="gap-2">
-          <Button variant="ghost" onClick={() => onStop(Date.now())} disabled={busy}>{t('Det passer, stop nu', 'That is right, stop now')}</Button>
-          <Button onClick={() => onStop(fromLocalInput(value))} loading={busy} disabled={!value}>{t('Gem med det sluttidspunkt', 'Save with that end time')}</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}

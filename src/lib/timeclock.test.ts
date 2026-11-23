@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatDuration, periodRange, summarizeEntries, todaysTasks } from './timeclock'
+import { formatDuration, periodRange, ranTooLong, suggestedEnd, summarizeEntries, todaysTasks } from './timeclock'
 import type { TimeclockEntry } from '@/types/warehouse'
 
 const MIN = 60_000
@@ -59,3 +59,22 @@ describe('todaysTasks', () => {
     expect(todaysTasks({ userEmail: 'anna@example.test', date: '2026-11-18', roles, assignments: [{ id: 'a1', employeeId: 'anna@example.test', employeeName: 'Anna', roleId: 'gone', date: '2026-11-18' }], patterns: [] })).toEqual([])
   })
 })
+
+describe('ranTooLong', () => {
+  const HOUR = 60 * MIN
+  it('is true only past 10 hours, counted on from the answer by this PC', () => {
+    expect(ranTooLong({ startedAt: 0, now: 10 * HOUR }, 0)).toBe(false)
+    expect(ranTooLong({ startedAt: 0, now: 10 * HOUR }, 1)).toBe(true)
+    expect(ranTooLong({ startedAt: 0, now: 9 * HOUR }, HOUR + 1)).toBe(true)
+  })
+})
+
+describe('suggestedEnd', () => {
+  const HOUR = 60 * MIN
+  it('suggests 8 hours after the start, never after now and never before the last start or pause', () => {
+    expect(suggestedEnd({ startedAt: 0, now: 66 * HOUR })).toBe(8 * HOUR)
+    expect(suggestedEnd({ startedAt: 0, now: 5 * HOUR })).toBe(5 * HOUR)
+    expect(suggestedEnd({ startedAt: 0, earliest: 9 * HOUR, now: 66 * HOUR })).toBe(9 * HOUR)
+  })
+})
+
