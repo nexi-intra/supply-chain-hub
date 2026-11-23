@@ -169,6 +169,7 @@ const MESSAGES: Record<string, string> = {
   TIMECLOCK_NOT_PAUSED: 'Uret holder ikke pause.',
   TIMECLOCK_LONG_RUN: 'Uret har kørt i over 10 timer. Vælg hvornår du stoppede.',
   TIMECLOCK_NOT_FOUND: 'Registreringen findes ikke (længere).',
+  TIMECLOCK_SOFTWARELOAD_ELSEWHERE: 'Softwareload kører i en anden hub. Stop det der først.',
   // Softwareload
   SOFTWARELOAD_INVALID: 'Ugyldige oplysninger til opgaven.',
   SOFTWARELOAD_RUNNING: 'Der kører allerede en softwareload-opgave.',
@@ -178,6 +179,7 @@ const MESSAGES: Record<string, string> = {
   SOFTWARELOAD_PAUSED: 'Opgaven holder allerede pause.',
   SOFTWARELOAD_NOT_PAUSED: 'Opgaven holder ikke pause.',
   SOFTWARELOAD_TIMECLOCK_LONG_RUN: 'Stempelkortet har kørt i over 10 timer. Stop det i Stempelkort med det rigtige sluttidspunkt, og start eller fortsæt så opgaven.',
+  SOFTWARELOAD_TIMECLOCK_ELSEWHERE: 'Stempelkort kører i en anden hub. Stop det der først.',
   SOFTWARELOAD_LONG_RUN: 'Opgaven har kørt i over 10 timer. Vælg hvornår du stoppede.',
   SOFTWARELOAD_BUSY: 'Opgaven er ved at blive afsluttet eller flyttet i SAP. Vent til det er færdigt, eller se under Venter på SAP.',
   SOFTWARELOAD_WRITE_DISABLED: 'Softwareload må endnu ikke flytte i dette SAP-system.',
@@ -365,6 +367,7 @@ const MESSAGES_EN: Record<string, string> = {
   TIMECLOCK_NOT_PAUSED: 'The clock is not on a break.',
   TIMECLOCK_LONG_RUN: 'The clock has run for more than 10 hours. Choose when you stopped.',
   TIMECLOCK_NOT_FOUND: 'The registration does not exist (any more).',
+  TIMECLOCK_SOFTWARELOAD_ELSEWHERE: 'Softwareload is running in another hub. Stop it there first.',
   // Softwareload
   SOFTWARELOAD_INVALID: 'Invalid details for the task.',
   SOFTWARELOAD_RUNNING: 'A softwareload task is already running.',
@@ -374,6 +377,7 @@ const MESSAGES_EN: Record<string, string> = {
   SOFTWARELOAD_PAUSED: 'The task is already on a break.',
   SOFTWARELOAD_NOT_PAUSED: 'The task is not on a break.',
   SOFTWARELOAD_TIMECLOCK_LONG_RUN: 'Your time card has run for more than 10 hours. Stop it in Time card with the right end time, then start or resume the task.',
+  SOFTWARELOAD_TIMECLOCK_ELSEWHERE: 'Your time card is running in another hub. Stop it there first.',
   SOFTWARELOAD_LONG_RUN: 'The task has run for more than 10 hours. Choose when you stopped.',
   SOFTWARELOAD_BUSY: 'The task is being finished or moved in SAP. Wait until it is done, or check Waiting for SAP.',
   SOFTWARELOAD_WRITE_DISABLED: 'Softwareload may not move anything in this SAP system yet.',

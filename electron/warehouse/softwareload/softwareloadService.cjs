@@ -281,7 +281,7 @@ async function runChunks({ groups, size, failures, attempt, saved, refused = asy
 }
 
 function createSoftwareloadService({
-  storeFor, indexStore, sap, timeclock, now = Date.now, newId = () => crypto.randomUUID(), matdocs, renewClaimMs = RENEW_CLAIM_MS,
+  storeFor, peekFor = null, indexStore, sap, timeclock, now = Date.now, newId = () => crypto.randomUUID(), matdocs, renewClaimMs = RENEW_CLAIM_MS,
   journalDir = null, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
 }) {
   const journal = createJournal(journalDir)
@@ -402,9 +402,31 @@ function createSoftwareloadService({
     }
   }
 
+  /**
+   * Another hub the person belongs to (`user.otherTeams`) where their task counts time now (running, not paused and not
+   * on its way to SAP), or null. One read per hub, past the cache and never creating its folder; a hub that cannot be
+   * read counts as not running.
+   */
+  async function runningElsewhere(user) {
+    const teams = peekFor && Array.isArray(user.otherTeams) ? user.otherTeams.filter(team => team !== user.team) : []
+    const counting = await Promise.all(teams.map(team => Promise.resolve()
+      .then(() => peekFor(team).getAsync(runningKey(user.email), { skipCache: true }))
+      .then(task => Boolean(task) && !isPaused(task) && !task.finishing, () => false)))
+    return teams[counting.indexOf(true)] ?? null
+  }
+
+  /** Stempelkort only stops in the open hub, so a start or resume is refused while it counts time in another hub. */
+  const timeclockElsewhere = user => (typeof timeclock?.runningElsewhere === 'function' ? timeclock.runningElsewhere(user) : null)
+  function refuseTimeclockElsewhere(team) {
+    if (team) throw codeError('SOFTWARELOAD_TIMECLOCK_ELSEWHERE', `Stempelkort kører i ${team}. Stop det der først`)
+  }
+
   async function start(user, input = {}) {
     const chosen = choice(input)
-    if (await readRunning(user, { skipCache: true })) throw codeError('SOFTWARELOAD_RUNNING', 'Der kører allerede en softwareload-opgave')
+    // The other hub is read alongside the own running task, so a slow drive is waited for once.
+    const [running, elsewhere] = await Promise.all([readRunning(user, { skipCache: true }), timeclockElsewhere(user)])
+    if (running) throw codeError('SOFTWARELOAD_RUNNING', 'Der kører allerede en softwareload-opgave')
+    refuseTimeclockElsewhere(elsewhere)
     const stoppedTimeclock = await stopTimeclock(user)
     let started = null
     await storeFor(user.team).mutateAsync(runningKey(user.email), current => {
@@ -506,10 +528,11 @@ function createSoftwareloadService({
 
   /** Resumes the task; a running Stempelkort is stopped first, as at start, so the same time is never counted twice. */
   async function resume(user) {
-    const current = await readRunning(user, { skipCache: true })
+    const [current, elsewhere] = await Promise.all([readRunning(user, { skipCache: true }), timeclockElsewhere(user)])
     if (!current) throw notRunning()
     if (current.finishing) throw beingFinished()
     if (!isPaused(current)) throw codeError('SOFTWARELOAD_NOT_PAUSED', 'Opgaven holder ikke pause')
+    refuseTimeclockElsewhere(elsewhere)
     const stoppedTimeclock = await stopTimeclock(user, 'fortsæt så softwareload-opgaven')
     return { ...await changePause(user, false), ...(stoppedTimeclock ? { stoppedTimeclock } : {}) }
   }
@@ -1466,7 +1489,7 @@ function createSoftwareloadService({
 
   return {
     status, start, edit, scan, unscan, markFailed, unmarkFailed,
-    pause: user => changePause(user, true), resume, pauseIfRunning,
+    pause: user => changePause(user, true), resume, pauseIfRunning, runningElsewhere,
     cancel, versions, preview, finish, stop, pendingPreview, continueFinish, abandon, kifPreview, kifMove, search, tasks, deleteTask, deleteKifMove, isManager,
     comments, addComment, updateComment, deleteComment,
   }

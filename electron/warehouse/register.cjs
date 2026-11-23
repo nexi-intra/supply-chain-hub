@@ -112,6 +112,18 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
     return stores.get(dir)
   }
   const storeFor = team => openStore(dataDirOf(team))
+  // Another hub's folder read without opening its store, so no folder is ever made there (cf. peekRules). A store this
+  // Hub has open already is read through as usual; a missing file is no value, like getAsync.
+  const peekStore = dir => stores.get(dir) || {
+    getAsync: async key => {
+      try {
+        return parseFileContents(await fs.promises.readFile(path.join(dir, keyToFilename(key)), 'utf8'))
+      } catch (error) {
+        if (error?.code === 'ENOENT') return undefined
+        throw error
+      }
+    },
+  }
   const reportsDir = team => path.resolve(dataDirOf(team), 'rapporter')
   // The platform root may not be known yet when this runs, so a shared store is opened on each use. Every method is
   // forwarded to the real store, so a service can never call one that a hand-written wrapper forgot.
@@ -200,11 +212,18 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   // Tegningen shares the places' store: a publish writes the drawing and the places in one transaction.
   const layouts = createLayoutService({ repo: locationRepo, locations })
   // Stempelkort: one store per hub in <team>/lagerstyring/stempelkort; times are only read back by managers.
-  const timeclock = createTimeclockService({ storeFor: team => openStore(path.join(dataDirOf(team), 'stempelkort')) })
+  // A person in TCD and TRR can run Stempelkort in one hub and Softwareload in the other: each refuses to start or
+  // resume while the other counts time in another hub the person belongs to (read only, never creating a folder there).
+  const timeclock = createTimeclockService({
+    storeFor: team => openStore(path.join(dataDirOf(team), 'stempelkort')),
+    peekFor: team => peekStore(path.join(dataDirOf(team), 'stempelkort')),
+    softwareloadElsewhere: user => softwareload.runningElsewhere(user),
+  })
   // Softwareload: own tasks in <team>/lagerstyring/softwareload; the search index is shared by TCD and TRR and opened
   // lazily like the shared store above.
   const softwareload = createSoftwareloadService({
     storeFor: team => openStore(path.join(dataDirOf(team), 'softwareload')),
+    peekFor: team => peekStore(path.join(dataDirOf(team), 'softwareload')),
     indexStore: lazyStore(() => openStore(path.join(platformRoot(), SHARED_FOLDER, 'softwareload'))),
     sap: createSoftwareloadSap({ bridge: sap, runScript, clipboard, system: config.sapSystem, expected: sapExpected }),
     timeclock,

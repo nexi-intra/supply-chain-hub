@@ -19,6 +19,9 @@ function setup({ clipboard = { readText: () => '', writeText: () => {} }, env = 
     mona: { email: 'mona@nexi.test', role: 'manager', activeTeam: { teamId: 'TCD', folderName: 'TCD' } },
     anna: { email: 'anna@nexi.test', role: 'user', activeTeam: { teamId: 'TCD', folderName: 'TCD' } },
     pim: { email: 'mona@nexi.test', role: 'manager', activeTeam: { teamId: 'PIM', folderName: 'PIM' } },
+    // Lars belongs to TCD and is an extra manager in TRR (authService: `teams` = home + extra teams); the open hub differs.
+    larsTcd: { email: 'lars@nexi.test', role: 'user', activeTeam: { teamId: 'TCD', folderName: 'TCD' }, teams: [{ teamId: 'TCD', folderName: 'TCD' }, { teamId: 'TRR', folderName: 'TRR' }] },
+    larsTrr: { email: 'lars@nexi.test', role: 'manager', activeTeam: { teamId: 'TRR', folderName: 'TRR' }, teams: [{ teamId: 'TCD', folderName: 'TCD' }, { teamId: 'TRR', folderName: 'TRR' }] },
   }
   const broadcasts = []
   const registered = registerWarehouse({
@@ -452,6 +455,83 @@ test('Stempelkort says when it could not pause the softwareload task, and still 
   await call('anna', 'timeclock:pause')
   const resumed = await call('anna', 'timeclock:resume')
   assert.deepEqual([resumed.paused, resumed.pausedSoftwareload, resumed.softwareloadPauseFailed], [false, null, true])
+})
+
+/** Every file read under `<root>\<team>` while `fn` runs. */
+async function readsIn(root, team, fn) {
+  const realReadFile = fs.promises.readFile
+  const reads = []
+  fs.promises.readFile = (file, ...rest) => {
+    if (String(file).startsWith(path.join(root, team) + path.sep)) reads.push(String(file))
+    return realReadFile.call(fs.promises, file, ...rest)
+  }
+  try { await fn() } finally { fs.promises.readFile = realReadFile }
+  return reads
+}
+
+const SOFTWARELOAD_TASK = { type: 'sw', target: 'd006', version: '4.2.1' }
+const TIMECLOCK_IN_TCD = /^Error: SOFTWARELOAD_TIMECLOCK_ELSEWHERE: Stempelkort kører i TCD\. Stop det der først$/
+const SOFTWARELOAD_IN_TRR = /^Error: TIMECLOCK_SOFTWARELOAD_ELSEWHERE: Softwareload kører i TRR\. Stop det der først$/
+
+test('a person in TCD and TRR cannot start Softwareload in TRR while Stempelkort runs in TCD', async () => {
+  const { call } = setup()
+  await call('larsTcd', 'timeclock:start', { taskId: 'lager', taskName: 'Lager' })
+  await assert.rejects(call('larsTrr', 'softwareload:start', SOFTWARELOAD_TASK), TIMECLOCK_IN_TCD)
+  assert.equal((await call('larsTrr', 'softwareload:status')).running, null, 'no task was started')
+  assert.equal((await call('larsTcd', 'timeclock:status')).running.taskName, 'Lager', 'Stempelkort keeps running')
+
+  // A paused Stempelkort counts no time, so the task starts; resuming the task is refused once Stempelkort runs again.
+  await call('larsTcd', 'timeclock:pause')
+  await call('larsTrr', 'softwareload:start', SOFTWARELOAD_TASK)
+  await call('larsTrr', 'softwareload:pause')
+  await call('larsTcd', 'timeclock:resume')
+  await assert.rejects(call('larsTrr', 'softwareload:resume'), TIMECLOCK_IN_TCD)
+  assert.equal((await call('larsTrr', 'softwareload:status')).running.paused, true, 'the task stays on its break')
+})
+
+test('the mirror: Stempelkort in TCD cannot start or resume while Softwareload runs in TRR', async () => {
+  const { call } = setup()
+  await call('larsTrr', 'softwareload:start', SOFTWARELOAD_TASK)
+  await assert.rejects(call('larsTcd', 'timeclock:start', { taskId: 'lager', taskName: 'Lager' }), SOFTWARELOAD_IN_TRR)
+  assert.equal((await call('larsTcd', 'timeclock:status')).running, null, 'no clock was started')
+  assert.equal((await call('larsTrr', 'softwareload:status')).running.paused, false, 'the task keeps running')
+
+  await call('larsTrr', 'softwareload:pause')
+  await call('larsTcd', 'timeclock:start', { taskId: 'lager', taskName: 'Lager' })
+  await call('larsTcd', 'timeclock:pause')
+  await call('larsTrr', 'softwareload:resume')
+  await assert.rejects(call('larsTcd', 'timeclock:resume'), SOFTWARELOAD_IN_TRR)
+  await assert.rejects(call('larsTcd', 'timeclock:start', { taskId: 'pak', taskName: 'Pakning', switchTask: true }), SOFTWARELOAD_IN_TRR)
+  const { running } = await call('larsTcd', 'timeclock:status')
+  assert.deepEqual([running.taskName, running.paused], ['Lager', true], 'a refused switch does not save or replace the clock')
+})
+
+test('in the same hub nothing changes for a person in two hubs: Stempelkort pauses the task, and the task stops Stempelkort', async () => {
+  const { root, call } = setup()
+  const reads = await readsIn(root, 'TRR', async () => {
+    const started = await call('larsTcd', 'softwareload:start', SOFTWARELOAD_TASK)
+    const clock = await call('larsTcd', 'timeclock:start', { taskId: 'lager', taskName: 'Lager' })
+    assert.deepEqual([clock.pausedSoftwareload?.id, clock.pausedSoftwareload?.paused, clock.softwareloadPauseFailed], [started.id, true, undefined])
+    const resumed = await call('larsTcd', 'softwareload:resume')
+    assert.deepEqual([resumed.paused, resumed.stoppedTimeclock?.taskName], [false, 'Lager'])
+  })
+  assert.equal(reads.length, 3, 'one read of the other hub per start or resume')
+  assert.equal(fs.existsSync(path.join(root, 'TRR', 'lagerstyring')), false, 'reading the other hub never creates its folder')
+})
+
+test('a person in one hub reads nothing in the other hub, and no folder is made there', async () => {
+  const { root, call } = setup()
+  const reads = await readsIn(root, 'TRR', async () => {
+    await call('anna', 'timeclock:start', { taskId: 'lager', taskName: 'Lager' })
+    await call('anna', 'timeclock:pause')
+    await call('anna', 'timeclock:resume')
+    await call('anna', 'softwareload:start', SOFTWARELOAD_TASK)
+    await call('anna', 'softwareload:pause')
+    await call('anna', 'softwareload:resume')
+    await call('anna', 'timeclock:start', { taskId: 'pak', taskName: 'Pakning', switchTask: true })
+  })
+  assert.deepEqual(reads, [])
+  assert.equal(fs.existsSync(path.join(root, 'TRR', 'lagerstyring')), false)
 })
 
 test('the CountPoint role of a user is read once per 30 s, and again at once after a role change through this Hub', async () => {

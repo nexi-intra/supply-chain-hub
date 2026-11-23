@@ -14,6 +14,12 @@ test('the creator and extra managers keep their Hub role; without a profile the 
   assert.deepEqual(warehouseUser(actor('TCD', 'creator', 'boss@nexi.test'), users), { email: 'boss@nexi.test', fullName: 'boss@nexi.test', role: 'creator', team: 'TCD' })
 })
 
+test('a person in both hubs knows the other hub; one hub (or another team only) adds nothing', () => {
+  const both = { ...actor('TRR', 'manager'), teams: [{ teamId: 'TCD' }, { teamId: 'PIM' }, { teamId: 'TRR' }] }
+  assert.deepEqual(warehouseUser(both, users), { email: 'anna@nexi.test', fullName: 'Anna Holm', role: 'manager', team: 'TRR', otherTeams: ['TCD'] })
+  assert.deepEqual(warehouseUser({ ...actor('TCD'), teams: [{ teamId: 'TCD' }, { teamId: 'PIM' }] }, users), { email: 'anna@nexi.test', fullName: 'Anna Holm', role: 'user', team: 'TCD' })
+})
+
 test('any other hub (or none) is refused', () => {
   for (const teamId of ['PIM', 'tcd', null]) assert.throws(() => warehouseUser(actor(teamId), users), { code: 'WAREHOUSE_TEAM_NOT_ALLOWED' })
   assert.throws(() => warehouseUser(actor('TCD', 'admin'), users), { code: 'WAREHOUSE_TEAM_NOT_ALLOWED' }, 'unknown roles are not trusted')

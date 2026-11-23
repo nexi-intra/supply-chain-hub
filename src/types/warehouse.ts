@@ -1237,7 +1237,8 @@ export interface TimeclockEntry extends TimeclockTask {
 
 /**
  * Starting or resuming Stempelkort pauses the running softwareload task: `pausedSoftwareload` is the task it paused
- * (null when none ran or it was on a break), `softwareloadPauseFailed` that it could not, so both clocks run.
+ * (null when none ran or it was on a break), `softwareloadPauseFailed` that it could not, so both clocks run. While the
+ * person's task counts time in another hub, the start or resume fails with TIMECLOCK_SOFTWARELOAD_ELSEWHERE.
  */
 export interface SoftwareloadPausedByTimeclock {
   pausedSoftwareload: SoftwareloadTaskView | null
@@ -1453,7 +1454,7 @@ export interface SoftwareloadProgress { email: string; done: number; total: numb
 
 export interface SoftwareloadBridge {
   status(): Promise<{ running: SoftwareloadTaskView | null; pending: SoftwareloadPending[]; isManager: boolean; writeEnabled: boolean }>
-  /** Stops a running Stempelkort first (`stoppedTimeclock`); fails with SOFTWARELOAD_TIMECLOCK_LONG_RUN after 10 hours. */
+  /** Stops a running Stempelkort first (`stoppedTimeclock`); fails with SOFTWARELOAD_TIMECLOCK_LONG_RUN after 10 hours, and with SOFTWARELOAD_TIMECLOCK_ELSEWHERE while it runs in another hub. */
   start(request: { type: SoftwareloadType; kif?: boolean; target: string; version: string }): Promise<SoftwareloadTaskView & { stoppedTimeclock?: { taskName: string; workedMs: number } }>
   /**
    * Corrects the own running task's choices with the same rules as start; the change is kept in the task's `edits`.
@@ -1466,7 +1467,7 @@ export interface SoftwareloadBridge {
   markFailed(request: { serial: string; note: string }): Promise<SoftwareloadTaskView>
   unmarkFailed(request: { serial: string }): Promise<SoftwareloadTaskView>
   pause(): Promise<SoftwareloadTaskView>
-  /** Stops a running Stempelkort first (`stoppedTimeclock`), like start; fails with SOFTWARELOAD_TIMECLOCK_LONG_RUN after 10 hours. */
+  /** Stops a running Stempelkort first (`stoppedTimeclock`), like start; fails with SOFTWARELOAD_TIMECLOCK_LONG_RUN after 10 hours, and with SOFTWARELOAD_TIMECLOCK_ELSEWHERE while it runs in another hub. */
   resume(): Promise<SoftwareloadTaskView & { stoppedTimeclock?: { taskName: string; workedMs: number } }>
   cancel(): Promise<{ ok: true }>
   /** The hub's latest versions, newest first. */

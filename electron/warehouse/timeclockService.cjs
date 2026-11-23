@@ -23,7 +23,11 @@ const runningKey = email => `aktiv-${writerOf(email)}`
 const monthKey = (email, day) => `tider-${writerOf(email)}-${day.slice(0, 7)}`
 const pausedMs = (pauses, end) => pauses.reduce((sum, pause) => sum + Math.max(0, Math.min(pause.to ?? end, end) - pause.from), 0)
 
-function createTimeclockService({ storeFor, now = Date.now }) {
+/**
+ * `peekFor(team)` reads another hub's Stempelkort folder without opening or creating it; `softwareloadElsewhere(user)`
+ * names another hub where the person's Softwareload task counts time. Both are optional: one hub reads nothing more.
+ */
+function createTimeclockService({ storeFor, peekFor = null, softwareloadElsewhere = null, now = Date.now }) {
   /** A Hub manager or creator; a status manager from Optælling is a manager there only. */
   const isManager = user => (user.role === 'manager' || user.role === 'creator') && !user.statusManager
   const me = user => ({ email: lower(user.email), name: user.fullName || user.email })
@@ -49,6 +53,25 @@ function createTimeclockService({ storeFor, now = Date.now }) {
   }
 
   const readRunning = (user, options) => storeFor(user.team).getAsync(runningKey(user.email), options)
+  const isPaused = running => { const open = running.pauses.at(-1); return Boolean(open && open.to == null) }
+
+  /**
+   * Another hub the person belongs to (`user.otherTeams`) where their Stempelkort counts time now, or null. One read per
+   * hub, past the cache and never creating its folder; a hub that cannot be read counts as not running.
+   */
+  async function runningElsewhere(user) {
+    const teams = peekFor && Array.isArray(user.otherTeams) ? user.otherTeams.filter(team => team !== user.team) : []
+    const counting = await Promise.all(teams.map(team => Promise.resolve()
+      .then(() => peekFor(team).getAsync(runningKey(user.email), { skipCache: true }))
+      .then(running => Boolean(running) && !isPaused(running), () => false)))
+    return teams[counting.indexOf(true)] ?? null
+  }
+
+  /** Refuses to start or resume while the person's Softwareload task counts time in another hub, so no time counts twice. */
+  function refuseElsewhere(team) {
+    if (team) throw codeError('TIMECLOCK_SOFTWARELOAD_ELSEWHERE', `Softwareload kører i ${team}. Stop det der først`)
+  }
+  const softwareloadTeam = user => (softwareloadElsewhere ? softwareloadElsewhere(user) : null)
 
   async function status(user) {
     return { running: view(await readRunning(user)), isManager: isManager(user) }
@@ -103,10 +126,10 @@ function createTimeclockService({ storeFor, now = Date.now }) {
     const chosen = task(input)
     const store = storeFor(user.team)
     let saved = null
-    if (input.switchTask === true) {
-      const running = await readRunning(user, { skipCache: true })
-      if (running) saved = await finish(user, running, {})
-    }
+    // The other hub is read alongside the own running clock, so a slow drive is waited for once.
+    const [running, elsewhere] = await Promise.all([input.switchTask === true ? readRunning(user, { skipCache: true }) : null, softwareloadTeam(user)])
+    refuseElsewhere(elsewhere)
+    if (running) saved = await finish(user, running, {})
     let started = null
     await store.mutateAsync(runningKey(user.email), current => {
       if (current) throw codeError('TIMECLOCK_RUNNING', `Uret kører allerede på ${current.taskName}`)
@@ -128,6 +151,11 @@ function createTimeclockService({ storeFor, now = Date.now }) {
       return next
     })
     return view(next)
+  }
+
+  async function resume(user) {
+    refuseElsewhere(await softwareloadTeam(user))
+    return changePause(user, false)
   }
 
   async function stop(user, { endAt } = {}) {
@@ -199,7 +227,7 @@ function createTimeclockService({ storeFor, now = Date.now }) {
     return { ok: true }
   }
 
-  return { status, start, pause: user => changePause(user, true), resume: user => changePause(user, false), stop, cancel, entries, updateEntry, deleteEntry, isManager }
+  return { status, start, pause: user => changePause(user, true), resume, stop, cancel, entries, updateEntry, deleteEntry, isManager, runningElsewhere }
 }
 
 module.exports = { createTimeclockService, LONG_RUN_MS }
