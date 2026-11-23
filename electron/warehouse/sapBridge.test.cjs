@@ -78,33 +78,66 @@ test('the export script is allowed and may run with a longer timeout', async () 
   assert.equal(calls[1].options.timeout, 1000)
 })
 
-test('scripts that change SAP only run against an allowed system (PS4, QS4)', async () => {
+test('scripts that change SAP only run against the configured system', async () => {
   const calls = []
   const execFile = (file, args, options, callback) => { calls.push(args); callback(null, '{"ok":true}') }
-  const run = createCscriptRunner({ scriptDir: 'C:\\app\\sap', cscriptPath: 'cscript.exe', execFile })
+  const run = createCscriptRunner({ scriptDir: 'C:\\app\\sap', cscriptPath: 'cscript.exe', execFile, system: 'PS4' })
   await run('pidoc-create', ['PS4', 'D000'])
   assert.deepEqual(calls[0].slice(2), [path.join('C:\\app\\sap', 'pidoc-create.vbs'), 'PS4', 'D000'])
-  await run('pidoc-create', ['QS4', 'D000'])
+  await assert.rejects(run('pidoc-create', ['QS4', 'D000']), { code: 'SAP_WRITE_SYSTEM_NOT_ALLOWED' }, 'QS4 is allowed, but not the configured system')
   await assert.rejects(run('pidoc-create', ['XS4', 'D000']), { code: 'SAP_WRITE_SYSTEM_NOT_ALLOWED' })
   await assert.rejects(run('pidoc-create', []), { code: 'SAP_WRITE_SYSTEM_NOT_ALLOWED' })
   await assert.rejects(run('pidoc-create', ['ps4']), { code: 'SAP_WRITE_SYSTEM_NOT_ALLOWED' })
-  assert.equal(calls.length, 2)
+  assert.equal(calls.length, 1, 'a refused write never starts cscript')
 })
 
-test('softwareload write scripts run on PS4 and QS4 only', async () => {
+test('a QS4 installation cannot write to PS4', async () => {
+  const calls = []
+  const execFile = (file, args, options, callback) => { calls.push(args); callback(null, '{"ok":true}') }
+  const run = createCscriptRunner({ scriptDir: 'C:\\app\\sap', cscriptPath: 'cscript.exe', execFile, system: 'QS4' })
+  for (const name of ['pidoc-create', 'pidoc-print', 'pidoc-serials', 'pidoc-count', 'pidoc-post', 'pidoc-delete', 'sl-transfer', 'sl-block']) {
+    await assert.rejects(run(name, ['PS4', 'x']), { code: 'SAP_WRITE_SYSTEM_NOT_ALLOWED' }, name)
+  }
+  assert.equal(calls.length, 0)
+  await run('pidoc-post', ['QS4', '2026'])
+  assert.deepEqual(calls[0].slice(2), [path.join('C:\\app\\sap', 'pidoc-post.vbs'), 'QS4', '2026'])
+})
+
+test('a configured system that is not on the allow-list cannot write', async () => {
+  const calls = []
+  const execFile = (file, args, options, callback) => { calls.push(args); callback(null, '{"ok":true}') }
+  const run = createCscriptRunner({ scriptDir: 'C:\\app\\sap', cscriptPath: 'cscript.exe', execFile, system: 'XS4' })
+  await assert.rejects(run('pidoc-create', ['XS4', 'D000']), { code: 'SAP_WRITE_SYSTEM_NOT_ALLOWED' })
+  await assert.rejects(run('sl-transfer', ['XS4', 'prep']), { code: 'SAP_WRITE_SYSTEM_NOT_ALLOWED' })
+  assert.equal(calls.length, 0)
+})
+
+test('softwareload write scripts run on the configured system only', async () => {
   const calls = []
   const execFile = (file, args, options, callback) => { calls.push(args); callback(null, '{"ok":true}') }
   const run = createCscriptRunner({ scriptDir: 'C:\\app\\sap', cscriptPath: 'cscript.exe', execFile, system: 'PS4' })
   await assert.rejects(run('sl-transfer', ['XS4', 'prep', 'D005', 'C:\\t', 'in.txt', 'err.txt', 'D000']), { code: 'SAP_WRITE_SYSTEM_NOT_ALLOWED' })
   await assert.rejects(run('sl-block', ['XS4', 'C:\\t', 'in.txt', 'INT4100-7883-0', '344']), { code: 'SAP_WRITE_SYSTEM_NOT_ALLOWED' })
+  await assert.rejects(run('sl-transfer', ['QS4', 'prep', 'D005', 'C:\\t', 'in.txt', 'err.txt', 'D000']), { code: 'SAP_WRITE_SYSTEM_NOT_ALLOWED' })
+  await assert.rejects(run('sl-block', ['QS4', 'C:\\t', 'in.txt', 'INT4100-7883-0', '344']), { code: 'SAP_WRITE_SYSTEM_NOT_ALLOWED' })
   assert.equal(calls.length, 0)
   await run('sl-transfer', ['PS4', 'prep', 'D005', 'C:\\t', 'in.txt', 'err.txt', 'D000'])
   assert.deepEqual(calls[0].slice(2), [path.join('C:\\app\\sap', 'sl-transfer.vbs'), 'PS4', 'prep', 'D005', 'C:\\t', 'in.txt', 'err.txt', 'D000'])
   await run('sl-block', ['PS4', 'C:\\t', 'in.txt', 'INT4100-7883-0', '344'])
-  await run('sl-transfer', ['QS4', 'prep', 'D005', 'C:\\t', 'in.txt', 'err.txt', 'D000'])
   await run('pidoc-post', ['PS4', '2026'])
   await run('sl-lookup', ['prep', 'C:\\t', 'out.txt', '393031157352189282'])
-  assert.deepEqual(calls.map(args => path.basename(args[2])), ['sl-transfer.vbs', 'sl-block.vbs', 'sl-transfer.vbs', 'pidoc-post.vbs', 'sl-lookup.vbs'])
+  assert.deepEqual(calls.map(args => path.basename(args[2])), ['sl-transfer.vbs', 'sl-block.vbs', 'pidoc-post.vbs', 'sl-lookup.vbs'])
+})
+
+test('read scripts are not tied to the configured system', async () => {
+  const calls = []
+  const execFile = (file, args, options, callback) => { calls.push({ args, options }); callback(null, '{"ok":true}') }
+  const run = createCscriptRunner({ scriptDir: 'C:\\app\\sap', cscriptPath: 'cscript.exe', execFile, system: 'QS4' })
+  await run('status')
+  await run('sap-show', ['PS4', 'pidoc', '105900001', '2026'])
+  await run('sl-lookup', ['prep', 'C:\\t', 'out.txt', '393031157352189282'])
+  assert.deepEqual(calls.map(call => path.basename(call.args[2])), ['status.vbs', 'sap-show.vbs', 'sl-lookup.vbs'])
+  assert.equal(calls[0].options.env.COUNTPOINT_SAP_SYSTEM, 'QS4')
 })
 
 test('the runner maps a killed process to a timeout', async () => {

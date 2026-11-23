@@ -7,7 +7,8 @@ const childProcess = require('node:child_process')
 const { computeSapState, EXPECTED } = require('./sapState.cjs')
 
 const SCRIPTS = Object.freeze({ status: 'status.vbs', export: 'export.vbs', matdoc: 'matdoc.vbs', longserno: 'longserno.vbs', stockcheck: 'stockcheck.vbs', mm60: 'mm60.vbs', 'sap-show': 'sap-show.vbs', 'sl-lookup': 'sl-lookup.vbs' })
-// Scripts that CHANGE SAP. Their first argument is the SAP system, which must be on WRITE_SYSTEMS (the scripts check it again).
+// Scripts that CHANGE SAP. Their first argument is the SAP system. The runner refuses it unless it is the system this
+// installation is configured for AND on WRITE_SYSTEMS; the scripts themselves do not check it.
 const WRITE_SCRIPTS = Object.freeze({ 'pidoc-create': 'pidoc-create.vbs', 'pidoc-print': 'pidoc-print.vbs', 'pidoc-serials': 'pidoc-serials.vbs', 'pidoc-count': 'pidoc-count.vbs', 'pidoc-post': 'pidoc-post.vbs', 'pidoc-delete': 'pidoc-delete.vbs', 'sl-transfer': 'sl-transfer.vbs', 'sl-block': 'sl-block.vbs' })
 // PS4 enabled 2026-10-20 after the full flow was verified in QS4.
 const WRITE_SYSTEMS = Object.freeze(['PS4', 'QS4'])
@@ -30,13 +31,14 @@ function defaultCscriptPath(env = process.env, exists = fs.existsSync) {
 }
 
 function createCscriptRunner({ scriptDir, cscriptPath = defaultCscriptPath(), execFile = childProcess.execFile, timeoutMs = 15000, writeSystems = WRITE_SYSTEMS, system = 'PS4' }) {
-  // Read scripts pick the connection to this system (env COUNTPOINT_SAP_SYSTEM); write scripts get it as argument.
+  // `system` is the configured SAP system. Read scripts pick the connection to it (env COUNTPOINT_SAP_SYSTEM); write
+  // scripts get it as their first argument, and only it.
   const env = { ...process.env, COUNTPOINT_SAP_SYSTEM: system }
   return function runScript(name, args = [], options = {}) {
     const write = Object.hasOwn(WRITE_SCRIPTS, name)
     if (!write && !Object.hasOwn(SCRIPTS, name)) return Promise.reject(codeError('SAP_SCRIPT_NOT_ALLOWED'))
     if (!Array.isArray(args) || !args.every(arg => typeof arg === 'string' && SAFE_ARGUMENT.test(arg))) return Promise.reject(codeError('SAP_INVALID_ARGUMENT'))
-    if (write && !(SCRIPT_WRITE_SYSTEMS[name] || writeSystems).includes(args[0])) return Promise.reject(codeError('SAP_WRITE_SYSTEM_NOT_ALLOWED'))
+    if (write && (args[0] !== system || !(SCRIPT_WRITE_SYSTEMS[name] || writeSystems).includes(args[0]))) return Promise.reject(codeError('SAP_WRITE_SYSTEM_NOT_ALLOWED'))
     const script = path.join(scriptDir, write ? WRITE_SCRIPTS[name] : SCRIPTS[name])
     return new Promise((resolve, reject) => {
       execFile(cscriptPath, ['//NoLogo', '//E:vbscript', script, ...args], { timeout: options.timeoutMs || timeoutMs, windowsHide: true, encoding: 'utf8', maxBuffer: 1024 * 1024, env }, (error, stdout) => {
