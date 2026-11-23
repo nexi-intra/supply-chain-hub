@@ -176,8 +176,9 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId, wa
     return Object.values(index).filter(entry => liveEntry(entry, at)).sort((a, b) => b.createdAt - a.createdAt)
   }
 
-  async function isDeleted(team, id) {
-    const index = (await store(team).getAsync(INDEX_KEY)) || {}
+  /** `fresh` reads past the store's read cache (up to 3 s old): another PC's tombstone is seen at once. */
+  async function isDeleted(team, id, { fresh = false } = {}) {
+    const index = (await store(team).getAsync(INDEX_KEY, fresh ? { skipCache: true } : undefined)) || {}
     return Boolean(index[id]?.deleted)
   }
 
@@ -195,15 +196,36 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId, wa
   /**
    * The tombstones of the counts. `docsById` keeps the posted SAP documents of a count in its tombstone (`deletedDocs`:
    * number, year and material document), the only trace of what was posted in SAP once its files are gone.
+   * Returns what restoreDeleted needs to put the entries back.
    */
   async function markDeleted(team, ids, by, docsById = {}) {
-    if (!ids.length) return
+    if (!ids.length) return null
     for (const id of ids) key(id, '')
     const at = now()
     const deletedBy = { email: by.email, name: by.name }
+    const previous = {}
     await store(team).mutateAsync(INDEX_KEY, index => {
       const next = index && typeof index === 'object' ? index : {}
-      for (const id of ids) next[id] = { id, deleted: true, deletedAt: at, deletedBy, ...(docsById[id]?.length ? { deletedDocs: docsById[id] } : {}) }
+      for (const id of ids) {
+        previous[id] = next[id] ?? null
+        next[id] = { id, deleted: true, deletedAt: at, deletedBy, ...(docsById[id]?.length ? { deletedDocs: docsById[id] } : {}) }
+      }
+      return next
+    })
+    return { at, deletedBy, previous }
+  }
+
+  /** Undoes markDeleted before any file is removed: each entry still holding that very tombstone gets its old value back. */
+  async function restoreDeleted(team, marked) {
+    if (!marked) return
+    await store(team).mutateAsync(INDEX_KEY, index => {
+      const next = index && typeof index === 'object' ? index : {}
+      for (const [id, entry] of Object.entries(marked.previous)) {
+        const current = next[id]
+        if (!current?.deleted || current.deletedAt !== marked.at || current.deletedBy?.email !== marked.deletedBy.email) continue
+        if (entry) next[id] = entry
+        else delete next[id]
+      }
       return next
     })
   }
@@ -262,7 +284,8 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId, wa
     return meta
   }
 
-  const getObject = (team, id, part) => store(team).getAsync(key(id, part)).then(value => value || {})
+  // `fresh` reads past the store's read cache (up to 3 s old).
+  const getObject = (team, id, part, { fresh = false } = {}) => store(team).getAsync(key(id, part), fresh ? { skipCache: true } : undefined).then(value => value || {})
   const setField = (team, id, part, field, value) => store(team).updateAsync(key(id, part), { op: 'setField', field, value })
   const deleteField = (team, id, part, field) => store(team).updateAsync(key(id, part), { op: 'deleteField', field })
 
@@ -423,6 +446,7 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId, wa
     deleteCount,
     deleteCounts,
     markDeleted,
+    restoreDeleted,
     removeCountFiles,
     getMeta,
     updateMeta,
@@ -436,14 +460,14 @@ function createCountRepository({ storeFor, now = Date.now, newId = defaultId, wa
     getClaims: (team, id) => getObject(team, id, 'claims'),
     setClaim: (team, id, area, value) => setField(team, id, 'claims', area, value),
     deleteClaim: (team, id, area) => deleteField(team, id, 'claims', area),
-    getApprovals: (team, id) => getObject(team, id, 'approvals'),
+    getApprovals: (team, id, options) => getObject(team, id, 'approvals', options),
     setApproval: (team, id, material, value) => setField(team, id, 'approvals', material, value),
     /** Several approvals in one locked write (same file and format as setApproval): `change(all)` returns { all, result }. */
     changeApprovals: (team, id, change) => changeKey(team, key(id, 'approvals'), change),
     getMaterialLocks: (team, id) => getObject(team, id, 'materiallaase'),
     /** compare-and-set on all locks of a count: `change(all)` returns { all, result }. */
     changeMaterialLocks: (team, id, change) => changeKey(team, key(id, 'materiallaase'), change),
-    getPiDocs: (team, id) => getObject(team, id, 'sap-dokumenter'),
+    getPiDocs: (team, id, options) => getObject(team, id, 'sap-dokumenter', options),
     /** compare-and-set on all SAP documents of a count (keyed by CountPoint id): `change(all)` returns { all, result }. */
     changePiDocs: (team, id, change) => changeKey(team, key(id, 'sap-dokumenter'), change),
     /**

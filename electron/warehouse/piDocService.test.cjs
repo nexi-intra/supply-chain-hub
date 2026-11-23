@@ -61,7 +61,8 @@ test('a document is not created in SAP for a count deleted meanwhile', async () 
     getPiDocs: async () => structuredClone(stored),
     // The count is deleted on another PC right after the reservation is written.
     changePiDocs: async (team, id, change) => { stored = change(structuredClone(stored)).all; deleted = true },
-    isDeleted: async () => deleted,
+    // Read past the 3 s read cache: a cached index may not have the tombstone yet.
+    isDeleted: async (team, id, options) => options?.fresh === true && deleted,
   }
   const writer = { createDocument: async request => { created.push(request); return { docs: [{ docNo: '105000905', materials: ['R1'] }], missing: [] } } }
   const service = createPiDocService({ counts: { countDoc: async () => ({ rows: ROWS }) }, repo, roles: { roleOf: async () => 'manager' }, writer, system: 'QS4' })

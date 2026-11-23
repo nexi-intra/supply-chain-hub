@@ -269,3 +269,21 @@ test('own placements and storage rules are shared by the team', async () => {
   await assert.rejects(repo.setRule('TCD', 'D001', { kinds: ['used'], by: OWNER }), { code: 'RULE_INVALID' })
   await assert.rejects(repo.setRule('TCD', 'D006', { kinds: ['nonsense'], by: OWNER }), { code: 'RULE_INVALID' })
 })
+
+test('fresh reads of approvals, SAP documents and the delete mark see another PC\'s write within the read cache time', async () => {
+  const { repo, dataDir } = setup()
+  const otherStore = createStore(path.join(dataDir, 'TCD'))
+  const other = createCountRepository({ storeFor: () => otherStore, now: () => 1000 })
+  const id = 'count1abc'
+  await repo.changeApprovals('TCD', id, () => ({ all: { R1: { status: 'approved' } } }))
+  await repo.changePiDocs('TCD', id, () => ({ all: { D1: { id: 'D1', status: 'counted' } } }))
+  await repo.markDeleted('TCD', ['count9abc'], OWNER)
+  // This PC has read them (now in its read cache); the other PC writes.
+  const cached = async () => [(await repo.getApprovals('TCD', id)).R1.status, (await repo.getPiDocs('TCD', id)).D1.status, await repo.isDeleted('TCD', id)]
+  assert.deepEqual(await cached(), ['approved', 'counted', false])
+  await other.changeApprovals('TCD', id, all => ({ all: { ...all, R1: { status: 'posted' } } }))
+  await other.changePiDocs('TCD', id, all => ({ all: { ...all, D1: { id: 'D1', status: 'posted' } } }))
+  await other.markDeleted('TCD', [id], { email: 'mona@example.test', name: 'Mona' })
+  assert.deepEqual(await cached(), ['approved', 'counted', false], 'the cached reads are up to 3 s old')
+  assert.deepEqual([(await repo.getApprovals('TCD', id, { fresh: true })).R1.status, (await repo.getPiDocs('TCD', id, { fresh: true })).D1.status, await repo.isDeleted('TCD', id, { fresh: true })], ['posted', 'posted', true])
+})

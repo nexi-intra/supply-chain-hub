@@ -46,9 +46,16 @@ function setup({ status = true } = {}) {
     count: async (team, data) => { written.push({ kind: 'count', team, name: data.meta.name, language: data.language }); return path.join(root, 'rapporter', `${data.meta.name}.xlsx`) },
     status: async (team, data) => { written.push({ kind: 'status', team, version: data.version, counts: data.counts.length, history: data.status.history.map(entry => entry.action), language: data.language }); return path.join(root, 'rapporter', `${data.status.name} v${data.version}.xlsx`) },
   }
-  const service = name => createCountService({
-    repo: createCountRepository({ storeFor, now: () => clock.now }),
-    storeFor, fetcher, placementSource, reportWriter,
+  // A PC of its own has its own stores (and read caches) on the same folder; the others share one, as before.
+  const ownStores = new Map()
+  const storeOf = name => team => {
+    const id = `${name}:${team}`
+    if (!ownStores.has(id)) ownStores.set(id, createStore(path.join(root, 'data', team)))
+    return ownStores.get(id)
+  }
+  const service = (name, { ownStore = false } = {}) => createCountService({
+    repo: createCountRepository({ storeFor: ownStore ? storeOf(name) : storeFor, now: () => clock.now }),
+    storeFor: ownStore ? storeOf(name) : storeFor, fetcher, placementSource, reportWriter,
     journalsDir: path.join(root, `local-${name}`), deviceId: name,
     now: () => clock.now, newId: () => `${name}${++ids}`,
     journalOptions: { autoFlush: false },
@@ -1194,7 +1201,7 @@ test('after the status is locked the SAP documents are still made, counted, post
   await ctx.repo.updateStatus('TCD', 'st0open1', { state: 'locked', lockedAt: 2, lockedBy: { email: 'mona@example.test', name: 'Mona' } }, { action: 'locked', by: { email: 'mona@example.test', name: 'Mona' } })
   ctx.tick(5000)
   // Another PC looks at the archive: read once while nothing changes, read again after the posting.
-  const viewer = ctx.service('pc5')
+  const viewer = ctx.service('pc5', { ownStore: true })
   const before = await viewer.statusArchive(MONA, 'st0open1')
   assert.equal(before.lines.find(line => line.material === 'R162-0717').approval.status, 'approved')
   assert.equal(await viewer.statusArchive(MONA, 'st0open1'), before, 'cached while nothing changes')
@@ -1255,6 +1262,27 @@ test('a count with an SAP document not posted yet cannot be deleted; posted ones
   assert.deepEqual(await anna.deleteCount(ANNA, id), { ok: true })
   const entry = (await ctx.storeFor('TCD').getAsync('counts-index'))[id]
   assert.deepEqual([entry.deleted, entry.deletedDocs], [true, [{ docNo: '105000962', year: '2026', materialDoc: '4905204901' }, { docNo: '105000963', year: '2026', materialDoc: null }]])
+})
+
+test('a document reserved on another PC while the count is being deleted stops the delete, and the count comes back whole', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const { id } = await newCount(ctx, anna)
+  const reservation = { id: 'CPRACE1', reference: 'CPRACE1', status: 'creating', sloc: 'D000', stockType: 'unrestricted', lines: [{ material: 'R162-0717' }] }
+  // Right after the tombstone is written, a manager on another PC reserves a document (read before the tombstone).
+  const repo = { ...ctx.repo, markDeleted: async (...args) => { const result = await ctx.repo.markDeleted(...args); await ctx.repo.changePiDocs('TCD', args[1][0], all => ({ all: { ...all, CPRACE1: { ...reservation, startedAt: ctx.clock.now } } })); return result } }
+  const svc = createCountService({ repo, storeFor: ctx.storeFor, fetcher: ctx.fetcher, placementSource: null, journalsDir: path.join(ctx.root, 'local-race'), deviceId: 'race', now: () => ctx.clock.now, newId: () => 'unused', journalOptions: { autoFlush: false } })
+  const entry = (await ctx.storeFor('TCD').getAsync('counts-index'))[id]
+  const refused = error => error.code === 'COUNT_PIDOCS_ACTIVE' && /under oprettelse$/.test(error.message)
+  await assert.rejects(svc.deleteCount(ANNA, id), refused)
+  assert.deepEqual((await ctx.storeFor('TCD').getAsync('counts-index', { skipCache: true }))[id], entry, 'the index entry is back as it was')
+  assert.equal((await ctx.repo.getMeta('TCD', id)).id, id, 'the files are kept')
+  assert.equal(await ctx.repo.isDeleted('TCD', id, { fresh: true }), false)
+
+  await ctx.repo.changePiDocs('TCD', id, () => ({ all: {} }))
+  await assert.rejects(svc.deleteStatus(MONA, 'st0open1'), refused)
+  assert.equal((await ctx.repo.getStatus('TCD', 'st0open1')).state, 'open', 'the status is kept')
+  assert.deepEqual((await ctx.repo.listCounts('TCD')).map(item => item.id), [id])
 })
 
 test('deleting a status is refused while one of its counts has an SAP document not posted yet; posted ones are kept per count', async () => {

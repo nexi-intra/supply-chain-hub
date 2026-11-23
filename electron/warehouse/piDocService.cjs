@@ -65,9 +65,17 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
       planDocument({ rows, docs: live(all, startedAt), materials, sloc, stockType })
       return { all: { ...all, [reference]: { id: reference, reference, status: 'creating', startedAt, sloc: plan.sloc, stockType: plan.stockType, kind: plan.kind, lines: plan.lines, createdBy: by(user, startedAt) } } }
     })
-    // Deleted meanwhile (the delete reads the documents before its tombstone): a document made now could not be found
-    // from the app. The reservation is left: the count's files are being removed.
-    const deleted = repo.isDeleted ? await repo.isDeleted(user.team, id).catch(() => false) : false
+    // Deleted meanwhile: a document made now could not be found from the app. Read past the read cache. A delete re-reads
+    // the documents after its tombstone (removeCounts' recheck), so either it sees this reservation and stops, or this sees
+    // its tombstone. The reservation is left: the count's files are being removed. When the index cannot be read, SAP is
+    // not asked either (the reservation is taken back, as when SAP fails).
+    let deleted = false
+    try {
+      deleted = repo.isDeleted ? await repo.isDeleted(user.team, id, { fresh: true }) : false
+    } catch (error) {
+      await repo.changePiDocs(user.team, id, all => { delete all[reference]; return { all } }).catch(() => {})
+      throw error
+    }
     if (deleted) throw codeError('COUNT_DELETED', 'Optællingen er slettet')
     let result
     try {
