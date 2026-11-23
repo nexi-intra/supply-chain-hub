@@ -5,12 +5,12 @@
 ' presses Check (validation only) and stops with the errors if there are any. Without errors it WAITS for the user to
 ' press "Update Count" (or "Update Count + Create new"); then leaves the document so it is not locked for posting.
 ' outFile: one line per serial with an error: serial<TAB>message. Output: {"ok":true,"message":"..","newSerials":N}
-' or {"ok":false,"error":"..","errors":N}.
+' or {"ok":false,"error":"..","errors":N}; "timedOut":true when the wait timed out (the item is read back all the same).
 Option Explicit
 On Error Resume Next
 
 Dim systemName, docNo, year, material, outDir, inFile, outFile, waitSeconds, app, conn, base, s, i, before, beforeIds, ownId
-Dim fso, serials, count, grid, list, row, errorsFound, newSerials, stream, message, text
+Dim fso, serials, count, grid, list, row, errorsFound, newSerials, stream, message, text, timedOut
 
 Function JsonText(value)
   Dim t
@@ -23,11 +23,14 @@ Function JsonText(value)
 End Function
 
 Sub Finish(ok, text, extra)
+  Dim tail
   CloseOwnSession
+  tail = extra
+  If timedOut Then tail = tail & ",""timedOut"":true"
   If ok Then
-    WScript.StdOut.WriteLine "{""ok"":true,""message"":" & JsonText(text) & extra & "}"
+    WScript.StdOut.WriteLine "{""ok"":true,""message"":" & JsonText(text) & tail & "}"
   Else
-    WScript.StdOut.WriteLine "{""ok"":false,""error"":" & JsonText(text) & extra & "}"
+    WScript.StdOut.WriteLine "{""ok"":false,""error"":" & JsonText(text) & tail & "}"
   End If
   WScript.Quit 0
 End Sub
@@ -85,6 +88,7 @@ inFile = WScript.Arguments(5)
 outFile = WScript.Arguments(6)
 waitSeconds = CLng(WScript.Arguments(7))
 Set s = Nothing
+timedOut = False
 Set fso = CreateObject("Scripting.FileSystemObject")
 If Err.Number <> 0 Then Err.Clear : Finish False, "arguments", ""
 If Len(docNo) < 9 Or Len(docNo) > 10 Or Len(year) <> 4 Or Len(material) = 0 Then Finish False, "arguments", ""
@@ -221,7 +225,9 @@ For i = 1 To waitSeconds * 2
   End If
   Err.Clear
 Next
-If i > waitSeconds * 2 Then Finish False, "timeout", ""
+' No "Update Count" seen in time: the user may have pressed it and left the screen. The item is read back below (open
+' popups are cancelled there first), so the answer is what SAP has.
+If i > waitSeconds * 2 Then timedOut = True
 WaitIdle
 If s.Children.Count > 1 Then message = s.findById("wnd[1]").Text & ": " & message
 If s.findById("wnd[0]/sbar").MessageType = "E" Then Finish False, "sap: " & message, ""

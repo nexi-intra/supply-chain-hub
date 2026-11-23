@@ -2,14 +2,15 @@
 ' Usage: pidoc-post.vbs <system> <year> <outDir> <listFile> <statusFile> <waitSeconds> <doc> [clipboard]
 '   With "clipboard" CountPoint has put all documents on the clipboard (one per line); <doc> is the first of them.
 ' Opens its OWN session on <system> (refuses any other), lists the documents in MI20, saves the list (%pc), ticks exactly
-' those documents and WAITS for the user. When the user is back on the list (or closes the window) the documents are
-' looked up in MI22 (display only) and that list is saved to <statusFile>. Output: {"ok":true,"screens":"..."}.
+' those documents and WAITS for the user. When the user is back on the list (or closes the window, or the wait times out)
+' the documents are looked up in MI22 (display only) and that list is saved to <statusFile>.
+' Output: {"ok":true,"screens":"..."}, with "timedOut":true when the wait timed out.
 Option Explicit
 On Error Resume Next
 
 Const PLANT = "D301"
 Dim systemName, year, outDir, listFile, statusFile, waitSeconds, firstDoc, fromClipboard
-Dim app, conn, base, s, i, before, beforeIds, ownId, fso, ticked, screens, last, current, leftList
+Dim app, conn, base, s, i, before, beforeIds, ownId, fso, ticked, screens, last, current, leftList, timedOut
 
 Function JsonText(value)
   Dim t
@@ -22,11 +23,14 @@ Function JsonText(value)
 End Function
 
 Sub Finish(ok, text)
+  Dim tail
   CloseOwnSession
+  tail = ""
+  If timedOut Then tail = ",""timedOut"":true"
   If ok Then
-    WScript.StdOut.WriteLine "{""ok"":true,""ticked"":" & ticked & ",""screens"":" & JsonText(screens) & "}"
+    WScript.StdOut.WriteLine "{""ok"":true,""ticked"":" & ticked & ",""screens"":" & JsonText(screens) & tail & "}"
   Else
-    WScript.StdOut.WriteLine "{""ok"":false,""error"":" & JsonText(text) & ",""screens"":" & JsonText(screens) & "}"
+    WScript.StdOut.WriteLine "{""ok"":false,""error"":" & JsonText(text) & ",""screens"":" & JsonText(screens) & tail & "}"
   End If
   WScript.Quit 0
 End Sub
@@ -142,6 +146,7 @@ fromClipboard = (WScript.Arguments.Count > 7)
 Set s = Nothing
 ticked = 0
 screens = ""
+timedOut = False
 Set fso = CreateObject("Scripting.FileSystemObject")
 If Err.Number <> 0 Then Err.Clear : Finish False, "arguments"
 If Len(year) <> 4 Or Len(firstDoc) < 9 Then Finish False, "arguments"
@@ -233,7 +238,19 @@ For i = 1 To waitSeconds * 2
   End If
   Err.Clear
 Next
-If i > waitSeconds * 2 Then Finish False, "timeout"
+If i > waitSeconds * 2 Then
+  ' No end seen in time: the user may have posted and gone on to another screen. Open popups are cancelled (as
+  ' CloseOwnSession does; nothing is saved by that) and the status is read in MI22 below, like after a closed window.
+  timedOut = True
+  WaitIdle
+  Err.Clear
+  Do While s.Children.Count > 1
+    s.findById("wnd[" & (s.Children.Count - 1) & "]").sendVKey 12
+    WaitIdle
+    If Err.Number <> 0 Then Exit Do
+  Loop
+  Err.Clear
+End If
 If s Is Nothing Then
   ' The user closed the window: open a fresh session only to read the status (display only).
   base.CreateSession

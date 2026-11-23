@@ -240,6 +240,15 @@ test('SAP counting another quantity than the serials sent stops the count; the m
   assert.equal(stored().D6.entered, undefined, 'a retry does not skip it')
 })
 
+test('an unknown SAP state is passed on as it is; nothing is marked counted and SAP is not asked again', async () => {
+  const unknown = Object.assign(new Error('PIDOC_UNKNOWN: Optælling ved ikke, om SAP har gemt. Tjek dokumentet i SAP (MI03).'), { code: 'PIDOC_UNKNOWN' })
+  const { service, calls, stored } = serialSetup(request => { if (request.material === 'INT2-0') throw unknown; return { counted: request.serials.length, serials: request.serials.length, newSerials: 0 } })
+  await assert.rejects(service.count(ANNA, 'c1', 'D6'), unknown)
+  assert.deepEqual(calls, [['serials', 'INT1-0'], ['serials', 'INT2-0']])
+  assert.equal(stored().D6.status, 'printed')
+  assert.deepEqual(Object.keys(stored().D6.entered), ['INT1-0'], 'only what SAP confirmed is remembered')
+})
+
 /** A document for R1 made Monday 23.11.2026 from the SAP figures of the day; `at(day, hour)` is local time. */
 function staleSetup({ fetchedAt, docFetchedAt }) {
   const at = (day, hour) => new Date(2026, 10, day, hour).getTime()

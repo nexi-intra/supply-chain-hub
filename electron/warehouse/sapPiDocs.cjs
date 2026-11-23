@@ -38,6 +38,9 @@ function checkDoc({ docNo, year }) {
   if (!/^\d{9,10}$/.test(String(docNo || '')) || !/^\d{4}$/.test(String(year || ''))) throw writeError('PIDOC_INVALID', 'Ugyldigt dokument')
 }
 
+/** After a timeout the scripts read SAP back; when even that fails, nobody knows whether the user saved. */
+const unknownState = () => writeError('PIDOC_UNKNOWN', 'Optælling ved ikke, om SAP har gemt. Tjek dokumentet i SAP (MI03).')
+
 function createPiDocWriter({ bridge, runScript, clipboard, system, tempRoot = os.tmpdir(), waitSeconds = WAIT_SECONDS }) {
   let writing = false
 
@@ -73,6 +76,7 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, tempRoot = os
         const counted = parseSapNumber(result.error.slice('not-counted: '.length))
         throw writeError('PIDOC_NOT_COUNTED', `SAP har talt ${Number.isNaN(counted) ? result.error.slice('not-counted: '.length) : counted} på ${material}, men der blev sendt ${list.length} serienumre. Tjek dokumentet i SAP (MI03)`, { counted })
       }
+      if (!result?.ok && result?.timedOut) throw unknownState()
       if (!result?.ok) throw scriptFailure(result, 'ZMS_COUNT_SERIAL')
       return { counted: parseSapNumber(result.counted) || 0, serials: Number(result.serials) || 0, newSerials: Number(result.newSerials) || 0 }
     })
@@ -88,6 +92,7 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, tempRoot = os
       const result = lastJsonLine(await runScript('pidoc-count', [system, String(docNo), String(year), dir, 'count.txt', String(waitSeconds)], { timeoutMs: (waitSeconds + 300) * 1000 }))
       if (result?.error === 'cancelled') throw writeError('PIDOC_CANCELLED', 'SAP-vinduet blev lukket uden Gem – intet er gemt')
       if (/^not-counted/.test(result?.error || '')) throw writeError('PIDOC_NOT_COUNTED', `SAP viser ikke de rigtige antal (${result.error.slice(13)})`)
+      if (!result?.ok && result?.timedOut) throw unknownState()
       if (!result?.ok) throw scriptFailure(result, 'MI04')
       return { message: String(result.message || '') }
     })
@@ -149,6 +154,8 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, tempRoot = os
       if (list.length > 1 && !(await putOnClipboard(clipboard, list.join('\r\n')))) throw writeError('CLIPBOARD_REFUSED', CLIPBOARD_REFUSED)
       onWaiting()
       const result = lastJsonLine(await runScript('pidoc-post', [system, String(year), dir, 'mi20.txt', 'mi22.txt', String(waitSeconds), list[0], ...(list.length > 1 ? ['clipboard'] : [])], { timeoutMs: (waitSeconds + 300) * 1000 }))
+      // A timeout ends like a closed window: MI22 decides. Only when that status could not be read is the state unknown.
+      if (!result?.ok && (result?.timedOut || result?.error === 'closed-unknown')) throw unknownState()
       if (!result?.ok) throw scriptFailure(result, 'Bogføringen i MI20')
       const differences = parseMi20(await fs.promises.readFile(path.join(dir, 'mi20.txt'), 'utf8')).filter(item => list.includes(item.docNo))
       const status = parseMi22(await fs.promises.readFile(path.join(dir, 'mi22.txt'), 'utf8')).filter(doc => list.includes(doc.docNo))

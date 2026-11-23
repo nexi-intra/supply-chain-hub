@@ -146,6 +146,58 @@ test('posting: MI20 for several documents; MI22 decides what was posted; the mat
   await assert.rejects(writer.postDocuments({ docNos: [], year: '2026' }), { code: 'PIDOC_INVALID' })
 })
 
+const UNKNOWN = { code: 'PIDOC_UNKNOWN', message: 'PIDOC_UNKNOWN: Optælling ved ikke, om SAP har gemt. Tjek dokumentet i SAP (MI03).' }
+
+test('posting: after a timeout MI22 still decides what was posted; a timeout without a status is unknown, never "intet er gemt"', async () => {
+  let next
+  const runScript = async (name, args) => {
+    fs.copyFileSync(path.join(__dirname, 'fixtures', 'sap', 'pidoc', 'mi20-list.txt'), path.join(args[2], args[3]))
+    if (next.ok) fs.copyFileSync(path.join(__dirname, 'fixtures', 'sap', 'pidoc', 'mi22-posted.txt'), path.join(args[2], args[4]))
+    return JSON.stringify(next)
+  }
+  const writer = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
+  next = { ok: true, ticked: 1, timedOut: true, screens: 'SAPMSSY0/120/1 > SAPMM07I/701/1 []' }
+  const result = await writer.postDocuments({ docNos: ['105000894'], year: '2026' })
+  assert.deepEqual([result.posted, result.open], [['105000894'], []])
+  for (const error of ['read-failed', 'status-not-found', 'mi22-screen-changed']) {
+    next = { ok: false, error, timedOut: true, screens: '' }
+    await assert.rejects(writer.postDocuments({ docNos: ['105000894'], year: '2026' }), UNKNOWN)
+  }
+  next = { ok: false, error: 'closed-unknown', screens: '' }
+  await assert.rejects(writer.postDocuments({ docNos: ['105000894'], year: '2026' }), UNKNOWN, 'window closed and no session to read the status')
+  next = { ok: false, error: 'read-failed', screens: '' }
+  await assert.rejects(writer.postDocuments({ docNos: ['105000894'], year: '2026' }), { code: 'PIDOC_SAP_FAILED' }, 'before the hand-over nothing is posted')
+})
+
+test('MI04 and ZMS_COUNT_SERIAL after a timeout: the read-back decides; when it fails the state is unknown', async () => {
+  let next
+  const runScript = async () => JSON.stringify(next)
+  const writer = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
+  const counts = () => writer.enterCounts({ docNo: '105000894', year: '2026', entries: [{ material: 'R1', qty: 3 }] })
+  const serials = () => writer.enterSerials({ docNo: '105000893', year: '2026', material: 'INT1-0', serials: ['S1', 'S2'] })
+  next = { ok: true, message: '', items: 1, timedOut: true }
+  assert.deepEqual(await counts(), { message: '' }, 'saved and read back: done')
+  next = { ok: true, message: '', newSerials: 0, counted: '2', serials: '2', timedOut: true }
+  assert.equal((await serials()).counted, 2)
+  next = { ok: false, error: 'verify-failed', timedOut: true }
+  await assert.rejects(counts(), UNKNOWN)
+  await assert.rejects(serials(), UNKNOWN)
+  next = { ok: false, error: 'not-counted: R1', timedOut: true }
+  await assert.rejects(counts(), { code: 'PIDOC_NOT_COUNTED' }, 'read back: SAP does not have it')
+  next = { ok: false, error: 'not-counted', timedOut: true }
+  await assert.rejects(serials(), { code: 'PIDOC_NOT_COUNTED' })
+})
+
+test('the waiting scripts read SAP back after a timeout instead of ending with "timeout"', () => {
+  for (const name of ['pidoc-post.vbs', 'pidoc-count.vbs', 'pidoc-serials.vbs']) {
+    const source = fs.readFileSync(path.join(__dirname, 'sap', name), 'utf8')
+    assert.doesNotMatch(source, /Finish False, "timeout"/, `${name} does not give up on a timeout`)
+    assert.match(source, /^Dim [^\r\n]*\btimedOut\b/m, `${name}: timedOut is declared (Option Explicit)`)
+    assert.match(source, /^\s*(If i > waitSeconds \* 2 Then )?timedOut = True\r$/m, `${name}: a timeout is remembered`)
+    assert.match(source, /If timedOut Then [^\r\n]*""timedOut"":true/, `${name}: the answer says it timed out`)
+  }
+})
+
 test('deleting: only CountPoint documents; deleted = SAP message and no longer active in MI22', async () => {
   let next = { ok: true, message: 'Physical inventory document 105000903 deleted', screens: '' }
   const calls = []

@@ -2,14 +2,15 @@
 ' Usage: pidoc-count.vbs <system> <docNo> <year> <outDir> <inFile> <waitSeconds>
 '   inFile = material<TAB>quantity per line (whole numbers); 0 sets "Zero Count".
 ' Opens its OWN session on <system> (refuses any other), fills every item of the document (all pages), and WAITS for the
-' user to press Save. Then reads the items again in ZMS_COUNT_SERIAL (display only) and checks they are counted.
-' Output: {"ok":true,"message":"..","items":N} or {"ok":false,"error":".."}.
+' user to press Save. Then reads the items again in ZMS_COUNT_SERIAL (display only) and checks they are counted; also
+' when the wait times out, as the user may have saved and left the screen.
+' Output: {"ok":true,"message":"..","items":N} or {"ok":false,"error":".."}, with "timedOut":true after a timeout.
 Option Explicit
 On Error Resume Next
 
 Const SUB_AREA = "wnd[0]/usr/sub:SAPMM07I:0731/"
 Dim systemName, docNo, year, outDir, inFile, waitSeconds, app, conn, base, s, i, before, beforeIds, ownId
-Dim fso, text, lines, parts, wanted, filled, r, field, material, qty, page, message, list, row, wrong
+Dim fso, text, lines, parts, wanted, filled, r, field, material, qty, page, message, list, row, wrong, timedOut
 
 Function JsonText(value)
   Dim t
@@ -22,11 +23,14 @@ Function JsonText(value)
 End Function
 
 Sub Finish(ok, text, extra)
+  Dim tail
   CloseOwnSession
+  tail = extra
+  If timedOut Then tail = tail & ",""timedOut"":true"
   If ok Then
-    WScript.StdOut.WriteLine "{""ok"":true,""message"":" & JsonText(text) & extra & "}"
+    WScript.StdOut.WriteLine "{""ok"":true,""message"":" & JsonText(text) & tail & "}"
   Else
-    WScript.StdOut.WriteLine "{""ok"":false,""error"":" & JsonText(text) & extra & "}"
+    WScript.StdOut.WriteLine "{""ok"":false,""error"":" & JsonText(text) & tail & "}"
   End If
   WScript.Quit 0
 End Sub
@@ -78,6 +82,7 @@ outDir = WScript.Arguments(3)
 inFile = WScript.Arguments(4)
 waitSeconds = CLng(WScript.Arguments(5))
 Set s = Nothing
+timedOut = False
 Set fso = CreateObject("Scripting.FileSystemObject")
 If Err.Number <> 0 Then Err.Clear : Finish False, "arguments", ""
 If Len(docNo) < 9 Or Len(docNo) > 10 Or Len(year) <> 4 Then Finish False, "arguments", ""
@@ -198,7 +203,19 @@ For i = 1 To waitSeconds * 2
   End If
   Err.Clear
 Next
-If i > waitSeconds * 2 Then Finish False, "timeout", ""
+If i > waitSeconds * 2 Then
+  ' No Save seen in time: the user may have saved and gone on to another screen. Open popups are cancelled (as
+  ' CloseOwnSession does; nothing is saved by that) and the items are read back below, so the answer is what SAP has.
+  timedOut = True
+  WaitIdle
+  Err.Clear
+  Do While s.Children.Count > 1
+    s.findById("wnd[" & (s.Children.Count - 1) & "]").sendVKey 12
+    WaitIdle
+    If Err.Number <> 0 Then Exit Do
+  Loop
+  Err.Clear
+End If
 WaitIdle
 message = s.findById("wnd[0]/sbar").Text
 
