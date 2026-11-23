@@ -42,6 +42,13 @@ const PROBLEMS: SoftwareloadOutcome[] = ['failed-sap', 'interrupted', 'abandoned
 export const isProblemOutcome = (outcome: SoftwareloadOutcome) => PROBLEMS.includes(outcome)
 
 /**
+ * Whether the person scanned (`lastScanAt`) after the task's break began and it is still on it: scans are saved, but
+ * their time does not count, so the screen offers to resume the time.
+ */
+export const scannedDuringPause = (running: { paused: boolean; lastEventAt: number }, lastScanAt: number | null) =>
+  running.paused && lastScanAt !== null && lastScanAt >= running.lastEventAt
+
+/**
  * The title over the result of a finished task (`name` for someone else's): "flyttet i SAP" only when something moved,
  * and it says when not everything did.
  */

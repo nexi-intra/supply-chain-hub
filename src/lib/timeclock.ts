@@ -1,5 +1,6 @@
 import { expandShiftPatterns } from './shiftPatterns'
 import type { ShiftAssignment, ShiftPatternRule, ShiftRole } from './types'
+import { t } from './warehouse/text'
 import type { TimeclockEntry } from '@/types/warehouse'
 
 const pad = (value: number) => String(value).padStart(2, '0')
@@ -18,6 +19,16 @@ export const ranTooLong = (running: { startedAt: number; now: number }, sinceAns
 /** The end the "Hvornår stoppede du?" dialog suggests: 8 hours after the start, never before `earliest` nor after now. */
 export const suggestedEnd = ({ startedAt, earliest = startedAt, now }: { startedAt: number; earliest?: number; now: number }) =>
   Math.max(earliest, Math.min(now, startedAt + SUGGESTED_RUN_MS))
+
+/**
+ * What Stempelkort tells after a start or resume that paused the running softwareload task, so the same time is not
+ * counted twice; when the pause failed, both clocks run and the person must pause the task. Null when there was none.
+ */
+export function softwareloadPauseNotice(result: { pausedSoftwareload?: unknown; softwareloadPauseFailed?: boolean }): { failed: boolean; text: string } | null {
+  if (result.softwareloadPauseFailed) return { failed: true, text: t('Softwareload-opgaven kunne ikke sættes på pause. Sæt den på pause selv', 'The softwareload task could not be paused. Pause it yourself') }
+  if (result.pausedSoftwareload) return { failed: false, text: t('Din softwareload-opgave er sat på pause', 'Your softwareload task is paused') }
+  return null
+}
 
 /** "1 t 23 min" (Danish) or "1 h 23 min"; under an hour only minutes. */
 export function formatDuration(ms: number, language: 'da' | 'en'): string {

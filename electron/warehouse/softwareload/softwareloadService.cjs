@@ -491,7 +491,10 @@ function createSoftwareloadService({
     return { ...await changePause(user, false), ...(stoppedTimeclock ? { stoppedTimeclock } : {}) }
   }
 
-  /** Pauses the running task when Stempelkort starts. Never fails: no task, a task already paused or a drive error leave it be. */
+  /**
+   * Pauses the running task when Stempelkort starts. Never throws: no task, a task already paused or being finished
+   * give null, and a drive error gives `{ failed: true }`, so Stempelkort can tell the person to pause it themselves.
+   */
   async function pauseIfRunning(user) {
     try {
       let next = null
@@ -502,7 +505,7 @@ function createSoftwareloadService({
       })
       return view(next)
     } catch {
-      return null
+      return { failed: true }
     }
   }
 

@@ -10,7 +10,7 @@ import { NativeSelect, Tabs } from '@/components/warehouse/ui'
 import { useKV } from '@/hooks/useKV'
 import { saveListChange } from '@/lib/kvChanges'
 import { saveInBackground } from '@/lib/saveInBackground'
-import { formatClock, formatDuration, isoDay, ranTooLong, todaysTasks } from '@/lib/timeclock'
+import { formatClock, formatDuration, isoDay, ranTooLong, softwareloadPauseNotice, todaysTasks } from '@/lib/timeclock'
 import { errorCode, errorMessage } from '@/lib/warehouse/errors'
 import { formatTime } from '@/lib/warehouse/format'
 import { currentWarehouseLanguage, t } from '@/lib/warehouse/text'
@@ -107,6 +107,13 @@ function ClockCard({ user, onManager }: { user: WarehouseUser; onManager: (isMan
     }
   }
 
+  // Starting or resuming the clock pauses a running softwareload task; the person hears so, and must pause it when that failed.
+  const tellSoftwareload = (result: { pausedSoftwareload?: unknown; softwareloadPauseFailed?: boolean }) => {
+    const notice = softwareloadPauseNotice(result)
+    if (notice?.failed) toast.error(notice.text, { duration: 15_000 })
+    else if (notice) toast.info(notice.text)
+  }
+
   const start = (switchTask: boolean) => run('start', async () => {
     if (!chosenRole) { toast.error(t('Vælg en opgave først', 'Choose a task first')); return }
     const started = await window.electronWarehouse!.timeclock.start({ ...taskOf(chosenRole), switchTask })
@@ -114,9 +121,14 @@ function ClockCard({ user, onManager }: { user: WarehouseUser; onManager: (isMan
     toast.success(started.saved
       ? t(`${started.saved.taskName} er gemt (${formatDuration(started.saved.workedMs, 'da')}). Uret kører nu på ${started.taskName}`, `${started.saved.taskName} is saved (${formatDuration(started.saved.workedMs, 'en')}). The clock now runs on ${started.taskName}`)
       : t(`Uret kører på ${started.taskName}`, `The clock runs on ${started.taskName}`))
+    tellSoftwareload(started)
   })
   const pause = () => run('pause', async () => show(await window.electronWarehouse!.timeclock.pause()))
-  const resume = () => run('resume', async () => show(await window.electronWarehouse!.timeclock.resume()))
+  const resume = () => run('resume', async () => {
+    const resumed = await window.electronWarehouse!.timeclock.resume()
+    show(resumed)
+    tellSoftwareload(resumed)
+  })
   const stop = (endAt?: number) => run('stop', async () => {
     const saved = await window.electronWarehouse!.timeclock.stop(endAt === undefined ? {} : { endAt })
     show(null)

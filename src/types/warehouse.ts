@@ -1224,12 +1224,22 @@ export interface TimeclockEntry extends TimeclockTask {
   editedAt?: number
 }
 
+/**
+ * Starting or resuming Stempelkort pauses the running softwareload task: `pausedSoftwareload` is the task it paused
+ * (null when none ran or it was on a break), `softwareloadPauseFailed` that it could not, so both clocks run.
+ */
+export interface SoftwareloadPausedByTimeclock {
+  pausedSoftwareload: SoftwareloadTaskView | null
+  softwareloadPauseFailed?: true
+}
+
 export interface TimeclockBridge {
   status(): Promise<{ running: TimeclockRunning | null; isManager: boolean }>
-  /** `switchTask`: saves the running clock and starts this task in one go. */
-  start(request: TimeclockTask & { switchTask?: boolean }): Promise<TimeclockRunning & { saved?: { taskName: string; workedMs: number } }>
+  /** `switchTask`: saves the running clock and starts this task in one go. Pauses a running softwareload task. */
+  start(request: TimeclockTask & { switchTask?: boolean }): Promise<TimeclockRunning & SoftwareloadPausedByTimeclock & { saved?: { taskName: string; workedMs: number } }>
   pause(): Promise<TimeclockRunning>
-  resume(): Promise<TimeclockRunning>
+  /** Pauses a running softwareload task, as start does. */
+  resume(): Promise<TimeclockRunning & SoftwareloadPausedByTimeclock>
   /** Fails with TIMECLOCK_LONG_RUN after 10 hours without `endAt` (when the work really stopped). */
   stop(request?: { endAt?: number }): Promise<{ taskName: string; workedMs: number; pausedMs: number }>
   cancel(): Promise<{ ok: true }>

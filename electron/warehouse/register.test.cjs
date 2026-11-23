@@ -396,6 +396,7 @@ test('softwareload channels are registered and starting Stempelkort pauses a run
   await assert.rejects(call('anna', 'softwareload:edit', { type: 'key', target: 'D004', version: '4.2.2', taskId: 'an-old-task' }), /^Error: SOFTWARELOAD_NOT_RUNNING: /)
   const clock = await call('anna', 'timeclock:start', { taskId: 'lager', taskName: 'Lager' })
   assert.equal(clock.taskName, 'Lager')
+  assert.deepEqual([clock.pausedSoftwareload?.id, clock.pausedSoftwareload?.paused, clock.softwareloadPauseFailed], [started.id, true, undefined], 'Stempelkort says it paused the task')
   const { running } = await call('anna', 'softwareload:status')
   assert.equal(running.paused, true)
   assert.deepEqual(running.terminals.map(terminal => terminal.serial), ['NCC1'])
@@ -434,6 +435,22 @@ test('Stempelkort and softwareload never count the same time: resuming one stops
   await call('anna', 'timeclock:resume')
   const task = await store.getAsync(key, { skipCache: true })
   assert.equal(task.pauses.at(-1).to, null, 'the task is on a break again')
+})
+
+test('Stempelkort says when it could not pause the softwareload task, and still starts', async () => {
+  const { root, call } = setup()
+  const none = await call('anna', 'timeclock:start', { taskId: 'lager', taskName: 'Lager' })
+  assert.deepEqual([none.pausedSoftwareload, none.softwareloadPauseFailed], [null, undefined], 'no task, nothing to say')
+  await call('anna', 'softwareload:start', { type: 'sw', target: 'd006', version: '4.2.1' })
+  // The running task cannot be read, as when M: answers with a broken file.
+  const dir = path.join(root, 'TCD', 'lagerstyring', 'softwareload')
+  const [file] = fs.readdirSync(dir).filter(name => name.startsWith('aktiv-'))
+  fs.writeFileSync(path.join(dir, file), '{ broken')
+  const started = await call('anna', 'timeclock:start', { taskId: 'lager', taskName: 'Lager' })
+  assert.deepEqual([started.taskName, started.pausedSoftwareload, started.softwareloadPauseFailed], ['Lager', null, true])
+  await call('anna', 'timeclock:pause')
+  const resumed = await call('anna', 'timeclock:resume')
+  assert.deepEqual([resumed.paused, resumed.pausedSoftwareload, resumed.softwareloadPauseFailed], [false, null, true])
 })
 
 test('the CountPoint role of a user is read once per 30 s, and again at once after a role change through this Hub', async () => {

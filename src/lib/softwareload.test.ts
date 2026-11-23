@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { commentsFor, commentsOnTask, finishTitle, isDeliberateConfirm, isProblemOutcome, kifMovePlan, outcomeLabel, previewGroups, sapRunErrorMessage, SOFTWARELOAD_TARGETS, summarizeByMaterial, summarizeTasks, targetLabel, taskForMaterial, taskLoadCounts, TYPE_LABELS } from './softwareload'
+import { commentsFor, commentsOnTask, finishTitle, isDeliberateConfirm, isProblemOutcome, kifMovePlan, outcomeLabel, previewGroups, sapRunErrorMessage, scannedDuringPause, SOFTWARELOAD_TARGETS, summarizeByMaterial, summarizeTasks, targetLabel, taskForMaterial, taskLoadCounts, TYPE_LABELS } from './softwareload'
 import { setWarehouseLanguage } from './warehouse/text'
 import type { SoftwareloadComment, SoftwareloadKifPreview, SoftwareloadOutcome, SoftwareloadResult, SoftwareloadTask } from '@/types/warehouse'
 
@@ -226,5 +226,14 @@ describe('commentsFor', () => {
     const loaded = task({ startedAt: new Date(2026, 10, 18, 7).getTime(), version: 'v2', results: { a: { ...result('to-target'), material: 'M-R' } } })
     expect(ids(commentsOnTask([...all, comment('december', { from: '2026-12-01', to: '2026-12-31' })], loaded))).toEqual(['both', 'material', 'whole'])
     expect(ids(commentsOnTask([comment('day', { from: '2026-11-18', to: '2026-11-18' })], loaded))).toEqual(['day'])
+  })
+})
+describe('scannedDuringPause', () => {
+  it('is true for a scan after the break began, while the task is still on it', () => {
+    const paused = { paused: true, lastEventAt: 10 * HOUR }
+    expect(scannedDuringPause(paused, 10 * HOUR + 1)).toBe(true)
+    expect(scannedDuringPause(paused, 10 * HOUR - 1)).toBe(false)
+    expect(scannedDuringPause(paused, null)).toBe(false)
+    expect(scannedDuringPause({ paused: false, lastEventAt: 10 * HOUR }, 11 * HOUR)).toBe(false)
   })
 })

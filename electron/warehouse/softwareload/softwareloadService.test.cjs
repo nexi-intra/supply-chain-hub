@@ -122,10 +122,10 @@ function setup({ timeclockRunning = null, sap = { writeEnabled: false }, matdocs
     if (!stores.has(dir)) stores.set(dir, createStore(path.join(root, dir)))
     return stores.get(dir)
   }
-  // `faults.venter = n` makes the next n writes to a pending task fail as if M: were gone; `faults.kif` and
-  // `faults.versioner` the same for KIF records and the version list. `gates.venter = gate()` holds every write to a
+  // `faults.venter = n` makes the next n writes to a pending task fail as if M: were gone; `faults.kif`,
+  // `faults.versioner` and `faults.aktiv` the same for KIF records, the version list and the running task. `gates.venter = gate()` holds every write to a
   // pending task until the test opens it, as a slow M:.
-  const faults = { venter: 0, kif: 0, versioner: 0 }
+  const faults = { venter: 0, kif: 0, versioner: 0, aktiv: 0 }
   const gates = {}
   const hurdle = async key => {
     const kind = Object.keys(faults).find(prefix => key === prefix || key.startsWith(`${prefix}-`))
@@ -374,6 +374,19 @@ test('pause and resume, and pauseIfRunning never throws', async () => {
   await svc.cancel(ANNA)
   assert.equal((await svc.status(ANNA)).running, null)
   await assert.rejects(svc.cancel(ANNA), { code: 'SOFTWARELOAD_NOT_RUNNING' })
+})
+
+test('pauseIfRunning says when it could not pause the task, instead of keeping quiet', async () => {
+  const ctx = setup()
+  const svc = ctx.service()
+  assert.equal(await svc.pauseIfRunning(ANNA), null, 'no task, nothing to pause')
+  await svc.start(ANNA, TASK)
+  ctx.faults.aktiv = 1
+  assert.deepEqual(await svc.pauseIfRunning(ANNA), { failed: true })
+  assert.equal((await svc.status(ANNA)).running.paused, false, 'the task still runs')
+  const paused = await svc.pauseIfRunning(ANNA)
+  assert.deepEqual([paused.id, paused.paused], ['t1', true])
+  assert.equal(await svc.pauseIfRunning(ANNA), null, 'already on a break')
 })
 
 test('resuming the task stops a running Stempelkort like start does, and refuses after 10 hours', async () => {

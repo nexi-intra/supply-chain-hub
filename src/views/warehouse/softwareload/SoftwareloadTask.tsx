@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect, Textarea } from '@/components/warehouse/ui'
 import { trackPendingWrite } from '@/lib/pendingWrites'
-import { SOFTWARELOAD_TARGETS, SOFTWARELOAD_TYPES as TYPES, targetLabel, TYPE_LABELS } from '@/lib/softwareload'
+import { scannedDuringPause, SOFTWARELOAD_TARGETS, SOFTWARELOAD_TYPES as TYPES, targetLabel, TYPE_LABELS } from '@/lib/softwareload'
 import { drainScanQueue, dropOtherScanQueues, readScanQueue, writeScanQueue, type ScanJob } from '@/lib/softwareloadScanQueue'
 import { formatClock, formatDuration, ranTooLong } from '@/lib/timeclock'
 import { errorCode, errorMessage } from '@/lib/warehouse/errors'
@@ -244,6 +244,8 @@ function RunningTask({ email, running, receivedAt, active, stopped, onStopped, o
   const [stuck, setStuck] = useState(false)
   const stuckRef = useRef(false)
   const [flash, setFlash] = useState<Flash | null>(null)
+  // When this screen last took a scan; a scan during a break shows the banner that resumes the time.
+  const [lastScanAt, setLastScanAt] = useState<number | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [failing, setFailing] = useState<string | null>(null)
   const [askCancel, setAskCancel] = useState(false)
@@ -360,6 +362,7 @@ function RunningTask({ email, running, receivedAt, active, stopped, onStopped, o
     changeAdded(map => { map.set(value, { at: Date.now(), saving: true }) })
     playTone('success')
     setFlash({ tone: 'success', text: value })
+    setLastScanAt(Date.now())
     enqueue({ kind: 'scan', serial: value, at: Date.now() })
   }
 
@@ -452,7 +455,13 @@ function RunningTask({ email, running, receivedAt, active, stopped, onStopped, o
         <div aria-live="assertive" className={cn('min-h-11 rounded-md border px-4 py-2 text-sm font-medium', flash ? FLASH_STYLES[flash.tone] : 'border-dashed text-muted-foreground')}>
           {flash ? <span className={cn(flash.tone === 'success' && 'font-mono text-base')}>{flash.text}</span> : t('Klar til scanning.', 'Ready to scan.')}
         </div>
-        {running.paused && <p className="text-xs text-muted-foreground">{t('Opgaven holder pause. Scanninger bliver stadig gemt.', 'The task is on a break. Scans are still saved.')}</p>}
+        {scannedDuringPause(running, lastScanAt) ? (
+          <div role="alert" className="flex flex-wrap items-center gap-3 rounded-md border border-amber-500/50 bg-amber-500/10 px-4 py-3 text-sm font-medium text-amber-700 dark:text-amber-300">
+            <Pause size={18} weight="fill" aria-hidden="true" />
+            <span className="flex-1">{t('Opgaven holder pause, så tiden tæller ikke med, mens du scanner. Scanningerne bliver gemt.', 'The task is on a break, so the time does not count while you scan. The scans are saved.')}</span>
+            <Button size="sm" onClick={resume} loading={busy === 'resume'} disabled={busy !== null}><Play size={16} weight="fill" /> {t('Fortsæt tiden', 'Resume the time')}</Button>
+          </div>
+        ) : running.paused && <p className="text-xs text-muted-foreground">{t('Opgaven holder pause. Scanninger bliver stadig gemt.', 'The task is on a break. Scans are still saved.')}</p>}
         {stuck && saving && (
           <p className="flex flex-wrap items-center gap-2 text-sm font-medium text-amber-700 dark:text-amber-300" role="status">
             {t(`${queueSize} scanninger venter på at blive gemt. De ligger på denne PC og sendes igen af sig selv.`, `${queueSize} scans are waiting to be saved. They are kept on this PC and sent again by themselves.`)}

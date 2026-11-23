@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { formatDuration, periodRange, ranTooLong, suggestedEnd, summarizeEntries, todaysTasks } from './timeclock'
+import { formatDuration, periodRange, ranTooLong, softwareloadPauseNotice, suggestedEnd, summarizeEntries, todaysTasks } from './timeclock'
+import { setWarehouseLanguage } from './warehouse/text'
 import type { TimeclockEntry } from '@/types/warehouse'
 
 const MIN = 60_000
@@ -78,3 +79,18 @@ describe('suggestedEnd', () => {
   })
 })
 
+
+describe('softwareloadPauseNotice', () => {
+  it('says when Stempelkort paused the softwareload task, and when it could not', () => {
+    expect(softwareloadPauseNotice({ pausedSoftwareload: null })).toBeNull()
+    expect(softwareloadPauseNotice({})).toBeNull()
+    expect(softwareloadPauseNotice({ pausedSoftwareload: { id: 't1' } })).toEqual({ failed: false, text: 'Din softwareload-opgave er sat på pause' })
+    expect(softwareloadPauseNotice({ pausedSoftwareload: null, softwareloadPauseFailed: true })).toEqual({ failed: true, text: 'Softwareload-opgaven kunne ikke sættes på pause. Sæt den på pause selv' })
+    setWarehouseLanguage('en')
+    try {
+      expect(softwareloadPauseNotice({ pausedSoftwareload: { id: 't1' } })?.text).toBe('Your softwareload task is paused')
+    } finally {
+      setWarehouseLanguage('da')
+    }
+  })
+})
