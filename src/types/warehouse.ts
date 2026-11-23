@@ -591,6 +591,8 @@ export interface MaterialLock {
   material: string
   holder: { email: string; name: string }
   at: number
+  /** Set when the holder has made no line or scan on the material for an hour: the lock has lapsed, anyone may take the material. */
+  idleSince?: number | null
   helpers: { email: string; name: string; at: number }[]
   requests: { email: string; name: string; at: number }[]
 }

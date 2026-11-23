@@ -77,6 +77,14 @@ describe('changes of a count', () => {
     expect(releaseLock('R1', 'owner@x')(state({ materialLocks: [lock(BO)] })).materialLocks).toEqual([])
   })
 
+  it('an idle material lock is taken over, except by its own holder and helpers', () => {
+    const idle = state({ materialLocks: [lock(BO, { idleSince: 5, helpers: [{ email: 'cara@x', name: 'Cara', at: 2 }] })] })
+    const taken = takeLock('R1', ANNA)(idle).materialLocks[0]
+    expect([taken.holder, taken.idleSince ?? null, taken.helpers]).toEqual([ANNA, null, []])
+    expect(takeLock('R1', BO)(idle)).toBe(idle)
+    expect(takeLock('R1', { email: 'cara@x', name: 'Cara' })(idle)).toBe(idle)
+  })
+
   it('a saved line changes the list and the counted quantity of its row once, also when shown again', () => {
     const changed = withLine(line('l1', 7))(state())
     expect([changed.lines[0].qty, changed.rows[0].counted, changed.rows[0].countedLines, changed.rows[0].diff, changed.rows[0].valueDiff]).toEqual([7, 7, 7, -3, -6])

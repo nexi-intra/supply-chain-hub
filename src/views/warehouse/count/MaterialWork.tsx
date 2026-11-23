@@ -12,6 +12,7 @@ import { formatNumber } from '@/lib/warehouse/format'
 import type { CountState, MaterialLock } from '@/types/warehouse'
 import type { PanelProps } from './CountView'
 import { answerRequest, askToCount, releaseLock, takeLock, withApprovals, withMaterialLock } from './optimisticState'
+import { sinceTime } from './since'
 import { t } from '@/lib/warehouse/text'
 
 /** What a material action needs from the count: it shows the change at once and saves in the background. */
@@ -21,7 +22,10 @@ export type CountActions = Pick<PanelProps, 'id' | 'state' | 'optimistic' | 'per
 export interface SubmitRetry { comment: string; serverDiff: string }
 
 export const lockOf = (state: CountState, material: string) => state.materialLocks.find(lock => lock.material === material) || null
-export const mayCount = (lock: MaterialLock | null, email: string) => !lock || lock.holder.email === email || lock.helpers.some(helper => helper.email === email)
+/** The holder or one of the helpers. */
+export const countsOn = (lock: MaterialLock | null, email: string) => Boolean(lock && (lock.holder.email === email || lock.helpers.some(helper => helper.email === email)))
+/** Free, idle for an hour (anyone may take it over), or the user's own. */
+export const mayCount = (lock: MaterialLock | null, email: string) => !lock || Boolean(lock.idleSince) || countsOn(lock, email)
 export const hasAsked = (lock: MaterialLock | null, email: string) => Boolean(lock?.requests.some(request => request.email === email))
 export const isApproved = (state: CountState, material: string) => ['approved', 'posted'].includes(state.approvals[material]?.status || '')
 export const isSubmitted = (state: CountState, material: string) => state.approvals[material]?.status === 'submitted'
@@ -103,9 +107,11 @@ export function SubmitDialog({ id, material, state, optimistic, person, retry, o
 export function MaterialsInProgress({ id, state, optimistic, person, isOwner }: CountActions & { isOwner: boolean }) {
   const [submitting, setSubmitting] = useState<{ material: string; retry?: SubmitRetry } | null>(null)
   const email = state.me.email
-  const mine = state.materialLocks.filter(lock => mayCount(lock, email))
-  const others = state.materialLocks.filter(lock => !mayCount(lock, email))
-  const toAnswer = state.materialLocks.filter(lock => (lock.holder.email === email || isOwner) && lock.requests.length > 0)
+  // The owner, a manager or an Optælling admin answers and releases for others too (as the drive allows).
+  const manages = isOwner || state.me.byRole
+  const mine = state.materialLocks.filter(lock => countsOn(lock, email))
+  const others = state.materialLocks.filter(lock => !countsOn(lock, email))
+  const toAnswer = state.materialLocks.filter(lock => (lock.holder.email === email || manages) && lock.requests.length > 0)
 
   // Shown at once; the write to M: (15–90 s) runs in the background and is taken back if it fails.
   const answer = (material: string, asker: { email: string; name: string }, allow: boolean) => {
@@ -121,7 +127,7 @@ export function MaterialsInProgress({ id, state, optimistic, person, isOwner }: 
     <Card>
       <CardHeader>
         <CardTitle className="text-base">{t('Materialer i gang', 'Materials in progress')}</CardTitle>
-        <CardDescription>{t('Et materiale låses til den, der tæller det. Låsen slippes med "Frigiv" eller "Send til godkendelse".', 'A material is locked to the person counting it. The lock is released with "Release" or "Send for approval".')}</CardDescription>
+        <CardDescription>{t('Et materiale låses til den, der tæller det. Låsen slippes med "Frigiv", med "Send til godkendelse" eller efter en time uden tællelinjer og scanninger.', 'A material is locked to the person counting it. The lock is released with "Release", with "Send for approval" or after an hour without count lines and scans.')}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4 text-sm">
         {toAnswer.map(lock => lock.requests.map(request => (
@@ -146,6 +152,7 @@ export function MaterialsInProgress({ id, state, optimistic, person, isOwner }: 
                   <span className="text-xs tabular-nums text-muted-foreground">{formatNumber(totals.counted)}/{formatNumber(totals.sapQty)}</span>
                 </div>
                 {lock.holder.email !== email && <p className="text-xs text-muted-foreground">{t(`Du tæller med hos ${lock.holder.name}`, `You are helping ${lock.holder.name}`)}</p>}
+                {lock.idleSince && <p className="text-xs text-amber-700 dark:text-amber-300">{t(`inaktiv siden ${sinceTime(lock.idleSince)}`, `idle since ${sinceTime(lock.idleSince)}`)}</p>}
                 {lock.helpers.length > 0 && lock.holder.email === email && <p className="text-xs text-muted-foreground">{t('Tæller med', 'Helping')}: {lock.helpers.map(helper => helper.name).join(', ')}</p>}
                 <div className="flex flex-wrap gap-1.5">
                   <Button size="sm" className="h-7 px-2 text-xs" onClick={() => setSubmitting({ material: lock.material })} aria-label={t(`Send ${lock.material} til godkendelse`, `Send ${lock.material} for approval`)}><PaperPlaneTilt size={14} /> {t('Send til godkendelse', 'Send for approval')}</Button>
@@ -164,9 +171,10 @@ export function MaterialsInProgress({ id, state, optimistic, person, isOwner }: 
                 <LockKey size={14} className="text-muted-foreground" />
                 <span className="font-mono">{lock.material}</span>
                 <span className="text-muted-foreground">{lock.holder.name}</span>
+                {lock.idleSince && <span className="text-xs text-amber-700 dark:text-amber-300">{t(`inaktiv siden ${sinceTime(lock.idleSince)}`, `idle since ${sinceTime(lock.idleSince)}`)}</span>}
                 <span className="ml-auto flex gap-1">
-                  <RequestButton id={id} material={lock.material} state={state} optimistic={optimistic} person={person} />
-                  {isOwner && <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => release(lock.material)}>{t('Frigiv', 'Release')}</Button>}
+                  {!lock.idleSince && <RequestButton id={id} material={lock.material} state={state} optimistic={optimistic} person={person} />}
+                  {manages && <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => release(lock.material)} aria-label={t(`Frigiv ${lock.material}`, `Release ${lock.material}`)}>{t('Frigiv', 'Release')}</Button>}
                 </span>
               </div>
             ))}

@@ -15,6 +15,8 @@ const { ACTIVE: ACTIVE_PIDOC, RESERVATION_MS } = require('./core/piDocs.cjs')
 const { createJournal, readAllJournals } = require('./journal.cjs')
 
 const CLAIM_IDLE_MS = 30 * 60 * 1000
+// A material lock lapses after an hour without a line or scan by its holder on the material.
+const LOCK_IDLE_MS = 60 * 60 * 1000
 const CLAIM_TOUCH_MS = 2 * 60 * 1000
 const PENDING_TTL_MS = 30 * 60 * 1000
 const IMPORT_MAX = 20000
@@ -528,7 +530,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       rows: aggregate.rows,
       approvals,
       claims: activeClaims(claims),
-      materialLocks: Object.entries(locks).map(([material, lock]) => lockView(material, lock)),
+      materialLocks: Object.entries(locks).map(([material, lock]) => lockView(state, material, lock)),
       progress: computeProgress({ snapshot: state.snapshot, aggregate, countLists: state.countLists, events: state.events || [], approvals, now: now() }),
     }
   }
@@ -567,7 +569,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       serials: { found: aggregate.serials.found, expected: aggregate.serials.expected, missing: aggregate.serials.missing.length, extra: aggregate.serials.extra.length },
       members: Object.values(rights.members),
       claims: activeClaims(claims),
-      materialLocks: Object.entries(locks).map(([material, lock]) => lockView(material, lock)),
+      materialLocks: Object.entries(locks).map(([material, lock]) => lockView(state, material, lock)),
       approvals,
       approvedWithSerialLines: [...approvedWithLines(state, approvals)].sort(),
       journal: state.journal.status(),
@@ -780,7 +782,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     if (result.outcome === 'found' && result.material) {
       const lock = context.locks[result.material]
       if (isApprovedStatus(context.approvals[result.material])) materialWarning = { kind: 'approved', byName: '' }
-      else if (lock && !mayCount(lock, lower(user.email))) materialWarning = { kind: 'locked', byName: lock.name }
+      else if (lock && !mayCount(lock, lower(user.email)) && !lockExpired(state, result.material, lock)) materialWarning = { kind: 'locked', byName: lock.name }
     }
     return { ...result, saved: true, eventId: event.id, areaWarning: warning, materialWarning, journal: state.journal.status() }
   }
@@ -797,7 +799,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       const [locks, approvals] = await Promise.all([materialLocks(state), repo.getApprovals(state.team, state.id).catch(() => ({}))])
       if (isApprovedStatus(approvals[material])) throw codeError('MATERIAL_APPROVED', `${material} er godkendt – serienumre kan ikke fjernes`)
       const lock = locks[material]
-      if (lock && !mayCount(lock, lower(user.email)) && !rights.isOwner) throw codeError('MATERIAL_LOCKED', `${lock.name} tæller ${material}`)
+      if (lock && !mayCount(lock, lower(user.email)) && !lockExpired(state, material, lock) && !rights.isOwner) throw codeError('MATERIAL_LOCKED', `${lock.name} tæller ${material}`)
     }
     const event = await state.journal.append({ type: 'serial-remove', serial: normalized, material: material || '' })
     await refresh(state, true)
@@ -984,8 +986,38 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   const isApprovedStatus = approval => ['approved', 'posted'].includes(approval?.status)
   const mayCount = (lock, email) => !lock || lock.email === email || Boolean(lock.helpers?.[email])
   const peopleOf = map => Object.entries(map || {}).map(([email, entry]) => ({ email, name: entry.name, at: entry.at }))
-  const lockView = (material, lock) => ({ material, holder: { email: lock.email, name: lock.name }, at: lock.at, helpers: peopleOf(lock.helpers), requests: peopleOf(lock.requests) })
+  const lockView = (state, material, lock) => ({ material, holder: { email: lock.email, name: lock.name }, at: lock.at, idleSince: lockExpired(state, material, lock) ? lockActivity(state, material, lock) : null, helpers: peopleOf(lock.helpers), requests: peopleOf(lock.requests) })
   const materialLocks = state => repo.getMaterialLocks(state.team, state.id).catch(() => ({}))
+
+  /** The holder's latest line or scan per material, from the count's events; worked out again only when they change. */
+  function lockActivities(state) {
+    if (state.lockActivity?.events === state.events) return state.lockActivity.latest
+    const latest = new Map()
+    const touch = (by, material, at) => {
+      if (!material) return
+      const key = `${lower(by)}|${material}`
+      if (!(latest.get(key) >= at)) latest.set(key, at)
+    }
+    for (const event of state.events || []) {
+      if (event.type === 'line') touch(event.by, String(event.material || '').toUpperCase(), event.at)
+      else if (event.type === 'scan') touch(event.by, state.index.serials.get(event.serial)?.material, event.at)
+      else if (event.type === 'import') for (const serial of event.serials || []) touch(event.by, state.index.serials.get(serial)?.material, event.at)
+    }
+    state.lockActivity = { events: state.events, latest }
+    return latest
+  }
+
+  const lockActivity = (state, material, lock) => Math.max(lock.at || 0, lockActivities(state).get(`${lower(lock.email)}|${material}`) || 0)
+  /** A lock lapses when its holder has made no line or scan on the material for LOCK_IDLE_MS: the material is free again. */
+  const lockExpired = (state, material, lock) => now() - lockActivity(state, material, lock) >= LOCK_IDLE_MS
+
+  /** The lock that keeps `email` from counting the material, or null. One that looks idle is checked against fresh events first. */
+  async function blockingLock(state, material, lock, email) {
+    if (!lock || mayCount(lock, email)) return null
+    if (!lockExpired(state, material, lock)) return lock
+    await refresh(state, true)
+    return lockExpired(state, material, lock) ? null : lock
+  }
 
   function materialCode(state, material) {
     const code = String(material || '').trim().toUpperCase()
@@ -1000,13 +1032,15 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const [approvals, locks] = await Promise.all([repo.getApprovals(state.team, state.id).catch(() => ({})), materialLocks(state)])
     if (isApprovedStatus(approvals[code])) throw codeError('MATERIAL_APPROVED', `${code} er godkendt og tælles ikke længere`)
     const known = locks[code]
-    if (known && mayCount(known, email)) return lockView(code, known)
-    if (known) throw codeError('MATERIAL_LOCKED', `${known.name} tæller ${code} – anmod om at tælle med`)
+    if (known && mayCount(known, email)) return lockView(state, code, known)
+    if (await blockingLock(state, code, known, email)) throw codeError('MATERIAL_LOCKED', `${known.name} tæller ${code} – anmod om at tælle med`)
     return repo.changeMaterialLocks(state.team, state.id, all => {
       const lock = all[code]
-      if (lock && !mayCount(lock, email)) throw codeError('MATERIAL_LOCKED', `${lock.name} tæller ${code} – anmod om at tælle med`)
-      if (!lock) all[code] = { email, name: user.fullName || user.email, at: now(), helpers: {}, requests: {} }
-      return { all, result: lockView(code, all[code]) }
+      if (lock && mayCount(lock, email)) return { all, result: lockView(state, code, lock) }
+      if (lock && !lockExpired(state, code, lock)) throw codeError('MATERIAL_LOCKED', `${lock.name} tæller ${code} – anmod om at tælle med`)
+      // Free, or idle for an hour: taken over, and the idle lock's helpers and requests lapse with it.
+      all[code] = { email, name: user.fullName || user.email, at: now(), helpers: {}, requests: {} }
+      return { all, result: lockView(state, code, all[code]) }
     })
   }
 
@@ -1021,9 +1055,9 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const email = lower(user.email)
     const result = await repo.changeMaterialLocks(state.team, state.id, all => {
       const lock = all[code]
-      if (!lock || mayCount(lock, email)) return { all, result: null }
+      if (!lock || mayCount(lock, email) || lockExpired(state, code, lock)) return { all, result: null }
       lock.requests = { ...(lock.requests || {}), [email]: { name: user.fullName || user.email, at: now() } }
-      return { all, result: lockView(code, lock) }
+      return { all, result: lockView(state, code, lock) }
     })
     return result || takeMaterial(user, state, code)
   }
@@ -1037,11 +1071,11 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     return repo.changeMaterialLocks(state.team, state.id, all => {
       const lock = all[code]
       if (!lock?.requests?.[asker]) throw codeError('REQUEST_NOT_FOUND', 'Anmodningen findes ikke (længere)')
-      if (lock.email !== lower(user.email) && !rights.isOwner) throw codeError('COUNT_OWNER_ONLY', 'Kun den, der tæller materialet, eller den ansvarlige kan svare')
+      if (lock.email !== lower(user.email) && !rights.isOwner && !rights.byRole) throw codeError('COUNT_OWNER_ONLY', 'Kun den, der tæller materialet, den ansvarlige, en admin eller en manager kan svare')
       const request = lock.requests[asker]
       delete lock.requests[asker]
       if (allow === true) lock.helpers = { ...(lock.helpers || {}), [asker]: { name: request.name, at: now() } }
-      return { all, result: lockView(code, lock) }
+      return { all, result: lockView(state, code, lock) }
     })
   }
 
@@ -1055,8 +1089,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       const lock = all[code]
       if (!lock) return { all, result: null }
       if (lock.helpers?.[email] && lock.email !== email) delete lock.helpers[email]
-      else if (lock.email === email || rights.isOwner || rights.isManager) delete all[code]
-      else throw codeError('COUNT_OWNER_ONLY', 'Kun den, der tæller materialet, eller den ansvarlige kan frigive det')
+      else if (lock.email === email || rights.isOwner || rights.byRole) delete all[code]
+      else throw codeError('COUNT_OWNER_ONLY', 'Kun den, der tæller materialet, den ansvarlige, en admin eller en manager kan frigive det')
       return { all, result: null }
     })
     return { ok: true }
@@ -1067,8 +1101,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const { state, rights } = await requireWriter(user, id)
     const code = materialCode(state, material)
     const email = lower(user.email)
-    const lock = (await materialLocks(state))[code]
-    if (lock && !mayCount(lock, email) && !rights.isOwner) throw codeError('MATERIAL_LOCKED', `${lock.name} tæller ${code}`)
+    const lock = await blockingLock(state, code, (await materialLocks(state))[code], email)
+    if (lock && !rights.isOwner) throw codeError('MATERIAL_LOCKED', `${lock.name} tæller ${code}`)
     const approvals = await repo.getApprovals(state.team, state.id).catch(() => ({}))
     if (isApprovedStatus(approvals[code])) throw codeError('MATERIAL_APPROVED', `${code} er allerede godkendt`)
     await requireSynced(state)

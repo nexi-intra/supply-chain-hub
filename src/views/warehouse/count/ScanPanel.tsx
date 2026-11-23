@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils'
 import type { ScanResult } from '@/types/warehouse'
 import type { PanelProps } from './CountView'
 import { MaterialFocus } from './MaterialFocus'
-import { isApproved, lockOf, mayCount, MaterialsInProgress } from './MaterialWork'
+import { countsOn, isApproved, lockOf, MaterialsInProgress } from './MaterialWork'
 import { takeLock, withClaim } from './optimisticState'
 import { RemoveSerialDialog } from './RemoveSerial'
 import { t } from '@/lib/warehouse/text'
@@ -60,7 +60,7 @@ export function ScanPanel({ id, open, state, refresh, optimistic, person }: Pane
     setFocusMaterial(value)
     inputRef.current?.focus()
     const lock = value ? lockOf(state, value) : null
-    if (!value || (lock && mayCount(lock, state.me.email))) return
+    if (!value || (lock && countsOn(lock, state.me.email))) return
     setTaking(value)
     void optimistic(takeLock(value, person), () => window.electronWarehouse!.counts.lockMaterial({ id, material: value })).then(saved => {
       if (!saved) setFocusMaterial(current => (current === value ? previous : current))

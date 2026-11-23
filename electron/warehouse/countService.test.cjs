@@ -940,6 +940,68 @@ test('a material is locked to its counter: others ask to count along; sending to
   assert.deepEqual((await anna.getState(ANNA, id)).materialLocks, [])
 })
 
+test('a material lock expires after 60 minutes without a line or scan by its holder, and says since when it is idle', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const bo = ctx.service('pc2')
+  const { id } = await newCount(ctx, anna)
+  await bo.requestJoin(BO, id)
+  await anna.decideMember(ANNA, id, { email: BO.email, approve: true })
+  const MIN = 60 * 1000
+  const t0 = ctx.clock.now
+
+  await anna.saveLine(ANNA, id, { place: 'A1.1', material: 'R162-0717', qty: 5 })
+  await anna.lockMaterial(ANNA, id, { material: 'INT4300-4921-0' })
+  await anna.flush(ANNA, id)
+  ctx.tick(50 * MIN)
+  await anna.scan(ANNA, id, { serial: 'N1', place: 'A1.2' })
+  await anna.flush(ANNA, id)
+  ctx.tick(9 * MIN)
+  await assert.rejects(bo.saveLine(BO, id, { place: 'A1.1', material: 'R162-0717', qty: 7 }), { code: 'MATERIAL_LOCKED' }, '59 minutes after the line the lock holds')
+  assert.deepEqual((await bo.getState(BO, id)).materialLocks.map(lock => [lock.material, lock.idleSince]).sort(), [['INT4300-4921-0', null], ['R162-0717', null]])
+
+  ctx.tick(2 * MIN)
+  const idle = (await bo.getState(BO, id)).materialLocks
+  assert.deepEqual(idle.map(lock => [lock.material, lock.holder.name, lock.idleSince]).sort(), [['INT4300-4921-0', 'Anna', null], ['R162-0717', 'Anna', t0]], 'idle since the last line; the scan keeps the other lock')
+  await bo.saveLine(BO, id, { place: 'A1.1', material: 'R162-0717', qty: 7 })
+  await assert.rejects(bo.lockMaterial(BO, id, { material: 'INT4300-4921-0' }), { code: 'MATERIAL_LOCKED' })
+  const taken = (await bo.getState(BO, id)).materialLocks.find(lock => lock.material === 'R162-0717')
+  assert.deepEqual([taken.holder.name, taken.idleSince], ['Bo', null], 'the idle lock is taken over')
+  await assert.rejects(anna.saveLine(ANNA, id, { place: 'A1.1', material: 'R162-0717', qty: 1 }), { code: 'MATERIAL_LOCKED' }, 'the former holder asks like everyone else')
+})
+
+test('a manager or an Optælling admin answers requests and releases materials of others; a plain participant cannot', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const bo = ctx.service('pc2')
+  const mona = ctx.service('pc3')
+  const ADA = { email: 'ada@example.test', fullName: 'Ada', role: 'user', team: 'TCD', countAdmin: true }
+  const ada = ctx.service('pc4')
+  const CARA = { email: 'cara@example.test', fullName: 'Cara', role: 'user', team: 'TCD' }
+  const cara = ctx.service('pc5')
+  const DAN = { email: 'dan@example.test', fullName: 'Dan', role: 'user', team: 'TCD' }
+  const dan = ctx.service('pc6')
+  const { id } = await newCount(ctx, anna)
+  for (const [svc, user] of [[bo, BO], [cara, CARA], [dan, DAN]]) {
+    await svc.requestJoin(user, id)
+    await anna.decideMember(ANNA, id, { email: user.email, approve: true })
+  }
+  await bo.lockMaterial(BO, id, { material: 'R162-0717' })
+  await bo.lockMaterial(BO, id, { material: 'INT4300-4921-0' })
+  await cara.requestMaterial(CARA, id, { material: 'R162-0717' })
+  await cara.requestMaterial(CARA, id, { material: 'INT4300-4921-0' })
+
+  await assert.rejects(dan.answerMaterialRequest(DAN, id, { material: 'R162-0717', email: CARA.email, allow: true }), { code: 'COUNT_OWNER_ONLY' })
+  assert.deepEqual((await ada.answerMaterialRequest(ADA, id, { material: 'R162-0717', email: CARA.email, allow: true })).helpers.map(item => item.name), ['Cara'], 'an admin answers')
+  const rejected = await mona.answerMaterialRequest(MONA, id, { material: 'INT4300-4921-0', email: CARA.email, allow: false })
+  assert.deepEqual([rejected.requests, rejected.helpers], [[], []], 'so does a manager')
+
+  await assert.rejects(dan.releaseMaterial(DAN, id, { material: 'R162-0717' }), { code: 'COUNT_OWNER_ONLY' })
+  await ada.releaseMaterial(ADA, id, { material: 'R162-0717' })
+  await mona.releaseMaterial(MONA, id, { material: 'INT4300-4921-0' })
+  assert.deepEqual(await ctx.repo.getMaterialLocks('TCD', id), {})
+})
+
 test('a quantity line on a serial-managed material is refused; a material counted by quantity is still allowed', async () => {
   const ctx = setup()
   const anna = ctx.service('pc1')

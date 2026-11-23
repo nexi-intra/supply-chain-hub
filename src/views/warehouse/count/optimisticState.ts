@@ -72,8 +72,11 @@ export const askToCount = (material: string, person: { email: string; name: stri
   return { ...lock, requests: [...lock.requests, { ...person, at: Date.now() }] }
 })
 
-/** Takes a free material for `person` (nothing changes when it is already theirs or someone else's). */
-export const takeLock = (material: string, person: { email: string; name: string }): StatePatch => withMaterialLock(material, lock => lock || { material, holder: person, at: Date.now(), helpers: [], requests: [] })
+/** Takes a free material for `person` (nothing changes when it is already theirs or someone else's); an idle lock is taken over, as the drive does. */
+export const takeLock = (material: string, person: { email: string; name: string }): StatePatch => withMaterialLock(material, lock => {
+  if (lock && (!lock.idleSince || lock.holder.email === person.email || lock.helpers.some(item => item.email === person.email))) return lock
+  return { material, holder: person, at: Date.now(), helpers: [], requests: [] }
+})
 
 /** Releases a material: a helper only leaves; the holder (or the owner/a manager) frees it for everyone. */
 export const releaseLock = (material: string, email: string): StatePatch => withMaterialLock(material, lock => {
