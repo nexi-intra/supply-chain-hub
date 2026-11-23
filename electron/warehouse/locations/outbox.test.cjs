@@ -14,12 +14,15 @@ const isBusyError = error => error?.code === 'KV_LOCK_BUSY'
 function setup({ random } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'outbox-'))
   // `busy`: how many of the next runs give up on the shared folder's locks (nothing is written then).
-  const sap = { up: false, busy: 0, applied: [], refuse: new Set(), runs: 0 }
+  // `before`: awaited at the start of every run (a test holds or inspects a run there). M: itself applies an id once.
+  const sap = { up: false, busy: 0, applied: [], refuse: new Set(), runs: 0, before: null }
   const clock = { now: Date.UTC(2026, 9, 20) }
   const failedEvents = []
   const run = async action => {
     sap.runs++
+    if (sap.before) await sap.before(action)
     if (!sap.up) throw down()
+    if (sap.applied.includes(action.id)) return { duplicate: true }
     if (sap.busy > 0) { sap.busy--; throw busy() }
     if (sap.refuse.has(action.id)) throw Object.assign(new Error('Pallen er ikke der længere'), { code: 'PALLET_GONE' })
     sap.applied.push(action.id)
@@ -32,8 +35,21 @@ function setup({ random } = {}) {
   const live = () => timers.filter(timer => !timer.cleared && !timer.fired)
   const fire = async timer => { timer.fired = true; timer.fn(); await new Promise(resolve => setImmediate(resolve)) }
   const queuedEvents = []
-  return { dir, sap, clock, failedEvents, queuedEvents, live, fire, make: () => createOutbox({ dir, run, isStorageError, isBusyError, random, now: () => clock.now, setTimer, clearTimer, onQueued: action => queuedEvents.push(action.id), onFailed: failed => failedEvents.push(...failed.map(item => item.id)) }) }
+  return { dir, sap, clock, failedEvents, queuedEvents, live, fire, make: (extra = {}) => createOutbox({ dir, run, isStorageError, isBusyError, random, now: () => clock.now, setTimer, clearTimer, onQueued: action => queuedEvents.push(action.id), onFailed: failed => failedEvents.push(...failed.map(item => item.id)), ...extra }) }
 }
+
+function deferred() {
+  let resolve
+  const promise = new Promise(ok => { resolve = ok })
+  return { promise, resolve }
+}
+const onDisk = dir => JSON.parse(fs.readFileSync(path.join(dir, 'locations-outbox.json'), 'utf8'))
+// Polls until `check` holds (saves on this PC take a few ms each).
+async function until(check, ms = 5000) {
+  const holds = () => { try { return check() } catch { return false } }
+  for (const end = Date.now() + ms; !holds() && Date.now() < end;) await new Promise(resolve => setTimeout(resolve, 5))
+}
+const eperm = () => Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' })
 
 test('only the daily actions can be queued', () => {
   assert.deepEqual([...QUEUED_METHODS].sort(), ['changeSloc', 'editPallet', 'move', 'putAway', 'refill', 'shelfMove', 'shelfPut', 'shelfSet', 'shelfTake', 'take', 'undo'])
@@ -119,7 +135,7 @@ test('a replay failure is kept and reported whichever flush finds it, until it i
   const kept = make().failures()
   assert.deepEqual(kept.map(item => [item.id, item.method, item.code, item.email, item.team]), [['a1', 'putAway', 'PALLET_GONE', 'anna@x.test', 'TCD']], 'kept across a restart')
   assert.deepEqual(kept[0].request, { pallets: [{ location: 'H26', material: 'R162-0717' }] }, 'with what the action was about')
-  outbox.acknowledge(['a1'])
+  await outbox.acknowledge(['a1'])
   assert.deepEqual(make().failures(), [])
 })
 
@@ -279,4 +295,116 @@ test('after close a busy replay schedules no new retry, and an old retry does no
   const runs = sap.runs
   await fire(old)
   assert.equal(sap.runs, runs, 'a retry that fires after close does not touch M:')
+})
+test('an action is in the outbox file while it runs (written ahead) and leaves it when M: has it', async () => {
+  const { dir, sap, make } = setup()
+  sap.up = true
+  const outbox = make()
+  const seen = []
+  sap.before = async action => { seen.push([action.id, onDisk(dir).queue.map(item => item.id), outbox.pending(), outbox.unsettled()]) }
+  assert.deepEqual(await outbox.submit({ id: 'a1', method: 'take', user: ANNA, request: { pallet: 'p1' } }), { queued: false, result: { ok: 'a1' } })
+  assert.deepEqual(seen, [['a1', ['a1'], 0, 1]], 'on disk before it runs; not shown as waiting for M: while a person waits for it')
+  assert.deepEqual(onDisk(dir).queue, [], 'gone from the file after success')
+  assert.ok(onDisk(dir).applied.includes('a1'))
+  assert.equal(outbox.unsettled(), 0)
+})
+
+test('an action left in the file by a crash is replayed exactly once at the next start, also when M: already had it', async () => {
+  const { dir, sap, make } = setup()
+  sap.up = true
+  const crashed = make()
+  // a1: M: wrote it, then the Hub died before it heard back. a2 (an undo) was written ahead behind it and never ran.
+  sap.before = async action => { sap.applied.push(action.id); await new Promise(() => {}) }
+  void crashed.submit({ id: 'a1', method: 'take', user: ANNA, request: { pallet: 'p1' } })
+  void crashed.submit({ id: 'a2', method: 'undo', user: ANNA, request: { eventId: 'e1' } })
+  await until(() => onDisk(dir).queue.length === 2)
+  assert.deepEqual(onDisk(dir).queue.map(item => item.id), ['a1', 'a2'], 'both on disk although neither finished')
+  sap.before = null
+  const started = make()
+  assert.equal(started.pending(), 2, 'both found at the start')
+  const runs = sap.runs
+  assert.deepEqual(await started.flush(), { done: 2, failed: [] })
+  assert.equal(sap.runs - runs, 2)
+  assert.deepEqual(sap.applied, ['a1', 'a2'], 'each applied once on M:')
+  assert.deepEqual(await started.flush(), { done: 0, failed: [] }, 'not replayed again')
+  assert.deepEqual(onDisk(dir).queue, [])
+  assert.equal(make().pending(), 0)
+})
+test('two submits that overlap run one at a time, in the order they were made', async () => {
+  const { sap, make } = setup()
+  sap.up = true
+  const outbox = make()
+  const started = []
+  const gates = { a1: deferred(), a2: deferred() }
+  sap.before = async action => { started.push(action.id); await gates[action.id].promise }
+  const one = outbox.submit({ id: 'a1', method: 'putAway', user: ANNA, request: {} })
+  const two = outbox.submit({ id: 'a2', method: 'take', user: ANNA, request: {} })
+  await until(() => started.length > 0 && outbox.unsettled() === 2)
+  await new Promise(resolve => setTimeout(resolve, 50))
+  assert.deepEqual(started, ['a1'], 'the second waits for the first')
+  gates.a2.resolve()
+  await new Promise(resolve => setTimeout(resolve, 50))
+  assert.deepEqual(started, ['a1'], 'also when it could have finished first')
+  gates.a1.resolve()
+  assert.deepEqual(await one, { queued: false, result: { ok: 'a1' } })
+  assert.deepEqual(await two, { queued: false, result: { ok: 'a2' } })
+  assert.deepEqual(sap.applied, ['a1', 'a2'])
+})
+
+test('a failure of one of two overlapping actions is thrown to its own caller only', async () => {
+  const { sap, make } = setup()
+  sap.up = true
+  sap.refuse.add('a1')
+  const outbox = make()
+  const one = outbox.submit({ id: 'a1', method: 'take', user: ANNA, request: {} })
+  const two = outbox.submit({ id: 'a2', method: 'take', user: ANNA, request: {} })
+  await assert.rejects(one, { code: 'PALLET_GONE' })
+  assert.deepEqual(await two, { queued: false, result: { ok: 'a2' } })
+  assert.deepEqual(outbox.failures(), [], 'the person saw it: not kept to report later')
+  assert.equal(outbox.unsettled(), 0)
+})
+
+test('a rename refused for a moment (EPERM) is tried again; a lasting one refuses the action before it runs', async () => {
+  const { dir, sap, make } = setup()
+  sap.up = true
+  let refusals = 2
+  const renames = []
+  const rename = async (from, to) => { renames.push(from); if (refusals-- > 0) throw eperm(); return fs.promises.rename(from, to) }
+  const outbox = make({ rename, saveRetryMs: 1 })
+  assert.deepEqual(await outbox.submit({ id: 'a1', method: 'take', user: ANNA, request: {} }), { queued: false, result: { ok: 'a1' } })
+  assert.ok(renames.length >= 3, 'tried again after EPERM')
+  assert.deepEqual(sap.applied, ['a1'])
+
+  refusals = Infinity
+  const runs = sap.runs
+  await assert.rejects(outbox.submit({ id: 'a2', method: 'take', user: ANNA, request: {} }), { code: 'OUTBOX_SAVE_FAILED' })
+  assert.equal(sap.runs, runs, 'never run: it could not be written ahead')
+  assert.equal(outbox.unsettled(), 0, 'not kept either')
+  assert.deepEqual(fs.readdirSync(dir).filter(name => name.endsWith('.tmp')), [], 'no temp files left behind')
+  refusals = 0
+  assert.deepEqual(await outbox.submit({ id: 'a3', method: 'take', user: ANNA, request: {} }), { queued: false, result: { ok: 'a3' } })
+  assert.deepEqual(onDisk(dir).queue, [])
+  assert.deepEqual(sap.applied, ['a1', 'a3'], 'the refused action is never replayed')
+})
+
+test('whenSettled waits until nothing is left in the outbox, or gives up after its time', async () => {
+  const { sap, make } = setup()
+  const outbox = make()
+  assert.equal(await outbox.whenSettled(1000), true, 'nothing to wait for')
+  await outbox.submit({ id: 'a1', method: 'take', user: ANNA, request: {} })
+  assert.equal(await outbox.whenSettled(20), false, 'M: is down')
+  sap.up = true
+  const settled = outbox.whenSettled(5000)
+  await outbox.flush()
+  assert.equal(await settled, true)
+})
+
+test('an outbox file from 1.6.7 (without anything new) is read and replayed', async () => {
+  const { dir, sap, make } = setup()
+  fs.writeFileSync(path.join(dir, 'locations-outbox.json'), JSON.stringify({ queue: [{ id: 'old-1', method: 'take', user: ANNA, request: { pallet: 'p1' }, label: 'Tag', at: 1 }], applied: ['old-0'], failures: [] }))
+  sap.up = true
+  const outbox = make()
+  assert.equal(outbox.pending(), 1)
+  assert.deepEqual(await outbox.flush(), { done: 1, failed: [] })
+  assert.deepEqual(await outbox.submit({ id: 'old-0', method: 'take', user: ANNA, request: {} }), { queued: false, duplicate: true })
 })

@@ -5,8 +5,9 @@ const os = require('node:os')
 const path = require('node:path')
 const { registerWarehouse } = require('./register.cjs')
 const { createStore } = require('../store.cjs')
+const { createArrivalOrder } = require('../ipcArrivals.cjs')
 
-function setup({ clipboard = { readText: () => '', writeText: () => {} }, env = {}, root = null } = {}) {
+function setup({ clipboard = { readText: () => '', writeText: () => {} }, env = {}, root = null, arrivals } = {}) {
   if (!root) {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'warehouse-register-'))
     for (const team of ['TCD', 'TRR', 'PIM']) fs.mkdirSync(path.join(root, team))
@@ -22,7 +23,8 @@ function setup({ clipboard = { readText: () => '', writeText: () => {} }, env = 
   const broadcasts = []
   const registered = registerWarehouse({
     ipcMain,
-    currentActor: async event => actors[event.who],
+    // `delay`: this call's user lookup is slow (read from M:).
+    currentActor: async event => { if (event.delay) await new Promise(resolve => setTimeout(resolve, event.delay)); return actors[event.who] },
     teamUsers: async () => users,
     teamDir: team => path.join(root, team),
     platformRoot: () => root,
@@ -32,9 +34,16 @@ function setup({ clipboard = { readText: () => '', writeText: () => {} }, env = 
     // Fake SAP (fixture files): background description lookups must never reach a real SAP from a test.
     isPackaged: false,
     env: { TCD_HUB_SAP_FIXTURES_DIR: path.join(__dirname, 'fixtures', 'sap'), ...env },
+    ...(arrivals ? { arrivals } : {}),
   })
   const call = (who, channel, payload) => handlers.get(`warehouse:${channel}`)({ who, sender: { id: 1 } }, payload)
-  return { root, handlers, registered, call, broadcasts }
+  // As main.cjs: every call is numbered the moment it arrives, before its user is looked up.
+  const send = (who, channel, payload, delay = 0) => {
+    const event = { who, sender: { id: 1 }, delay }
+    arrivals?.arrive(`warehouse:${channel}`, event)
+    return Promise.resolve(handlers.get(`warehouse:${channel}`)(event, payload)).finally(() => arrivals?.leave(event))
+  }
+  return { root, handlers, registered, call, send, broadcasts }
 }
 
 test('every Optælling channel is registered once under "warehouse:"', () => {
@@ -154,13 +163,15 @@ test('another hub is refused on the Placeringer channels', async () => {
 })
 
 test('daily Placeringer actions go through the local queue: the same action id is applied once', async () => {
-  const { call } = setup()
+  const { call, registered } = setup()
   await call('mona', 'locations:create-location', { name: 'A2.4', type: 'Palle', purpose: 'reserve', capacity: 2 })
   const first = await call('anna', 'locations:put-away', { actionId: 'act-1', pallets: [{ location: 'A2.4', material: 'R162-0717', quantity: 50 }] })
   assert.equal(first.created.length, 1)
   assert.deepEqual(await call('anna', 'locations:put-away', { actionId: 'act-1', pallets: [{ location: 'A2.4', material: 'R162-0717', quantity: 50 }] }), { duplicate: true })
   assert.equal((await call('anna', 'locations:overview')).counts.pallets, 1)
   assert.deepEqual(await call('anna', 'locations:pending'), { pending: 0, failures: [] })
+  assert.equal(registered.hasPendingWrites(), false)
+  assert.equal(await registered.whenWritesSettled(1000), true)
 })
 
 test('a daily action that finds M: busy (KV_LOCK_BUSY) is kept on this PC instead of refused, and applied once when replayed', async () => {
@@ -172,6 +183,8 @@ test('a daily action that finds M: busy (KV_LOCK_BUSY) is kept on this PC instea
   registered.locations.take = async () => { throw Object.assign(new Error('KV_LOCK_BUSY: Lageret er optaget af en anden klient. Prøv igen.'), { code: 'KV_LOCK_BUSY' }) }
   assert.deepEqual(await call('anna', 'locations:take', { actionId: 'busy-1', pallet: pallet.id, quantity: 30 }), { queued: true })
   assert.deepEqual(await call('anna', 'locations:pending'), { pending: 1, failures: [] }, 'queued, not a failure')
+  assert.equal(registered.hasPendingWrites(), true, 'closing the window waits for it (or Luk alligevel)')
+  assert.equal(await registered.whenWritesSettled(20), false)
   assert.deepEqual(broadcasts.filter(([channel]) => channel === 'warehouse:locations:queued').map(([, payload]) => payload), [{ team: 'TCD' }], 'the windows show the waiting banner at once')
   registered.locations.take = take
   registered.closeAll()
@@ -184,6 +197,32 @@ test('a daily action that finds M: busy (KV_LOCK_BUSY) is kept on this PC instea
   again.registered.closeAll()
 })
 
+test('Placeringer actions sent at once run in the order the window sent them, also when an earlier one waits longer for its user', async () => {
+  const { call, send, registered } = setup({ arrivals: createArrivalOrder() })
+  await call('mona', 'locations:create-location', { name: 'A2.4', type: 'Palle', purpose: 'reserve', capacity: 2 })
+  const ran = []
+  for (const method of ['createLocation', 'putAway', 'take']) {
+    const original = registered.locations[method]
+    registered.locations[method] = async (user, request) => { ran.push(request.actionId || request.name); return original(user, request) }
+  }
+  // A place made by an admin and pallets put on it at once: the put-aways must not overtake the place.
+  const results = await Promise.all([
+    send('mona', 'locations:create-location', { name: 'G1', type: 'Gulv', purpose: 'reserve' }, 60),
+    send('anna', 'locations:put-away', { actionId: 'p1', pallets: [{ location: 'G1', material: 'R162-0717', quantity: 10 }] }, 30),
+    send('anna', 'locations:put-away', { actionId: 'p2', pallets: [{ location: 'G1', material: 'R162-0717', quantity: 20 }] }),
+  ])
+  assert.deepEqual(ran, ['G1', 'p1', 'p2'])
+  assert.deepEqual(results.slice(1).map(result => result.created.length), [1, 1])
+  const [pallet] = results[1].created
+  ran.length = 0
+  await Promise.all([
+    send('anna', 'locations:take', { actionId: 't1', pallet: pallet.id, quantity: 4 }, 40),
+    send('anna', 'locations:take', { actionId: 't2', pallet: pallet.id }),
+  ])
+  assert.deepEqual(ran, ['t1', 't2'], 'take part, then the rest')
+  assert.equal(registered.hasPendingWrites(), false)
+  registered.closeAll()
+})
 test('a pallet edit keeps what the dialog showed (expected) through the local queue, so a stale edit is refused', async () => {
   const { call } = setup()
   await call('mona', 'locations:create-location', { name: 'A2.4', type: 'Palle', purpose: 'reserve', capacity: 1 })

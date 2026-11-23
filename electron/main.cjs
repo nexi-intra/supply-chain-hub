@@ -17,8 +17,11 @@ const fs = require('fs')
 const fsp = require('fs/promises')
 const crypto = require('crypto')
 const { createActivityTracker } = require('./mainActivity.cjs')
+const { createArrivalOrder } = require('./ipcArrivals.cjs')
 // Én tracker for hele main: watchdog'en logger hvad der var i gang, når main frøs.
 const mainActivity = createActivityTracker()
+// The order calls arrive in, for the channels that must keep it (Placeringer's writes, registered by the warehouse).
+const ipcArrivals = createArrivalOrder()
 // Async-resultater afsluttes først, når promiset er afgjort.
 function tracked(label, fn) {
   return function (...args) {
@@ -34,7 +37,9 @@ function tracked(label, fn) {
 const nativeHandle = nativeIpcMain.handle.bind(nativeIpcMain)
 nativeIpcMain.handle = (channel, listener) => nativeHandle(channel, async (...args) => {
   const end = mainActivity.begin('ipc:' + channel)
-  try { return await listener(...args) } finally { end() }
+  // Numbered before any await (securedIpc looks up the user first), so a later call cannot overtake it.
+  ipcArrivals.arrive(channel, args[0])
+  try { return await listener(...args) } finally { ipcArrivals.leave(args[0]); end() }
 })
 const { createStore, encryptPayload, whenWritesSettled, hasWritesInFlight } = require('./store.cjs')
 const { guardCloseWhileSaving } = require('./closeWhileSaving.cjs')
@@ -823,12 +828,14 @@ function createWindow() {
   })
   win.on('closed', () => diagnostics.write('info', 'window closed'))
   guardCloseWhileSaving(win, {
-    hasPendingWrites: () => mainActivity.isBusy(isQuitWriteChannel) || hasWritesInFlight(),
+    // Placeringer's actions are on this PC's disk already (outbox); the window waits for them to reach M: as well.
+    hasPendingWrites: () => mainActivity.isBusy(isQuitWriteChannel) || hasWritesInFlight() || Boolean(warehouse?.hasPendingWrites()),
     whenSaved: () => {
       diagnostics.write('info', 'lukning venter: gemninger er stadig på vej til drevet')
       const startedAt = Date.now()
       const left = () => Math.max(0, CLOSE_WHILE_SAVING_MAX_MS - (Date.now() - startedAt))
       return mainActivity.whenIdle(isQuitWriteChannel, left()).then(() => whenWritesSettled(left()))
+        .then(settled => Promise.resolve(warehouse ? warehouse.whenWritesSettled(left()) : true).then(placed => settled !== false && placed))
         .then(settled => diagnostics.write('info', `lukning: gemninger ${settled ? 'færdige' : 'IKKE færdige'} efter ${Date.now() - startedAt} ms`))
     },
     showMessage: (options, signal) => dialog.showMessageBox(win, { ...options, signal }),
@@ -1024,6 +1031,7 @@ app.whenReady().then(() => {
   const warehouseUserStores = new Map()
   warehouse = registerWarehouse({
     ipcMain,
+    arrivals: ipcArrivals,
     preparedFiles,
     currentActor: event => authService.currentAsync(event.sender.id),
     teamUsers: async team => {

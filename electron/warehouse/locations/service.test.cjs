@@ -6,7 +6,7 @@ const path = require('node:path')
 const { createStore } = require('../../store.cjs')
 const { createLocationRepository } = require('./repository.cjs')
 const { createLocationService } = require('./service.cjs')
-const { createOutbox } = require('./outbox.cjs')
+const { createOutbox, QUEUED_METHODS } = require('./outbox.cjs')
 
 const ANNA = { email: 'anna@x.test', fullName: 'Anna', role: 'user', team: 'TCD' }
 const BO = { email: 'bo@x.test', fullName: 'Bo', role: 'user', team: 'TCD' }
@@ -633,4 +633,35 @@ test('opening Placeringer checks the one-time shelf migration once, not on every
   await pc1.service.overview(ANNA)
   await pc1.service.overview(ANNA)
   assert.equal(metaReads, 0)
+})
+test('every action the outbox can replay is applied once on M: when its id comes again (a crash after M: had it)', async () => {
+  const { pc1, seed } = setup()
+  await seed(
+    [place('A2.1'), place('A2.2'), place('A2.3'), place('A2.4'), place('H26', { purpose: 'pick', type: 'Hylde', fixedMaterials: ['R162-0717'] }), shelf('E9 H1', { rack: 'E9', shelf: 1 }), shelf('E9 H2', { rack: 'E9', shelf: 2 })],
+    [{ id: 'p1', location: 'A2.1', material: 'R162-0717', quantity: 100, receivedAt: 1 }, { id: 'p2', location: 'A2.2', material: 'R162-0717', quantity: 50, receivedAt: 2 }],
+  )
+  const calls = [
+    ['putAway', ANNA, { pallets: [{ location: 'A2.3', material: 'R162-0717', quantity: 5 }] }],
+    ['take', ANNA, { pallet: 'p1', quantity: 10 }],
+    ['refill', ANNA, { location: 'H26', pallet: 'p1', quantity: 5 }],
+    ['move', ANNA, { pallet: 'p2', to: 'A2.4' }],
+    ['changeSloc', ANNA, { pallet: 'p1', sloc: 'D004' }],
+    ['editPallet', ANNA, { pallet: 'p1', changes: { note: 'talt' } }],
+    ['shelfPut', ANNA, { location: 'E9 H1', material: 'R162-0717', quantity: 40 }],
+    ['shelfTake', ANNA, { location: 'E9 H1', material: 'R162-0717', quantity: 5 }],
+    ['shelfMove', ANNA, { from: 'E9 H1', to: 'E9 H2', material: 'R162-0717', quantity: 5 }],
+    ['shelfSet', ANNA, { location: 'E9 H1', material: 'R162-0717', quantity: 20 }],
+    ['undo', ADA, async () => { const [set] = await pc1.repo.history('TCD', { type: 'shelf-set' }); return { eventId: set.id, at: set.at } }],
+  ]
+  assert.deepEqual(calls.map(([method]) => method).sort(), [...QUEUED_METHODS].sort(), 'every queued method is covered')
+  for (const [method, user, make] of calls) {
+    const request = { ...(typeof make === 'function' ? await make() : make), actionId: `replay-${method}` }
+    const first = await pc1.service[method](user, request)
+    assert.notDeepEqual(first, { duplicate: true }, `${method} is applied the first time`)
+    const state = JSON.stringify(await pc1.repo.read('TCD'))
+    const events = (await pc1.repo.history('TCD')).length
+    assert.deepEqual(await pc1.service[method](user, request), { duplicate: true }, `${method} is not applied twice`)
+    assert.equal(JSON.stringify(await pc1.repo.read('TCD')), state, `${method}: nothing changed by the replay`)
+    assert.equal((await pc1.repo.history('TCD')).length, events, `${method}: no new event`)
+  }
 })

@@ -1,10 +1,14 @@
-// Placeringer's local queue for when M: is down: a daily action that cannot reach the shared folder is kept in a JSON
-// file on this PC and replayed in order when the folder is back. An action that is no longer possible then (the
-// pallet was taken by someone else) is kept as a failure until a window has shown it, never retried. Every action id
-// is applied at most once. After a storage error new actions are only queued for a while, so the Hub does not keep
-// hanging on a dead share; the timer's flush is the retry. A busy share (the store gave up on its locks before
-// writing anything) is handled the same way with a short random pause, since it is usually over in seconds, and the
-// outbox itself tries again when that pause is over, so PCs that collided once do not collide again in step.
+// Placeringer's local queue on this PC. Every daily action is written to a JSON file here before it is run (write-ahead)
+// and leaves it when M: has it, so an action the screen has shown as done survives the Hub being closed, reloaded or
+// crashing and the PC being switched off; whatever is left in the file is replayed at the next start. The actions run
+// one at a time in the order they came, also when several are sent at once. When M: is down an action simply stays in
+// the file and is replayed in order when the folder is back. An action that is no longer possible then (the pallet was
+// taken by someone else) is kept as a failure until a window has shown it, never retried. Every action id is applied at
+// most once (here and in the shared data, so a replay of an action M: already had changes nothing). After a storage
+// error new actions are only queued for a while, so the Hub does not keep hanging on a dead share; the timer's flush is
+// the retry. A busy share (the store gave up on its locks before writing anything) is handled the same way with a short
+// random pause, since it is usually over in seconds, and the outbox itself tries again when that pause is over, so PCs
+// that collided once do not collide again in step.
 const fs = require('node:fs')
 const path = require('node:path')
 
@@ -15,22 +19,32 @@ const KEEP_FAILURES = 200
 const PAUSE_MS = 30000
 const BUSY_PAUSE_MS = 5000
 const BUSY_JITTER_MS = 5000
+// Windows refuses a rename for a moment while a virus scanner or the indexer has the file open (as in store.cjs).
+const SAVE_ATTEMPTS = 10
+const SAVE_RETRY_MS = 50
+const RETRIED_CODES = new Set(['EPERM', 'EBUSY', 'EACCES'])
 
 function codeError(code) {
   return Object.assign(new Error(code), { code })
 }
 
-function createOutbox({ dir, run, isStorageError, isBusyError = () => false, now = Date.now, random = Math.random, setTimer = setTimeout, clearTimer = clearTimeout, onQueued = () => {}, onFailed = () => {}, pauseMs = PAUSE_MS, busyPauseMs = BUSY_PAUSE_MS, busyJitterMs = BUSY_JITTER_MS }) {
+function createOutbox({ dir, run, isStorageError, isBusyError = () => false, now = Date.now, random = Math.random, setTimer = setTimeout, clearTimer = clearTimeout, onQueued = () => {}, onFailed = () => {}, pauseMs = PAUSE_MS, busyPauseMs = BUSY_PAUSE_MS, busyJitterMs = BUSY_JITTER_MS, rename = fs.promises.rename, saveRetryMs = SAVE_RETRY_MS }) {
   const file = path.join(dir, FILE)
   let state = load()
-  let flushing = null
+  let draining = null
   let downUntil = 0
   // The one retry scheduled after a busy share; a new pause replaces it.
   let retry = null
   // Set by close(): a flush still running then must not schedule a new retry.
   let closed = false
-  // What happened to an action replayed while its own submit() waits on the flush.
-  const outcomes = new Map()
+  // The saves, one after another; each writes the state as it is when it starts.
+  let saving = Promise.resolve()
+  let temps = 0
+  // Actions written ahead whose save has not reached the disk yet: none of them is run before it has.
+  const ahead = new Map()
+  // Actions whose submit() waits for the answer (the person sees it): not "waiting for M:", and an error is not kept.
+  const waiting = new Map()
+  const settledWaiters = new Set()
 
   function load() {
     try {
@@ -42,20 +56,84 @@ function createOutbox({ dir, run, isStorageError, isBusyError = () => false, now
     }
   }
 
-  function save() {
-    fs.mkdirSync(dir, { recursive: true })
-    const temp = `${file}.${process.pid}.tmp`
-    fs.writeFileSync(temp, JSON.stringify(state), 'utf8')
-    fs.renameSync(temp, file)
+  async function writeFile(json) {
+    await fs.promises.mkdir(dir, { recursive: true })
+    const temp = `${file}.${process.pid}.${++temps}.tmp`
+    // On the disk before the rename, so a power cut never leaves an empty or half file behind.
+    const handle = await fs.promises.open(temp, 'w')
+    try {
+      await handle.writeFile(json, 'utf8')
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await rename(temp, file)
+        return
+      } catch (error) {
+        if (!RETRIED_CODES.has(error?.code) || attempt >= SAVE_ATTEMPTS) {
+          await fs.promises.unlink(temp).catch(() => {})
+          throw error
+        }
+        await new Promise(resolve => setTimeout(resolve, saveRetryMs))
+      }
+    }
   }
+
+  function save({ onFail } = {}) {
+    const link = saving.then(async () => {
+      const ids = state.queue.map(action => action.id)
+      await writeFile(JSON.stringify(state))
+      for (const id of ids) ahead.get(id)?.resolve()
+    }).catch(error => {
+      onFail?.(error)
+      throw error
+    })
+    saving = link.catch(() => {})
+    return link
+  }
+  // A save after the fact (done, dropped, shown): when it fails the next save writes it, and a replay is applied once.
+  const persist = () => save().catch(() => {})
 
   const applied = id => state.applied.includes(id)
   const queued = id => state.queue.some(action => action.id === id)
+  function dequeue(id) {
+    state.queue = state.queue.filter(action => action.id !== id)
+    if (!state.queue.length) for (const done of [...settledWaiters]) done()
+  }
   function markApplied(id) {
     state.applied = [...state.applied, id].slice(-KEEP_APPLIED)
-    state.queue = state.queue.filter(action => action.id !== id)
-    save()
+    dequeue(id)
+    return persist()
   }
+  function answer(id, outcome) {
+    const resolve = waiting.get(id)
+    if (!resolve) return
+    waiting.delete(id)
+    resolve(outcome)
+  }
+
+  /** Puts the action last in the queue and resolves when that is on disk; a save that keeps failing refuses it. */
+  function writeAhead(entry) {
+    state.queue.push(entry)
+    const pending = {}
+    pending.promise = new Promise((resolve, reject) => {
+      pending.resolve = () => { ahead.delete(entry.id); resolve() }
+      pending.reject = error => { ahead.delete(entry.id); reject(error) }
+    })
+    ahead.set(entry.id, pending)
+    save({
+      onFail: error => {
+        // Already on disk through an earlier save: it is kept.
+        if (ahead.get(entry.id) !== pending) return
+        dequeue(entry.id)
+        pending.reject(Object.assign(codeError('OUTBOX_SAVE_FAILED'), { cause: error }))
+      },
+    }).catch(() => {})
+    return pending.promise
+  }
+
   const wentDown = (ms = pauseMs) => { downUntil = now() + ms }
   function cancelRetry() {
     if (retry) clearTimer(retry)
@@ -82,49 +160,69 @@ function createOutbox({ dir, run, isStorageError, isBusyError = () => false, now
     if (isBusyError(error)) { wasBusy(); return true }
     return false
   }
-  function keep(entry) {
-    state.queue.push(entry)
-    save()
-  }
   function announce(entry) {
     try { onQueued(entry) } catch {}
     return { queued: true }
   }
 
-  /** Replays the queue in order; stops at the first storage or busy error so the order is kept. */
-  function flush() {
-    if (flushing) return flushing
-    flushing = (async () => {
+  /** Runs the queue in order, one action at a time; stops at the first storage or busy error so the order is kept. */
+  function drain() {
+    if (draining) return draining
+    let finished = false
+    let current = null
+    current = (async () => {
       let done = 0
       const failed = []
-      const seen = []
-      while (state.queue.length) {
-        const action = state.queue[0]
-        seen.push(action.id)
-        if (applied(action.id)) { state.queue.shift(); save(); continue }
-        try {
-          outcomes.set(action.id, { result: await run(action) })
-          markApplied(action.id)
+      try {
+        while (state.queue.length) {
+          const action = state.queue[0]
+          const written = ahead.get(action.id)
+          if (written) { await written.promise.catch(() => {}); continue }
+          if (applied(action.id)) {
+            dequeue(action.id)
+            await persist()
+            answer(action.id, { duplicate: true })
+            continue
+          }
+          let result
+          try {
+            result = await run(action)
+          } catch (error) {
+            if (pausedBy(error)) break
+            if (waiting.has(action.id)) {
+              // The person waiting sees the error, so it is not kept as a failure to report later.
+              dequeue(action.id)
+              await persist()
+              answer(action.id, { error })
+              continue
+            }
+            const failure = { id: action.id, method: action.method, request: action.request, label: action.label || '', email: action.user?.email || '', team: action.user?.team || '', name: action.user?.fullName || '', code: typeof error?.code === 'string' ? error.code : 'UNEXPECTED_ERROR', message: String(error?.message || ''), at: now() }
+            failed.push({ action, ...failure })
+            // Kept until a window has shown it: whichever flush finds it, and also when Placeringer is not open.
+            state.failures = [...state.failures, failure].slice(-KEEP_FAILURES)
+            await markApplied(action.id)
+            // Told at once: the actions behind it may take a while.
+            try { onFailed([{ action, ...failure }]) } catch {}
+            continue
+          }
           downUntil = 0
           cancelRetry()
           done++
-        } catch (error) {
-          if (pausedBy(error)) break
-          outcomes.set(action.id, { error })
-          const failure = { id: action.id, method: action.method, request: action.request, label: action.label || '', email: action.user?.email || '', team: action.user?.team || '', name: action.user?.fullName || '', code: typeof error?.code === 'string' ? error.code : 'UNEXPECTED_ERROR', message: String(error?.message || ''), at: now() }
-          failed.push({ action, ...failure })
-          // Kept until a window has shown it: whichever flush finds it, and also when Placeringer is not open.
-          state.failures = [...state.failures, failure].slice(-KEEP_FAILURES)
-          markApplied(action.id)
+          await markApplied(action.id)
+          answer(action.id, { result })
         }
+        return { done, failed: failed.map(({ action, code, message }) => ({ action, code, message })) }
+      } finally {
+        finished = true
+        if (draining === current) draining = null
+        // Stopped by M: (or by something unexpected): whoever still waits is told the action is kept here.
+        for (const id of [...waiting.keys()]) if (queued(id)) answer(id, { queued: true })
       }
-      // A waiting submit() reads its outcome right after this resolves; the rest is dropped.
-      setTimeout(() => { for (const id of seen) outcomes.delete(id) }, 0)
-      if (failed.length) { try { onFailed(failed) } catch {} }
-      return { done, failed: failed.map(({ action, code, message }) => ({ action, code, message })) }
-    })().finally(() => { flushing = null })
-    return flushing
+    })()
+    if (!finished) draining = current
+    return current
   }
+  const flush = () => drain()
 
   async function submit(action) {
     if (!action || typeof action.id !== 'string' || !action.id) throw codeError('OUTBOX_ID_INVALID')
@@ -132,36 +230,25 @@ function createOutbox({ dir, run, isStorageError, isBusyError = () => false, now
     if (applied(action.id)) return { queued: false, duplicate: true }
     if (queued(action.id)) return { queued: true }
     const entry = { id: action.id, method: action.method, user: action.user, request: action.request, label: action.label || '', at: now() }
+    const outcome = new Promise(resolve => waiting.set(entry.id, resolve))
+    try {
+      await writeAhead(entry)
+    } catch (error) {
+      waiting.delete(entry.id)
+      throw error
+    }
     if (now() < downUntil) {
       // M: failed or was busy a moment ago: keep the action here and let a retry find out when it can be reached.
-      keep(entry)
+      waiting.delete(entry.id)
       return announce(entry)
     }
-    if (state.queue.length || flushing) {
-      // Behind the queue, so a take never overtakes the put-away it depends on.
-      keep(entry)
-      await flush()
-      const outcome = outcomes.get(entry.id)
-      outcomes.delete(entry.id)
-      if (!outcome) return announce(entry)
-      if (outcome.error) {
-        // The person is waiting and sees the error, so it is not kept as a failure to report later.
-        state.failures = state.failures.filter(item => item.id !== entry.id)
-        save()
-        throw outcome.error
-      }
-      return { queued: false, result: outcome.result }
-    }
-    try {
-      const result = await run(entry)
-      state.applied = [...state.applied, entry.id].slice(-KEEP_APPLIED)
-      save()
-      return { queued: false, result }
-    } catch (error) {
-      if (!pausedBy(error)) throw error
-      keep(entry)
-      return announce(entry)
-    }
+    // Behind whatever is in the queue, so a take never overtakes the put-away it depends on.
+    drain().catch(() => {})
+    const answered = await outcome
+    if (answered.error) throw answered.error
+    if (answered.queued) return announce(entry)
+    if (answered.duplicate) return { queued: false, duplicate: true }
+    return { queued: false, result: answered.result }
   }
 
   /** Replayed actions that could not be done and have not been shown yet; `filter` picks a person's own. */
@@ -169,15 +256,45 @@ function createOutbox({ dir, run, isStorageError, isBusyError = () => false, now
   function acknowledge(ids) {
     const gone = new Set(ids)
     state.failures = state.failures.filter(item => !gone.has(item.id))
-    save()
+    return persist()
   }
 
+  /** Resolves true when nothing is left in the queue (and the file says so), false after `timeoutMs`. */
+  function whenSettled(timeoutMs) {
+    return new Promise(resolve => {
+      let timer = null
+      const finish = value => {
+        settledWaiters.delete(check)
+        if (timer) clearTimeout(timer)
+        resolve(value)
+      }
+      const check = () => { settledWaiters.delete(check); saving.then(() => finish(true)) }
+      if (!state.queue.length) { check(); return }
+      settledWaiters.add(check)
+      timer = setTimeout(() => finish(false), Math.max(0, timeoutMs))
+      timer.unref?.()
+    })
+  }
+
+  /** Stops the retries; resolves when the last save is on disk. */
   function close() {
     closed = true
     cancelRetry()
+    return saving
   }
 
-  return { submit, flush, pending: () => state.queue.length, failures, acknowledge, close }
+  return {
+    submit,
+    flush,
+    // Kept here for M: (shown as "venter på M:"), not the ones running right now with a person waiting for them.
+    pending: () => state.queue.filter(action => !waiting.has(action.id)).length,
+    // Everything not yet on M:, also what is running right now.
+    unsettled: () => state.queue.length,
+    whenSettled,
+    failures,
+    acknowledge,
+    close,
+  }
 }
 
 module.exports = { createOutbox, QUEUED_METHODS }

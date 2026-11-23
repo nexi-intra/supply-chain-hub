@@ -52,17 +52,42 @@ describe('sendLocationAction', () => {
     expect(settled).toHaveBeenCalledTimes(1)
   })
 
-  it('sends the actions one after another, in the order they were made', async () => {
+  it('hands every action to the Hub at once, without waiting for the one before (the Hub keeps the order and the outbox)', async () => {
     const first = deferred<object>()
-    const second = vi.fn(() => Promise.resolve({}))
-    const one = sendLocationAction(() => first.promise, { settled: () => {} })
-    const two = sendLocationAction(second, { settled: () => {} })
-    await Promise.resolve()
-    expect(second).not.toHaveBeenCalled()
-    first.reject(new Error('PALLET_GONE'))
-    await one
+    const second = deferred<object>()
+    const sent: string[] = []
+    const one = sendLocationAction(() => { sent.push('first'); return first.promise }, { settled: () => {} })
+    const two = sendLocationAction(() => { sent.push('second'); return second.promise }, { settled: () => {} })
+    expect(sent).toEqual(['first', 'second'])
+    expect([locationActionsInFlight(), pendingWriteCount()]).toEqual([2, 2])
+    second.resolve({})
+    first.resolve({})
+    await expect(Promise.all([one, two])).resolves.toEqual([true, true])
+    expect([locationActionsInFlight(), pendingWriteCount()]).toEqual([0, 0])
+  })
+
+  it('with several actions on their way, a refusal rolls back only its own change and the screen reads again when all are done', async () => {
+    const first = deferred<object>()
+    const second = deferred<object>()
+    const rollbacks = [vi.fn(), vi.fn()]
+    const confirmed = [vi.fn(), vi.fn()]
+    const settled = vi.fn()
+    const one = sendLocationAction(() => first.promise, { rollback: rollbacks[0], confirmed: confirmed[0], settled })
+    const two = sendLocationAction(() => second.promise, { rollback: rollbacks[1], confirmed: confirmed[1], settled })
+    const during = startLocationsRead()
+    first.reject(Object.assign(new Error('PALLET_GONE'), { code: 'PALLET_GONE' }))
+    await expect(one).resolves.toBe(false)
+    expect(rollbacks[0]).toHaveBeenCalledTimes(1)
+    expect(rollbacks[1]).not.toHaveBeenCalled()
+    expect(toast.error).toHaveBeenCalledTimes(1)
+    const afterFirst = startLocationsRead()
+    second.resolve({ pallet: null })
     await expect(two).resolves.toBe(true)
-    expect(second).toHaveBeenCalledTimes(1)
+    expect(confirmed[1]).toHaveBeenCalledWith({ pallet: null })
+    expect(confirmed[0]).not.toHaveBeenCalled()
+    expect(settled).toHaveBeenCalledTimes(2)
+    expect([during(), afterFirst()]).toEqual([false, false])
+    expect(startLocationsRead()()).toBe(true)
   })
 
   it('an action kept on this PC (M: down) says so and is not confirmed', async () => {

@@ -75,8 +75,9 @@ function loadDeviceId(dir) {
  * @param {(teamId: string) => Promise<object>} deps.teamUsers the team's public users (no secrets)
  * @param {(teamId: string) => string} deps.teamDir the registered folder of a team in the platform root
  * @param {() => string} deps.platformRoot
+ * @param {ReturnType<import('../ipcArrivals.cjs')['createArrivalOrder']>} [deps.arrivals] the order IPC calls arrived in (main.cjs)
  */
-function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platformRoot, userDataDir, electron, broadcast, isPackaged, configDirs = [], scriptsDir = __dirname, env = process.env, preparedFiles = null }) {
+function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platformRoot, userDataDir, electron, broadcast, isPackaged, configDirs = [], scriptsDir = __dirname, env = process.env, preparedFiles = null, arrivals = null }) {
   const { clipboard, dialog, shell, BrowserWindow } = electron
   const config = resolveWarehouseConfig({ env, configDirs })
   const localDir = path.join(userDataDir, 'warehouse')
@@ -432,11 +433,22 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
     emit('locations:changed', { team: user.team })
     return result
   }
+  // The window sends every action at once; here they keep the order they arrived in on this PC. The daily ones are
+  // written to the outbox in that order (so they survive a close or a crash at once) and run one at a time there; the
+  // others (places, racks) run one at a time after what came before them, and a daily action waits for an earlier one
+  // of those before it runs (a pallet put on a place just made).
+  let lastDaily = Promise.resolve()
+  let lastOther = Promise.resolve()
+  const runsAfter = new Map()
   // The daily actions survive M: being down: kept on this PC and replayed in order when it is back.
   // A replayed action that is no longer possible is kept in the outbox file until a window of the same team has shown it.
   const outbox = createOutbox({
     dir: localDir,
-    run: runLocations,
+    run: async action => {
+      const earlier = runsAfter.get(action.id)
+      if (earlier) { runsAfter.delete(action.id); await earlier }
+      return runLocations(action)
+    },
     isStorageError: error => error?.code === 'STORAGE_UNAVAILABLE' || STORAGE_ERRORS.has(error?.code),
     // The store gives up on its locks before it writes anything, so the action is tried again a little later.
     isBusyError: error => error?.code === 'KV_LOCK_BUSY',
@@ -451,20 +463,37 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   outboxTimer.unref?.()
   setTimeout(flushOutbox, 0).unref?.()
   for (const [channel, method] of Object.entries(LOCATION_WRITES)) {
-    handle(`locations:${channel}`, async (user, p) => {
-      if (!QUEUED_METHODS.has(method)) return runLocations({ method, user, request: p })
+    arrivals?.order(`warehouse:locations:${channel}`)
+    handle(`locations:${channel}`, async (user, p, event) => {
+      await arrivals?.turn(event)
+      if (!QUEUED_METHODS.has(method)) {
+        const running = Promise.all([lastDaily, lastOther]).then(() => runLocations({ method, user, request: p }))
+        lastOther = running.then(() => {}, () => {})
+        arrivals?.leave(event)
+        return running
+      }
       const { label, ...rest } = p
       // The id also goes to the service, which records it in the shared data so a replay is never applied twice.
       const request = { ...rest, actionId: typeof rest.actionId === 'string' && rest.actionId ? rest.actionId.slice(0, 100) : crypto.randomUUID() }
-      const outcome = await outbox.submit({ id: request.actionId, method, user, request, label: typeof label === 'string' ? label.slice(0, 200) : '' })
-      return outcome.queued ? { queued: true } : outcome.duplicate ? { duplicate: true } : outcome.result
+      const earlier = lastOther
+      runsAfter.set(request.actionId, earlier)
+      // In the outbox (and on its way to the disk) when submit returns, so the next action may go on.
+      const submitted = outbox.submit({ id: request.actionId, method, user, request, label: typeof label === 'string' ? label.slice(0, 200) : '' })
+      lastDaily = submitted.then(() => {}, () => {})
+      arrivals?.leave(event)
+      try {
+        const outcome = await submitted
+        return outcome.queued ? { queued: true } : outcome.duplicate ? { duplicate: true } : outcome.result
+      } finally {
+        if (runsAfter.get(request.actionId) === earlier) runsAfter.delete(request.actionId)
+      }
     })
   }
   const ownTeam = user => item => item.team === user.team
   handle('locations:pending', user => ({ pending: outbox.pending(), failures: outbox.failures(ownTeam(user)).map(({ id, method, label, name, email, code, at }) => ({ id, method, label, name, email, code, at })) }))
-  handle('locations:ack-failures', (user, p) => {
+  handle('locations:ack-failures', async (user, p) => {
     const mine = new Set(outbox.failures(ownTeam(user)).map(item => item.id))
-    outbox.acknowledge((Array.isArray(p.ids) ? p.ids : []).filter(id => mine.has(id)))
+    await outbox.acknowledge((Array.isArray(p.ids) ? p.ids : []).filter(id => mine.has(id)))
     return { ok: true }
   })
   // Tegningen needs M: (never queued); only a publish changes the places.
@@ -488,7 +517,13 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   const locationsAssistant = createLocationsAssistant({ userFor: serviceUser, service: locations })
   // Placeringer first ("hvor står R162-0717?"); questions about Optælling are left to it.
   const assistant = { answer: async request => (await locationsAssistant.answer(request)) || stockAssistant.answer(request) }
-  return { channels, counts, locations, assistant, closeAll: () => { clearInterval(outboxTimer); outbox.close(); return counts.closeAll() } }
+  return {
+    channels, counts, locations, assistant,
+    // For the close guard: Placeringer actions not yet on M: (running now, or kept here while M: is down or busy).
+    hasPendingWrites: () => outbox.unsettled() > 0,
+    whenWritesSettled: timeoutMs => outbox.whenSettled(timeoutMs),
+    closeAll: () => { clearInterval(outboxTimer); return Promise.all([outbox.close(), counts.closeAll()]).then(([, closed]) => closed) },
+  }
 }
 
 module.exports = { registerWarehouse, DATA_FOLDER, SHARED_FOLDER }

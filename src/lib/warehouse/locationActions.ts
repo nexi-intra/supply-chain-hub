@@ -9,10 +9,11 @@ type Listed = LocationList['locations'][number]
 
 // Placeringer's own actions on their way to M: (one action is a transaction of 15-40 s). The screen shows each result at
 // once; a re-read that overlaps one of them can be older than the screen, so it is dropped, and the screens read again
-// when an action is done (`settled`).
+// when an action is done (`settled`). Every action is handed to the Hub at once: nothing waits in this window, so a
+// close, reload or crash of the window loses nothing. The Hub keeps them in the order they were sent, writes the daily
+// ones to this PC's disk first and runs them one at a time (electron/warehouse/register.cjs, locations/outbox.cjs).
 let inFlight = 0
 let generation = 0
-let queue: Promise<unknown> = Promise.resolve()
 // Places this PC is deleting, hidden from the lists until M: has answered; racks it is creating, shown as predicted.
 const hidden = new Map<string, number>()
 const racks = new Map<string, RackCard>()
@@ -61,10 +62,10 @@ export function sendLocationAction<T>(write: () => Promise<T>, options: Location
   for (const id of options.hides || []) hidden.set(id, (hidden.get(id) || 0) + 1)
   if (options.rack) racks.set(options.rack.rack, options.rack)
   if (options.success) toast.success(options.success)
-  // One after another, in the order they were made: they lock the same files on M: anyway, and a later action can
-  // depend on an earlier one (take the rest of a pallet after taking part of it).
-  const running = queue.then(() => write())
-  queue = running.catch(() => {})
+  // Sent now, in the order they are made: the Hub runs them one after another in that order (they lock the same files
+  // on M: anyway, and a later action can depend on an earlier one: take the rest of a pallet after taking part of it).
+  let running: Promise<T>
+  try { running = Promise.resolve(write()) } catch (error) { running = Promise.reject(error) }
   return trackPendingWrite(running).then(
     result => {
       if (result && typeof result === 'object' && isDeferred(result)) { toast.warning(deferredText(result)); return true }
