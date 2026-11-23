@@ -109,6 +109,8 @@ const COMPONENT_MAP = {
   'views/warehouse/softwareload/SoftwareloadTask.tsx': 'warehouse:softwareload-start', // also the "Fejlet" dialog: warehouse:softwareload-failed
   'views/warehouse/softwareload/SoftwareloadFinish.tsx': 'warehouse:softwareload-finish',
   'views/warehouse/softwareload/SoftwareloadPending.tsx': 'warehouse:softwareload-finish', // "Venter på SAP" is explained in the finish task
+  'views/warehouse/softwareload/SoftwareloadPlan.tsx': 'warehouse:softwareload-finish', // SAP's plan on the finish screen and before "Fortsæt i SAP"
+  'views/warehouse/softwareload/SoftwareloadStop.tsx': 'warehouse:softwareload-finish', // "Stop tiden nu, flyt i SAP senere" (finish screen and running task)
   'views/warehouse/softwareload/SoftwareloadKif.tsx': 'warehouse:softwareload-kif',
   'views/warehouse/softwareload/SoftwareloadSearch.tsx': 'warehouse:softwareload-search',
   'views/warehouse/softwareload/SoftwareloadStats.tsx': 'warehouse:softwareload-stats',
