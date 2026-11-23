@@ -164,6 +164,7 @@ test('data is written to "<team folder>\\lagerstyring", never next to the Hub\'s
   assert.ok(fs.readdirSync(path.join(root, 'TCD', 'lagerstyring')).length > 0)
   assert.deepEqual(fs.readdirSync(path.join(root, 'TCD')), ['lagerstyring'])
   assert.equal((await call('anna', 'statuses:overview')).active.name, status.name)
+  assert.equal((await call('anna', 'statuses:active-progress')).name, status.name)
 })
 
 test('Hubert reads Optælling through the same services and Hub user: TCD gets the live figures, other hubs are refused, nothing is written', async () => {

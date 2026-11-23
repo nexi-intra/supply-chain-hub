@@ -1,6 +1,6 @@
 import { useMemo, useSyncExternalStore } from 'react'
 import { trackPendingWrite } from '@/lib/pendingWrites'
-import type { CountListEntry, CountStatus, StatusOverview, StatusProgress } from '@/types/warehouse'
+import type { ActiveStatusProgress, CountListEntry, CountStatus, StatusOverview, StatusProgress } from '@/types/warehouse'
 
 // Deleting a count or a status is a write to M: of 15–90 s. What is being deleted on this PC disappears at once from
 // every list (the overview read from the drive still has it until the write is done) and comes back if it fails.
@@ -33,7 +33,7 @@ export function deleteInBackground({ counts = [], status = null }: { counts?: st
 
 export const isBeingDeleted = (kind: 'count' | 'status', id: string) => (kind === 'count' ? hiddenCounts : hiddenStatuses).has(id)
 
-function progressOf(counts: CountListEntry[]): StatusProgress {
+function progressOf(counts: Pick<CountListEntry, 'status' | 'summary'>[]): StatusProgress {
   const reached = counts.reduce((sum, item) => sum + (item.summary?.reached || 0), 0)
   const total = counts.reduce((sum, item) => sum + (item.summary?.total || 0), 0)
   const valueDiff = Math.round(counts.reduce((sum, item) => sum + (item.summary?.valueDiff || 0), 0) * 100) / 100
@@ -52,6 +52,14 @@ export function withoutDeleted(overview: StatusOverview): StatusOverview {
   const statuses = overview.statuses.filter(item => !hiddenStatuses.has(item.id)).map(withoutCounts)
   const active = overview.active && !hiddenStatuses.has(overview.active.id) ? withoutCounts(overview.active) : null
   return { ...overview, active, statuses, unassigned: overview.unassigned.filter(item => !hiddenCounts.has(item.id)) }
+}
+
+/** The tools page's active status without what this PC is deleting, with its progress counted again. */
+export function withoutDeletedActive(active: ActiveStatusProgress | null): ActiveStatusProgress | null {
+  if (!active || hiddenStatuses.has(active.id)) return null
+  if (!active.counts.some(item => hiddenCounts.has(item.id))) return active
+  const counts = active.counts.filter(item => !hiddenCounts.has(item.id))
+  return { ...active, counts, progress: progressOf(counts) }
 }
 
 const subscribe = (listener: () => void) => {

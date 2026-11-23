@@ -296,6 +296,13 @@ export interface StatusOverview {
   canManage: boolean
 }
 
+export interface ActiveStatusProgress {
+  id: string
+  name: string
+  counts: Pick<CountListEntry, 'id' | 'status' | 'summary'>[]
+  progress: StatusProgress
+}
+
 export interface CountListEntry {
   id: string
   name: string
@@ -1144,6 +1151,8 @@ export interface WarehouseBridge {
   }
   statuses: {
     overview(): Promise<StatusOverview>
+    /** Only the active status and the summaries of its counts (the line on the tools page); null without one. */
+    activeProgress(): Promise<ActiveStatusProgress | null>
     start(request: { year: number; quarter: number; name?: string }): Promise<CountStatus>
     checklist(id: string): Promise<StatusChecklist>
     /** Locks the status; the final reports are written in `language` (Danish unless 'en'). */

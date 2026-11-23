@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { CountListEntry, CountStatus, StatusOverview } from '@/types/warehouse'
-import { deleteInBackground, isBeingDeleted, withoutDeleted } from './pendingDeletes'
+import type { ActiveStatusProgress, CountListEntry, CountStatus, StatusOverview } from '@/types/warehouse'
+import { deleteInBackground, isBeingDeleted, withoutDeleted, withoutDeletedActive } from './pendingDeletes'
 
 const entry = (id: string, reached: number, total: number): CountListEntry => ({ id, name: id, status: 'open', summary: { percent: 0, reached, total, valueDiff: -10, updatedAt: 1 } } as unknown as CountListEntry)
 const status = (id: string, counts: CountListEntry[]): CountStatus => ({ id, name: id, state: 'open', counts, progress: { counts: counts.length, closed: 0, reached: 0, total: 0, percent: 0, valueDiff: 0 }, taken: counts.map(item => ({ countId: item.id })) } as unknown as CountStatus)
@@ -23,6 +23,17 @@ describe('deleting on the shared drive shows at once', () => {
     finish()
     expect(await deleted).toBe(true)
     expect(isBeingDeleted('count', 'c1')).toBe(true)
+  })
+
+  it('the line on the tools page leaves out what is being deleted, with the progress counted again', () => {
+    const summary = (reached: number, total: number) => ({ percent: 0, reached, total, valueDiff: -10, updatedAt: 1 })
+    const active: ActiveStatusProgress = { id: 's5', name: 'Q4', counts: [{ id: 'c5', status: 'open', summary: summary(5, 10) }, { id: 'c6', status: 'closed', summary: summary(10, 10) }], progress: { counts: 2, closed: 1, reached: 15, total: 20, percent: 75, valueDiff: -20 } }
+    expect(withoutDeletedActive(active)).toBe(active)
+    void deleteInBackground({ counts: ['c5'] }, () => new Promise(() => {}))
+    expect(withoutDeletedActive(active)!.progress).toEqual({ counts: 1, closed: 1, reached: 10, total: 10, percent: 100, valueDiff: -10 })
+    expect(withoutDeletedActive(null)).toBeNull()
+    void deleteInBackground({ status: 's5' }, () => new Promise(() => {}))
+    expect(withoutDeletedActive(active)).toBeNull()
   })
 
   it('a failed delete shows the status and its counts again', async () => {

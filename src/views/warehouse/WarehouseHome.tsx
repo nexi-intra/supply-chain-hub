@@ -3,7 +3,7 @@ import { motion } from 'framer-motion'
 import { Barcode, ClipboardText, Clock, Cpu, IdentificationCard, MapPin, Package } from '@phosphor-icons/react'
 import { SectionTile } from '@/components/arcade/SectionTile'
 import { t } from '@/lib/warehouse/text'
-import { withoutDeleted } from './pendingDeletes'
+import { withoutDeletedActive } from './pendingDeletes'
 import type { WarehouseUser } from '@/types/warehouse'
 
 export type WarehouseTool = 'timeclock' | 'counts' | 'locations' | 'softwareload'
@@ -86,8 +86,8 @@ export function WarehouseHome({ user, onOpen }: { user: WarehouseUser; onOpen: (
   const [activeStatus, setActiveStatus] = useState<string | null>(null)
   useEffect(() => {
     let current = true
-    window.electronWarehouse?.statuses.overview()
-      .then(raw => { const overview = withoutDeleted(raw); if (current && overview.active) setActiveStatus(`${overview.active.name} · ${overview.active.progress.percent} %`) })
+    window.electronWarehouse?.statuses.activeProgress()
+      .then(raw => { const active = withoutDeletedActive(raw); if (current && active) setActiveStatus(`${active.name} · ${active.progress.percent} %`) })
       .catch(() => {})
     return () => { current = false }
   }, [user.team])

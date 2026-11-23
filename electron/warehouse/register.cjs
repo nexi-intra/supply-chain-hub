@@ -316,6 +316,7 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   })
   handle('sap:status', async (user, p) => ({ ...(await sap.status({ fresh: p.fresh === true })), expectedSystem: config.sapSystem }))
   handle('statuses:overview', user => counts.statusOverview(user))
+  handle('statuses:active-progress', user => counts.activeProgress(user))
   handle('statuses:start', (user, p) => counts.startStatus(user, { year: p.year, quarter: p.quarter, name: p.name }))
   handle('statuses:checklist', (user, p) => counts.statusChecklist(user, p.id))
   handle('statuses:lock', (user, p) => counts.lockStatus(user, p.id, { language: p.language }))

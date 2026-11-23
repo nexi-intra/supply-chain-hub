@@ -73,6 +73,7 @@ contextBridge.exposeInMainWorld('electronWarehouse', {
   },
   statuses: {
     overview: () => warehouse('statuses:overview'),
+    activeProgress: () => warehouse('statuses:active-progress'),
     start: request => warehouse('statuses:start', request),
     checklist: id => warehouse('statuses:checklist', { id }),
     lock: (id, language) => warehouse('statuses:lock', { id, language }),

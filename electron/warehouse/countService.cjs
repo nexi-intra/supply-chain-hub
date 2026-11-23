@@ -131,6 +131,21 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     return { active: withCounts.find(status => status.state === 'open') || null, statuses: withCounts, unassigned: counts.filter(item => !item.statusId), canManage: isManager(user) }
   }
 
+  /** The line on the tools page: the active status and its progress, from the summaries of its own counts only. */
+  async function activeProgress(user) {
+    const team = teamOf(user)
+    const [status, all] = await Promise.all([repo.getActiveStatus(team), repo.listCounts(team)])
+    if (!status) return null
+    const entries = all.filter(entry => entry.statusId === status.id && !entry.creating)
+    const email = lower(user.email)
+    const summaries = await Promise.all(entries.map(entry => {
+      const cached = entry.status === 'closed' && closedDetails.get(`${team}:${entry.id}:${email}`)
+      return cached ? cached.summary : repo.getSummary(team, entry.id).catch(() => null)
+    }))
+    const counts = entries.map((entry, index) => ({ id: entry.id, status: entry.status, summary: summaries[index] || null }))
+    return { id: status.id, name: status.name, counts, progress: statusProgress(counts) }
+  }
+
   function statusProgress(counts) {
     const reached = counts.reduce((sum, item) => sum + (item.summary?.reached || 0), 0)
     const total = counts.reduce((sum, item) => sum + (item.summary?.total || 0), 0)
@@ -1862,7 +1877,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   }
 
   return {
-    listCounts, statusOverview, startStatus, statusChecklist, lockStatus: changes(lockStatus, 'team'), statusArchive, unlockStatus: changes(unlockStatus, 'team'), deleteStatus: changes(deleteStatus, 'team'), preview, createCount, openCount, getState, listSerials, materialSerials,
+    listCounts, statusOverview, activeProgress, startStatus, statusChecklist, lockStatus: changes(lockStatus, 'team'), statusArchive, unlockStatus: changes(unlockStatus, 'team'), deleteStatus: changes(deleteStatus, 'team'), preview, createCount, openCount, getState, listSerials, materialSerials,
     scan, undo, removeSerial, saveLine: changes(saveLine), deleteLine, importSerials, lookupMatdoc,
     lockMaterial: changes(lockMaterial), requestMaterial: changes(requestMaterial), answerMaterialRequest: changes(answerMaterialRequest), releaseMaterial: changes(releaseMaterial), submitMaterial: changes(submitMaterial),
     requestJoin: changes(requestJoin), decideMember: changes(decideMember), claimArea: changes(claimArea), releaseArea: changes(releaseArea),

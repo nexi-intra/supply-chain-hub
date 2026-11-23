@@ -607,6 +607,39 @@ test('the status overview sums the progress and value differences of its counts'
   assert.deepEqual(active.progress, { counts: 1, closed: 0, reached: state.progress.overall.reached, total: state.progress.overall.total, percent: state.progress.overall.percent, valueDiff: -1500 })
 })
 
+test('the tools page reads only the active status and the summaries of its counts, with the same progress as the overview', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const { id } = await newCount(ctx, anna)
+  await anna.scan(ANNA, id, { serial: 'N1', place: 'A1.1' })
+  ctx.tick(2000)
+  await anna.getState(ANNA, id)
+  assert.equal(await whenWritesSettled(5000), true)
+  const store = ctx.storeFor('TCD')
+  await store.updateAsync('statusser', { op: 'setField', field: 'st0old01', value: { id: 'st0old01', team: 'TCD', name: 'Status Q3 2026', year: 2026, quarter: 3, state: 'locked', startedBy: { email: 'mona@example.test', name: 'Mona' }, startedAt: 0, history: [], reports: [] } })
+  const old = { id: 'oldcount1abc', name: 'Q3 D000', scope: { type: 'slocs', slocs: ['D000'], materials: [] }, status: 'closed', owner: { email: 'bo@example.test', name: 'Bo' }, createdAt: 1, fetchedAt: 1, statusId: 'st0old01' }
+  const closed = { ...old, id: 'closed1abc', name: 'D004', scope: { type: 'slocs', slocs: ['D004'], materials: [] }, createdAt: 2, statusId: 'st0open1' }
+  const creating = { ...old, id: 'creating1abc', name: 'D005 på vej', status: 'open', createdAt: ctx.clock.now, statusId: 'st0open1', creating: true }
+  for (const entry of [old, closed, creating]) await store.updateAsync('counts-index', { op: 'setField', field: entry.id, value: entry })
+  await store.setAsync('count-oldcount1abc-summary', { percent: 50, reached: 5, total: 10, valueDiff: -7, updatedAt: 1 })
+  await store.setAsync('count-closed1abc-summary', { percent: 100, reached: 4, total: 4, valueDiff: 2.5, updatedAt: 1 })
+  const { active } = await ctx.service('pc8').statusOverview(ANNA)
+
+  const getAsync = store.getAsync
+  const read = []
+  store.getAsync = (key, ...rest) => { read.push(key); return getAsync.call(store, key, ...rest) }
+  const progress = await ctx.service('pc9').activeProgress(ANNA)
+  store.getAsync = getAsync
+  assert.deepEqual({ id: progress.id, name: progress.name, progress: progress.progress }, { id: active.id, name: active.name, progress: active.progress })
+  assert.equal(progress.progress.closed, 1)
+  assert.deepEqual(progress.counts.map(item => item.id).sort(), active.counts.map(item => item.id).sort())
+  assert.deepEqual([...new Set(read)].sort(), ['count-closed1abc-summary', `count-${id}-summary`, 'counts-index', 'statusser'].sort(), 'no files of other statuses, no members')
+
+  await ctx.repo.updateStatus('TCD', 'st0open1', { state: 'locked', lockedAt: 2, lockedBy: { email: 'mona@example.test', name: 'Mona' } }, { action: 'locked', by: { email: 'mona@example.test', name: 'Mona' } })
+  ctx.tick(5000)
+  assert.equal(await ctx.service('pc7').activeProgress(ANNA), null, 'no active status, no line')
+})
+
 test('a manager locks the status when every count is closed and every material approved; unlocking needs a reason', async () => {
   const ctx = setup()
   const anna = ctx.service('pc1')
