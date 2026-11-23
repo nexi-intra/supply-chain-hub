@@ -1,7 +1,7 @@
 // Undo of one Placeringer action, as pure functions. A transaction records its change: the pallets and places that
 // differ, as they were before and after (null = did not exist). An undo puts the "before" back – but only when every
 // one of them still is as the action left it, so later work by anyone is never rolled back.
-const { isShelf, DRAWN_PURPOSES } = require('./model.cjs')
+const { isShelf, palletLimit, DRAWN_PURPOSES } = require('./model.cjs')
 
 const KINDS = Object.freeze([['pallets', 'pallet'], ['locations', 'location'], ['stock', 'stock']])
 const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
@@ -29,7 +29,8 @@ function changeOf(before, after) {
  * Whether `change` can be undone in `state`, without building the new state (the log asks this for every line):
  * everything the action left must still be as it left it; a pallet put back needs its place, and never a pick place
  * (pick places hold no pallets); a shelf line put back needs a lagerhylde; a place the undo removes must have no other
- * pallet or shelf line on it.
+ * pallet or shelf line on it. A pallet put back on a place it had left needs room there and a place that takes pallets:
+ * the conflict then says why (`reason`: full, reserved, station or inactive).
  */
 function undoCheck(change, state) {
   for (const [key, kind] of KINDS) {
@@ -45,6 +46,20 @@ function undoCheck(change, state) {
     if (!pallet) continue
     const place = placeAfter(pallet.location)
     if (!place || place.purpose === 'pick' || isShelf(place)) return { ok: false, conflict: { kind: 'location', id: pallet.location } }
+  }
+  // A pallet the undo puts (back) on a place must fit there as a put-away or move would (roomIn): room for it next to
+  // what stands there now, and a place that takes pallets. A place the undo itself brings back is as it was then.
+  const arriving = Object.entries(beforePallets).filter(([id, pallet]) => pallet && change.after.pallets?.[id]?.location !== pallet.location).map(([, pallet]) => pallet.location)
+  if (arriving.length) {
+    const count = {}
+    for (const [id, pallet] of Object.entries(state.pallets || {})) if (!Object.hasOwn(beforePallets, id)) count[pallet.location] = (count[pallet.location] || 0) + 1
+    for (const pallet of Object.values(beforePallets)) if (pallet) count[pallet.location] = (count[pallet.location] || 0) + 1
+    for (const id of new Set(arriving)) {
+      const place = placeAfter(id)
+      const reason = Object.hasOwn(beforePlaces, id) ? null : place.active === false ? 'inactive' : place.purpose === 'reserved' || place.purpose === 'station' ? place.purpose : null
+      if (reason) return { ok: false, conflict: { kind: 'location', id, reason } }
+      if (count[id] > palletLimit(place)) return { ok: false, conflict: { kind: 'location', id, reason: 'full' } }
+    }
   }
   for (const line of Object.values(beforeStock)) {
     if (line && !isShelf(placeAfter(line.location))) return { ok: false, conflict: { kind: 'location', id: line.location } }

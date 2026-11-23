@@ -15,7 +15,7 @@ test('changeOf keeps only what differs, with null for what did not exist', () =>
 })
 
 test('undoPlan puts everything back as it was before when nothing changed since', () => {
-  const start = state([place('A1.1'), place('A1.2')], [pallet('p1', 'A1.1'), pallet('p2', 'A1.1')])
+  const start = state([place('A1.1', { capacity: 2 }), place('A1.2')], [pallet('p1', 'A1.1'), pallet('p2', 'A1.1')])
   // take 10 of p1, take the whole p2, move p1 to A1.2: each as its own action
   for (const step of [
     s => { s.pallets.p1.quantity = 90 },
@@ -59,14 +59,61 @@ test('undoing a rename brings the old id back and its pallets with it', () => {
   assert.equal(plan.state.pallets.p1.location, 'A1.1')
 })
 
-test('a pallet used up on a pick place comes back on undo, a full place does not block', () => {
+test('a pallet used up on a pick place comes back on undo while its place is free; not when another pallet has taken it', () => {
   const start = state([place('A1.1'), place('H1', { purpose: 'pick', fixedMaterials: ['R162-0717'] })], [pallet('p1', 'A1.1')])
   const after = state(Object.values(start.locations))
+  assert.deepEqual(undoPlan(changeOf(start, after), after).state, start)
   const later = clone(after)
   later.pallets.p5 = pallet('p5', 'A1.1') // A1.1 (capacity 1) is now taken by another pallet
-  const plan = undoPlan(changeOf(start, after), later)
+  assert.deepEqual(undoPlan(changeOf(start, after), later), { ok: false, conflict: { kind: 'location', id: 'A1.1', reason: 'full' } })
+})
+
+test('a move back to a place that was used again is refused when the place is full, with room it goes back', () => {
+  // 09:00 Bo moves P from A2.4 to B1.1; 09:20 Lis puts a new pallet on A2.4, which holds one.
+  const start = state([place('A2.4'), place('B1.1')], [pallet('P', 'A2.4')])
+  const after = state(Object.values(start.locations), [pallet('P', 'B1.1')])
+  const change = changeOf(start, after)
+  const reused = clone(after)
+  reused.pallets.L = pallet('L', 'A2.4')
+  assert.deepEqual(undoPlan(change, reused), { ok: false, conflict: { kind: 'location', id: 'A2.4', reason: 'full' } })
+  // A place for two (S0) with one new pallet, and a floor with any number, still have room.
+  for (const extra of [{ type: 'Bord', capacity: 2 }, { type: 'Gulv', capacity: 0 }]) {
+    const roomy = clone(reused)
+    roomy.locations['A2.4'] = place('A2.4', extra)
+    const plan = undoPlan(change, roomy)
+    assert.equal(plan.ok, true, extra.type)
+    assert.deepEqual([plan.state.pallets.P.location, plan.state.pallets.L.location], ['A2.4', 'A2.4'])
+  }
+})
+
+test('a pallet is never put back on a place that has become reserved, a station or inactive since', () => {
+  const start = state([place('A2.4'), place('B1.1')], [pallet('P', 'A2.4')])
+  const moved = state(Object.values(start.locations), [pallet('P', 'B1.1')])
+  const taken = state(Object.values(start.locations))
+  for (const after of [moved, taken]) {
+    const change = changeOf(start, after)
+    for (const [extra, reason] of [[{ purpose: 'reserved' }, 'reserved'], [{ purpose: 'station', fixedMaterials: ['R162-0717'] }, 'station'], [{ active: false }, 'inactive']]) {
+      const later = clone(after)
+      later.locations['A2.4'] = place('A2.4', extra)
+      assert.deepEqual(undoPlan(change, later), { ok: false, conflict: { kind: 'location', id: 'A2.4', reason } }, reason)
+    }
+  }
+})
+
+test('a pallet that stays on its place does not need room there: an edit on a full or deactivated place can be undone', () => {
+  const start = state([place('A2.4', { active: false })], [pallet('P', 'A2.4'), pallet('Q', 'A2.4')])
+  const after = clone(start)
+  after.pallets.P.note = 'Bøjet hjørne'
+  const plan = undoPlan(changeOf(start, after), after)
   assert.equal(plan.ok, true)
-  assert.deepEqual(Object.keys(plan.state.pallets).sort(), ['p1', 'p5'])
+  assert.equal(plan.state.pallets.P.note, '')
+})
+
+test('a place the undo brings back as it was takes its pallets back with it, also when it was deactivated then', () => {
+  const start = state([place('A1.1', { active: false })], [pallet('p1', 'A1.1')])
+  const after = state([place('A1.9', { name: 'A1.9', active: false })], [pallet('p1', 'A1.9')])
+  const plan = undoPlan(changeOf(start, after), after)
+  assert.equal(plan.ok, true)
   assert.equal(plan.state.pallets.p1.location, 'A1.1')
 })
 

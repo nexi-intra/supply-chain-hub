@@ -860,13 +860,20 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
   }
   /** The change each transaction recorded, by tx id. */
   const changesOf = events => new Map(events.filter(event => event.change).map(event => [event.tx, event.change]))
+  const PLACE_REASONS = { full: 'er fuld', reserved: 'er reserveret', station: 'er en arbejdsstation', inactive: 'er deaktiveret' }
+  /** Whether a change made a place unfit for a pallet put back (`reason`): a pallet came onto it, or the place was changed. */
+  const usedPlace = (change, { id, reason }) => Boolean(change) && (Object.hasOwn(change.after.locations || {}, id)
+    || (reason === 'full' && Object.entries(change.after.pallets || {}).some(([pallet, after]) => after?.location === id && change.before.pallets?.[pallet]?.location !== id)))
   /**
    * The latest later event that touched what blocks the undo, as a sentence. An undo is never named (it cannot be undone),
    * nor an action that changed nothing (a take of some pieces from a pallet with an unknown quantity): it hides nothing.
+   * A place that cannot take the pallet back is blamed on the latest action that used or changed it; else the place is named.
    */
   function blocker(events, origin, conflict, changes = changesOf(events)) {
-    const later = events.find(event => event.at >= origin.at && event.tx !== origin.tx && event.type !== 'undo' && !event.undoneAt && !(event.tx && !changes.has(event.tx)) && touches(event, conflict))
-    return later ? `Kan ikke fortrydes – ${later.by?.name || 'en anden'} ${said(later)} kl. ${clock(later.at)} – fortryd den først` : 'Kan ikke fortrydes – noget er ændret siden'
+    const later = event => event.at >= origin.at && event.tx !== origin.tx && event.type !== 'undo' && !event.undoneAt && !(event.tx && !changes.has(event.tx)) && touches(event, conflict)
+    const named = conflict.reason ? events.find(event => later(event) && usedPlace(changes.get(event.tx), conflict)) : events.find(later)
+    if (named) return `Kan ikke fortrydes. ${named.by?.name || 'En anden'} ${said(named)} kl. ${clock(named.at)}. Fortryd den først.`
+    return conflict.reason && PLACE_REASONS[conflict.reason] ? `Kan ikke fortrydes. ${conflict.id} ${PLACE_REASONS[conflict.reason]}.` : 'Kan ikke fortrydes. Noget er ændret siden.'
   }
 
   /** What undoing a whole action does, for the confirmation: pallets removed, put back or changed; places likewise. */

@@ -14,6 +14,8 @@ const ADA = { email: 'ada@x.test', fullName: 'Ada', role: 'user', team: 'TCD' }
 const TRR = { email: 'tina@x.test', fullName: 'Tina', role: 'user', team: 'TRR' }
 const day = (y, m, d) => Date.UTC(y, m - 1, d)
 const place = (name, extra = {}) => ({ id: name, name, area: name.replace(/[\d. ].*$/, ''), type: 'Palle', purpose: 'reserve', capacity: 1, fixedMaterials: [], active: true, note: '', ...extra })
+// A time as the log and the refusals name it (10:12).
+const hhmm = at => `${String(new Date(at).getHours()).padStart(2, '0')}:${String(new Date(at).getMinutes()).padStart(2, '0')}`
 
 function setup() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'locations-service-'))
@@ -133,8 +135,8 @@ test('a take of some pieces from a pallet with an unknown quantity is never name
   clock.now += 60000
   await pc1.service.take(BO, { actionId: 'a3', pallet: pallet.id, quantity: 5 })
   const put = (await pc1.service.log(ADA, {})).events.find(event => event.type === 'putaway')
-  assert.match(put.reason, /Tom rettede pallen.*fortryd den først/)
-  await assert.rejects(pc1.service.undo(ADA, { eventId: put.id }), error => error.code === 'UNDO_CONFLICT' && /Tom rettede pallen.*fortryd den først/.test(error.message))
+  assert.match(put.reason, /^Kan ikke fortrydes\. Tom rettede pallen kl\. \d\d:\d\d\. Fortryd den først\.$/)
+  await assert.rejects(pc1.service.undo(ADA, { eventId: put.id }), error => error.code === 'UNDO_CONFLICT' && /Tom rettede pallen.*Fortryd den først/.test(error.message))
 })
 
 test('two people take the same pallet: the first wins, the second gets PALLET_GONE and nothing is counted twice', async () => {
@@ -454,8 +456,47 @@ test('an undo is refused with the later action named when something changed sinc
   await pc1.service.take(BO, { actionId: 'a2', pallet: 'p1', quantity: 5 })
   const first = (await pc1.service.log(ADA, { person: 'anna@x.test' })).events.find(event => event.type === 'take')
   assert.equal(first.canUndo, false)
-  assert.match(first.reason, /Bo .*5 stk.*fortryd den først/)
-  await assert.rejects(pc1.service.undo(ADA, { eventId: first.id }), error => error.code === 'UNDO_CONFLICT' && /Bo .*5 stk.*fortryd den først/.test(error.message))
+  assert.match(first.reason, /Bo .*5 stk.*Fortryd den først\.$/)
+  await assert.rejects(pc1.service.undo(ADA, { eventId: first.id }), error => error.code === 'UNDO_CONFLICT' && /^Kan ikke fortrydes\. Bo .*5 stk.*Fortryd den først\.$/.test(error.message))
+})
+
+test('a move back to a place that was used again is refused, naming who used it; undoing that first lets it through', async () => {
+  const { pc1, clock, seed } = setup()
+  const LIS = { email: 'lis@x.test', fullName: 'Lis', role: 'user', team: 'TCD' }
+  await seed([place('A2.4'), place('B1.1')], [{ id: 'P', location: 'A2.4', material: 'R162-0717', quantity: 100, receivedAt: 1 }])
+  clock.now += 9 * 3600000
+  await pc1.service.move(BO, { actionId: 'bo-move', pallet: 'P', to: 'B1.1' })
+  clock.now += 20 * 60000
+  await pc1.service.putAway(LIS, { actionId: 'lis-put', pallets: [{ location: 'A2.4', material: 'R162-0717', quantity: 1 }] })
+  const used = clock.now
+  clock.now += 40 * 60000
+  const said = `Kan ikke fortrydes. Lis satte 1 stk. R162-0717 på A2.4 kl. ${hhmm(used)}. Fortryd den først.`
+  const log = await pc1.service.log(ADA)
+  const move = log.events.find(event => event.type === 'move')
+  assert.deepEqual([move.canUndo, move.reason], [false, said])
+  await assert.rejects(pc1.service.undo(ADA, { eventId: move.id, actionId: 'u1' }), { code: 'UNDO_CONFLICT', message: said })
+  assert.equal((await pc1.repo.read('TCD')).pallets.P.location, 'B1.1', 'nothing is put back')
+  await pc1.service.undo(ADA, { eventId: log.events.find(event => event.type === 'putaway').id, actionId: 'u2' })
+  assert.deepEqual(await pc1.service.undo(ADA, { eventId: move.id, actionId: 'u3' }), { undone: 1 })
+  const state = await pc1.repo.read('TCD')
+  assert.deepEqual(Object.values(state.pallets).map(pallet => [pallet.id, pallet.location]), [['P', 'A2.4']])
+})
+
+test('an undo onto a place made reserved, a station or inactive since names who changed the place, or says what the place is', async () => {
+  const { pc1, clock, seed } = setup()
+  await seed([place('A2.4'), place('A2.5'), place('A2.6'), place('A3.1', { active: false }), place('B1.1', { type: 'Gulv', capacity: 0 })], ['A2.4', 'A2.5', 'A2.6', 'A3.1'].map(location => ({ id: `p-${location}`, location, material: 'R162-0717', quantity: 10, receivedAt: 1 })))
+  for (const location of ['A2.4', 'A2.5', 'A2.6', 'A3.1']) await pc1.service.move(BO, { actionId: `move-${location}`, pallet: `p-${location}`, to: 'B1.1' })
+  clock.now += 60000
+  await pc1.service.setActive(ADA, { location: 'A2.4', active: false })
+  await pc1.service.editLocation(ADA, { location: 'A2.5', changes: { purpose: 'reserved' } })
+  await pc1.service.editLocation(ADA, { location: 'A2.6', changes: { purpose: 'station', fixedMaterials: ['R162-0717'] } })
+  const changed = clock.now
+  const moves = (await pc1.service.log(ADA, { type: 'move' })).events
+  const reason = location => moves.find(event => event.from === location).reason
+  for (const location of ['A2.4', 'A2.5', 'A2.6']) assert.equal(reason(location), `Kan ikke fortrydes. Ada rettede placeringen ${location} kl. ${hhmm(changed)}. Fortryd den først.`)
+  // A3.1 was deactivated already when the pallet left it: nobody to name, so the place is.
+  assert.equal(reason('A3.1'), 'Kan ikke fortrydes. A3.1 er deaktiveret.')
+  await assert.rejects(pc1.service.undo(ADA, { eventId: moves.find(event => event.from === 'A3.1').id }), { code: 'UNDO_CONFLICT', message: 'Kan ikke fortrydes. A3.1 er deaktiveret.' })
 })
 
 test('a plain user cannot undo (LOCATIONS_MANAGER_ONLY) and sees canUndo false', async () => {
@@ -600,8 +641,6 @@ test('stock moves between shelves and its quantity can be set; the rack card sho
   await pc1.service.shelfSet(ANNA, { location: 'E9 H2', material: 'R162-0717', quantity: 0 })
   assert.equal((await pc1.repo.read('TCD')).stock['E9 H2|R162-0717'], undefined, '0 removes the line')
 })
-
-const hhmm = at => `${String(new Date(at).getHours()).padStart(2, '0')}:${String(new Date(at).getMinutes()).padStart(2, '0')}`
 
 test('Ret antal refuses with STOCK_CHANGED, naming who changed the quantity and when, when the shelf no longer has what the dialog showed', async () => {
   const { pc1, pc2, clock, seed } = setup()
