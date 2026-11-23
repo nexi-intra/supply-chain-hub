@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { commentsFor, commentsOnTask, finishTitle, isDeliberateConfirm, kifMovePlan, outcomeLabel, previewGroups, sapRunErrorMessage, SOFTWARELOAD_TARGETS, summarizeByMaterial, summarizeTasks, targetLabel, taskForMaterial, TYPE_LABELS } from './softwareload'
+import { commentsFor, commentsOnTask, finishTitle, isDeliberateConfirm, isProblemOutcome, kifMovePlan, outcomeLabel, previewGroups, sapRunErrorMessage, SOFTWARELOAD_TARGETS, summarizeByMaterial, summarizeTasks, targetLabel, taskForMaterial, taskLoadCounts, TYPE_LABELS } from './softwareload'
 import { setWarehouseLanguage } from './warehouse/text'
 import type { SoftwareloadComment, SoftwareloadKifPreview, SoftwareloadOutcome, SoftwareloadResult, SoftwareloadTask } from '@/types/warehouse'
 
@@ -120,6 +120,29 @@ describe('isDeliberateConfirm', () => {
     expect(isDeliberateConfirm({ detail: 0, sinceOpenMs: 1000 }), 'Space or Enter on the focused button').toBe(true)
     expect(isDeliberateConfirm({ detail: 2, sinceOpenMs: 1000 }), 'second click of a double click').toBe(false)
     expect(isDeliberateConfirm({ detail: 1, sinceOpenMs: 100 }), 'too soon after the dialog opened').toBe(false)
+  })
+})
+
+describe('taskLoadCounts', () => {
+  it('counts Loadet like summarizeTasks: skipped and failed moved correctly are loaded, not missing', () => {
+    const outside = task({ terminals: terminals('a', 10), results: { ...results('a', 7, 'to-target'), a7: result('skipped'), a8: result('skipped'), a9: result('skipped') } })
+    expect(taskLoadCounts(outside)).toEqual({ loaded: 10, failed: 0, problems: [] })
+    expect(taskLoadCounts(outside).loaded).toBe(summarizeTasks([outside])[0].moved)
+
+    const withFailed = task({ terminals: { ...terminals('a', 8), ...terminals('f', 2, true) }, results: { ...results('a', 8, 'to-target'), ...results('f', 2, 'to-d002') } })
+    expect(taskLoadCounts(withFailed)).toEqual({ loaded: 8, failed: 2, problems: [] })
+    expect(taskLoadCounts(withFailed).loaded).toBe(summarizeTasks([withFailed])[0].moved)
+  })
+
+  it('counts the problem outcomes apart, in the order of isProblem, including those of failed terminals', () => {
+    const refused = task({
+      terminals: { ...terminals('a', 9), ...terminals('f', 1, true) },
+      results: { ...results('a', 6, 'to-target'), a6: result('not-found'), a7: result('failed-sap'), a8: result('blocked-stock'), f0: result('failed-sap') },
+    })
+    expect(taskLoadCounts(refused)).toEqual({ loaded: 9, failed: 1, problems: [['failed-sap', 2], ['not-found', 1], ['blocked-stock', 1]] })
+    expect(isProblemOutcome('to-target')).toBe(false)
+    expect(isProblemOutcome('skipped')).toBe(false)
+    expect(isProblemOutcome('abandoned')).toBe(true)
   })
 })
 

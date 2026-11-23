@@ -37,6 +37,10 @@ const UNCERTAIN_CODES = ['SAP_TIMEOUT', 'SAP_SCRIPT_FAILED', 'SOFTWARELOAD_SAP_F
 /** Outcomes of a terminal that should have moved and did not (all of its way). */
 const NOT_MOVED: SoftwareloadOutcome[] = ['failed-sap', 'abandoned', 'interrupted']
 
+/** Outcomes that are a problem for the person: shown first and in red. */
+const PROBLEMS: SoftwareloadOutcome[] = ['failed-sap', 'interrupted', 'abandoned', 'manual', 'not-found', 'blocked-stock']
+export const isProblemOutcome = (outcome: SoftwareloadOutcome) => PROBLEMS.includes(outcome)
+
 /**
  * The title over the result of a finished task (`name` for someone else's): "flyttet i SAP" only when something moved,
  * and it says when not everything did.
@@ -181,6 +185,20 @@ export function summarizeTasks(tasks: SoftwareloadTask[]): SoftwareloadSummaryRo
   return [...rows.values()]
     .map(row => ({ ...row, perHour: row.workedMs > 0 ? Math.round(row.moved / (row.workedMs / 3_600_000) * 10) / 10 : 0 }))
     .sort((a, b) => a.name.localeCompare(b.name, 'da') || TYPE_ORDER.indexOf(a.type) - TYPE_ORDER.indexOf(b.type))
+}
+
+/**
+ * One task in the task list, counted like summarizeTasks: `loaded` is every terminal not marked failed (its `moved`),
+ * and `problems` the problem outcomes of all its terminals per outcome, in the order of PROBLEMS.
+ */
+export function taskLoadCounts(task: SoftwareloadTask): { loaded: number; failed: number; problems: [SoftwareloadOutcome, number][] } {
+  const terminals = Object.entries(task.terminals)
+  const failed = terminals.filter(([, terminal]) => terminal.failed).length
+  const outcomes = terminals.map(([serial]) => task.results[serial]?.outcome)
+  const problems = PROBLEMS
+    .map(outcome => [outcome, outcomes.filter(item => item === outcome).length] as [SoftwareloadOutcome, number])
+    .filter(([, count]) => count > 0)
+  return { loaded: terminals.length - failed, failed, problems }
 }
 
 export interface SoftwareloadMaterialRow {

@@ -3,7 +3,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
-import { outcomeLabel, targetLabel } from '@/lib/softwareload'
+import { isProblemOutcome, outcomeLabel, targetLabel } from '@/lib/softwareload'
 import { currentWarehouseLanguage, t } from '@/lib/warehouse/text'
 import { cn } from '@/lib/utils'
 import type { SoftwareloadCounts, SoftwareloadOutcome, SoftwareloadProgress, SoftwareloadResult } from '@/types/warehouse'
@@ -28,8 +28,7 @@ export function parseSerials(text: string): { serials: string[]; invalid: string
 export const label = (value: { da: string; en: string }) => (currentWarehouseLanguage() === 'da' ? value.da : value.en)
 
 /** Outcomes that are a problem for the person: shown first and in red. */
-const PROBLEMS: SoftwareloadOutcome[] = ['failed-sap', 'interrupted', 'abandoned', 'manual', 'not-found', 'blocked-stock']
-export const isProblem = (outcome: SoftwareloadOutcome) => PROBLEMS.includes(outcome)
+export const isProblem = isProblemOutcome
 
 /**
  * The SAP progress of the user's own finish or KIF move; other people's events (broadcast to every window) are left out.

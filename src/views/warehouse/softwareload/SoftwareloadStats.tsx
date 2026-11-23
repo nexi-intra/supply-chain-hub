@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { NativeSelect, Textarea } from '@/components/warehouse/ui'
-import { commentsFor, commentsOnTask, outcomeLabel, SOFTWARELOAD_TYPES as TYPES, summarizeByMaterial, summarizeTasks, targetLabel, taskForMaterial, TYPE_LABELS } from '@/lib/softwareload'
+import { commentsFor, commentsOnTask, outcomeLabel, SOFTWARELOAD_TYPES as TYPES, summarizeByMaterial, summarizeTasks, targetLabel, taskForMaterial, taskLoadCounts, TYPE_LABELS } from '@/lib/softwareload'
 import { formatDuration, periodRange, type PeriodKind } from '@/lib/timeclock'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { formatDateTime, formatTime } from '@/lib/warehouse/format'
@@ -31,8 +31,8 @@ const PERIODS: { value: Period; label: () => string }[] = [
 ]
 
 const formatRate = (value: number) => value.toLocaleString(warehouseLocale(), { minimumFractionDigits: 1, maximumFractionDigits: 1 })
-const movedOf = (task: SoftwareloadTask) => Object.values(task.results).filter(result => result.outcome === 'to-target').length
-const failedOf = (task: SoftwareloadTask) => Object.values(task.terminals).filter(terminal => terminal.failed).length
+/** An outcome label inside a sentence: "SAP afviste" stays, "Opgivet" becomes "opgivet". */
+const inSentence = (text: string) => (/^\p{Lu}{2}/u.test(text) ? text : text.charAt(0).toLocaleLowerCase(warehouseLocale()) + text.slice(1))
 const byNewest = (a: string, b: string) => b.localeCompare(a, 'da', { numeric: true })
 
 /** A whole calendar month `YYYY-MM` as `YYYY-MM-DD` days. */
@@ -503,7 +503,7 @@ function TaskList({ tasks, comments, onDelete }: { tasks: SoftwareloadTask[]; co
               <th className="px-4 py-2 font-medium">{t('Type', 'Type')}</th>
               <th className="px-4 py-2 font-medium">{t('Version', 'Version')}</th>
               <th className="px-4 py-2 font-medium">{t('Mål', 'Target')}</th>
-              <th className="px-4 py-2 text-right font-medium">{t('Terminaler', 'Terminals')}</th>
+              <th className="px-4 py-2 text-right font-medium">{t('Loadet', 'Loaded')}</th>
               <th className="px-4 py-2 text-right font-medium">{t('Pause', 'Break')}</th>
               <th className="px-4 py-2 text-right font-medium">{t('Tid', 'Time')}</th>
             </tr>
@@ -511,8 +511,9 @@ function TaskList({ tasks, comments, onDelete }: { tasks: SoftwareloadTask[]; co
           <tbody className="divide-y">
             {tasks.map(task => {
               const isOpen = open.has(task.id)
-              const count = Object.keys(task.terminals).length
-              const failed = failedOf(task)
+              const { loaded, failed, problems } = taskLoadCounts(task)
+              // Loadet as in "Pr. person og type"; failed terminals and problem outcomes in red, e.g. "10 (1 SAP afviste)".
+              const notes = [...(failed > 0 ? [t(`${failed} fejlet`, `${failed} failed`)] : []), ...problems.map(([outcome, count]) => `${count} ${inSentence(label(outcomeLabel(outcome)))}`)]
               return (
                 <Fragment key={task.id}>
                   <tr className="cursor-pointer hover:bg-muted/30" onClick={() => toggle(task.id)}>
@@ -527,8 +528,8 @@ function TaskList({ tasks, comments, onDelete }: { tasks: SoftwareloadTask[]; co
                     <td className="px-4 py-2">{task.version}</td>
                     <td className="whitespace-nowrap px-4 py-2">{targetLabel(task.target)}</td>
                     <td className="whitespace-nowrap px-4 py-2 text-right tabular-nums">
-                      {movedOf(task)}/{count}
-                      {failed > 0 && <span className="ml-1 text-destructive">({t(`${failed} fejlet`, `${failed} failed`)})</span>}
+                      {loaded}
+                      {notes.length > 0 && <span className="ml-1 text-destructive">({notes.join(', ')})</span>}
                     </td>
                     <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">{task.pausedMs >= 60_000 ? formatDuration(task.pausedMs, language) : '–'}</td>
                     <td className="px-4 py-2 text-right font-medium tabular-nums">{formatDuration(task.workedMs, language)}</td>
