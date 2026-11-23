@@ -37,6 +37,7 @@ export function LinesPanel({ id, open, state, reloadOpen, optimistic, person }: 
   const canWrite = state.me.canWrite
   const types = scopeStockTypes(state.meta.scope)
   const descriptions = useMemo(() => new Map(open.materials.map(item => [item.material, item.description])), [open.materials])
+  const serialMaterials = useMemo(() => new Set(state.rows.filter(row => row.serialManaged).map(row => row.material)), [state.rows])
   const groups = useMemo(() => {
     const suggestions = new Map<string, CountListLine[]>()
     for (const line of open.countLists) suggestions.set(line.material, [...(suggestions.get(line.material) || []), line])
@@ -137,7 +138,7 @@ export function LinesPanel({ id, open, state, reloadOpen, optimistic, person }: 
                   </tr>
                 </thead>
                 <tbody>
-                  {state.lines.map(line => <OwnRow key={line.lineId} id={id} line={line} description={descriptions.get(line.material) || ''} canWrite={canWrite} optimistic={optimistic} person={person} />)}
+                  {state.lines.map(line => <OwnRow key={line.lineId} id={id} line={line} description={descriptions.get(line.material) || ''} serialManaged={serialMaterials.has(line.material)} canWrite={canWrite} optimistic={optimistic} person={person} />)}
                 </tbody>
               </table>
             </div>
@@ -280,7 +281,7 @@ function MaterialRow({ id, open, state, group, showType, canWrite, reloadOpen, o
   )
 }
 
-function OwnRow({ id, line, description, canWrite, optimistic, person }: Pick<PanelProps, 'id' | 'optimistic' | 'person'> & { line: CountLine; description: string; canWrite: boolean }) {
+function OwnRow({ id, line, description, serialManaged, canWrite, optimistic, person }: Pick<PanelProps, 'id' | 'optimistic' | 'person'> & { line: CountLine; description: string; serialManaged: boolean; canWrite: boolean }) {
   // Shown at once; saved in the background and taken back if the drive refuses it.
   const edit = () => {
     const answer = window.prompt(t(`Nyt antal for ${line.material} på ${line.place}:`, `New quantity for ${line.material} in ${line.place}:`), String(line.qty))
@@ -299,7 +300,7 @@ function OwnRow({ id, line, description, canWrite, optimistic, person }: Pick<Pa
   return (
     <tr className="border-t">
       <td className="px-3 py-2">{line.place} <span className="text-xs text-muted-foreground">{line.area}</span></td>
-      <td className="px-3 py-2"><div className="font-mono">{line.material}</div>{description && <div className="text-xs text-muted-foreground">{description}</div>}</td>
+      <td className="px-3 py-2"><div className="font-mono">{line.material}</div>{description && <div className="text-xs text-muted-foreground">{description}</div>}{serialManaged && <div className="text-xs font-medium text-destructive">{t('Materialet har serienumre. Slet linjen, før materialet kan godkendes.', 'The material has serial numbers. Delete the line before the material can be approved.')}</div>}</td>
       <td className="px-3 py-2 font-mono">{line.sloc}</td>
       <td className="px-3 py-2">{stockLabel(line.stockType)}</td>
       <td className="px-3 py-2 text-right tabular-nums">{formatNumber(line.qty)}</td>
@@ -307,7 +308,7 @@ function OwnRow({ id, line, description, canWrite, optimistic, person }: Pick<Pa
       <td className="px-3 py-2 text-right">
         {canWrite && (
           <div className="flex justify-end gap-1">
-            <Button size="sm" variant="ghost" onClick={() => edit()} aria-label={t('Ret antal', 'Edit quantity')}><PencilSimple size={16} /></Button>
+            {!serialManaged && <Button size="sm" variant="ghost" onClick={() => edit()} aria-label={t('Ret antal', 'Edit quantity')}><PencilSimple size={16} /></Button>}
             <Button size="sm" variant="ghost" onClick={() => remove()} aria-label={t('Slet linje', 'Delete line')}><Trash size={16} /></Button>
           </div>
         )}
@@ -331,10 +332,13 @@ function AddLine({ id, open, state, types, reloadOpen, optimistic, person }: Pic
   const known = open.places.find(item => item.name.toLowerCase() === place.trim().toLowerCase())
   const materialInfo = open.materials.filter(item => item.material === material.trim().toUpperCase())
   const serialManaged = materialInfo.some(item => item.serialManaged)
+  const serialText = t('Materialet har serienumre. Scan eller importér dem, eller brug Fjern serienummer.', 'The material has serial numbers. Scan or import them, or use Remove serial number.')
 
   // The line shows at once (the material is taken for you); the save runs in the background. A new location is saved
   // alongside it, not before it.
   const save = () => {
+    // The count document of a serial-managed material only knows its serials, so a quantity line is never saved.
+    if (serialManaged) { toast.error(serialText); return }
     const value = Number(qty)
     if (!place.trim() || !material.trim() || qty.trim() === '' || !Number.isInteger(value) || value < 0) { toast.error(t('Udfyld placering, materiale og et helt antal', 'Fill in location, material and a whole number')); return }
     const code = material.trim().toUpperCase()
@@ -385,7 +389,7 @@ function AddLine({ id, open, state, types, reloadOpen, optimistic, person }: Pic
             <Label htmlFor="line-material">{t('Materiale', 'Material')}</Label>
             <Input id="line-material" list="line-materials" value={material} onChange={event => setMaterial(event.target.value.toUpperCase())} className="font-mono" placeholder="R162-0717" />
             <datalist id="line-materials">{materials.map(([code, description]) => <option key={code} value={code}>{description}</option>)}</datalist>
-            {serialManaged && <p className="text-xs text-amber-700 dark:text-amber-300">{t('Materialet har serienumre i SAP – scan dem helst i stedet.', 'The material has serial numbers in SAP – preferably scan them instead.')}</p>}
+            {serialManaged && <p role="alert" className="text-xs font-medium text-destructive">{serialText}</p>}
             {material.trim() && materialInfo.length === 0 && <p className="text-xs text-amber-700 dark:text-amber-300">{t('SAP har ikke materialet i optællingen – det kommer med som ekstra.', 'SAP does not have the material in the count – it is included as extra.')}</p>}
           </div>
           <div className="space-y-1.5">
@@ -404,7 +408,7 @@ function AddLine({ id, open, state, types, reloadOpen, optimistic, person }: Pic
             <Label htmlFor="line-comment">{t('Kommentar (valgfri)', 'Comment (optional)')}</Label>
             <Input id="line-comment" value={comment} maxLength={200} onChange={event => setComment(event.target.value)} />
           </div>
-          <Button onClick={() => save()}><Plus size={18} weight="bold" /> {t('Gem linje', 'Save line')}</Button>
+          <Button onClick={() => save()} disabled={serialManaged}><Plus size={18} weight="bold" /> {t('Gem linje', 'Save line')}</Button>
         </div>
       </CardContent>
     </Card>

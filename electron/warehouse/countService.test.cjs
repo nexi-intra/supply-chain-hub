@@ -857,6 +857,50 @@ test('a material is locked to its counter: others ask to count along; sending to
   assert.deepEqual((await anna.getState(ANNA, id)).materialLocks, [])
 })
 
+test('a quantity line on a serial-managed material is refused; a material counted by quantity is still allowed', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const { id } = await newCount(ctx, anna)
+  const text = 'Materialet har serienumre. Scan eller importér dem, eller brug Fjern serienummer.'
+  await assert.rejects(anna.saveLine(ANNA, id, { place: 'Reol 3', material: 'int4300-4921-0', qty: 2 }), error => error.code === 'LINE_SERIAL_MANAGED' && error.message === text)
+  await assert.rejects(anna.saveLine(ANNA, id, { place: 'Reol 3', material: 'INT4300-4921-0', qty: 0 }), { code: 'LINE_SERIAL_MANAGED' })
+  await anna.saveLine(ANNA, id, { place: 'Reol 3', material: 'R162-0717', qty: 2 })
+  const state = await anna.getState(ANNA, id)
+  assert.deepEqual(state.lines.map(line => `${line.material}:${line.qty}`), ['R162-0717:2'], 'a material counted by quantity is still allowed')
+  assert.deepEqual(state.materialLocks.map(lock => lock.material), ['R162-0717'], 'a refused line does not take the material')
+})
+
+test('an old quantity line on a serial-managed material blocks its approval until the line is deleted', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const mona = ctx.service('pc3')
+  const { id } = await newCount(ctx, anna)
+  await anna.scan(ANNA, id, { serial: 'N1', place: 'Reol 3' })
+  await anna.scan(ANNA, id, { serial: 'U1', place: 'Reol 3' })
+  await anna.flush(ANNA, id)
+  // Written by a client from before the rule: N2's label could not be read, so "1 stk." was typed instead.
+  const old = { type: 'line', lineId: 'ln-old', place: 'Reol 3', area: '', material: 'INT4300-4921-0', sloc: 'D000', stockType: 'unrestricted', qty: 1, status: 'counted', comment: '', id: 'old-1', at: ctx.clock.now, by: BO.email, byName: 'Bo' }
+  await ctx.storeFor('TCD').setAsync(`count-${id}-j-oldclient000-0000`, { writer: 'oldclient000', by: BO.email, full: false, events: [old] })
+  ctx.tick(10_000)
+
+  const state = await mona.getState(MONA, id)
+  const row = state.rows.find(item => item.material === 'INT4300-4921-0' && item.stockType === 'unrestricted')
+  assert.deepEqual([row.countedSerials, row.countedLines, row.diff], [1, 1, 0], 'the line is not dropped silently from the difference')
+  const blocked = error => error.code === 'APPROVAL_SERIAL_LINES' && /INT4300-4921-0/.test(error.message)
+  await assert.rejects(mona.setApproval(MONA, id, { material: 'INT4300-4921-0', status: 'approved' }), blocked)
+  await assert.rejects(anna.submitMaterial(ANNA, id, { material: 'INT4300-4921-0' }), blocked)
+  assert.deepEqual(await mona.approveAllWithoutDifference(MONA, id), { approved: 1 }, 'only INT4300-4921-0-R; the line keeps INT4300-4921-0 out')
+  const approvals = await ctx.repo.getApprovals('TCD', id)
+  assert.equal(approvals['INT4300-4921-0'], undefined)
+
+  await anna.deleteLine(ANNA, id, { lineId: 'ln-old' })
+  await anna.flush(ANNA, id)
+  ctx.tick(10_000)
+  const approved = await mona.setApproval(MONA, id, { material: 'INT4300-4921-0', status: 'approved' })
+  assert.equal(approved.status, 'approved')
+  assert.deepEqual(approved.frozen.map(item => [item.counted, item.diff, item.missingSerials]), [[1, -1, ['N2']]], 'after the deletion the serials decide')
+})
+
 test('count document: SAP stock of the day + the approved difference; fetched by a manager or the owner, read by everyone', async () => {
   const ctx = setup()
   const anna = ctx.service('pc1')

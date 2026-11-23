@@ -41,6 +41,8 @@ function codeError(code, message) {
   return Object.assign(new Error(message || code), { code })
 }
 
+const SERIAL_LINE_TEXT = 'Materialet har serienumre. Scan eller importér dem, eller brug Fjern serienummer.'
+
 const lower = value => String(value || '').trim().toLowerCase()
 const sameList = (list, wanted) => Array.isArray(list) && list.length === wanted.length && wanted.every(item => list.includes(item))
 const clean = (value, max) => String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max)
@@ -799,6 +801,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   function validateLine(state, input) {
     const material = String(input.material || '').trim().toUpperCase()
     if (!MATERIAL_PATTERN.test(material)) throw codeError('LINE_INVALID', 'Ugyldigt materialenummer')
+    // The count document of a serial-managed material is built from its serials only, so a quantity would be lost there.
+    if (state.index.materials.get(material)?.serialManaged) throw codeError('LINE_SERIAL_MANAGED', SERIAL_LINE_TEXT)
     const qty = Number(input.qty)
     if (!Number.isInteger(qty) || qty < 0 || qty > QTY_MAX) throw codeError('LINE_INVALID', 'Antal skal være et helt tal')
     const allowed = scopeStockTypes(state.snapshot.scope)
@@ -813,6 +817,10 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     if (!place) throw codeError('LINE_INVALID', 'Vælg en placering')
     return { material, qty, stockType, sloc, place, status: input.status === 'error' ? 'error' : 'counted', comment: clean(input.comment, 200) }
   }
+
+  /** Quantity lines on a serial-managed material, saved before LINE_SERIAL_MANAGED: they count in the difference, not in the count document. */
+  const serialLinesOf = (state, code) => (state.index.materials.get(code)?.serialManaged ? state.aggregate.lines.filter(line => line.material === code) : [])
+  const serialLinesError = code => codeError('APPROVAL_SERIAL_LINES', `${code} har tællelinjer med antal, men materialet har serienumre. Slet linjerne under Tilbehør og tællelister, før materialet kan godkendes.`)
 
   async function saveLine(user, id, input = {}) {
     const { state } = await requireWriter(user, id)
@@ -1043,6 +1051,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     if (isApprovedStatus(approvals[code])) throw codeError('MATERIAL_APPROVED', `${code} er allerede godkendt`)
     await requireSynced(state)
     await refresh(state, true)
+    if (serialLinesOf(state, code).length) throw serialLinesError(code)
     const rows = state.aggregate.rows.filter(row => row.material === code)
     const sum = key => rows.reduce((total, row) => total + (row[key] || 0), 0)
     const diff = sum('diff')
@@ -1194,12 +1203,14 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const by = me(user)
     const at = now()
     const frozen = status === 'approved' ? freezeRows(state.aggregate.rows, code, state.aggregate.serials.missing) : null
+    const serialLines = status === 'approved' ? serialLinesOf(state, code) : []
     // Checked and written under the lock: a "Bogført i SAP" from another PC that a cached read has not seen yet is never overwritten.
     const write = repo.changeApprovals(state.team, state.id, all => {
       const current = all[code]
       // Posted is final: a reset would let numbers counted afterwards be posted in SAP a second time.
       if (current?.status === 'posted') throw postedError(code)
       if (status === 'posted' && current?.status !== 'approved') throw codeError('APPROVAL_INVALID', 'Materialet skal godkendes før det markeres som bogført')
+      if (serialLines.length) throw serialLinesError(code)
       // The log of undone "Bogført i SAP" marks follows the material.
       const log = current?.unposts?.length ? { unposts: current.unposts } : {}
       all[code] = status === 'reset' ? { status: 'open', by, at, ...log }
@@ -1229,7 +1240,8 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     }
     const by = me(user)
     const at = now()
-    const candidates = [...byMaterial].filter(([, entry]) => !entry.diff).map(([material]) => material)
+    // A serial-managed material with quantity lines waits until they are deleted (setApproval refuses it the same way).
+    const candidates = [...byMaterial].filter(([material, entry]) => !entry.diff && !serialLinesOf(state, material).length).map(([material]) => material)
     // One locked write of the approvals with every material (was one 20-s write per material). Already approved or
     // posted materials are skipped under the lock, so an approval made meanwhile on another PC is kept.
     const approved = await repo.changeApprovals(state.team, state.id, all => {

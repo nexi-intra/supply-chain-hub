@@ -22,6 +22,8 @@ interface MaterialSummary {
   diff: number
   valueDiff: number | null
   countedAfter: number
+  /** Quantity lines on a serial-managed material: the count document drops them, so they must be deleted before approval. */
+  serialLines: number
 }
 
 const statusMap = (): Record<string, { label: string; variant: 'default' | 'secondary' | 'outline' | 'destructive' }> => ({
@@ -41,7 +43,7 @@ export function ApprovalPanel({ id, state, optimistic, person }: PanelProps) {
   const materials = useMemo(() => {
     const byMaterial = new Map<string, MaterialSummary>()
     for (const row of state.rows) {
-      const entry = byMaterial.get(row.material) || { material: row.material, description: row.description, kind: row.kind, sapQty: 0, counted: 0, diff: 0, valueDiff: 0, countedAfter: 0 }
+      const entry = byMaterial.get(row.material) || { material: row.material, description: row.description, kind: row.kind, sapQty: 0, counted: 0, diff: 0, valueDiff: 0, countedAfter: 0, serialLines: 0 }
       entry.sapQty += row.sapQty
       entry.counted += row.counted
       entry.diff += row.diff
@@ -49,8 +51,13 @@ export function ApprovalPanel({ id, state, optimistic, person }: PanelProps) {
       entry.valueDiff = row.valueDiff === null || entry.valueDiff === null ? null : Math.round((entry.valueDiff + row.valueDiff) * 100) / 100
       byMaterial.set(row.material, entry)
     }
+    const serialManaged = new Set(state.rows.filter(row => row.serialManaged).map(row => row.material))
+    for (const line of state.lines) {
+      const entry = byMaterial.get(line.material)
+      if (entry && serialManaged.has(line.material)) entry.serialLines += 1
+    }
     return [...byMaterial.values()].sort((a, b) => Number(state.approvals[b.material]?.status === 'submitted') - Number(state.approvals[a.material]?.status === 'submitted'))
-  }, [state.rows, state.approvals])
+  }, [state.rows, state.lines, state.approvals])
   const needle = query.trim().toUpperCase()
   const visible = materials.filter(item => (!needle || item.material.includes(needle) || item.description.toUpperCase().includes(needle)) && (!onlyOpen || !['approved', 'posted'].includes(state.approvals[item.material]?.status || '')))
 
@@ -92,7 +99,7 @@ export function ApprovalPanel({ id, state, optimistic, person }: PanelProps) {
   }
 
   const approveClean = () => {
-    const clean = materials.filter(item => !state.rows.some(row => row.material === item.material && row.diff !== 0) && !['approved', 'posted'].includes(state.approvals[item.material]?.status || '') && !saving.has(item.material))
+    const clean = materials.filter(item => item.serialLines === 0 && !state.rows.some(row => row.material === item.material && row.diff !== 0) && !['approved', 'posted'].includes(state.approvals[item.material]?.status || '') && !saving.has(item.material))
     const at = Date.now()
     save(Object.fromEntries(clean.map(item => [item.material, { status: 'approved', comment: t('Ingen difference', 'No difference'), by: person, at, unposts: state.approvals[item.material]?.unposts } satisfies Approval])), () => window.electronWarehouse!.counts.approveClean(id), false)
     toast.success(t(`${formatNumber(clean.length)} materialer uden difference er godkendt`, `${formatNumber(clean.length)} materials without a difference are approved`))
@@ -143,12 +150,13 @@ export function ApprovalPanel({ id, state, optimistic, person }: PanelProps) {
                       {approval?.status === 'posted' && approval.postedBy && <div className="text-xs text-muted-foreground">{t('Bogført', 'Posted')}: {approval.postedBy.name} · {formatDateTime(approval.postedAt)}</div>}
                       {approval?.unposts?.length ? <UnpostNote entry={approval.unposts[approval.unposts.length - 1]} count={approval.unposts.length} /> : null}
                       {approval?.comment && <div className="text-xs text-muted-foreground">{approval.comment}</div>}
+                      {item.serialLines > 0 && <div role="alert" className="text-xs font-medium text-destructive">{item.serialLines === 1 ? t('1 tællelinje med antal, men materialet har serienumre. Slet linjen under Tilbehør og tællelister, før materialet kan godkendes.', '1 count line with a quantity, but the material has serial numbers. Delete the line under Accessories and count lists before the material can be approved.') : t(`${formatNumber(item.serialLines)} tællelinjer med antal, men materialet har serienumre. Slet linjerne under Tilbehør og tællelister, før materialet kan godkendes.`, `${formatNumber(item.serialLines)} count lines with a quantity, but the material has serial numbers. Delete the lines under Accessories and count lists before the material can be approved.`)}</div>}
                       {item.countedAfter !== 0 && <div className="text-xs font-medium text-amber-700 dark:text-amber-300">{item.countedAfter > 0 ? '+' : ''}{formatNumber(item.countedAfter)} {approval?.status === 'posted' ? t('talt efter bogføring, indgår ikke', 'counted after posting, not included') : t('talt efter godkendelse – Nulstil for at tage dem med', 'counted after approval – Reset to include them')}</div>}
                     </td>
                     {canEdit && (
                       <td className="px-3 py-1.5">
                         <div className="flex justify-end gap-1" aria-busy={saving.has(item.material) || undefined} title={saving.has(item.material) ? t('Gemmer på M: …', 'Saving on M: …') : undefined}>
-                          {(!approval || ['open', 'returned', 'submitted'].includes(approval.status)) && <Button size="sm" disabled={saving.has(item.material)} onClick={() => set(item.material, 'approved')}><CheckCircle size={16} /> {t('Godkend', 'Approve')}</Button>}
+                          {(!approval || ['open', 'returned', 'submitted'].includes(approval.status)) && <Button size="sm" disabled={saving.has(item.material) || item.serialLines > 0} onClick={() => set(item.material, 'approved')}><CheckCircle size={16} /> {t('Godkend', 'Approve')}</Button>}
                           {approval?.status === 'approved' && <Button size="sm" variant="secondary" disabled={saving.has(item.material)} onClick={() => set(item.material, 'posted')}><Stamp size={16} /> {t('Bogført i SAP', 'Posted in SAP')}</Button>}
                           {approval?.status !== 'returned' && approval?.status !== 'posted' && <Button size="sm" variant="ghost" disabled={saving.has(item.material)} onClick={() => set(item.material, 'returned')}><ArrowUUpLeft size={16} /> {t('Tilbage', 'Send back')}</Button>}
                           {approval && approval.status !== 'open' && approval.status !== 'posted' && <Button size="sm" variant="ghost" disabled={saving.has(item.material)} onClick={() => set(item.material, 'reset')}>{t('Nulstil', 'Reset')}</Button>}
