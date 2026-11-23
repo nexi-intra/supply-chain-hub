@@ -242,6 +242,30 @@ test('a journal written without a heartbeat (1.6.7) is read as before and has no
   assert.deepEqual(unsentWriters(read.writers, { now: 10 * 60 * 60 * 1000 }), [], 'without a heartbeat nothing can be said')
 })
 
+test('load() sends one heartbeat when the journal has events, so a PC that was away is seen again', async () => {
+  const { root, remote } = setup()
+  let clock = 50_000
+  let ids = 0
+  const make = () => createJournal({
+    countId: 'count1abc', team: 'TCD', user: { email: 'bo@example.test', name: 'Bo' }, deviceId: 'pc2', localDir: path.join(root, 'local-wake'), remote, chunkSize: 3,
+    now: () => clock, newId: () => `w${++ids}`, autoFlush: false,
+  })
+  const first = make()
+  await first.load()
+  await first.append({ type: 'scan', serial: 'N1' })
+  await first.flush()
+  clock = 900_000
+  const again = make()
+  await again.load()
+  await until(() => again.status().lastFlushAt === 900_000)
+  const writer = (await readJournals({ remote, countId: 'count1abc' })).writers[0]
+  assert.deepEqual([writer.uploadedAt, writer.pendingAtUpload], [900_000, 0])
+
+  const empty = createJournal({ countId: 'count1abc', team: 'TCD', user: { email: 'cara@example.test', name: 'Cara' }, deviceId: 'pc3', localDir: path.join(root, 'local-empty'), remote, autoFlush: false, now: () => clock })
+  await empty.load()
+  assert.equal(empty.status().lastFlushAt, null, 'nothing to send for a PC without events')
+})
+
 test('a flush with nothing new still sends a fresh heartbeat, also when the last chunk is full; close() marks a clean exit', async () => {
   const { root, remote } = setup()
   let clock = 50_000
@@ -273,7 +297,7 @@ test('a flush with nothing new still sends a fresh heartbeat, also when the last
   assert.equal((await readAllJournals({ remote, countId: 'count1abc' })).length, 3, 'no events are added or lost')
 })
 
-test('unsentWriters: behind at its last upload, or no heartbeat for over 10 minutes without a clean exit', () => {
+test('unsentWriters: behind at its last upload, or no heartbeat for over 15 minutes without a clean exit', () => {
   const MIN = 60 * 1000
   const now = 600 * MIN
   const writer = (name, fields) => ({ writer: `w-${name}`, email: `${name}@example.test`, name, exitedAt: null, ...fields })
@@ -281,6 +305,7 @@ test('unsentWriters: behind at its last upload, or no heartbeat for over 10 minu
     writer('synced', { uploadedAt: now - 2 * MIN, pendingAtUpload: 0, lastEventAt: now - 20 * MIN }),
     writer('behind', { uploadedAt: now - 5 * MIN, pendingAtUpload: 3, lastEventAt: now - 5 * MIN }),
     writer('fresh', { uploadedAt: now - 10 * 1000, pendingAtUpload: 2, lastEventAt: now - 10 * 1000 }),
+    writer('between', { uploadedAt: now - 14 * MIN, pendingAtUpload: 0, lastEventAt: now - 30 * MIN }),
     writer('silent', { uploadedAt: now - 18 * MIN, pendingAtUpload: 0, lastEventAt: now - 18 * MIN }),
     writer('gone', { uploadedAt: now - 300 * MIN, pendingAtUpload: 0, lastEventAt: now - 300 * MIN }),
     writer('exited', { uploadedAt: now - 300 * MIN, pendingAtUpload: 0, lastEventAt: now - 300 * MIN, exitedAt: now - 300 * MIN }),
@@ -304,7 +329,8 @@ test('unsentWriters on a closed count: judged at the close, and a PC in sync aft
     writer('alive', { uploadedAt: closedAt - 4 * MIN, pendingAtUpload: 0, lastEventAt: closedAt - 30 * MIN }),
     writer('caughtUp', { uploadedAt: closedAt + 5 * MIN, pendingAtUpload: 0, lastEventAt: closedAt - MIN }),
     writer('behind', { uploadedAt: closedAt - 4 * MIN, pendingAtUpload: 2, lastEventAt: closedAt - 4 * MIN }),
-    writer('silent', { uploadedAt: closedAt - 12 * MIN, pendingAtUpload: 0, lastEventAt: closedAt - 12 * MIN }),
+    writer('between', { uploadedAt: closedAt - 12 * MIN, pendingAtUpload: 0, lastEventAt: closedAt - 12 * MIN }),
+    writer('silent', { uploadedAt: closedAt - 16 * MIN, pendingAtUpload: 0, lastEventAt: closedAt - 16 * MIN }),
   ]
   assert.deepEqual(unsentWriters(writers, { now, closedAt }).map(item => item.writer), ['w-silent', 'w-behind'])
 })

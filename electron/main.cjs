@@ -1705,9 +1705,9 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 app.on('before-quit', () => { localAI?.stop(); assistantBackend?.stop(); void wordChecker?.close() })
-// Før lukning: upload de sidste Optælling-scanninger (højst 4 s) og vent på
+// Før lukning: upload de sidste Optælling-scanninger med en ren lukning i hver journal, og vent på
 // igangværende gemninger + multiplayers udskudte indeks-skrivninger (højst 10 s
-// i alt). Ét fælles flag: app.quit() herunder udløser before-quit igen, og den
+// i alt, også for Optælling, da en skrivning på M: kan tage flere sekunder). Ét fælles flag: app.quit() herunder udløser before-quit igen, og den
 // gang skal lukningen bare fortsætte.
 const QUIT_FLUSH_TIMEOUT_MS = 10000
 // Closing the window waits this long at most for writes still on their way (a write on M: has taken 80 s).
@@ -1726,7 +1726,7 @@ app.on('before-quit', event => {
   const remaining = () => Math.max(0, QUIT_FLUSH_TIMEOUT_MS - (Date.now() - startedAt))
   const delay = (ms, value) => new Promise(resolve => setTimeout(() => resolve(value), ms))
   const warehouseDone = warehouse
-    ? Promise.race([warehouse.closeAll().catch(() => {}), delay(4000)])
+    ? Promise.race([warehouse.closeAll().catch(() => {}), delay(remaining())])
     : Promise.resolve()
   const writesDone = mainActivity.whenIdle(isQuitWriteChannel, remaining())
     .then(idle => whenWritesSettled(remaining()).then(settled => idle && settled !== false))

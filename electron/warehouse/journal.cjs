@@ -11,7 +11,8 @@ const DEFAULT_FLUSH_MS = 2000
 const RETRY_MS = 10000
 // Who may still hold scans that are not on M: (see unsentWriters). An open count sends a heartbeat every KEEPALIVE_MS.
 const UNSENT_GRACE_MS = 60 * 1000
-const UNSENT_AFTER_MS = 10 * 60 * 1000
+// Three heartbeats: two can be late (a slow M:, a sleeping PC) before a PC is named.
+const UNSENT_AFTER_MS = 15 * 60 * 1000
 const KEEPALIVE_MS = 5 * 60 * 1000
 
 function writerKey(email, deviceId) {
@@ -62,7 +63,7 @@ function heartbeatOf(chunk) {
 
 /**
  * The other PCs that may hold scans not on M: yet: behind at their last upload (more than a minute ago), or without a
- * heartbeat for over 10 minutes and not closed cleanly (an open count sends one every 5 minutes). On a closed count
+ * heartbeat for over 15 minutes and not closed cleanly (an open count sends one every 5 minutes). On a closed count
  * (`closedAt`) each PC is judged at the close, and one that sent everything after the close is left out. Only a warning:
  * what such a PC holds locally cannot be seen from here.
  */
@@ -164,6 +165,8 @@ function createJournal({ countId, team, user, deviceId, localDir, remote, chunkS
     }
     notify()
     if (autoFlush && pending() > 0) schedule(0)
+    // Back on M: with everything sent: one heartbeat at once, so a PC that was away (also across a close) is seen again.
+    else if (remoteKnown && events.length > 0 && pending() === 0) flush()
     return events.slice()
   }
 

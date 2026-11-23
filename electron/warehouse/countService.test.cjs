@@ -1054,7 +1054,7 @@ test('closing and approving list the PCs that have not sent their latest scans, 
 
   // Bo's PC loses M: and keeps the next scan locally.
   await bo.scan(BO, id, { serial: 'N2', place: 'A1.1' })
-  ctx.tick(10 * MIN)
+  ctx.tick(14 * MIN)
   const expected = [{ email: 'bo@example.test', name: 'Bo', since: sentAt, pending: 0 }]
   assert.deepEqual((await mona.getState(MONA, id)).unsentPcs, expected, 'the approval sees it')
   assert.deepEqual((await anna.getState(ANNA, id)).unsentPcs, expected, 'so does the owner before closing')
@@ -1066,7 +1066,56 @@ test('closing and approving list the PCs that have not sent their latest scans, 
   assert.deepEqual((await mona.getState(MONA, id)).unsentPcs, [], 'gone once Bo\'s PC has sent')
 })
 
-test('an open count keeps sending a heartbeat while nothing waits, and a clean exit is not a warning', async () => {
+/** Every journal write on the drive takes `ms` (a slow M:), so `lastFlushAt` comes later than the start of the write. */
+function slowJournalWrites(ctx, ms) {
+  const store = ctx.storeFor('TCD')
+  const setAsync = store.setAsync.bind(store)
+  store.setAsync = async (key, ...rest) => { if (String(key).includes('-j-')) ctx.tick(ms); return setAsync(key, ...rest) }
+}
+
+async function lastHeartbeat(ctx, id) {
+  const store = ctx.storeFor('TCD')
+  const key = (await store.keysAsync()).filter(name => name.startsWith(`count-${id}-j-`)).sort().at(-1)
+  return key ? (await store.getAsync(key, { skipCache: true })).uploadedAt : null
+}
+
+async function waitFor(check, ms = 2000) {
+  const end = Date.now() + ms
+  while (!(await check())) { if (Date.now() > end) return false; await new Promise(resolve => setTimeout(resolve, 5)) }
+  return true
+}
+
+test('an open count keeps sending a heartbeat every 5 minutes while nothing waits, also off screen with slow writes; a clean exit is no warning', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const mona = ctx.service('pc3')
+  const { id } = await newCount(ctx, anna)
+  const pc = countingService(ctx, 'pc2')
+  await pc.svc.requestJoin(BO, id)
+  await anna.decideMember(ANNA, id, { email: BO.email, approve: true })
+  const MIN = 60 * 1000
+  slowJournalWrites(ctx, 15_000)
+  await pc.svc.scan(BO, id, { serial: 'N1', place: 'A1.1' })
+  await pc.svc.flush(BO, id)
+
+  // Off screen: only the service timer sends. Each write takes 15 s, so lastFlushAt is 15 s after the start.
+  ctx.tick(5 * MIN)
+  const first = ctx.clock.now
+  pc.fire(60_000)
+  assert.ok(await waitFor(async () => (await lastHeartbeat(ctx, id)) === first), 'the first heartbeat')
+  ctx.tick(5 * MIN - 15_000)
+  const second = ctx.clock.now
+  pc.fire(60_000)
+  assert.ok(await waitFor(async () => (await lastHeartbeat(ctx, id)) === second), 'the next one 5 minutes after the start of the last, not 10')
+  ctx.tick(14 * MIN)
+  assert.deepEqual((await mona.getState(MONA, id)).unsentPcs, [], 'alive: 14 minutes since its heartbeat is within the slack')
+
+  await pc.svc.closeAll()
+  ctx.tick(60 * MIN)
+  assert.deepEqual((await mona.getState(MONA, id)).unsentPcs, [], 'Bo closed the Hub cleanly')
+})
+
+test('a PC asleep across the close sends once when it wakes up, and is no longer listed', async () => {
   const ctx = setup()
   const anna = ctx.service('pc1')
   const bo = ctx.service('pc2')
@@ -1077,22 +1126,42 @@ test('an open count keeps sending a heartbeat while nothing waits, and a clean e
   const MIN = 60 * 1000
   await bo.scan(BO, id, { serial: 'N1', place: 'A1.1' })
   await bo.flush(BO, id)
-  const store = ctx.storeFor('TCD')
-  const heartbeat = async () => {
-    const key = (await store.keysAsync()).filter(name => name.startsWith(`count-${id}-j-`)).sort().at(-1)
-    return (await store.getAsync(key, { skipCache: true })).uploadedAt
-  }
+  const sentAt = ctx.clock.now
 
-  ctx.tick(6 * MIN)
+  ctx.tick(20 * MIN)
+  await anna.closeCount(ANNA, id)
+  ctx.tick(5 * MIN)
+  assert.deepEqual((await mona.getState(MONA, id)).unsentPcs.map(pc => pc.since), [sentAt], 'not heard of for 20 minutes at the close')
+
   await bo.getState(BO, id)
-  for (let tries = 0; tries < 200 && await heartbeat() !== ctx.clock.now; tries++) await new Promise(resolve => setTimeout(resolve, 5))
-  assert.equal(await heartbeat(), ctx.clock.now, 'Bo\'s idle PC sent a heartbeat without new scans')
-  ctx.tick(6 * MIN)
-  assert.deepEqual((await mona.getState(MONA, id)).unsentPcs, [], '12 minutes after the last scan, but alive')
+  const woke = ctx.clock.now
+  assert.ok(await waitFor(async () => (await lastHeartbeat(ctx, id)) === woke), 'Bo\'s PC sends once on the closed count')
+  ctx.tick(2000)
+  assert.deepEqual((await mona.getState(MONA, id)).unsentPcs, [], 'in sync after the close')
+  ctx.tick(10 * MIN)
+  await bo.getState(BO, id)
+  assert.equal(await waitFor(async () => (await lastHeartbeat(ctx, id)) !== woke, 200), false, 'and only once')
+})
 
-  await bo.closeAll()
-  ctx.tick(60 * MIN)
-  assert.deepEqual((await mona.getState(MONA, id)).unsentPcs, [], 'Bo closed the Hub cleanly')
+test('the heartbeat timer does not write to a count deleted on another PC, and forgets it', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const { id } = await newCount(ctx, anna)
+  const pc = countingService(ctx, 'pc2')
+  await pc.svc.requestJoin(BO, id)
+  await anna.decideMember(ANNA, id, { email: BO.email, approve: true })
+  await pc.svc.scan(BO, id, { serial: 'N1', place: 'A1.1' })
+  await pc.svc.flush(BO, id)
+  await anna.deleteCount(ANNA, id)
+  assert.equal(await lastHeartbeat(ctx, id), null)
+
+  ctx.tick(6 * 60 * 1000)
+  pc.reads.length = 0
+  pc.fire(60_000)
+  assert.ok(await waitFor(() => pc.reads.includes('isDeleted')), 'the timer asks first')
+  await new Promise(resolve => setTimeout(resolve, 50))
+  assert.equal(await lastHeartbeat(ctx, id), null, 'no chunk is written again')
+  assert.equal(pc.armed(60_000), 0, 'nothing is left open to send for')
 })
 
 test('after closing, approval judges each PC at the close: in sync then is no warning, behind then still is', async () => {

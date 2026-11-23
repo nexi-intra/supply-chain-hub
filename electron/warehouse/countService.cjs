@@ -17,6 +17,9 @@ const { createJournal, readJournals, unsentWriters, KEEPALIVE_MS } = require('./
 const CLAIM_IDLE_MS = 30 * 60 * 1000
 // A material lock lapses after an hour without a line or scan by its holder on the material.
 const LOCK_IDLE_MS = 60 * 60 * 1000
+// The heartbeat of an open count (KEEPALIVE_MS) is checked every minute, also off screen; the margin absorbs timer drift.
+const KEEPALIVE_TICK_MS = 60 * 1000
+const KEEPALIVE_MARGIN_MS = 30 * 1000
 const CLAIM_TOUCH_MS = 2 * 60 * 1000
 const PENDING_TTL_MS = 30 * 60 * 1000
 const IMPORT_MAX = 20000
@@ -346,8 +349,9 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       const index = indexSnapshot(snapshot)
       const journal = createJournal({ countId: id, team, user: me(user), deviceId, localDir: journalsDir, remote: storeFor(team), now, ...journalOptions })
       await journal.load()
-      state = { team, id, meta, snapshot, index, placements, members, countLists: buildCountLists({ snapshot, index, placements }), journal, chunkCache: new Map(), remoteEvents: [], aggregate: null, aggregateKey: '', found: new Map(), refreshedAt: 0, claimTouched: new Map(), othersAt: 0, othersKey: '[]' }
+      state = { team, id, meta, snapshot, index, placements, members, countLists: buildCountLists({ snapshot, index, placements }), journal, chunkCache: new Map(), remoteEvents: [], aggregate: null, aggregateKey: '', found: new Map(), refreshedAt: 0, claimTouched: new Map(), othersAt: 0, othersKey: '[]', keepAliveAt: now() }
       opened.set(key, state)
+      keepAliveStopped = false
       startKeepAlive()
       await refresh(state, true)
     }
@@ -355,26 +359,47 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   }
 
   /**
-   * While a count is open and nothing waits, this PC sends a heartbeat at least every KEEPALIVE_MS (one small write,
-   * no reads), so the others can tell a PC that is idle from one that has lost M:. Not awaited: a write to M: can take long.
+   * While a count is open and nothing waits, this PC sends a heartbeat every KEEPALIVE_MS (one small write, no reads),
+   * so the others can tell a PC that is idle from one that has lost M:. The journal sent one at load (hence `keepAliveAt`).
+   * Timed from the start of the last one: a write to M: takes seconds, and timing from its end would skip a turn.
    */
-  function keepAlive(state) {
-    if (state.meta.status !== 'open') return
+  function keepAliveDue(state) {
     const status = state.journal.status()
-    if (status.pending !== 0 || now() - Math.max(status.lastFlushAt || 0, state.keepAliveAt || 0) < KEEPALIVE_MS) return
+    if (status.pending !== 0 || now() - (state.keepAliveAt || 0) < KEEPALIVE_MS - KEEPALIVE_MARGIN_MS) return false
+    if (state.meta.status === 'open') return true
+    // Closed while this PC was away: one heartbeat after the close shows it holds nothing.
+    return state.meta.status === 'closed' && (status.lastFlushAt || 0) < (state.meta.closedAt || 0)
+  }
+
+  function sendKeepAlive(state) {
     state.keepAliveAt = now()
+    // Not awaited: a write to M: can take long.
     state.journal.flush().catch(() => {})
   }
 
-  // Also when the count is not on screen (nothing calls refresh then).
+  const keepAlive = state => { if (keepAliveDue(state)) sendKeepAlive(state) }
+
+  /** From the timer: the count may have been deleted on another PC meanwhile, so that is checked before writing. */
+  async function keepAliveOffScreen(state) {
+    if (!keepAliveDue(state)) return
+    if (await repo.isDeleted(state.team, state.id).catch(() => false)) {
+      await forget(state.team, state.id)
+      return
+    }
+    if (!keepAliveStopped && keepAliveDue(state)) sendKeepAlive(state)
+  }
+
+  // Also when the count is not on screen (nothing calls refresh then). The next round is set when this one is done.
   let keepAliveTimer = null
+  let keepAliveStopped = false
   function startKeepAlive() {
-    if (keepAliveTimer) return
+    if (keepAliveTimer || keepAliveStopped) return
     keepAliveTimer = startTimer(() => {
-      keepAliveTimer = null
-      for (const state of opened.values()) keepAlive(state)
-      if (opened.size) startKeepAlive()
-    }, KEEPALIVE_MS)
+      Promise.all([...opened.values()].map(keepAliveOffScreen)).catch(() => {}).finally(() => {
+        keepAliveTimer = null
+        if (opened.size) startKeepAlive()
+      })
+    }, KEEPALIVE_TICK_MS)
   }
 
   async function refresh(state, force = false) {
@@ -1701,12 +1726,13 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   }
 
   async function closeAll() {
+    keepAliveStopped = true
     clearTimer(keepAliveTimer)
     keepAliveTimer = null
-    for (const state of opened.values()) {
-      stopScanWarm(state)
-      await state.journal.close().catch(() => {})
-    }
+    const states = [...opened.values()]
+    for (const state of states) stopScanWarm(state)
+    // In parallel: each close is a write to M: (with the clean-exit mark), and quitting waits for them only so long.
+    await Promise.all(states.map(state => state.journal.close().catch(() => {})))
     opened.clear()
   }
 
