@@ -113,8 +113,11 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
    * An empty serial list is a Zero Count in MI04, which posts the whole book stock as a loss: unless SAP has none today
    * either, the material must be on `confirmZero` (the list the user was shown), else PIDOC_ZERO_CONFIRM. Checked
    * before anything goes into SAP.
+   * A quantity line (MI04) of an approved material that SAP had stock of at approval, but that has no line in the stored
+   * day figures, is entered only when it is on `confirmMissing` (as "Hent dagens SAP-tal" asks, DOC_STOCK_MISSING): the
+   * figures may be an empty export saved by an older client, else PIDOC_MISSING_CONFIRM.
    */
-  async function count(user, id, docId, { confirmZero = [] } = {}) {
+  async function count(user, id, docId, { confirmZero = [], confirmMissing = [] } = {}) {
     const { rows, fetchedAt, docs, role } = await context(user, id)
     const doc = docs.find(item => item.id === docId)
     const reason = refusal({ action: 'count', role, email: user.email, doc })
@@ -136,6 +139,11 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
     const flagged = pending.find(line => rows.some(item => item.material === line.material && item.sloc === doc.sloc && item.stockType === doc.stockType && item.serialLinesAtApproval))
     if (flagged) throw codeError('APPROVED_WITH_SERIAL_LINES', approvedWithLinesText(flagged.material))
     const rowOf = material => rows.find(item => item.material === material && item.sloc === doc.sloc && item.stockType === doc.stockType)
+    // "<material> <sloc>[ blocked]", as DOC_STOCK_MISSING lists them.
+    const missing = pending.filter(line => line.transaction !== 'ZMS_COUNT_SERIAL').map(line => rowOf(line.material))
+      .filter(row => row?.status === 'approved' && row.sapAtApproval > 0 && row.sapToday === 0)
+      .map(row => `${row.material} ${row.sloc}${row.stockType === 'blocked' ? ' blocked' : ''}`)
+    if (!confirmedAll(missing, confirmMissing)) throw codeError('PIDOC_MISSING_CONFIRM', `Dagens SAP-tal har ingen linje for godkendte materialer, som SAP havde på lager ved godkendelsen. Det sker, hvis eksporten fra SAP fejlede. Hent dagens SAP-tal igen, eller bekræft antallet. Gælder: ${missing.join(', ')}`)
     const serialLists = new Map()
     for (const line of pending) {
       if (line.transaction !== 'ZMS_COUNT_SERIAL') continue

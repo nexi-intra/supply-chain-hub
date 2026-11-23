@@ -1175,8 +1175,8 @@ export interface WarehouseBridge {
     list(id: string): Promise<PiDocList>
     create(request: { id: string; materials: string[]; sloc: string; stockType: StockType }): Promise<PiDocList & { created: string[]; missing: string[] }>
     print(request: { id: string; docId: string }): Promise<PiDocList>
-    /** Refused with PIDOC_ZERO_CONFIRM when an empty serial list would be a Zero Count while SAP has stock today; entered only when every such material is on `confirmZero` (the list shown). */
-    count(request: { id: string; docId: string; confirmZero?: string[] }): Promise<PiDocList>
+    /** Refused with PIDOC_ZERO_CONFIRM when an empty serial list would be a Zero Count while SAP has stock today; entered only when every such material is on `confirmZero` (the list shown). Refused with PIDOC_MISSING_CONFIRM when the day figures lack an approved quantity material SAP had at approval; entered only when every such one is on `confirmMissing`. */
+    count(request: { id: string; docId: string; confirmZero?: string[]; confirmMissing?: string[] }): Promise<PiDocList>
     post(request: { id: string; docIds: string[] }): Promise<PiDocList & { posted: string[]; open: string[] }>
     remove(request: { id: string; docId: string }): Promise<PiDocList>
   }

@@ -22,7 +22,9 @@ const rowKey = (row: { material: string; sloc: string; stockType: string }) => `
 const MAX_LINES = 20
 
 /** What the main process asks to confirm: SAP figures of the day missing approved materials, or a Zero Count on a document. */
-type Confirmation = { kind: 'missing'; materials: string[]; message: string } | { kind: 'zero'; materials: string[]; message: string; item: PiDoc }
+// A count refused for a confirmation keeps the ones given before it, so confirming the next one does not undo them.
+type CountConfirmed = { confirmZero?: string[]; confirmMissing?: string[] }
+type Confirmation = { kind: 'missing'; materials: string[]; message: string } | { kind: 'zero' | 'count-missing'; materials: string[]; message: string; item: PiDoc; confirmed: CountConfirmed }
 
 export function DocPanel({ id, open, state }: PanelProps) {
   const [doc, setDoc] = useState<CountDoc | null>(null)
@@ -149,15 +151,16 @@ export function DocPanel({ id, open, state }: PanelProps) {
     }
   }
 
-  const countDoc = async (item: PiDoc, confirmZero: string[] = []) => {
+  const countDoc = async (item: PiDoc, confirmed: CountConfirmed = {}) => {
     setConfirmation(null)
     setBusy(item.id)
     try {
-      setPiList(await window.electronWarehouse!.piDocs.count({ id, docId: item.id, ...(confirmZero.length ? { confirmZero } : {}) }))
+      setPiList(await window.electronWarehouse!.piDocs.count({ id, docId: item.id, ...confirmed }))
       toast.success(t(`Antal er lagt på SAP-dokument ${item.docNo}`, `Quantity entered on SAP document ${item.docNo}`), { description: t('Klar til bogføring (manager).', 'Ready for posting (manager).') })
     } catch (error) {
-      if (errorCode(error) === 'PIDOC_ZERO_CONFIRM') {
-        setConfirmation({ kind: 'zero', materials: errorMaterials(error), message: errorMessage(error), item })
+      const code = errorCode(error)
+      if (code === 'PIDOC_ZERO_CONFIRM' || code === 'PIDOC_MISSING_CONFIRM') {
+        setConfirmation({ kind: code === 'PIDOC_ZERO_CONFIRM' ? 'zero' : 'count-missing', materials: errorMaterials(error), message: errorMessage(error), item, confirmed })
         return
       }
       const refetch = errorCode(error) === 'PIDOC_DOC_STALE' && doc?.canFetch ? { action: { label: t('Hent dagens SAP-tal', "Fetch today's SAP figures"), onClick: () => void fetchToday() } } : {}
@@ -285,7 +288,8 @@ export function DocPanel({ id, open, state }: PanelProps) {
           <ConfirmDialog
             confirmation={confirmation}
             onCancel={() => setConfirmation(null)}
-            onConfirm={() => void (confirmation.kind === 'missing' ? fetchToday(confirmation.materials) : countDoc(confirmation.item, confirmation.materials))}
+            onConfirm={() => void (confirmation.kind === 'missing' ? fetchToday(confirmation.materials)
+              : countDoc(confirmation.item, { ...confirmation.confirmed, [confirmation.kind === 'zero' ? 'confirmZero' : 'confirmMissing']: confirmation.materials }))}
           />
         )}
       </CardContent>
@@ -295,19 +299,29 @@ export function DocPanel({ id, open, state }: PanelProps) {
 
 /** Lists what the main process refused and lets the user go ahead anyway, deliberately. */
 function ConfirmDialog({ confirmation, onCancel, onConfirm }: { confirmation: Confirmation; onCancel: () => void; onConfirm: () => void }) {
-  const missing = confirmation.kind === 'missing'
+  const { title, description, action } = confirmation.kind === 'missing'
+    ? {
+      title: t('Materialer mangler i dagens SAP-tal', "Materials are missing from today's SAP figures"),
+      description: t('Dagens SAP-tal har ingen linje for disse godkendte materialer, selvom SAP havde dem på lager ved godkendelsen. Det sker, hvis eksporten fra SAP fejlede. Gemmer du tallene, bliver SAP i dag 0 for dem. Tjek dem i MB52, før du gemmer.', "Today's SAP figures have no line for these approved materials, although SAP had them in stock at approval. That happens when the export from SAP failed. If you save the figures, SAP today becomes 0 for them. Check them in MB52 before you save."),
+      action: t('Gem tallene alligevel', 'Save the figures anyway'),
+    }
+    : confirmation.kind === 'count-missing'
+      ? {
+        title: t(`Materialer mangler i dagens SAP-tal for SAP-dokument ${confirmation.item.docNo}`, `Materials are missing from today's SAP figures for SAP document ${confirmation.item.docNo}`),
+        description: t('Dagens SAP-tal har ingen linje for disse godkendte materialer, selvom SAP havde dem på lager ved godkendelsen. Det sker, hvis eksporten fra SAP fejlede. Lægger du antal på, regnes SAP i dag som 0 for dem. Tjek dem i MB52, eller hent dagens SAP-tal igen.', "Today's SAP figures have no line for these approved materials, although SAP had them in stock at approval. That happens when the export from SAP failed. If you enter the quantity, SAP today counts as 0 for them. Check them in MB52, or fetch today's SAP figures again."),
+        action: t('Læg antal på alligevel', 'Enter the quantity anyway'),
+      }
+      : {
+        title: t(`Antal 0 på SAP-dokument ${confirmation.item.docNo}?`, `Quantity 0 on SAP document ${confirmation.item.docNo}?`),
+        description: t('Serienummerlisten er tom for disse materialer, men SAP har lager i dag. Antallet bliver 0 i SAP, og hele lageret bogføres som tab. Bekræft kun, hvis der virkelig ikke er nogen.', 'The serial number list is empty for these materials, but SAP has stock today. The quantity becomes 0 in SAP, and the whole stock is posted as a loss. Only confirm if there really are none.'),
+        action: t('Læg 0 på alligevel', 'Enter 0 anyway'),
+      }
   return (
     <Dialog open onOpenChange={value => { if (!value) onCancel() }}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>
-            {missing ? t('Materialer mangler i dagens SAP-tal', "Materials are missing from today's SAP figures") : t(`Antal 0 på SAP-dokument ${confirmation.item.docNo}?`, `Quantity 0 on SAP document ${confirmation.item.docNo}?`)}
-          </DialogTitle>
-          <DialogDescription>
-            {missing
-              ? t('Dagens SAP-tal har ingen linje for disse godkendte materialer, selvom SAP havde dem på lager ved godkendelsen. Det sker, hvis eksporten fra SAP fejlede. Gemmer du tallene, bliver SAP i dag 0 for dem. Tjek dem i MB52, før du gemmer.', "Today's SAP figures have no line for these approved materials, although SAP had them in stock at approval. That happens when the export from SAP failed. If you save the figures, SAP today becomes 0 for them. Check them in MB52 before you save.")
-              : t('Serienummerlisten er tom for disse materialer, men SAP har lager i dag. Antallet bliver 0 i SAP, og hele lageret bogføres som tab. Bekræft kun, hvis der virkelig ikke er nogen.', 'The serial number list is empty for these materials, but SAP has stock today. The quantity becomes 0 in SAP, and the whole stock is posted as a loss. Only confirm if there really are none.')}
-          </DialogDescription>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
         {confirmation.materials.length
           ? <ul className="max-h-60 overflow-auto rounded-md border px-3 py-2 font-mono text-sm">{confirmation.materials.map(material => <li key={material}>{material}</li>)}</ul>
@@ -315,7 +329,7 @@ function ConfirmDialog({ confirmation, onCancel, onConfirm }: { confirmation: Co
         <DialogFooter>
           <Button variant="ghost" onClick={onCancel}>{t('Annullér', 'Cancel')}</Button>
           <SapActionButton variant="destructive" onAction={onConfirm} disabled={!confirmation.materials.length}>
-            {missing ? t('Gem tallene alligevel', 'Save the figures anyway') : t('Læg 0 på alligevel', 'Enter 0 anyway')}
+            {action}
           </SapActionButton>
         </DialogFooter>
       </DialogContent>
