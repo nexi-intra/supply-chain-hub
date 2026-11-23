@@ -116,6 +116,7 @@ const MESSAGES: Record<string, string> = {
   PIDOC_NOT_CREATED: 'SAP oprettede ikke dokumentet.',
   PIDOC_NOT_POSSIBLE: 'SAP vil ikke oprette dokumentet. Der er ikke oprettet noget.',
   PIDOC_SAP_FAILED: 'SAP-trinnet fejlede. Prøv igen.',
+  PIDOC_SAP_LANGUAGE: 'Log på SAP på engelsk (EN), og prøv igen.',
   // Placeringer
   DATE_INVALID: 'Ugyldig dato.',
   LOCATIONS_LIVE: 'Placeringer er taget i brug – placeringsarket kan ikke importeres igen.',
@@ -322,6 +323,7 @@ const MESSAGES_EN: Record<string, string> = {
   PIDOC_NOT_CREATED: 'SAP did not create the document.',
   PIDOC_NOT_POSSIBLE: 'SAP will not create the document. Nothing was created.',
   PIDOC_SAP_FAILED: 'The SAP step failed. Try again.',
+  PIDOC_SAP_LANGUAGE: 'Log on to SAP in English (EN) and try again.',
   // Placeringer
   DATE_INVALID: 'Invalid date.',
   LOCATIONS_LIVE: 'Locations are in use – the placement sheet can no longer be imported.',

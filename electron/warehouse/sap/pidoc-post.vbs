@@ -182,6 +182,13 @@ ownId = s.Id
 WaitIdle
 If s.Info.SystemName <> systemName Then Finish False, "wrong-system"
 Err.Clear
+' The MI20/MI22 lists ("Doc. Active", "posted with m. doc.") are read in English; another logon language could hide a
+' posted document, so nothing is filled unless the session is in English.
+Dim logonLanguage
+logonLanguage = ""
+logonLanguage = UCase(Trim(CStr(s.Info.Language)))
+Err.Clear
+If logonLanguage <> "EN" And logonLanguage <> "E" Then Finish False, "language-not-supported"
 
 s.findById("wnd[0]/tbar[0]/okcd").Text = "/nMI20"
 s.findById("wnd[0]").sendVKey 0

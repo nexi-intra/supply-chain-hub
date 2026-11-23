@@ -133,6 +133,13 @@ ownId = s.Id
 WaitIdle
 If s.Info.SystemName <> systemName Then Finish False, "wrong-system", ""
 Err.Clear
+' Like the other PI scripts, this one only runs on an English logon (SAP's messages and the Check errors are passed on
+' as read), so nothing is filled unless the session is in English.
+Dim logonLanguage
+logonLanguage = ""
+logonLanguage = UCase(Trim(CStr(s.Info.Language)))
+Err.Clear
+If logonLanguage <> "EN" And logonLanguage <> "E" Then Finish False, "language-not-supported", ""
 
 s.findById("wnd[0]/tbar[0]/okcd").Text = "/nZMS_COUNT_SERIAL"
 s.findById("wnd[0]").sendVKey 0

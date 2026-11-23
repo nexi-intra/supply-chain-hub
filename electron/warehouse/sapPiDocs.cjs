@@ -27,6 +27,7 @@ function scriptFailure(result, what) {
   const error = String(result?.error || 'ukendt fejl').slice(0, 200)
   if (error === 'cancelled') return writeError('PIDOC_CANCELLED', `SAP-vinduet blev lukket (${what}) – intet er gemt i SAP`)
   if (error === 'timeout') return writeError('PIDOC_TIMEOUT', `Der blev ikke trykket i SAP i tide (${what}) – intet er gemt. Prøv igen`)
+  if (error === 'language-not-supported') return writeError('PIDOC_SAP_LANGUAGE', 'Log på SAP på engelsk (EN), og prøv igen')
   if (/^not-logged-in-/.test(error)) return writeError('SAP_NOT_READY', `Du er ikke logget ind i ${error.slice('not-logged-in-'.length)}`)
   if (/^no-access-/.test(error)) return writeError('SAP_NO_ACCESS', `Du har ikke adgang til ${error.slice('no-access-'.length).toUpperCase()} i SAP`)
   if (/^not-created/.test(error)) return writeError('PIDOC_NOT_CREATED', `SAP oprettede ikke dokumentet (${error})`)

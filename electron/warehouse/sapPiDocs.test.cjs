@@ -188,6 +188,37 @@ test('Windows silently refusing the clipboard (Electron 44 still resolves) stops
   assert.deepEqual(calls, [], 'MI31/MI20 never start with the old clipboard text')
 })
 
+test('a SAP session not logged on in English stops every PI script with "Log på SAP på engelsk"', async () => {
+  const names = []
+  const runScript = async name => { names.push(name); return '{"ok":false,"error":"language-not-supported"}' }
+  const writer = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript, clipboard: null, system: 'PS4', tempRoot: os.tmpdir(), waitSeconds: 300 })
+  const refused = { code: 'PIDOC_SAP_LANGUAGE', message: 'PIDOC_SAP_LANGUAGE: Log på SAP på engelsk (EN), og prøv igen' }
+  await assert.rejects(writer.createDocument({ ...REQUEST, materials: ['R133-0032'] }), refused)
+  await assert.rejects(writer.printDocument({ docNo: '105000893', year: '2026', sloc: 'D000' }), refused)
+  await assert.rejects(writer.enterSerials({ docNo: '105000893', year: '2026', material: 'INT1-0', serials: ['S1'] }), refused)
+  await assert.rejects(writer.enterCounts({ docNo: '105000894', year: '2026', entries: [{ material: 'R1', qty: 1 }] }), refused)
+  await assert.rejects(writer.postDocuments({ docNos: ['105000894'], year: '2026' }), refused)
+  await assert.rejects(writer.deleteDocument({ docNo: '105000903', year: '2026', reference: 'CPX12345' }), refused)
+  assert.deepEqual(names, ['pidoc-create', 'pidoc-print', 'pidoc-serials', 'pidoc-count', 'pidoc-post', 'pidoc-delete'])
+})
+
+// The scripts cannot run here (they change SAP); their source is checked instead.
+const PI_SCRIPTS = fs.readdirSync(path.join(__dirname, 'sap')).filter(name => /^pidoc-.*\.vbs$/.test(name))
+
+test('every PI script refuses a non-English logon after the system check and before any transaction is filled', () => {
+  assert.deepEqual(PI_SCRIPTS.sort(), ['pidoc-count.vbs', 'pidoc-create.vbs', 'pidoc-delete.vbs', 'pidoc-post.vbs', 'pidoc-print.vbs', 'pidoc-serials.vbs'])
+  for (const name of PI_SCRIPTS) {
+    const source = fs.readFileSync(path.join(__dirname, 'sap', name), 'utf8')
+    const system = source.indexOf('"wrong-system"')
+    const refusal = source.indexOf('If logonLanguage <> "EN" And logonLanguage <> "E" Then Finish False, "language-not-supported"')
+    const firstTransaction = source.indexOf('okcd").Text = "/n', source.indexOf('\nsystemName = WScript.Arguments(0)'))
+    assert.ok(system > 0 && refusal > system, `${name}: the language is checked after the system`)
+    assert.ok(firstTransaction > refusal, `${name}: the language is checked before the first transaction`)
+    assert.match(source, /^Dim logonLanguage\r$/m, `${name}: logonLanguage is declared (Option Explicit)`)
+    assert.match(source, /^logonLanguage = UCase\(Trim\(CStr\(s\.Info\.Language\)\)\)\r$/m, `${name}: reads the session's logon language`)
+  }
+})
+
 test('one material needs no clipboard; bad requests and a second run at once are refused', async () => {
   const { writer, calls, clip } = setup()
   await writer.createDocument({ ...REQUEST, materials: ['R133-0032'] })

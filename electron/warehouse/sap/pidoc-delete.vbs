@@ -147,6 +147,13 @@ For i = 0 To conn.Children.Count - 1
 Next
 If base Is Nothing Then Finish False, "sap-busy"
 OpenSession
+' SAP's "deleted" message and the MI22 list are read in English; another logon language could hide a deleted
+' document, so nothing is filled unless the session is in English.
+Dim logonLanguage
+logonLanguage = ""
+logonLanguage = UCase(Trim(CStr(s.Info.Language)))
+Err.Clear
+If logonLanguage <> "EN" And logonLanguage <> "E" Then Finish False, "language-not-supported"
 
 s.findById("wnd[0]/tbar[0]/okcd").Text = "/nMI02"
 s.findById("wnd[0]").sendVKey 0

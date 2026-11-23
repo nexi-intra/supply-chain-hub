@@ -86,6 +86,7 @@ describe('errorMessage', () => {
   it('in English the Danish backend detail is never shown; every Danish code has an English text', () => {
     setWarehouseLanguage('en')
     try {
+      expect(errorMessage(new Error('Error: PIDOC_SAP_LANGUAGE: Log på SAP på engelsk (EN), og prøv igen'))).toBe('Log on to SAP in English (EN) and try again.')
       expect(errorMessage(new Error('Error: COUNT_NOT_MEMBER: Du deltager ikke i optællingen'))).toBe('You are not taking part in the count. Ask to join.')
       expect(errorMessage(new Error('Error: SOMETHING_NEW: ukendt'))).toBe('Something unexpected went wrong. Try again.')
       expect(errorMessage(new Error('Error: SOMETHING_NEW'), 'Not saved')).toBe('Not saved')
