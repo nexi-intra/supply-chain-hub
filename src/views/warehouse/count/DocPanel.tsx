@@ -418,11 +418,15 @@ function SerialLinesDialog({ flagged, onCancel, onConfirm }: { flagged: PiDoc[];
 const resolveTexts = (item: PiDoc) => {
   const step = item.sapUnknown?.step ?? 'create'
   if (step === 'count') {
+    const sent = (item.sapUnknown?.materials ?? []).map(entry => `${entry.material} (${formatNumber(entry.qty)})`).join(', ')
+    const left = item.lines.filter(line => !item.entered?.[line.material] && !item.sapUnknown?.materials?.some(entry => entry.material === line.material)).length
     return {
       title: t(`Afklar antallet på SAP-dokument ${item.docNo}`, `Resolve the quantity on SAP document ${item.docNo}`),
-      description: t(`Optælling ved ikke, om antallet blev gemt på SAP-dokument ${item.docNo}. Tjek dokumentet i SAP (MI03), og vælg hvad SAP viser.`, `Stock count does not know whether the quantity was saved on SAP document ${item.docNo}. Check the document in SAP (MI03) and choose what SAP shows.`),
+      description: t(`Optælling ved ikke, om antallet blev gemt på SAP-dokument ${item.docNo}${sent ? ` for ${sent}` : ''}. Tjek dokumentet i SAP (MI03), og vælg hvad SAP viser.`, `Stock count does not know whether the quantity was saved on SAP document ${item.docNo}${sent ? ` for ${sent}` : ''}. Check the document in SAP (MI03) and choose what SAP shows.`),
       saved: t('Antal er lagt på i SAP', 'The quantity is entered in SAP'),
-      savedHelp: t('Dokumentet står som Antal lagt på og kan bogføres.', 'The document is shown as Quantity entered and can be posted.'),
+      savedHelp: left
+        ? t(`Optælling noterer dem som lagt på. ${left} ${left === 1 ? 'materiale mangler' : 'materialer mangler'} stadig, så dokumentet står igen som Printet, og en admin lægger resten på.`, `Stock count records them as entered. ${left} ${left === 1 ? 'material is' : 'materials are'} still missing, so the document is shown as Printed again, and an admin enters the rest.`)
+        : t('Dokumentet står som Antal lagt på og kan bogføres.', 'The document is shown as Quantity entered and can be posted.'),
       missing: t('Antal er ikke lagt på i SAP', 'The quantity is not entered in SAP'),
       missingHelp: t('Dokumentet står igen som Printet, så en admin kan lægge antal på.', 'The document is shown as Printed again, so an admin can enter the quantity.'),
     }

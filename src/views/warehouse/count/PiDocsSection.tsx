@@ -125,6 +125,7 @@ export function PiDocsSection({ list, selected, busy, figuresAt, onCreate, onPri
                   <span role="alert" className="flex items-center gap-1 text-xs font-medium text-red-700 dark:text-red-300">
                     <Warning size={14} /> {errorMessage('PIDOC_UNKNOWN')}
                     {doc.sapUnknown && t(` Gælder ${stepText()[doc.sapUnknown.step]}, ${doc.sapUnknown.by.name} ${formatDateTime(doc.sapUnknown.by.at)}.`, ` Concerns ${stepText()[doc.sapUnknown.step]}, ${doc.sapUnknown.by.name} ${formatDateTime(doc.sapUnknown.by.at)}.`)}
+                    {doc.sapUnknown?.materials?.length ? t(` Materialer: ${doc.sapUnknown.materials.map(entry => entry.material).join(', ')}.`, ` Materials: ${doc.sapUnknown.materials.map(entry => entry.material).join(', ')}.`) : null}
                     {!doc.docNo && t(` Søg i MI22 på referencen ${doc.reference}.`, ` Search MI22 for the reference ${doc.reference}.`)}
                   </span>
                   {doc.canResolve

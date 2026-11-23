@@ -496,14 +496,14 @@ export interface PiDoc {
   postedBy?: { email: string; name: string; at: number }
   materialDoc?: string | null
   differences?: { material: string; book: number; counted: number; diff: number; amount: number }[]
-  entered?: Record<string, { qty?: number; serials?: number; by: string; at: number }>
+  entered?: Record<string, { qty?: number; serials?: number; by: string; at: number; resolvedBy?: string }>
   next: PiDocAction | null
   canNext: boolean
   canDelete: boolean
   /** A manager may resolve it (status unknown). */
   canResolve: boolean
   /** SAP may have taken this step without the app knowing; `detail` is the script's answer. */
-  sapUnknown?: { step: PiDocStep; status: PiDocStatus; by: { email: string; name: string; at: number }; detail: string }
+  sapUnknown?: { step: PiDocStep; status: PiDocStatus; by: { email: string; name: string; at: number }; detail: string; materials?: { material: string; qty: number }[] }
   sapResolutions?: PiDocResolution[]
   deletedBy?: { email: string; name: string; at: number; message: string }
 }

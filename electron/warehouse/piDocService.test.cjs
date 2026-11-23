@@ -461,6 +461,7 @@ function flow(t, { docs = {}, rows = ROWS } = {}) {
   const sap = {
     create: async () => ({ docs: [{ docNo: '105000900', materials: ['R1', 'R2'] }], missing: [] }),
     counts: async () => ({ message: 'ok' }),
+    serials: async request => ({ counted: request.serials.length, serials: request.serials.length, newSerials: 0 }),
     post: async request => ({ posted: request.docNos, open: [], unknown: [], materialDocs: {}, differences: [] }),
   }
   const answered = async (name, request, answer) => {
@@ -473,11 +474,13 @@ function flow(t, { docs = {}, rows = ROWS } = {}) {
     createDocument: request => answered('create', request, sap.create),
     printDocument: request => answered('print', request, async () => ({ message: 'ok' })),
     enterCounts: request => answered('counts', request, sap.counts),
+    enterSerials: request => answered('serials', request, sap.serials),
     postDocuments: request => answered('post', request, sap.post),
     deleteDocument: request => answered('delete', request, async () => ({ deleted: true, message: 'deleted' })),
   }
   const counts = {
     countDoc: async () => ({ fetchedAt: state.clock, rows }),
+    copySerials: async (user, id, { material }) => ({ serials: [`S-${material}`] }),
     markPosted: async (user, id, materials) => { state.marked.push(...materials); return { posted: materials, skipped: [] } },
   }
   const journalDir = journalFolder(t)
@@ -517,6 +520,7 @@ test('MI04 or MI20 whose result is unknown marks the document unknown; SAP is no
   sap.counts = async () => { throw sapUnknown() }
   await assert.rejects(service.count(ANNA, 'c1', '105000901'), { code: 'PIDOC_UNKNOWN' })
   assert.deepEqual([state.stored['105000901'].status, state.stored['105000901'].sapUnknown.step, state.stored['105000901'].sapUnknown.by.email], ['printed', 'count', 'anna@x'])
+  assert.deepEqual(state.stored['105000901'].sapUnknown.materials, [{ material: 'R1', qty: 5 }], 'the MI04 batch sent')
   sap.post = async () => { throw sapUnknown() }
   await assert.rejects(service.post(MONA, 'c1', ['105000902']), { code: 'PIDOC_UNKNOWN' })
   assert.deepEqual([state.stored['105000902'].status, state.stored['105000902'].sapUnknown.step], ['counted', 'post'])
@@ -688,4 +692,35 @@ test('a journalled delete does not settle an unknown count as saved: the mark st
   assert.deepEqual([doc.status, stored.status, stored.sapUnknown], ['deleted', 'deleted', mark])
   assert.deepEqual(stored.sapResolutions.map(item => [item.step, item.outcome, item.status, item.resolvedBy.email]), [['count', 'superseded', 'deleted', 'mona@x']])
   assert.deepEqual(journal(), [])
+})
+test('an unknown serial material resolved as saved is entered; the document stays printed until every line is, and only the rest is sent next', async t => {
+  const materials = ['INT1-0', 'INT2-0', 'INT3-0']
+  const lines = materials.map(material => ({ material, transaction: 'ZMS_COUNT_SERIAL' }))
+  const rows = materials.map(material => row(material, 'new', { docQty: 1, sapToday: 1, sapAtApproval: 1 }))
+  const { state, sap, service } = flow(t, { docs: { 105000901: sapDoc('105000901', 'printed', { kind: 'new', transaction: 'ZMS_COUNT_SERIAL', lines }) }, rows })
+  sap.serials = async request => { if (request.material === 'INT2-0') throw sapUnknown(); return { counted: 1, serials: 1, newSerials: 0 } }
+  await assert.rejects(service.count(ANNA, 'c1', '105000901'), { code: 'PIDOC_UNKNOWN' })
+  assert.deepEqual(state.calls.map(call => call[1].material), ['INT1-0', 'INT2-0'], 'INT3-0 is never sent')
+  assert.deepEqual(state.stored['105000901'].sapUnknown.materials, [{ material: 'INT2-0', qty: 1 }])
+
+  await service.resolve(MONA, 'c1', '105000901', { outcome: 'saved', docNo: '105000901', reason: 'MI03 viser INT2-0 talt' })
+  const resolved = state.stored['105000901']
+  assert.deepEqual([resolved.status, resolved.sapUnknown, Object.keys(resolved.entered), resolved.countedBy], ['printed', undefined, ['INT1-0', 'INT2-0'], undefined])
+  const [doc] = (await service.list(ANNA, 'c1')).docs
+  assert.deepEqual([doc.status, doc.next, doc.canNext], ['printed', 'count', true], 'the admin carries on, nothing to post yet')
+
+  sap.serials = async () => ({ counted: 1, serials: 1, newSerials: 0 })
+  state.calls.length = 0
+  await service.count(ANNA, 'c1', '105000901')
+  assert.deepEqual(state.calls.map(call => call[1].material), ['INT3-0'])
+  assert.deepEqual([state.stored['105000901'].status, Object.keys(state.stored['105000901'].entered)], ['counted', materials])
+})
+
+test('an unknown count resolved as not entered goes back to printed without entering anything', async t => {
+  const { state, sap, service } = flow(t, { docs: { 105000901: sapDoc('105000901', 'printed', { lines: [{ material: 'R1', transaction: 'MI04' }, { material: 'R2', transaction: 'MI04' }] }) }, rows: COUNT_ROWS })
+  sap.counts = async () => { throw sapUnknown() }
+  await assert.rejects(service.count(ANNA, 'c1', '105000901'), { code: 'PIDOC_UNKNOWN' })
+  assert.deepEqual(state.stored['105000901'].sapUnknown.materials, [{ material: 'R1', qty: 5 }, { material: 'R2', qty: 2 }])
+  await service.resolve(MONA, 'c1', '105000901', { outcome: 'missing', reason: 'MI03 viser intet antal' })
+  assert.deepEqual([state.stored['105000901'].status, state.stored['105000901'].entered], ['printed', undefined])
 })

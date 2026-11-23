@@ -141,9 +141,9 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
   }
 
   /** The documents SAP may have changed in `step` without the app knowing: kept as unknown, never lost to M: failing. */
-  async function markUnknown(user, id, docs, step, status, error) {
+  async function markUnknown(user, id, docs, step, status, error, extra = {}) {
     const at = now()
-    const sapUnknown = { step, status, by: by(user, at), detail: clean(error?.detail || error?.code || 'unknown', 200) }
+    const sapUnknown = { step, status, by: by(user, at), detail: clean(error?.detail || error?.code || 'unknown', 200), ...extra }
     await persist(user, id, docs.map(doc => ({ kind: 'unknown', docId: doc.id, sapUnknown }))).catch(() => false)
   }
 
@@ -289,12 +289,13 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
       done[material] = { ...value, by: lower(user.email), at: now() }
       if (!(await persist(user, id, [{ kind: 'step', docId, from: ['printed'], entered: { [material]: done[material] } }], isPrinted))) throw saveFailed(`serienumrene for ${material} på ${doc.docNo}`)
     }
-    // SAP may have saved what it was given: the document waits for a manager instead of being entered again.
-    const inSap = async step => {
+    // SAP may have saved what it was given: the document waits for a manager instead of being entered again. The materials
+    // sent are kept on the mark, so a manager's "saved" enters exactly those.
+    const inSap = async (step, sent) => {
       try {
         return await step()
       } catch (error) {
-        if (error?.code === 'PIDOC_UNKNOWN') await markUnknown(user, id, [doc], 'count', 'printed', error)
+        if (error?.code === 'PIDOC_UNKNOWN') await markUnknown(user, id, [doc], 'count', 'printed', error, { materials: sent })
         throw error
       }
     }
@@ -323,7 +324,7 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
       if (line.transaction === 'ZMS_COUNT_SERIAL') {
         const serials = serialLists.get(line.material)
         if (!serials.length) { quantities.push({ material: line.material, qty: 0 }); continue }
-        const result = await inSap(() => writer.enterSerials({ docNo: doc.docNo, year: doc.year, material: line.material, serials }))
+        const result = await inSap(() => writer.enterSerials({ docNo: doc.docNo, year: doc.year, material: line.material, serials }), [{ material: line.material, qty: serials.length }])
         // SAP's own count must be the list sent; anything else would go on to MI20 unnoticed.
         if (result.counted !== serials.length) throw codeError('PIDOC_NOT_COUNTED', `SAP har talt ${result.counted} på ${line.material}, men der blev sendt ${serials.length} serienumre. Tjek dokumentet i SAP (MI03)`)
         await remember(line.material, { serials: result.serials, qty: result.counted })
@@ -335,7 +336,7 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
       }
     }
     if (quantities.length) {
-      await inSap(() => writer.enterCounts({ docNo: doc.docNo, year: doc.year, entries: quantities }))
+      await inSap(() => writer.enterCounts({ docNo: doc.docNo, year: doc.year, entries: quantities }), quantities.map(({ material, qty }) => ({ material, qty })))
       // One write for every quantity entered (was one 20-s write per material).
       const enteredAt = now()
       for (const entry of quantities) done[entry.material] = { qty: entry.qty, by: lower(user.email), at: enteredAt }
@@ -429,7 +430,8 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
   /**
    * A manager's decision on a document SAP may or may not have (status unknown), after looking in SAP (MI03/MI22):
    * `saved` with the document number typed in (an unknown create gets that number; a count or posting must name the
-   * document itself) makes it created, counted or posted as the step it came from; `missing` releases an unknown create
+   * document itself) makes it created, counted or posted as the step it came from (a count: the materials sent then are
+   * entered, and it is counted once every line is, else printed so the admin enters the rest); `missing` releases an unknown create
    * (kept as deleted) and takes a count or posting back to the step before, so it can be done again. SAP is not touched.
    * Who, when, why and the step it came from are added to `sapResolutions`. A resolved posting marks its materials
    * "Bogført i SAP" as a posting does.
@@ -463,7 +465,14 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
         resolvedTo = { ...rest, status: 'deleted', sapResolutions }
         all[docId] = resolvedTo
       } else if (step === 'count') {
-        resolvedTo = { ...rest, status: outcome === 'saved' ? 'counted' : 'printed', ...(outcome === 'saved' ? { countedBy: doer } : {}), sapResolutions }
+        // "Saved" enters the materials SAP was given when it went unknown; the document is counted only when every line is,
+        // otherwise the admin carries on with the rest. "Not saved" enters nothing.
+        const sent = Array.isArray(sapUnknown.materials) ? sapUnknown.materials : []
+        const entered = outcome === 'saved' && sent.length
+          ? { ...(rest.entered || {}), ...Object.fromEntries(sent.map(item => [item.material, { qty: item.qty, by: doer.email, at: doer.at, resolvedBy: lower(user.email) }])) }
+          : rest.entered
+        const complete = outcome === 'saved' && rest.lines.every(line => entered?.[line.material])
+        resolvedTo = { ...rest, ...(entered ? { entered } : {}), status: complete ? 'counted' : 'printed', ...(complete ? { countedBy: doer } : {}), sapResolutions }
         all[docId] = resolvedTo
       } else {
         resolvedTo = { ...rest, status: outcome === 'saved' ? 'posted' : 'counted', ...(outcome === 'saved' ? { postedBy: doer, materialDoc: rest.materialDoc || null, differences: rest.differences || [] } : {}), sapResolutions }
