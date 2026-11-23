@@ -103,10 +103,10 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   }
   const storeFor = team => openStore(dataDirOf(team))
   const reportsDir = team => path.resolve(dataDirOf(team), 'rapporter')
-  // The platform root may not be known yet when this runs, so the shared store is opened on each use. Every method is
+  // The platform root may not be known yet when this runs, so a shared store is opened on each use. Every method is
   // forwarded to the real store, so a service can never call one that a hand-written wrapper forgot.
-  const sharedStoreOf = () => openStore(path.join(platformRoot(), SHARED_FOLDER))
-  const sharedStore = new Proxy({}, { get: (_, name) => sharedStoreOf()[name] })
+  const lazyStore = open => new Proxy({}, { get: (_, name) => open()[name] })
+  const sharedStore = lazyStore(() => openStore(path.join(platformRoot(), SHARED_FOLDER)))
 
   // SAP descriptions are learned from every MB52 fetch and material document lookup (Placeringer shows them).
   const catalog = createMaterialCatalog({ sharedStore, fetcher })
@@ -197,17 +197,11 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   const layouts = createLayoutService({ repo: locationRepo, locations })
   // Stempelkort: one store per hub in <team>/lagerstyring/stempelkort; times are only read back by managers.
   const timeclock = createTimeclockService({ storeFor: team => openStore(path.join(dataDirOf(team), 'stempelkort')) })
-  // Softwareload: own tasks in <team>/lagerstyring/softwareload; the search index is shared by TCD and TRR. The
-  // platform root may not be known yet when this runs, so the shared store is opened on every call.
-  const softwareloadIndex = () => openStore(path.join(platformRoot(), SHARED_FOLDER, 'softwareload'))
+  // Softwareload: own tasks in <team>/lagerstyring/softwareload; the search index is shared by TCD and TRR and opened
+  // lazily like the shared store above.
   const softwareload = createSoftwareloadService({
     storeFor: team => openStore(path.join(dataDirOf(team), 'softwareload')),
-    indexStore: {
-      getAsync: (...args) => softwareloadIndex().getAsync(...args),
-      mutateAsync: (...args) => softwareloadIndex().mutateAsync(...args),
-      keysAsync: (...args) => softwareloadIndex().keysAsync(...args),
-      deleteAsync: (...args) => softwareloadIndex().deleteAsync(...args),
-    },
+    indexStore: lazyStore(() => openStore(path.join(platformRoot(), SHARED_FOLDER, 'softwareload'))),
     sap: createSoftwareloadSap({ bridge: sap, runScript, clipboard, system: config.sapSystem, expected: sapExpected }),
     timeclock,
     matdocs: args => learningFetcher.fetchMatdoc(args),

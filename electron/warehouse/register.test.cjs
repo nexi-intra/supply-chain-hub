@@ -51,7 +51,7 @@ test('"Tjek SAP-fejl" over IPC: the check is saved in the shared store and the m
   const overview = await call('mona', 'sap-check:overview')
   assert.equal(overview.latest.id, check.id)
   assert.deepEqual(overview.history.map(entry => entry.id), [check.id])
-  assert.ok(fs.existsSync(path.join(root, '_lagerstyring')), 'the check lives in the shared folder of the platform root')
+  assert.equal((await createStore(path.join(root, '_lagerstyring')).getAsync(`sap-tjek-${check.id}`))?.id, check.id, 'the check lives in the shared store of the platform root')
 
   await call('mona', 'sap-check:settings', { to: 'sap-team@nexi.test', cc: '', language: 'da' })
   const mail = await call('mona', 'sap-check:mail', { id: check.id, mode: 'all', scope: 'D301' })
