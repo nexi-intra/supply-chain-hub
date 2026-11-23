@@ -22,6 +22,9 @@ function setup({ clipboard = { readText: () => '', writeText: () => {} }, env = 
     // Lars belongs to TCD and is an extra manager in TRR (authService: `teams` = home + extra teams); the open hub differs.
     larsTcd: { email: 'lars@nexi.test', role: 'user', activeTeam: { teamId: 'TCD', folderName: 'TCD' }, teams: [{ teamId: 'TCD', folderName: 'TCD' }, { teamId: 'TRR', folderName: 'TRR' }] },
     larsTrr: { email: 'lars@nexi.test', role: 'manager', activeTeam: { teamId: 'TRR', folderName: 'TRR' }, teams: [{ teamId: 'TCD', folderName: 'TCD' }, { teamId: 'TRR', folderName: 'TRR' }] },
+    // The creator opens every hub, but authService lists only the home team.
+    bossTcd: { email: 'boss@nexi.test', role: 'creator', activeTeam: { teamId: 'TCD', folderName: 'TCD' }, teams: [{ teamId: 'TCD', folderName: 'TCD' }] },
+    bossTrr: { email: 'boss@nexi.test', role: 'creator', activeTeam: { teamId: 'TRR', folderName: 'TRR' }, teams: [{ teamId: 'TCD', folderName: 'TCD' }] },
   }
   const broadcasts = []
   const registered = registerWarehouse({
@@ -519,6 +522,21 @@ test('the mirror: Stempelkort in TCD cannot start or resume while Softwareload r
   await assert.rejects(call('larsTcd', 'timeclock:start', { taskId: 'pak', taskName: 'Pakning', switchTask: true }), SOFTWARELOAD_IN_TRR)
   const { running } = await call('larsTcd', 'timeclock:status')
   assert.deepEqual([running.taskName, running.paused], ['Lager', true], 'a refused switch does not save or replace the clock')
+})
+
+test('the creator is checked both ways: Stempelkort in TRR first, then Softwareload in the home hub TCD is refused', async () => {
+  const { call } = setup()
+  await call('bossTrr', 'timeclock:start', { taskId: 'lager', taskName: 'Lager' })
+  await assert.rejects(call('bossTcd', 'softwareload:start', SOFTWARELOAD_TASK), /^Error: SOFTWARELOAD_TIMECLOCK_ELSEWHERE: Stempelkort kører i TRR\. Stop det der først$/)
+  assert.equal((await call('bossTcd', 'softwareload:status')).running, null)
+})
+
+test('another Hub on the same drive (the other hub\'s store not open here) still refuses the start', async () => {
+  const first = setup()
+  await first.call('larsTcd', 'timeclock:start', { taskId: 'lager', taskName: 'Lager' })
+  const second = setup({ root: first.root })
+  await assert.rejects(second.call('larsTrr', 'softwareload:start', SOFTWARELOAD_TASK), TIMECLOCK_IN_TCD)
+  assert.equal((await second.call('larsTrr', 'softwareload:status')).running, null)
 })
 
 test('in the same hub nothing changes for a person in two hubs: Stempelkort pauses the task, and the task stops Stempelkort', async () => {

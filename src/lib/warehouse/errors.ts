@@ -203,11 +203,19 @@ const EN_WITH_DETAIL: Record<string, string> = {
   SOFTWARELOAD_SAVE_FAILED: 'SAP made the move, but it could not be saved on M:',
 }
 
+// The other clock runs in another hub: in English the hub is taken from the Danish detail.
+const EN_IN_HUB: Record<string, (hub: string) => string> = {
+  SOFTWARELOAD_TIMECLOCK_ELSEWHERE: hub => `Your time card is running in ${hub}. Stop it there first.`,
+  TIMECLOCK_SOFTWARELOAD_ELSEWHERE: hub => `Softwareload is running in ${hub}. Stop it there first.`,
+}
+
 export function errorMessage(error: unknown, fallback?: string): string {
   const code = errorCode(error)
   if (currentWarehouseLanguage() === 'en') {
     const detail = errorDetail(error)
     if (code && detail && EN_WITH_DETAIL[code]) return `${EN_WITH_DETAIL[code]}: ${detail}`
+    const hub = code && EN_IN_HUB[code] ? /\b(TCD|TRR)\b/.exec(detail || '')?.[1] : undefined
+    if (code && hub) return EN_IN_HUB[code](hub)
     return (code && MESSAGES_EN[code]) || fallback || MESSAGES_EN.UNEXPECTED_ERROR
   }
   return errorDetail(error) || (code && MESSAGES[code]) || fallback || MESSAGES.UNEXPECTED_ERROR

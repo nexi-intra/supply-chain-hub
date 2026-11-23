@@ -57,6 +57,20 @@ describe('errorMessage', () => {
     }
   })
 
+  it('a clock running in another hub names that hub in English too, and falls back without a hub', () => {
+    const timeclock = new Error("Error invoking remote method 'warehouse:softwareload:start': Error: SOFTWARELOAD_TIMECLOCK_ELSEWHERE: Stempelkort kører i TCD. Stop det der først")
+    const softwareload = new Error("Error invoking remote method 'warehouse:timeclock:start': Error: TIMECLOCK_SOFTWARELOAD_ELSEWHERE: Softwareload kører i TRR. Stop det der først")
+    expect(errorMessage(timeclock)).toBe('Stempelkort kører i TCD. Stop det der først')
+    setWarehouseLanguage('en')
+    try {
+      expect(errorMessage(timeclock)).toBe('Your time card is running in TCD. Stop it there first.')
+      expect(errorMessage(softwareload)).toBe('Softwareload is running in TRR. Stop it there first.')
+      expect(errorMessage(new Error('Error: TIMECLOCK_SOFTWARELOAD_ELSEWHERE'))).toBe('Softwareload is running in another hub. Stop it there first.')
+    } finally {
+      setWarehouseLanguage('da')
+    }
+  })
+
   it('in English the softwareload codes that carry the service\'s detail still show it', () => {
     setWarehouseLanguage('en')
     try {

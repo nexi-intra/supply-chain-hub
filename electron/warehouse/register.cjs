@@ -120,6 +120,7 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
         return parseFileContents(await fs.promises.readFile(path.join(dir, keyToFilename(key)), 'utf8'))
       } catch (error) {
         if (error?.code === 'ENOENT') return undefined
+        console.warn('Lagerstyring: could not read another hub', dir, error?.code)
         throw error
       }
     },

@@ -11,7 +11,13 @@ test('a Hub user in the open TCD or TRR hub becomes an Optælling user with name
 })
 
 test('the creator and extra managers keep their Hub role; without a profile the e-mail is the name', () => {
-  assert.deepEqual(warehouseUser(actor('TCD', 'creator', 'boss@nexi.test'), users), { email: 'boss@nexi.test', fullName: 'boss@nexi.test', role: 'creator', team: 'TCD' })
+  assert.deepEqual(warehouseUser(actor('TCD', 'creator', 'boss@nexi.test'), users), { email: 'boss@nexi.test', fullName: 'boss@nexi.test', role: 'creator', team: 'TCD', otherTeams: ['TRR'] })
+})
+
+test('the creator opens every hub, so the other warehouse hub is known also when only the home team is listed', () => {
+  const creator = (teamId, home) => ({ ...actor(teamId, 'creator', 'boss@nexi.test'), teams: [{ teamId: home }] })
+  assert.deepEqual(warehouseUser(creator('TCD', 'PIM'), users).otherTeams, ['TRR'])
+  assert.deepEqual(warehouseUser(creator('TRR', 'TRR'), users).otherTeams, ['TCD'])
 })
 
 test('a person in both hubs knows the other hub; one hub (or another team only) adds nothing', () => {
