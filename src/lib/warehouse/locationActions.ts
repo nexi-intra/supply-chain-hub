@@ -1,8 +1,8 @@
 import { toast } from 'sonner'
 import { trackPendingWrite } from '@/lib/pendingWrites'
-import type { LocationList, MapContents, MaterialCard, PalletInput, RackCard, StockLineView } from '@/types/warehouse'
+import type { DocumentLookup, LocationList, MapContents, MaterialCard, PalletInput, RackCard, StockLineView } from '@/types/warehouse'
 import { errorMessage } from './errors'
-import { deferredText, isDeferred, isShelfPlace, locationKeyOf, palletLimitOf } from './locations'
+import { deferredText, formatDate, isDeferred, isShelfPlace, locationKeyOf, palletLimitOf } from './locations'
 import { t } from './text'
 
 type Listed = LocationList['locations'][number]
@@ -106,6 +106,49 @@ export function replayFailureText(code: string): string {
 export function matdocOf(value: string): string | null {
   const text = String(value ?? '').trim().replace(/\s+/g, ' ')
   return /^\d{10}( \d{4}( \d{1,4})?)?$/.test(text) ? text : null
+}
+
+/** A place where a pallet or shelf line with a looked-up 49/50 number already is: who put it there and when. */
+export interface PlacedBefore { id: string; name: string; by: string; at: number | null }
+/** What of one material of a looked-up 49/50 number is already put away: the places, and how many of its serials are on a pallet. */
+export interface PlacedFound { places: PlacedBefore[]; serials: number }
+
+/** The pallets and shelf lines of one material that have the number, and the pallets with one of its serials, oldest first. */
+export function placedFor(placed: DocumentLookup['placed'], material: string, serials: string[]): PlacedFound {
+  const mine = new Set(serials.map(serial => serial.trim().toUpperCase()))
+  const onPallets = placed.serials.filter(item => mine.has(item.serial))
+  const places = new Map<string, PlacedBefore>()
+  for (const item of [...placed.pallets.filter(pallet => pallet.material === material), ...placed.lines.filter(line => line.material === material)]) places.set(item.id, { id: item.id, name: item.name, by: item.by, at: item.at })
+  for (const item of onPallets) if (!places.has(item.pallet)) places.set(item.pallet, { id: item.pallet, name: item.name, by: item.by, at: item.at })
+  return { places: [...places.values()].sort((a, b) => (a.at ?? 0) - (b.at ?? 0) || a.name.localeCompare(b.name, 'da', { numeric: true })), serials: new Set(onPallets.map(item => item.serial)).size }
+}
+
+/** "i dag", "i går" or the date. */
+export function whenLabel(at: number | null, now = Date.now()): string {
+  if (!at) return ''
+  const day = (ms: number) => { const date = new Date(ms); return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime() }
+  const days = Math.round((day(now) - day(at)) / 86400000)
+  if (days === 0) return t('i dag', 'today')
+  if (days === 1) return t('i går', 'yesterday')
+  return formatDate(at)
+}
+
+const SHOWN_PLACES = 3
+
+/** "Allerede sat på plads: A2.4 (Bo, i går). 2 af serienumrene står allerede på en palle.", or null when nothing is. */
+export function placedSummary(found: PlacedFound | null, now = Date.now()): string | null {
+  if (!found || (!found.places.length && !found.serials)) return null
+  const parts: string[] = []
+  if (found.places.length) {
+    const shown = found.places.slice(0, SHOWN_PLACES).map(place => {
+      const detail = [place.by, whenLabel(place.at, now)].filter(Boolean).join(', ')
+      return detail ? `${place.name} (${detail})` : place.name
+    }).join(', ')
+    const more = found.places.length - SHOWN_PLACES
+    parts.push(t(`Allerede sat på plads: ${shown}${more > 0 ? ` og ${more} flere` : ''}.`, `Already put away: ${shown}${more > 0 ? ` and ${more} more` : ''}.`))
+  }
+  if (found.serials) parts.push(found.serials === 1 ? t('1 af serienumrene står allerede på en palle.', '1 of the serial numbers is already on a pallet.') : t(`${found.serials} af serienumrene står allerede på en palle.`, `${found.serials} of the serial numbers are already on a pallet.`))
+  return parts.join(' ')
 }
 
 /**

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowsClockwise, FloppyDisk, Plus, Trash } from '@phosphor-icons/react'
+import { ArrowsClockwise, FloppyDisk, Plus, Trash, Warning } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -8,10 +8,10 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { SapActionButton } from '@/components/warehouse/SapActionButton'
 import { cn } from '@/lib/utils'
-import { errorMessage } from '@/lib/warehouse/errors'
+import { errorCode, errorMessage } from '@/lib/warehouse/errors'
 import { contextOf, type MapContext } from '@/lib/warehouse/layout/map'
 import { peekOf } from '@/lib/warehouse/layout/peek'
-import { sendLocationAction, startLocationsRead, withPutAway } from '@/lib/warehouse/locationActions'
+import { placedFor, placedSummary, sendLocationAction, startLocationsRead, withPutAway, type PlacedFound } from '@/lib/warehouse/locationActions'
 import { locationKeyOf, newActionId, reasonLabel, type LocationsTarget } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
 import type { LocationList, MapContents, PalletInput, SlotSuggestion, WarehouseLayout, WarehouseUser } from '@/types/warehouse'
@@ -34,6 +34,8 @@ interface Draft {
   checked: boolean
   /** The suggestion last shown with "Vis"; null shows the chosen place. Any change of `location` or `material`, or a suggestion list without it, clears it. */
   shown: string | null
+  /** What of this material of the looked-up 49/50 number is already put away; a new number or material clears it. */
+  placed: PlacedFound | null
 }
 
 /** The published drawing and what stands on its places, read once for the whole form. */
@@ -41,7 +43,7 @@ interface PeekMap { layout: WarehouseLayout; ctx: MapContext }
 
 let nextKey = 1
 const today = () => new Date().toISOString().slice(0, 10)
-const blank = (): Draft => ({ key: nextKey++, document: '', material: '', description: '', quantity: '', serials: [], location: '', sloc: 'D000', date: today(), tags: [], note: '', slots: [], checked: false, shown: null })
+const blank = (): Draft => ({ key: nextKey++, document: '', material: '', description: '', quantity: '', serials: [], location: '', sloc: 'D000', date: today(), tags: [], note: '', slots: [], checked: false, shown: null, placed: null })
 // Typing waits this long before the place view follows, so it does not flicker on every key.
 const TYPING_MS = 250
 // Noon local time, so the day never shifts with the time zone.
@@ -58,13 +60,19 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
   const [dataFailed, setDataFailed] = useState(false)
   const [layoutTry, setLayoutTry] = useState(0)
   // A new place or material clears the suggestion being looked at, and so does a suggestion list without it, so the view shows what will be saved.
+  // What is already put away belongs to the looked-up number and material: a change of either clears it.
   const update = (key: number, patch: Partial<Draft>) => setDrafts(list => list.map(item => {
     if (item.key !== key) return item
-    const next = { ...item, ...patch }
+    let next = { ...item, ...patch }
     const stale = 'location' in patch || next.material !== item.material
       || (next.shown !== null && !next.slots.some(slot => locationKeyOf(slot.location) === locationKeyOf(next.shown!)))
-    return stale && !('shown' in patch) ? { ...next, shown: null } : next
+    if (stale && !('shown' in patch)) next = { ...next, shown: null }
+    if ((next.document !== item.document || next.material !== item.material) && !('placed' in patch)) next = { ...next, placed: null }
+    return next
   }))
+  // The drafts as they are now, for "Gem alligevel" on a refusal that comes back later.
+  const draftsNow = useRef(drafts)
+  draftsNow.current = drafts
   const bridge = window.electronWarehouse!.locations
 
   // As on the map: the drawing is read when it changes, what stands on the places when Placeringer changes. A failed
@@ -125,20 +133,39 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
     try {
       const found = await bridge.lookupDocument({ document: draft.document })
       if (!found.materials.length) { toast.warning(t('Materialedokumentet har ingen serienumre i SAP.', 'The material document has no serial numbers in SAP.')); return }
-      // One pallet per material on the document.
+      // One pallet per material on the document, each with what of it is already put away.
       const [first, ...rest] = found.materials
-      const extra = rest.map(item => ({ ...blank(), document: found.document, material: item.material, description: item.description, quantity: String(item.quantity), serials: item.serials, sloc: draft.sloc, date: draft.date }))
-      setDrafts(list => list.flatMap(item => (item.key === draft.key ? [{ ...item, shown: null, document: found.document, material: first.material, description: first.description, quantity: String(first.quantity), serials: first.serials }, ...extra] : [item])))
+      const extra = rest.map(item => ({ ...blank(), document: found.document, material: item.material, description: item.description, quantity: String(item.quantity), serials: item.serials, sloc: draft.sloc, date: draft.date, placed: placedFor(found.placed, item.material, item.serials) }))
+      setDrafts(list => list.flatMap(item => (item.key === draft.key ? [{ ...item, shown: null, document: found.document, material: first.material, description: first.description, quantity: String(first.quantity), serials: first.serials, placed: placedFor(found.placed, first.material, first.serials) }, ...extra] : [item])))
       for (const item of [{ key: draft.key, material: first.material }, ...extra]) void describe(item.key, item.material)
     } catch (error) {
       toast.error(errorMessage(error))
     }
   }
 
+  const invalidDrafts = (ready: Draft[]) => {
+    if (ready.length && ready.every(item => item.material && item.location)) return false
+    toast.error(t('Hver palle skal have materiale og plads.', 'Every pallet needs a material and a place.'))
+    return true
+  }
+
   function save() {
     const ready = drafts.filter(item => item.material || item.location)
-    const missing = ready.find(item => !item.material || !item.location)
-    if (!ready.length || missing) { toast.error(t('Hver palle skal have materiale og plads.', 'Every pallet needs a material and a place.')); return }
+    if (invalidDrafts(ready)) return
+    // The same delivery put away again: asked first. A partial delivery with the same 49/50 number is saved anyway.
+    const warned = ready.map(item => ({ item, text: placedSummary(item.placed) })).filter(entry => entry.text)
+    let allowDuplicate = false
+    if (warned.length) {
+      const lines = warned.map(({ item, text }) => (drafts.length > 1 ? `${t(`Palle ${drafts.indexOf(item) + 1}`, `Pallet ${drafts.indexOf(item) + 1}`)}: ${text}` : text))
+      if (!window.confirm(`${lines.join('\n')}\n\n${t('Gem alligevel?', 'Save anyway?')}`)) return
+      allowDuplicate = warned.some(({ item }) => (item.placed?.serials ?? 0) > 0)
+    }
+    setDrafts([blank()])
+    send(ready, allowDuplicate)
+  }
+
+  /** The pallets go to M: in the background; `allowDuplicate` puts them away even with a serial already on a pallet. */
+  function send(ready: Draft[], allowDuplicate: boolean) {
     const pallets: PalletInput[] = ready.map(item => ({
       location: item.location, material: item.material, quantity: item.quantity.trim() === '' ? null : Number(item.quantity), document: item.document || null,
       serials: item.serials, sloc: item.sloc, receivedAt: dateMs(item.date), tags: item.tags, note: item.note,
@@ -149,14 +176,23 @@ export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
     const placeOf = (name: string) => data?.list.locations.find(location => location.id === locationKeyOf(name))
     const pick = pallets.length === 1 && placeOf(pallets[0].location)?.purpose === 'pick'
     const where = locationKeyOf(pallets[0].location)
-    setDrafts([blank()])
     // The places view counts the new pallets at once, so the next pallet sees the place as taken.
     setData(value => value && withPutAway(value, pallets))
-    void sendLocationAction(() => bridge.putAway({ actionId: newActionId(), label: t('Sæt på plads: ', 'Put away: ') + pallets.map(item => `${item.material} → ${item.location}`).join(', '), pallets }), {
+    // A serial already on a pallet (put away on another PC meanwhile) is refused; "Gem alligevel" sends the pallets as
+    // they stand in the form now, without the check.
+    const again = () => {
+      const keys = new Set(kept.map(item => item.key))
+      const current = draftsNow.current.filter(item => keys.has(item.key))
+      if (!current.length || invalidDrafts(current)) return
+      setDrafts(list => { const rest = list.filter(item => !keys.has(item.key)); return rest.length ? rest : [blank()] })
+      send(current, true)
+    }
+    void sendLocationAction(() => bridge.putAway({ actionId: newActionId(), label: t('Sæt på plads: ', 'Put away: ') + pallets.map(item => `${item.material} → ${item.location}`).join(', '), pallets, ...(allowDuplicate ? { allowDuplicate } : {}) }), {
       success: pallets.length > 1 ? t(`${pallets.length} paller er sat på plads`, `${pallets.length} pallets put away`)
         : pick ? t(`${where} er fyldt op`, `${where} has been refilled`)
         : t(`Pallen står nu på ${where}`, `The pallet is now on ${where}`),
       rollback: () => setDrafts(list => [...kept, ...list.filter(item => item.material || item.location || item.document)]),
+      offer: error => (!allowDuplicate && errorCode(error) === 'SERIAL_ON_PALLET' ? { label: t('Gem alligevel', 'Save anyway'), onClick: again } : null),
       settled: onDone,
     })
   }
@@ -185,6 +221,7 @@ function DraftCard({ draft, index, tags, canRemove, map, mapFailed, onShowOnMap,
   onChange: (patch: Partial<Draft>) => void; onLookup: () => Promise<void>; onDescribe: (material: string) => void; onRemove: () => void
 }) {
   const id = (name: string) => `putaway-${draft.key}-${name}`
+  const placed = placedSummary(draft.placed)
   // The place the view follows: a typed place after a short pause, a chosen suggestion at once.
   const [settled, setSettled] = useState(draft.location)
   useEffect(() => {
@@ -222,6 +259,7 @@ function DraftCard({ draft, index, tags, canRemove, map, mapFailed, onShowOnMap,
           </div>
           <SapActionButton variant="outline" className="self-end" disabled={!draft.document.trim()} onAction={onLookup}><ArrowsClockwise size={16} /> {t('Hent fra SAP', 'Fetch from SAP')}</SapActionButton>
         </div>
+        {placed && <p className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400"><Warning size={14} className="mt-px shrink-0" /> {placed}</p>}
         <div className="grid gap-3 sm:grid-cols-[2fr_1fr_1fr_1fr]">
           <div className="space-y-1.5">
             <Label htmlFor={id('material')}>{t('Materiale', 'Material')}</Label>

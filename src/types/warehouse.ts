@@ -910,7 +910,16 @@ export interface LocationList {
   drawing: { version: number; linked: string[] } | null
 }
 export interface PalletCard { pallet: PalletView; location: Location | null; history: LocationEvent[] }
-export interface DocumentLookup { document: string; materials: { material: string; description: string; quantity: number; serials: string[] }[] }
+/** Something already put away with a 49/50 number: a pallet with it, or a shelf line whose note names it. `at` is when it was put away (a line: last changed), `by` who did it (empty when unknown). */
+export interface PlacedWithDocument { id: string; location: string; name: string; material: string; quantity: number | null; document?: string | null; at: number | null; by: string }
+/** A serial of the 49/50 number that already stands on a pallet. */
+export interface SerialOnPallet { serial: string; pallet: string; location: string; name: string; material: string; at: number | null; by: string }
+export interface DocumentLookup {
+  document: string
+  materials: { material: string; description: string; quantity: number; serials: string[] }[]
+  /** What is already put away with the number, so the same delivery is not put away twice (a partial delivery is fine). */
+  placed: { pallets: PlacedWithDocument[]; lines: PlacedWithDocument[]; serials: SerialOnPallet[] }
+}
 
 export type ImportWarningCode = 'NOT_IN_SAP' | 'DESCRIPTION_DIFFERS' | 'AREA_FROM_NAME' | 'UNKNOWN_TYPE' | 'ROW_SKIPPED' | 'MIXED_PLACE' | 'NOT_CHECKED' | 'PALLET_PLACE_MANY'
 export type ImportStep = 'sheet' | 'check' | 'mb52' | 'mm60' | 'plan' | 'done'
@@ -1022,7 +1031,8 @@ export interface LocationsBridge {
   overview(): Promise<LocationsOverview>
   lookupDocument(request: { document: string }): Promise<DocumentLookup>
   suggest(request: { material: string }): Promise<{ slots: SlotSuggestion[] }>
-  putAway(request: WithActionId<{ pallets: PalletInput[] }>): Promise<{ created: Pallet[]; /** Pick places filled straight from the pallet (no pallet is kept there). */ filled: string[] } | Deferred>
+  /** `allowDuplicate`: put away even when a serial already stands on another pallet (else SERIAL_ON_PALLET). */
+  putAway(request: WithActionId<{ pallets: PalletInput[]; allowDuplicate?: boolean }>): Promise<{ created: Pallet[]; /** Pick places filled straight from the pallet (no pallet is kept there). */ filled: string[] } | Deferred>
   take(request: WithActionId<{ pallet: string; quantity?: number }>): Promise<{ pallet: Pallet | null; olderPallet: (Pallet & { ageDays: number }) | null } | Deferred>
   /** From a reserve pallet (`pallet`) or from a shelf (`shelf` + `material` + `quantity`). */
   refill(request: WithActionId<{ location: string; pallet?: string; shelf?: string; material?: string; quantity?: number }>): Promise<{ pallet?: Pallet | null; line?: StockLine | null } | Deferred>

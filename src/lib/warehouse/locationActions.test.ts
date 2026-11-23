@@ -6,10 +6,11 @@ vi.mock('sonner', () => ({ toast }))
 
 import { pendingWriteCount } from '@/lib/pendingWrites'
 import {
-  addToStock, countedInCard, isPlaceHidden, locationActionsInFlight, matdocOf, movedInList, moveTargetCheck, palletEdit, predictedRack, replayFailureText, sendLocationAction, startLocationsRead,
+  addToStock, countedInCard, isPlaceHidden, locationActionsInFlight, matdocOf, movedInList, moveTargetCheck, palletEdit, placedFor, placedSummary, predictedRack, replayFailureText, sendLocationAction, startLocationsRead,
   takeFromCard, takeFromCardShelf, withPutAway, withStockQuantity,
 } from './locationActions'
 import { errorCode } from './errors'
+import { formatDate } from './locations'
 import { setWarehouseLanguage } from './text'
 
 type Listed = LocationList['locations'][number]
@@ -241,5 +242,25 @@ describe('optimistic changes', () => {
     expect(matdocOf(' 5000032337  2026 0001 ')).toBe('5000032337 2026 0001')
     expect(matdocOf('5000032337')).toBe('5000032337')
     expect(matdocOf('50000-32337')).toBeNull()
+  })
+
+  it('placedFor and placedSummary say where one material of a 49/50 number is already put away', () => {
+    const now = new Date(2026, 10, 20, 10).getTime()
+    const yesterday = new Date(2026, 10, 19, 15).getTime()
+    const pallet = (id: string, name: string, material: string, at: number, by = 'Bo') => ({ id, location: name, name, material, quantity: 1, document: '5000032337 2026', at, by })
+    const onPallet = (serial: string, id: string, name: string, material: string) => ({ serial, pallet: id, location: name, name, material, at: yesterday, by: 'Bo' })
+    const placed = {
+      pallets: [pallet('p1', 'A2.4', 'M1', yesterday), pallet('p9', 'A9.1', 'M2', yesterday)],
+      lines: [{ id: 'E9 H1|M1', location: 'E9 H1', name: 'E9 H1', material: 'M1', quantity: 4, at: now, by: '' }],
+      serials: [onPallet('N1', 'p1', 'A2.4', 'M1'), onPallet('N2', 'p5', 'A2.5', 'M1'), onPallet('N7', 'p7', 'A2.7', 'M2')],
+    }
+    const found = placedFor(placed, 'M1', ['N1', 'N2', 'N3'])
+    expect(found.serials).toBe(2)
+    expect(placedSummary(found, now)).toBe('Allerede sat på plads: A2.4 (Bo, i går), A2.5 (Bo, i går), E9 H1 (i dag). 2 af serienumrene står allerede på en palle.')
+    expect(placedSummary(placedFor(placed, 'M3', ['N9']), now), 'another material of the number is not this one').toBeNull()
+    const many = placedFor({ pallets: ['A1.1', 'A1.2', 'A1.3', 'A1.4', 'A1.5'].map((name, index) => pallet(`p${index}`, name, 'M1', new Date(2026, 9, 1).getTime())), lines: [], serials: [] }, 'M1', [])
+    expect(placedSummary(many, now)).toBe(`Allerede sat på plads: A1.1 (Bo, ${formatDate(new Date(2026, 9, 1).getTime())}), A1.2 (Bo, ${formatDate(new Date(2026, 9, 1).getTime())}), A1.3 (Bo, ${formatDate(new Date(2026, 9, 1).getTime())}) og 2 flere.`)
+    setWarehouseLanguage('en')
+    expect(placedSummary({ places: found.places.slice(0, 1), serials: 1 }, now)).toBe('Already put away: A2.4 (Bo, yesterday). 1 of the serial numbers is already on a pallet.')
   })
 })

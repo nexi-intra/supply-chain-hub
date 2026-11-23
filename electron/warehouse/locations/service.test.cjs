@@ -296,6 +296,47 @@ test('lookupDocument returns material, description and serials from the material
   assert.deepEqual(result.materials, [{ material: 'INT4300-4921-0', description: 'SmartPOS N950', quantity: 2, serials: ['N1', 'N2'] }])
   assert.deepEqual(learned.map(entry => `${entry.material}:${entry.source}`), ['INT4300-4921-0:matdoc'])
   assert.equal((await pc1.service.lookupDocument(ANNA, { document: '4900229137' })).document, '4900229137 2026', 'the document SAP found, with its year')
+  assert.deepEqual(result.placed, { pallets: [], lines: [], serials: [] }, 'nothing is put away with it yet')
+})
+
+test('lookupDocument also returns the pallets and shelf lines that already have the document, and serials already on a pallet', async () => {
+  const { pc1, seed } = setup()
+  const at = day(2026, 10, 19)
+  await seed([place('A2.4'), place('A2.5'), place('A2.6'), place('E9 H1', { type: 'Hylde', rack: 'E9', shelf: 1 })], [
+    { id: 'p1', location: 'A2.4', material: 'INT4300-4921-0', quantity: 2, document: '4900229137 2026 0001', receivedAt: at, createdAt: at, createdBy: { email: 'bo@x.test', name: 'Bo' } },
+    { id: 'p2', location: 'A2.5', material: 'INT4300-4921-0', quantity: 1, serials: ['N2'], receivedAt: at, createdAt: at, createdBy: { email: 'bo@x.test', name: 'Bo' } },
+    { id: 'p3', location: 'A2.6', material: 'INT4300-4921-0', quantity: 1, document: '4900229137 2025', serials: ['N9'], receivedAt: at },
+  ])
+  await pc1.repo.transact('TCD', tx => { tx.stock['E9 H1|INT4300-4921-0'] = { id: 'E9 H1|INT4300-4921-0', location: 'E9 H1', material: 'INT4300-4921-0', quantity: 4, updatedAt: at, updatedBy: { email: 'ada@x.test', name: 'Ada' }, note: '49/50: 4900229137 2026 0002' } })
+  const { placed } = await pc1.service.lookupDocument(ANNA, { document: '4900229137' })
+  assert.deepEqual(placed.pallets, [{ id: 'p1', location: 'A2.4', name: 'A2.4', material: 'INT4300-4921-0', quantity: 2, document: '4900229137 2026 0001', at, by: 'Bo' }], 'the same number and year; another year is another document')
+  assert.deepEqual(placed.lines, [{ id: 'E9 H1|INT4300-4921-0', location: 'E9 H1', name: 'E9 H1', material: 'INT4300-4921-0', quantity: 4, at, by: 'Ada' }])
+  assert.deepEqual(placed.serials, [{ serial: 'N2', pallet: 'p2', location: 'A2.5', name: 'A2.5', material: 'INT4300-4921-0', at, by: 'Bo' }])
+})
+
+test('putAway refuses a serial already on another pallet unless allowDuplicate; the same 49/50 number alone is a partial delivery', async () => {
+  const { pc1, seed } = setup()
+  await seed([place('A2.4'), place('A2.5'), place('A2.6'), place('A2.7')], [{ id: 'p1', location: 'A2.4', material: 'INT4300-4921-0', quantity: 1, document: '5000032337 2026', serials: ['N1'], receivedAt: 1 }])
+  const twice = { location: 'A2.5', material: 'INT4300-4921-0', quantity: 2, document: '5000032337 2026', serials: ['n1', 'N3'] }
+  await assert.rejects(pc1.service.putAway(ANNA, { actionId: 'a1', pallets: [twice] }), error => error.code === 'SERIAL_ON_PALLET' && /N1/.test(error.message) && /A2\.4/.test(error.message))
+  assert.deepEqual(Object.keys((await pc1.repo.read('TCD')).pallets), ['p1'], 'nothing is put away')
+  await assert.rejects(pc1.service.putAway(ANNA, { actionId: 'a2', pallets: [{ ...twice, serials: ['N5'] }, { ...twice, location: 'A2.6', serials: ['N5'] }] }), { code: 'SERIAL_ON_PALLET' }, 'also twice in one put-away')
+  const partial = await pc1.service.putAway(ANNA, { actionId: 'a3', pallets: [{ ...twice, location: 'A2.6', serials: ['N4'] }] })
+  assert.equal(partial.created.length, 1, 'the same 49/50 number with other serials goes in')
+  const allowed = await pc1.service.putAway(ANNA, { actionId: 'a4', allowDuplicate: true, pallets: [{ ...twice, location: 'A2.7' }] })
+  assert.deepEqual(allowed.created.map(pallet => pallet.serials), [['N1', 'N3']], 'put away anyway when the person said so')
+})
+
+test('a replayed put-away is not refused for the serials on the pallet its own first try made', async () => {
+  const { pc1, seed } = setup()
+  // What a first try leaves when M: dropped before its action id landed: its first pallet, with the serials.
+  await seed([place('A2.4'), place('A2.5')], [{ id: 'put-3:0', location: 'A2.4', material: 'INT4300-4921-0', quantity: 1, serials: ['N1'], receivedAt: 1 }])
+  const { created } = await pc1.service.putAway(ANNA, { actionId: 'put-3', pallets: [
+    { location: 'A2.4', material: 'INT4300-4921-0', quantity: 1, serials: ['N1'] },
+    { location: 'A2.5', material: 'INT4300-4921-0', quantity: 1, serials: ['N2'] },
+  ] })
+  assert.deepEqual(created.map(pallet => pallet.id), ['put-3:0', 'put-3:1'])
+  assert.deepEqual(Object.keys((await pc1.repo.read('TCD')).pallets).sort(), ['put-3:0', 'put-3:1'])
 })
 
 test('cards show descriptions, FIFO, pick places and history', async () => {

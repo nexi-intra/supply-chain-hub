@@ -42,6 +42,9 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
   }
   const serialsOf = list => [...new Set((Array.isArray(list) ? list : []).map(serial => String(serial || '').trim().toUpperCase()).filter(Boolean))]
   const tagsOf = list => [...new Set((Array.isArray(list) ? list : []).map(tag => String(tag || '').trim()).filter(Boolean))]
+  /** "Serienummeret N1" or "Serienumrene N1, N2, N3 og 2 flere". */
+  const serialList = serials => (serials.length === 1 ? `Serienummeret ${serials[0]}`
+    : `Serienumrene ${serials.slice(0, 3).join(', ')}${serials.length > 3 ? ` og ${serials.length - 3} flere` : ''}`)
 
   // The first daily action after an import makes the data live; from then on the import is locked.
   const goLive = tx => { if (!tx.meta.liveAt) tx.meta.liveAt = now() }
@@ -110,12 +113,29 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
   const age = pallet => ({ ...pallet, ageDays: Math.floor((now() - (pallet.receivedAt || now())) / DAY_MS) })
 
   // ---------- Daily actions ----------
-  async function putAway(user, { pallets, actionId } = {}) {
+  /**
+   * A serial already on another pallet (or on two pallets of this put-away) is refused unless `allowDuplicate`: the same
+   * delivery put away twice makes stock that is not there. The same 49/50 number alone is fine (a partial delivery).
+   */
+  async function putAway(user, { pallets, actionId, allowDuplicate } = {}) {
     const team = teamOf(user)
     if (!Array.isArray(pallets) || !pallets.length || pallets.length > 200) throw codeError('PALLETS_INVALID', 'Ingen paller at sætte på plads')
     const result = await repo.transact(team, { actionId, writes: ['pallets'] }, tx => {
       const created = []
       const filled = []
+      // The pallets a first try of this action made are its own, so a replay is never refused for their serials.
+      const own = new Set(actionId ? pallets.map((_, index) => `${actionId}:${index}`) : [])
+      const serialsOnPallets = new Map()
+      const checked = allowDuplicate !== true
+      if (checked) for (const pallet of Object.values(tx.pallets)) if (!own.has(pallet.id)) for (const serial of pallet.serials || []) serialsOnPallets.set(serial, pallet.location)
+      const inThisPutAway = new Set()
+      const checkSerials = serials => {
+        if (!checked) return
+        const onPallets = serials.filter(serial => serialsOnPallets.has(serial))
+        const twice = serials.filter(serial => inThisPutAway.has(serial) && !serialsOnPallets.has(serial))
+        if (onPallets.length) throw codeError('SERIAL_ON_PALLET', `${serialList(onPallets)} står allerede på en palle på ${[...new Set(onPallets.map(serial => nameOf(tx, serialsOnPallets.get(serial))))].join(', ')}. Tjek, om pallen allerede er sat på plads.`)
+        if (twice.length) throw codeError('SERIAL_ON_PALLET', `${serialList(twice)} er på to paller i denne registrering.`)
+      }
       for (const [index, input] of pallets.entries()) {
         // The id comes from the action, so a replay after M: dropped halfway (the pallets written, the rest not) finds
         // the pallet it already made instead of making a second one.
@@ -126,9 +146,13 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
           tx.adopt(id)
           tx.event({ type: 'putaway', by: by(user), pallet: id, location: made.location, material: made.material, quantity: made.quantity })
           created.push(made)
+          for (const serial of made.serials || []) inThisPutAway.add(serial)
           continue
         }
         const location = roomIn(tx, input.location)
+        const serials = serialsOf(input.serials)
+        checkSerials(serials)
+        for (const serial of serials) inThisPutAway.add(serial)
         if (location.purpose === 'pick') {
           // Straight onto a pick place: the pallet is used up there (pick places hold no pallets and have no quantity).
           const material = pickMaterial(location, materialOf(input.material))
@@ -141,7 +165,7 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
         const pallet = {
           id, location: location.id, material: materialOf(input.material), quantity: quantityOf(input.quantity, { min: 0, optional: true }),
           receivedAt: Number.isFinite(input.receivedAt) ? input.receivedAt : now(), document: normalizeMatdoc(input.document) || null,
-          serials: serialsOf(input.serials), sloc, tags: tagsOf(input.tags), note: String(input.note || '').trim().slice(0, 500), createdAt: now(), createdBy: by(user),
+          serials, sloc, tags: tagsOf(input.tags), note: String(input.note || '').trim().slice(0, 500), createdAt: now(), createdBy: by(user),
         }
         tx.pallets[pallet.id] = pallet
         tx.event({ type: 'putaway', by: by(user), pallet: pallet.id, location: location.id, material: pallet.material, quantity: pallet.quantity })
@@ -401,6 +425,10 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
     }
   }
 
+  /**
+   * A 49/50 number, its SAP lines grouped per material, and what is already put away with it (so the same delivery is
+   * not put away twice): pallets and shelf lines with the number, and pallets with one of its serials.
+   */
   async function lookupDocument(user, { document } = {}) {
     const team = teamOf(user)
     const fetched = await fetcher.fetchMatdoc({ team, document })
@@ -413,7 +441,37 @@ function createLocationService({ repo, catalog, fetcher, sheetSource, isLocation
     }
     const list = [...materials.values()]
     await catalog.learn(list.filter(entry => entry.description).map(entry => ({ material: entry.material, description: entry.description, source: 'matdoc' })))
-    return { document: fetched.document, materials: list }
+    // Read after SAP answered (a cached read), so it is as new as it can be.
+    const state = await repo.read(team)
+    return { document: fetched.document, materials: list, placed: placedWith(state, fetched.document, fetched.rows.map(row => row.serial)) }
+  }
+
+  /** "5000032337 2026 0001" and "5000032337 2026" are the same document; a year on both must match. */
+  const documentOf = value => {
+    const [number, year] = (normalizeMatdoc(value) || '').split(' ')
+    return number ? { number, year: year || null } : null
+  }
+  const sameDocument = (a, b) => Boolean(a && b && a.number === b.number && (!a.year || !b.year || a.year === b.year))
+  const nameOf = (state, id) => state.locations[id]?.name || id
+  const whoName = who => (who && (who.name || who.email)) || ''
+
+  function placedWith(state, document, serials) {
+    const wanted = documentOf(document)
+    const pallets = Object.values(state.pallets)
+    const onPallets = new Set(serialsOf(serials))
+    const order = (a, b) => (a.at || 0) - (b.at || 0) || a.name.localeCompare(b.name, 'da', { numeric: true })
+    return {
+      pallets: pallets.filter(pallet => sameDocument(documentOf(pallet.document), wanted))
+        .map(pallet => ({ id: pallet.id, location: pallet.location, name: nameOf(state, pallet.location), material: pallet.material, quantity: pallet.quantity ?? null, document: pallet.document, at: pallet.createdAt ?? pallet.receivedAt ?? null, by: whoName(pallet.createdBy) }))
+        .sort(order),
+      // A shelf line keeps the 49/50 numbers only in its note (the pallets moved to the shelf before hyldelager).
+      lines: Object.values(state.stock || {}).filter(line => (String(line.note || '').match(/\b\d{10}(?: \d{4})?\b/g) || []).some(found => sameDocument(documentOf(found), wanted)))
+        .map(line => ({ id: line.id, location: line.location, name: nameOf(state, line.location), material: line.material, quantity: line.quantity, at: line.updatedAt ?? null, by: whoName(line.updatedBy) }))
+        .sort(order),
+      serials: pallets.flatMap(pallet => (pallet.serials || []).filter(serial => onPallets.has(serial))
+        .map(serial => ({ serial, pallet: pallet.id, location: pallet.location, name: nameOf(state, pallet.location), material: pallet.material, at: pallet.createdAt ?? pallet.receivedAt ?? null, by: whoName(pallet.createdBy) })))
+        .sort((a, b) => a.serial.localeCompare(b.serial, 'da', { numeric: true })),
+    }
   }
 
   async function suggest(user, { material } = {}) {
