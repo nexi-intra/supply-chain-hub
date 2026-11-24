@@ -28,6 +28,14 @@ const labels = {
     failed: 'Palautusta ei voitu suorittaa. Siirto on edelleen lukittu. Yritä uudelleen, kun tallennustila on käytettävissä.',
     confirm: 'Palautetaanko tili ja siihen liittyvät tiedot siirtoa edeltävään tilaan?',
   },
+  sv: {
+    title: 'En kontoflytt måste återställas',
+    body: 'Hubbens data är tillfälligt spärrad för att undvika arbete med en ofullständig flytt. Kontakta Creator om du inte själv kan återställa den.',
+    resume: 'Fortsätt flytten', rollback: 'Ångra flytten', logout: 'Logga ut',
+    progress: 'Slutförda steg', conflict: 'Data har ändrats sedan flytten. Inget skrivs över automatiskt. Kontakta hubbens ansvarige.',
+    failed: 'Återställningen kunde inte slutföras. Flytten är fortfarande spärrad. Försök igen när lagringen är tillgänglig.',
+    confirm: 'Vill du återställa kontot och berörda data till läget före flytten?',
+  },
 }
 
 // Independently available in every logged-in view, even when ordinary KV
@@ -44,25 +52,29 @@ export function AccountMigrationRecovery({ userEmail, onLogout }: { userEmail: s
     const accounts = window.electronAccounts
     if (!accounts) return
     let active = true, checking = false
+    let lastCheck = 0
     const check = async () => {
       // Denne komponent er altid monteret (ogsaa oven paa spil) og laeser IKKE
       // via useKV, saa den fik ikke normalt den samme "data-game-active"-pause
       // som resten af appen - hvert baggrunds-tjek er 2 IPC-rundture, der
       // konkurrerede med spillets main-traad hver gang NOGEN aendrede data
       // paa det delte drev (hyppigere efter watcheren blev speedet op).
-      if (checking || (typeof document !== 'undefined' && document.body?.hasAttribute('data-game-active'))) return
+      if (checking || (typeof document !== 'undefined' && (document.body?.hasAttribute('data-game-active') || document.visibilityState === 'hidden'))) return
       checking = true
+      lastCheck = Date.now()
       try {
         const record = await accounts.status()
         const actor = record ? await window.electronAuth?.current() : undefined
-        if (active) { setMigration(record); setBlocked(!!record); setCanRecover(actor?.role === 'creator' && !actor.viewId) }
+        if (active) { setMigration(record); setBlocked(!!record); setCanRecover(actor?.role === 'creator') }
       } catch (failure) {
         if (active && String(failure).includes('AUTH_FORBIDDEN')) { setMigration(null); setBlocked(true); setCanRecover(false) }
       } finally { checking = false }
     }
     void check()
-    const interval = setInterval(() => { void check() }, 5000)
-    const unsubscribe = window.electronKv?.onChanged(() => { void check() })
+    // Målt: 227 statuskald på 12 min (hvert 5. s + ved HVER datændring). Serveren afviser
+    // alligevel skrivninger under en migrering, så banneret må gerne komme inden for 30 s.
+    const interval = setInterval(() => { void check() }, 30000)
+    const unsubscribe = window.electronKv?.onChanged(() => { if (Date.now() - lastCheck > 10000) void check() })
     return () => { active = false; clearInterval(interval); unsubscribe?.() }
   }, [userEmail])
   if (!blocked) return null
@@ -82,7 +94,7 @@ export function AccountMigrationRecovery({ userEmail, onLogout }: { userEmail: s
         {migration && <div className="text-sm space-y-1"><p className="break-all">{migration.oldEmail} → {migration.newEmail}</p><p>{text.progress}: {migration.applied} / {migration.total}</p></div>}
         {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
         <div className="flex flex-wrap gap-2">
-          {canRecover && <><Button disabled={busy} onClick={() => { void recover('resume') }}>{text.resume}</Button><Button variant="outline" disabled={busy} onClick={() => { void recover('rollback') }}>{text.rollback}</Button></>}
+          {canRecover && <><Button disabled={busy} onClick={() => { return recover('resume') }}>{text.resume}</Button><Button variant="outline" disabled={busy} onClick={() => { return recover('rollback') }}>{text.rollback}</Button></>}
           <Button variant="ghost" disabled={busy} onClick={onLogout}>{text.logout}</Button>
         </div>
       </section>

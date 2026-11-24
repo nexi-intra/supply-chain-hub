@@ -421,14 +421,14 @@ function createResilientStore(networkStore, localStore, options = {}) {
     return result
   }
 
-  function watch(onChange, onConnectionChange, intervalMs) {
+  function watch(onChange, onConnectionChange, options) {
     // Fanger op på en evt. kø fra sidste session, hvis appen starter allerede forbundet.
     if (networkStore.isConnected()) runReplay()
 
     return networkStore.watch(onChange, (connected) => {
       if (connected) runReplay()
       onConnectionChange?.(connected)
-    }, intervalMs)
+    }, options)
   }
 
   function isConnected() {
@@ -459,6 +459,7 @@ function createResilientStore(networkStore, localStore, options = {}) {
     update,
     updateAsync,
     watch,
+    setWatchVisibility: visible => networkStore.setWatchVisibility?.(visible),
     isConnected,
     dumpAll,
     dumpAllAsync,

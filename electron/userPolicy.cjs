@@ -7,8 +7,9 @@ function publicUsers(value) {
     return [key, profile]
   }))
 }
-function updateUsers(store, operation, actor, creatorEmail, trusted = {}) {
-  if (actor.viewId || !['creator', 'manager'].includes(actor.role)) fail()
+/** The checks and the change of one users update, shared by the synchronous and the asynchronous write. */
+function prepareUsersUpdate(operation, actor, creatorEmail, trusted = {}) {
+  if (!['creator', 'manager'].includes(actor.role)) fail()
   const allowed = new Set(['setField', 'deleteField', 'renameField'])
   if (!allowed.has(operation?.op) || typeof operation.field !== 'string' || !operation.field) fail()
   const unsafe = new Set(['__proto__', 'constructor', 'prototype'])
@@ -16,7 +17,7 @@ function updateUsers(store, operation, actor, creatorEmail, trusted = {}) {
   const targetKey = operation.op === 'renameField' ? operation.newField : operation.field
   if (typeof targetKey !== 'string' || !/^[^\s@]+@[^\s@]+$/.test(targetKey) || targetKey.length > 254) fail()
   let result
-  store.mutate('users', value => {
+  const change = value => {
     const users = value || {}
     if (typeof users !== 'object' || Array.isArray(users)) fail('KV_INVALID_OPERATION')
     const existing = users[operation.field], creator = normalize(creatorEmail)
@@ -52,7 +53,18 @@ function updateUsers(store, operation, actor, creatorEmail, trusted = {}) {
     }
     result = publicUsers(next)
     return next
-  })
-  return result
+  }
+  return { change, result: () => result }
 }
-module.exports = { publicUsers, updateUsers }
+function updateUsers(store, operation, actor, creatorEmail, trusted = {}) {
+  const update = prepareUsersUpdate(operation, actor, creatorEmail, trusted)
+  store.mutate('users', update.change)
+  return update.result()
+}
+/** Same as updateUsers under the same lock, but the write does not freeze the main thread (20-40 s on M:). */
+async function updateUsersAsync(store, operation, actor, creatorEmail, trusted = {}) {
+  const update = prepareUsersUpdate(operation, actor, creatorEmail, trusted)
+  await store.mutateAsync('users', update.change)
+  return update.result()
+}
+module.exports = { publicUsers, updateUsers, updateUsersAsync }

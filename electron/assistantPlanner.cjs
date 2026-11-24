@@ -1,6 +1,6 @@
 const { validatePlan } = require('./assistantKnowledge.cjs')
 const { validateConversation, isFollowUp } = require('./assistantConversation.cjs')
-const fingerprint = principal => `${principal.email}:${principal.viewId || ''}:${principal.role}:${principal.teams.map(team => team.teamId).sort().join(',')}`
+const fingerprint = principal => `${principal.email}:${principal.role}:${principal.teams.map(team => team.teamId).sort().join(',')}`
 function parsePlan(text) {
   if (typeof text !== 'string' || text.length > 4000) throw new Error('Ugyldig lokal søgeplan')
   const json = text.trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '')
@@ -13,7 +13,7 @@ function parsePlan(text) {
   return plan
 }
 async function resolveAssistantAnswer(assistant, localAI, request) {
-  const scope = fingerprint(await assistant.authorize(request?.token, request?.viewId))
+  const scope = fingerprint(await assistant.authorize(request?.token))
   const history = validateConversation(request.conversation)
   let answer = await assistant.query(request)
   answer = { ...answer, contextQuestion: answer.contextQuestion || answer.scoreContext || request.question }
@@ -33,13 +33,13 @@ async function resolveAssistantAnswer(assistant, localAI, request) {
       { role: 'user', content: followUp ? JSON.stringify({ precedingQuestions: history.length ? history : [request.previousQuestion], latestQuestion: request.question }) : request.question },
     ], { maxTokens: 180 })
     const plan = parsePlan(result.text)
-    if (fingerprint(await assistant.authorize(request.token, request.viewId)) !== scope) throw new Error('Hubben eller adgangen blev ændret under opslaget')
+    if (fingerprint(await assistant.authorize(request.token)) !== scope) throw new Error('Hubben eller adgangen blev ændret under opslaget')
     if (!plan.modules.length) return answer
     const question = followUp && plan.question ? plan.question : answer.contextQuestion
     answer = await assistant.query({ ...request, question, previousQuestion: undefined, conversation: undefined, searchPlan: plan })
     return { ...answer, contextQuestion: answer.contextQuestion || answer.scoreContext || question }
   } catch (error) {
-    if (fingerprint(await assistant.authorize(request.token, request.viewId)) !== scope) throw new Error('Hubben eller adgangen blev ændret under opslaget')
+    if (fingerprint(await assistant.authorize(request.token)) !== scope) throw new Error('Hubben eller adgangen blev ændret under opslaget')
     return { ...answer, warning: `Lokal fortolkning / Local interpretation / Paikallinen tulkinta: ${String(error.message).slice(0, 300)}` }
   }
 }

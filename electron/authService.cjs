@@ -5,6 +5,10 @@ const { promisify } = require('node:util')
 const pbkdf2 = promisify(crypto.pbkdf2)
 const ITERATIONS = 150000
 const DAY = 24 * 60 * 60 * 1000
+// A remembered session is renewed (to 365 days) only once less than this is left, i.e. at most about monthly.
+const RENEW_AFTER_REMAINING_MS = 335 * DAY
+// Laesninger mens kontolaasen holdes: friske og uden om store'ns laese-koe.
+const UNDER_LOCK_READ = Object.freeze({ skipCache: true, unthrottled: true })
 const normalize = value => String(value || '').trim().toLowerCase()
 const sessionKey = token => crypto.createHash('sha256').update(token).digest('hex')
 function fail(code) { const error = new Error(code); error.code = code; throw error }
@@ -41,21 +45,42 @@ async function verifyPassword(password, stored) {
 // Only the backend can mint sessions. Persistent keys are token hashes: the
 // shared file does not contain reusable plaintext bearer tokens. Every use
 // checks the account and directory afresh (no cached privilege fallback).
-function createAuthService({ registry, getRoot, openTeam, openSessions, switchTeam, deviceSecret, now = Date.now, runWrite = callback => callback(), runAuthentication = (_, callback) => callback({ recovering: false }), assertAvailable = () => {} }) {
+function createAuthService({ registry, getRoot, openTeam, openSessions, switchTeam, getActiveFolder = () => null, deviceSecret, now = Date.now, runWrite = callback => callback(), runWriteAsync = async callback => callback(), runAuthentication = (_, callback) => callback({ recovering: false }), runAuthenticationAsync = async (_email, callback) => callback({ recovering: false }), assertAvailable = () => {}, contextTtlMs = 500 }) {
   if (!Buffer.isBuffer(deviceSecret) || deviceSecret.length !== 32) fail('AUTH_DEVICE_KEY_INVALID')
   const bindings = new Map(), busy = new Set(), attempts = new Map(), epochs = new Map()
-  // Coalesces the many synchronous session/role reads that arrive in a burst
-  // (module load) into one fresh snapshot per sender. A revoked session or
-  // changed role therefore takes effect within CONTEXT_TTL_MS instead of
-  // instantly; migration context (accountService) stays live and uncached.
-  const contextCache = new Map(), CONTEXT_TTL_MS = 500
-  const invalidate = sender => contextCache.delete(sender)
+  // Coalesces the session/role reads behind every IPC call into one snapshot per
+  // sender. A revoked session or changed role takes effect within contextTtlMs
+  // (main.cjs uses 15 s and clears the cache as soon as its watcher sees
+  // active-sessions/users change); migration context (accountService) is gated separately.
+  const contextCache = new Map(), CONTEXT_TTL_MS = contextTtlMs
+  // currentAsync maa svare med et aeldre snapshot, mens det genlaeses i
+  // baggrunden: hoejst 60 s efter at den seneste vellykkede laesning blev
+  // gemt (`at` saettes naar laesningen er faerdig), dvs. data kan vaere op til
+  // 60 s + varigheden af den laesning gamle. Afvises genlaesningen (fx
+  // tilbagekaldt session) fjernes snapshottet, saa naeste kald afvises.
+  // Rolle-tjek (requireRoleAsync) bruger aldrig et forældet snapshot.
+  const MAX_STALE_MS = Math.max(CONTEXT_TTL_MS, 60000)
+  // Bumped by every HARD invalidation, so a resolve that started before a logout/role change is never cached afterwards.
+  let generation = 0
+  // Bumped by every SOFT revalidation (revalidateAll): older snapshots are served once more but are re-read at once.
+  let softEpoch = 0, resolveSeq = 0
+  const pendingResolves = new Map()
+  const invalidate = sender => { generation++; contextCache.delete(sender) }
   const sign = record => crypto.createHmac('sha256', deviceSecret).update(JSON.stringify([getRoot(), record.authVersion, record.email, record.userId, record.teamId, record.createdAt, record.expiresAt, record.credentialHash])).digest('hex')
   const signed = record => ({ ...record, signature: sign(record) })
   function account(email) {
     const home = registry.lookupTeamForEmail(getRoot(), email)
     if (!home) fail('AUTH_CREDENTIALS')
-    const users = openTeam(home).get('users', { skipCache: true }) || {}
+    return accountIn(home, openTeam(home).get('users', { skipCache: true }), email)
+  }
+  async function accountAsync(email, readOptions = { skipCache: true }) {
+    const home = registry.lookupTeamForEmail(getRoot(), email)
+    if (!home) fail('AUTH_CREDENTIALS')
+    const target = openTeam(home)
+    return accountIn(home, typeof target.getAsync === 'function' ? await target.getAsync('users', readOptions) : target.get('users', { skipCache: true }), email)
+  }
+  function accountIn(home, stored, email) {
+    const users = stored || {}
     const entry = Object.entries(users).find(([key, user]) => normalize(user?.email || key) === normalize(email))
     if (!entry) fail('AUTH_CREDENTIALS')
     return { home, key: entry[0], user: structuredClone(entry[1]) }
@@ -64,32 +89,133 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
     if (user.status === 'pending') fail('AUTH_PENDING')
     if (user.status && user.status !== 'approved') fail('AUTH_REJECTED')
   }
-  function current(sender) {
+  // Snapshot for samme rod/mappe; fresh = yngre end TTL og ikke markeret af en senere revalidateAll.
+  function snapshot(sender) {
     const cached = contextCache.get(sender)
-    if (cached && cached.root === getRoot() && now() - cached.at < CONTEXT_TTL_MS) return structuredClone(cached.actor)
+    if (!cached || cached.root !== getRoot() || cached.folder !== getActiveFolder()) return null
+    const age = now() - cached.at
+    return { cached, fresh: age < CONTEXT_TTL_MS && cached.soft === softEpoch, usable: age < MAX_STALE_MS }
+  }
+  function cachedActor(sender) {
+    const found = snapshot(sender)
+    return found?.fresh ? structuredClone(found.cached.actor) : null
+  }
+  // A resolve may only replace a snapshot that is older than itself (seq), so a
+  // slow resolve that finishes late never overwrites data read after it started.
+  function remember(sender, actor, startedAt, seq, soft) {
+    if (startedAt !== generation) return
+    const existing = contextCache.get(sender)
+    if (existing && existing.seq > seq) return
+    contextCache.set(sender, { at: now(), root: getRoot(), folder: getActiveFolder(), actor: structuredClone(actor), seq, soft })
+  }
+  function current(sender) {
+    const cached = cachedActor(sender)
+    if (cached) return cached
+    const startedAt = generation, seq = ++resolveSeq, soft = softEpoch
     const actor = resolveCurrent(sender)
-    contextCache.set(sender, { at: now(), root: getRoot(), actor: structuredClone(actor) })
+    remember(sender, actor, startedAt, seq, soft)
     return structuredClone(actor)
   }
-  function resolveCurrent(sender) {
+  // Single-flight resolve per window. A pending resolve is reused only if it
+  // started after the latest hard invalidation AND the latest soft revalidation.
+  function ensureResolve(sender) {
+    const pending = pendingResolves.get(sender)
+    if (pending && pending.generation === generation && pending.soft === softEpoch && pending.root === getRoot() && pending.folder === getActiveFolder()) return pending
+    const startedAt = generation, soft = softEpoch, seq = ++resolveSeq
+    const promise = resolveCurrentAsync(sender).then(actor => { remember(sender, actor, startedAt, seq, soft); return actor }, error => {
+      // Afvist (AUTH_REQUIRED, rolle/konto aendret, laesefejl): et snapshot der
+      // er aeldre end denne resolve maa ikke serveres igen.
+      const existing = contextCache.get(sender)
+      if (existing && existing.seq < seq) contextCache.delete(sender)
+      throw error
+    })
+    const entry = { promise, generation: startedAt, soft, root: getRoot(), folder: getActiveFolder() }
+    pendingResolves.set(sender, entry)
+    promise.then(() => {}, () => {}).finally(() => { if (pendingResolves.get(sender) === entry) pendingResolves.delete(sender) })
+    return entry
+  }
+  /** current() without blocking the main thread on the shared drive; concurrent calls for one window share one resolve. */
+  async function currentAsync(sender) {
+    const found = snapshot(sender)
+    if (found?.fresh) return structuredClone(found.cached.actor)
+    // Stale-while-revalidate: hoejst MAX_STALE_MS gammelt og ikke haardt
+    // invalideret (det sletter snapshottet) -> svar straks, genlaes i baggrunden.
+    if (found?.usable) { ensureResolve(sender); return structuredClone(found.cached.actor) }
+    return structuredClone(await ensureResolve(sender).promise)
+  }
+  // Uden stale-servering: til auth-operationer selv (renew), som skal se samme friske snapshot som foer.
+  async function currentFreshAsync(sender) {
+    return cachedActor(sender) || structuredClone(await ensureResolve(sender).promise)
+  }
+  // Blød invalidering (en anden klient aendrede active-sessions/users): alle
+  // snapshots markeres forældede og genlaeses straks i baggrunden, saa en
+  // tilbagekaldt session eller ny rolle slaar igennem efter én M:-laesning.
+  function revalidateAll() {
+    softEpoch++
+    for (const sender of new Set([...bindings.keys(), ...contextCache.keys()])) {
+      if (!bindings.has(sender)) { contextCache.delete(sender); continue }
+      ensureResolve(sender).promise.catch(() => {})
+    }
+  }
+  function boundSession(sender, sessions) {
     const bound = bindings.get(sender)
     if (!bound || bound.root !== getRoot()) fail('AUTH_REQUIRED')
-    const session = openSessions().get('active-sessions', { skipCache: true })?.[sessionKey(bound.token)]
+    const session = sessions?.[sessionKey(bound.token)]
     if (!session || session.authVersion !== 1 || session.expiresAt <= now() || !Number.isFinite(session.expiresAt)) fail('AUTH_REQUIRED')
     if (typeof session.signature !== 'string' || !/^[a-f0-9]{64}$/.test(session.signature) || !crypto.timingSafeEqual(Buffer.from(session.signature, 'hex'), Buffer.from(sign(session), 'hex'))) fail('AUTH_REQUIRED')
-    const email = normalize(session.email), { home, user } = account(email)
+    return { bound, session }
+  }
+  function boundOrFail(sender) {
+    const bound = bindings.get(sender)
+    if (!bound || bound.root !== getRoot()) fail('AUTH_REQUIRED')
+    return bound
+  }
+  function resolveCurrent(sender) {
+    boundOrFail(sender)
+    const { bound, session } = boundSession(sender, openSessions().get('active-sessions', { skipCache: true }))
+    return actorFrom(bound, session, account(normalize(session.email)))
+  }
+  async function resolveCurrentAsync(sender, readOptions = { skipCache: true }) {
+    boundOrFail(sender)
+    if (typeof registry.prefetchAsync === 'function') await registry.prefetchAsync(getRoot())
+    const sessionStore = openSessions()
+    const sessions = typeof sessionStore.getAsync === 'function' ? await sessionStore.getAsync('active-sessions', readOptions) : sessionStore.get('active-sessions', { skipCache: true })
+    const { bound, session } = boundSession(sender, sessions)
+    return actorFrom(bound, session, await accountAsync(normalize(session.email), readOptions))
+  }
+  // Under kontolaasen: samme resolve som currentAsync, men laesningerne springer
+  // laese-koeen over (laasen holdes imens) og deles ikke med en koe-ventende resolve.
+  async function currentUnderLockAsync(sender) {
+    const startedAt = generation, seq = ++resolveSeq, soft = softEpoch
+    const actor = await resolveCurrentAsync(sender, UNDER_LOCK_READ)
+    remember(sender, actor, startedAt, seq, soft)
+    return structuredClone(actor)
+  }
+  function actorFrom(bound, session, { home, user }) {
+    const email = normalize(session.email)
     approved(user)
     if (typeof user.password !== 'string' || !user.password || session.credentialHash !== sessionKey(user.password)) fail('AUTH_REQUIRED')
     if (home.teamId !== session.teamId) fail('AUTH_REQUIRED')
-    if (bound.viewId && !registry.listAccessViewsForEmail(getRoot(), email).some(view => view.viewId === bound.viewId)) fail('AUTH_FORBIDDEN')
     const creator = normalize(registry.getCreatorEmail(getRoot()))
-    const role = email === creator ? 'creator' : user.role === 'manager' || user.role === 'admin' || (!user.role && user.isManager) ? 'manager' : 'user'
-    return { token: bound.token, email, userId: session.userId, teamId: session.teamId, expiresAt: session.expiresAt, createdAt: session.createdAt, role, home, viewId: bound.viewId || null }
+    const homeRole = email === creator ? 'creator' : user.role === 'manager' || user.role === 'admin' || (!user.role && user.isManager) ? 'manager' : 'user'
+    // The open hub decides the role: own role at home, manager in an extra team, nothing elsewhere.
+    const teams = [home, ...(homeRole === 'creator' ? [] : registry.managerTeamsForEmail?.(getRoot(), email) || [])]
+    const folder = getActiveFolder()
+    const activeTeam = !folder ? home : (homeRole === 'creator' ? registry.listTeams(getRoot()) : teams).find(team => team.folderName === folder) || null
+    const role = homeRole === 'creator' ? 'creator' : activeTeam?.teamId === home.teamId ? homeRole : activeTeam ? 'manager' : 'user'
+    return { token: bound.token, email, userId: session.userId, teamId: session.teamId, expiresAt: session.expiresAt, createdAt: session.createdAt, role, homeRole, home, activeTeam, teams }
+  }
+  function checkRole(actor, role) {
+    if (actor.role !== 'creator' && (role === 'creator' || actor.role !== 'manager')) fail('AUTH_FORBIDDEN')
+    return actor
   }
   function requireRole(sender, role) {
-    const actor = current(sender)
-    if (actor.viewId || (actor.role !== 'creator' && (role === 'creator' || actor.role !== 'manager'))) fail('AUTH_FORBIDDEN')
-    return actor
+    return checkRole(current(sender), role)
+  }
+  // Rolle-tjek uden synkron M:-laesning: aldrig et forældet/soft-markeret snapshot
+  // (en degraderet creator/manager mister adgangen straks), men venter async paa genlaesning.
+  async function requireRoleAsync(sender, role) {
+    return checkRole(await currentFreshAsync(sender), role)
   }
   async function exclusive(sender, callback, throttle = false) {
     if (busy.has(sender) || busy.size >= 4) fail('AUTH_BUSY')
@@ -106,28 +232,33 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
   async function login(sender, request) {
     return exclusive(sender, async (check) => {
       if (typeof request?.email !== 'string' || !request.email.trim() || request.email.length > 254 || typeof request.password !== 'string' || !request.password || request.password.length > 1024) fail('AUTH_CREDENTIALS')
+      await registry.prefetchAsync?.(getRoot())
       const identity = normalize(request.email)
       let email = identity
       if (!identity.includes('@')) {
         const candidates = []
         for (const team of registry.listTeams(getRoot())) {
-          const users = openTeam(team).get('users', { skipCache: true }) || {}
+          const users = await openTeam(team).getAsync('users', { skipCache: true }) || {}
           for (const [key, user] of Object.entries(users)) if (normalize(user?.username) === identity) candidates.push(normalize(user.email || key))
         }
         if (new Set(candidates).size !== 1) fail('AUTH_CREDENTIALS')
         email = candidates[0]
       }
-      const original = account(email)
+      const original = await accountAsync(email)
       if (!await verifyPassword(request.password, original.user.password)) fail('AUTH_CREDENTIALS')
       const upgraded = original.user.password.startsWith('pbkdf2$') ? undefined : await hashPassword(request.password)
       check()
-      const actor = runAuthentication(email, ({ recovering }) => {
+      const actor = await runAuthenticationAsync(email, async ({ recovering }) => {
+      // Laasen og alle laesninger er nu async: en logout kan ske ved hvert
+      // await, saa epoch tjekkes igen foer hver skrivning og foer binding.
+      check()
       // Password hashing is asynchronous: recheck password/status after it.
-      const fresh = account(email)
+      const fresh = await accountAsync(email, UNDER_LOCK_READ)
       if (fresh.user.password !== original.user.password || fresh.home.teamId !== original.home.teamId) fail('AUTH_CREDENTIALS')
       approved(fresh.user)
       const effectiveUpgrade = recovering ? undefined : upgraded
-      if (effectiveUpgrade) openTeam(fresh.home).mutate('users', users => {
+      if (effectiveUpgrade) await openTeam(fresh.home).mutateAsync('users', users => {
+        check()
         const user = users?.[fresh.key]
         if (!user || user.password !== original.user.password) fail('AUTH_CREDENTIALS')
         approved(user)
@@ -136,21 +267,28 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
       const token = `session_${crypto.randomBytes(32).toString('hex')}`
       const record = signed({ authVersion: 1, email, userId: `user_${email}`, teamId: fresh.home.teamId, credentialHash: sessionKey(effectiveUpgrade || fresh.user.password), createdAt: now(), expiresAt: now() + (request.rememberMe === true ? 365 * DAY : DAY) })
       const previous = bindings.get(sender)
-      openSessions().mutate('active-sessions', sessions => {
+      await openSessions().mutateAsync('active-sessions', sessions => {
+        check()
         if (sessions && (typeof sessions !== 'object' || Array.isArray(sessions))) fail('KV_INVALID_OPERATION')
         const next = recovering ? { ...(sessions || {}) } : Object.fromEntries(Object.entries(sessions || {}).filter(([, value]) => !(value?.authVersion === 1 && Number.isFinite(value.expiresAt) && value.expiresAt <= now())))
         if (previous && previous.root === getRoot() && (!recovering || normalize(next[sessionKey(previous.token)]?.email) === email)) delete next[sessionKey(previous.token)]
         next[sessionKey(token)] = record
         return next
       })
-      bindings.set(sender, { token, root: getRoot(), viewId: null })
+      try { check() } catch (error) {
+        // Logout kom mens sessionen blev skrevet: fjern den igen (tokenet er aldrig udleveret).
+        await openSessions().updateAsync('active-sessions', { op: 'deleteField', field: sessionKey(token) }).catch(() => {})
+        throw error
+      }
+      bindings.set(sender, { token, root: getRoot() })
       invalidate(sender)
-      return current(sender)
+      return currentUnderLockAsync(sender)
       })
       // Starting a team watcher may replay its queue. Do it after releasing
       // the account lock; each queued write acquires that lock independently.
+      check()
       switchTeam(actor.home)
-      return current(sender)
+      return currentFreshAsync(sender)
     }, true)
   }
   async function signup(sender, request) {
@@ -185,57 +323,74 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
       // Notifications are constructed here, never accepted as privileged
       // status/recipient payloads from the signup form.
       const managers = Object.values(target.get('users', { skipCache: true }) || {}).filter(user => (!user.status || user.status === 'approved') && (user.role === 'manager' || user.role === 'admin' || (!user.role && user.isManager)))
-      const labels = request.language === 'en' ? ['New signup request', 'A user requests access'] : request.language === 'fi' ? ['Uusi rekisteröitymispyyntö', 'Käyttäjä pyytää käyttöoikeutta'] : ['Ny tilmeldingsanmodning', 'En bruger anmoder om adgang']
-      try { for (const manager of managers) {
-        const id = crypto.randomUUID(), message = `${labels[1]}: ${request.fullName.trim()} (${email}), ${request.phone.trim()}`
-        target.update('emails', { op: 'append', items: [{ id, from: email, to: manager.email, subject: labels[0], message, timestamp: now(), read: false }] })
-        target.update('email-notifications', { op: 'append', items: [{ id: `${id}-notification`, to: manager.email, subject: labels[0], body: message, timestamp: new Date(now()).toISOString(), type: 'user-signup', read: false }] })
-      } } catch { console.error('Supply Chain Hub: signup saved, manager notification could not be saved') }
+      const labels = request.language === 'en' ? ['New signup request', 'A user requests access'] : request.language === 'fi' ? ['Uusi rekisteröitymispyyntö', 'Käyttäjä pyytää käyttöoikeutta'] : request.language === 'sv' ? ['Ny registreringsbegäran', 'En användare begär åtkomst'] : ['Ny tilmeldingsanmodning', 'En bruger anmoder om adgang']
+      try {
+        // One append per key for all managers: each write locks a file on the shared drive (up to 90 s), and this was
+        // two writes per manager one after another.
+        const mails = [], notices = []
+        for (const manager of managers) {
+          const id = crypto.randomUUID(), message = `${labels[1]}: ${request.fullName.trim()} (${email}), ${request.phone.trim()}`
+          mails.push({ id, from: email, to: manager.email, subject: labels[0], message, timestamp: now(), read: false })
+          notices.push({ id: `${id}-notification`, to: manager.email, subject: labels[0], body: message, timestamp: new Date(now()).toISOString(), type: 'user-signup', read: false })
+        }
+        if (mails.length) {
+          target.update('emails', { op: 'append', items: mails })
+          target.update('email-notifications', { op: 'append', items: notices })
+        }
+      } catch { console.error('Supply Chain Hub: signup saved, manager notification could not be saved') }
       return { email, status: 'pending' }
       })
     }, true)
   }
   async function resume(sender, token) {
-    return exclusive(sender, async () => {
+    return exclusive(sender, async (check) => {
       if (typeof token !== 'string' || !/^session_[a-f0-9]{64}$/.test(token)) fail('AUTH_REQUIRED')
-      const previous = bindings.get(sender)
-      bindings.set(sender, { token, root: getRoot(), viewId: null })
+      await registry.prefetchAsync?.(getRoot())
+      check()
+      const previous = bindings.get(sender), attempt = { token, root: getRoot() }
+      bindings.set(sender, attempt)
       invalidate(sender)
-      try { const actor = current(sender); runAuthentication(actor.email, () => actor); switchTeam(actor.home); return current(sender) } catch (error) {
-        if (previous) bindings.set(sender, previous); else bindings.delete(sender)
+      try {
+        const actor = await currentFreshAsync(sender)
+        await runAuthenticationAsync(actor.email, () => actor)
+        check()
+        switchTeam(actor.home)
+        return await currentFreshAsync(sender)
+      } catch (error) {
+        // Gendan kun hvis bindingen stadig er vores: en logout/forget under et
+        // await har allerede fjernet den og maa ikke fortrydes.
+        if (bindings.get(sender) === attempt) { if (previous) bindings.set(sender, previous); else bindings.delete(sender) }
         invalidate(sender)
         throw error
       }
     })
   }
-  function renew(sender) {
-    const actor = current(sender)
-    return runAuthentication(actor.email, () => {
+  async function renew(sender) {
+    const actor = await currentFreshAsync(sender)
+    return runAuthenticationAsync(actor.email, async () => {
+    if (bindings.get(sender)?.token !== actor.token) fail('AUTH_REQUIRED')
     const key = sessionKey(actor.token)
-    openSessions().mutate('active-sessions', sessions => {
+    // A remembered session runs for 365 days; renewing it on every start cost a write to M: (15-25 s) each time.
+    // Checked on a fresh read, so a removed or tampered session is refused exactly as before.
+    const current = (await openSessions().getAsync('active-sessions', UNDER_LOCK_READ))?.[key]
+    if (!current || current.expiresAt <= now() || current.signature !== sign(current)) fail('AUTH_REQUIRED')
+    if (current.expiresAt - now() >= RENEW_AFTER_REMAINING_MS) return currentUnderLockAsync(sender)
+    await openSessions().mutateAsync('active-sessions', sessions => {
       if (!sessions?.[key] || sessions[key].expiresAt <= now()) fail('AUTH_REQUIRED')
       if (sessions[key].signature !== sign(sessions[key])) fail('AUTH_REQUIRED')
       return { ...sessions, [key]: signed({ ...sessions[key], expiresAt: now() + 365 * DAY }) }
     })
     invalidate(sender)
-    return current(sender)
+    return currentUnderLockAsync(sender)
     })
   }
-  function logout(sender) {
+  async function logout(sender) {
+    // Epoch, binding og cache ryddes synkront foer foerste await.
     epochs.set(sender, (epochs.get(sender) || 0) + 1)
     const bound = bindings.get(sender)
     bindings.delete(sender)
     invalidate(sender)
-    if (bound && bound.root === getRoot()) runWrite(() => openSessions().update('active-sessions', { op: 'deleteField', field: sessionKey(bound.token) }))
-  }
-  function selectView(sender, viewId) {
-    return runWrite(() => {
-    const actor = current(sender)
-    if (viewId !== null && (typeof viewId !== 'string' || !registry.listAccessViewsForEmail(getRoot(), actor.email).some(view => view.viewId === viewId))) fail('AUTH_FORBIDDEN')
-    bindings.get(sender).viewId = viewId
-    invalidate(sender)
-    return current(sender)
-    })
+    if (bound && bound.root === getRoot()) await runWriteAsync(() => openSessions().updateAsync('active-sessions', { op: 'deleteField', field: sessionKey(bound.token) }))
   }
   async function profile(sender, request) {
     return exclusive(sender, async check => {
@@ -263,6 +418,6 @@ function createAuthService({ registry, getRoot, openTeam, openSessions, switchTe
     })
   }
   function forget(sender) { epochs.set(sender, (epochs.get(sender) || 0) + 1); bindings.delete(sender); attempts.delete(sender); invalidate(sender) }
-  return { login, signup, resume, current, requireRole, renew, logout, selectView, profile, forget, invalidateAll: () => contextCache.clear() }
+  return { login, signup, resume, current, currentAsync, requireRole, requireRoleAsync, renew, logout, profile, forget, revalidateAll, invalidateAll: () => { generation++; contextCache.clear() } }
 }
 module.exports = { createAuthService, hashPassword, verifyPassword, sessionKey, loadDeviceSecret }

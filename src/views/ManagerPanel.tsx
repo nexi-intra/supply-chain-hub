@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowLeft, ShieldCheck, Check, Crown, User as UserIcon, Trash, FirstAidKit, X, Umbrella, ClockCounterClockwise, PencilSimple, Plus, Phone, CalendarBlank, Eye, Gift, WaveSine, LockKey, Books } from '@phosphor-icons/react'
+import { ArrowLeft, ShieldCheck, Check, User as UserIcon, Trash, X, Umbrella, ClockCounterClockwise, PencilSimple, Plus, Phone, CalendarBlank, Eye, Gift, LockKey, Books, Brain, Baby } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -16,26 +16,33 @@ import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { format } from 'date-fns'
-import { da, enUS, fi } from 'date-fns/locale'
+import { da, enUS, fi, sv } from 'date-fns/locale'
 import { UserRole, hasManagerAccess, getCreatorEmail, getRoleDisplayName, getRoleDescription } from '@/lib/userRoles'
 import { hashPassword } from '@/lib/passwords'
 import { newId } from '@/lib/utils'
 import { parseLocalDate } from '@/lib/dateUtils'
 import { vacationPreviewEntries } from '@/lib/vacationPreview'
 import { appendToKvArray, updateKvArrayItem, removeFromKvArray, upsertInKvArray, setKvObjectField, deleteKvObjectField, replaceKvObjectField } from '@/lib/kvArrays'
+import { useOptimisticList } from '@/hooks/useOptimisticList'
+import { decideVacationRequests } from '@/lib/vacationRequests'
+import { loadAccessRequests, reviewAccessRequest } from '@/lib/libraryAccess'
+import type { LibraryKind } from '@/lib/libraryConfig'
 import { cn } from '@/lib/utils'
 import { isAnyModalOpen } from '@/lib/modalStack'
-import { consumeNavigationParams } from '@/lib/appNavigation'
+import { consumeNavigationParams, peekNavigationParams } from '@/lib/appNavigation'
 import { getEmployeeColorByEmail, EMPLOYEE_COLOR_OVERRIDES_KEY, EMPLOYEE_COLOR_PALETTE, type EmployeeColorOverrides } from '@/lib/employeeColors'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { getWeekNumber as getISOWeekNumber } from '@/lib/dateUtils'
 import { useLanguage } from '@/contexts/LanguageContext'
 import React from 'react'
 import { ManualVacationGrant } from '@/components/ManualVacationGrant'
-import { OnboardingWizard, OffboardingWizard } from '@/components/OnboardingWizard'
+import { ExtraManagersCard } from '@/components/ExtraManagersCard'
+import { WarehouseRolesCard } from '@/components/warehouse/WarehouseRolesCard'
+import { ParentalLeaveDialog } from '@/components/ParentalLeaveDialog'
+import { OnboardingWizard, OffboardingWizard, type OnboardedAccount } from '@/components/OnboardingWizard'
 import { Checkbox } from '@/components/ui/checkbox'
 import { vacationApprovedEmail, vacationRejectedEmail, vacationEditedEmail, vacationDeletedEmail, userApprovedEmail, userRejectedEmail } from '@/lib/emailTemplates'
-import type { BirthdayEntry, SickLeaveEntry, VacationEntry, VacationStatus, GuideAccessRequest } from '@/lib/types'
+import type { BirthdayEntry, VacationEntry, VacationStatus, GuideAccessRequest } from '@/lib/types'
 
 interface User {
   email: string
@@ -52,19 +59,40 @@ interface ManagerPanelProps {
   userEmail: string
 }
 
+const ROLE_ORDER: Record<UserRole, number> = { creator: 0, manager: 1, user: 2 }
+const userKey = (user: User) => user.email.toLowerCase()
+const vacationKey = (entry: VacationEntry) => entry.id
+const birthdayKey = (entry: BirthdayEntry) => entry.email
+
+function sortByStartDate(entries: VacationEntry[]): VacationEntry[] {
+  return entries.sort((a, b) => {
+    const dateA = new Date(a.startDate)
+    const dateB = new Date(b.startDate)
+    if (isNaN(dateA.getTime()) || isNaN(dateB.getTime())) return 0
+    return dateA.getTime() - dateB.getTime()
+  })
+}
+
+type StoredUser = { email: string; password?: string; fullName: string; phone?: string; role?: UserRole; isManager?: boolean; status?: 'pending' | 'approved' | 'rejected'; username?: string } & Record<string, unknown>
+
 export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPanelProps) {
   const { t, language } = useLanguage()
-  const dateLocale = language === 'en' ? enUS : language === 'fi' ? fi : da
+  const dateLocale = language === 'en' ? enUS : language === 'fi' ? fi : language === 'sv' ? sv : da
   // Deep-link (fx knappen i ferieanmodnings-mails) kan bede om en bestemt fane.
-  const [initialTab] = useState(() => consumeNavigationParams()?.tab ?? 'permissions')
+  const [initialTab] = useState(() => peekNavigationParams()?.tab ?? 'permissions')
+  useEffect(() => { consumeNavigationParams() }, [])
   const [activeTab, setActiveTab] = useState(initialTab)
-  const [users, setUsers] = useState<User[]>([])
+  // A write to M: takes 20-90 s, so every change is shown at once in these lists (and kept shown while it is saved).
+  // Each list is ONE state; the requests, the overview and the counters are derived from it, so they always agree.
+  const [allUsers, userList] = useOptimisticList<User>(userKey)
+  const users = useMemo(() => allUsers.filter(u => u.status !== 'pending').sort((a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role]), [allUsers])
+  const pendingUsers = useMemo(() => allUsers.filter(u => u.status === 'pending'), [allUsers])
+  const creatorEmail = useRef<string | null>(null)
   // Manager-satte farveoverstyringer (delt KV) — vinder over den automatiske hash-farve.
   const [colorOverrides] = useKV<EmployeeColorOverrides>(EMPLOYEE_COLOR_OVERRIDES_KEY, {})
-  const [pendingUsers, setPendingUsers] = useState<User[]>([])
-  const [sickLeaveEntries, setSickLeaveEntries] = useState<SickLeaveEntry[]>([])
-  const [vacationEntries, setVacationEntries] = useState<VacationEntry[]>([])
-  const [allVacations, setAllVacations] = useState<VacationEntry[]>([])
+  const [vacations, vacationList] = useOptimisticList<VacationEntry>(vacationKey)
+  const vacationEntries = useMemo(() => sortByStartDate(vacations.filter(e => e.status === 'pending')), [vacations])
+  const allVacations = useMemo(() => sortByStartDate(vacations.filter(e => e.status !== 'rejected')), [vacations])
   const [isLoading, setIsLoading] = useState(true)
   const [hasAccess, setHasAccess] = useState(false)
   const [editingUser, setEditingUser] = useState<User | null>(null)
@@ -75,8 +103,6 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
   const [newPassword, setNewPassword] = useState('')
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
-  const [isCreatingUser, setIsCreatingUser] = useState(false)
-  const createUserInProgress = useRef(false)
   const [newUserName, setNewUserName] = useState('')
   const [newUserEmail, setNewUserEmail] = useState('')
   const [newUserPassword, setNewUserPassword] = useState('')
@@ -86,13 +112,20 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
   const [editVacationStartDate, setEditVacationStartDate] = useState<Date | undefined>()
   const [editVacationEndDate, setEditVacationEndDate] = useState<Date | undefined>()
   const [editVacationNotes, setEditVacationNotes] = useState('')
+  const [editVacationType, setEditVacationType] = useState<'vacation' | 'parental'>('vacation')
   const [vacationFilter, setVacationFilter] = useState<'all' | 'pending' | 'approved'>('all')
   const [previewVacation, setPreviewVacation] = useState<VacationEntry | null>(null)
   const [isPreviewDialogOpen, setIsPreviewDialogOpen] = useState(false)
   const [previewMonth, setPreviewMonth] = useState(new Date().getMonth())
   const [previewYear, setPreviewYear] = useState(new Date().getFullYear())
   const [isManualGrantDialogOpen, setIsManualGrantDialogOpen] = useState(false)
-  const [birthdays, setBirthdays] = useState<BirthdayEntry[]>([])
+  const [isParentalDialogOpen, setIsParentalDialogOpen] = useState(false)
+  const [birthdayItems, birthdayList] = useOptimisticList<BirthdayEntry>(birthdayKey)
+  const birthdays = useMemo(() => [...birthdayItems].sort((a, b) => {
+    const dateA = new Date(`2000-${a.birthday}`)
+    const dateB = new Date(`2000-${b.birthday}`)
+    return dateA.getMonth() - dateB.getMonth() || dateA.getDate() - dateB.getDate()
+  }), [birthdayItems])
   const [isEditBirthdayDialogOpen, setIsEditBirthdayDialogOpen] = useState(false)
   const [editingBirthday, setEditingBirthday] = useState<BirthdayEntry | null>(null)
   const [birthdayDate, setBirthdayDate] = useState('')
@@ -104,17 +137,34 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
   // Hub-advarslen/notifikationen, uden at røre selve "afventer godkendelse"-status.
   const [seenVacationRequestIds, setSeenVacationRequestIds] = useKV<string[]>(`seen-vacation-requests-${userEmail}`, [])
   const [guideAdminEmails, setGuideAdminEmails] = useKV<string[]>('guide-admin-emails', [], { initializeIfMissing: false })
-  const [isBulkProcessing, setIsBulkProcessing] = useState(false)
+  // Which save/delete is running, so that button shows a spinner and can't be pressed twice.
+  const [busyAction, setBusyAction] = useState<string | null>(null)
+  const runBusy = async (key: string, action: () => Promise<void>) => {
+    if (busyAction) return
+    setBusyAction(key)
+    try {
+      await action()
+    } catch (error) {
+      console.error('Manager action failed:', error)
+      toast.error(t.profile.errors.generic)
+    } finally {
+      setBusyAction(null)
+    }
+  }
   // Fase 8/9 guide-adgangsanmodning: andre teams' brugere anmoder om adgang til EGNE guides.
   // BEVIDST ikke useKV her: dens "skriv default hvis undefined"-adfærd kan i et kapløb
   // overskrive en anden brugers lige-indsendte anmodning med et tomt array (se lærdom i
   // repo-hukommelsen) — almindelig load-ved-mount/efter-handling er sikkert her.
   const [guideAccessRequests, setGuideAccessRequests] = useState<GuideAccessRequest[]>([])
   const pendingGuideAccessRequests = useMemo(() => guideAccessRequests.filter(r => r.status === 'pending'), [guideAccessRequests])
+  const [knowledgeAccessRequests, setKnowledgeAccessRequests] = useState<GuideAccessRequest[]>([])
+  const pendingKnowledgeAccessRequests = useMemo(() => knowledgeAccessRequests.filter(r => r.status === 'pending'), [knowledgeAccessRequests])
+  const pendingLibraryAccessCount = pendingGuideAccessRequests.length + pendingKnowledgeAccessRequests.length
 
   const loadGuideAccessRequests = async () => {
-    const requests = await window.kv.get<GuideAccessRequest[]>('guide-access-requests')
-    setGuideAccessRequests(requests || [])
+    const [guideRequests, knowledgeRequests] = await Promise.all([loadAccessRequests('guides'), loadAccessRequests('knowledge')])
+    setGuideAccessRequests(guideRequests)
+    setKnowledgeAccessRequests(knowledgeRequests)
   }
 
   useEffect(() => {
@@ -123,7 +173,6 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
       setHasAccess(access)
       if (access) {
         loadUsers()
-        loadSickLeaveEntries()
         loadVacationEntries()
         loadBirthdays()
         loadGuideAccessRequests()
@@ -159,37 +208,48 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
 
   const loadUsers = async () => {
     setIsLoading(true)
-    const creator = await getCreatorEmail()
-    const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; phone?: string; role?: UserRole; isManager?: boolean; status?: 'pending' | 'approved' | 'rejected'; username?: string }>>('users')
-    if (usersData) {
-      const allUsers = Object.values(usersData)
-        .filter(u => u.role !== 'creator' && (!creator || u.email.toLowerCase() !== creator))
-        .map(u => {
-        let role: UserRole = 'user'
-        if (u.role) {
-          role = u.role
-        } else if (u.isManager) {
-          role = 'manager'
-        }
-
-        return {
-          email: u.email,
-          fullName: u.fullName,
-          role,
-          phone: u.phone,
-          status: u.status,
-          username: u.username,
-        }
-      })
-
-      setPendingUsers(allUsers.filter(u => u.status === 'pending'))
-      setUsers(allUsers.filter(u => u.status !== 'pending').sort((a, b) => {
-        const roleOrder = { creator: 0, manager: 1, user: 2 }
-        return roleOrder[a.role] - roleOrder[b.role]
-      }))
+    try {
+      // Parallelt: hver læsning er en rundtur til M:.
+      const [creator, usersData] = await Promise.all([getCreatorEmail(), window.kv.get<Record<string, StoredUser>>('users')])
+      creatorEmail.current = creator
+      if (usersData) {
+        userList.show(Object.values(usersData)
+          .filter(u => u.role !== 'creator' && (!creator || u.email.toLowerCase() !== creator))
+          .map(u => ({
+            email: u.email,
+            fullName: u.fullName,
+            role: u.role || (u.isManager ? 'manager' : 'user'),
+            phone: u.phone,
+            status: u.status,
+            username: u.username,
+          })))
+      }
+    } finally {
+      setIsLoading(false)
     }
-    setIsLoading(false)
   }
+
+  const isCreator = (email: string) => !!creatorEmail.current && email.toLowerCase() === creatorEmail.current
+
+  /** Reads the stored account and saves `change` of it, only if nobody changed it meanwhile. False if it is gone. */
+  const updateStoredUser = async (email: string, change: (stored: StoredUser) => StoredUser): Promise<boolean> => {
+    const usersData = await window.kv.get<Record<string, StoredUser>>('users')
+    const stored = usersData?.[email]
+    if (!stored) {
+      toast.error(t.managerPanel.permissions.userNotFound)
+      return false
+    }
+    await replaceKvObjectField('users', email, stored, change(stored))
+    return true
+  }
+
+  /** The account shows the change at once; it is saved in the background and a failed save undoes it. */
+  const changeUser = (user: User, next: User | null, write: Promise<boolean>) =>
+    userList.change([[userKey(user), next]], write.catch(error => {
+      console.error('Kunne ikke gemme brugeren:', error)
+      toast.error(t.profile.errors.generic)
+      return false
+    }))
 
   const sendUserDecisionEmail = async (user: User, approved: boolean) => {
     try {
@@ -208,63 +268,25 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
     }
   }
 
-  const handleApproveUser = async (user: User) => {
-    const usersData = await window.kv.get<Record<string, { status?: string } & Record<string, unknown>>>('users')
-    if (!usersData?.[user.email]) {
-      toast.error(t.managerPanel.permissions.userNotFound)
-      return
-    }
-    await replaceKvObjectField('users', user.email, usersData[user.email], { ...usersData[user.email], status: 'approved' })
-    await loadUsers()
-    await sendUserDecisionEmail(user, true)
-    toast.success(`${user.fullName} ${t.managerPanel.permissions.userApprovedSuffix}`)
+  // The request leaves the list at once; the account, and then the mail to the person, are saved in the background.
+  const decideUser = (user: User, status: 'approved' | 'rejected') => {
+    toast.success(status === 'approved'
+      ? `${user.fullName} ${t.managerPanel.permissions.userApprovedSuffix}`
+      : `${t.managerPanel.permissions.userRequestRejectedPrefix} ${user.fullName} ${t.managerPanel.permissions.userRequestRejectedSuffix}`)
+    void changeUser(user, { ...user, status }, updateStoredUser(user.email, stored => ({ ...stored, status })))
+      .then(saved => { if (saved) void sendUserDecisionEmail(user, status === 'approved') })
   }
 
-  const handleRejectUser = async (user: User) => {
-    const usersData = await window.kv.get<Record<string, { status?: string } & Record<string, unknown>>>('users')
-    if (!usersData?.[user.email]) {
-      toast.error(t.managerPanel.permissions.userNotFound)
-      return
-    }
-    await replaceKvObjectField('users', user.email, usersData[user.email], { ...usersData[user.email], status: 'rejected' })
-    await loadUsers()
-    await sendUserDecisionEmail(user, false)
-    toast.success(`${t.managerPanel.permissions.userRequestRejectedPrefix} ${user.fullName} ${t.managerPanel.permissions.userRequestRejectedSuffix}`)
-  }
+  const handleApproveUser = (user: User) => decideUser(user, 'approved')
 
-  const loadSickLeaveEntries = async () => {
-    const entries = await window.kv.get<SickLeaveEntry[]>('sick-leave-entries') || []
-    setSickLeaveEntries(entries.sort((a, b) => {
-      const dateA = new Date(b.submittedAt)
-      const dateB = new Date(a.submittedAt)
-      if (isNaN(dateA.getTime()) || isNaN(dateB.getTime())) return 0
-      return dateA.getTime() - dateB.getTime()
-    }))
-  }
+  const handleRejectUser = (user: User) => decideUser(user, 'rejected')
 
   const loadVacationEntries = async () => {
-    const entries = await window.kv.get<VacationEntry[]>('vacation-entries') || []
-    setVacationEntries(entries.filter(e => e.status === 'pending').sort((a, b) => {
-      const dateA = new Date(a.startDate)
-      const dateB = new Date(b.startDate)
-      if (isNaN(dateA.getTime()) || isNaN(dateB.getTime())) return 0
-      return dateA.getTime() - dateB.getTime()
-    }))
-    setAllVacations(entries.filter(e => e.status !== 'rejected').sort((a, b) => {
-      const dateA = new Date(a.startDate)
-      const dateB = new Date(b.startDate)
-      if (isNaN(dateA.getTime()) || isNaN(dateB.getTime())) return 0
-      return dateA.getTime() - dateB.getTime()
-    }))
+    vacationList.show(await window.kv.get<VacationEntry[]>('vacation-entries') || [])
   }
 
   const loadBirthdays = async () => {
-    const birthdaysData = await window.kv.get<BirthdayEntry[]>('employee-birthdays') || []
-    setBirthdays(birthdaysData.sort((a, b) => {
-      const dateA = new Date(`2000-${a.birthday}`)
-      const dateB = new Date(`2000-${b.birthday}`)
-      return dateA.getMonth() - dateB.getMonth() || dateA.getDate() - dateB.getDate()
-    }))
+    birthdayList.show(await window.kv.get<BirthdayEntry[]>('employee-birthdays') || [])
   }
 
   const openEditBirthdayDialog = (entry: BirthdayEntry) => {
@@ -274,7 +296,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
     setIsEditBirthdayDialogOpen(true)
   }
 
-  const handleSaveBirthday = async () => {
+  const handleSaveBirthday = () => {
     if (!editingBirthday || !birthdayDate) {
       toast.error(t.managerPanel.birthdays.dateRequiredError)
       return
@@ -286,83 +308,75 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
       birthday: birthdayDate,
       birthYear: birthYear ? parseInt(birthYear) : undefined
     }
+    const storedEntry = { ...updatedEntry, id: updatedEntry.email }
 
-    await upsertInKvArray('employee-birthdays', [{ ...updatedEntry, id: updatedEntry.email }])
-    await loadBirthdays()
-    
     setIsEditBirthdayDialogOpen(false)
     setEditingBirthday(null)
     setBirthdayDate('')
     setBirthYear('')
     toast.success(t.managerPanel.birthdays.savedToast)
+    void birthdayList.change([[updatedEntry.email, storedEntry]], upsertInKvArray('employee-birthdays', [storedEntry]))
+      .then(saved => { if (!saved) toast.error(t.profile.errors.generic) })
   }
 
-  const deleteBirthday = async (email: string) => {
-    await removeFromKvArray('employee-birthdays', [email])
-    await loadBirthdays()
+  const deleteBirthday = (email: string) => {
     toast.success(t.managerPanel.birthdays.deletedToast)
+    void birthdayList.change([[email, null]], removeFromKvArray('employee-birthdays', [email]))
+      .then(saved => { if (!saved) toast.error(t.profile.errors.generic) })
   }
 
-  const changeUserRole = async (email: string, newRole: UserRole) => {
-    const creator = await getCreatorEmail()
-    if (creator && email.toLowerCase() === creator) {
+  const changeUserRole = (email: string, newRole: UserRole) => {
+    if (isCreator(email)) {
       toast.error(t.managerPanel.permissions.cannotChangeAdminRole)
       return
     }
+    const user = userList.items.find(u => u.email === email)
+    if (!user) return
 
-    const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; role: UserRole; isManager: boolean }>>('users')
-    if (usersData && usersData[email]) {
-      await replaceKvObjectField('users', email, usersData[email], {
-        ...usersData[email],
-        role: newRole,
-        isManager: newRole === 'manager' || newRole === 'creator',
-      })
-      await loadUsers()
-      
-      toast.success(`${t.managerPanel.permissions.roleChangedPrefix} ${getRoleDisplayName(newRole, language)}`)
-    }
+    toast.success(`${t.managerPanel.permissions.roleChangedPrefix} ${getRoleDisplayName(newRole, language)}`)
+    void changeUser(user, { ...user, role: newRole }, updateStoredUser(email, stored => ({
+      ...stored,
+      role: newRole,
+      isManager: newRole === 'manager' || newRole === 'creator',
+    })))
   }
 
   // Sætter en manuel farve for en bruger (delt override) — vinder over auto-farven overalt.
-  const setUserColor = async (email: string, paletteIndex: number) => {
-    try {
-      await setKvObjectField(EMPLOYEE_COLOR_OVERRIDES_KEY, email.trim().toLowerCase(), paletteIndex)
-      toast.success(language === 'da' ? 'Farve opdateret' : language === 'fi' ? 'Väri päivitetty' : 'Color updated')
-    } catch {
-      toast.error(language === 'da' ? 'Kunne ikke ændre farve' : language === 'fi' ? 'Värin muutos epäonnistui' : 'Could not change color')
-    }
+  // The colour shows at once (useKV); a failed save puts the old one back.
+  const setUserColor = (email: string, paletteIndex: number) => {
+    toast.success(language === 'da' ? 'Farve opdateret' : language === 'fi' ? 'Väri päivitetty' : language === 'sv' ? 'Färg uppdaterad' : 'Color updated')
+    void setKvObjectField(EMPLOYEE_COLOR_OVERRIDES_KEY, email.trim().toLowerCase(), paletteIndex).catch(() => {
+      toast.error(language === 'da' ? 'Kunne ikke ændre farve' : language === 'fi' ? 'Värin muutos epäonnistui' : language === 'sv' ? 'Kunde inte ändra färg' : 'Could not change color')
+    })
   }
 
-  const resetUserColor = async (email: string) => {
-    try {
-      await deleteKvObjectField(EMPLOYEE_COLOR_OVERRIDES_KEY, email.trim().toLowerCase())
-      toast.success(language === 'da' ? 'Farve nulstillet' : language === 'fi' ? 'Väri palautettu' : 'Color reset')
-    } catch {
-      toast.error(language === 'da' ? 'Kunne ikke nulstille farve' : language === 'fi' ? 'Värin palautus epäonnistui' : 'Could not reset color')
-    }
+  const resetUserColor = (email: string) => {
+    toast.success(language === 'da' ? 'Farve nulstillet' : language === 'fi' ? 'Väri palautettu' : language === 'sv' ? 'Färg återställd' : 'Color reset')
+    void deleteKvObjectField(EMPLOYEE_COLOR_OVERRIDES_KEY, email.trim().toLowerCase()).catch(() => {
+      toast.error(language === 'da' ? 'Kunne ikke nulstille farve' : language === 'fi' ? 'Värin palautus epäonnistui' : language === 'sv' ? 'Kunde inte återställa färg' : 'Could not reset color')
+    })
   }
 
-  const deleteUser = async (email: string) => {
-    const creator = await getCreatorEmail()
-    if (creator && email.toLowerCase() === creator) {
+  const deleteUser = (email: string) => {
+    if (isCreator(email)) {
       toast.error(t.managerPanel.permissions.cannotDeleteAdmin)
       return
     }
+    const user = userList.items.find(u => u.email === email)
+    if (!user) return
 
-    const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; role: UserRole; isManager: boolean }>>('users')
-    if (usersData && usersData[email]) {
-      const userFullName = usersData[email].fullName
-      
+    toast.success(t.managerPanel.permissions.deleted)
+    void changeUser(user, null, (async () => {
+      const usersData = await window.kv.get<Record<string, StoredUser>>('users')
+      if (!usersData?.[email]) return true
+      // The backend also removes the person's shifts, absences, messages, notes and personal settings.
       await deleteKvObjectField('users', email)
-      setGuideAdminEmails((current) => (current || []).filter((item) => item.toLowerCase() !== email.toLowerCase()))
-      
-      const assignments = (await window.kv.get<Array<{ id: string; employeeId: string; employeeName: string; roleId: string; date: string; comment?: string }>>('shift-assignments')) || []
-      const assignmentIdsToRemove = assignments.filter(a => a.employeeName === userFullName).map(a => a.id)
-      await removeFromKvArray('shift-assignments', assignmentIdsToRemove)
-      
-      await loadUsers()
-      toast.success(t.managerPanel.permissions.deleted)
-    }
+      return true
+    })()).then(saved => {
+      if (saved && (guideAdminEmails || []).some(item => item.toLowerCase() === email.toLowerCase())) {
+        setGuideAdminEmails((current) => (current || []).filter((item) => item.toLowerCase() !== email.toLowerCase()))
+      }
+    })
   }
 
   const setGuideAdmin = (email: string, enabled: boolean) => {
@@ -372,32 +386,20 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
       return enabled ? [...withoutUser, normalizedEmail] : withoutUser
     })
     toast.success(enabled
-      ? (language === 'da' ? 'Brugeren er nu Guide Admin' : language === 'fi' ? 'Käyttäjä on nyt opasvastaava' : 'User is now a Guide Admin')
-      : (language === 'da' ? 'Guide Admin-adgangen er fjernet' : language === 'fi' ? 'Opasvastaavan käyttöoikeus poistettiin' : 'Guide Admin access removed'))
+      ? (language === 'da' ? 'Brugeren er nu Guide Admin' : language === 'fi' ? 'Käyttäjä on nyt opasvastaava' : language === 'sv' ? 'Användaren är nu Guide Admin' : 'User is now a Guide Admin')
+      : (language === 'da' ? 'Guide Admin-adgangen er fjernet' : language === 'fi' ? 'Opasvastaavan käyttöoikeus poistettiin' : language === 'sv' ? 'Guide Admin-behörigheten har tagits bort' : 'Guide Admin access removed'))
   }
 
-  const handleApproveGuideAccessRequest = async (request: GuideAccessRequest) => {
-    const expiresAt = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString()
-    await upsertInKvArray<GuideAccessRequest>('guide-access-requests', [{
-      ...request,
-      status: 'approved',
-      reviewedBy: userEmail,
-      reviewedAt: new Date().toISOString(),
-      expiresAt,
-    }])
-    await loadGuideAccessRequests()
-    toast.success(t.managerPanel.guideAccessRequests.approved)
-  }
-
-  const handleRejectGuideAccessRequest = async (request: GuideAccessRequest) => {
-    await upsertInKvArray<GuideAccessRequest>('guide-access-requests', [{
-      ...request,
-      status: 'rejected',
-      reviewedBy: userEmail,
-      reviewedAt: new Date().toISOString(),
-    }])
-    await loadGuideAccessRequests()
-    toast.success(t.managerPanel.guideAccessRequests.rejected)
+  // The request leaves the list at once; a failed save puts it back.
+  const handleReviewLibraryAccessRequest = (kind: LibraryKind, request: GuideAccessRequest, status: 'approved' | 'rejected') => {
+    const setRequests = kind === 'guides' ? setGuideAccessRequests : setKnowledgeAccessRequests
+    setRequests(current => current.map(item => item.id === request.id ? { ...item, status } : item))
+    toast.success(status === 'approved' ? t.managerPanel.guideAccessRequests.approved : t.managerPanel.guideAccessRequests.rejected)
+    void reviewAccessRequest(kind, request, status, userEmail).catch(error => {
+      console.error('Kunne ikke gemme adgangsanmodningen:', error)
+      setRequests(current => current.map(item => item.id === request.id ? request : item))
+      toast.error(t.profile.errors.generic)
+    })
   }
 
   // Telefon og brugernavn er allerede hentet af loadUsers, saa dialogen aabner
@@ -435,7 +437,67 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
       return
     }
 
-    const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; role: UserRole; isManager: boolean; phone?: string; username?: string }>>('users')
+    // Checked at once against the accounts on screen; the save checks again against the stored ones.
+    if (trimmedUsername && userList.items.some(u => userKey(u) !== userKey(editingUser) && u.username?.toLowerCase() === trimmedUsername.toLowerCase())) {
+      toast.error(t.managerPanel.validation.usernameTaken)
+      return
+    }
+
+    const normalizedNewEmail = newEmail.trim().toLowerCase()
+    const emailChanged = normalizedNewEmail !== editingUser.email.trim().toLowerCase()
+    if (emailChanged && (userList.items.some(u => userKey(u) === normalizedNewEmail) || isCreator(normalizedNewEmail))) {
+      toast.error(t.managerPanel.validation.emailExists)
+      return
+    }
+
+    if (newPassword && newPassword.length < 6) {
+      toast.error(t.managerPanel.validation.passwordTooShort)
+      return
+    }
+
+    const closeDialog = () => {
+      setIsEditDialogOpen(false)
+      setEditingUser(null)
+      setNewName('')
+      setNewEmail('')
+      setNewPhone('')
+      setNewUsername('')
+      setNewPassword('')
+    }
+
+    if (!emailChanged) {
+      // Name, phone, username or password: shown and closed at once, saved in the background (a write takes 20-90 s).
+      const user = editingUser
+      const form = { fullName: newName.trim(), email: newEmail.trim(), phone: newPhone.trim(), username: trimmedUsername, password: newPassword.trim() }
+      closeDialog()
+      toast.success(t.managerPanel.validation.userUpdated)
+      void changeUser(user, { ...user, fullName: form.fullName, phone: form.phone || user.phone, username: form.username || undefined }, (async () => {
+        const usersData = await window.kv.get<Record<string, StoredUser>>('users')
+        const stored = usersData?.[user.email]
+        if (!usersData || !stored) {
+          toast.error(t.managerPanel.permissions.userNotFound)
+          return false
+        }
+        if (form.username && Object.entries(usersData).some(([email, u]) => email !== user.email && u.username?.toLowerCase() === form.username.toLowerCase())) {
+          toast.error(t.managerPanel.validation.usernameTaken)
+          return false
+        }
+        const updatedUserData = {
+          ...stored,
+          fullName: form.fullName,
+          email: form.email,
+          phone: form.phone || stored.phone,
+          username: form.username || undefined,
+          password: form.password ? await hashPassword(form.password) : stored.password,
+        }
+        await window.kv.updateField('users', { op: 'renameField', field: user.email, newField: user.email, expected: stored, value: updatedUserData })
+        return true
+      })())
+      return
+    }
+
+    // A new e-mail moves the account and everything that refers to it; the backend may refuse, so this waits (spinner).
+    const usersData = await window.kv.get<Record<string, StoredUser>>('users')
     if (!usersData || !usersData[editingUser.email]) {
       toast.error(t.managerPanel.permissions.userNotFound)
       return
@@ -452,14 +514,8 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
     }
 
     const userData = usersData[editingUser.email]
-    const normalizedNewEmail = newEmail.trim().toLowerCase()
-    if (normalizedNewEmail !== editingUser.email.trim().toLowerCase() && Object.keys(usersData).some(email => email.trim().toLowerCase() === normalizedNewEmail)) {
+    if (Object.keys(usersData).some(email => email.trim().toLowerCase() === normalizedNewEmail)) {
       toast.error(t.managerPanel.validation.emailExists)
-      return
-    }
-
-    if (newPassword && newPassword.length < 6) {
-      toast.error(t.managerPanel.validation.passwordTooShort)
       return
     }
 
@@ -472,40 +528,33 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
       password: newPassword.trim() ? await hashPassword(newPassword.trim()) : userData.password,
     }
 
-    if (newEmail.trim().toLowerCase() !== editingUser.email.toLowerCase()) {
-      // Native account migration updates the directory and all references.
-      if (!window.electronAuth && window.electronRegistry) {
-        const currentTeam = await window.electronRegistry.getCurrentTeam()
-        if (currentTeam) await window.electronRegistry.assignUser(newEmail.trim().toLowerCase(), currentTeam.teamId)
-      }
-      await window.kv.updateField('users', { op: 'renameField', field: editingUser.email, newField: normalizedNewEmail, expected: userData, value: { ...updatedUserData, email: normalizedNewEmail } })
-      if (!window.electronAuth && (guideAdminEmails || []).some((item) => item.toLowerCase() === editingUser.email.toLowerCase())) {
-        setGuideAdminEmails((current) => [
-          ...(current || []).filter((item) => item.toLowerCase() !== editingUser.email.toLowerCase()),
-          newEmail.trim().toLowerCase(),
-        ])
-      }
-    } else {
-      await window.kv.updateField('users', { op: 'renameField', field: editingUser.email, newField: editingUser.email, expected: userData, value: updatedUserData })
+    // Native account migration updates the directory and all references.
+    if (!window.electronAuth && window.electronRegistry) {
+      const currentTeam = await window.electronRegistry.getCurrentTeam()
+      if (currentTeam) await window.electronRegistry.assignUser(normalizedNewEmail, currentTeam.teamId)
+    }
+    await window.kv.updateField('users', { op: 'renameField', field: editingUser.email, newField: normalizedNewEmail, expected: userData, value: { ...updatedUserData, email: normalizedNewEmail } })
+    if (!window.electronAuth && (guideAdminEmails || []).some((item) => item.toLowerCase() === editingUser.email.toLowerCase())) {
+      setGuideAdminEmails((current) => [
+        ...(current || []).filter((item) => item.toLowerCase() !== editingUser.email.toLowerCase()),
+        normalizedNewEmail,
+      ])
     }
 
-    if (window.electronAuth && normalizedNewEmail !== editingUser.email.toLowerCase() && editingUser.email.toLowerCase() === userEmail.toLowerCase()) {
+    if (window.electronAuth && editingUser.email.toLowerCase() === userEmail.toLowerCase()) {
       onLogout()
       return
     }
-    await loadUsers()
-    setIsEditDialogOpen(false)
-    setEditingUser(null)
-    setNewName('')
-    setNewEmail('')
-    setNewPhone('')
-    setNewUsername('')
-    setNewPassword('')
+    // The list shows the new e-mail at once and is read again without the dialog waiting for it.
+    void userList.change([[userKey(editingUser), null], [normalizedNewEmail, { ...editingUser, email: normalizedNewEmail, fullName: updatedUserData.fullName, phone: updatedUserData.phone, username: updatedUserData.username }]], Promise.resolve(true))
+    void loadUsers()
+    closeDialog()
     toast.success(t.managerPanel.validation.userUpdated)
   }
 
-  const handleCreateUser = async () => {
-    if (createUserInProgress.current) return
+  // The account shows in the list and the dialog closes at once; it is created on the shared drive in the background.
+  // If that fails, the dialog opens again with what was typed.
+  const handleCreateUser = () => {
     if (!newUserName.trim()) {
       toast.error(t.managerPanel.validation.createNameRequired)
       return
@@ -529,59 +578,52 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
       return
     }
 
-    createUserInProgress.current = true
-    setIsCreatingUser(true)
-    try {
-      const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; role: UserRole; isManager: boolean; phone?: string; status?: 'pending' | 'approved' | 'rejected' }>>('users') || {}
-      if (usersData[newUserEmail.toLowerCase()]) {
-        toast.error(t.managerPanel.validation.emailExists)
-        return
-      }
+    const form = { fullName: newUserName.trim(), email: newUserEmail.trim().toLowerCase(), password: newUserPassword.trim(), phone: newUserPhone.trim() }
+    if (userList.items.some(u => userKey(u) === form.email) || isCreator(form.email)) {
+      toast.error(t.managerPanel.validation.emailExists)
+      return
+    }
+
+    setIsCreateDialogOpen(false)
+    setNewUserName('')
+    setNewUserEmail('')
+    setNewUserPassword('')
+    setNewUserPhone('')
+    toast.success(t.managerPanel.validation.userCreated)
+
+    let failure: unknown
+    const created = (async () => {
       // Uden dette kan brugeren ikke logge ind bagefter — registret er den ENESTE
       // kilde login-skærmen bruger til at finde ud af hvilket team en email hører til.
-      if (window.electronRegistry) {
+      const [password] = await Promise.all([hashPassword(form.password), (async () => {
+        if (!window.electronRegistry) return
         const currentTeam = await window.electronRegistry.getCurrentTeam()
-        if (currentTeam) await window.electronRegistry.assignUser(newUserEmail.toLowerCase(), currentTeam.teamId)
-      }
-      await setKvObjectField('users', newUserEmail.toLowerCase(), {
-        email: newUserEmail.toLowerCase(),
-        password: await hashPassword(newUserPassword.trim()),
-        fullName: newUserName.trim(),
+        if (currentTeam) await window.electronRegistry.assignUser(form.email, currentTeam.teamId)
+      })()])
+      await setKvObjectField('users', form.email, {
+        email: form.email,
+        password,
+        fullName: form.fullName,
         role: 'user',
         isManager: false,
-        phone: newUserPhone.trim(),
+        phone: form.phone,
         // Manager-created accounts skip the approval flow.
         status: 'approved'
       })
-      setIsCreateDialogOpen(false)
-      setNewUserName('')
-      setNewUserEmail('')
-      setNewUserPassword('')
-      setNewUserPhone('')
-      toast.success(t.managerPanel.validation.userCreated)
-      void loadUsers().catch(error => console.error('Kunne ikke opdatere brugerlisten:', error))
-    } catch (error) {
-      console.error('Failed to save new user:', error)
-      toast.error(`${t.managerPanel.validation.createFailedPrefix}: ${error instanceof Error ? error.message : String(error)}`)
-    } finally {
-      createUserInProgress.current = false
-      setIsCreatingUser(false)
-    }
-  }
+      return true
+    })().catch(error => { failure = error; return false })
 
-  const deleteSickLeave = async (id: string) => {
-    const previous = sickLeaveEntries
-    setSickLeaveEntries(current => current.filter(entry => entry.id !== id))
-    toast.success(t.managerPanel.sickLeave.deletedToast)
-
-    try {
-      await removeFromKvArray('sick-leave-entries', [id])
-    } catch (error) {
-      console.error('Failed to delete sick leave:', error)
-      setSickLeaveEntries(previous)
-      toast.error(t.managerPanel.vacationRequests.notFoundError)
-      void loadSickLeaveEntries()
-    }
+    const shown: User = { email: form.email, fullName: form.fullName, role: 'user', phone: form.phone, status: 'approved' }
+    void userList.change([[form.email, shown]], created).then(saved => {
+      if (saved) return
+      console.error('Failed to save new user:', failure)
+      toast.error(`${t.managerPanel.validation.createFailedPrefix}: ${failure instanceof Error ? failure.message : String(failure)}`)
+      setNewUserName(form.fullName)
+      setNewUserEmail(form.email)
+      setNewUserPassword(form.password)
+      setNewUserPhone(form.phone)
+      setIsCreateDialogOpen(true)
+    })
   }
 
   /** Sender kvitterings-mail og notifikation. Maa aldrig forsinke selve beslutningen. */
@@ -599,8 +641,8 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
         timestamp: Date.now(),
         read: false,
       }
-      await appendToKvArray('emails', [newEmail])
-      await appendToKvArray('email-notifications', [{
+      // Uafhængige nøgler: gemmes samtidig (hver gemning tager op mod et halvt minut på M:).
+      await Promise.all([appendToKvArray('emails', [newEmail]), appendToKvArray('email-notifications', [{
         id: newId('notif'),
         type: 'email' as const,
         message: approved ? t.managerPanel.vacationRequests.approvalEmailNotification : t.managerPanel.vacationRequests.rejectionEmailNotification,
@@ -608,7 +650,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
         read: false,
         from: userEmail,
         emailId: newEmail.id,
-      }])
+      }])])
     } catch (emailError) {
       console.error('Kunne ikke sende feriebeslutnings-mail:', emailError)
     }
@@ -619,23 +661,20 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
    * og skrivning + mail sker i baggrunden. Tidligere ventede brugeren paa en
    * skrivning, en unoedvendig genindlaesning og to mail-skrivninger.
    */
-  const decideVacation = async (vacation: VacationEntry, status: 'approved' | 'rejected') => {
-    const previous = vacationEntries
-    setVacationEntries(current => current.filter(entry => entry.id !== vacation.id))
+  const decideVacation = (vacation: VacationEntry, status: 'approved' | 'rejected') => {
     if (status === 'approved') toast.success(t.managerPanel.vacationRequests.approvedToast)
     else toast.error(t.managerPanel.vacationRequests.rejectedToast)
 
-    const updated = await updateKvArrayItem<VacationEntry>('vacation-entries', vacation.id, (v) => ({
-      ...v, status: status as VacationStatus, reviewedBy: userEmail, reviewedAt: new Date().toISOString(),
-    })).catch(error => { console.error('Kunne ikke gemme feriebeslutningen:', error); return null })
-
-    if (!updated) {
-      setVacationEntries(previous)
-      toast.error(t.managerPanel.vacationRequests.notFoundError)
-      void loadVacationEntries()
-      return
-    }
-    void sendVacationDecisionEmail(vacation, status === 'approved')
+    const reviewedAt = new Date().toISOString()
+    const decide = (v: VacationEntry): VacationEntry => ({ ...v, status: status as VacationStatus, reviewedBy: userEmail, reviewedAt })
+    void vacationList.change([[vacation.id, decide(vacation)]], updateKvArrayItem<VacationEntry>('vacation-entries', vacation.id, decide)).then(saved => {
+      if (!saved) {
+        toast.error(t.managerPanel.vacationRequests.notFoundError)
+        void loadVacationEntries()
+        return
+      }
+      void sendVacationDecisionEmail(vacation, status === 'approved')
+    })
   }
 
   const handleApproveVacation = (vacation: VacationEntry) => decideVacation(vacation, 'approved')
@@ -647,6 +686,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
     setEditVacationStartDate(parseLocalDate(vacation.startDate))
     setEditVacationEndDate(parseLocalDate(vacation.endDate))
     setEditVacationNotes(vacation.notes || '')
+    setEditVacationType(vacation.type === 'parental' ? 'parental' : 'vacation')
     setIsEditVacationDialogOpen(true)
   }
 
@@ -656,24 +696,32 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
     )
   }
 
-  /** Batch-afgørelse: opdaterer hver valgt anmodning atomart og sender alle mails/notifikationer i ét skriv pr. nøgle. */
-  const handleBulkVacationDecision = async (status: 'approved' | 'rejected') => {
+  /**
+   * Batch-afgørelse: vises straks i begge lister. Alle valgte anmodninger gemmes i ÉN skrivning (før én pr. anmodning,
+   * hver op mod et minut på M:), og derefter alle mails og alle notifikationer samtidig.
+   */
+  const handleBulkVacationDecision = (status: 'approved' | 'rejected') => {
     const selected = vacationEntries.filter(v => selectedVacationIds.includes(v.id))
     if (selected.length === 0) return
-    setIsBulkProcessing(true)
 
-    try {
+    const reviewedAt = new Date()
+    const write = decideVacationRequests(selected.map(v => v.id), status, userEmail, reviewedAt)
+    setSelectedVacationIds([])
+    const count = `${selected.length} ${selected.length === 1 ? t.managerPanel.vacationRequests.requestSingular : t.managerPanel.vacationRequests.requestPlural}`
+    toast.success(`${count} ${status === 'approved' ? t.managerPanel.vacationRequests.bulkApprovedSuffix : t.managerPanel.vacationRequests.bulkRejectedSuffix}`)
+
+    const shown = selected.map((v): [string, VacationEntry] => [v.id, { ...v, status, reviewedBy: userEmail, reviewedAt: reviewedAt.toISOString() }])
+    void vacationList.change(shown, write.then(decided => decided.length > 0)).then(async saved => {
+      const decided = await write.catch(() => null)
+      void loadVacationEntries()
+      if (!saved || !decided) {
+        toast.error(decided ? t.managerPanel.vacationRequests.bulkNoneFound : t.profile.errors.generic)
+        return
+      }
+
       const emailItems: Array<{ id: string } & Record<string, unknown>> = []
       const notificationItems: Array<{ id: string } & Record<string, unknown>> = []
-      let succeeded = 0
-
-      for (const vacation of selected) {
-        const updated = await updateKvArrayItem<VacationEntry>('vacation-entries', vacation.id, (v) => ({
-          ...v, status: status as VacationStatus, reviewedBy: userEmail, reviewedAt: new Date().toISOString(),
-        }))
-        if (!updated) continue
-        succeeded++
-
+      for (const vacation of decided) {
         const emailContent = status === 'approved'
           ? vacationApprovedEmail(vacation.startDate, vacation.endDate, userEmail, vacation.notes)
           : vacationRejectedEmail(vacation.startDate, vacation.endDate, userEmail, vacation.notes)
@@ -697,30 +745,14 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
           emailId,
         })
       }
-
-      if (emailItems.length > 0) {
-        // Mails maa ikke forsinke listen - de sendes i baggrunden.
-        void appendToKvArray('emails', emailItems)
-          .then(() => appendToKvArray('email-notifications', notificationItems))
-          .catch(error => console.error('Kunne ikke sende beslutnings-mails:', error))
-      }
-
-      setVacationEntries(current => current.filter(entry => !selectedVacationIds.includes(entry.id)))
-      setSelectedVacationIds([])
-
-      if (succeeded === 0) {
-        toast.error(t.managerPanel.vacationRequests.bulkNoneFound)
-      } else if (status === 'approved') {
-        toast.success(`${succeeded} ${succeeded === 1 ? t.managerPanel.vacationRequests.requestSingular : t.managerPanel.vacationRequests.requestPlural} ${t.managerPanel.vacationRequests.bulkApprovedSuffix}`)
-      } else {
-        toast.success(`${succeeded} ${succeeded === 1 ? t.managerPanel.vacationRequests.requestSingular : t.managerPanel.vacationRequests.requestPlural} ${t.managerPanel.vacationRequests.bulkRejectedSuffix}`)
-      }
-    } finally {
-      setIsBulkProcessing(false)
-    }
+      // Uafhængige nøgler: gemmes samtidig.
+      void Promise.all([appendToKvArray('emails', emailItems), appendToKvArray('email-notifications', notificationItems)])
+        .catch(error => console.error('Kunne ikke sende beslutnings-mails:', error))
+    })
   }
 
-  const handleSaveVacationEdit = async () => {
+  // Shown and closed at once; a failed save puts the vacation back as it was.
+  const handleSaveVacationEdit = () => {
     if (!editingVacation || !editVacationStartDate || !editVacationEndDate) {
       toast.error(t.managerPanel.vacationOverview.startEndRequired)
       return
@@ -731,78 +763,113 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
       return
     }
 
-    const editedEntry = await updateKvArrayItem<VacationEntry>('vacation-entries', editingVacation.id, (v) => ({
+    const original = editingVacation
+    const startDate = editVacationStartDate
+    const endDate = editVacationEndDate
+    const notes = editVacationNotes.trim() || undefined
+    const type = editVacationType
+    const edit = (v: VacationEntry): VacationEntry => ({
       ...v,
-      startDate: format(editVacationStartDate, 'yyyy-MM-dd'),
-      endDate: format(editVacationEndDate, 'yyyy-MM-dd'),
-      notes: editVacationNotes.trim() || undefined,
-    }))
-    if (!editedEntry) {
-      toast.error(t.managerPanel.vacationRequests.notFoundError)
-      void loadVacationEntries()
-      setIsEditVacationDialogOpen(false)
-      return
-    }
-    setVacationEntries(current => current.map(entry => entry.id === editedEntry.id ? editedEntry : entry))
+      startDate: format(startDate, 'yyyy-MM-dd'),
+      endDate: format(endDate, 'yyyy-MM-dd'),
+      notes,
+      type: type === 'parental' ? 'parental' : undefined,
+    })
+
     setIsEditVacationDialogOpen(false)
-
-    try {
-      const emailContent = vacationEditedEmail(
-        editingVacation.startDate,
-        editingVacation.endDate,
-        editVacationStartDate,
-        editVacationEndDate,
-        userEmail,
-        editVacationNotes.trim() || undefined,
-      )
-
-      const newEmail = {
-        id: newId('email'),
-        from: userEmail,
-        to: editingVacation.userEmail,
-        subject: emailContent.subject,
-        message: emailContent.body,
-        timestamp: Date.now(),
-        read: false
-      }
-
-      await appendToKvArray('emails', [newEmail])
-
-      const notification = {
-        id: newId('notif'),
-        type: 'email' as const,
-        message: t.managerPanel.vacationOverview.editedNotification,
-        timestamp: Date.now(),
-        read: false,
-        from: userEmail,
-        emailId: newEmail.id
-      }
-
-      await appendToKvArray('email-notifications', [notification])
-    } catch (emailError) {
-      console.error('Error sending vacation edit email:', emailError)
-    }
-
     setEditingVacation(null)
     setEditVacationStartDate(undefined)
     setEditVacationEndDate(undefined)
     setEditVacationNotes('')
     toast.success(t.managerPanel.vacationOverview.updatedToast)
+
+    const outcome = updateKvArrayItem<VacationEntry>('vacation-entries', original.id, edit)
+      .then(entry => entry ? 'saved' as const : 'missing' as const, error => { console.error('Kunne ikke gemme ferien:', error); return 'failed' as const })
+    void vacationList.change([[original.id, edit(original)]], outcome.then(result => result === 'saved')).then(async saved => {
+      if (!saved) {
+        toast.error(await outcome === 'missing' ? t.managerPanel.vacationRequests.notFoundError : (language === 'da' ? 'Ændringen blev ikke gemt — prøv igen' : language === 'fi' ? 'Muutosta ei tallennettu — yritä uudelleen' : language === 'sv' ? 'Ändringen sparades inte — försök igen' : 'The change was not saved — please try again'))
+        void loadVacationEntries()
+        return
+      }
+
+      // Barsel sender ingen ferie-mails.
+      if (original.type === 'parental' || type === 'parental') return
+      try {
+        const emailContent = vacationEditedEmail(original.startDate, original.endDate, startDate, endDate, userEmail, notes)
+
+        const newEmail = {
+          id: newId('email'),
+          from: userEmail,
+          to: original.userEmail,
+          subject: emailContent.subject,
+          message: emailContent.body,
+          timestamp: Date.now(),
+          read: false
+        }
+
+        const notification = {
+          id: newId('notif'),
+          type: 'email' as const,
+          message: t.managerPanel.vacationOverview.editedNotification,
+          timestamp: Date.now(),
+          read: false,
+          from: userEmail,
+          emailId: newEmail.id
+        }
+
+        // I baggrunden og samtidig: uafhængige nøgler.
+        void Promise.all([appendToKvArray('emails', [newEmail]), appendToKvArray('email-notifications', [notification])])
+          .catch(emailError => console.error('Error sending vacation edit email:', emailError))
+      } catch (emailError) {
+        console.error('Error sending vacation edit email:', emailError)
+      }
+    })
   }
 
-  const deleteVacation = async (id: string) => {
-    const allVacationsData = await window.kv.get<VacationEntry[]>('vacation-entries') || []
-    const vacationToDelete = allVacationsData.find(v => v.id === id)
-    
+  // Returns at once: the vacation leaves both lists immediately and is deleted on the shared drive in the background
+  // (that write has taken 80 s). If it fails, the vacation comes back with an error.
+  const deleteVacation = (id: string) => {
+    const vacationToDelete = vacationList.items.find(v => v.id === id)
     if (!vacationToDelete) {
       toast.error(t.managerPanel.vacationOverview.notFoundError)
       return
     }
 
-    await window.kv.update('vacation-entries', { op: 'remove', ids: [id] })
-    await loadVacationEntries()
     toast.success(t.managerPanel.vacationOverview.deletedToast)
+    void vacationList.change([[id, null]], removeFromKvArray('vacation-entries', [id])).then(saved => {
+      void loadVacationEntries()
+      if (!saved) {
+        toast.error(t.profile.errors.generic)
+        return
+      }
+      sendVacationDeletedEmail(vacationToDelete)
+    })
+  }
 
+  /** A vacation granted in a dialog (manual grant, parental leave) shows in both lists while it is saved. */
+  const showGrantedVacation = (entry: VacationEntry, saved: Promise<boolean>) => {
+    void vacationList.change([[entry.id, entry]], saved).then(() => loadVacationEntries())
+  }
+
+  /** The onboarded person (and birthday) shows at once; afterwards the lists are read again. */
+  const showOnboardedAccount = (account: OnboardedAccount, accountSaved: Promise<boolean>, birthday?: { entry: BirthdayEntry; saved: Promise<boolean> }) => {
+    void userList.change([[account.email, { ...account, status: 'approved' }]], accountSaved).then(saved => { if (saved) void loadUsers() })
+    if (birthday) void birthdayList.change([[birthdayKey(birthday.entry), birthday.entry]], birthday.saved).then(saved => { if (saved) void loadBirthdays() })
+  }
+
+  /** The offboarded person, their birthday and pending requests leave the lists at once. */
+  const showOffboardedAccount = (email: string, saved: Promise<boolean>) => {
+    const emailLower = email.toLowerCase()
+    void userList.change([[emailLower, null]], saved)
+    const birthdaysToHide = birthdayList.items.filter(entry => entry.email.toLowerCase() === emailLower)
+    if (birthdaysToHide.length > 0) void birthdayList.change(birthdaysToHide.map(entry => [birthdayKey(entry), null]), saved)
+    const requestsToHide = vacationList.items.filter(entry => entry.userEmail.toLowerCase() === emailLower && entry.status === 'pending')
+    if (requestsToHide.length > 0) void vacationList.change(requestsToHide.map(entry => [entry.id, null]), saved)
+    void saved.then(() => Promise.all([loadUsers(), loadBirthdays(), loadVacationEntries()]))
+  }
+
+  const sendVacationDeletedEmail = (vacationToDelete: VacationEntry) => {
+    if (vacationToDelete.type === 'parental') return
     try {
       const emailContent = vacationDeletedEmail(
         vacationToDelete.startDate,
@@ -822,8 +889,6 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
         read: false
       }
 
-      await appendToKvArray('emails', [newEmail])
-
       const notification = {
         id: newId('notif'),
         type: 'email' as const,
@@ -834,7 +899,9 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
         emailId: newEmail.id
       }
 
-      await appendToKvArray('email-notifications', [notification])
+      // I baggrunden og samtidig, så knappen ikke venter på mailen.
+      void Promise.all([appendToKvArray('emails', [newEmail]), appendToKvArray('email-notifications', [notification])])
+        .catch(emailError => console.error('Error sending vacation deletion email:', emailError))
     } catch (emailError) {
       console.error('Error sending vacation deletion email:', emailError)
     }
@@ -916,7 +983,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
         </header>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-6 max-w-6xl">
+          <TabsList className="grid w-full grid-cols-5 max-w-6xl">
             <TabsTrigger value="permissions" className="gap-2">
               <ShieldCheck size={18} />
               {t.managerPanel.tabs.permissions}
@@ -925,10 +992,6 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                   {pendingUsers.length}
                 </Badge>
               )}
-            </TabsTrigger>
-            <TabsTrigger value="sick-leave" className="gap-2">
-              <FirstAidKit size={18} />
-              {t.managerPanel.tabs.sickLeave}
             </TabsTrigger>
             <TabsTrigger value="vacation-requests" className="gap-2">
               <Umbrella size={18} />
@@ -950,9 +1013,9 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
             <TabsTrigger value="guide-access" className="gap-2">
               <LockKey size={18} />
               {t.managerPanel.tabs.guideAccess}
-              {pendingGuideAccessRequests.length > 0 && (
+              {pendingLibraryAccessCount > 0 && (
                 <Badge className="ml-1 h-5 px-1.5 bg-accent text-accent-foreground">
-                  {pendingGuideAccessRequests.length}
+                  {pendingLibraryAccessCount}
                 </Badge>
               )}
             </TabsTrigger>
@@ -1081,7 +1144,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                                 backgroundColor: getEmployeeColorByEmail(user.email, colorOverrides).bg,
                                 color: getEmployeeColorByEmail(user.email, colorOverrides).text,
                               }}
-                              title={language === 'da' ? 'Skift farve' : language === 'fi' ? 'Vaihda väri' : 'Change color'}
+                              title={language === 'da' ? 'Skift farve' : language === 'fi' ? 'Vaihda väri' : language === 'sv' ? 'Byt färg' : 'Change color'}
                             >
                               {user.fullName.charAt(0).toUpperCase()}
                             </button>
@@ -1089,7 +1152,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                           <PopoverContent className="w-64">
                             <div className="space-y-3">
                               <div className="text-sm font-semibold">
-                                {language === 'da' ? 'Vælg farve' : language === 'fi' ? 'Valitse väri' : 'Choose color'}
+                                {language === 'da' ? 'Vælg farve' : language === 'fi' ? 'Valitse väri' : language === 'sv' ? 'Välj färg' : 'Choose color'}
                               </div>
                               <div className="grid grid-cols-8 gap-2">
                                 {EMPLOYEE_COLOR_PALETTE.map((color, index) => {
@@ -1115,7 +1178,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                                 className="w-full"
                                 onClick={() => resetUserColor(user.email)}
                               >
-                                {language === 'da' ? 'Nulstil til automatisk' : language === 'fi' ? 'Palauta automaattiseksi' : 'Reset to automatic'}
+                                {language === 'da' ? 'Nulstil til automatisk' : language === 'fi' ? 'Palauta automaattiseksi' : language === 'sv' ? 'Återställ till automatiskt' : 'Reset to automatic'}
                               </Button>
                             </div>
                           </PopoverContent>
@@ -1191,7 +1254,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                       ? 'Vælg brugere, som må reviewe, redigere og godkende andre brugeres guideforslag. De får ingen øvrige managerrettigheder og kan ikke godkende deres egne indsendelser.'
                       : language === 'fi'
                         ? 'Valitse käyttäjät, jotka voivat tarkistaa, muokata ja hyväksyä muiden opasehdotuksia. He eivät saa muita esihenkilöoikeuksia eivätkä voi hyväksyä omia lähetyksiään.'
-                        : 'Choose users who may review, edit and approve other users’ guide proposals. They receive no other manager permissions and cannot approve their own submissions.'}
+                        : language === 'sv' ? 'Välj användare som får granska, redigera och godkänna andra användares guideförslag. De får inga andra chefsbehörigheter och kan inte godkänna sina egna inlämningar.' : 'Choose users who may review, edit and approve other users’ guide proposals. They receive no other manager permissions and cannot approve their own submissions.'}
                   </p>
                 </div>
               </div>
@@ -1206,7 +1269,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                         <div className="text-sm text-muted-foreground truncate">{user.email}</div>
                       </div>
                       <div className="flex items-center gap-3 shrink-0">
-                        {automaticReviewer && <Badge variant="secondary">{language === 'da' ? 'Automatisk via managerrolle' : language === 'fi' ? 'Automaattinen esihenkilöroolin kautta' : 'Automatic through manager role'}</Badge>}
+                        {automaticReviewer && <Badge variant="secondary">{language === 'da' ? 'Automatisk via managerrolle' : language === 'fi' ? 'Automaattinen esihenkilöroolin kautta' : language === 'sv' ? 'Automatiskt via chefsroll' : 'Automatic through manager role'}</Badge>}
                         {!automaticReviewer && checked && <Badge variant="outline">Guide Admin</Badge>}
                         <Checkbox checked={checked} disabled={automaticReviewer} onCheckedChange={(value) => setGuideAdmin(user.email, value === true)} />
                       </div>
@@ -1215,6 +1278,8 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                 })}
               </div>
             </Card>
+
+            <WarehouseRolesCard />
 
             <Card className="p-6 bg-muted/30">
               <div className="space-y-4">
@@ -1234,376 +1299,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                 </div>
               </div>
             </Card>
-          </TabsContent>
-
-          <TabsContent value="sick-leave" className="space-y-6">
-            <Card className="p-6">
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-2">
-                  <FirstAidKit size={28} className="text-destructive" weight="duotone" />
-                  <h2 className="text-2xl font-bold">{t.managerPanel.sickLeave.title}</h2>
-                </div>
-                <Badge variant="outline" className="text-sm">
-                  {sickLeaveEntries.length} {sickLeaveEntries.length === 1 ? t.managerPanel.sickLeave.entrySingular : t.managerPanel.sickLeave.entryPlural}
-                </Badge>
-              </div>
-
-              <div className="mb-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                {(() => {
-                  const employeeStats = new Map<string, { 
-                    name: string
-                    email: string
-                    count: number
-                    lastDate: string 
-                  }>()
-
-                  const selfSickEntries = sickLeaveEntries.filter(e => e.type !== 'child')
-                  const childSickEntries = sickLeaveEntries.filter(e => e.type === 'child')
-
-                  sickLeaveEntries.forEach((entry) => {
-                    const existing = employeeStats.get(entry.userEmail)
-                    if (existing) {
-                      existing.count++
-                      const existingDate = new Date(existing.lastDate)
-                      const currentDate = parseLocalDate(entry.startDate)
-                      if (currentDate > existingDate) {
-                        existing.lastDate = entry.startDate
-                      }
-                    } else {
-                      employeeStats.set(entry.userEmail, {
-                        name: entry.userName,
-                        email: entry.userEmail,
-                        count: 1,
-                        lastDate: entry.startDate
-                      })
-                    }
-                  })
-
-                  const sortedStats = Array.from(employeeStats.values()).sort((a, b) => b.count - a.count)
-                  const totalEmployees = users.length
-                  const employeesWithSickLeave = employeeStats.size
-                  const totalSickDays = sickLeaveEntries.length
-
-                  return (
-                    <>
-                      <Card className="p-4 bg-blocked-surface border-blocked/25">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="text-sm font-medium text-muted-foreground">{t.managerPanel.sickLeave.selfSickness}</div>
-                          <FirstAidKit size={20} className="text-destructive" weight="duotone" />
-                        </div>
-                        <div className="text-3xl font-bold text-destructive">{selfSickEntries.length}</div>
-                        <div className="text-xs text-muted-foreground mt-1">
-                          {t.managerPanel.sickLeave.selfSicknessUnit}
-                        </div>
-                      </Card>
-
-                      <Card className="p-4 bg-attention-surface border-attention/25">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="text-sm font-medium text-muted-foreground">{t.managerPanel.sickLeave.childSick}</div>
-                          <UserIcon size={20} className="text-orange-600" weight="duotone" />
-                        </div>
-                        <div className="text-3xl font-bold text-orange-600">{childSickEntries.length}</div>
-                        <div className="text-xs text-muted-foreground mt-1">
-                          {t.managerPanel.sickLeave.childSickUnit}
-                        </div>
-                      </Card>
-
-                      <Card className="p-4 bg-accent/10 border-accent/25">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="text-sm font-medium text-muted-foreground">{t.managerPanel.sickLeave.totalSickness}</div>
-                          <FirstAidKit size={20} className="text-accent" weight="duotone" />
-                        </div>
-                        <div className="text-3xl font-bold text-accent">{totalSickDays}</div>
-                        <div className="text-xs text-muted-foreground mt-1">
-                          {employeesWithSickLeave} {t.managerPanel.sickLeave.ofEmployees} {totalEmployees} {t.managerPanel.sickLeave.employeesUnit}
-                        </div>
-                      </Card>
-
-                      <Card className="p-4 bg-primary/10 border-primary/25">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="text-sm font-medium text-muted-foreground">{t.managerPanel.sickLeave.mostSickness}</div>
-                          <Crown size={20} className="text-primary" weight="duotone" />
-                        </div>
-                        {sortedStats.length > 0 ? (
-                          <>
-                            <div className="text-sm leading-snug font-bold text-primary break-words line-clamp-2" title={sortedStats[0].name}>{sortedStats[0].name}</div>
-                            <div className="text-xs text-muted-foreground mt-1">
-                              {sortedStats[0].count} {sortedStats[0].count === 1 ? t.managerPanel.sickLeave.entrySingular : t.managerPanel.sickLeave.entryPlural}
-                            </div>
-                          </>
-                        ) : (
-                          <div className="text-lg font-bold text-muted-foreground">{t.managerPanel.sickLeave.noData}</div>
-                        )}
-                      </Card>
-                    </>
-                  )
-                })()}
-              </div>
-
-              {sickLeaveEntries.length > 0 && (() => {
-                // Mønster-analyse: ugedags-heatmap (90 dage) + alarm ved ≥3 sygemeldinger på 30 dage.
-                const now = Date.now()
-                const DAY_MS = 86400000
-                const last90 = sickLeaveEntries.filter(e => {
-                  const d = parseLocalDate(e.startDate)
-                  return !isNaN(d.getTime()) && now - d.getTime() <= 90 * DAY_MS
-                })
-
-                const weekdayLabels = t.managerPanel.weekdaysShort
-                const weekdayCounts = new Array(7).fill(0)
-                last90.forEach(e => {
-                  const d = parseLocalDate(e.startDate)
-                  if (isNaN(d.getTime())) return
-                  weekdayCounts[(d.getDay() + 6) % 7]++
-                })
-                const maxWeekday = Math.max(...weekdayCounts, 1)
-
-                const last30ByEmployee = new Map<string, { name: string; count: number }>()
-                sickLeaveEntries.forEach(e => {
-                  const d = parseLocalDate(e.startDate)
-                  if (isNaN(d.getTime()) || now - d.getTime() > 30 * DAY_MS) return
-                  const existing = last30ByEmployee.get(e.userEmail)
-                  if (existing) existing.count++
-                  else last30ByEmployee.set(e.userEmail, { name: e.userName, count: 1 })
-                })
-                const frequencyAlerts = Array.from(last30ByEmployee.values())
-                  .filter(s => s.count >= 3)
-                  .sort((a, b) => b.count - a.count)
-
-                return (
-                  <Card className="p-4 mb-6 border">
-                    <div className="flex items-center gap-2 mb-4">
-                      <WaveSine size={20} className="text-primary" weight="duotone" />
-                      <h3 className="font-bold text-lg">{t.managerPanel.sickLeave.patternsTitle}</h3>
-                      <span className="text-xs text-muted-foreground ml-1">{t.managerPanel.sickLeave.patternsSubtitle}</span>
-                    </div>
-
-                    <div className="grid grid-cols-7 gap-2 mb-2">
-                      {weekdayLabels.map((label, i) => {
-                        const count = weekdayCounts[i]
-                        const intensity = count / maxWeekday
-                        return (
-                          <div key={label} className="flex flex-col items-center gap-1.5">
-                            <div
-                              className="w-full h-16 rounded-lg border flex items-end justify-center pb-1 transition-colors"
-                              style={{
-                                backgroundColor: count === 0
-                                  ? 'transparent'
-                                  : `oklch(0.55 0.18 25 / ${0.12 + intensity * 0.55})`
-                              }}
-                              title={`${count} ${count === 1 ? t.managerPanel.sickLeave.entrySingular : t.managerPanel.sickLeave.entryPlural} ${t.managerPanel.sickLeave.weekdayTooltipOn} ${label}`}
-                            >
-                              <span className={cn("text-sm font-bold", count === 0 ? "text-muted-foreground" : "text-foreground")}>
-                                {count}
-                              </span>
-                            </div>
-                            <span className="text-xs text-muted-foreground font-medium">{label}</span>
-                          </div>
-                        )
-                      })}
-                    </div>
-                    <p className="text-xs text-muted-foreground mb-4">
-                      {t.managerPanel.sickLeave.patternsHint}
-                    </p>
-
-                    {frequencyAlerts.length > 0 && (
-                      <div className="p-4 rounded-md border border-attention/40 bg-attention-surface">
-                        <div className="flex items-center gap-2 mb-2">
-                          <FirstAidKit size={18} className="text-amber-600 dark:text-amber-400" weight="fill" />
-                          <span className="font-semibold text-sm">{t.managerPanel.sickLeave.frequencyAlertTitle}</span>
-                        </div>
-                        <div className="space-y-1.5">
-                          {frequencyAlerts.map(alert => (
-                            <div key={alert.name} className="flex items-center justify-between text-sm">
-                              <span className="font-medium">{alert.name}</span>
-                              <Badge className="bg-amber-500/20 text-amber-700 dark:text-amber-300 border-amber-500/30">
-                                {alert.count} {t.managerPanel.sickLeave.entryPlural}
-                              </Badge>
-                            </div>
-                          ))}
-                        </div>
-                        <p className="text-xs text-muted-foreground mt-2">
-                          {t.managerPanel.sickLeave.frequencyAlertHint}
-                        </p>
-                      </div>
-                    )}
-                  </Card>
-                )
-              })()}
-
-              {sickLeaveEntries.length > 0 && (() => {
-                const employeeStats = new Map<string, { 
-                  name: string
-                  email: string
-                  count: number
-                  lastDate: string 
-                }>()
-
-                sickLeaveEntries.forEach((entry) => {
-                  const existing = employeeStats.get(entry.userEmail)
-                  if (existing) {
-                    existing.count++
-                    const existingDate = new Date(existing.lastDate)
-                    const currentDate = parseLocalDate(entry.startDate)
-                    if (currentDate > existingDate) {
-                      existing.lastDate = entry.startDate
-                    }
-                  } else {
-                    employeeStats.set(entry.userEmail, {
-                      name: entry.userName,
-                      email: entry.userEmail,
-                      count: 1,
-                      lastDate: entry.startDate
-                    })
-                  }
-                })
-
-                const sortedStats = Array.from(employeeStats.values()).sort((a, b) => b.count - a.count)
-
-                return (
-                  <Card className="p-4 mb-6 bg-muted/30 border">
-                    <div className="flex items-center gap-2 mb-4">
-                      <UserIcon size={20} className="text-primary" weight="duotone" />
-                      <h3 className="font-bold text-lg">{t.managerPanel.sickLeave.employeeStatsTitle}</h3>
-                    </div>
-                    <div className="space-y-2">
-                      {sortedStats.map((stat, index) => (
-                        <div 
-                          key={stat.email}
-                          className="flex items-center justify-between p-3 rounded-lg bg-card border hover:shadow-sm transition-all"
-                        >
-                          <div className="flex items-center gap-3">
-                            <div className="flex items-center justify-center w-8 h-8 rounded-full bg-blocked-surface text-blocked font-bold text-sm">
-                              {index + 1}
-                            </div>
-                            <div>
-                              <div className="font-semibold">{stat.name}</div>
-                              <div className="text-xs text-muted-foreground">{stat.email}</div>
-                            </div>
-                          </div>
-                            <div className="flex items-center gap-4">
-                            <div className="text-right">
-                              <div className="font-bold text-lg text-destructive">{stat.count}</div>
-                              <div className="text-xs text-muted-foreground">
-                                {stat.count === 1 ? t.managerPanel.sickLeave.entrySingular : t.managerPanel.sickLeave.entryPlural}
-                              </div>
-                            </div>
-                            <div className="text-right min-w-[100px]">
-                              <div className="text-xs text-muted-foreground">{t.managerPanel.sickLeave.latestLabel}</div>
-                              <div className="text-sm font-medium">
-                                {(() => {
-                                  try {
-                                    const date = new Date(stat.lastDate)
-                                    if (isNaN(date.getTime())) return t.managerPanel.sickLeave.invalidDate
-                                    return format(date, 'd. MMM', { locale: dateLocale })
-                                  } catch {
-                                    return t.managerPanel.sickLeave.invalidDate
-                                  }
-                                })()}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </Card>
-                )
-              })()}
-
-              <div className="mb-4 p-4 bg-muted/50 rounded-lg border">
-                <p className="text-sm text-muted-foreground">
-                  {t.managerPanel.sickLeave.managementDescription}
-                </p>
-              </div>
-
-              {sickLeaveEntries.length === 0 ? (
-                <div className="text-center py-12">
-                  <FirstAidKit size={64} className="text-muted-foreground mx-auto mb-4" weight="duotone" />
-                  <p className="text-muted-foreground">{t.managerPanel.sickLeave.none}</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {sickLeaveEntries.map((entry) => (
-                    <motion.div
-                      key={entry.id}
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="flex items-center justify-between p-5 rounded-md border bg-card hover:border-primary/40 transition-colors group"
-                    >
-                      <div className="flex items-center gap-4 flex-1">
-                        <div className="w-12 h-12 rounded-md bg-primary flex items-center justify-center text-primary-foreground font-bold text-lg">
-                        </div>
-                        <div className="flex-1">
-                          <div className="font-bold text-lg mb-1">{entry.userName}</div>
-                          <div className="text-sm text-muted-foreground">{entry.userEmail}</div>
-                          <div className="flex flex-col gap-1 mt-2 text-sm">
-                            <span className="font-medium">
-                              {(() => {
-                                try {
-                                  const startDate = parseLocalDate(entry.startDate)
-                                  if (isNaN(startDate.getTime())) return t.managerPanel.sickLeave.invalidDateFull
-                                  return format(startDate, 'd. MMM yyyy', { locale: dateLocale })
-                                } catch {
-                                  return t.managerPanel.sickLeave.invalidDateFull
-                                }
-                              })()}
-                            </span>
-                            <span className="text-xs text-muted-foreground">
-                              {t.managerPanel.sickLeave.submittedPrefix}: {(() => {
-                                try {
-                                  const date = new Date(entry.submittedAt)
-                                  if (isNaN(date.getTime())) return t.managerPanel.sickLeave.invalidDateFull
-                                  return format(date, 'd. MMM yyyy HH:mm', { locale: dateLocale })
-                                } catch {
-                                  return t.managerPanel.sickLeave.invalidDateFull
-                                }
-                              })()}
-                            </span>
-                            {entry.reason && (
-                              <span className="text-muted-foreground mt-1">{t.managerPanel.sickLeave.notesPrefix}: {entry.reason}</span>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <Badge className={entry.type === 'child' ? "bg-orange-500 text-white" : "bg-green-500 text-white"}>
-                            <Check size={14} className="mr-1" />
-                            {entry.type === 'child' ? t.managerPanel.sickLeave.childSickBadge : t.managerPanel.sickLeave.sickBadge}
-                          </Badge>
-                        </div>
-                      </div>
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            className="text-destructive hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-opacity"
-                          >
-                            <Trash size={20} />
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>{t.managerPanel.sickLeave.deleteTitle}</AlertDialogTitle>
-                            <AlertDialogDescription>
-                              {t.managerPanel.sickLeave.deleteConfirmPrefix} <strong>{entry.userName}</strong>{t.managerPanel.sickLeave.deleteConfirmSuffix}
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
-                            <AlertDialogAction
-                              onClick={() => deleteSickLeave(entry.id)}
-                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                            >
-                              {t.managerPanel.sickLeave.deleteAction}
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
-                    </motion.div>
-                  ))}
-                </div>
-              )}
-            </Card>
+            <ExtraManagersCard />
           </TabsContent>
 
           <TabsContent value="vacation-requests" className="space-y-6">
@@ -1641,17 +1337,15 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                       <div className="flex gap-2 ml-auto">
                         <Button
                           size="sm"
-                          disabled={isBulkProcessing}
                           onClick={() => handleBulkVacationDecision('approved')}
                           className="gap-2"
                         >
                           <Check size={16} weight="bold" />
-                          {isBulkProcessing ? t.managerPanel.vacationRequests.processing : `${t.managerPanel.vacationRequests.approveSelectedPrefix} (${selectedVacationIds.length})`}
+                          {`${t.managerPanel.vacationRequests.approveSelectedPrefix} (${selectedVacationIds.length})`}
                         </Button>
                         <Button
                           size="sm"
                           variant="destructive"
-                          disabled={isBulkProcessing}
                           onClick={() => handleBulkVacationDecision('rejected')}
                           className="gap-2"
                         >
@@ -1797,6 +1491,14 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                     <Gift size={18} weight="bold" />
                     {t.managerPanel.vacationOverview.grantButton}
                   </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => setIsParentalDialogOpen(true)}
+                    className="gap-2"
+                  >
+                    <Baby size={18} weight="bold" />
+                    {t.parentalLeave.registerButton}
+                  </Button>
                   <Select value={vacationFilter} onValueChange={(value: 'all' | 'pending' | 'approved') => setVacationFilter(value)}>
                     <SelectTrigger className="w-40">
                       <SelectValue />
@@ -1875,6 +1577,12 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                             )}
                           </div>
                           <div className="flex items-center gap-3">
+                            {vacation.type === 'parental' && (
+                              <Badge variant="outline" className="border-violet-500/40 text-violet-700 dark:text-violet-300">
+                                <Baby size={14} className="mr-1" />
+                                {t.parentalLeave.badge}
+                              </Badge>
+                            )}
                             {vacation.status === 'pending' && (
                               <Badge className="bg-amber-500/20 text-amber-700 border-amber-500/30">
                                 <ClockCounterClockwise size={14} className="mr-1" />
@@ -2091,26 +1799,30 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
           </TabsContent>
 
           <TabsContent value="guide-access" className="space-y-6">
-            <Card className="p-6">
+            {([
+              { kind: 'guides' as const, Icon: LockKey, title: t.managerPanel.guideAccessRequests.title, description: t.managerPanel.guideAccessRequests.description, none: t.managerPanel.guideAccessRequests.none, pending: pendingGuideAccessRequests },
+              { kind: 'knowledge' as const, Icon: Brain, title: t.managerPanel.knowledgeAccessRequests.title, description: t.managerPanel.knowledgeAccessRequests.description, none: t.managerPanel.knowledgeAccessRequests.none, pending: pendingKnowledgeAccessRequests },
+            ]).map(({ kind, Icon, title, description, none, pending }) => (
+            <Card key={kind} className="p-6">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
-                  <LockKey size={28} className="text-primary" weight="duotone" />
-                  <h2 className="text-2xl font-bold">{t.managerPanel.guideAccessRequests.title}</h2>
+                  <Icon size={28} className="text-primary" weight="duotone" />
+                  <h2 className="text-2xl font-bold">{title}</h2>
                 </div>
-                {pendingGuideAccessRequests.length > 0 && (
+                {pending.length > 0 && (
                   <Badge className="bg-amber-500/20 text-amber-700 border-amber-500/30">
-                    {pendingGuideAccessRequests.length}
+                    {pending.length}
                   </Badge>
                 )}
               </div>
               <div className="mb-4 p-3 bg-background/60 rounded-lg border text-sm text-muted-foreground">
-                {t.managerPanel.guideAccessRequests.description}
+                {description}
               </div>
-              {pendingGuideAccessRequests.length === 0 ? (
-                <p className="text-muted-foreground text-center py-8">{t.managerPanel.guideAccessRequests.none}</p>
+              {pending.length === 0 ? (
+                <p className="text-muted-foreground text-center py-8">{none}</p>
               ) : (
                 <div className="space-y-3">
-                  {pendingGuideAccessRequests.map((request) => (
+                  {pending.map((request) => (
                     <motion.div
                       key={request.id}
                       initial={{ opacity: 0, y: 10 }}
@@ -2128,12 +1840,12 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                           size="sm"
                           variant="outline"
                           className="gap-1.5 text-destructive hover:bg-destructive/10"
-                          onClick={() => handleRejectGuideAccessRequest(request)}
+                          onClick={() => handleReviewLibraryAccessRequest(kind, request, 'rejected')}
                         >
                           <X size={16} weight="bold" />
                           {t.managerPanel.guideAccessRequests.reject}
                         </Button>
-                        <Button size="sm" className="gap-1.5" onClick={() => handleApproveGuideAccessRequest(request)}>
+                        <Button size="sm" className="gap-1.5" onClick={() => handleReviewLibraryAccessRequest(kind, request, 'approved')}>
                           <Check size={16} weight="bold" />
                           {t.managerPanel.guideAccessRequests.approve}
                         </Button>
@@ -2143,6 +1855,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
                 </div>
               )}
             </Card>
+            ))}
           </TabsContent>
 
         </Tabs>
@@ -2157,6 +1870,18 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>{t.parentalLeave.typeLabel}</Label>
+              <Select value={editVacationType} onValueChange={(value: 'vacation' | 'parental') => setEditVacationType(value)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="vacation">{t.parentalLeave.typeVacation}</SelectItem>
+                  <SelectItem value="parental">{t.parentalLeave.typeParental}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <div className="space-y-2">
               <Label>{t.managerPanel.dialogs.editVacation.startDate}</Label>
               <DatePickerField
@@ -2184,7 +1909,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" disabled={isCreatingUser} onClick={() => {
+            <Button variant="outline" onClick={() => {
               setIsEditVacationDialogOpen(false)
               setEditingVacation(null)
               setEditVacationStartDate(undefined)
@@ -2278,14 +2003,14 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
             }}>
               {t.common.cancel}
             </Button>
-            <Button onClick={handleSaveUserName}>
+            <Button onClick={() => runBusy('save-user', handleSaveUserName)} loading={busyAction === 'save-user'}>
               {t.managerPanel.dialogs.editUser.saveChanges}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={isCreateDialogOpen} onOpenChange={(open) => { if (!createUserInProgress.current) setIsCreateDialogOpen(open) }}>
+      <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>{t.managerPanel.dialogs.createUser.title}</DialogTitle>
@@ -2347,9 +2072,9 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
             }}>
               {t.common.cancel}
             </Button>
-            <Button onClick={handleCreateUser} loading={isCreatingUser} className="gap-2">
+            <Button onClick={handleCreateUser} className="gap-2">
               <Plus size={18} weight="bold" />
-              {isCreatingUser ? language === 'da' ? 'Gemmer…' : language === 'fi' ? 'Tallennetaan…' : 'Saving…' : t.managerPanel.dialogs.createUser.submit}
+              {t.managerPanel.dialogs.createUser.submit}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2638,27 +2363,27 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
         open={isManualGrantDialogOpen}
         onOpenChange={setIsManualGrantDialogOpen}
         managerEmail={userEmail}
-        onSuccess={loadVacationEntries}
+        onGranted={showGrantedVacation}
+      />
+
+      <ParentalLeaveDialog
+        open={isParentalDialogOpen}
+        onOpenChange={setIsParentalDialogOpen}
+        managerEmail={userEmail}
+        onGranted={showGrantedVacation}
       />
 
       <OnboardingWizard
         open={isOnboardingOpen}
         onOpenChange={setIsOnboardingOpen}
-        onCompleted={() => {
-          loadUsers()
-          loadBirthdays()
-        }}
+        onCreating={showOnboardedAccount}
       />
 
       <OffboardingWizard
         open={isOffboardingOpen}
         onOpenChange={setIsOffboardingOpen}
         currentUserEmail={userEmail}
-        onCompleted={() => {
-          loadUsers()
-          loadBirthdays()
-          loadVacationEntries()
-        }}
+        onRemoving={showOffboardedAccount}
       />
 
       <Dialog open={isEditBirthdayDialogOpen} onOpenChange={setIsEditBirthdayDialogOpen}>

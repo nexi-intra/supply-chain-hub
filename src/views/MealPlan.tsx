@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { NisseSpot } from '@/components/christmas/NisseSpot'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowLeft, CaretLeft, CaretRight, ForkKnife, FloppyDisk, Trash, CalendarBlank } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
@@ -193,11 +194,12 @@ export function MealPlan({ onNavigateBack }: MealPlanProps) {
       </div>
       
       <div className="container mx-auto px-4 sm:px-6 pt-28 pb-12 sm:pb-20 max-w-7xl">
-        <header className="mb-6 border-b pb-4">
+        <header className="mb-6 border-b pb-4 relative">
           <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground flex items-center gap-2.5">
             <ForkKnife size={26} weight="duotone" className="text-primary" />
             {t.mealPlan.title}
           </h1>
+          <NisseSpot spot="meals" pose="hang" className="absolute right-[18%] top-full -mt-[3px]" />
           <p className="text-sm text-muted-foreground mt-1">
             {t.mealPlan.subtitle}
           </p>

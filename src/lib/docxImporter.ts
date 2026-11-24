@@ -17,8 +17,10 @@ export interface GuideImportDraft {
   title: string
   language: GuideLanguage
   sections: GuideSection[]
-  originalFile: File
+  originalFile?: File
   preserveWordLayout?: boolean
+  /** Already stored original of an imported PDF (Knowledge Base). */
+  originalPdf?: { url: string; filename: string; size: number }
 }
 
 export type ImportStage = 'reading' | 'converting' | 'parsing' | 'uploading-images' | 'done'
@@ -71,34 +73,44 @@ function dataUriToFile(dataUri: string, filename: string): File | null {
   return new File([bytes], `${filename}.${extension}`, { type: mime })
 }
 
-/** Uploader <img>-elementers base64-data til fileStorage; dedupliserer identiske billeder (fx gentagne logoer). */
+// Billeder uploades samtidig (hver upload er en rundtur paa op til 90 s til M:), men hoejst
+// saa mange ad gangen, at drevet og hukommelsen ikke overbelastes ved store dokumenter.
+const PARALLEL_IMAGE_UPLOADS = 6
+
+/** Unikke billeder (data-URI) fra <img>-elementer, i dokumentraekkefoelge. */
+function imageSources(images: HTMLImageElement[]): string[] {
+  return images.map((img) => img.getAttribute('src') || '').filter((src) => src.startsWith('data:image/'))
+}
+
+/** Uploader alle unikke billeder parallelt; dedupliserer identiske billeder (fx gentagne logoer). Fejlede billeder udelades. */
 async function uploadImages(
-  images: HTMLImageElement[],
-  cache: Map<string, string>,
-  progress: { uploaded: number; total: number },
+  sources: string[],
   onProgress?: ProgressCallback,
-): Promise<string[]> {
-  const ids: string[] = []
-  for (const img of images) {
-    const src = img.getAttribute('src') || ''
-    if (!src.startsWith('data:image/')) continue
-    const cached = cache.get(src)
-    if (cached) { ids.push(cached); continue }
-    const file = dataUriToFile(src, `import-${newId('img')}`)
-    if (!file) continue
-    try {
-      const stored = await fileStorage.uploadImage(file)
-      cache.set(src, stored.fileId)
-      ids.push(stored.fileId)
+): Promise<Map<string, string>> {
+  const unique = [...new Set(sources)]
+  const uploaded = new Map<string, string>()
+  const progress = { uploaded: 0, total: unique.length }
+  reportUploadProgress(progress, onProgress)
+  let next = 0
+  const worker = async () => {
+    while (next < unique.length) {
+      const src = unique[next++]
+      const file = dataUriToFile(src, `import-${newId('img')}`)
+      if (!file) continue
+      try {
+        const stored = await fileStorage.uploadImage(file)
+        uploaded.set(src, stored.fileId)
+      } catch (error) {
+        console.error('Kunne ikke uploade billede fra importeret dokument:', error)
+      }
       progress.uploaded++
       reportUploadProgress(progress, onProgress)
-      // Giv UI'et luft mellem hvert billede, så appen forbliver klikbar under import af mange/store billeder.
+      // Giv UI'et luft mellem billederne, så appen forbliver klikbar under import af mange/store billeder.
       await yieldToBrowser()
-    } catch (error) {
-      console.error('Kunne ikke uploade billede fra importeret dokument:', error)
     }
   }
-  return ids
+  await Promise.all(Array.from({ length: Math.min(PARALLEL_IMAGE_UPLOADS, unique.length) }, worker))
+  return uploaded
 }
 
 function reportUploadProgress(progress: { uploaded: number; total: number }, onProgress?: ProgressCallback) {
@@ -114,22 +126,24 @@ function reportUploadProgress(progress: { uploaded: number; total: number }, onP
   })
 }
 
+interface PlannedStep { text: string; sources: string[] }
+interface PlannedSection { heading: string; steps: PlannedStep[]; implicit: boolean }
+
 /** Parser den konverterede HTML til sektioner/trin ud fra overskrifter, afsnit, lister og tabeller. */
 async function buildSectionsFromHtml(html: string, onProgress?: ProgressCallback): Promise<GuideSection[]> {
   const doc = new DOMParser().parseFromString(html, 'text/html')
-  const imageCache = new Map<string, string>()
-  const sections: GuideSection[] = []
-  let current: GuideSection | null = null
+  // Først struktureres dokumentet (uden netvaerk), derefter uploades alle billeder samtidig,
+  // og til sidst bygges sektionerne med de faerdige billed-id'er.
+  const planned: PlannedSection[] = []
+  let current: PlannedSection | null = null
   let skippingToc = false
 
-  const totalImages = doc.body.querySelectorAll('img').length
-  const progress = { uploaded: 0, total: totalImages }
-  reportUploadProgress(progress, onProgress)
-
-  const ensureSection = () => {
+  const ensureSection = (keepIfEmpty = false) => {
     if (!current) {
-      current = { id: newId('sec'), heading: FALLBACK_HEADING, steps: [] }
-      sections.push(current)
+      current = { heading: FALLBACK_HEADING, steps: [], implicit: !keepIfEmpty }
+      planned.push(current)
+    } else if (keepIfEmpty) {
+      current.implicit = false
     }
     return current
   }
@@ -142,8 +156,8 @@ async function buildSectionsFromHtml(html: string, onProgress?: ProgressCallback
       if (heading) {
         if (isTocHeading(heading)) { skippingToc = true; current = null; continue }
         skippingToc = false
-        current = { id: newId('sec'), heading, steps: [] }
-        sections.push(current)
+        current = { heading, steps: [], implicit: false }
+        planned.push(current)
       }
       continue
     }
@@ -153,19 +167,19 @@ async function buildSectionsFromHtml(html: string, onProgress?: ProgressCallback
 
     if (tag === 'p') {
       const text = el.textContent?.trim() || ''
-      const imageIds = await uploadImages(Array.from(el.querySelectorAll('img')), imageCache, progress, onProgress)
-      if (!text && imageIds.length === 0) continue
-      ensureSection().steps.push({ id: newId('step'), text, imageIds })
+      const sources = imageSources(Array.from(el.querySelectorAll('img')))
+      if (!text && sources.length === 0) continue
+      ensureSection().steps.push({ text, sources })
       continue
     }
 
     if (tag === 'ul' || tag === 'ol') {
-      const section = ensureSection()
+      const section = ensureSection(true)
       for (const li of Array.from(el.children)) {
         const text = li.textContent?.trim() || ''
-        const imageIds = await uploadImages(Array.from(li.querySelectorAll('img')), imageCache, progress, onProgress)
-        if (!text && imageIds.length === 0) continue
-        section.steps.push({ id: newId('step'), text, imageIds })
+        const sources = imageSources(Array.from(li.querySelectorAll('img')))
+        if (!text && sources.length === 0) continue
+        section.steps.push({ text, sources })
       }
       continue
     }
@@ -175,21 +189,31 @@ async function buildSectionsFromHtml(html: string, onProgress?: ProgressCallback
         .map((tr) => Array.from(tr.querySelectorAll('td,th')).map((cell) => cell.textContent?.trim() || '').join(' | '))
         .filter(Boolean)
       if (rows.length > 0) {
-        ensureSection().steps.push({ id: newId('step'), text: rows.join('\n'), imageIds: [] })
+        ensureSection(true).steps.push({ text: rows.join('\n'), sources: [] })
       }
       continue
     }
 
     // Andre blokke (fx billede-wrapper uden <p>): tag billeder med hvis der er nogen.
-    const looseImages = await uploadImages(Array.from(el.querySelectorAll('img')), imageCache, progress, onProgress)
-    if (looseImages.length > 0) {
-      ensureSection().steps.push({ id: newId('step'), text: '', imageIds: looseImages })
+    const looseSources = imageSources(Array.from(el.querySelectorAll('img')))
+    if (looseSources.length > 0) {
+      ensureSection().steps.push({ text: '', sources: looseSources })
     }
   }
 
+  const uploaded = await uploadImages(planned.flatMap((section) => section.steps.flatMap((step) => step.sources)), onProgress)
+
+  const sections: GuideSection[] = []
+  for (const section of planned) {
+    const steps = section.steps
+      .map((step) => ({ id: newId('step'), text: step.text, imageIds: step.sources.flatMap((src) => uploaded.get(src) ?? []) }))
+      .filter((step) => step.text || step.imageIds.length > 0)
+    // Et afsnit oprettet alene for billeder, der alle fejlede, efterlades ikke som tomt afsnit.
+    if (section.implicit && steps.length === 0) continue
+    sections.push({ id: newId('sec'), heading: section.heading, steps })
+  }
   return sections
 }
-
 /** Fjerner filtypen og erstatter understreger/bindestreger med mellemrum til et pænere gæt på titlen. */
 function titleFromFilename(filename: string): string {
   return filename.replace(/\.(docx?|DOCX?)$/, '').replace(/[_-]+/g, ' ').trim() || 'Importeret guide'

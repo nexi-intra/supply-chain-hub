@@ -1,0 +1,213 @@
+import { useMemo, useState } from 'react'
+import { ArrowCounterClockwise, ArrowUUpLeft, CheckCircle, Checks, Stamp } from '@phosphor-icons/react'
+import { toast } from 'sonner'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Input } from '@/components/ui/input'
+import { errorCode, errorMaterials } from '@/lib/warehouse/errors'
+import { formatDateTime, formatMoney, formatNumber, kindLabel } from '@/lib/warehouse/format'
+import { cn } from '@/lib/utils'
+import type { Approval, Kind, Unpost } from '@/types/warehouse'
+import type { PanelProps } from './CountView'
+import { FoundElsewhereDialog } from './FoundElsewhere'
+import { withApprovals } from './optimisticState'
+import { UnsentPcsNotice } from './UnsentPcs'
+import { t } from '@/lib/warehouse/text'
+
+interface MaterialSummary {
+  material: string
+  description: string
+  kind: Kind
+  sapQty: number
+  counted: number
+  diff: number
+  valueDiff: number | null
+  countedAfter: number
+  /** Quantity lines on a serial-managed material: the count document drops them, so they must be deleted before approval. */
+  serialLines: number
+}
+
+const statusMap = (): Record<string, { label: string; variant: 'default' | 'secondary' | 'outline' | 'destructive' }> => ({
+  approved: { label: t('Godkendt', 'Approved'), variant: 'default' },
+  posted: { label: t('Bogført i SAP', 'Posted in SAP'), variant: 'secondary' },
+  returned: { label: t('Sendt tilbage', 'Sent back'), variant: 'destructive' },
+  submitted: { label: t('Sendt til godkendelse', 'Sent for approval'), variant: 'secondary' },
+  open: { label: t('Talt', 'Counted'), variant: 'outline' },
+})
+
+export function ApprovalPanel({ id, state, optimistic, person }: PanelProps) {
+  const [onlyOpen, setOnlyOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  // Materials whose approval is still on its way to M: (their buttons wait, so two changes cannot cross).
+  const [saving, setSaving] = useState<ReadonlySet<string>>(new Set())
+  // Refused with APPROVAL_FOUND_ELSEWHERE: the serials to confirm, and the approval to send again with them.
+  const [foundElsewhere, setFoundElsewhere] = useState<{ serials: string[]; retry: (confirmed: string[]) => void } | null>(null)
+  const canEdit = state.me.isManager && !state.statusLocked
+  const approvedWithLines = useMemo(() => new Set(state.approvedWithSerialLines || []), [state.approvedWithSerialLines])
+  const materials = useMemo(() => {
+    const byMaterial = new Map<string, MaterialSummary>()
+    for (const row of state.rows) {
+      const entry = byMaterial.get(row.material) || { material: row.material, description: row.description, kind: row.kind, sapQty: 0, counted: 0, diff: 0, valueDiff: 0, countedAfter: 0, serialLines: 0 }
+      entry.sapQty += row.sapQty
+      entry.counted += row.counted
+      entry.diff += row.diff
+      entry.countedAfter += row.countedAfter || 0
+      entry.valueDiff = row.valueDiff === null || entry.valueDiff === null ? null : Math.round((entry.valueDiff + row.valueDiff) * 100) / 100
+      byMaterial.set(row.material, entry)
+    }
+    const serialManaged = new Set(state.rows.filter(row => row.serialManaged).map(row => row.material))
+    for (const line of state.lines) {
+      const entry = byMaterial.get(line.material)
+      if (entry && serialManaged.has(line.material)) entry.serialLines += 1
+    }
+    return [...byMaterial.values()].sort((a, b) => Number(state.approvals[b.material]?.status === 'submitted') - Number(state.approvals[a.material]?.status === 'submitted'))
+  }, [state.rows, state.lines, state.approvals])
+  const needle = query.trim().toUpperCase()
+  const visible = materials.filter(item => (!needle || item.material.includes(needle) || item.description.toUpperCase().includes(needle)) && (!onlyOpen || !['approved', 'posted'].includes(state.approvals[item.material]?.status || '')))
+
+  /** Shown at once; saved in the background (a write to M: takes 15–90 s) and taken back if the drive refuses it. Resolves to whether it was saved. */
+  const save = (approvals: Record<string, Approval>, write: () => Promise<unknown>, releaseLocks: boolean, retry?: (confirmed: string[]) => void) => {
+    const changed = Object.keys(approvals)
+    setSaving(current => new Set([...current, ...changed]))
+    const patch = (current: typeof state) => {
+      const next = withApprovals(approvals)(current)
+      return releaseLocks ? { ...next, materialLocks: next.materialLocks.filter(lock => !changed.includes(lock.material)) } : next
+    }
+    const onError = (error: unknown) => {
+      if (!retry || errorCode(error) !== 'APPROVAL_FOUND_ELSEWHERE') return false
+      setFoundElsewhere({ serials: errorMaterials(error), retry })
+      return true
+    }
+    return optimistic(patch, write, { onError }).finally(() => setSaving(current => new Set([...current].filter(material => !changed.includes(material)))))
+  }
+
+  const set = (material: string, status: 'approved' | 'returned' | 'posted' | 'reset', confirmFoundElsewhere?: string[]) => {
+    if (saving.has(material)) return
+    let comment = ''
+    if (status === 'returned') {
+      comment = window.prompt(t(`Hvorfor sendes ${material} tilbage til optælling?`, `Why is ${material} sent back for counting?`)) || ''
+      if (!comment.trim()) return
+    }
+    const at = Date.now()
+    const current = state.approvals[material]
+    const log = current?.unposts?.length ? { unposts: current.unposts } : {}
+    const value: Approval = status === 'reset' ? { status: 'open', by: person, at, ...log }
+      : status === 'posted' ? { ...current, status: 'posted', postedBy: person, postedAt: at }
+      : { status, comment: comment.trim().slice(0, 300), by: person, at, ...log }
+    save({ [material]: value }, () => window.electronWarehouse!.counts.approval({ id, material, status, comment, ...(confirmFoundElsewhere ? { confirmFoundElsewhere } : {}) }), status === 'approved', status === 'approved' ? confirmed => set(material, 'approved', confirmed) : undefined)
+  }
+
+  /** Undoes a wrong manual "Bogført i SAP" mark; the backend refuses while an SAP document holds the material. */
+  const unpost = (material: string) => {
+    if (saving.has(material)) return
+    const reason = (window.prompt(t(`Hvorfor fortrydes Bogført i SAP for ${material}? Gør det kun, hvis differencen ikke er bogført i SAP.`, `Why is Posted in SAP undone for ${material}? Only do it if the difference has not been posted in SAP.`)) || '').trim()
+    if (!reason) return
+    const { postedBy = null, postedAt = null, ...rest } = state.approvals[material] || { status: 'posted' }
+    const value: Approval = { ...rest, status: 'approved', unposts: [...(rest.unposts || []), { by: person, at: Date.now(), reason: reason.slice(0, 300), postedBy, postedAt }] }
+    save({ [material]: value }, () => window.electronWarehouse!.counts.unpost({ id, material, reason }), false)
+  }
+
+  const approveClean = (confirmFoundElsewhere?: string[]) => {
+    const clean = materials.filter(item => item.serialLines === 0 && !state.rows.some(row => row.material === item.material && row.diff !== 0) && !['approved', 'posted'].includes(state.approvals[item.material]?.status || '') && !saving.has(item.material))
+    const at = Date.now()
+    let approved = clean.length
+    const write = async () => { approved = (await window.electronWarehouse!.counts.approveClean(id, confirmFoundElsewhere ? { confirmFoundElsewhere } : undefined)).approved }
+    // Told only once the drive has taken it: a refusal (also APPROVAL_FOUND_ELSEWHERE, whose confirm comes back here) approved nothing.
+    void save(Object.fromEntries(clean.map(item => [item.material, { status: 'approved', comment: t('Ingen difference', 'No difference'), by: person, at, unposts: state.approvals[item.material]?.unposts } satisfies Approval])), write, false, confirmed => approveClean(confirmed))
+      .then(saved => { if (saved) toast.success(t(`${formatNumber(approved)} materialer uden difference er godkendt`, `${formatNumber(approved)} materials without a difference are approved`)) })
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">{t('Godkendelse pr. materialenummer', 'Approval per material number')}</CardTitle>
+        <CardDescription>{t('Managers godkender slutresultatet og markerer, når differencen er bogført i SAP. Ved godkendelse låses SAP, talt og difference, så nye SAP-tal ikke ændrer dem. Markeringen er kun en note – Optælling bogfører intet.', 'Managers approve the final result and mark when the difference has been posted in SAP. Approval locks SAP, counted and difference, so new SAP figures do not change them. The mark is only a note – Stock count posts nothing.')}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <UnsentPcsNotice pcs={state.unsentPcs || []} />
+        <div className="flex flex-wrap items-center gap-4">
+          <Input value={query} onChange={event => setQuery(event.target.value)} placeholder={t('Søg materiale', 'Search material')} className="max-w-xs" />
+          <label className="flex items-center gap-2 text-sm"><Checkbox checked={onlyOpen} onCheckedChange={value => setOnlyOpen(value === true)} /> {t('Kun ikke-godkendte', 'Only not approved')}</label>
+          {canEdit && <Button variant="outline" onClick={() => approveClean()}><Checks size={18} /> {t('Godkend alle uden difference', 'Approve all without a difference')}</Button>}
+        </div>
+        <div className="max-h-[600px] overflow-auto rounded-lg border">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-muted text-left text-xs uppercase tracking-wide text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2">{t('Materiale', 'Material')}</th>
+                <th className="px-3 py-2">{t('Gruppe', 'Group')}</th>
+                <th className="px-3 py-2 text-right">SAP</th>
+                <th className="px-3 py-2 text-right">{t('Talt', 'Counted')}</th>
+                <th className="px-3 py-2 text-right">Diff.</th>
+                <th className="px-3 py-2 text-right">{t('Værdi diff.', 'Value diff.')}</th>
+                <th className="px-3 py-2">Status</th>
+                {canEdit && <th className="px-3 py-2" />}
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map(item => {
+                const approval: Approval | undefined = state.approvals[item.material]
+                const status = statusMap()[approval?.status || 'open']
+                // Approved with quantity lines (from the journal): the frozen figures hold them, also after the lines are deleted.
+                const withLines = approvedWithLines.has(item.material) && ['approved', 'posted'].includes(approval?.status || '')
+                return (
+                  <tr key={item.material} className="border-t">
+                    <td className="px-3 py-1.5"><div className="font-mono">{item.material}</div><div className="max-w-72 truncate text-xs text-muted-foreground">{item.description}</div></td>
+                    <td className="px-3 py-1.5 text-xs">{kindLabel(item.kind)}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums">{formatNumber(item.sapQty)}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums">{formatNumber(item.counted)}</td>
+                    <td className={cn('px-3 py-1.5 text-right font-semibold tabular-nums', item.diff < 0 && 'text-red-600 dark:text-red-400', item.diff > 0 && 'text-amber-600 dark:text-amber-400')}>{formatNumber(item.diff)}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums">{formatMoney(item.valueDiff)}</td>
+                    <td className="px-3 py-1.5">
+                      <Badge variant={status.variant}>{status.label}</Badge>
+                      {approval?.by && approval.status !== 'open' && <div className="mt-0.5 text-xs text-muted-foreground">{approval.status === 'submitted' ? t('Sendt af ', 'Sent by ') : ''}{approval.by.name} · {formatDateTime(approval.at)}</div>}
+                      {approval?.status === 'submitted' && typeof approval.diff === 'number' && <div className={cn('text-xs font-medium', approval.diff === 0 ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300')}>{approval.diff === 0 ? t('Uden difference', 'No difference') : t(`Med difference ${approval.diff > 0 ? '+' : ''}${formatNumber(approval.diff)}`, `With difference ${approval.diff > 0 ? '+' : ''}${formatNumber(approval.diff)}`)}</div>}
+                      {approval?.status === 'posted' && approval.postedBy && <div className="text-xs text-muted-foreground">{t('Bogført', 'Posted')}: {approval.postedBy.name} · {formatDateTime(approval.postedAt)}</div>}
+                      {approval?.unposts?.length ? <UnpostNote entry={approval.unposts[approval.unposts.length - 1]} count={approval.unposts.length} /> : null}
+                      {approval?.comment && <div className="text-xs text-muted-foreground">{approval.comment}</div>}
+                      {withLines ? (
+                        <div role="alert" className="text-xs font-medium text-destructive">{approval?.status === 'posted' ? t('Godkendt med tællelinjer med antal. Tjek det bogførte antal i SAP.', 'Approved with count lines with a quantity. Check the posted quantity in SAP.') : t('Godkendt med tællelinjer med antal. Nulstil materialet, slet linjen og godkend igen.', 'Approved with count lines with a quantity. Reset the material, delete the line and approve again.')}</div>
+                      ) : item.serialLines > 0 && !['approved', 'posted'].includes(approval?.status || '') && <div role="alert" className="text-xs font-medium text-destructive">{item.serialLines === 1 ? t('1 tællelinje med antal, men materialet har serienumre. Slet linjen under Tilbehør og tællelister, før materialet kan godkendes.', '1 count line with a quantity, but the material has serial numbers. Delete the line under Accessories and count lists before the material can be approved.') : t(`${formatNumber(item.serialLines)} tællelinjer med antal, men materialet har serienumre. Slet linjerne under Tilbehør og tællelister, før materialet kan godkendes.`, `${formatNumber(item.serialLines)} count lines with a quantity, but the material has serial numbers. Delete the lines under Accessories and count lists before the material can be approved.`)}</div>}
+                      {item.countedAfter !== 0 && <div className="text-xs font-medium text-amber-700 dark:text-amber-300">{item.countedAfter > 0 ? '+' : ''}{formatNumber(item.countedAfter)} {approval?.status === 'posted' ? t('talt efter bogføring, indgår ikke', 'counted after posting, not included') : t('talt efter godkendelse – Nulstil for at tage dem med', 'counted after approval – Reset to include them')}</div>}
+                    </td>
+                    {canEdit && (
+                      <td className="px-3 py-1.5">
+                        <div className="flex justify-end gap-1" aria-busy={saving.has(item.material) || undefined} title={saving.has(item.material) ? t('Gemmer på M: …', 'Saving on M: …') : undefined}>
+                          {(!approval || ['open', 'returned', 'submitted'].includes(approval.status)) && <Button size="sm" disabled={saving.has(item.material) || item.serialLines > 0} onClick={() => set(item.material, 'approved')}><CheckCircle size={16} /> {t('Godkend', 'Approve')}</Button>}
+                          {approval?.status === 'approved' && !withLines && <Button size="sm" variant="secondary" disabled={saving.has(item.material)} onClick={() => set(item.material, 'posted')}><Stamp size={16} /> {t('Bogført i SAP', 'Posted in SAP')}</Button>}
+                          {approval?.status !== 'returned' && approval?.status !== 'posted' && <Button size="sm" variant="ghost" disabled={saving.has(item.material)} onClick={() => set(item.material, 'returned')}><ArrowUUpLeft size={16} /> {t('Tilbage', 'Send back')}</Button>}
+                          {approval && approval.status !== 'open' && approval.status !== 'posted' && <Button size="sm" variant="ghost" disabled={saving.has(item.material)} onClick={() => set(item.material, 'reset')}>{t('Nulstil', 'Reset')}</Button>}
+                          {approval?.status === 'posted' && <Button size="sm" variant="ghost" disabled={saving.has(item.material)} onClick={() => unpost(item.material)}><ArrowCounterClockwise size={16} /> {t('Fortryd bogført', 'Undo posted')}</Button>}
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                )
+              })}
+              {visible.length === 0 && <tr><td colSpan={canEdit ? 8 : 7} className="px-3 py-6 text-center text-muted-foreground">{t('Ingen materialer.', 'No materials.')}</td></tr>}
+            </tbody>
+          </table>
+        </div>
+        {foundElsewhere && (
+          <FoundElsewhereDialog
+            id={id}
+            serials={foundElsewhere.serials}
+            onCancel={() => setFoundElsewhere(null)}
+            onConfirm={() => { setFoundElsewhere(null); foundElsewhere.retry(foundElsewhere.serials) }}
+          />
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+/** The latest undone "Bogført i SAP" mark; the count says how many there have been. */
+function UnpostNote({ entry, count }: { entry: Unpost; count: number }) {
+  return (
+    <div className="text-xs text-muted-foreground">
+      {count > 1 ? t(`Bogført fortrudt (${formatNumber(count)} gange, senest)`, `Posting undone (${formatNumber(count)} times, latest)`) : t('Bogført fortrudt', 'Posting undone')}: {entry.by.name} · {formatDateTime(entry.at)} · {entry.reason}
+    </div>
+  )
+}

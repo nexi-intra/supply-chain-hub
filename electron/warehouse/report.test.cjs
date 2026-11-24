@@ -1,0 +1,222 @@
+const test = require('node:test')
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+const ExcelJS = require('exceljs')
+const { buildSnapshot, indexSnapshot } = require('./core/snapshot.cjs')
+const { storageRulesFor } = require('./core/classify.cjs')
+const { aggregateCount, computeProgress } = require('./core/countState.cjs')
+const { writeReport, reportFileName, writeStatusReport, writeSapCheckReport } = require('./report.cjs')
+
+const rulesByTeam = { TCD: storageRulesFor('TCD', {}), TRR: storageRulesFor('TRR', {}) }
+const stock = (material, sloc, unrestricted, blocked = 0, valueUnrestricted = 0, valueBlocked = 0) => ({ material, description: `${material} tekst`, plant: 'D301', sloc, unrestricted, blocked, valueUnrestricted, valueBlocked })
+const serial = (serialNo, material, sloc, stockType = 'unrestricted') => ({ serial: serialNo, material, sloc, plant: 'D301', description: material, userStatus: '', stockType })
+
+function reportData() {
+  const snapshot = buildSnapshot({
+    team: 'TCD', scope: { type: 'slocs', slocs: ['D000'] }, rulesByTeam, fetchedAt: Date.UTC(2026, 9, 15, 8, 0), fetchedBy: 'anna@example.test',
+    mb52: [stock('INT4300-4921-0', 'D000', 2, 1, 2000, 1000), stock('INT4300-4921-0-R', 'D000', 1), stock('R162-0717', 'D000', 100, 0, 500)],
+    serials: [serial('N1', 'INT4300-4921-0', 'D000'), serial('N2', 'INT4300-4921-0', 'D000'), serial('N3', 'INT4300-4921-0', 'D000', 'blocked'), serial('U1', 'INT4300-4921-0-R', 'D000'), serial('X1', 'INT4300-4921-0-R', 'D001')],
+  })
+  const index = indexSnapshot(snapshot)
+  const events = [
+    { id: 'e1', type: 'scan', serial: 'N1', place: 'A1.1', by: 'anna@example.test', byName: 'Anna', at: 1 },
+    { id: 'e2', type: 'scan', serial: 'U1', place: 'A1.2', by: 'anna@example.test', byName: 'Anna', at: 2 },
+    { id: 'e3', type: 'scan', serial: 'X1', place: 'A1.2', by: 'anna@example.test', byName: 'Anna', at: 3 },
+    { id: 'e4', type: 'line', lineId: 'L1', place: 'A1.1', area: 'A', material: 'R162-0717', sloc: 'D000', stockType: 'unrestricted', qty: 97, status: 'counted', comment: '=HYPERLINK("x")', by: 'bo@example.test', byName: 'Bo', at: 4 },
+  ]
+  const aggregate = aggregateCount({ snapshot, index, events })
+  const approvals = { 'R162-0717': { status: 'posted', by: { name: 'Mona' }, at: 10, postedBy: { name: 'Mona' }, postedAt: 20 } }
+  return {
+    meta: { id: 'count1abc', team: 'TCD', name: 'Status D000 / uge 42', scope: snapshot.scope, status: 'closed', owner: { email: 'anna@example.test', name: 'Anna' }, createdAt: 0, fetchedAt: snapshot.fetchedAt, closedAt: Date.UTC(2026, 9, 16, 12, 0), closedBy: { name: 'Anna' } },
+    snapshot, aggregate, approvals,
+    members: { 'anna@example.test': { name: 'Anna', role: 'owner', status: 'approved' }, 'bo@example.test': { name: 'Bo', role: 'participant', status: 'approved' } },
+    progress: computeProgress({ snapshot, aggregate, events, approvals, now: 100 }),
+    piDocs: [
+      { id: '105000990', docNo: '105000990', year: '2026', status: 'posted', sloc: 'D000', stockType: 'unrestricted', lines: [{ material: 'R162-0717' }], createdBy: { name: 'Mona', at: 5 }, postedBy: { name: 'Mona', at: Date.UTC(2026, 9, 16, 13, 0) }, materialDoc: '4905204990', differences: [{ material: 'R162-0717', book: 100, counted: 97, diff: -3, amount: 15 }] },
+      { id: '105000991', docNo: '105000991', year: '2026', status: 'printed', sloc: 'D000', stockType: 'unrestricted', lines: [{ material: 'INT4300-4921-0-R' }, { material: 'INT4300-4921-0' }], createdBy: { name: 'Mona', at: 6 } },
+      { id: 'CPREF1', reference: 'CPREF1', status: 'creating', startedAt: 7, sloc: 'D000', stockType: 'unrestricted', lines: [{ material: 'R162-0717' }] },
+    ],
+  }
+}
+
+test('the final status report sums every count, keeps free and blocked stock apart and lists the history', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'countpoint-status-report-'))
+  const first = reportData()
+  const second = { ...reportData(), meta: { ...first.meta, id: 'count2abc', name: 'D000 spærret' } }
+  const mona = { email: 'mona@example.test', name: 'Mona' }
+  const status = { id: 'st1abc', team: 'TCD', name: 'Status Q4 2026', state: 'locked', startedBy: mona, startedAt: Date.UTC(2026, 9, 1), lockedBy: mona, lockedAt: Date.UTC(2026, 9, 16), history: [{ at: Date.UTC(2026, 9, 1), by: mona, action: 'started' }, { at: Date.UTC(2026, 9, 10), by: mona, action: 'unlocked', reason: 'Rettelse af R162' }, { at: Date.UTC(2026, 9, 16), by: mona, action: 'locked' }] }
+  const file = await writeStatusReport({ status, version: 2, counts: [first, second] }, dir, new Date(2026, 9, 16, 9, 5))
+  assert.equal(path.basename(file), 'Status Q4 2026 endelig v2 2026-10-16 0905.xlsx')
+  const workbook = new ExcelJS.Workbook()
+  await workbook.xlsx.readFile(file)
+  assert.deepEqual(workbook.worksheets.map(sheet => sheet.name), ['Resumé', 'Differencer', 'Serienumre', 'Skal flyttes', 'SAP-dokumenter', 'Historik'])
+
+  const values = sheet => { const rows = []; sheet.eachRow(row => rows.push(row.values.slice(1))); return rows }
+  const summary = values(workbook.getWorksheet('Resumé'))
+  assert.ok(summary.some(row => row[0] === 'Version' && row[1] === 2))
+  assert.ok(summary.some(row => row[0] === 'D000 spærret'))
+  assert.deepEqual(summary.find(row => row[0] === 'I alt').slice(6, 11), [-8, -2030, -2, -2000, -4030], 'free and blocked differences apart, then the total')
+
+  const differences = values(workbook.getWorksheet('Differencer'))
+  assert.equal(differences[0][0], 'Optælling')
+  assert.equal(differences.length - 1, 6)
+  assert.deepEqual(differences.slice(1).map(row => row[5]), ['Unblocked', 'Unblocked', 'Unblocked', 'Unblocked', 'Blocked', 'Blocked'])
+  assert.equal(values(workbook.getWorksheet('Serienumre')).length - 1, 6)
+  assert.equal(values(workbook.getWorksheet('Skal flyttes')).length - 1, 4)
+  const docs = values(workbook.getWorksheet('SAP-dokumenter'))
+  assert.deepEqual(docs[0].slice(0, 3), ['Optælling', 'SAP-dokument', 'År'])
+  assert.deepEqual(docs.slice(1).map(row => `${row[0]}:${row[1]}:${row[3]}:${row[6]}`), ['Status D000 / uge 42:105000990:Bogført:R162-0717', 'Status D000 / uge 42:105000991:Udskrevet:INT4300-4921-0-R', 'Status D000 / uge 42:105000991:Udskrevet:INT4300-4921-0', 'D000 spærret:105000990:Bogført:R162-0717', 'D000 spærret:105000991:Udskrevet:INT4300-4921-0-R', 'D000 spærret:105000991:Udskrevet:INT4300-4921-0'])
+  const history = values(workbook.getWorksheet('Historik'))
+  assert.deepEqual(history.slice(1).map(row => `${row[1]}:${row[2]}:${row[3] ?? ''}`), ['Startet:Mona:', 'Låst op:Mona:Rettelse af R162', 'Godkendt og låst:Mona:'])
+})
+
+test('the SAP error file for the SAP team has the errors, their serial numbers and what was fixed', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'countpoint-sapcheck-report-'))
+  const errors = [
+    { id: 'a', type: 'count-mismatch', status: 'open', firstSeen: Date.UTC(2026, 9, 1), material: 'INT1-0', description: 'Terminal', sloc: 'D000', stockType: 'unrestricted', sapQty: 3303, serialCount: 3304, serials: [], locations: [] },
+    { id: 'b', type: 'duplicate-serial', status: 'new', firstSeen: Date.UTC(2026, 9, 19), material: 'INT1-0-R', description: 'Brugt', sloc: 'D004', stockType: 'unrestricted', sapQty: null, serialCount: 2, serials: ['U1'], locations: [{ material: 'INT1-0-R', sloc: 'D004', stockType: 'unrestricted' }, { material: 'INT1-0-R', sloc: 'D001', stockType: 'blocked' }] },
+  ]
+  const check = { at: Date.UTC(2026, 9, 19, 8), by: { name: 'Mona' }, slocs: ['D000', 'D004'], fixed: [{ id: 'c', type: 'stock-without-serials', material: 'INT2-0', description: '', sloc: 'D005', stockType: 'unrestricted', firstSeen: Date.UTC(2026, 9, 1) }] }
+  const file = await writeSapCheckReport({ team: 'TCD', check, errors, mode: 'all' }, dir, new Date(2026, 9, 19, 10, 15))
+  assert.equal(path.basename(file), 'SAP-fejl TCD 2026-10-19 1015.xlsx')
+  const workbook = new ExcelJS.Workbook()
+  await workbook.xlsx.readFile(file)
+  assert.deepEqual(workbook.worksheets.map(sheet => sheet.name), ['Resumé', 'Fejl', 'Serienumre', 'Rettet siden sidst'])
+  const values = sheet => { const rows = []; sheet.eachRow(row => rows.push(row.values.slice(1))); return rows }
+  const rows = values(workbook.getWorksheet('Fejl'))
+  assert.deepEqual(rows[1].slice(0, 2), ['Antal passer ikke', 'Stadig ikke rettet'])
+  assert.deepEqual(rows[1].slice(7, 10), [3303, 3304, 1])
+  assert.equal(rows[2][10], 'INT1-0-R D001 Blocked')
+  assert.deepEqual(rows[1].slice(11, 13), ['TCD', ''])
+  assert.deepEqual(values(workbook.getWorksheet('Serienumre'))[1].slice(0, 2), ['Serienummer flere steder', 'U1'])
+  assert.equal(values(workbook.getWorksheet('Rettet siden sidst'))[1][1], 'INT2-0')
+
+  const english = await writeSapCheckReport({ team: 'TCD', check, errors, mode: 'new', language: 'en' }, dir, new Date(2026, 9, 19, 10, 15))
+  assert.equal(path.basename(english), 'SAP errors TCD 2026-10-19 1015.xlsx')
+  const book = new ExcelJS.Workbook()
+  await book.xlsx.readFile(english)
+  assert.deepEqual(book.worksheets.map(sheet => sheet.name), ['Summary', 'Errors', 'Serial numbers', 'Fixed since last check'])
+  assert.deepEqual(values(book.getWorksheet('Errors'))[1].slice(0, 2), ['Quantity does not match', 'Still not fixed'])
+  assert.ok(values(book.getWorksheet('Summary')).some(row => row[0] === 'In this file' && row[1] === 'Only new errors'))
+})
+
+test('report file names are safe and dated', () => {
+  assert.equal(reportFileName({ name: 'Status D000 / uge 42' }, new Date(2026, 9, 16, 9, 5)), 'Status D000 - uge 42 2026-10-16 0905.xlsx')
+  assert.equal(reportFileName({ name: '..\\..\\x:y*?' }, new Date(2026, 0, 1, 0, 0)), 'x-y 2026-01-01 0000.xlsx')
+})
+
+test('the Excel report has summary, differences, serial numbers, move list and count lines', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'countpoint-report-'))
+  const file = await writeReport(reportData(), dir, new Date(2026, 9, 16, 9, 5))
+  assert.equal(path.dirname(file), dir)
+  const workbook = new ExcelJS.Workbook()
+  await workbook.xlsx.readFile(file)
+  assert.deepEqual(workbook.worksheets.map(sheet => sheet.name), ['Resumé', 'Differencer', 'Alle materialer', 'Serienumre', 'Skal flyttes', 'Tællelinjer', 'SAP-dokumenter'])
+
+  const values = sheet => { const rows = []; sheet.eachRow(row => rows.push(row.values.slice(1))); return rows }
+  const summary = values(workbook.getWorksheet('Resumé'))
+  assert.ok(summary.some(row => row[0] === 'Optælling' && row[1] === 'Status D000 / uge 42'))
+  const totalRow = summary.find(row => row[0] === 'I alt')
+  assert.deepEqual(totalRow.slice(2, 6), [104, 99, -5, -2015])
+
+  const differences = values(workbook.getWorksheet('Differencer'))
+  assert.deepEqual(differences[0].slice(0, 10), ['Materiale', 'Beskrivelse', 'Gruppe', 'Storage location', 'Lagertype', 'SAP antal', 'Talt', 'Difference', 'Enhedspris (DKK)', 'Værdidifference (DKK)'])
+  assert.deepEqual(differences[1].slice(0, 10), ['INT4300-4921-0', 'INT4300-4921-0 tekst', 'Nye terminaler', 'D000', 'Unblocked', 2, 1, -1, 1000, -1000], 'largest value difference first')
+  const r162 = differences.find(row => row[0] === 'R162-0717')
+  assert.equal(r162[10], 'Bogført i SAP')
+
+  const serials = values(workbook.getWorksheet('Serienumre'))
+  assert.deepEqual(serials.slice(1).map(row => `${row[0]}:${row[5]}`).sort(), ['N2:Mangler', 'N3:Mangler', 'X1:Anden storage location'])
+  const moves = values(workbook.getWorksheet('Skal flyttes'))
+  assert.deepEqual(moves.slice(1).map(row => `${row[1]}:${row[3]}:${row[5] ?? ''}`).sort(), ['U1:D000:D004, D005', 'X1:D001:'])
+  const lines = values(workbook.getWorksheet('Tællelinjer'))
+  assert.equal(lines[1][7], '=HYPERLINK("x")', 'text stays text')
+  const commentCell = workbook.getWorksheet('Tællelinjer').getRow(2).getCell(8)
+  assert.equal(commentCell.formula, undefined)
+
+  const docs = values(workbook.getWorksheet('SAP-dokumenter'))
+  assert.deepEqual(docs[0], ['SAP-dokument', 'År', 'Status', 'Storage location', 'Lagertype', 'Materiale', 'SAP antal', 'Talt', 'Difference', 'Beløb (DKK)', 'Materialedokument', 'Oprettet af', 'Bogført af', 'Bogført'])
+  assert.deepEqual(docs[1].slice(0, 13), ['105000990', '2026', 'Bogført', 'D000', 'Unblocked', 'R162-0717', 100, 97, -3, 15, '4905204990', 'Mona', 'Mona'], 'the posted document with its differences and material document')
+  assert.ok(docs[1][13] instanceof Date)
+  assert.deepEqual(docs.slice(2).map(row => `${row[0]}:${row[2]}:${row[5]}:${row[6] ?? ''}:${row[10] ?? ''}`), ['105000991:Udskrevet:INT4300-4921-0-R::', '105000991:Udskrevet:INT4300-4921-0::'], 'one row per material; a reservation without a number is left out')
+})
+
+test('in English the count report and the final status report have English sheets, headings and labels – no Danish text', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'countpoint-report-en-'))
+  const data = reportData()
+  const mona = { email: 'mona@example.test', name: 'Mona' }
+  const status = { id: 'st1abc', team: 'TCD', name: 'Status Q4 2026', state: 'locked', startedBy: mona, startedAt: 1, lockedBy: mona, lockedAt: 2, history: [{ at: 1, by: mona, action: 'started' }, { at: 2, by: mona, action: 'locked' }] }
+  const countFile = await writeReport({ ...data, meta: { ...data.meta, name: 'D000 week 42' }, language: 'en' }, dir, new Date(2026, 9, 16, 9, 5))
+  const statusFile = await writeStatusReport({ status, version: 1, counts: [{ ...data, meta: { ...data.meta, name: 'D000 week 42' } }], language: 'en' }, dir, new Date(2026, 9, 16, 9, 6))
+  assert.equal(path.basename(statusFile), 'Status Q4 2026 final v1 2026-10-16 0906.xlsx')
+
+  const read = async file => { const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(file); return workbook }
+  const count = await read(countFile)
+  const final = await read(statusFile)
+  assert.deepEqual(count.worksheets.map(sheet => sheet.name), ['Summary', 'Differences', 'All materials', 'Serial numbers', 'Must be moved', 'Count lines', 'SAP documents'])
+  assert.deepEqual(final.worksheets.map(sheet => sheet.name), ['Summary', 'Differences', 'Serial numbers', 'Must be moved', 'SAP documents', 'Status history'], 'Excel reserves the sheet name History')
+
+  const texts = workbook => workbook.worksheets.flatMap(sheet => { const cells = []; sheet.eachRow(row => row.eachCell(cell => { if (typeof cell.value === 'string') cells.push(`${sheet.name}: ${cell.value}`) })); return cells })
+  const danish = [...texts(count), ...texts(final)].filter(text => /[æøåÆØÅ]|\b(I alt|Godkendt|Bogført|Talt|Mangler|Materiale|Antal|Startet|og)\b/.test(text))
+  assert.deepEqual(danish, [])
+  const summary = []
+  count.getWorksheet('Summary').eachRow(row => summary.push(row.values.slice(1)))
+  assert.ok(summary.some(row => row[0] === 'Count' && row[1] === 'D000 week 42'))
+  assert.ok(summary.some(row => row[0] === 'Total'))
+  assert.ok(summary.some(row => row[0] === 'New terminals'))
+})
+
+test('reports are Danish unless English is asked for', async () => {
+  const workbook = require('./report.cjs').buildWorkbook({ ...reportData(), language: 'sv' })
+  assert.deepEqual(workbook.worksheets.map(sheet => sheet.name).slice(0, 2), ['Resumé', 'Differencer'])
+})
+
+test('a report with a name already taken gets " (2)", without synchronous file calls (the folder is on M:)', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'countpoint-report-name-'))
+  const existsSync = t.mock.method(fs, 'existsSync')
+  const date = new Date(2026, 9, 16, 9, 5)
+  const first = await writeReport(reportData(), dir, date)
+  const firstSize = fs.statSync(first).size
+  const [second, third] = await Promise.all([writeReport(reportData(), dir, date), writeReport(reportData(), dir, date)])
+  assert.deepEqual([second, third].map(file => path.basename(file)).sort(), [path.basename(first).replace(/\.xlsx$/, ' (2).xlsx'), path.basename(first).replace(/\.xlsx$/, ' (3).xlsx')])
+  assert.equal(fs.statSync(first).size, firstSize, 'the first report is kept')
+  for (const file of [second, third]) assert.ok(fs.statSync(file).size > 0)
+  assert.deepEqual(fs.readdirSync(dir).filter(name => !name.endsWith('.xlsx')), [], 'no temp files left')
+  assert.equal(existsSync.mock.callCount(), 0)
+})
+test('a report that fails while it is written or moved into place leaves no .xlsx and no temp file in "rapporter"', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'countpoint-report-fail-'))
+  const date = new Date(2026, 9, 16, 9, 5)
+  const createWriteStream = t.mock.method(fs, 'createWriteStream', () => { throw Object.assign(new Error('M: gone'), { code: 'EIO' }) })
+  await assert.rejects(writeReport(reportData(), dir, date), { code: 'EIO' })
+  assert.deepEqual(fs.readdirSync(dir), [], 'nothing left after a failed write')
+  createWriteStream.mock.restore()
+  const rename = t.mock.method(fs.promises, 'rename', async () => { throw Object.assign(new Error('M: gone'), { code: 'EBUSY' }) })
+  await assert.rejects(writeReport(reportData(), dir, date), { code: 'EBUSY' })
+  assert.deepEqual(fs.readdirSync(dir), [], 'nothing left after a failed move into place')
+  rename.mock.restore()
+  // M: gone for the clean-up as well: a failed write has not taken the report name, so no empty .xlsx can be left.
+  t.mock.method(fs, 'createWriteStream', () => { throw Object.assign(new Error('M: gone'), { code: 'EIO' }) })
+  const rm = t.mock.method(fs.promises, 'rm', async () => { throw Object.assign(new Error('M: gone'), { code: 'EIO' }) })
+  const unlink = t.mock.method(fs.promises, 'unlink', async () => { throw Object.assign(new Error('M: gone'), { code: 'EIO' }) })
+  await assert.rejects(writeReport(reportData(), dir, date), { code: 'EIO' })
+  assert.deepEqual(fs.readdirSync(dir).filter(name => name.endsWith('.xlsx')), [])
+  fs.createWriteStream.mock.restore()
+  rm.mock.restore()
+  unlink.mock.restore()
+  const file = await writeReport(reportData(), dir, date)
+  assert.deepEqual(fs.readdirSync(dir), [path.basename(file)])
+})
+test('a document SAP may or may not have is in the SAP documents sheet as unknown, also without a number (its reference)', () => {
+  const data = reportData()
+  data.piDocs.push(
+    { id: 'CPREF2', reference: 'CPREF2', status: 'created', year: '2026', sloc: 'D000', stockType: 'unrestricted', lines: [{ material: 'R162-0717' }], createdBy: { name: 'Mona', at: 8 }, sapUnknown: { step: 'create', status: 'created' } },
+    { id: '105000992', docNo: '105000992', reference: 'CPREF3', status: 'counted', year: '2026', sloc: 'D000', stockType: 'unrestricted', lines: [{ material: 'R162-0717' }], createdBy: { name: 'Mona', at: 9 }, sapUnknown: { step: 'post', status: 'counted' } },
+  )
+  const workbook = require('./report.cjs').buildWorkbook(data)
+  const rows = []
+  workbook.getWorksheet('SAP-dokumenter').eachRow(row => rows.push(row.values.slice(1)))
+  assert.deepEqual(rows.slice(1).map(row => `${row[0]}:${row[2]}`), ['105000990:Bogført', '105000991:Udskrevet', '105000991:Udskrevet', 'CPREF2:Ukendt i SAP', '105000992:Ukendt i SAP'])
+})

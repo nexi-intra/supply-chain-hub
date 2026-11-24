@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { NisseSpot } from '@/components/christmas/NisseSpot'
 import { motion } from 'framer-motion'
 import { ArrowLeft, Trash, User, Check, X, ClockCounterClockwise, CalendarDot, House } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
@@ -17,7 +18,7 @@ import { AutoText } from '@/components/AutoText'
 import { cn, newId } from '@/lib/utils'
 import { getEmployeeColorByEmail, EMPLOYEE_COLOR_OVERRIDES_KEY, type EmployeeColorOverrides } from '@/lib/employeeColors'
 import { getWeekNumber as getISOWeekNumber, parseLocalDate } from '@/lib/dateUtils'
-import { appendToKvArray, removeFromKvArray } from '@/lib/kvArrays'
+import { appendToKvArray, removeFromKvArray, updateKvArrayItem } from '@/lib/kvArrays'
 import { isAnyModalOpen } from '@/lib/modalStack'
 import { useLanguage } from '@/contexts/LanguageContext'
 import { vacationApprovedEmail, vacationRejectedEmail, vacationCancelledByEmployeeEmail } from '@/lib/emailTemplates'
@@ -30,8 +31,20 @@ interface VacationCalendarProps {
   userEmail: string
 }
 
+const CALENDAR_LABELS = {
+  da: { locale: 'da-DK', week: 'Uge', today: 'I dag', jumped: 'Sprang til i dag', closed: 'Lukket' },
+  en: { locale: 'en-GB', week: 'Week', today: 'Today', jumped: 'Jumped to today', closed: 'Closed' },
+  fi: { locale: 'fi-FI', week: 'Viikko', today: 'Tänään', jumped: 'Siirryttiin tähän päivään', closed: 'Suljettu' },
+  sv: { locale: 'sv-SE', week: 'Vecka', today: 'Idag', jumped: 'Hoppade till idag', closed: 'Stängt' },
+}
+// 2026-01-05 is a Monday, so the list starts on Monday like the grid.
+const weekdayNames = (locale: string) => Array.from({ length: 7 }, (_, day) => {
+  const name = new Intl.DateTimeFormat(locale, { weekday: 'short' }).format(new Date(2026, 0, 5 + day)).replace('.', '')
+  return name.charAt(0).toUpperCase() + name.slice(1)
+})
+
 export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUserEmail }: VacationCalendarProps) {
-  const [vacations, setVacations] = useKV<VacationEntry[]>('vacation-entries', [])
+  const [vacations] = useKV<VacationEntry[]>('vacation-entries', [])
   const [colorOverrides] = useKV<EmployeeColorOverrides>(EMPLOYEE_COLOR_OVERRIDES_KEY, {})
   const [homeOfficePatterns] = useKV<Record<string, HomeOfficePattern>>('home-office-patterns', {})
   const [homeOfficeExceptions] = useKV<HomeOfficeException[]>('home-office-exceptions', [])
@@ -44,6 +57,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
   const [birthdays, setBirthdays] = useState<BirthdayEntry[]>([])
   const userEmail = propUserEmail
   const { t, language } = useLanguage()
+  const labels = CALENDAR_LABELS[language as keyof typeof CALENDAR_LABELS] ?? CALENDAR_LABELS.da
 
   const months = [
     t.shifts.months.january, t.shifts.months.february, t.shifts.months.march, t.shifts.months.april,
@@ -53,7 +67,11 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
 
   useEffect(() => {
     const loadUser = async () => {
-      const users = await window.kv.get<Record<string, { email: string; password: string; fullName: string; isManager: boolean }>>('users')
+      // Parallelt: hver læsning er en rundtur til M:.
+      const [users, birthdaysRaw] = await Promise.all([
+        window.kv.get<Record<string, { email: string; password: string; fullName: string; isManager: boolean }>>('users'),
+        window.kv.get<BirthdayEntry[]>('employee-birthdays'),
+      ])
       if (users) {
         setUsersData(users)
         if (users[userEmail]) {
@@ -67,8 +85,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
         setAllTeamMembers(teamList)
       }
 
-      const birthdaysData = (await window.kv.get<BirthdayEntry[]>('employee-birthdays')) || []
-      setBirthdays(birthdaysData)
+      setBirthdays(birthdaysRaw || [])
     }
     if (userEmail) {
       loadUser()
@@ -112,16 +129,14 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
     const vacation = (vacations || []).find(v => v.id === id)
     if (!vacation) return
 
-    // Fjern med det samme i billedet og kvitter; skrivning og mails i baggrunden.
-    const previousVacations = vacations || []
-    setVacations((current) => (current || []).filter(v => v.id !== id))
+    // removeFromKvArray shows the removal at once in every open view and saves it once. Also calling setVacations
+    // saved the same list a second time - on M: up to 80 s more.
     toast.success('Ferie anmodning fjernet')
 
     try {
       await removeFromKvArray('vacation-entries', [id])
     } catch (error) {
       console.error('Error removing vacation:', error)
-      setVacations(previousVacations)
       toast.error('Kunne ikke fjerne ferie anmodningen')
       return
     }
@@ -162,25 +177,32 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
         read: false
       }))
 
-      await appendToKvArray('emails', newEmails)
-      await appendToKvArray('email-notifications', newNotifications)
+      // Uafhængige nøgler: gemmes samtidig (hver gemning tager op mod et halvt minut på M:).
+      await Promise.all([appendToKvArray('emails', newEmails), appendToKvArray('email-notifications', newNotifications)])
     } catch (emailError) {
       console.error('Error sending vacation removal email:', emailError)
       toast.error('Kunne ikke sende email notifikation')
     }
   }
 
+  // Under the file lock, and shown at once in every open view of 'vacation-entries' (hub, notification bell) – a
+  // useKV setter only updated this screen's copy until the write was on the shared drive (up to 90 s).
+  const saveDecision = (id: string, status: VacationStatus) => {
+    void updateKvArrayItem<VacationEntry>('vacation-entries', id, current => ({
+      ...current, status, reviewedBy: userEmail, reviewedAt: new Date().toISOString(),
+    })).then(updated => {
+      if (!updated) toast.error('Ferie anmodningen findes ikke længere')
+    }, error => {
+      console.error('Error saving vacation decision:', error)
+      toast.error('Kunne ikke gemme beslutningen – prøv igen')
+    })
+  }
+
   const handleApproveVacation = async (id: string) => {
     const vacation = (vacations || []).find(v => v.id === id)
     if (!vacation) return
 
-    setVacations((current) =>
-      (current || []).map((v) =>
-        v.id === id
-          ? { ...v, status: 'approved' as VacationStatus, reviewedBy: userEmail, reviewedAt: new Date().toISOString() }
-          : v
-      )
-    )
+    saveDecision(id, 'approved')
     toast.success('Ferie godkendt')
 
     try {
@@ -196,10 +218,6 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
         read: false
       }
 
-      // Atomart append i stedet for at laese og skrive hele arrayet: hurtigere,
-      // og to samtidige godkendelser taber ikke hinandens mail.
-      await appendToKvArray('emails', [newEmail])
-
       const notification = {
         id: Date.now().toString() + '-notif',
         to: vacation.userEmail,
@@ -210,7 +228,8 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
         read: false
       }
 
-      await appendToKvArray('email-notifications', [notification])
+      // Uafhængige nøgler: gemmes samtidig.
+      await Promise.all([appendToKvArray('emails', [newEmail]), appendToKvArray('email-notifications', [notification])])
     } catch (emailError) {
       console.error('Error sending vacation approval email:', emailError)
       toast.error('Kunne ikke sende email notifikation')
@@ -221,13 +240,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
     const vacation = (vacations || []).find(v => v.id === id)
     if (!vacation) return
 
-    setVacations((current) =>
-      (current || []).map((v) =>
-        v.id === id
-          ? { ...v, status: 'rejected' as VacationStatus, reviewedBy: userEmail, reviewedAt: new Date().toISOString() }
-          : v
-      )
-    )
+    saveDecision(id, 'rejected')
     toast.error('Ferie afvist')
 
     try {
@@ -243,8 +256,6 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
         read: false
       }
 
-      await appendToKvArray('emails', [newEmail])
-
       const notification = {
         id: Date.now().toString() + '-notif-reject',
         to: vacation.userEmail,
@@ -255,7 +266,8 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
         read: false
       }
 
-      await appendToKvArray('email-notifications', [notification])
+      // Uafhængige nøgler: gemmes samtidig.
+      await Promise.all([appendToKvArray('emails', [newEmail]), appendToKvArray('email-notifications', [notification])])
     } catch (emailError) {
       console.error('Error sending vacation rejection email:', emailError)
       toast.error('Kunne ikke sende email notifikation')
@@ -361,7 +373,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
     const today = new Date()
     setSelectedMonth(today.getMonth())
     setSelectedYear(today.getFullYear())
-    toast.success('Sprang til i dag')
+    toast.success(labels.jumped)
   }
 
   const getStatusBadge = (status: VacationStatus) => {
@@ -428,8 +440,11 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
               Anmodet af: {vacation.userEmail}
             </div>
           )}
-          <div className="mt-2">
+          <div className="mt-2 flex flex-wrap items-center gap-2">
             {getStatusBadge(vacation.status)}
+            {vacation.type === 'parental' && (
+              <Badge variant="outline" className="border-violet-500/40 text-violet-700 dark:text-violet-300">{t.parentalLeave.badge}</Badge>
+            )}
           </div>
           {vacation.reviewedBy && (
             <div className="text-xs text-muted-foreground mt-1">
@@ -444,7 +459,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => handleApproveVacation(vacation.id)}
+              onClick={() => { void handleApproveVacation(vacation.id) }}
               className="text-green-600 hover:bg-green-500/10"
             >
               <Check size={20} weight="bold" />
@@ -452,7 +467,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => handleRejectVacation(vacation.id)}
+              onClick={() => { void handleRejectVacation(vacation.id) }}
               className="text-red-600 hover:bg-red-500/10"
             >
               <X size={20} weight="bold" />
@@ -463,7 +478,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => handleDeleteVacation(vacation.id)}
+            onClick={() => { void handleDeleteVacation(vacation.id) }}
             className="text-destructive hover:bg-destructive/10"
           >
             <Trash size={20} />
@@ -498,10 +513,11 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
       </div>
 
       <div className="container mx-auto px-4 sm:px-6 lg:px-8 pt-28 pb-12 sm:pb-20 max-w-7xl relative z-10">
-        <header className="mb-6 flex flex-wrap items-center gap-3 border-b pb-4">
+        <header className="relative mb-6 flex flex-wrap items-center gap-3 border-b pb-4">
           <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground">
-            {language === 'da' ? 'Kalender' : language === 'fi' ? 'Kalenteri' : 'Calendar'}
+            {language === 'da' ? 'Kalender' : language === 'fi' ? 'Kalenteri' : language === 'sv' ? 'Semesterkalender' : 'Calendar'}
           </h1>
+          <NisseSpot spot="calendar" pose="peek" className="absolute -bottom-[3px] right-[12%]" />
           {isManager && (
             <Badge variant="secondary" className="text-xs">
               Manager
@@ -561,7 +577,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
                   className="gap-2"
                 >
                   <CalendarDot size={18} weight="fill" />
-                  I dag
+                  {labels.today}
                 </Button>
               </div>
               <div className="flex items-center gap-3 flex-wrap">
@@ -576,7 +592,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
                 <DialogHeader>
                   <DialogTitle>
                     {detailDay !== null && new Date(selectedYear, selectedMonth, detailDay).toLocaleDateString(
-                      language === 'da' ? 'da-DK' : language === 'fi' ? 'fi-FI' : 'en-US',
+                      language === 'da' ? 'da-DK' : language === 'fi' ? 'fi-FI' : language === 'sv' ? 'sv-SE' : 'en-US',
                       { weekday: 'long', day: 'numeric', month: 'long' }
                     )}
                   </DialogTitle>
@@ -591,6 +607,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
                         style={{ backgroundColor: userColor.bg, color: userColor.text }}
                       >
                         <span className="flex-1">{getFirstName(vacation.userEmail)}</span>
+                        {vacation.type === 'parental' && <span className="text-xs font-semibold">{t.parentalLeave.badge}</span>}
                         {vacation.notes && <span className="text-xs opacity-80 truncate">{vacation.notes}</span>}
                       </div>
                     )
@@ -602,7 +619,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
                     >
                       <House size={16} weight="fill" className="flex-shrink-0" />
                       <span className="flex-1">{member.name}</span>
-                      <span className="text-xs opacity-80">{language === 'da' ? 'Hjemmearbejde' : language === 'fi' ? 'Etätyö' : 'Home office'}</span>
+                      <span className="text-xs opacity-80">{language === 'da' ? 'Hjemmearbejde' : language === 'fi' ? 'Etätyö' : language === 'sv' ? 'Hemarbete' : 'Home office'}</span>
                     </div>
                   ))}
                 </div>
@@ -611,9 +628,9 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
 
             <div className="grid grid-cols-8 gap-2">
               <div className="text-center font-semibold text-sm py-2 text-muted-foreground">
-                Uge
+                {labels.week}
               </div>
-              {['Man', 'Tir', 'Ons', 'Tor', 'Fre', 'Lør', 'Søn'].map((day, index) => (
+              {weekdayNames(labels.locale).map((day, index) => (
                 <div
                   key={day}
                   className={cn(
@@ -696,7 +713,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
                             )}
                             {isWeekendDay && dayBirthdays.length === 0 ? (
                               <div className="text-[8px] text-muted-foreground text-center mt-2">
-                                Lukket
+                                {labels.closed}
                               </div>
                             ) : !isWeekendDay && (
                               <>
@@ -710,7 +727,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
                                         backgroundColor: userColor.bg,
                                         color: userColor.text
                                       }}
-                                      title={`${getFirstName(vacation.userEmail)}${vacation.notes ? ': ' + vacation.notes : ''}`}
+                                      title={`${getFirstName(vacation.userEmail)}${vacation.type === 'parental' ? ` (${t.parentalLeave.badge})` : ''}${vacation.notes ? ': ' + vacation.notes : ''}`}
                                     >
                                       {getFirstName(vacation.userEmail)}
                                     </div>
@@ -718,14 +735,14 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
                                 })}
                                 {dayVacations.length > (dayBirthdays.length > 0 ? 2 : 3) && (
                                   <div className="text-[9px] text-muted-foreground underline">
-                                    +{dayVacations.length - (dayBirthdays.length > 0 ? 2 : 3)} {language === 'da' ? 'se alle' : language === 'fi' ? 'katso kaikki' : 'see all'}
+                                    +{dayVacations.length - (dayBirthdays.length > 0 ? 2 : 3)} {language === 'da' ? 'se alle' : language === 'fi' ? 'katso kaikki' : language === 'sv' ? 'visa alla' : 'see all'}
                                   </div>
                                 )}
                                 {dayHomeOffice.slice(0, 3).map((member) => (
                                   <div
                                     key={member.email}
                                     className="text-[10px] px-1.5 py-0.5 rounded truncate font-semibold bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300 flex items-center gap-0.5"
-                                    title={`${member.name}${language === 'da' ? ' arbejder hjemme' : language === 'fi' ? ' työskentelee etänä' : ' works from home'}`}
+                                    title={`${member.name}${language === 'da' ? ' arbejder hjemme' : language === 'fi' ? ' työskentelee etänä' : language === 'sv' ? ' arbetar hemifrån' : ' works from home'}`}
                                   >
                                     <House size={10} weight="fill" className="flex-shrink-0" />
                                     <span className="truncate">{getFirstName(member.email)}</span>
@@ -736,7 +753,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
                                     className="text-[9px] text-sky-700 dark:text-sky-300 underline"
                                     title={dayHomeOffice.map(m => m.name).join(', ')}
                                   >
-                                    +{dayHomeOffice.length - 3} {language === 'da' ? 'hjemme' : language === 'fi' ? 'etänä' : 'home'}
+                                    +{dayHomeOffice.length - 3} {language === 'da' ? 'hjemme' : language === 'fi' ? 'etänä' : language === 'sv' ? 'hemma' : 'home'}
                                   </div>
                                 )}
                               </>
@@ -803,7 +820,7 @@ export function VacationCalendar({ onNavigateBack, onLogout, userEmail: propUser
                 )}
               </TabsContent>
               <TabsContent value="approved" className="mt-4">
-                <h3 className="text-xl font-bold mb-4"><AutoText text="Godkendte Ferier" /></h3>
+                <h3 className="text-xl font-bold mb-4"><AutoText text="Godkendte Ferier" /><NisseSpot spot="calendar-approved" pose="stand" className="ml-3 align-middle" /></h3>
                 {myApprovedVacations.length === 0 ? (
                   <p className="text-muted-foreground text-center py-8">
                     <AutoText text="Du har ingen godkendte ferier" />

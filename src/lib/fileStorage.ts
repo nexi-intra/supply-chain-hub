@@ -37,12 +37,9 @@ class FileStorageService {
         data: base64Data,
       }
 
+      // kv.set lykkes kun, når filen er skrevet og omdøbt på plads – en kontrol-læsning af hele
+      // dokumentet (flere MB over M:) bagefter gav intet ekstra, kun ventetid.
       await window.kv.set(`${fileId}_meta`, metadata)
-
-      const verification = await window.kv.get(`${fileId}_meta`)
-      if (!verification) {
-        throw new Error('Fil blev ikke gemt korrekt - verification failed')
-      }
     } catch (kvError) {
       console.error('[FileStorage] KV storage error:', kvError)
 
@@ -124,11 +121,11 @@ class FileStorageService {
     return url
   }
 
-  async downloadFile(fileUrl: string): Promise<Blob> {
+  async downloadFile(fileUrl: string, read: <T>(key: string) => Promise<T | undefined> = key => window.kv.get(key)): Promise<Blob> {
     if (fileUrl.startsWith('kv://')) {
       const fileId = fileUrl.replace('kv://', '')
       
-      const metadata = await window.kv.get<{
+      const metadata = await read<{
         filename: string
         contentType: string
         size: number
@@ -138,7 +135,7 @@ class FileStorageService {
       }>(`${fileId}_meta`)
 
       if (!metadata) {
-        const legacyData = await window.kv.get<{
+        const legacyData = await read<{
           data: string
           filename: string
           contentType: string
@@ -161,14 +158,14 @@ class FileStorageService {
         return new Blob([bytes as BlobPart], { type: metadata.contentType || 'application/octet-stream' })
       }
 
-      const chunks: string[] = []
-      for (let i = 0; i < metadata.chunkCount; i++) {
-        const chunk = await window.kv.get<string>(`${fileId}_chunk_${i}`)
+      // Parallelt: hvert stykke er en rundtur til M:.
+      const chunks = await Promise.all(Array.from({ length: metadata.chunkCount }, async (_, i) => {
+        const chunk = await read<string>(`${fileId}_chunk_${i}`)
         if (!chunk) {
           throw new Error(`Missing chunk ${i} for file ${fileId}`)
         }
-        chunks.push(chunk)
-      }
+        return chunk
+      }))
 
       const base64Data = chunks.join('')
       const bytes = this.base64ToUint8Array(base64Data)
@@ -198,10 +195,11 @@ class FileStorageService {
       }>(`${fileId}_meta`)
 
       if (metadata) {
-        await window.kv.delete(`${fileId}_meta`)
-        for (let i = 0; i < metadata.chunkCount; i++) {
-          await window.kv.delete(`${fileId}_chunk_${i}`)
-        }
+        // Parallelt: hver sletning er en rundtur til M:.
+        await Promise.all([
+          window.kv.delete(`${fileId}_meta`),
+          ...Array.from({ length: metadata.chunkCount || 0 }, (_, i) => window.kv.delete(`${fileId}_chunk_${i}`)),
+        ])
       } else {
         await window.kv.delete(fileId)
       }

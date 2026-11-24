@@ -1,17 +1,27 @@
 import { ComponentProps } from "react"
 
 import { cn } from "@/lib/utils"
+import { useChristmas } from "@/contexts/ChristmasContext"
+import { SnowCap } from "@/components/christmas/SnowCap"
 
-function Card({ className, ...props }: ComponentProps<"div">) {
+// In the Christmas season every card in the app gets snow on top (not in the games: the theme is off there).
+// `snow={false}` is for cards that bring their own snow, like the module tiles on the front page.
+function Card({ className, snow = true, children, ...props }: ComponentProps<"div"> & { snow?: boolean }) {
+  const christmas = useChristmas()
+  const withSnow = snow && christmas.active
   return (
     <div
       data-slot="card"
       className={cn(
         "bg-card text-card-foreground flex flex-col gap-6 rounded-md border py-6",
+        withSnow && "relative",
         className
       )}
       {...props}
-    />
+    >
+      {withSnow && <SnowCap auto />}
+      {children}
+    </div>
   )
 }
 

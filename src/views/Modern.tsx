@@ -1,23 +1,23 @@
 import { motion } from 'framer-motion'
 import { useState, useEffect } from 'react'
-import { Cube, Headset, Books, ArrowLeft } from '@phosphor-icons/react'
-import { Card } from '@/components/ui/card'
+import { ArrowLeft } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
+import { SectionTile, SectionBadge, CubeBasherArt, ModernArt } from '@/components/arcade/SectionTile'
 import { useLanguage } from '@/contexts/LanguageContext'
 import { isAnyModalOpen } from '@/lib/modalStack'
 import { CubeBasherGame } from '@/components/CubeBasherGame'
-import { TheLibrarian2Game } from '@/components/TheLibrarian2Game'
 
 interface ModernProps {
   onNavigateBack: () => void
   userEmail?: string
 }
 
-type ModernView = 'hub' | 'cubebasher' | 'librarian2'
+type ModernView = 'hub' | 'cubebasher'
 
 export function Modern({ onNavigateBack }: ModernProps) {
   const { language } = useLanguage()
   const [view, setView] = useState<ModernView>('hub')
+  const openLabel = language === 'da' ? 'Åbn spil' : language === 'fi' ? 'Avaa peli' : language === 'sv' ? 'Öppna spel' : 'Open game'
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -34,9 +34,6 @@ export function Modern({ onNavigateBack }: ModernProps) {
 
   if (view === 'cubebasher') {
     return <CubeBasherGame onNavigateBack={() => setView('hub')} />
-  }
-  if (view === 'librarian2') {
-    return <TheLibrarian2Game onNavigateBack={() => setView('hub')} />
   }
 
   return (
@@ -55,7 +52,7 @@ export function Modern({ onNavigateBack }: ModernProps) {
               className="pointer-events-auto bg-background/90 hover:bg-background transition-colors gap-2 font-semibold"
             >
               <ArrowLeft size={20} weight="bold" />
-              {language === 'da' ? 'Tilbage til Spilhjørnet' : language === 'fi' ? 'Takaisin pelinurkkaan' : 'Back to Game Corner'}
+              {language === 'da' ? 'Tilbage til Spilhjørnet' : language === 'fi' ? 'Takaisin pelinurkkaan' : language === 'sv' ? 'Tillbaka till Spelhörnan' : 'Back to Game Corner'}
             </Button>
           </motion.div>
         </div>
@@ -74,9 +71,7 @@ export function Modern({ onNavigateBack }: ModernProps) {
             transition={{ duration: 0.5, delay: 0.2 }}
             className="flex justify-center mb-6"
           >
-            <div className="p-6 rounded-md bg-primary">
-              <Headset size={64} weight="duotone" className="text-white" />
-            </div>
+            <SectionBadge game="section-modern" art={<ModernArt />} />
           </motion.div>
           <motion.h1
             className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground mb-4"
@@ -94,117 +89,34 @@ export function Modern({ onNavigateBack }: ModernProps) {
           >
             {language === 'da'
               ? 'Større, moderne 3D-spil — mere end blot en hurtig omgang.'
-              : language === 'fi' ? 'Suurempi, moderni 3D-pelit ... enemmän kuin vain nopea kierros.' : 'Bigger, modern 3D games — more than just a quick round.'}
+              : language === 'fi' ? 'Suurempia, moderneja 3D-pelejä — enemmän kuin vain nopea kierros.' : language === 'sv' ? 'Större, moderna 3D-spel — mer än bara en snabb runda.' : 'Bigger, modern 3D games — more than just a quick round.'}
           </motion.p>
         </motion.header>
 
         <motion.div
-          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-8"
+          className="mx-auto grid max-w-md auto-rows-fr grid-cols-1 gap-4 md:gap-6"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.5, duration: 0.6 }}
         >
           {/* Hvert spil-kort SKAL have sin egen unikke OKLCH-farve (ligesom Arcades 5 spil) —
-              genbrug ALDRIG en anden games farve her. Modern-headerens farve ovenfor er
-              bevidst en tredje, neutral "modul-farve" delt af ingen af kortene. */}
+              genbrug ALDRIG en anden games farve her. Farverne ligger i arcade.css pr. data-game. */}
           <motion.div
+            className="h-full"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.5, duration: 0.4 }}
           >
-            <motion.div
-              initial={{ scale: 1, y: 0, rotate: 0, boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1)" }}
-              whileHover={{ scale: 1.08, y: -10, rotate: [0, 3, -3, 0], boxShadow: "0 30px 60px -15px rgba(0, 0, 0, 0.35)" }}
-              whileTap={{ scale: 0.92 }}
-              transition={{ duration: 0.3, ease: "easeInOut" }}
-            >
-              <Card
-                className="relative overflow-hidden transition-colors group h-full flex flex-col cursor-pointer hover:border-primary/40"
-                onClick={() => setView('cubebasher')}
-              >
-                <motion.div
-                  className="absolute inset-0"
-                  style={{ background: 'radial-gradient(circle at top right, oklch(0.55 0.19 25 / 0.08), transparent)' }}
-                  initial={{ opacity: 0 }}
-                  whileHover={{ opacity: 1 }}
-                  transition={{ duration: 0.3 }}
-                />
-
-                <div className="relative p-4 md:p-6 flex flex-col flex-1">
-                  <motion.div
-                    className="mb-3 inline-flex items-center justify-center rounded-md p-2 bg-secondary text-primary"
-                    style={{ color: 'white' }}
-                    initial={{ scale: 1, rotate: 0, y: 0 }}
-                    whileHover={{ scale: [1, 1.3, 1.15], rotate: [0, -15, 15, -10, 10, 0], y: [0, -8, 0] }}
-                    transition={{ duration: 0.8, ease: "easeInOut" }}
-                  >
-                    <div className="[&>svg]:w-8 [&>svg]:h-8 md:[&>svg]:w-12 md:[&>svg]:h-12">
-                      <Cube size={48} weight="duotone" />
-                    </div>
-                  </motion.div>
-
-                  <h3 className="text-sm sm:text-base md:text-lg font-bold mb-1.5 md:mb-2 text-foreground text-center">
-                    Cube Basher
-                  </h3>
-
-                  <p className="text-muted-foreground text-xs leading-relaxed mb-3 md:mb-4 flex-1">
-                    {language === 'da'
-                      ? 'Overlev 30 minutter mod en voksende hær af onde terninger. Byg din helt og bank fjender med din hammer!'
-                      : language === 'fi' ? 'Selviytyä 30 minuuttia vastaan kasvava lauma pahoja kuutioita. Tasoita sankari ja lyö vihollisia vasaralla!' : 'Survive 30 minutes against a growing horde of evil cubes. Level up your hero and bash enemies with your hammer!'}
-                  </p>
-                </div>
-              </Card>
-            </motion.div>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.55, duration: 0.4 }}
-          >
-            <motion.div
-              initial={{ scale: 1, y: 0, rotate: 0, boxShadow: "0 1px 3px 0 rgba(0, 0, 0, 0.1)" }}
-              whileHover={{ scale: 1.08, y: -10, rotate: [0, 3, -3, 0], boxShadow: "0 30px 60px -15px rgba(0, 0, 0, 0.35)" }}
-              whileTap={{ scale: 0.92 }}
-              transition={{ duration: 0.3, ease: "easeInOut" }}
-            >
-              <Card
-                className="relative overflow-hidden transition-colors group h-full flex flex-col cursor-pointer hover:border-primary/40"
-                onClick={() => setView('librarian2')}
-              >
-                <motion.div
-                  className="absolute inset-0"
-                  style={{ background: 'radial-gradient(circle at top right, oklch(0.50 0.18 295 / 0.08), transparent)' }}
-                  initial={{ opacity: 0 }}
-                  whileHover={{ opacity: 1 }}
-                  transition={{ duration: 0.3 }}
-                />
-
-                <div className="relative p-4 md:p-6 flex flex-col flex-1">
-                  <motion.div
-                    className="mb-3 inline-flex items-center justify-center rounded-md p-2 bg-secondary text-primary"
-                    style={{ color: 'white' }}
-                    initial={{ scale: 1, rotate: 0, y: 0 }}
-                    whileHover={{ scale: [1, 1.3, 1.15], rotate: [0, -15, 15, -10, 10, 0], y: [0, -8, 0] }}
-                    transition={{ duration: 0.8, ease: "easeInOut" }}
-                  >
-                    <div className="[&>svg]:w-8 [&>svg]:h-8 md:[&>svg]:w-12 md:[&>svg]:h-12">
-                      <Books size={48} weight="duotone" />
-                    </div>
-                  </motion.div>
-
-                  <h3 className="text-sm sm:text-base md:text-lg font-bold mb-1.5 md:mb-2 text-foreground text-center">
-                    The Librarian
-                  </h3>
-
-                  <p className="text-muted-foreground text-xs leading-relaxed mb-3 md:mb-4 flex-1">
-                    {language === 'da'
-                      ? 'Stil bøger tilbage på hylderne hurtigere end børnene kan tage dem ned. Hold Kaos-måleren under 100 % indtil lukketid!'
-                      : language === 'fi' ? 'Hyllyt ovat nopeampia kuin lapset. Pidä kaaosmittari alle 100% kunnes sulkemisaika!' : 'Shelve books faster than the kids can unshelve them. Keep the Chaos meter under 100% until closing time!'}
-                  </p>
-                </div>
-              </Card>
-            </motion.div>
+            <SectionTile
+              game="cubebasher"
+              title="Cube Basher"
+              cta={openLabel}
+              art={<CubeBasherArt />}
+              onClick={() => setView('cubebasher')}
+              description={language === 'da'
+                ? 'Overlev 30 minutter fra daggry til nat mod en voksende hær af onde terninger. Saml 11 våben, udvikl dem til super-våben, åbn skattekister og klar meteorregn og blodmåne!'
+                : language === 'fi' ? 'Selviydy 30 minuuttia aamunkoitosta yöhön kasvavaa pahojen kuutioiden laumaa vastaan. Kerää 11 asetta, kehitä niistä superaseita, avaa aarrearkkuja ja selviä meteorisateesta ja verikuusta!' : language === 'sv' ? 'Överlev 30 minuter från gryning till natt mot en växande horde av onda kuber. Samla 11 vapen, utveckla dem till supervapen, öppna skattkistor och klara meteorregn och blodmåne!' : 'Survive 30 minutes from dawn till night against a growing horde of evil cubes. Collect 11 weapons, evolve them into super weapons, open treasure chests and weather meteor showers and blood moons!'}
+            />
           </motion.div>
         </motion.div>
       </div>

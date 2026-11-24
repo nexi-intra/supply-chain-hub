@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, type ReactElement } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, type ReactElement } from 'react'
+import { NisseSpot } from '@/components/christmas/NisseSpot'
 import { motion } from 'framer-motion'
 import { ArrowLeft, Plus, Trash, UserCircle, Tag, Calendar as CalendarIcon, PencilSimple, ChatText, Phone, FirstAidKit, Airplane, Gift, ArrowsClockwise, CaretDown, CaretUp, Funnel, Warning } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
@@ -11,9 +12,11 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
 import { useKV } from '@/hooks/useKV'
+import { saveListChange, saveRecordChange } from '@/lib/kvChanges'
+import { saveInBackground } from '@/lib/saveInBackground'
 import { UserProfile } from '@/components/UserProfile'
 import { toast } from 'sonner'
-import { AutoText } from '@/components/AutoText'
+import { AutoText as DetectedText } from '@/components/AutoText'
 import { useAutoTranslate } from '@/lib/useAutoTranslate'
 import { cn } from '@/lib/utils'
 import { readableTextOn } from '@/lib/readableText'
@@ -31,11 +34,29 @@ import type { TeamEmployee } from '@/views/TeamOverview'
 import { getEmployeeColorByEmail, EMPLOYEE_COLOR_OVERRIDES_KEY, type EmployeeColorOverrides } from '@/lib/employeeColors'
 import { useLanguage } from '@/contexts/LanguageContext'
 import type { ShiftRole, ShiftAssignment, ShiftPatternRule, SickLeaveEntry, VacationEntry, BirthdayEntry } from '@/lib/types'
+import { resolveShiftDayComment, setShiftDayNote, updateShiftDayAssignments, type ShiftDayNotes } from '@/lib/shiftDayComments'
+import { formatShiftTime, resolveShiftTime, shiftTimeError, toShiftTime } from '@/lib/shiftTimes'
+import { TimeRangeFields } from '@/components/TimeRangeFields'
+import { ShiftRoleDialog } from '@/components/ShiftRoleDialog'
 
 interface ShiftScheduleProps {
   onNavigateBack: () => void
   onLogout: () => void
   userEmail: string
+}
+
+// The view's own labels are written in Danish; short words like "Tilbage" cannot be language-detected.
+// Machine translation turns "vagt" into "guard", so the core terms are fixed.
+const SHIFT_TERMS: Record<string, Partial<Record<'en' | 'fi' | 'sv', string>>> = {
+  'Vagtplan': { en: 'Shift schedule', fi: 'Vuorolista', sv: 'Schema' },
+  'Gentagne vagter': { en: 'Recurring shifts', fi: 'Toistuvat vuorot', sv: 'Återkommande pass' },
+  'Ryd Hel Uge': { en: 'Clear whole week', fi: 'Tyhjennä koko viikko', sv: 'Rensa hela veckan' },
+  'Tildel Vagt': { en: 'Assign shift', fi: 'Määritä vuoro', sv: 'Tilldela pass' },
+}
+const AutoText = ({ text }: { text: string }) => {
+  const { language } = useLanguage()
+  const fixed = SHIFT_TERMS[text]?.[language as 'en' | 'fi' | 'sv']
+  return fixed ? <>{fixed}</> : <DetectedText text={text} from="da" />
 }
 
 const SHIFT_PATTERN_INTERVAL_LABELS: Record<number, string> = {
@@ -47,10 +68,33 @@ const SHIFT_PATTERN_INTERVAL_LABELS: Record<number, string> = {
   6: 'Hver sjette uge',
 }
 
+const LOCALES = { da: 'da-DK', en: 'en-GB', fi: 'fi-FI', sv: 'sv-SE' } as const
+const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slice(1)
+const monthNames = (locale: string) => Array.from({ length: 12 }, (_, month) => capitalize(new Intl.DateTimeFormat(locale, { month: 'long' }).format(new Date(2026, month, 1))))
+// 2026-01-04 is a Sunday, so index 0..6 follows Date.getDay().
+const dayNames = (locale: string) => Array.from({ length: 7 }, (_, day) => capitalize(new Intl.DateTimeFormat(locale, { weekday: 'short' }).format(new Date(2026, 0, 4 + day)).replace('.', '')))
+const gridLabels = (language: keyof typeof LOCALES, text: { date: string; week: string; today: string; vacation: string; parental: string; sick: string; add: string; addTask: string; chooseTask: string; note: string; addNote: string; editNote: string }) =>
+  ({ ...text, months: monthNames(LOCALES[language]), days: dayNames(LOCALES[language]) })
+const SHIFT_GRID_LABELS = {
+  da: gridLabels('da', { date: 'Dato', week: 'U', today: 'I dag', vacation: 'Ferie', parental: 'Barsel', sick: 'Syg', add: 'Tilføj', addTask: 'Tilføj opgave', chooseTask: 'Vælg opgave', note: 'Note', addNote: 'Tilføj kommentar', editNote: 'Rediger kommentar' }),
+  en: gridLabels('en', { date: 'Date', week: 'W', today: 'Today', vacation: 'Vacation', parental: 'Parental leave', sick: 'Sick', add: 'Add', addTask: 'Add task', chooseTask: 'Choose task', note: 'Note', addNote: 'Add comment', editNote: 'Edit comment' }),
+  fi: gridLabels('fi', { date: 'Päivä', week: 'Vk', today: 'Tänään', vacation: 'Loma', parental: 'Perhevapaa', sick: 'Sairas', add: 'Lisää', addTask: 'Lisää tehtävä', chooseTask: 'Valitse tehtävä', note: 'Muistiinpano', addNote: 'Lisää kommentti', editNote: 'Muokkaa kommenttia' }),
+  sv: gridLabels('sv', { date: 'Datum', week: 'V', today: 'Idag', vacation: 'Semester', parental: 'Föräldraledig', sick: 'Sjuk', add: 'Lägg till', addTask: 'Lägg till uppgift', chooseTask: 'Välj uppgift', note: 'Anteckning', addNote: 'Lägg till kommentar', editNote: 'Redigera kommentar' }),
+}
+
 export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEmail }: ShiftScheduleProps) {
-  const [roles, setRoles] = useKV<ShiftRole[]>('shift-roles', [])
-  const [assignments, setAssignments] = useKV<ShiftAssignment[]>('shift-assignments', [])
-  const [shiftPatterns, setShiftPatterns] = useKV<ShiftPatternRule[]>('shift-patterns', [])
+  const grid = SHIFT_GRID_LABELS[useLanguage().language] ?? SHIFT_GRID_LABELS.da
+  const [roles] = useKV<ShiftRole[]>('shift-roles', [])
+  const [assignments] = useKV<ShiftAssignment[]>('shift-assignments', [])
+  const [dayNotes] = useKV<ShiftDayNotes>('team-status-notes', {})
+  const [shiftPatterns] = useKV<ShiftPatternRule[]>('shift-patterns', [])
+  // The schedule is also shown on the Hub (team tasks, team status) and in Min uge. Each edit is saved as only the
+  // changed items under the file lock, so every open view shows it at once and a failed save is rolled back everywhere.
+  const saveFailed = 'Ændringen blev ikke gemt – prøv igen'
+  const setRoles = (change: (current: ShiftRole[]) => ShiftRole[]) => saveInBackground(saveListChange('shift-roles', roles || [], change(roles || [])), { failure: saveFailed })
+  const setAssignments = (change: (current: ShiftAssignment[]) => ShiftAssignment[]) => saveInBackground(saveListChange('shift-assignments', assignments || [], change(assignments || [])), { failure: saveFailed })
+  const setDayNotes = (change: (current: ShiftDayNotes) => ShiftDayNotes) => saveInBackground(saveRecordChange('team-status-notes', dayNotes || {}, change(dayNotes || {})), { failure: saveFailed })
+  const setShiftPatterns = (change: (current: ShiftPatternRule[]) => ShiftPatternRule[]) => saveInBackground(saveListChange('shift-patterns', shiftPatterns || [], change(shiftPatterns || [])), { failure: saveFailed })
   const [colorOverrides] = useKV<EmployeeColorOverrides>(EMPLOYEE_COLOR_OVERRIDES_KEY, {})
   const [employees, setEmployees] = useState<TeamEmployee[]>([])
   const [sickLeaveEntries, setSickLeaveEntries] = useKV<SickLeaveEntry[]>('sick-leave-entries', [])
@@ -73,6 +117,8 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
   const [patternStartDate, setPatternStartDate] = useState(() => toIsoDateString(new Date()))
   const [patternEndDate, setPatternEndDate] = useState('')
   const [patternComment, setPatternComment] = useState('')
+  const [patternStart, setPatternStart] = useState('')
+  const [patternEnd, setPatternEnd] = useState('')
   const [editingPatternId, setEditingPatternId] = useState<string | null>(null)
   const [showExistingPatterns, setShowExistingPatterns] = useState(true)
   const [patternFilterRole, setPatternFilterRole] = useState('all')
@@ -82,39 +128,17 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
   const [editingComment, setEditingComment] = useState<{ employeeId: string; date: string } | null>(null)
   const [commentText, setCommentText] = useState('')
   
-  const [newRoleName, setNewRoleName] = useState('')
-  const [newRoleColor, setNewRoleColor] = useState('#8b5cf6')
-  const [onlyWhenAssigned, setOnlyWhenAssigned] = useState(false)
-
-  const rolePlaceholder = useAutoTranslate('F.eks. Supervisor, Tekniker, Support')
-  const selectEmployeePlaceholder = useAutoTranslate('Vælg medarbejder')
-  const selectRolePlaceholder = useAutoTranslate('Vælg rolle')
-  const selectTaskPlaceholder = useAutoTranslate('Vælg opgave')
-  const selectWeekPlaceholder = useAutoTranslate('Vælg uge')
-  const commentPlaceholder = useAutoTranslate('F.eks. Går kl. 14:00 til tandlæge')
-
-  const colorPresets = [
-    { name: 'Lilla', value: '#a855f7' },
-    { name: 'Blå', value: '#3b82f6' },
-    { name: 'Cyan', value: '#06b6d4' },
-    { name: 'Grøn', value: '#10b981' },
-    { name: 'Gul', value: '#eab308' },
-    { name: 'Orange', value: '#f97316' },
-    { name: 'Rød', value: '#ef4444' },
-    { name: 'Pink', value: '#ec4899' },
-    { name: 'Indigo', value: '#6366f1' },
-    { name: 'Teal', value: '#14b8a6' },
-    { name: 'Lime', value: '#84cc16' },
-    { name: 'Rose', value: '#f43f5e' },
-    { name: 'Emerald', value: '#059669' },
-    { name: 'Sky', value: '#0ea5e9' },
-    { name: 'Violet', value: '#8b5cf6' },
-    { name: 'Amber', value: '#f59e0b' },
-  ]
+  const selectEmployeePlaceholder = useAutoTranslate('Vælg medarbejder', 'da')
+  const selectRolePlaceholder = useAutoTranslate('Vælg rolle', 'da')
+  const selectTaskPlaceholder = useAutoTranslate('Vælg opgave', 'da')
+  const selectWeekPlaceholder = useAutoTranslate('Vælg uge', 'da')
+  const commentPlaceholder = useAutoTranslate('F.eks. Går kl. 14:00 til tandlæge', 'da')
   
   const [selectedEmployee, setSelectedEmployee] = useState('')
   const [selectedRole, setSelectedRole] = useState('')
   const [selectedDate, setSelectedDate] = useState('')
+  const [selectedStart, setSelectedStart] = useState('')
+  const [selectedEnd, setSelectedEnd] = useState('')
   
   const [weekEmployee, setWeekEmployee] = useState('')
   const [weekRole, setWeekRole] = useState('')
@@ -126,34 +150,23 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear())
   
   const [activeTab, setActiveTab] = useState('schedule')
-  const dateScrollRef = useRef<HTMLDivElement>(null)
-  const contentScrollRef = useRef<HTMLDivElement>(null)
   const scheduleScrollRef = useRef<HTMLDivElement>(null)
-  const hasScrolledToToday = useRef(false)
-  const [scrollToToday, setScrollToToday] = useState(false)
+  const focusTodayActive = useRef(true)
+  const [focusTodayRequest, setFocusTodayRequest] = useState(0)
 
-  const syncScroll = (source: 'date' | 'content') => {
-    if (source === 'date' && dateScrollRef.current && contentScrollRef.current) {
-      contentScrollRef.current.scrollTop = dateScrollRef.current.scrollTop
-    } else if (source === 'content' && dateScrollRef.current && contentScrollRef.current) {
-      dateScrollRef.current.scrollTop = contentScrollRef.current.scrollTop
-    }
-  }
-
-  const months = [
-    'Januar', 'Februar', 'Marts', 'April', 'Maj', 'Juni',
-    'Juli', 'August', 'September', 'Oktober', 'November', 'December'
-  ]
+  const months = grid.months
 
   useEffect(() => {
     const loadUserAndCheckAdmin = async () => {
-      const usersData = await window.kv.get<Record<string, { email: string; fullName: string; role?: string }>>('users')
+      // Parallelt: hver læsning er en rundtur til M:.
+      const [usersData, birthdaysData] = await Promise.all([
+        window.kv.get<Record<string, { email: string; fullName: string; role?: string }>>('users'),
+        window.kv.get<BirthdayEntry[]>('employee-birthdays'),
+      ])
       if (usersData && usersData[userEmail]?.role === 'creator') {
         setIsAdmin(true)
       }
-
-      const birthdaysData = await window.kv.get<BirthdayEntry[]>('employee-birthdays') || []
-      setBirthdays(birthdaysData)
+      setBirthdays(birthdaysData || [])
     }
     if (userEmail) {
       loadUserAndCheckAdmin()
@@ -165,8 +178,11 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
   }, [])
 
   const loadEmployees = async () => {
-    const usersData = await window.kv.get<Record<string, { email: string; fullName: string; role?: string; phone?: string }>>('users')
-    const userSettings = (await window.kv.get<Record<string, { phoneNumber?: string }>>('user-settings')) || {}
+    const [usersData, settingsRaw] = await Promise.all([
+      window.kv.get<Record<string, { email: string; fullName: string; role?: string; phone?: string }>>('users'),
+      window.kv.get<Record<string, { phoneNumber?: string }>>('user-settings'),
+    ])
+    const userSettings = settingsRaw || {}
     
     if (usersData && typeof usersData === 'object' && !Array.isArray(usersData)) {
       const userList: TeamEmployee[] = (await excludeCreator(Object.values(usersData))).map(user => {
@@ -217,36 +233,29 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
     return () => window.removeEventListener('keydown', handleKeyDown, true)
   }, [onNavigateBack, selectedMonth, selectedYear])
 
-  useEffect(() => {
-    if (activeTab === 'schedule' && scheduleScrollRef.current && (!hasScrolledToToday.current || scrollToToday)) {
-      const scrollToCurrentWeek = () => {
-        const today = new Date()
-        const currentMonth = today.getMonth()
-        const currentYear = today.getFullYear()
-
-        if (selectedMonth !== currentMonth || selectedYear !== currentYear) {
-          hasScrolledToToday.current = true
-          setScrollToToday(false)
-          return
-        }
-
-        const container = scheduleScrollRef.current
-        const row = container?.querySelector<HTMLElement>('[data-current-week]')
-        if (container && row) {
-          const headerHeight = container.querySelector('thead')?.offsetHeight ?? 0
-          const containerRect = container.getBoundingClientRect()
-          const rowRect = row.getBoundingClientRect()
-          const top = Math.max(0, rowRect.top - containerRect.top + container.scrollTop - headerHeight - 8)
-          container.scrollTo({ top, behavior: 'smooth' })
-        }
-
-        hasScrolledToToday.current = true
-        setScrollToToday(false)
-      }
-
-      setTimeout(scrollToCurrentWeek, 300)
+  // Data fra faelleslageret kommer i flere omgange. Hold dagens HELE tabelraekke
+  // (dato og opgaver) i fokus, og maal igen naar rækkerne vokser. Stop saa snart
+  // brugeren selv scroller eller arbejder i planen.
+  useLayoutEffect(() => {
+    const container = scheduleScrollRef.current
+    if (!container || activeTab !== 'schedule' || !focusTodayActive.current) return
+    const today = new Date()
+    if (selectedMonth !== today.getMonth() || selectedYear !== today.getFullYear()) return
+    const table = container.querySelector('table')
+    const alignToday = () => {
+      if (!focusTodayActive.current) return
+      const row = container.querySelector<HTMLElement>('[data-today]')
+      if (!row) return
+      const headerHeight = container.querySelector('thead')?.offsetHeight ?? 0
+      const top = row.getBoundingClientRect().top - container.getBoundingClientRect().top
+        + container.scrollTop - headerHeight - Math.min(60, container.clientHeight * 0.12)
+      container.scrollTo({ top: Math.max(0, top), behavior: 'instant' })
     }
-  }, [activeTab, selectedMonth, selectedYear, scrollToToday])
+    const frame = requestAnimationFrame(alignToday)
+    const observer = typeof ResizeObserver !== 'undefined' && table ? new ResizeObserver(alignToday) : null
+    if (observer && table) observer.observe(table)
+    return () => { cancelAnimationFrame(frame); observer?.disconnect() }
+  }, [activeTab, selectedMonth, selectedYear, employees, assignments, roles, shiftPatterns, sickLeaveEntries, vacationEntries, focusTodayRequest])
 
   const isWeekend = (date: Date) => {
     const day = date.getDay()
@@ -258,47 +267,12 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
     return isWeekend(date) || isDanishHoliday(dateString)
   }
 
-  const handleAddRole = () => {
-    if (!newRoleName.trim()) {
-      toast.error('Indtast et rolle navn')
-      return
-    }
-
-    const newRole: ShiftRole = {
-      id: Date.now().toString(),
-      name: newRoleName.trim(),
-      color: newRoleColor,
-      onlyWhenAssigned,
-    }
-
-    setRoles((current) => [...(current || []), newRole])
-    setNewRoleName('')
-    setNewRoleColor('#8b5cf6')
-    setOnlyWhenAssigned(false)
-    setShowRoleDialog(false)
-    toast.success('Rolle tilføjet')
-  }
-
-  const handleUpdateRole = () => {
-    if (!editingRole) return
-    if (!newRoleName.trim()) {
-      toast.error('Indtast et rolle navn')
-      return
-    }
-
-    setRoles((current) => 
-      (current || []).map(r => 
-        r.id === editingRole.id 
-          ? { ...r, name: newRoleName.trim(), color: newRoleColor, onlyWhenAssigned }
-          : r
-      )
-    )
-    setNewRoleName('')
-    setNewRoleColor('#8b5cf6')
-    setOnlyWhenAssigned(false)
+  // Created and edited in the shared ShiftRoleDialog (also used by Stempelkort), so a task is made the same way everywhere.
+  const handleSaveRole = (role: ShiftRole) => {
+    const exists = (roles || []).some(r => r.id === role.id)
+    setRoles((current) => exists ? (current || []).map(r => r.id === role.id ? role : r) : [...(current || []), role])
     setEditingRole(null)
-    setShowRoleDialog(false)
-    toast.success('Rolle opdateret')
+    toast.success(exists ? 'Rolle opdateret' : 'Rolle tilføjet')
   }
 
   const handleDeleteRole = (roleId: string) => {
@@ -315,6 +289,11 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
 
     if (isDateLocked(selectedDate)) {
       toast.error('Kan ikke tildele vagter på weekender eller helligdage')
+      return
+    }
+    const timeError = shiftTimeError(selectedStart, selectedEnd)
+    if (timeError) {
+      toast.error(timeError)
       return
     }
 
@@ -340,13 +319,16 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
       employeeId: selectedEmployee,
       employeeName: employee.name,
       roleId: selectedRole,
-      date: selectedDate
+      date: selectedDate,
+      ...toShiftTime(selectedStart, selectedEnd),
     }
 
     setAssignments((current) => [...(current || []), newAssignment])
     setSelectedEmployee('')
     setSelectedRole('')
     setSelectedDate('')
+    setSelectedStart('')
+    setSelectedEnd('')
     setShowAssignmentDialog(false)
     toast.success('Vagt tildelt')
   }
@@ -354,6 +336,17 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
   const handleDeleteAssignment = (assignmentId: string) => {
     setAssignments((current) => (current || []).filter(a => a.id !== assignmentId))
     toast.success('Vagt fjernet')
+  }
+
+  const handleSetAssignmentTime = (assignmentId: string, start: string, end: string): boolean => {
+    const timeError = shiftTimeError(start, end)
+    if (timeError) {
+      toast.error(timeError)
+      return false
+    }
+    setAssignments((current) => (current || []).map(a => a.id === assignmentId ? { ...a, ...toShiftTime(start, end) } : a))
+    toast.success(start.trim() ? 'Tid gemt' : 'Tid fjernet')
+    return true
   }
 
   // En tildeling hvis opgave er blevet slettet/omdannet (roleId matcher ikke
@@ -366,17 +359,11 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
 
   const openEditRoleDialog = (role: ShiftRole) => {
     setEditingRole(role)
-    setNewRoleName(role.name)
-    setNewRoleColor(role.color)
-    setOnlyWhenAssigned(role.onlyWhenAssigned === true)
     setShowRoleDialog(true)
   }
 
   const openAddRoleDialog = () => {
     setEditingRole(null)
-    setNewRoleName('')
-    setNewRoleColor('#8b5cf6')
-    setOnlyWhenAssigned(false)
     setShowRoleDialog(true)
   }
 
@@ -401,7 +388,9 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
   }
 
   const getAssignmentsForEmployeeAndDate = (employeeId: string, dateString: string): (ShiftAssignment & { isPattern?: boolean })[] => {
-    const real = (assignments || []).filter(a => a.employeeId === employeeId && a.date === dateString)
+    // En gammel ren kommentar-række er ikke en opgave og maa ikke blive vist
+    // som "Ukendt opgave" i cellen.
+    const real = (assignments || []).filter(a => a.employeeId === employeeId && a.date === dateString && a.roleId)
     // Gentagelses-mønstre udfoldes her, kun for de datoer der rent faktisk
     // vises — der skrives ALDRIG konkrete rækker for hver fremtidig uge.
     const employee = (employees || []).find(e => e.id === employeeId)
@@ -423,6 +412,8 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
           roleId: p.roleId,
           date: dateString,
           comment: p.comment,
+          startTime: p.startTime,
+          endTime: p.endTime,
           isPattern: true,
         }))
       : []
@@ -437,7 +428,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
       const vacation = getEmployeeVacationForDate(employee.email, dateString)
       const sickLeave = getEmployeeSickLeaveForDate(employee.email, dateString)
       if (vacation) {
-        toast.error('Kan ikke tildele vagter når medarbejderen er på ferie')
+        toast.error(vacation.type === 'parental' ? 'Kan ikke tildele vagter når medarbejderen er på barsel' : 'Kan ikke tildele vagter når medarbejderen er på ferie')
       } else if (sickLeave) {
         toast.error('Kan ikke tildele vagter når medarbejderen er sygemeldt')
       } else {
@@ -553,6 +544,8 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
     setPatternStartDate(toIsoDateString(new Date()))
     setPatternEndDate('')
     setPatternComment('')
+    setPatternStart('')
+    setPatternEnd('')
     setEditingPatternId(null)
   }
 
@@ -565,6 +558,8 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
     setPatternStartDate(pattern.anchorDate)
     setPatternEndDate(pattern.endDate || '')
     setPatternComment(pattern.comment || '')
+    setPatternStart(pattern.startTime || '')
+    setPatternEnd(pattern.endTime || '')
   }
 
   const togglePatternWeekday = (weekday: number) => {
@@ -584,6 +579,11 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
       toast.error('Slutdato kan ikke ligge før startdato')
       return
     }
+    const timeError = shiftTimeError(patternStart, patternEnd)
+    if (timeError) {
+      toast.error(timeError)
+      return
+    }
 
     if (editingPatternId) {
       setShiftPatterns((current) => (current || []).map((p) => p.id !== editingPatternId ? p : {
@@ -596,6 +596,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
         anchorDate: patternStartDate,
         endDate: patternEndDate || undefined,
         comment: patternComment.trim() || undefined,
+        ...toShiftTime(patternStart, patternEnd),
       }))
       resetPatternForm()
       toast.success('Gentaget vagt opdateret')
@@ -612,6 +613,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
       anchorDate: patternStartDate,
       endDate: patternEndDate || undefined,
       comment: patternComment.trim() || undefined,
+      ...toShiftTime(patternStart, patternEnd),
     }
 
     setShiftPatterns((current) => [...(current || []), newPattern])
@@ -626,11 +628,8 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
   }
 
   const openCommentDialog = (employeeId: string, dateString: string) => {
-    const cellAssignments = getAssignmentsForEmployeeAndDate(employeeId, dateString)
-    const existingComment = cellAssignments.find(a => a.comment)?.comment || ''
-    
     setEditingComment({ employeeId, date: dateString })
-    setCommentText(existingComment)
+    setCommentText(getCellComment(employeeId, dateString))
     setShowCommentDialog(true)
   }
 
@@ -639,40 +638,24 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
 
     const { employeeId, date } = editingComment
     const cellAssignments = getAssignmentsForEmployeeAndDate(employeeId, date)
+    const hasStoredAssignment = (assignments || []).some(a => a.employeeId === employeeId && a.date === date)
+    const trimmed = commentText.trim()
 
-    if (commentText.trim()) {
-      if (cellAssignments.length > 0) {
-        setAssignments((current) => 
-          (current || []).map(a => 
-            a.employeeId === employeeId && a.date === date
-              ? { ...a, comment: commentText.trim() }
-              : a
-          )
-        )
+    // Dagsnoten er den faelles sandhed, ogsaa naar dagens opgaver kun stammer
+    // fra gentagne moenstre og derfor ikke findes som gemte tildelinger.
+    void setDayNotes(current => setShiftDayNote(current, date, employeeId, trimmed))
+
+    if (trimmed) {
+      if (hasStoredAssignment) {
+        void setAssignments(current => updateShiftDayAssignments(current, date, employeeId, trimmed))
         toast.success('Kommentar gemt')
+      } else if (cellAssignments.length === 0) {
+        toast.success('Kommentar tilføjet')
       } else {
-        const employee = (employees || []).find(e => e.id === employeeId)
-        if (employee) {
-          const newAssignment: ShiftAssignment = {
-            id: Date.now().toString(),
-            employeeId: employeeId,
-            employeeName: employee.name,
-            roleId: '',
-            date: date,
-            comment: commentText.trim()
-          }
-          setAssignments((current) => [...(current || []), newAssignment])
-          toast.success('Kommentar tilføjet')
-        }
+        toast.success('Kommentar gemt')
       }
     } else {
-      setAssignments((current) => 
-        (current || []).map(a => 
-          a.employeeId === employeeId && a.date === date
-            ? { ...a, comment: undefined }
-            : a
-        )
-      )
+      if (hasStoredAssignment) void setAssignments(current => updateShiftDayAssignments(current, date, employeeId, '').filter(a => !(a.employeeId === employeeId && a.date === date && !a.roleId && !a.comment)))
       toast.success('Kommentar fjernet')
     }
 
@@ -683,18 +666,15 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
 
   const getCellComment = (employeeId: string, dateString: string) => {
     const cellAssignments = getAssignmentsForEmployeeAndDate(employeeId, dateString)
-    const commentAssignment = cellAssignments.find(a => a.comment)
-    return commentAssignment?.comment || ''
+    const legacyNoteOnly = (assignments || []).filter(a => a.employeeId === employeeId && a.date === dateString && !a.roleId)
+    return resolveShiftDayComment(dayNotes, dateString, employeeId, [...legacyNoteOnly, ...cellAssignments])
   }
 
   const handleDeleteComment = (employeeId: string, dateString: string) => {
-    setAssignments((current) => 
-      (current || []).map(a => 
-        a.employeeId === employeeId && a.date === dateString && a.comment
-          ? { ...a, comment: undefined }
-          : a
-      ).filter(a => !(a.employeeId === employeeId && a.date === dateString && !a.roleId && !a.comment))
-    )
+    void setDayNotes(current => setShiftDayNote(current, dateString, employeeId, ''))
+    if ((assignments || []).some(a => a.employeeId === employeeId && a.date === dateString)) {
+      void setAssignments(current => updateShiftDayAssignments(current, dateString, employeeId, '').filter(a => !(a.employeeId === employeeId && a.date === dateString && !a.roleId && !a.comment)))
+    }
     toast.success('Kommentar slettet')
   }
 
@@ -781,8 +761,9 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
         </div>
       </div>
       <div className="w-full px-4 sm:px-6 pt-28 pb-12 sm:pb-20 relative z-10">
-        <header className="mb-6 border-b pb-4">
+        <header className="mb-6 border-b pb-4 relative">
           <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground"><AutoText text="Vagtplan" /></h1>
+          <NisseSpot spot="shifts" pose="hang" className="absolute top-full -mt-[3px] left-[45%]" />
         </header>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
@@ -872,8 +853,8 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                       const today = new Date()
                       setSelectedMonth(today.getMonth())
                       setSelectedYear(today.getFullYear())
-                      hasScrolledToToday.current = false
-                      setScrollToToday(true)
+                      focusTodayActive.current = true
+                      setFocusTodayRequest(current => current + 1)
                     }}
                     variant="outline"
                     className="gap-2"
@@ -885,12 +866,12 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
               </div>
 
               <div className="rounded-md border border-border bg-card overflow-hidden">
-                <div ref={scheduleScrollRef} className="overflow-auto relative" style={{ maxHeight: 'calc(100vh - 200px)', maxWidth: '100%' }}>
+                <div ref={scheduleScrollRef} className="overflow-auto relative" style={{ maxHeight: 'calc(100vh - 200px)', maxWidth: '100%' }} onWheel={() => { focusTodayActive.current = false }} onTouchStart={() => { focusTodayActive.current = false }} onPointerDown={() => { focusTodayActive.current = false }}>
                   <table className="w-full border-collapse relative" style={{ tableLayout: 'fixed', width: 'max-content' }}>
                     <thead className="sticky top-0 z-50 bg-card border-b" style={{ position: 'sticky', top: 0 }}>
                       <tr>
                         <th className="sticky left-0 z-[60] bg-card border-r-2 border-b-2 border-border px-3 py-4 text-left font-bold shadow-[2px_0_8px_rgba(0,0,0,0.15)]" style={{ position: 'sticky', left: 0, width: '160px', minWidth: '160px', maxWidth: '160px' }}>
-                          <span className="text-sm font-bold">Dato</span>
+                          <span className="text-sm font-bold">{grid.date}</span>
                         </th>
                         {(employees || []).map((employee) => {
                           const firstName = employee.name.split(' ')[0]
@@ -933,14 +914,14 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                           const currentWeek = isCurrentWeek(date)
                           const todayDate = isToday(date)
                           
-                          const dayNames = ['Søn', 'Man', 'Tir', 'Ons', 'Tor', 'Fre', 'Lør']
-                          const dayName = dayNames[date.getDay()]
+                          const dayName = grid.days[date.getDay()]
                           const weekNumber = getWeekNumber(date)
 
                           rows.push(
                             <tr 
                               key={day} 
                               data-current-week={currentWeek ? 'true' : undefined}
+                              data-today={todayDate ? 'true' : undefined}
                               className={cn(
                                 "border-b-2 border-border transition-all",
                                 isLocked && "bg-muted/30",
@@ -972,7 +953,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                                       todayDate && "ring-2 ring-accent"
                                     )}
                                   >
-                                    U{weekNumber}
+                                    {grid.week}{weekNumber}
                                   </Badge>
                                   <span className={cn("text-xs", todayDate && "font-extrabold text-foreground")}>{dayName}</span>
                                   <span className={cn("text-xs", todayDate && "font-extrabold text-foreground")}>{day}/{selectedMonth + 1}</span>
@@ -983,7 +964,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                                   )}
                                   {todayDate && (
                                     <Badge className="text-[9px] px-1 py-0 bg-accent text-accent-foreground">
-                                      <AutoText text="I dag" />
+                                      {grid.today}
                                     </Badge>
                                   )}
                                 </div>
@@ -1021,10 +1002,10 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                                         <div className="relative group">
                                           <div
                                             className="px-1.5 py-1 rounded text-[10px] font-semibold bg-card text-foreground border border-border flex items-center gap-1 cursor-pointer justify-center"
-                                            title={vacation.notes || 'På ferie'}
+                                            title={vacation.notes || (vacation.type === 'parental' ? grid.parental : grid.vacation)}
                                           >
                                             <Airplane size={12} weight="duotone" className="text-muted-foreground" />
-                                            <span className="truncate">Ferie</span>
+                                            <span className="truncate">{vacation.type === 'parental' ? grid.parental : grid.vacation}</span>
                                           </div>
                                         </div>
                                       )}
@@ -1032,10 +1013,10 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                                         <div className="relative group">
                                           <div
                                             className="px-1.5 py-1 rounded text-[10px] font-semibold bg-card text-foreground border border-border flex items-center gap-1 cursor-pointer justify-center"
-                                            title={sickLeave.reason || 'Sygemeldt'}
+                                            title={sickLeave.reason || grid.sick}
                                           >
                                             <FirstAidKit size={12} weight="duotone" className="text-muted-foreground" />
-                                            <span className="truncate">Syg</span>
+                                            <span className="truncate">{grid.sick}</span>
                                           </div>
                                         </div>
                                       )}
@@ -1047,7 +1028,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                                             title={cellComment}
                                           >
                                             <ChatText size={11} weight="duotone" className="text-muted-foreground" />
-                                            <span className="truncate flex-1"><AutoText text={cellComment} /></span>
+                                            <span className="truncate flex-1"><DetectedText text={cellComment} /></span>
                                           </div>
                                           <Button
                                             size="sm"
@@ -1115,28 +1096,50 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                                               )
                                             }
                                             
+                                            const time = resolveShiftTime(assignment, role)
+                                            const chipClass = cn(
+                                              "w-full px-1.5 py-1.5 rounded text-[11px] font-semibold truncate border transition-all flex items-center justify-center gap-1",
+                                              assignment.isPattern && "border-dashed"
+                                            )
+                                            const chipStyle = {
+                                              backgroundColor: role.color || '#8b5cf6',
+                                              color: readableTextOn(role.color || '#8b5cf6'),
+                                              borderColor: `${role.color || '#8b5cf6'}CC`,
+                                              boxShadow: `0 2px 6px ${role.color || '#8b5cf6'}40`
+                                            }
+                                            const chipBody = (
+                                              <>
+                                                {assignment.isPattern && <ArrowsClockwise size={10} weight="bold" className="shrink-0" />}
+                                                <span className="flex min-w-0 flex-col items-center leading-tight">
+                                                  <span className="truncate max-w-full">{role.name}</span>
+                                                  {time && <span data-shift-time className="text-[9px] font-medium tabular-nums opacity-90">{formatShiftTime(time)}</span>}
+                                                </span>
+                                              </>
+                                            )
+
                                             return (
                                               <div key={assignment.id} className="group relative">
-                                                <div
-                                                  className={cn(
-                                                    "px-1.5 py-1.5 rounded text-[11px] font-semibold truncate border transition-all flex items-center justify-center gap-1",
-                                                    assignment.isPattern && "border-dashed"
-                                                  )}
-                                                  style={{
-                                                    backgroundColor: role.color || '#8b5cf6',
-                                                    color: readableTextOn(role.color || '#8b5cf6'),
-                                                    borderColor: `${role.color || '#8b5cf6'}CC`,
-                                                    boxShadow: `0 2px 6px ${role.color || '#8b5cf6'}40`
-                                                  }}
-                                                  title={assignment.isPattern ? `${role.name} (gentaget mønster)` : role.name}
-                                                >
-                                                  {assignment.isPattern && <ArrowsClockwise size={10} weight="bold" className="shrink-0" />}
-                                                  <span className="truncate">{role.name}</span>
-                                                </div>
+                                                {assignment.isPattern ? (
+                                                  <div className={chipClass} style={chipStyle} title={`${role.name} (gentaget mønster)`}>
+                                                    {chipBody}
+                                                  </div>
+                                                ) : (
+                                                  <ShiftTimePopover
+                                                    assignment={assignment}
+                                                    role={role}
+                                                    onSave={(start, end) => handleSetAssignmentTime(assignment.id, start, end)}
+                                                  >
+                                                    <button type="button" data-shift-chip={assignment.id} className={chipClass} style={chipStyle} title={`${role.name} – klik for at sætte tid`}>
+                                                      {chipBody}
+                                                    </button>
+                                                  </ShiftTimePopover>
+                                                )}
+                                                {/* In the corner, so a click on the chip itself opens the time editor instead of deleting. */}
                                                 <Button
                                                   size="sm"
                                                   variant="destructive"
-                                                  className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                                                  aria-label="Fjern vagt"
+                                                  className="absolute -top-1.5 -right-1.5 h-4 w-4 p-0 rounded-full opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity z-10"
                                                   onClick={(e) => {
                                                     e.stopPropagation()
                                                     if (assignment.isPattern) {
@@ -1156,12 +1159,12 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                                               <PopoverTrigger asChild>
                                                 <button className="w-full h-full min-h-[24px] text-muted-foreground hover:text-foreground hover:bg-muted/40 rounded text-[10px] transition-colors flex items-center justify-center gap-1 border border-border/50 hover:border-border font-medium">
                                                   <Plus size={12} weight="regular" />
-                                                  <span>Tilføj</span>
+                                                  <span>{grid.add}</span>
                                                 </button>
                                               </PopoverTrigger>
                                               <PopoverContent className="w-64 p-2" align="center">
                                                 <div className="space-y-1">
-                                                  <p className="text-sm font-semibold mb-2 px-2">Vælg Opgave</p>
+                                                  <p className="text-sm font-semibold mb-2 px-2">{grid.chooseTask}</p>
                                                   {(roles || []).map(r => (
                                                     <button
                                                       key={r.id}
@@ -1186,12 +1189,12 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                                             <PopoverTrigger asChild>
                                               <button className="w-full h-full min-h-[28px] text-muted-foreground hover:text-foreground hover:bg-muted/40 rounded text-[11px] transition-colors flex items-center justify-center gap-1.5 border border-border/50 hover:border-border font-medium">
                                                 <Plus size={13} weight="regular" />
-                                                <span>Tilføj opgave</span>
+                                                <span>{grid.addTask}</span>
                                               </button>
                                             </PopoverTrigger>
                                             <PopoverContent className="w-64 p-2" align="center">
                                               <div className="space-y-1">
-                                                <p className="text-sm font-semibold mb-2 px-2">Vælg Opgave</p>
+                                                <p className="text-sm font-semibold mb-2 px-2">{grid.chooseTask}</p>
                                                 {(roles || []).map(r => (
                                                   <button
                                                     key={r.id}
@@ -1223,10 +1226,10 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                                               ? "text-foreground/80 hover:text-foreground bg-muted/50 hover:bg-muted border-border" 
                                               : "text-muted-foreground hover:text-foreground bg-card hover:bg-muted/30 border-border/50 hover:border-border"
                                           )}
-                                          title={cellComment ? "Rediger kommentar" : "Tilføj kommentar"}
+                                          title={cellComment ? grid.editNote : grid.addNote}
                                         >
                                           <ChatText size={11} weight={cellComment ? "duotone" : "regular"} />
-                                          <span>Note</span>
+                                          <span>{grid.note}</span>
                                         </button>
                                       )}
                                     </div>
@@ -1322,6 +1325,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                 <div className="flex items-center gap-2">
                   <Tag size={28} className="text-accent" weight="duotone" />
                   <h2 className="text-2xl font-bold"><AutoText text="Opgaver / Roller" /></h2>
+                  <NisseSpot spot="shifts-tasks" pose="stand" />
                 </div>
                 <div className="flex items-center gap-3">
                   <Badge variant="outline" className="text-sm">
@@ -1376,7 +1380,8 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                           <Tag size={28} style={{ color: role.color }} weight="duotone" />
                         </div>
                         <div className="flex-1">
-                          <div className="font-bold text-lg mb-1"><AutoText text={role.name} /></div>
+                          <div className="font-bold text-lg mb-1"><DetectedText text={role.name} /></div>
+                          {role.startTime && <div data-role-time className="text-sm text-muted-foreground tabular-nums">{formatShiftTime(resolveShiftTime(role, undefined))}</div>}
                         </div>
                         <div
                           className="px-5 py-2.5 rounded-lg font-semibold text-sm"
@@ -1436,69 +1441,23 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
           </TabsContent>
         </Tabs>
       </div>
-      <Dialog open={showRoleDialog} onOpenChange={(open) => {
-        setShowRoleDialog(open)
-        if (!open) {
-          setEditingRole(null)
-          setNewRoleName('')
-          setNewRoleColor('#8b5cf6')
-          setOnlyWhenAssigned(false)
-        }
-      }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle><AutoText text={editingRole ? 'Rediger Rolle' : 'Tilføj Ny Rolle'} /></DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 pt-4">
-            <div>
-              <Label htmlFor="role-name"><AutoText text="Rolle Navn" /></Label>
-              <Input
-                id="role-name"
-                value={newRoleName}
-                onChange={(e) => setNewRoleName(e.target.value)}
-                placeholder={rolePlaceholder}
-              />
-            </div>
-            <div>
-              <Label><AutoText text="Vælg Farve" /></Label>
-              <div className="grid grid-cols-4 gap-3 mt-3">
-                {colorPresets.map((color) => (
-                  <button
-                    key={color.value}
-                    type="button"
-                    onClick={() => setNewRoleColor(color.value)}
-                    className={cn(
-                      "relative flex flex-col items-center gap-2 p-3 rounded-md border-2 transition-colors",
-                      newRoleColor === color.value
-                        ? "border-foreground"
-                        : "border-border hover:border-muted-foreground"
-                    )}
-                  >
-                    <div
-                      className="w-10 h-10 rounded-full"
-                      style={{ backgroundColor: color.value }}
-                    />
-                    <span className="text-xs font-medium">{color.name}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <Checkbox id="role-only-when-assigned" checked={onlyWhenAssigned} onCheckedChange={(checked) => setOnlyWhenAssigned(checked === true)} />
-              <Label htmlFor="role-only-when-assigned"><AutoText text="Vis kun i Hub, når nogen er sat på opgaven" /></Label>
-            </div>
-            <Button onClick={editingRole ? handleUpdateRole : handleAddRole} className="w-full">
-              <AutoText text={editingRole ? 'Gem Ændringer' : 'Opret Rolle'} />
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ShiftRoleDialog
+        open={showRoleDialog}
+        onOpenChange={(open) => {
+          setShowRoleDialog(open)
+          if (!open) setEditingRole(null)
+        }}
+        role={editingRole}
+        onSave={handleSaveRole}
+      />
       <Dialog open={showAssignmentDialog} onOpenChange={(open) => {
         setShowAssignmentDialog(open)
         if (!open) {
           setSelectedEmployee('')
           setSelectedRole('')
           setSelectedDate('')
+          setSelectedStart('')
+          setSelectedEnd('')
         }
       }}>
         <DialogContent>
@@ -1550,6 +1509,15 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                 onChange={setSelectedDate}
               />
             </div>
+            <TimeRangeFields
+              id="assignment-time"
+              label={<AutoText text="Tidspunkt (valgfrit)" />}
+              start={selectedStart}
+              end={selectedEnd}
+              onStart={setSelectedStart}
+              onEnd={setSelectedEnd}
+              hint={<AutoText text="Tomt = rollens standardtid, eller hele dagen." />}
+            />
             <Button onClick={handleAddAssignment} className="w-full">
               <AutoText text="Tildel Vagt" />
             </Button>
@@ -1727,6 +1695,15 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                 <DatePickerField value={patternEndDate} onChange={setPatternEndDate} min={patternStartDate} />
               </div>
             </div>
+            <TimeRangeFields
+              id="pattern-time"
+              label={<AutoText text="Tidspunkt (valgfrit)" />}
+              start={patternStart}
+              end={patternEnd}
+              onStart={setPatternStart}
+              onEnd={setPatternEnd}
+              hint={<AutoText text="Tomt = rollens standardtid, eller hele dagen." />}
+            />
             <div>
               <Label><AutoText text="Kommentar (valgfri)" /></Label>
               <Input value={patternComment} onChange={(e) => setPatternComment(e.target.value)} placeholder={commentPlaceholder} />
@@ -1794,7 +1771,7 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
                             <div className="min-w-0">
                               <p className="text-sm font-semibold truncate">{pattern.employeeName} — {role?.name || '?'}</p>
                               <p className="text-xs text-muted-foreground truncate">
-                                <AutoText text={intervalLabel} /> · {weekdayLabels} · {pattern.anchorDate}{pattern.endDate ? ` → ${pattern.endDate}` : ''}
+                                <AutoText text={intervalLabel} /> · {weekdayLabels}{pattern.startTime ? ` · ${formatShiftTime(resolveShiftTime(pattern, undefined))}` : ''} · {pattern.anchorDate}{pattern.endDate ? ` → ${pattern.endDate}` : ''}
                               </p>
                             </div>
                             <div className="flex items-center gap-1 shrink-0">
@@ -1964,4 +1941,47 @@ export function ShiftSchedule({ onNavigateBack, onLogout, userEmail: propUserEma
       </AlertDialog>
     </div>
   );
+}
+
+function ShiftTimePopover({ assignment, role, onSave, children }: {
+  assignment: ShiftAssignment
+  role: ShiftRole
+  onSave: (start: string, end: string) => boolean
+  children: ReactElement
+}) {
+  const [open, setOpen] = useState(false)
+  const [start, setStart] = useState('')
+  const [end, setEnd] = useState('')
+  const roleDefault = formatShiftTime(resolveShiftTime(role, undefined))
+
+  return (
+    <Popover open={open} onOpenChange={(next) => {
+      setOpen(next)
+      if (next) {
+        setStart(assignment.startTime || '')
+        setEnd(assignment.endTime || '')
+      }
+    }}>
+      <PopoverTrigger asChild>{children}</PopoverTrigger>
+      <PopoverContent className="w-80 p-3" align="center" data-shift-time-editor>
+        <p className="mb-2 text-sm font-semibold">{role.name} · {assignment.employeeName}</p>
+        <TimeRangeFields
+          id={`shift-time-${assignment.id}`}
+          label={<AutoText text="Tid for denne vagt" />}
+          start={start}
+          end={end}
+          onStart={setStart}
+          onEnd={setEnd}
+          hint={roleDefault
+            ? <><AutoText text="Tomt = rollens standardtid" /> ({roleDefault})</>
+            : <AutoText text="Tomt = hele dagen" />}
+        />
+        <div className="mt-3 flex justify-end">
+          <Button size="sm" onClick={() => { if (onSave(start, end)) setOpen(false) }}>
+            <AutoText text="Gem tid" />
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
 }

@@ -1,6 +1,6 @@
 const path = require('node:path')
 const crypto = require('node:crypto')
-const { withFileLock } = require('./fileLock.cjs')
+const { withFileLock, withFileLockAsync } = require('./fileLock.cjs')
 const { updateUsers, publicUsers } = require('./userPolicy.cjs')
 const { migrateReferences, personalKey, relevantKey } = require('./accountReferences.cjs')
 const { registeredTeamDir } = require('./teamReadPolicy.cjs')
@@ -13,15 +13,27 @@ function fail(code) { const error = new Error(code); error.code = code; throw er
 function object(value) { return !!value && typeof value === 'object' && !Array.isArray(value) }
 function control(record) { return { id: record.id, root: record.root, teamId: record.teamId, oldEmail: record.oldEmail, newEmail: record.newEmail, state: record.state, applied: record.applied, total: record.steps.length } }
 
-function createAccountService({ getRoot, registry, openStore, beforeStep = () => {}, assertNoPendingSync = () => {}, maxJournalBytes = 32 * 1024 * 1024, now = Date.now }) {
+function createAccountService({ getRoot, registry, openStore, beforeStep = () => {}, assertNoPendingSync = () => {}, maxJournalBytes = 32 * 1024 * 1024, now = Date.now, contextTtlMs = 500, authenticationLockRetry = { attempts: 40, delayMs: 200 } }) {
   // Coalesces the migration-context read gate that securedIpc runs before and
   // after every IPC call. Only the READ gate is cached; every write/migration
   // path (rename/recover/runWrite) still takes the real account lock, so data
   // stays fully serialized and atomic. A migration started by another client
-  // is therefore detected within CONTEXT_TTL_MS instead of instantly.
-  const CONTEXT_TTL_MS = 500
-  let contextCache = null
-  const invalidateContext = () => { contextCache = null }
+  // is therefore detected within CONTEXT_TTL_MS by the sync gate. The async
+  // gate normally detects it within CONTEXT_TTL_MS plus one background read;
+  // only when background reads fail or hang can it answer from a context up to
+  // CONTEXT_MAX_STALE_MS (60 s) after the last successful read was stored, i.e.
+  // data up to 60 s plus that read's duration old.
+  const CONTEXT_TTL_MS = contextTtlMs
+  // Async-gaten (contextAsync/runWriteAsync) svarer med en aeldre terminal
+  // kontekst, mens den opfriskes i baggrunden (se assertNoMigrationAsync);
+  // 60 s-graensen naas kun naar baggrundslaesningerne fejler eller haenger.
+  const CONTEXT_MAX_STALE_MS = Math.max(CONTEXT_TTL_MS, 60000)
+  let contextCache = null, contextRefresh = null
+  // Retired identities for the reference check: loaded asynchronously once per write burst
+  // (prepareReferenceChecksAsync) instead of 1-4 synchronous reads on the main thread per write.
+  const RETIRED_SNAPSHOT_MS = 2000
+  let retiredLoad = null, retiredSnapshot = null
+  const invalidateContext = () => { contextCache = null; retiredLoad = null; retiredSnapshot = null }
   // Genbrug store-instansen pr. mappe: openStore/createStore laver ellers en
   // synkron mkdirSync mod netvaerksdrevet ved HVERT kald (fx hver skrivning).
   const storeCache = new Map()
@@ -76,15 +88,18 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
     return result
   }
   function runWrite(callback) { return withAccountLock(() => { assertReady(); return synchronous(callback) }) }
-  // Asynkron tvilling til IPC-skrivninger: samme globale konto-laas og
-  // migrations-gate, men await-baseret saa main-event-loopet aldrig blokeres.
-  // Flere ikke-blokerende forsoeg erstatter sync-vejens attempts:1, saa
-  // samtidige skrivninger fra flere klienter ikke fejler unoedigt med KV_LOCK_BUSY.
-  async function readControlAsync() {
+  // Lock-free migrations-gate (bruges af runWriteAsync, statusAsync og
+  // runAuthenticationAsync): laeser kun migrations-kontrollen, await-baseret saa
+  // main-event-loopet aldrig blokeres. runWriteAsync tager IKKE kontolaasen (se
+  // begrundelsen ved assertNoMigrationAsync); kun runAuthenticationAsync holder den.
+  // Under kontolaasen (runAuthenticationAsync) gives { unthrottled: true }, saa
+  // laesningen ikke staar i laese-koeen mens laasen holdes.
+  async function readControlAsync({ unthrottled = false } = {}) {
     const meta = metadata()
-    let record = await meta.getAsync(CONTROL, { skipCache: true })
+    const readOptions = unthrottled ? { skipCache: true, unthrottled: true } : { skipCache: true }
+    let record = await meta.getAsync(CONTROL, readOptions)
     if (record === undefined) {
-      const journal = await meta.getAsync(JOURNAL, { skipCache: true })
+      const journal = await meta.getAsync(JOURNAL, readOptions)
       if (journal === undefined) return null
       if (!object(journal) || !Array.isArray(journal.steps) || !Array.isArray(journal.scopes)) fail('ACCOUNT_MIGRATION_INVALID')
       record = control(journal)
@@ -111,10 +126,29 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
   // i en skrivning bliver stadig opdaget.
   async function assertNoMigrationAsync() {
     // Samme cache som context(): den saettes kun naar tilstanden var terminal.
-    if (contextCache && now() - contextCache.at < CONTEXT_TTL_MS) return
+    const cached = contextCache, age = cached ? now() - cached.at : Infinity
+    if (age < CONTEXT_TTL_MS) return cached.value
+    // Stale-while-revalidate med haard graense: en terminal kontekst der hoejst
+    // er CONTEXT_MAX_STALE_MS gammel svares straks, mens EN laesning i
+    // baggrunden opfrisker den. Ser den en migrering, ryddes cachen, saa det
+    // naeste kald afvises (ACCOUNT_MIGRATION_PENDING) - inden for én M:-laesning.
+    if (age < CONTEXT_MAX_STALE_MS) { refreshContextInBackground(); return cached.value }
     const record = await readControlAsync()
     if (!terminal(record)) fail('ACCOUNT_MIGRATION_PENDING')
     contextCache = { at: now(), value: record ? `${record.id}:${record.state}` : null }
+    return contextCache.value
+  }
+  function refreshContextInBackground() {
+    if (contextRefresh) return
+    const startedFrom = contextCache
+    contextRefresh = readControlAsync().then(record => {
+      if (!terminal(record)) { contextCache = null; return }
+      // Kun den cache vi startede fra fornyes: en invalidering eller nyere laesning imens vinder.
+      if (contextCache === startedFrom) contextCache = { at: now(), value: record ? `${record.id}:${record.state}` : null }
+    }, () => {
+      // Laesefejl: den gamle vaerdi beholdes, men dens alder forlaenges ikke,
+      // saa efter CONTEXT_MAX_STALE_MS venter kaldet igen paa en rigtig laesning.
+    }).finally(() => { contextRefresh = null })
   }
   async function runWriteAsync(callback) {
     await assertNoMigrationAsync()
@@ -126,6 +160,17 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
       if (recovering && normalize(email) !== normalize(registry.getCreatorEmail(getRoot()))) fail('ACCOUNT_MIGRATION_PENDING')
       return synchronous(() => callback({ recovering }))
     })
+  }
+  // Samme laas, budget og creator-regel som runAuthentication, men ventetid og
+  // I/O er await-baseret, saa main-event-loopet ikke fryser under login. Laasen
+  // holdes indtil callbackens promise er afgjort. authenticationLockRetry
+  // overstyres kun i tests; produktion bruger 40 x 200 ms som den synkrone vej.
+  function runAuthenticationAsync(email, callback) {
+    return withFileLockAsync(globalLock(), async () => {
+      const recovering = !terminal(await readControlAsync({ unthrottled: true }))
+      if (recovering && normalize(email) !== normalize(registry.getCreatorEmail(getRoot()))) fail('ACCOUNT_MIGRATION_PENDING')
+      return callback({ recovering })
+    }, { attempts: authenticationLockRetry.attempts, delayMs: authenticationLockRetry.delayMs, staleMs: ACCOUNT_LOCK_STALE_MS })
   }
   function context() {
     if (contextCache && now() - contextCache.at < CONTEXT_TTL_MS) return contextCache.value
@@ -139,11 +184,26 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
     contextCache = { at: now(), value }
     return value
   }
+  async function contextAsync() {
+    return assertNoMigrationAsync()
+  }
+  async function prepareReferenceChecksAsync() {
+    if (!retiredLoad || now() - retiredLoad.at >= RETIRED_SNAPSHOT_MS) {
+      const entry = { at: now(), promise: metadata().getAsync(RETIRED, { skipCache: true }).then(value => value || {}) }
+      retiredLoad = entry
+      entry.promise.then(value => { if (retiredLoad === entry) retiredSnapshot = { at: entry.at, value } }, () => { if (retiredLoad === entry) retiredLoad = null })
+    }
+    await retiredLoad.promise
+  }
+  function retiredIdentities() {
+    if (retiredSnapshot && now() - retiredSnapshot.at < RETIRED_SNAPSHOT_MS) return retiredSnapshot.value
+    return metadata().get(RETIRED, { skipCache: true }) || {}
+  }
   function assertReferences(key, value) {
     if (value && typeof value === 'object' && !Array.isArray(value) && typeof value.op === 'string') {
       for (const property of ['value', 'items', 'expected']) if (Object.hasOwn(value, property)) assertReferences(key, value[property])
     }
-    const retired = metadata().get(RETIRED, { skipCache: true }) || {}
+    const retired = retiredIdentities()
     for (const [email, record] of Object.entries(retired)) {
       if (personalKey(key, email, record.replacement) !== key || (key === 'users' && ((value?.field && normalize(value.field) === email) || Object.keys(value || {}).some(field => normalize(field) === email))) || !same(value, migrateReferences(key, value, email, record.replacement))) fail('ACCOUNT_RETIRED_REFERENCE')
     }
@@ -152,9 +212,14 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
     if (metadata().get(RETIRED, { skipCache: true })?.[normalize(email)]) fail('ACCOUNT_EMAIL_RETIRED')
   }
   function status(actor) {
-    const record = readControl()
+    return statusOf(actor, readControl())
+  }
+  async function statusAsync(actor) {
+    return statusOf(actor, await readControlAsync())
+  }
+  function statusOf(actor, record) {
     if (terminal(record)) return null
-    if (actor.viewId || (actor.role !== 'creator' && (actor.role !== 'manager' || actor.home.teamId !== record.teamId))) fail('AUTH_FORBIDDEN')
+    if (actor.role !== 'creator' && (actor.role !== 'manager' || actor.activeTeam?.teamId !== record.teamId)) fail('AUTH_FORBIDDEN')
     const { id, state, oldEmail, newEmail, applied, total, teamId } = record
     return { id, state, oldEmail, newEmail, applied, total, teamId }
   }
@@ -220,7 +285,7 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
       if (operation?.op !== 'renameField' || !oldEmail || oldEmail === newEmail) fail('KV_INVALID_OPERATION')
       const root = getRoot(), teams = registry.listTeams(root)
       const target = registeredTeamDir(root, teams, folder).team
-      if (actor.viewId || !['creator', 'manager'].includes(actor.role) || (actor.role !== 'creator' && actor.home.teamId !== target.teamId)) fail('AUTH_FORBIDDEN')
+      if (!['creator', 'manager'].includes(actor.role) || (actor.role !== 'creator' && actor.activeTeam?.teamId !== target.teamId)) fail('AUTH_FORBIDDEN')
       if (normalize(registry.getCreatorEmail(root)) === oldEmail) fail('AUTH_FORBIDDEN')
       return registry.withIdentityTransaction(root, identity => {
         const meta = metadata(), scopes = [{ id: '_metadata', directory: meta.dataDir, store: meta, keys: [JOURNAL, CONTROL, RETIRED] }]
@@ -260,10 +325,13 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
               } else add(scope.id, key, before, after)
             }
           }
-          const views = identity.get('views')
-          add('_identity', 'views', views, migrateReferences('access-views', views, oldEmail, newEmail))
           const nextDirectory = { ...directory, [newEmail]: target.teamId }; delete nextDirectory[oldEmail]
           add('_identity', 'directory', directory, nextDirectory)
+          const managerAccess = identity.get('managerAccess')
+          if (managerAccess[oldEmail]) {
+            const nextManagerAccess = { ...managerAccess, [newEmail]: managerAccess[oldEmail] }; delete nextManagerAccess[oldEmail]
+            add('_identity', 'managerAccess', managerAccess, nextManagerAccess)
+          }
           const nextRetired = { ...retired, [oldEmail]: { accountId, replacement: newEmail } }; delete nextRetired[newEmail]
           add('_metadata', RETIRED, retiredBefore, nextRetired)
           add(`team:${target.teamId}`, 'users', users, nextUsers)
@@ -282,7 +350,7 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
     })
   }
   function recover(actor, id, reverse) {
-    if (actor.role !== 'creator' || actor.viewId) fail('AUTH_FORBIDDEN')
+    if (actor.role !== 'creator') fail('AUTH_FORBIDDEN')
     invalidateContext()
     return withAccountLock(() => {
       const record = pending(), root = getRoot()
@@ -305,6 +373,6 @@ function createAccountService({ getRoot, registry, openStore, beforeStep = () =>
       return { state: reverse ? 'rolled-back' : 'committed' }
     })
   }
-  return { rename, pending, status, assertReady, assertAvailable, assertReferences, context, runWrite, runWriteAsync, runAuthentication, resume: (actor, id) => recover(actor, id, false), rollback: (actor, id) => recover(actor, id, true) }
+  return { rename, pending, status, statusAsync, assertReady, assertAvailable, assertReferences, prepareReferenceChecksAsync, context, contextAsync, runWrite, runWriteAsync, runAuthentication, runAuthenticationAsync, resume: (actor, id) => recover(actor, id, false), rollback: (actor, id) => recover(actor, id, true) }
 }
 module.exports = { createAccountService }

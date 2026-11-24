@@ -1,3 +1,5 @@
+import type { Language } from './translations'
+
 export type UserRole = 'creator' | 'manager' | 'user'
 
 // Fallback der virker selv hvis registret/KV er utilgængeligt (fx netværksdrev nede).
@@ -52,10 +54,10 @@ export async function getUserRole(email: string): Promise<UserRole> {
   if (window.electronAuth) {
     try {
       const actor = await window.electronAuth.current()
-      if (actor.email === normalizedEmail) return actor.viewId ? 'user' : actor.role
-      const users = await window.kv.get<Record<string, UserData>>('users')
+      if (actor.email === normalizedEmail) return actor.role
+      // Parallelt: hver læsning er en rundtur til M:.
+      const [users, creator] = await Promise.all([window.kv.get<Record<string, UserData>>('users'), window.electronRegistry?.getCreatorEmail()])
       const other = users?.[normalizedEmail] || users?.[email]
-      const creator = await window.electronRegistry?.getCreatorEmail()
       if (creator?.trim().toLowerCase() === normalizedEmail) return 'creator'
       return other?.role === 'creator' ? 'user' : normalizeStoredRole(other?.role) || (other?.isManager ? 'manager' : 'user')
     } catch { return 'user' }
@@ -116,7 +118,7 @@ export async function hasManagerAccess(email: string): Promise<boolean> {
   return role === 'creator' || role === 'manager'
 }
 
-export function getRoleDisplayName(role: UserRole, language: 'da' | 'en' | 'fi' = 'da'): string {
+export function getRoleDisplayName(role: UserRole, language: Language = 'da'): string {
   const roleNames = {
     da: {
       creator: 'Creator',
@@ -132,12 +134,17 @@ export function getRoleDisplayName(role: UserRole, language: 'da' | 'en' | 'fi' 
       creator: 'Creator',
       manager: 'Esihenkilö',
       user: 'Käyttäjä'
+    },
+    sv: {
+      creator: 'Creator',
+      manager: 'Chef',
+      user: 'Medarbetare'
     }
   }
   return roleNames[language][role]
 }
 
-export function getRoleDescription(role: UserRole, language: 'da' | 'en' | 'fi' = 'da'): string {
+export function getRoleDescription(role: UserRole, language: Language = 'da'): string {
   if (language === 'fi') {
     switch (role) {
       case 'creator':
@@ -146,6 +153,16 @@ export function getRoleDescription(role: UserRole, language: 'da' | 'en' | 'fi' 
         return 'Voi määrittää käyttöoikeuksia, käsitellä poissaoloja, nimetä opasvastaavia sekä tarkistaa ja hyväksyä oppaita'
       case 'user':
         return 'Tavalliset käyttäjäoikeudet: voi lukea oppaita ja pyytää lomaa'
+    }
+  }
+  if (language === 'sv') {
+    switch (role) {
+      case 'creator':
+        return 'Full åtkomst överallt, i alla team — den enda rollen med åtkomst till Arcade-highscores och datalagring'
+      case 'manager':
+        return 'Kan tilldela behörigheter, hantera frånvaro, utse Guide Admins samt granska och godkänna guider'
+      case 'user':
+        return 'Standardanvändaråtkomst, kan se guider och begära semester'
     }
   }
   if (language === 'en') {

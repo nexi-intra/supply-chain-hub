@@ -9,8 +9,9 @@
 const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
-const { withFileLock, withFileLocks, withFileLockAsync } = require('./fileLock.cjs')
+const { withFileLock, withFileLocks, withFileLockAsync, withFileLocksAsync } = require('./fileLock.cjs')
 const { isImmutableBlobKey } = require('./offlineSync.cjs')
+const { PREPARED_FILE_PATTERN } = require('./preparedFiles.cjs')
 
 const FILE_EXT = '.json'
 const READ_ATTEMPTS = 5
@@ -32,12 +33,52 @@ const ASYNC_WRITE_LOCK = { createParent: false, staleMs: 30000, attempts: 60, de
 // der ikke fandtes, saa "tildel opgave" fra widget'en kunne aldrig gemme.
 const SYNC_WRITE_LOCK = { createParent: false, staleMs: 30000 }
 
+// A write to M: is six round trips in a row (lock, read, tmp, rename, release). When one is slow, the log shows
+// which step took the time, so a slow shared drive can be told apart from a lock held by another client.
+const SLOW_WRITE_BREAKDOWN_MS = 5000
+function writeSteps(label) {
+  const startedAt = Date.now()
+  let last = startedAt
+  const parts = []
+  return {
+    mark(name) { const now = Date.now(); parts.push(`${name} ${now - last}`); last = now },
+    report() {
+      const total = Date.now() - startedAt
+      if (total >= SLOW_WRITE_BREAKDOWN_MS) console.warn(`KV: langsom skrivning ${total} ms ${label} (ms: ${parts.join(' | ')})`)
+    },
+  }
+}
+const noSteps = { mark() {}, report() {} }
+
 // Laesninger mod SMB er latens-bundne (~150-300 ms pr. rundtur uanset
 // filstoerrelse), saa parallelisme er den eneste maade at faa flere noegler
 // hurtigt: maalt paa M: tog forsidens 11 noegler 3,7 s serielt mod 1,5 s
 // parallelt. Graensen holdes moderat, fordi et SMB-share stadig kollapser under
 // ubegraenset parallelisme; alle laesninger er async, saa main-traaden er fri.
 const MAX_CONCURRENT_READS = 6
+
+// Igangvaerende async-skrivninger paa tvaers af alle store-instanser, saa
+// app-lukning kan vente paa dem (whenWritesSettled). Promises her afviser aldrig.
+const inFlightWrites = new Set()
+
+// true hvis alle skrivninger (ogsaa dem der koeres ind undervejs) blev faerdige
+// inden timeoutMs, ellers false. Afviser aldrig og holder ikke processen i live.
+async function whenWritesSettled(timeoutMs) {
+  let timer
+  const timedOut = new Promise(resolve => {
+    timer = setTimeout(() => resolve(false), Math.max(0, Number(timeoutMs) || 0))
+    timer.unref?.()
+  })
+  const drained = (async () => {
+    while (inFlightWrites.size > 0) await Promise.all([...inFlightWrites])
+    return true
+  })()
+  try {
+    return await Promise.race([drained, timedOut])
+  } finally {
+    clearTimeout(timer)
+  }
+}
 const MAX_CONCURRENT_WATCH_STATS = 4
 let activeReads = 0
 const readWaiters = []
@@ -52,17 +93,44 @@ function releaseReadSlot() {
 }
 
 // Read-cache-levetid. Naar watch() koerer, ved storen praecis hvilke filer der
-// er aendret paa disken (mtime+size hvert tick) og sletter dem fra cachen â€”
+// er aendret paa disken (mappe-mtime hvert tick, fuld scanning ved aendring) og sletter dem fra cachen â€”
 // saa cachen kan holdes laenge, og TTL'en er kun et sikkerhedsnet mod en
 // scanning der ikke fanger en aendring. Uden watcher (tests, engangs-stores)
 // bruges den korte TTL som foer.
 const CACHE_TTL_MS = 3000
 const CACHE_TTL_WATCHED_MS = 60000
-// Watcher-interval: et readdir+stat af 500 filer koster ~27 ms paa M:, saa 2 s
-// er billigt og giver baade hurtigere synlighed af kollegers aendringer og
-// hurtigere cache-invalidering.
-const DEFAULT_WATCH_INTERVAL_MS = 2000
+// Watcher: hvert tick stat'er kun selve mappen. Mappens mtime skifter naar en
+// fil oprettes/omdoebes/slettes (alle KV-skrivninger gaar via lock + tmp +
+// rename), saa fuld scanning (readdir + stat af hver fil) sker kun ved aendring
+// og som periodisk sikkerheds-scan (fanger in-place-overskrivninger).
+// fs.watch virker ikke paa M:-serveren.
 const MIN_WATCH_INTERVAL_MS = 1000
+const DEFAULT_WATCH_OPTIONS = {
+  intervalMs: 1000,
+  hiddenIntervalMs: 10000,
+  safetyScanMs: 30000,
+  hiddenSafetyScanMs: 120000,
+  // Loft: hoejst en aendrings-udloest fuld scanning pr. gap.
+  minScanGapMs: 2000,
+  // 'sync' (opstart: isConnected() retvisende med det samme) eller 'async' (senere watchere).
+  initialScan: 'sync',
+}
+
+/** Afgoer hvad et watcher-tick skal goere: 'full' scanning, 'skip' eller 'defer' (vent paa gap). */
+function decideWatchTick(state, config) {
+  const { visible, dirMtimeMs, lastDirMtimeMs, nowMs, lastFullScanAtMs, lastChangeScanAtMs, forceFull } = state
+  const safetyDue = nowMs - lastFullScanAtMs >= (visible ? config.safetyScanMs : config.hiddenSafetyScanMs)
+  const changed = forceFull || dirMtimeMs !== lastDirMtimeMs
+  if (!changed && !safetyDue) return 'skip'
+  if (changed && !safetyDue && !forceFull && lastChangeScanAtMs !== null && nowMs - lastChangeScanAtMs < config.minScanGapMs) return 'defer'
+  return 'full'
+}
+
+function resolveWatchOptions(options) {
+  // Legacy: et tal er det synlige interval og clampes som foer.
+  if (typeof options === 'number') return { ...DEFAULT_WATCH_OPTIONS, intervalMs: Math.max(options, MIN_WATCH_INTERVAL_MS) }
+  return { ...DEFAULT_WATCH_OPTIONS, ...(options || {}) }
+}
 
 function logSlow(operation, target, startedAt, attempts = 1) {
   if (!process.env.TCD_HUB_DEBUG) return
@@ -118,8 +186,11 @@ function wait(milliseconds) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds)
 }
 
-function createStore(dataDir, { externallyWatched = false } = {}) {
-  fs.mkdirSync(dataDir, { recursive: true })
+// preparedFiles (preparedFiles.cjs, optional): ready-made temp files for saves on M:.
+// createDir: false when the caller has already made dataDir (async), so no mkdirSync runs on the main thread.
+function createStore(dataDir, { externallyWatched = false, preparedFiles = null, createDir = true } = {}) {
+  if (createDir) fs.mkdirSync(dataDir, { recursive: true })
+  preparedFiles?.register(dataDir)
 
   // Local read cache. Invalideres af watch() pr. aendret noegle; TTL er sikkerhedsnet.
   const readCache = new Map()
@@ -129,7 +200,9 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
   // externallyWatched: en anden store-instans paa SAMME mappe koerer watch() og
   // kalder invalidate() her ved aendringer, saa cachen kan holdes lige saa laenge.
   let watching = externallyWatched
-
+  // Vinduets synlighed (setWatchVisibility) og de koerende watchere.
+  let watchVisible = true
+  const activeWatchers = new Set()
   // Cachen er kun paalidelig i lang tid naar watcheren aktivt overvaager
   // mappen OG kan naa den (frakoblet = ingen scanning = ingen invalidering).
   function isFresh(cached) {
@@ -197,7 +270,10 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
       logSlow('get-cache', key, startedAt)
       return cached.value
     }
-    await acquireReadSlot()
+    // unthrottled: kun til laesninger under kontolaasen, der ellers ville holde
+    // laasen (og alle andre klienters login) mens de staar i koe bag langsomme laesninger.
+    const unthrottled = Boolean(options && options.unthrottled)
+    if (!unthrottled) await acquireReadSlot()
     try {
       let lastError
       for (let attempt = 1; attempt <= READ_ATTEMPTS; attempt++) {
@@ -216,7 +292,7 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
       logSlow('get-failed', key, startedAt, READ_ATTEMPTS)
       throw lastError
     } finally {
-      releaseReadSlot()
+      if (!unthrottled) releaseReadSlot()
     }
   }
 
@@ -259,7 +335,7 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
 
   // Asynkrone tvillinger til IPC-vejen: identisk semantik og samme laasefiler,
   // men skrivning/rename/retry-ventetid blokerer aldrig main-event-loopet.
-  async function setUnlockedAsync(key, value) {
+  function jsonOf(value) {
     let json
     try { json = JSON.stringify(value) } catch {
       const error = new Error('KV_INVALID_OPERATION: Værdien kan ikke gemmes som JSON')
@@ -271,13 +347,32 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
       error.code = 'KV_INVALID_OPERATION'
       throw error
     }
-    const target = filePath(key)
-    const tmp = `${target}.${process.pid}.${Date.now()}.${crypto.randomBytes(4).toString('hex')}.tmp`
+    return json
+  }
+
+  async function writeTmpAsync(key, json) {
+    // A prepared (already created) empty file: writing into it costs ~0.5-1 s on M:, creating a new one 2-15 s.
+    const prepared = preparedFiles?.takeTmp(dataDir)
+    if (prepared) {
+      try {
+        const handle = await fs.promises.open(prepared, 'r+')
+        try { await handle.write(encryptPayload(json)) } finally { await handle.close() }
+        return prepared
+      } catch {
+        // Gone (another client's sweep after 24 h) or failed: never reused, and this save is done the ordinary way.
+        preparedFiles.discardTmp(prepared)
+      }
+    }
+    const tmp = `${filePath(key)}.${process.pid}.${Date.now()}.${crypto.randomBytes(4).toString('hex')}.tmp`
     await fs.promises.writeFile(tmp, encryptPayload(json))
+    return tmp
+  }
+
+  async function commitTmpAsync(key, tmp, value) {
     let lastError
     for (let attempt = 1; attempt <= WRITE_ATTEMPTS; attempt++) {
       try {
-        await fs.promises.rename(tmp, target)
+        await fs.promises.rename(tmp, filePath(key))
         readCache.set(key, { value, at: Date.now() })
         return
       } catch (err) {
@@ -290,6 +385,31 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
     throw lastError
   }
 
+  async function setUnlockedAsync(key, value, steps = noSteps) {
+    const json = jsonOf(value)
+    const tmp = await writeTmpAsync(key, json)
+    steps.mark('tmp')
+    await commitTmpAsync(key, tmp, value)
+    steps.mark('omdoeb')
+  }
+
+  // Runs a locked write and logs where the time went if it was slow (queue, lock, read, tmp, rename, release).
+  function timedLockedWrite(key, label, task) {
+    const steps = writeSteps(`${label} "${key}"`)
+    return serializeWrite(key, async () => {
+      steps.mark('koe')
+      try {
+        return await withFileLockAsync(lockPath(key), async () => {
+          steps.mark('laas')
+          return task(steps)
+        }, ASYNC_WRITE_LOCK)
+      } finally {
+        steps.mark('frigiv')
+        steps.report()
+      }
+    })
+  }
+
   // In-proces serialisering pr. noegle: to samtidige async-skrivninger til
   // SAMME noegle maa ikke slaas om fil-laasen (sync-vejen var implicit
   // serialiseret ved at blokere). Forskellige noegler koerer stadig parallelt.
@@ -299,11 +419,13 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
     const run = previous.catch(() => {}).then(task)
     const tracked = run.catch(() => {}).finally(() => { if (pendingWrites.get(key) === tracked) pendingWrites.delete(key) })
     pendingWrites.set(key, tracked)
+    inFlightWrites.add(tracked)
+    tracked.finally(() => inFlightWrites.delete(tracked))
     return run
   }
 
   function setAsync(key, value) {
-    return serializeWrite(key, () => withFileLockAsync(filePath(key) + '.lock', () => setUnlockedAsync(key, value), ASYNC_WRITE_LOCK))
+    return timedLockedWrite(key, 'set', steps => setUnlockedAsync(key, value, steps))
   }
 
   function deleteAsync(key) {
@@ -320,6 +442,39 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
       .map(filenameToKey)
     logSlow('keys', dataDir, startedAt)
     return result
+  }
+
+  // En billig aendrings-markoer for EN noegle: kun metadata (ingen laesning/dekryptering).
+  // Bruges af et aabent spil til at opdage modstanderens traek uden at vente paa watcheren.
+  async function statAsync(key) {
+    try {
+      const stats = await fs.promises.stat(filePath(key))
+      return { mtimeMs: stats.mtimeMs, size: stats.size }
+    } catch (err) {
+      if (err.code === 'ENOENT') return undefined
+      throw err
+    }
+  }
+
+  // En klient der crasher mellem writeFile(tmp) og rename efterlader temp-filen
+  // for evigt (fundet i _shared: 843 KB multiplayer-index-tmp). Baade tidsstemplet
+  // i navnet OG mtime skal vaere ældre end maxAgeMs, saa hverken en kollega-pc med
+  // forkert ur eller en "17 aar gammel" SMB-mtime kan slette en skrivning i gang.
+  async function sweepStaleTempFilesAsync(maxAgeMs = 24 * 60 * 60 * 1000) {
+    const removed = []
+    const nowMs = Date.now()
+    for (const name of await fs.promises.readdir(dataDir)) {
+      // Also files prepared for saves (preparedFiles.cjs) by a client that crashed or was killed.
+      const stampMs = Number(/\.json\.\d+\.(\d+)\.[0-9a-f]{8}\.tmp$/.exec(name)?.[1] ?? PREPARED_FILE_PATTERN.exec(name)?.[2] ?? NaN)
+      if (!Number.isFinite(stampMs) || nowMs - stampMs < maxAgeMs) continue
+      const target = path.join(dataDir, name)
+      try {
+        if (nowMs - (await fs.promises.stat(target)).mtimeMs < maxAgeMs) continue
+        await fs.promises.unlink(target)
+        removed.push(name)
+      } catch { /* allerede fjernet af en anden klient */ }
+    }
+    return removed
   }
 
   function del(key) {
@@ -376,8 +531,9 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
   function updateDetailed(key, operation) {
     validateOperation(operation)
     return withFileLock(lockPath(key), () => {
-      const outcome = computeUpdate(key, operation, get(key, { skipCache: true }))
-      if (outcome.write) setUnlocked(key, outcome.value)
+      const current = get(key, { skipCache: true })
+      const outcome = computeUpdate(key, operation, current)
+      if (outcome.write && !sameValue(outcome.value, current)) setUnlocked(key, outcome.value)
       return { result: outcome.result, value: outcome.write ? outcome.value : get(key, { skipCache: true }) }
     }, SYNC_WRITE_LOCK)
   }
@@ -390,11 +546,20 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
 
   async function updateDetailedAsync(key, operation) {
     validateOperation(operation)
-    return serializeWrite(key, () => withFileLockAsync(lockPath(key), async () => {
-      const outcome = computeUpdate(key, operation, await getAsync(key, { skipCache: true }))
-      if (outcome.write) await setUnlockedAsync(key, outcome.value)
+    return timedLockedWrite(key, `update ${operation.op}`, async steps => {
+      const current = await getAsync(key, { skipCache: true })
+      steps.mark('laes')
+      const outcome = computeUpdate(key, operation, current)
+      if (outcome.write && !sameValue(outcome.value, current)) await setUnlockedAsync(key, outcome.value, steps)
       return { result: outcome.result, value: outcome.write ? outcome.value : await getAsync(key, { skipCache: true }) }
-    }, ASYNC_WRITE_LOCK))
+    })
+  }
+
+  // En uaendret vaerdi (sammenlignet med det der blev laest under laasen)
+  // skrives ikke: hver skrivning paa M: koster laas + tmp + rename og faar alle
+  // ~40 klienters watchere til at rescanne mappen. Manglende fil skrives altid.
+  function sameValue(next, current) {
+    return current !== undefined && JSON.stringify(next) === JSON.stringify(current)
   }
 
   function validateOperation(operation) {
@@ -509,11 +674,26 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
   // undefined skips the write; backups may be made inside the callback.
   function mutate(key, callback) {
     return withFileLock(filePath(key) + '.lock', () => {
-      const next = callback(structuredClone(get(key, { skipCache: true })))
+      const current = get(key, { skipCache: true })
+      const next = callback(structuredClone(current))
       if (next && typeof next.then === 'function') throw new Error('Mutation callback must be synchronous')
-      if (next !== undefined) setUnlocked(key, next)
+      if (next !== undefined && !sameValue(next, current)) setUnlocked(key, next)
       return next
     }, SYNC_WRITE_LOCK)
+  }
+
+  // Asynkron tvilling til mutate(): laes-aendr-skriv under EN laas. Paa M: sparer
+  // det en hel rundtur (~200 ms) pr. skrivning i forhold til laes + compareAndSet,
+  // og der kan ikke opstaa KV_CONFLICT-retries, fordi ingen anden kan skrive imens.
+  async function mutateAsync(key, callback) {
+    return timedLockedWrite(key, 'mutate', async steps => {
+      const current = await getAsync(key, { skipCache: true })
+      steps.mark('laes')
+      const next = callback(structuredClone(current))
+      if (next && typeof next.then === 'function') throw new Error('Mutation callback must be synchronous')
+      if (next !== undefined && !sameValue(next, current)) await setUnlockedAsync(key, next, steps)
+      return next
+    })
   }
 
   // Trusted multi-record operations only. No capability is exposed to IPC.
@@ -536,6 +716,71 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
       if (result && typeof result.then === 'function') throw new Error('KV_INVALID_OPERATION: Transaction must be synchronous')
       return result
     } finally { active = false }
+  }
+
+  // Asynkron tvilling til withLockedKeys: samme laasefiler (virker sammen med 1.6.6),
+  // men main-traaden fryser aldrig. Maalt 07.11 paa M:: en Placeringer-handling
+  // fryste HELE appen i 32-42 s, fordi hver ny fil (laas, tmp) koster 3-4 s at
+  // oprette. Her oprettes laase og tmp-filer parallelt; callbacken er stadig
+  // synkron og koerer mod vaerdierne i hukommelsen. Kaster den, skrives intet.
+  // Noeglerne erstattes i den raekkefoelge de blev sat; en noegle givet til deleteAfterCommit slettes til sidst.
+  function withLockedKeysAsync(keys, callback) {
+    if (typeof callback !== 'function' || require('node:util').types.isAsyncFunction(callback)) return Promise.reject(new Error('KV_INVALID_OPERATION: Transaction must be synchronous'))
+    if (!Array.isArray(keys) || keys.some(key => typeof key !== 'string' || !key)) return Promise.reject(new Error('KV_INVALID_OPERATION: Invalid transaction keys'))
+    const ordered = [...new Set(keys)].sort((a, b) => lockPath(a).localeCompare(lockPath(b), 'en'))
+    const allowed = new Set(ordered)
+    const run = withFileLocksAsync(ordered.map(lockPath), async () => {
+      // Under laasene: ikke i koe bag andre laesninger, mens andre klienter venter paa laasene.
+      const values = await Promise.all(ordered.map(key => getAsync(key, { skipCache: true, unthrottled: true })))
+      const current = new Map(ordered.map((key, index) => [key, values[index]]))
+      const writes = new Map()
+      // Keys deleted once every write has landed (a journal written first by the same transaction).
+      const afterCommit = new Set()
+      let active = true
+      const check = key => { if (!active || !allowed.has(key)) throw new Error('KV_INVALID_OPERATION: Invalid transaction capability') }
+      const transaction = {
+        get(key) { check(key); return structuredClone(current.get(key)) },
+        set(key, value) { check(key); const json = jsonOf(value); current.set(key, structuredClone(value)); writes.delete(key); writes.set(key, { value, json }) },
+        delete(key) { check(key); current.set(key, undefined); writes.delete(key); writes.set(key, { deleted: true }) },
+        deleteAfterCommit(key) { check(key); afterCommit.add(key) },
+      }
+      let result
+      try {
+        result = callback(transaction)
+        if (result && typeof result.then === 'function') throw new Error('KV_INVALID_OPERATION: Transaction must be synchronous')
+      } finally { active = false }
+      const prepared = await Promise.allSettled([...writes].map(async ([key, op]) => ({ key, op, tmp: op.deleted ? null : await writeTmpAsync(key, op.json) })))
+      const failed = prepared.find(item => item.status === 'rejected')
+      if (failed) {
+        await Promise.all(prepared.filter(item => item.status === 'fulfilled' && item.value.tmp).map(item => fs.promises.unlink(item.value.tmp).catch(() => {})))
+        throw failed.reason
+      }
+      const pending = prepared.map(item => item.value)
+      try {
+        while (pending.length) {
+          const { key, op, tmp } = pending[0]
+          if (op.deleted) {
+            try { await fs.promises.unlink(filePath(key)) } catch (error) { if (error.code !== 'ENOENT') throw error }
+            readCache.delete(key)
+          } else {
+            await commitTmpAsync(key, tmp, op.value)
+          }
+          pending.shift()
+        }
+      } finally {
+        await Promise.all(pending.filter(item => item.tmp).map(item => fs.promises.unlink(item.tmp).catch(() => {})))
+      }
+      // Best effort: what is left is a journal whose writes all landed, and its owner finishes it next time.
+      for (const key of afterCommit) {
+        try { await fs.promises.unlink(filePath(key)) } catch {}
+        readCache.delete(key)
+      }
+      return result
+    }, ASYNC_WRITE_LOCK)
+    const tracked = run.catch(() => {})
+    inFlightWrites.add(tracked)
+    tracked.finally(() => inFlightWrites.delete(tracked))
+    return run
   }
 
   /** Alle nøgler + værdier (til backup). */
@@ -651,48 +896,135 @@ function createStore(dataDir, { externallyWatched = false } = {}) {
    * files were added, modified, or removed, and onConnectionChange(connected)
    * whenever dataDir goes from reachable to unreachable or back (e.g. a
    * network share disconnecting/reconnecting). Returns a stop function.
+   * options: tal (legacy, synligt interval) eller objekt, se DEFAULT_WATCH_OPTIONS.
    */
-  function watch(onChange, onConnectionChange, intervalMs = DEFAULT_WATCH_INTERVAL_MS) {
-    // Første scan er synkron (sker ved opstart, før vinduet vises) så
-    // isConnected() er retvisende med det samme.
-    const initial = scanDirectory(null)
-    let snapshot = initial.snapshot
-    connected = initial.reachable
-    watching = true
+  function watch(onChange, onConnectionChange, options) {
+    const config = resolveWatchOptions(options)
+    const asyncInitialScan = config.initialScan === 'async'
+    // Mappens mtime maales FOER scanningen, saa en aendring under scanningen
+    // giver en ny mtime ved naeste tick.
+    let lastDirMtimeMs = null
+    let snapshot = null
+    // Asynkron foerste scan (watchere startet efter opstart, fx team-skift):
+    // ingen synkron I/O mod M:; forbindelsen forbliver optimistisk indtil den er faerdig.
+    let ready = !asyncInitialScan
+    if (!asyncInitialScan) {
+      try { lastDirMtimeMs = fs.statSync(dataDir).mtimeMs } catch { /* uopnaaelig: foerste tick scanner fuldt */ }
+      // Første scan er synkron (sker ved opstart, før vinduet vises) så
+      // isConnected() er retvisende med det samme.
+      const initial = scanDirectory(null)
+      snapshot = initial.snapshot
+      connected = initial.reachable
+      watching = true
+    }
     let scanning = false
+    let stopped = false
+    let timer = null
+    let lastFullScanAtMs = performance.now()
+    let lastChangeScanAtMs = null
+    let forceFull = false
 
-    const timer = setInterval(() => {
-      if (scanning) return // forrige scan (langsomt netværk) kører stadig
+    function schedule(delayMs) {
+      if (stopped) return
+      clearTimeout(timer)
+      timer = setTimeout(tick, delayMs)
+      timer.unref?.()
+    }
+
+    function setReachable(reachable) {
+      if (reachable === connected) return
+      connected = reachable
+      // Efter en frakobling kan vi have misset aendringer: start paa en frisk.
+      if (connected) readCache.clear()
+      onConnectionChange?.(connected)
+    }
+
+    async function tick() {
+      timer = null
+      if (stopped || scanning || !ready) return // en igangvaerende scanning planlaegger selv naeste tick
       scanning = true
-      scanDirectoryAsync(snapshot)
-        .then((result) => {
-          if (result.reachable !== connected) {
-            connected = result.reachable
-            // Efter en frakobling kan vi have misset aendringer: start paa en frisk.
-            if (connected) readCache.clear()
-            onConnectionChange?.(connected)
-          }
-          if (!result.reachable) return
+      try {
+        let dirMtimeMs
+        try {
+          dirMtimeMs = (await fs.promises.stat(dataDir)).mtimeMs
+        } catch {
+          setReachable(false)
+          return
+        }
+        if (stopped) return
+        // Genforbundet: scan fuldt foer forbindelsen meldes tilbage.
+        if (!connected) forceFull = true
+        const nowMs = performance.now()
+        const decision = decideWatchTick({ visible: watchVisible, dirMtimeMs, lastDirMtimeMs, nowMs, lastFullScanAtMs, lastChangeScanAtMs, forceFull }, config)
+        if (decision !== 'full') return
+        const changeTriggered = dirMtimeMs !== lastDirMtimeMs
+        forceFull = false
+        const result = await scanDirectoryAsync(snapshot)
+        if (stopped) return
+        setReachable(result.reachable)
+        if (!result.reachable) return
 
-          snapshot = result.snapshot
-          if (result.changedKeys.length > 0) {
-            // Invalidate cache for changed keys to force fresh read on next get().
-            for (const key of result.changedKeys) readCache.delete(key)
-            onChange(result.changedKeys)
-          }
-        })
-        .finally(() => { scanning = false })
-    }, Math.max(intervalMs, MIN_WATCH_INTERVAL_MS))
-    timer.unref?.()
+        snapshot = result.snapshot
+        lastDirMtimeMs = dirMtimeMs
+        lastFullScanAtMs = nowMs
+        // Gap'et gaelder kun efter en aendrings-scan der faktisk fandt noget: en ren
+        // laasefil-bump maa ikke forsinke den rename der kommer lige efter.
+        if (changeTriggered && result.changedKeys.length > 0) lastChangeScanAtMs = nowMs
+        if (result.changedKeys.length > 0) {
+          // Invalidate cache for changed keys to force fresh read on next get().
+          for (const key of result.changedKeys) readCache.delete(key)
+          onChange(result.changedKeys)
+        }
+      } finally {
+        scanning = false
+        schedule(watchVisible ? config.intervalMs : config.hiddenIntervalMs)
+      }
+    }
 
-    return () => { watching = false; clearInterval(timer) }
+    const watcher = {
+      visibilityChanged(visible) {
+        if (visible) { forceFull = true; schedule(0) }
+        else schedule(config.hiddenIntervalMs)
+      },
+    }
+    activeWatchers.add(watcher)
+    if (ready) {
+      schedule(watchVisible ? config.intervalMs : config.hiddenIntervalMs)
+    } else {
+      (async () => {
+        try { lastDirMtimeMs = (await fs.promises.stat(dataDir)).mtimeMs } catch { /* uopnaaelig: foerste tick scanner fuldt */ }
+        const initial = await scanDirectoryAsync(null)
+        if (stopped) return
+        snapshot = initial.snapshot
+        lastFullScanAtMs = performance.now()
+        watching = true
+        ready = true
+        if (!initial.reachable) setReachable(false)
+        schedule(watchVisible ? config.intervalMs : config.hiddenIntervalMs)
+      })().catch(() => { if (!stopped) { ready = true; schedule(config.intervalMs) } })
+    }
+
+    return () => {
+      watching = false
+      stopped = true
+      clearTimeout(timer)
+      activeWatchers.delete(watcher)
+    }
+  }
+
+  /** Skjult vindue: langsommere ticks. Synlig igen: fuld scanning med det samme. */
+  function setWatchVisibility(visible) {
+    const next = Boolean(visible)
+    if (next === watchVisible) return
+    watchVisible = next
+    for (const watcher of activeWatchers) watcher.visibilityChanged(next)
   }
 
   function isConnected() {
     return connected
   }
 
-  return { get, getAsync, peekCache, set, setAsync, delete: del, deleteAsync, keys, keysAsync, watch, update, updateAsync, updateDetailed, updateDetailedAsync, mutate, withLockedKeys, invalidate: () => readCache.clear(), dumpAll, dumpAllAsync, dataDir, isConnected, scanDirectory, scanDirectoryAsync }
+  return { get, getAsync, peekCache, set, setAsync, delete: del, deleteAsync, keys, keysAsync, watch, setWatchVisibility, update, updateAsync, updateDetailed, updateDetailedAsync, mutate, mutateAsync, sweepStaleTempFilesAsync, statAsync, withLockedKeys, withLockedKeysAsync, invalidate: () => readCache.clear(), dumpAll, dumpAllAsync, dataDir, isConnected, scanDirectory, scanDirectoryAsync }
 }
 
-module.exports = { createStore, parseFileContents, keyToFilename }
+module.exports = { createStore, parseFileContents, keyToFilename, encryptPayload, decideWatchTick, whenWritesSettled, hasWritesInFlight: () => inFlightWrites.size > 0 }

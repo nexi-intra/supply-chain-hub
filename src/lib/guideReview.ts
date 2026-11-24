@@ -35,3 +35,9 @@ export function isGuideReviewAlreadyApplied(
 export function isOpenGuideReview(request: GuideReviewRequest): boolean {
   return request.status === 'pending' || request.status === 'draft' || request.status === 'changes_requested'
 }
+
+/** Godkend-knappens tekst: en sletning udgiver intet, den fjerner guiden. */
+export function guideApproveLabel(action: GuideReviewRequest['action'], language: string): string {
+  if (action === 'delete') return language === 'da' ? 'Godkend og slet' : language === 'fi' ? 'Hyväksy ja poista' : language === 'sv' ? 'Godkänn och ta bort' : 'Approve and delete'
+  return language === 'da' ? 'Godkend og udgiv' : language === 'fi' ? 'Hyväksy ja julkaise' : language === 'sv' ? 'Godkänn och publicera' : 'Approve and publish'
+}

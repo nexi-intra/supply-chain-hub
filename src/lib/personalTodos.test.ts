@@ -52,4 +52,20 @@ describe('createPersonalTodo', () => {
     expect(retried).toEqual(first)
     expect((store.get(personalTodosKey('a@test')) as typeof first[]).map(todo => todo.id)).toEqual([identity.id, identity.id])
   })
+
+  it('stores an optional time and the appointment kind', async () => {
+    fixture()
+    const todo = await createPersonalTodo('a@test', 'Ring til DHL', undefined, '2026-10-15', undefined, { startTime: '10:30' })
+    expect(todo).toMatchObject({ dueDate: '2026-10-15', startTime: '10:30', endTime: undefined, kind: undefined })
+    const meeting = await createPersonalTodo('a@test', 'Møde med Anna', undefined, '2026-10-15', undefined, { kind: 'event', startTime: '13:00', endTime: '14:00' })
+    expect(meeting).toMatchObject({ kind: 'event', startTime: '13:00', endTime: '14:00' })
+  })
+
+  it('needs a date for a time or an appointment, and a valid time range', async () => {
+    const { store } = fixture()
+    await expect(createPersonalTodo('a@test', 'Ring', undefined, undefined, undefined, { startTime: '10:00' })).rejects.toThrow('MISSING_DATE')
+    await expect(createPersonalTodo('a@test', 'Møde', undefined, '', undefined, { kind: 'event' })).rejects.toThrow('MISSING_DATE')
+    await expect(createPersonalTodo('a@test', 'Møde', undefined, '2026-10-15', undefined, { startTime: '14:00', endTime: '13:00' })).rejects.toThrow('INVALID_TIME')
+    expect(store.has(personalTodosKey('a@test'))).toBe(false)
+  })
 })

@@ -1,7 +1,7 @@
 {
     "name": "tcd-hub",
     "private": true,
-    "version": "1.5.7",
+    "version": "1.6.8",
     "type": "module",
     "main": "electron/main.cjs",
     "scripts": {
@@ -24,7 +24,8 @@
         "test:updater": "node --test electron/updater.test.cjs",
         "test:unit": "vitest run",
         "test:electron-auth": "electron electron/fixtures/auth-smoke.cjs",
-        "test": "node --test electron/*.test.cjs && vitest run"
+        "test:warehouse": "node --test electron/warehouse/*.test.cjs electron/warehouse/core/*.test.cjs electron/warehouse/locations/*.test.cjs electron/warehouse/softwareload/*.test.cjs electron/warehouse/softwareload/core/*.test.cjs",
+        "test": "node --test electron/*.test.cjs electron/games/backgammon/*.test.cjs electron/games/chess/*.test.cjs electron/games/wordPuzzle/*.test.cjs electron/warehouse/*.test.cjs electron/warehouse/core/*.test.cjs electron/warehouse/locations/*.test.cjs electron/warehouse/softwareload/*.test.cjs electron/warehouse/softwareload/core/*.test.cjs && vitest run"
     },
     "build": {
         "appId": "com.nexigroup.tcdhub",
@@ -36,11 +37,18 @@
             "provider": "generic",
             "url": "https://tcd-hub-updates.local/"
         },
+        "asarUnpack": [
+            "electron/wordToPdf.ps1",
+            "electron/warehouse/sap/*.vbs",
+            "electron/warehouse/outlook/*.vbs"
+        ],
         "files": [
             "dist/**",
             "electron/**",
             "!electron/fixtures/**",
             "!electron/*.test.cjs",
+            "!electron/warehouse/fixtures/**",
+            "!electron/warehouse/**/*.test.cjs",
             "package.json"
         ],
         "extraFiles": [
@@ -98,14 +106,22 @@
         "@tailwindcss/container-queries": "^0.1.1",
         "@tailwindcss/vite": "^4.1.11",
         "@tanstack/react-query": "^5.83.1",
+        "@tiptap/extension-text-style": "3.31.4",
+        "@tiptap/react": "3.31.4",
+        "@tiptap/starter-kit": "3.31.4",
+        "chess.js": "1.4.0",
         "class-variance-authority": "^0.7.1",
         "clsx": "^2.1.1",
         "cmdk": "^1.1.1",
         "d3": "^7.9.0",
         "date-fns": "^3.6.0",
+        "dictionary-da": "6.0.0",
+        "dictionary-en": "4.0.0",
+        "dictionary-sv": "4.0.0",
         "docx": "^9.7.1",
         "electron-updater": "^6.8.9",
         "embla-carousel-react": "^8.5.2",
+        "exceljs": "^4.4.0",
         "framer-motion": "^13.1.1",
         "input-otp": "^1.4.2",
         "jszip": "^3.10.2",
@@ -113,7 +129,9 @@
         "mammoth": "^1.12.0",
         "marked": "^15.0.7",
         "next-themes": "^0.4.6",
+        "nspell": "2.1.5",
         "octokit": "^4.1.2",
+        "pdfjs-dist": "6.4.299",
         "react": "^19.0.0",
         "react-day-picker": "^9.6.7",
         "react-dom": "^19.0.0",

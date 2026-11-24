@@ -92,7 +92,14 @@ class LocalBacking extends TranslatorBacking {
 }
 
 const backing = new LocalBacking({ cacheSize: 400, downloadTimeout: 0 })
-const translator = new BatchTranslator({ pivotLanguage: null, workers: 1 }, backing)
+// The WASM worker never frees models and runs out of memory after ~5, so each language
+// group gets a fresh engine — the same 4-model budget the app uses (bergamotTranslator.ts).
+let translator = new BatchTranslator({ pivotLanguage: null, workers: 1 }, backing)
+
+async function freshTranslator() {
+  await translator.delete()
+  translator = new BatchTranslator({ pivotLanguage: null, workers: 1 }, backing)
+}
 
 async function translate(from, to, text) {
   const response = await translator.translate({ from, to, text, html: false })
@@ -109,7 +116,13 @@ try {
   await translate('en', 'fi', danishToEnglish)
   const finnishToEnglish = await translate('fi', 'en', finnish)
   await translate('en', 'da', finnishToEnglish)
-  console.log('Bergamot verificeret for engelsk↔finsk og dansk↔finsk via engelsk.')
+  await freshTranslator()
+  await translate('en', 'sv', 'Open the main menu and select the delivery address.')
+  const swedishToEnglish = await translate('sv', 'en', 'Öppna huvudmenyn och välj leveransadressen.')
+  await translate('da', 'en', 'Åbn hovedmenuen og vælg leveringsadressen.')
+  await translate('en', 'sv', danishToEnglish)
+  await translate('en', 'da', swedishToEnglish)
+  console.log('Bergamot verificeret for engelsk↔finsk, engelsk↔svensk og dansk↔finsk/svensk via engelsk.')
 } finally {
   translator.delete()
   // Worker termination is asynchronous; cleanup is best-effort on Windows.

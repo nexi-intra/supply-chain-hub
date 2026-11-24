@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { persistKvChange } from '../lib/persistKvChange'
+import { predictKvUpdate, type KvOperation } from '../lib/kvPrediction'
 import { toast } from 'sonner'
 
 type SetValue<T> = T | ((current: T) => T)
@@ -9,6 +10,40 @@ type SetValue<T> = T | ((current: T) => T)
 // revalidate against the shared folder in the background, instead of showing an
 // empty widget for seconds while the slow network read completes.
 const kvSnapshotCache = new Map<string, unknown>()
+
+/** After a hub switch the remembered values belong to the previous team. */
+export function clearKvSnapshotCache() {
+  kvSnapshotCache.clear()
+}
+
+// The mounted views of each key, and how many helper writes (kvArrays) to it are still on their way to M:.
+const kvViews = new Map<string, Set<{ show: (value: unknown) => void; reload: () => void }>>()
+const kvPendingUpdates = new Map<string, number>()
+
+/**
+ * A helper (kvArrays) is about to send `operation` for `key`: every mounted view shows the predicted result at once,
+ * because the write itself can take 20 s on M:. While it is pending, reloads do not replace the prediction. The
+ * returned function ends it; then every view reads the stored value again (also after a failed write).
+ */
+export function beginKvPrediction(key: string, operation: KvOperation): () => void {
+  if (kvSnapshotCache.has(key)) {
+    const predicted = predictKvUpdate(kvSnapshotCache.get(key), operation)
+    if (predicted !== undefined) {
+      kvSnapshotCache.set(key, predicted)
+      kvViews.get(key)?.forEach(view => view.show(predicted))
+    }
+  }
+  kvPendingUpdates.set(key, (kvPendingUpdates.get(key) || 0) + 1)
+  let ended = false
+  return () => {
+    if (ended) return
+    ended = true
+    const left = (kvPendingUpdates.get(key) || 1) - 1
+    if (left > 0) { kvPendingUpdates.set(key, left); return }
+    kvPendingUpdates.delete(key)
+    kvViews.get(key)?.forEach(view => view.reload())
+  }
+}
 
 // Under aktivt spil (data-game-active paa <body>) udskydes KV-genindlaesninger,
 // saa den store re-render-kaede ikke blokerer spillets mus/tastatur-input. Naar
@@ -63,7 +98,7 @@ export function useKV<T>(key: string, initialValue: T, options?: { initializeIfM
     const load = (attempt = 0) => {
       const sequence = ++loadSequence.current
       window.kv.get<T>(key).then((stored) => {
-        if (cancelled || sequence !== loadSequence.current || pendingSave.current) return
+        if (cancelled || sequence !== loadSequence.current || pendingSave.current || kvPendingUpdates.has(key)) return
         if (stored !== undefined) {
           valueRef.current = stored
           setValueState(stored)
@@ -94,6 +129,12 @@ export function useKV<T>(key: string, initialValue: T, options?: { initializeIfM
     })
     const onGamesEnded = () => { if (deferredReload) { deferredReload = false; load() } }
     kvResumeListeners.add(onGamesEnded)
+    const view = {
+      show: (predicted: unknown) => { if (cancelled) return; loadSequence.current++; valueRef.current = predicted as T; setValueState(predicted as T) },
+      reload: () => { if (!cancelled) load() },
+    }
+    if (!kvViews.has(key)) kvViews.set(key, new Set())
+    kvViews.get(key)!.add(view)
 
     return () => {
       lifecycle.current++
@@ -101,6 +142,8 @@ export function useKV<T>(key: string, initialValue: T, options?: { initializeIfM
       if (retryTimer) clearTimeout(retryTimer)
       unsubscribe()
       kvResumeListeners.delete(onGamesEnded)
+      kvViews.get(key)?.delete(view)
+      if (kvViews.get(key)?.size === 0) kvViews.delete(key)
     }
   }, [key])
 

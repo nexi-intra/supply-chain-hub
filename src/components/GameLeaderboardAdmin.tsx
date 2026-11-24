@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
-import { Trophy, PencilSimple, Trash, Check } from '@phosphor-icons/react'
+import { Trophy, PencilSimple, Trash, Check, ClockCounterClockwise } from '@phosphor-icons/react'
 import { Card } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -11,8 +12,8 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { toast } from 'sonner'
-import { upsertInKvArray, upsertInNestedKvArray, removeFromKvArray } from '@/lib/kvArrays'
-import { normalizeFlatLeaderboard, normalizeNestedLeaderboard } from '@/lib/leaderboards'
+import { upsertInKvArray, upsertInNestedKvArray } from '@/lib/kvArrays'
+import { normalizeFlatLeaderboard, normalizeNestedLeaderboard, removeLeaderboardEntries } from '@/lib/leaderboards'
 import { useLanguage } from '@/contexts/LanguageContext'
 
 type Difficulty = string
@@ -51,6 +52,8 @@ interface GameLeaderboardAdminProps {
   /** Overstyr visuel opsætning pr. kategori (default: DIFFICULTY_SETTINGS). */
   categorySettings?: Record<Difficulty, CategorySetting>
   users: Array<{ email: string; fullName: string }>
+  /** Highscores fra en tidligere udgave af spillet: markeres tydeligt og kan slettes samlet. */
+  legacy?: boolean
 }
 
 const DIFFICULTIES: Difficulty[] = ['easy', 'medium', 'hard', 'expert']
@@ -66,7 +69,7 @@ function getDifficultySettings(t: ReturnType<typeof useLanguage>['t']): Record<D
 
 // Manager-administration af ét spils highscores og spil-statistik.
 // Erstatter de fem næsten identiske sektioner, der tidligere lå i ManagerPanel.
-export function GameLeaderboardAdmin({ gameTitle, icon, leaderboardKey, playCountsKey, hasLevel = false, categories = DIFFICULTIES, categorySettings, users }: GameLeaderboardAdminProps) {
+export function GameLeaderboardAdmin({ gameTitle, icon, leaderboardKey, playCountsKey, hasLevel = false, categories = DIFFICULTIES, categorySettings, users, legacy = false }: GameLeaderboardAdminProps) {
   const { t } = useLanguage()
   const resolvedCategorySettings = categorySettings || getDifficultySettings(t)
   const [leaderboard, setLeaderboard] = useState<Leaderboard | null>(null)
@@ -113,7 +116,8 @@ export function GameLeaderboardAdmin({ gameTitle, icon, leaderboardKey, playCoun
     setNewLevel('')
   }
 
-  const handleSaveScore = async () => {
+  // Shown and closed at once; the score is saved in the background and the board is read again if that fails.
+  const handleSaveScore = () => {
     if (!editingEntry) return
 
     const scoreValue = parseInt(newScore)
@@ -127,51 +131,58 @@ export function GameLeaderboardAdmin({ gameTitle, icon, leaderboardKey, playCoun
       return
     }
 
-    const board = await window.kv.get<Leaderboard>(leaderboardKey)
-    if (!board) {
-      toast.error(t.gameLeaderboardAdmin.leaderboardNotFound)
-      return
-    }
-
-    const entries = board[editingEntry.difficulty] || []
-    const existing = entries.find(entry => entry.email === editingEntry.email)
-    if (!existing) {
-      toast.error(t.gameLeaderboardAdmin.scoreEntryNotFound)
-      return
-    }
-
-    const updatedEntry = {
-      ...existing,
-      score: scoreValue,
-      ...(hasLevel ? { level: levelValue } : {}),
-      timestamp: Date.now(),
-    }
-
-    if (isFlatMode) {
-      await upsertInKvArray(leaderboardKey, [{ ...updatedEntry, id: updatedEntry.email }])
-    } else {
-      await upsertInNestedKvArray(leaderboardKey, [editingEntry.difficulty], [{ ...updatedEntry, id: updatedEntry.email }])
-    }
-    await load()
+    const { difficulty, email } = editingEntry
+    const change = (entry: ScoreEntry): ScoreEntry => ({ ...entry, score: scoreValue, ...(hasLevel ? { level: levelValue } : {}), timestamp: Date.now() })
+    setLeaderboard(current => current && { ...current, [difficulty]: (current[difficulty] || []).map(entry => entry.email === email ? change(entry) : entry) })
     closeEditDialog()
     toast.success(t.gameLeaderboardAdmin.scoreUpdated)
+
+    let problem: string | undefined
+    void (async () => {
+      const board = await window.kv.get<Leaderboard>(leaderboardKey)
+      const existing = (board?.[difficulty] || []).find(entry => entry.email === email)
+      if (!board || !existing) {
+        problem = !board ? t.gameLeaderboardAdmin.leaderboardNotFound : t.gameLeaderboardAdmin.scoreEntryNotFound
+        throw new Error(problem)
+      }
+      const updatedEntry = { ...change(existing), id: existing.email }
+      if (isFlatMode) await upsertInKvArray(leaderboardKey, [updatedEntry])
+      else await upsertInNestedKvArray(leaderboardKey, [difficulty], [updatedEntry])
+    })().catch(error => {
+      console.error('Kunne ikke gemme highscore:', error)
+      if (problem) toast.error(problem)
+      void load()
+    })
   }
 
-  const handleDeleteScore = async (difficulty: Difficulty, email: string) => {
-    if (isFlatMode) {
-      await removeFromKvArray(leaderboardKey, [email])
-      await load()
-      toast.success(t.gameLeaderboardAdmin.scoreDeleted)
-      return
-    }
-
-    await window.kv.update(leaderboardKey, { op: 'remove', ids: [email], path: [difficulty] })
-    await load()
+  // The score leaves the board at once; it is removed in the background and the board is read again if that fails.
+  const handleDeleteScore = (difficulty: Difficulty, email: string) => {
+    setLeaderboard(current => current && (isFlatMode
+      ? { [categories[0]]: (current[categories[0]] || []).filter(entry => entry.email !== email) }
+      : { ...current, [difficulty]: (current[difficulty] || []).filter(entry => entry.email !== email) }))
     toast.success(t.gameLeaderboardAdmin.scoreDeleted)
+    void removeLeaderboardEntries(leaderboardKey, { emails: [email], category: isFlatMode ? undefined : difficulty }).catch(error => {
+      console.error('Kunne ikke slette highscore:', error)
+      toast.error(t.gameLeaderboardAdmin.deleteFailed)
+      void load()
+    })
   }
+
+  const handleDeleteAll = () => {
+    setLeaderboard(current => current && Object.fromEntries(Object.keys(current).map(category => [category, []])))
+    toast.success(t.gameLeaderboardAdmin.legacyDeleted)
+    void removeLeaderboardEntries(leaderboardKey, { all: true }).catch(error => {
+      console.error('Kunne ikke slette gamle highscores:', error)
+      toast.error(t.gameLeaderboardAdmin.deleteFailed)
+      void load()
+    })
+  }
+
+  const hasEntries = !!leaderboard && categories.some((category) => (leaderboard[category] || []).length > 0)
 
   return (
     <>
+      {!legacy && (
       <Card className="p-6">
         <div className="flex items-center gap-3 mb-6">
           {icon}
@@ -221,13 +232,48 @@ export function GameLeaderboardAdmin({ gameTitle, icon, leaderboardKey, playCoun
           </div>
         )}
       </Card>
+      )}
 
-      <Card className="p-6">
+      <Card className={legacy ? 'p-6 border-amber-500/50 bg-amber-500/5' : 'p-6'} data-legacy-leaderboard={legacy ? leaderboardKey : undefined}>
+        {legacy ? (
+          <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+            <div className="flex items-start gap-3 min-w-0">
+              <ClockCounterClockwise size={28} className="text-amber-600 dark:text-amber-400 shrink-0" weight="duotone" />
+              <div>
+                <h2 className="text-xl font-bold">{gameTitle} {t.gameLeaderboardAdmin.legacyTitleSuffix}</h2>
+                <p className="text-sm text-muted-foreground mt-1 max-w-2xl">{t.gameLeaderboardAdmin.legacyDescription}</p>
+              </div>
+            </div>
+            {hasEntries && (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="destructive" className="gap-2">
+                    <Trash size={18} />
+                    {t.gameLeaderboardAdmin.deleteAllLegacy}
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>{t.gameLeaderboardAdmin.deleteAllLegacyTitle}</AlertDialogTitle>
+                    <AlertDialogDescription>{t.gameLeaderboardAdmin.deleteAllLegacyDescription}</AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
+                    <AlertDialogAction onClick={handleDeleteAll} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                      {t.gameLeaderboardAdmin.deleteAllLegacy}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
+          </div>
+        ) : (
         <div className="mb-4 p-4 bg-muted/50 rounded-lg border">
           <p className="text-sm text-muted-foreground">
             {t.gameLeaderboardAdmin.manageDescriptionPrefix} {gameTitle}{t.gameLeaderboardAdmin.manageDescriptionMiddle}{hasLevel ? t.gameLeaderboardAdmin.manageDescriptionLevelInsert : ''} {t.gameLeaderboardAdmin.manageDescriptionSuffix}
           </p>
         </div>
+        )}
 
         {!leaderboard ? (
           <div className="text-center py-12">
@@ -274,7 +320,10 @@ export function GameLeaderboardAdmin({ gameTitle, icon, leaderboardKey, playCoun
                                 #{index + 1}
                               </div>
                               <div className="flex-1 min-w-0">
-                                <div className="font-semibold truncate">{getUserName(entry.email)}</div>
+                                <div className="font-semibold truncate flex items-center gap-2">
+                                  <span className="truncate">{getUserName(entry.email)}</span>
+                                  {legacy && <Badge variant="outline" className="shrink-0 border-amber-500/60 text-amber-700 dark:text-amber-300">{t.gameLeaderboardAdmin.legacyBadge}</Badge>}
+                                </div>
                                 <div className="text-xs text-muted-foreground">{entry.email}</div>
                               </div>
                               {hasLevel ? (
@@ -286,12 +335,13 @@ export function GameLeaderboardAdmin({ gameTitle, icon, leaderboardKey, playCoun
                                 <div className="text-lg font-bold text-primary">{entry.score}</div>
                               )}
                             </div>
-                            <div className="ml-4 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <div className={legacy ? 'ml-4 flex items-center gap-2' : 'ml-4 flex items-center gap-2 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity'}>
                               <Button
                                 variant="ghost"
                                 size="icon"
                                 onClick={() => openEditDialog(difficulty, entry)}
                                 className="hover:bg-primary/10"
+                                aria-label={`${t.common.edit}: ${getUserName(entry.email)}`}
                               >
                                 <PencilSimple size={20} />
                               </Button>
@@ -301,6 +351,7 @@ export function GameLeaderboardAdmin({ gameTitle, icon, leaderboardKey, playCoun
                                     variant="ghost"
                                     size="icon"
                                     className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                    aria-label={`${t.gameLeaderboardAdmin.deleteAction}: ${getUserName(entry.email)}`}
                                   >
                                     <Trash size={20} />
                                   </Button>

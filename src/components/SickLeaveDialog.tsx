@@ -11,7 +11,8 @@ import { da } from 'date-fns/locale'
 import { toast } from 'sonner'
 import { useLanguage } from '@/contexts/LanguageContext'
 import { useUnsavedChanges } from '@/hooks/useUnsavedChanges'
-import { appendToKvArray, updateKvArrayItem } from '@/lib/kvArrays'
+import { updateKvArrayItem } from '@/lib/kvArrays'
+import { registerSickLeave } from '@/lib/sickLeave'
 import type { SickLeaveEntry } from '@/lib/types'
 
 interface SickLeaveDialogProps {
@@ -158,20 +159,6 @@ export function SickLeaveDialog({ open, onOpenChange, userEmail, editEntry = nul
       return
     }
 
-    const reporterIsSelf = entryUserEmail === userEmail
-
-    const newEntry: SickLeaveEntry = {
-      id: `sick-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      userEmail: entryUserEmail,
-      userName: entryUserName,
-      startDate: dateToUse.toISOString(),
-      reason: entryReason,
-      status: 'approved',
-      submittedAt: new Date().toISOString(),
-      reportedBy: reporterIsSelf ? undefined : userEmail,
-      type: entryType,
-    }
-
     toast.success(`✅ ${t.sickLeaveDialog.registered}`, {
       description: t.sickLeaveDialog.notificationSent.replace('{date}', dateFormatted),
       duration: 8000
@@ -180,55 +167,19 @@ export function SickLeaveDialog({ open, onOpenChange, userEmail, editEntry = nul
     // Navnet paa den der indberetter staar allerede i den liste dialogen hentede.
     const reporterName = allUsers.find(user => user.email === userEmail)?.fullName || userEmail
 
-    const sickTypeText = entryType === 'child' ? 'Barn syg' : 'Sygemelding'
-    const emailSubject = `${sickTypeText} - ${entryUserName}`
-    const emailBody = reporterIsSelf
-      ? `Hej Jacob,
-
-${entryUserName} (${entryUserEmail}) har meldt ${entryType === 'child' ? 'barn syg' : 'sig syg'}.
-
-Type: ${entryType === 'child' ? 'Barn syg' : 'Egen sygdom'}
-Dato: ${dateFormatted}
-
-${entryReason ? `Bemærkninger:\n${entryReason}\n\n` : ''}Denne notifikation er automatisk genereret fra Supply Chain Hub.`
-      : `Hej Jacob,
-
-${entryUserName} (${entryUserEmail}) ${entryType === 'child' ? 'har fået barn syg registreret' : 'er blevet sygemeldt'} af ${reporterName} (${userEmail}).
-
-Type: ${entryType === 'child' ? 'Barn syg' : 'Egen sygdom'}
-Dato: ${dateFormatted}
-
-${entryReason ? `Bemærkninger:\n${entryReason}\n\n` : ''}Denne notifikation er automatisk genereret fra Supply Chain Hub.`
-
-    void (async () => {
-      try {
-        await appendToKvArray<SickLeaveEntry>('sick-leave-entries', [newEntry])
-      } catch (error) {
-        console.error('Error submitting sick leave:', error)
-        toast.error(t.sickLeaveDialog.error, {
-          description: t.sickLeaveDialog.errorDescription
-        })
-        return
-      }
-
-      try {
-        await appendToKvArray('email-notifications', [{
-          id: `email-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          to: 'Jacob.remmer@nexigroup.com',
-          subject: emailSubject,
-          body: emailBody,
-          timestamp: new Date().toISOString(),
-          type: 'sick-leave' as const,
-          read: false
-        }])
-      } catch (emailError) {
-        console.error('Error saving email notification:', emailError)
-        toast.warning(t.sickLeaveDialog.registered, {
-          description: t.sickLeaveDialog.registeredDescription.replace('{date}', dateFormatted),
-          duration: 5000
-        })
-      }
-    })()
+    void registerSickLeave({
+      reporterEmail: userEmail, reporterName, userEmail: entryUserEmail, userName: entryUserName, date: dateToUse, reason: entryReason, type: entryType,
+    }).then(({ notified }) => {
+      if (!notified) toast.warning(t.sickLeaveDialog.registered, {
+        description: t.sickLeaveDialog.registeredDescription.replace('{date}', dateFormatted),
+        duration: 5000
+      })
+    }, error => {
+      console.error('Error submitting sick leave:', error)
+      toast.error(t.sickLeaveDialog.error, {
+        description: t.sickLeaveDialog.errorDescription
+      })
+    })
   }
 
   const handleCancel = () => {

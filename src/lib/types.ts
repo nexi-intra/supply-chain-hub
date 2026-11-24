@@ -79,6 +79,8 @@ export interface VacationEntry {
   reviewedAt?: string
   isSingleDay?: boolean
   manuallyGranted?: boolean
+  /** Manglende værdi = 'vacation'. 'parental' = barsel, tildelt af manager. */
+  type?: 'vacation' | 'parental'
 }
 
 /**
@@ -88,6 +90,7 @@ export interface VacationEntry {
  */
 export interface HomeOfficePattern {
   weekdays: number[]
+  repeat?: Partial<Record<number, { intervalWeeks: number; startDate: string }>>
 }
 
 /** KV: 'home-office-exceptions' — enkelt-dags-undtagelse fra brugerens faste mønster. */
@@ -104,6 +107,9 @@ export interface ShiftRole {
   name: string
   color: string
   onlyWhenAssigned?: boolean
+  /** Optional default 'HH:mm' for every shift of this role (see shiftTimes.ts). */
+  startTime?: string
+  endTime?: string
 }
 
 /** KV: 'shift-assignments'. */
@@ -114,6 +120,9 @@ export interface ShiftAssignment {
   roleId: string
   date: string
   comment?: string
+  /** Optional 'HH:mm' for this shift only; overrides the role default. */
+  startTime?: string
+  endTime?: string
 }
 
 /**
@@ -136,6 +145,9 @@ export interface ShiftPatternRule {
   /** Valgfri slutdato ('yyyy-MM-dd'), inklusiv. Ingen = løber for evigt. */
   endDate?: string
   comment?: string
+  /** Optional 'HH:mm' for every shift from this pattern; overrides the role default. */
+  startTime?: string
+  endTime?: string
 }
 
 /** KV: 'employee-birthdays'. */

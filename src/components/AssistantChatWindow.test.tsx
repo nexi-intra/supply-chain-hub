@@ -1,13 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { AssistantChatWindow, CHAT_WIDTHS } from './AssistantChatWindow'
-const render = (language: 'da' | 'en' | 'fi' = 'da') => renderToStaticMarkup(<main><button>Hub remains available</button><AssistantChatWindow language={language} width="compact" onWidthChange={() => {}} onMinimize={() => {}} onClose={() => {}} ready status="Guide search ready" settings={<button>Clear chat</button>}><p>Synthetic chat only</p></AssistantChatWindow></main>)
+const render = (language: 'da' | 'en' | 'fi' | 'sv' = 'da') => renderToStaticMarkup(<main><button>Hub remains available</button><AssistantChatWindow language={language} width="compact" onWidthChange={() => {}} onMinimize={() => {}} onClose={() => {}} ready status="Guide search ready" settings={<button>Clear chat</button>}><p>Synthetic chat only</p></AssistantChatWindow></main>)
 describe('floating assistant window', () => {
   it('uses Hubert as its visible and accessible name in all languages', () => {
-    for (const language of ['da', 'en', 'fi'] as const) {
+    for (const language of ['da', 'en', 'fi', 'sv'] as const) {
       expect(render(language)).toContain('aria-label="Hubert"')
       expect(render(language)).toContain('>Hubert</')
-      expect(render(language)).not.toMatch(/Hub-assistent|Hub assistant|Hub-avustaja/)
+      expect(render(language)).not.toMatch(/Hub-assistent|Hub assistant|Hub-avustaja|Hubassistent/)
+    }
+  })
+  it('credits the Meshy 3D model (CC BY 4.0) in all languages', () => {
+    for (const language of ['da', 'en', 'fi', 'sv'] as const) {
+      expect(render(language)).toContain('Meshy (CC BY 4.0)')
     }
   })
   it('is a nonmodal region, with no overlay or modal/sheet primitives', () => {

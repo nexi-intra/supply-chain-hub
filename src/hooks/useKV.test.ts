@@ -11,6 +11,7 @@ vi.mock('react', () => ({
 }))
 vi.mock('sonner', () => ({ toast: { error: harness.error } }))
 import { useKV } from './useKV'
+import { appendToKvArray, removeFromKvArray } from '../lib/kvArrays'
 
 beforeEach(() => { harness.values = []; harness.cleanup = []; harness.error.mockClear(); vi.spyOn(console, 'error').mockImplementation(() => {}) })
 afterEach(() => { for (const cleanup of harness.cleanup) cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
@@ -103,5 +104,54 @@ describe('responsive safe hook saves', () => {
     await second
     expect(f.read()).toEqual(['initial', 'success'])
     expect(latestValue()).toEqual(f.read())
+  })
+})
+
+describe('the shared-array helpers show their change at once (a write to M: takes 20 s)', () => {
+  function updatable<T>(value: T) {
+    const f = fixture(value)
+    let release!: () => void
+    let fail: Error | null = null
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const update = vi.fn(async (_key: string, operation: { op: string; items?: unknown[]; ids?: string[] }) => {
+      await gate
+      if (fail) throw fail
+      const current = f.read() as unknown as { id: string }[]
+      const next = operation.op === 'append' ? [...current, ...(operation.items as { id: string }[])] : current.filter(item => !operation.ids!.includes(item.id))
+      f.write(next as unknown as T)
+      return next
+    })
+    ;(window as unknown as { kv: Record<string, unknown> }).kv.update = update
+    return { ...f, update, release, failWith: (error: Error) => { fail = error } }
+  }
+
+  it('an appended item is shown before the write is done, and stays after it', async () => {
+    const f = updatable([{ id: 'a' }])
+    useKV('key', [] as { id: string }[])
+    await flush()
+    expect(latestValue()).toEqual([{ id: 'a' }])
+    const pending = appendToKvArray('key', [{ id: 'b' }])
+    expect(latestValue()).toEqual([{ id: 'a' }, { id: 'b' }])
+    f.notify()
+    await flush()
+    // A reload while the write is pending does not hide it.
+    expect(latestValue()).toEqual([{ id: 'a' }, { id: 'b' }])
+    f.release()
+    await pending
+    await flush()
+    expect(latestValue()).toEqual([{ id: 'a' }, { id: 'b' }])
+  })
+
+  it('a failed write shows the stored value again', async () => {
+    const f = updatable([{ id: 'a' }, { id: 'b' }])
+    useKV('key', [] as { id: string }[])
+    await flush()
+    f.failWith(new Error('EACCES'))
+    const pending = removeFromKvArray('key', ['a'])
+    expect(latestValue()).toEqual([{ id: 'b' }])
+    f.release()
+    await expect(pending).rejects.toThrow('EACCES')
+    await flush()
+    expect(latestValue()).toEqual([{ id: 'a' }, { id: 'b' }])
   })
 })
