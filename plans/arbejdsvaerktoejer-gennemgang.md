@@ -64,7 +64,7 @@ Nye fund fra testen:
 ### Skal prøves i appen
 
 - "Bogfør alligevel" fra Hub kan kun prøves på en optælling, der er godkendt i 1.6.7 med tællelinjer med antal. 1.6.8 lader ikke situationen opstå. Scriptdelen (MI05 og så bogføring) er bestået i QS4 (punkt 11).
-- En rigtig scanner i Placeringer: Enter i materialevælgeren og i søgningen skal tage det, der lige er scannet.
+- [x] En rigtig scanner i Placeringer (24.11.2026, Jacob, dev-vindue på rigtige data, kun søgning). Søgefeltet åbnede det scannede materiale af sig selv, også ved to scanninger lige efter hinanden, og "Hvor henter jeg?" valgte præcis det scannede materiale.
 - [x] Finske og svenske ord i Huberts linje "Andre paller" (24.11.2026). Prøvet med Huberts egen kode på en lokal kopi af TCD's rigtige placeringer, uden SAP. INT4100-4921-0 på den deaktiverede plads A.GULV gav "pois käytöstä" på finsk og "inaktiverad" på svensk, og dansk og engelsk var også rigtige. I de rigtige data findes kun grunden "deaktiveret". "Reserveret" og "arbejdsstation" på alle fire sprog er dækket af `assistantLocations.test.cjs` (14 af 14 bestået). TRR har ingen placeringer endnu.
 - [x] "Lukket pænt" (exitedAt) når frem til M: i god tid (24.11.2026). Målt med appens egen journal- og lagerkode mod en midlertidig mappe på M:, som er fjernet igen. `close()` tog 0,8 til 1,5 sekunder med 1, 250, 499 og 1.200 scanninger, og den sidste bid havde `exitedAt` hver gang. Grænsen er 10 sekunder (`QUIT_FLUSH_TIMEOUT_MS`). Risikoen er kun en meget langsom M:, hvor en skrivning har taget op til 80 sekunder.
 
