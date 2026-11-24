@@ -6,7 +6,7 @@ import type { PiDoc, PiDocCheck } from '@/types/warehouse'
 const harness = vi.hoisted(() => ({
   state: [] as unknown[], stateIndex: 0,
   sapButtons: [] as Array<{ onAction: () => Promise<void> | void; children?: ReactNode }>,
-  inputs: [] as Array<{ value?: string; 'aria-label'?: string }>,
+  inputs: [] as Array<{ value?: string; 'aria-label'?: string; disabled?: boolean; onChange: (event: { target: { value: string } }) => void }>,
 }))
 
 vi.mock('react', async original => ({ ...await original<typeof import('react')>(),
@@ -21,7 +21,7 @@ vi.mock('@/components/warehouse/SapActionButton', () => ({ SapActionButton: (pro
   harness.sapButtons.push(props)
   return <button>{props.children}</button>
 } }))
-vi.mock('@/components/ui/input', () => ({ Input: (props: { value?: string; 'aria-label'?: string }) => { harness.inputs.push(props); return <input aria-label={props['aria-label']} defaultValue={props.value} /> } }))
+vi.mock('@/components/ui/input', () => ({ Input: (props: { value?: string; 'aria-label'?: string; disabled?: boolean; onChange: (event: { target: { value: string } }) => void }) => { harness.inputs.push(props); return <input aria-label={props['aria-label']} defaultValue={props.value} disabled={props.disabled} /> } }))
 vi.mock('@/components/ui/dialog', async () => {
   const { createElement } = await vi.importActual<typeof import('react')>('react')
   const Frame = ({ children }: { children?: ReactNode }) => createElement('div', null, children)
@@ -44,15 +44,21 @@ function render() {
   return renderToStaticMarkup(<ResolveDialog countId="count-1" item={doc} onCancel={vi.fn()} onResolve={vi.fn()} />)
 }
 
-async function pressCheck() {
+function startCheck() {
   render()
   const button = harness.sapButtons.find(props => props.children === 'Tjek i SAP')
   expect(button).toBeDefined()
-  await button!.onAction()
+  return button!.onAction()
+}
+
+async function pressCheck() {
+  await startCheck()
   return render()
 }
 
 const input = (label: string) => harness.inputs.find(props => props['aria-label'] === label)
+const choices = (html: string) => html.match(/<button[^>]*aria-pressed[^>]*>/g) ?? []
+const saved = { outcome: 'saved', docNo: '100000123', reason: 'Tjek i SAP 24-11-2026 11:40: MI22 viser dokument 100000123.', summary: 'SAP har oprettet dokument 100000123.' } as const
 
 beforeEach(() => {
   harness.state = []
@@ -87,5 +93,46 @@ describe('ResolveDialog "Tjek i SAP"', () => {
     expect(html).toMatch(/role="alert"[^>]*>MI22 svarede ikke</)
     expect(html).not.toContain('aria-pressed="true"')
     expect(input('Begrundelse')?.value).toBe('')
+  })
+
+  it('lets a later check that cannot tell replace what the earlier check filled', async () => {
+    check.mockResolvedValueOnce(saved)
+    await pressCheck()
+    check.mockResolvedValueOnce({ outcome: null, docNo: null, reason: 'Tjek i SAP 24-11-2026 11:45: MI22 viser 2 dokumenter.', summary: 'SAP har 2 dokumenter på referencen.' })
+    const html = await pressCheck()
+    expect(html).not.toContain('aria-pressed="true"')
+    expect(html).not.toContain('SAP har oprettet dokument 100000123.')
+    expect(html).toContain('SAP har 2 dokumenter på referencen.')
+    expect(harness.state).not.toContain('100000123')
+    expect(input('Begrundelse')?.value).toBe('Tjek i SAP 24-11-2026 11:45: MI22 viser 2 dokumenter.')
+  })
+
+  it('clears the earlier proposal when a later check fails, but keeps what the manager typed', async () => {
+    check.mockResolvedValueOnce(saved)
+    await pressCheck()
+    input('Begrundelse')!.onChange({ target: { value: 'Min egen tekst' } })
+    check.mockRejectedValueOnce(new Error("Error invoking remote method 'warehouse': Error: PIDOC_SAP_FAILED: MI22 svarede ikke"))
+    const html = await pressCheck()
+    expect(html).toMatch(/role="alert"[^>]*>MI22 svarede ikke</)
+    expect(html).not.toContain('aria-pressed="true"')
+    expect(html).not.toContain('SAP har oprettet dokument 100000123.')
+    expect(harness.state).not.toContain('100000123')
+    expect(input('Begrundelse')?.value).toBe('Min egen tekst')
+  })
+
+  it('locks the choices and fields while the check runs', async () => {
+    let answer!: (value: PiDocCheck) => void
+    check.mockReturnValueOnce(new Promise(resolve => { answer = resolve }))
+    const running = startCheck()
+    let html = render()
+    expect(choices(html)).toHaveLength(2)
+    for (const button of choices(html)) expect(button).toContain('disabled=""')
+    expect(input('Begrundelse')?.disabled).toBe(true)
+    answer(saved)
+    await running
+    html = render()
+    for (const button of choices(html)) expect(button).not.toContain('disabled=""')
+    expect(input('Begrundelse')?.disabled).toBe(false)
+    expect(input('SAP-dokumentnummer')?.disabled).toBe(false)
   })
 })

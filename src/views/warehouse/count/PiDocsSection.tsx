@@ -67,14 +67,18 @@ export function PiDocsSection({ list, selected, busy, figuresAt, onCreate, onPri
         <h3 className="text-sm font-semibold">{t('SAP-dokumenter', 'SAP documents')}</h3>
         {list.system !== 'PS4' && <Badge variant="outline" className="border-amber-500 text-amber-700 dark:text-amber-300">Test-SAP {list.system}</Badge>}
         {postable.length > 1 && (
-          <SapActionButton size="sm" variant="outline" className="ml-auto" disabled={busy !== null} loading={busy === 'post'} onAction={() => onPost(postable)}>
-            <CheckCircle size={16} /> {t('Bogfør alle', 'Post all')} ({postable.length})
-          </SapActionButton>
+          <span className="ml-auto flex">
+            <SapActionButton size="sm" variant="outline" disabled={busy !== null} loading={busy === 'post'} onAction={() => onPost(postable)}>
+              <CheckCircle size={16} /> {t('Bogfør alle', 'Post all')} ({postable.length})
+            </SapActionButton>
+          </span>
         )}
         {list.canCreate && (
-          <SapActionButton size="sm" className={postable.length > 1 ? '' : 'ml-auto'} disabled={!selected || busy !== null} loading={busy === 'create'} onAction={onCreate}>
-            <FilePlus size={16} /> {selected ? t(`Opret SAP-dokument (${selected.materials.length}${selected.materials.length > 1 ? ' af maks. 20' : ''})`, `Create SAP document (${selected.materials.length}${selected.materials.length > 1 ? ' of max. 20' : ''})`) : t('Vælg materialer i tabellen', 'Choose materials in the table')}
-          </SapActionButton>
+          <span className={cn('flex', postable.length > 1 ? '' : 'ml-auto')}>
+            <SapActionButton size="sm" disabled={!selected || busy !== null} loading={busy === 'create'} onAction={onCreate}>
+              <FilePlus size={16} /> {selected ? t(`Opret SAP-dokument (${selected.materials.length}${selected.materials.length > 1 ? ' af maks. 20' : ''})`, `Create SAP document (${selected.materials.length}${selected.materials.length > 1 ? ' of max. 20' : ''})`) : t('Vælg materialer i tabellen', 'Choose materials in the table')}
+            </SapActionButton>
+          </span>
         )}
       </div>
       {!list.writeEnabled && (

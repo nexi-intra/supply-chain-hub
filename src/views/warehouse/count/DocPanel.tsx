@@ -458,28 +458,44 @@ export function ResolveDialog({ countId, item, onCancel, onResolve }: { countId:
   const [reason, setReason] = useState('')
   const [summary, setSummary] = useState<string | null>(null)
   const [checkFailed, setCheckFailed] = useState<string | null>(null)
+  const [checking, setChecking] = useState(false)
+  // What the last check filled in; a later check takes back the values the manager has not changed since.
+  const [filled, setFilled] = useState<{ outcome: 'saved' | 'missing' | null; docNo: string | null; reason: string | null }>({ outcome: null, docNo: null, reason: null })
   const texts = resolveTexts(item)
   // Same rule as the backend (9 or 10 digits); a count or posting must name the document itself.
   const validNo = /^\d{9,10}$/.test(docNo.trim()) && (!item.docNo || docNo.trim() === item.docNo)
   const ready = outcome !== null && reason.trim() !== '' && (outcome === 'missing' || validNo)
   // SAP is only read; when it cannot tell (outcome null), only the reason is filled and the choice is left to the manager.
+  // The fields are locked while it runs, so the values read here are still the ones on screen when the answer comes.
   const checkSap = async () => {
     setCheckFailed(null)
+    setChecking(true)
+    const kept = {
+      outcome: filled.outcome !== null && outcome === filled.outcome ? null : outcome,
+      docNo: filled.docNo !== null && docNo === filled.docNo ? '' : docNo,
+      reason: filled.reason !== null && reason === filled.reason ? '' : reason,
+    }
     try {
       const proposal = await window.electronWarehouse!.piDocs.check({ id: countId, docId: item.id })
+      const fillNo = proposal.outcome !== null && Boolean(proposal.docNo)
       setSummary(proposal.summary)
-      if (proposal.outcome) {
-        setOutcome(proposal.outcome)
-        if (proposal.docNo) setDocNo(proposal.docNo)
-      }
+      setOutcome(proposal.outcome ?? kept.outcome)
+      setDocNo(fillNo ? proposal.docNo! : kept.docNo)
       setReason(proposal.reason)
+      setFilled({ outcome: proposal.outcome, docNo: fillNo ? proposal.docNo : null, reason: proposal.reason })
     } catch (error) {
       setSummary(null)
+      setOutcome(kept.outcome)
+      setDocNo(kept.docNo)
+      setReason(kept.reason)
+      setFilled({ outcome: null, docNo: null, reason: null })
       setCheckFailed(errorMessage(error, t('Tjekket i SAP fejlede.', 'The check in SAP failed.')))
+    } finally {
+      setChecking(false)
     }
   }
   const choice = (value: 'saved' | 'missing', label: string, help: string) => (
-    <button type="button" aria-pressed={outcome === value} onClick={() => setOutcome(value)} className={cn('rounded-md border px-3 py-2 text-left text-sm', outcome === value ? 'border-primary bg-primary/10' : 'hover:bg-muted/50')}>
+    <button type="button" aria-pressed={outcome === value} disabled={checking} onClick={() => setOutcome(value)} className={cn('rounded-md border px-3 py-2 text-left text-sm disabled:opacity-50', outcome === value ? 'border-primary bg-primary/10' : 'hover:bg-muted/50')}>
       <span className="block font-medium">{label}</span>
       <span className="block text-xs text-muted-foreground">{help}</span>
     </button>
@@ -502,17 +518,17 @@ export function ResolveDialog({ countId, item, onCancel, onResolve }: { countId:
           {choice('missing', texts.missing, texts.missingHelp)}
         </div>
         {outcome === 'saved' && (
-          <Input value={docNo} maxLength={10} inputMode="numeric" onChange={event => setDocNo(event.target.value)} placeholder={t('SAP-dokumentnummer', 'SAP document number')} aria-label={t('SAP-dokumentnummer', 'SAP document number')} aria-invalid={docNo.trim() !== '' && !validNo} />
+          <Input value={docNo} maxLength={10} inputMode="numeric" disabled={checking} onChange={event => setDocNo(event.target.value)} placeholder={t('SAP-dokumentnummer', 'SAP document number')} aria-label={t('SAP-dokumentnummer', 'SAP document number')} aria-invalid={docNo.trim() !== '' && !validNo} />
         )}
         {outcome === 'saved' && !item.docNo && (
           <p className="flex items-center gap-2 text-sm text-amber-800 dark:text-amber-200">
             <Warning size={16} /> {t('Appen kan kun tage ét dokument pr. reference. Har MI31 lavet flere, så tjek dem i SAP.', 'The app can only take one document per reference. If MI31 made more, check them in SAP.')}
           </p>
         )}
-        <Input value={reason} maxLength={300} onChange={event => setReason(event.target.value)} placeholder={t('Hvad viser SAP?', 'What does SAP show?')} aria-label={t('Begrundelse', 'Reason')} />
+        <Input value={reason} maxLength={300} disabled={checking} onChange={event => setReason(event.target.value)} placeholder={t('Hvad viser SAP?', 'What does SAP show?')} aria-label={t('Begrundelse', 'Reason')} />
         <DialogFooter>
           <Button variant="ghost" onClick={onCancel}>{t('Annullér', 'Cancel')}</Button>
-          <Button disabled={!ready} onClick={() => outcome && onResolve({ outcome, docNo: outcome === 'saved' ? docNo.trim() : '', reason: reason.trim() })}>{t('Gem afklaringen', 'Save the decision')}</Button>
+          <Button disabled={!ready || checking} onClick={() => outcome && onResolve({ outcome, docNo: outcome === 'saved' ? docNo.trim() : '', reason: reason.trim() })}>{t('Gem afklaringen', 'Save the decision')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
