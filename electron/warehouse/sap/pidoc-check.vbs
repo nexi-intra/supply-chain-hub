@@ -5,8 +5,8 @@
 ' (plant D301) to <mi22File> and, unless <docNo> is "-", the MI20 list of <docNo> (plant D301, <year>) to <mi20File>.
 ' F8 only executes these display lists: nothing in MI20 is ticked, posted or saved. Nobody waits for the user, and the
 ' session is closed at the end. A list SAP has nothing for gives no file and "empty": it stays on selection screen 1000
-' with an S, I or W message, which is returned (mi22Message, mi20Message: "<type>: <text>"). Screen 1000 with any other
-' message (E, A, none, unreadable) is SAP refusing the selection, never "nothing listed": "list-error: ...".
+' with an S or I message, which is returned (mi22Message, mi20Message: "<type>: <text>"). Screen 1000 with any other
+' message (W, E, A, none, unreadable) is SAP refusing or stopping the selection, never "nothing listed": "list-error: ...".
 ' Output: {"ok":true,"mi22":"saved|empty","mi20":"saved|empty|skipped","mi22Message":"...","mi20Message":"..."} or
 ' {"ok":false,"error":"..."}.
 Option Explicit
@@ -119,6 +119,7 @@ End Function
 
 ' The text of the open popup, "" when none is open, "(popup)" when one is open but its text cannot be read.
 Function PopupText()
+  On Error Resume Next
   Dim n, t
   PopupText = ""
   n = 0
@@ -140,9 +141,11 @@ End Function
 
 ' Executes the filled display list (F8) and saves it to <file>: "saved", or "empty" when SAP lists nothing.
 ' SAP stays on selection screen 1000 both when it lists nothing and when it refuses the selection (e.g. no authorization
-' for the plant): only a status bar message read as S, I or W is "nothing listed" (listMessage keeps it). Anything else
-' (E, A, no message, unreadable) ends the run with "list-error", so CountPoint never reads a refusal as "no document".
+' for the plant) or stops F8 at a warning (W: the list never ran): only a status bar message read as S or I is "nothing
+' listed" (listMessage keeps it). Anything else (W, E, A, no message, unreadable) ends the run with "list-error", so
+' CountPoint never reads a refusal as "no document".
 Function RunList(file)
+  On Error Resume Next
   Dim screen, kind, text, popup
   listMessage = ""
   Err.Clear
@@ -163,7 +166,7 @@ Function RunList(file)
     If Err.Number <> 0 Then Err.Clear : kind = ""
     If Len(popup) > 0 Then text = Trim(text & " [" & popup & "]")
     listMessage = kind & ": " & text
-    If kind <> "S" And kind <> "I" And kind <> "W" Then Finish False, "list-error: " & listMessage
+    If kind <> "S" And kind <> "I" Then Finish False, "list-error: " & listMessage
     ClosePopups
     RunList = "empty"
     Exit Function

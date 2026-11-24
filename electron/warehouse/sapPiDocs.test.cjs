@@ -761,6 +761,8 @@ test('"Tjek i SAP": a document with another status than active or none (e.g. del
     .replace('\t105000900\t2\t\t0000.00\t19.10.2026\t\t\t1\tCPABC123\tDoc. Active', '\t105000900\t2\t\t0000.00\t19.10.2026\t\t\t1\tCPABC123\tDoc. Deleted')
   const { writer } = checkSetup({ mi22: deleted })
   assert.deepEqual((await writer.checkDocument({ reference: 'CPABC123', docNo: null, year: '2026' })).docs, [{ docNo: '105000900', materials: ['R133-0032', 'R133-0033'], active: false, posted: false, status: 'Doc. Deleted' }], 'posted only when every row has no status')
+  const inactive = checkSetup({ mi22: MI22.replaceAll('\tCPABC123\tDoc. Active', '\tCPABC123\tDoc. Inactive') })
+  assert.deepEqual((await inactive.writer.checkDocument({ reference: 'CPABC123', docNo: null, year: '2026' })).docs, [{ docNo: '105000900', materials: ['R133-0032', 'R133-0033'], active: false, posted: false, status: 'Doc. Inactive' }], '"Inactive" is not active')
 })
 
 test('"Tjek i SAP": SAP not ready, a non-English logon, a bad request or an unreadable list stop it; nothing is guessed', async () => {
@@ -807,8 +809,14 @@ test('pidoc-check.vbs only lists MI22 and MI20, never hands SAP over and closes 
   assert.ok(finish.includes('""mi22Message"":" & JsonText(mi22Message)') && finish.includes('""mi20Message"":" & JsonText(mi20Message)'), 'the message SAP gave for an empty list is answered')
 })
 
-test('pidoc-check.vbs: a list stays "empty" only on an S, I or W message; SAP refusing the selection on screen 1000 is an error', () => {
+test('pidoc-check.vbs: a list stays "empty" only on an S or I message; SAP refusing the selection on screen 1000 is an error', () => {
   const source = fs.readFileSync(path.join(__dirname, 'sap', 'pidoc-check.vbs'), 'utf8')
+  // VBScript does not carry On Error Resume Next into a called procedure: without its own, a failed read would leave the
+  // function before its checks.
+  for (const name of ['Function PopupText()', 'Function RunList(file)']) {
+    const body = source.slice(source.indexOf(name)).split('\r\n')
+    assert.equal(body[1], '  On Error Resume Next', `${name} has its own On Error Resume Next first`)
+  }
   const start = source.indexOf('Function RunList(')
   const runList = source.slice(start, source.indexOf('End Function', start))
   const at = text => runList.indexOf(text)
@@ -821,8 +829,10 @@ test('pidoc-check.vbs: a list stays "empty" only on an S, I or W message; SAP re
   }
   assert.ok(at('kind = ""') < at('kind = UCase('), 'no message read is no type')
   assert.ok(at('If Err.Number <> 0 Then Err.Clear : kind = ""') > at('text = Trim('), 'an unreadable status bar is no type')
-  const refuse = at('If kind <> "S" And kind <> "I" And kind <> "W" Then Finish False, "list-error: " & listMessage')
-  assert.ok(refuse > at('listMessage = kind & ": " & text') && refuse < at('ClosePopups') && at('ClosePopups') < empty, 'E, A, blank or unreadable never reach "empty"')
+  // W: F8 stopped at a warning and the list never ran; it is not "nothing listed".
+  const refuse = at('If kind <> "S" And kind <> "I" Then Finish False, "list-error: " & listMessage')
+  assert.ok(refuse > at('listMessage = kind & ": " & text') && refuse < at('ClosePopups') && at('ClosePopups') < empty, 'W, E, A, blank or unreadable never reach "empty"')
+  assert.doesNotMatch(runList, /"W"/)
   const lines = source.split('\r\n')
   assert.equal(lines[lines.indexOf('mi22 = RunList(mi22File)') + 1], 'mi22Message = listMessage')
   assert.equal(lines[lines.indexOf('  mi20 = RunList(mi20File)') + 1], '  mi20Message = listMessage')

@@ -326,9 +326,9 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, expected = { 
           if (status && !doc.statuses.includes(status)) doc.statuses.push(status)
           if (status) doc.blank = false
         }
-        // A posted document shows no status on any of its rows; "Doc. Active" is still open; any other status (e.g. deleted
-        // in MI02) is neither, and its text is passed on.
-        const docs = [...byDoc.values()].map(({ docNo, materials, statuses, blank }) => ({ docNo, materials, active: statuses.some(status => /active/i.test(status)), posted: blank, status: statuses.join(', ') }))
+        // A posted document shows no status on any of its rows; "Doc. Active" is still open ("Inactive" is not); any other
+        // status (e.g. deleted in MI02) is neither, and its text is passed on.
+        const docs = [...byDoc.values()].map(({ docNo, materials, statuses, blank }) => ({ docNo, materials, active: statuses.some(status => /\bactive\b/i.test(status) && !/inactive/i.test(status)), posted: blank, status: statuses.join(', ') }))
         const messages = { mi22: String(result.mi22Message || ''), mi20: String(result.mi20Message || '') }
         return { docs, counted: [...new Set(listed.map(item => item.material))], messages }
       } finally {
