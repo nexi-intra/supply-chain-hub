@@ -126,6 +126,27 @@ test('the runner passes stage lines on while the script runs; the answer stays t
   assert.equal(await quiet('status', [], { onLine: () => { throw new Error('never') } }), '{"ok":true}', 'no child to listen to is fine')
 })
 
+test('a stage line at the very end of stdout, without a line break, is passed on when stdout ends', async () => {
+  const { EventEmitter } = require('node:events')
+  let child, done
+  const execFile = (file, args, options, callback) => {
+    child = { stdout: new EventEmitter() }
+    done = callback
+    return child
+  }
+  const lines = []
+  const answer = createCscriptRunner({ scriptDir: 'C:\\app\\sap', cscriptPath: 'cscript.exe', execFile })('pidoc-count', ['PS4', '105000894'], { onLine: line => lines.push(line) })
+  child.stdout.emit('data', 'noise\r\n{"stage":"wait')
+  child.stdout.emit('data', 'ing"}')
+  assert.deepEqual(lines, [], 'the line may still go on')
+  child.stdout.emit('end')
+  assert.deepEqual(lines, [{ stage: 'waiting' }])
+  child.stdout.emit('end')
+  assert.deepEqual(lines, [{ stage: 'waiting' }], 'passed on once')
+  done(null, 'noise\r\n{"stage":"waiting"}')
+  await answer
+})
+
 test('the runner only starts allow-listed scripts with the 32-bit host and safe arguments', async () => {
   const calls = []
   const execFile = (file, args, options, callback) => { calls.push({ file, args, options }); callback(null, READY) }

@@ -79,12 +79,25 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, expected = { 
     })
   }
 
-  /** A script that hands SAP to the user: killed at the time limit, the user may have saved meanwhile. */
+  /** Wraps `onLine` and remembers whether the script has said {"stage":"waiting"}: from then on the user has SAP. */
+  function watchHandOver(onLine = () => {}) {
+    const watch = {
+      handedOver: false,
+      onLine: line => {
+        if (line?.stage === 'waiting') watch.handedOver = true
+        onLine(line)
+      },
+    }
+    return watch
+  }
+
+  /** A script that hands SAP to the user: killed at the time limit after the hand-over, the user may have saved meanwhile. */
   async function runWaiting(name, args, options) {
+    const watch = watchHandOver(options.onLine)
     try {
-      return await runScript(name, args, options)
+      return await runScript(name, args, { ...options, onLine: watch.onLine })
     } catch (error) {
-      if (error?.code === 'SAP_TIMEOUT') throw unknownState(name, error.code)
+      if (error?.code === 'SAP_TIMEOUT' && watch.handedOver) throw unknownState(name, error.code)
       throw error
     }
   }
@@ -155,6 +168,7 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, expected = { 
     if (writing) throw writeError('PIDOC_BUSY', 'Der er allerede et SAP-dokument i gang på denne PC')
     writing = true
     const dir = await fs.promises.mkdtemp(path.join(tempRoot, 'countpoint-pidoc-'))
+    let create
     try {
       // The test run and the start of the create run hold the SAP queue; it is handed on with the filled screen.
       const result = await inQueue(onWaiting, async onLine => {
@@ -167,16 +181,19 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, expected = { 
           const problems = log.items.filter(item => item.message).map(item => `${item.material}: ${item.message}`)
           throw writeError('PIDOC_NOT_POSSIBLE', `SAP vil ikke oprette dokument for ${missing.join(', ') || 'alle materialer'}${problems.length ? ` (${problems.join('; ')})` : ''}. Der er ikke oprettet noget`, { missing, problems })
         }
-        // From the hand-over on SAP may create the documents: a failure after the user's F8 leaves that unknown.
+        // From the hand-over on SAP may create the documents: a failure after the user's F8 leaves that unknown. Before
+        // the script says {"stage":"waiting"} the user does not have the screen, so nothing can have been created.
+        create = watchHandOver(onLine)
         try {
-          return await run(dir, 'create', request, 'mi22.txt', (waitSeconds + 120) * 1000, onLine)
+          return await run(dir, 'create', request, 'mi22.txt', (waitSeconds + 120) * 1000, create.onLine)
         } catch (error) {
+          if (error?.code !== 'SAP_TIMEOUT' && error?.code !== 'SAP_SCRIPT_FAILED') throw error
+          if (!create.handedOver) throw writeError('PIDOC_SAP_FAILED', `Oprettelsen i MI31 stoppede, før SAP-skærmen blev givet til dig (${error.code}). Intet er oprettet`)
           // Killed at the time limit, or the script broke after the hand-over: the user may have pressed F8.
-          if (error?.code === 'SAP_TIMEOUT' || error?.code === 'SAP_SCRIPT_FAILED') throw unknownState('pidoc-create', error.code)
-          throw error
+          throw unknownState('pidoc-create', error.code)
         }
       })
-      if (!result?.ok && !beforeF8(result?.error)) throw unknownState('pidoc-create', result?.error || 'no-answer')
+      if (!result?.ok && create.handedOver && !beforeF8(result?.error)) throw unknownState('pidoc-create', result?.error || 'no-answer')
       if (!result?.ok) throw scriptFailure(result, 'Oprettelsen i MI31')
       let found
       try {

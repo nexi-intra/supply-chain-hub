@@ -5,7 +5,7 @@
 Option Explicit
 On Error Resume Next
 
-Dim systemName, kind, docNo, year, app, conn, base, s, i, before, beforeIds
+Dim systemName, kind, docNo, year, app, conn, base, s, i, before, beforeIds, client
 
 Sub Finish(ok, text)
   If ok Then
@@ -29,6 +29,8 @@ kind = LCase(WScript.Arguments(1))
 docNo = WScript.Arguments(2)
 year = WScript.Arguments(3)
 If Err.Number <> 0 Then Err.Clear : Finish False, "arguments"
+client = CreateObject("WScript.Shell").Environment("PROCESS")("COUNTPOINT_SAP_CLIENT")
+If Len(client) = 0 Then Finish False, "arguments"
 If (kind <> "mi03" And kind <> "mb03") Or Len(docNo) < 9 Or Len(year) <> 4 Then Finish False, "arguments"
 
 Set app = GetObject("SAPGUI").GetScriptingEngine
@@ -36,7 +38,7 @@ If Err.Number <> 0 Then Err.Clear : Finish False, "sap-not-running"
 Set conn = Nothing
 For i = 0 To app.Children.Count - 1
   If app.Children(CInt(i)).Children.Count > 0 Then
-    If app.Children(CInt(i)).Children(0).Info.SystemName = systemName Then Set conn = app.Children(CInt(i))
+    If app.Children(CInt(i)).Children(0).Info.SystemName = systemName And app.Children(CInt(i)).Children(0).Info.Client = client Then Set conn = app.Children(CInt(i)) : Exit For
   End If
 Next
 Err.Clear
@@ -53,7 +55,7 @@ For i = 0 To conn.Children.Count - 1
   beforeIds = beforeIds & conn.Children(CInt(i)).Id & "|"
 Next
 base.CreateSession
-For i = 1 To 100
+For i = 1 To 300
   If conn.Children.Count > before Then Exit For
   WScript.Sleep 100
 Next
@@ -64,7 +66,7 @@ For i = 0 To conn.Children.Count - 1
 Next
 If s Is Nothing Then Err.Clear : Finish False, "session-not-created"
 WaitIdle
-If s.Info.SystemName <> systemName Then Finish False, "wrong-system"
+If s.Info.SystemName <> systemName Or s.Info.Client <> client Then Finish False, "wrong-system"
 Err.Clear
 
 If kind = "mi03" Then

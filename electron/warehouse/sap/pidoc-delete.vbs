@@ -8,7 +8,7 @@ Option Explicit
 On Error Resume Next
 
 Const PLANT = "D301"
-Dim systemName, docNo, year, reference, outDir, statusFile, waitSeconds, app, conn, base, s, i, before, beforeIds, ownId
+Dim systemName, docNo, year, reference, outDir, statusFile, waitSeconds, app, conn, base, s, i, before, beforeIds, ownId, client
 Dim fso, message, screens, last, current, leftHeader
 
 Function JsonText(value)
@@ -78,7 +78,7 @@ Sub OpenSession()
     beforeIds = beforeIds & conn.Children(CInt(i)).Id & "|"
   Next
   base.CreateSession
-  For i = 1 To 100
+  For i = 1 To 300
     If conn.Children.Count > before Then Exit For
     WScript.Sleep 100
   Next
@@ -89,7 +89,7 @@ Sub OpenSession()
   If s Is Nothing Then Err.Clear : Finish False, "session-not-created"
   ownId = s.Id
   WaitIdle
-  If s.Info.SystemName <> systemName Then Finish False, "wrong-system"
+  If s.Info.SystemName <> systemName Or s.Info.Client <> client Then Finish False, "wrong-system"
   Err.Clear
 End Sub
 
@@ -128,6 +128,8 @@ Set s = Nothing
 screens = ""
 Set fso = CreateObject("Scripting.FileSystemObject")
 If Err.Number <> 0 Then Err.Clear : Finish False, "arguments"
+client = CreateObject("WScript.Shell").Environment("PROCESS")("COUNTPOINT_SAP_CLIENT")
+If Len(client) = 0 Then Finish False, "arguments"
 If Len(docNo) < 9 Or Len(year) <> 4 Or Len(reference) = 0 Then Finish False, "arguments"
 If fso.FileExists(outDir & "\" & statusFile) Then fso.DeleteFile outDir & "\" & statusFile
 
@@ -136,7 +138,7 @@ If Err.Number <> 0 Then Err.Clear : Finish False, "sap-not-running"
 Set conn = Nothing
 For i = 0 To app.Children.Count - 1
   If app.Children(CInt(i)).Children.Count > 0 Then
-    If app.Children(CInt(i)).Children(0).Info.SystemName = systemName Then Set conn = app.Children(CInt(i))
+    If app.Children(CInt(i)).Children(0).Info.SystemName = systemName And app.Children(CInt(i)).Children(0).Info.Client = client Then Set conn = app.Children(CInt(i)) : Exit For
   End If
 Next
 Err.Clear
@@ -185,6 +187,7 @@ s.findById("wnd[0]").SetFocus
 last = s.Info.Program & "/" & s.Info.ScreenNumber & "/" & s.Children.Count
 screens = last
 leftHeader = False
+WScript.StdOut.WriteLine "{""stage"":""waiting""}"
 For i = 1 To waitSeconds * 2
   WScript.Sleep 500
   If Not SessionOpen() Then Set s = Nothing : Exit For

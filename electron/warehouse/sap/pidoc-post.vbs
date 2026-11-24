@@ -9,7 +9,7 @@ Option Explicit
 On Error Resume Next
 
 Const PLANT = "D301"
-Dim systemName, year, outDir, listFile, statusFile, waitSeconds, firstDoc, fromClipboard
+Dim systemName, year, outDir, listFile, statusFile, waitSeconds, firstDoc, fromClipboard, client
 Dim app, conn, base, s, i, before, beforeIds, ownId, fso, ticked, screens, last, current, leftList, timedOut
 
 Function JsonText(value)
@@ -149,6 +149,8 @@ screens = ""
 timedOut = False
 Set fso = CreateObject("Scripting.FileSystemObject")
 If Err.Number <> 0 Then Err.Clear : Finish False, "arguments"
+client = CreateObject("WScript.Shell").Environment("PROCESS")("COUNTPOINT_SAP_CLIENT")
+If Len(client) = 0 Then Finish False, "arguments"
 If Len(year) <> 4 Or Len(firstDoc) < 9 Then Finish False, "arguments"
 If fso.FileExists(outDir & "\" & listFile) Then fso.DeleteFile outDir & "\" & listFile
 If fso.FileExists(outDir & "\" & statusFile) Then fso.DeleteFile outDir & "\" & statusFile
@@ -158,7 +160,7 @@ If Err.Number <> 0 Then Err.Clear : Finish False, "sap-not-running"
 Set conn = Nothing
 For i = 0 To app.Children.Count - 1
   If app.Children(CInt(i)).Children.Count > 0 Then
-    If app.Children(CInt(i)).Children(0).Info.SystemName = systemName Then Set conn = app.Children(CInt(i))
+    If app.Children(CInt(i)).Children(0).Info.SystemName = systemName And app.Children(CInt(i)).Children(0).Info.Client = client Then Set conn = app.Children(CInt(i)) : Exit For
   End If
 Next
 Err.Clear
@@ -174,7 +176,7 @@ For i = 0 To conn.Children.Count - 1
   beforeIds = beforeIds & conn.Children(CInt(i)).Id & "|"
 Next
 base.CreateSession
-For i = 1 To 100
+For i = 1 To 300
   If conn.Children.Count > before Then Exit For
   WScript.Sleep 100
 Next
@@ -185,7 +187,7 @@ Next
 If s Is Nothing Then Err.Clear : Finish False, "session-not-created"
 ownId = s.Id
 WaitIdle
-If s.Info.SystemName <> systemName Then Finish False, "wrong-system"
+If s.Info.SystemName <> systemName Or s.Info.Client <> client Then Finish False, "wrong-system"
 Err.Clear
 ' The MI20/MI22 lists ("Doc. Active", "posted with m. doc.") are read in English; another logon language could hide a
 ' posted document, so nothing is filled unless the session is in English.
@@ -223,6 +225,7 @@ Err.Clear
 last = s.Info.Program & "/" & s.Info.ScreenNumber & "/" & s.Children.Count
 screens = last
 leftList = False
+WScript.StdOut.WriteLine "{""stage"":""waiting""}"
 For i = 1 To waitSeconds * 2
   WScript.Sleep 500
   If Not SessionOpen() Then Set s = Nothing : Exit For
@@ -254,7 +257,7 @@ End If
 If s Is Nothing Then
   ' The user closed the window: open a fresh session only to read the status (display only).
   base.CreateSession
-  For i = 1 To 100
+  For i = 1 To 300
     If conn.Children.Count > before Then Exit For
     WScript.Sleep 100
   Next
@@ -265,6 +268,8 @@ If s Is Nothing Then
   If s Is Nothing Then Finish False, "closed-unknown"
   ownId = s.Id
   WaitIdle
+  If s.Info.SystemName <> systemName Or s.Info.Client <> client Then Finish False, "wrong-system"
+  Err.Clear
 End If
 
 ' Status of the documents in MI22 (display only).

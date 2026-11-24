@@ -78,8 +78,8 @@ test('any failure after the user\'s F8 in MI31 is unknown: SAP may have created 
   for (const error of ['left-mi31', 'not-created: x', 'no-access-mi22', 'mi22-screen-changed', 'created-but-not-found', 'read-failed', 'field-not-set: wnd[0]/usr/ctxtIM_INVNU-LOW']) {
     await assert.rejects(setup({ createResult: { ok: false, error } }).writer.createDocument(REQUEST), error => error.code === unknown.code && error.message === unknown.message && typeof error.detail === 'string', error)
   }
-  // A script killed at the time limit, or one whose MI22 list cannot be read.
-  const killing = writerFor({ runScript: async (name, args) => { if (args[1] === 'test') { fs.writeFileSync(path.join(args[5], args[6]), fixture('mi31-test.txt')); return '{"ok":true}' } throw Object.assign(new Error('SAP_TIMEOUT'), { code: 'SAP_TIMEOUT' }) }, clipboard: { writeText: () => {}, readText: () => 'R133-0032\r\nR133-0033' }, system: 'QS4', waitSeconds: 600 })
+  // A script killed at the time limit after the hand-over, or one whose MI22 list cannot be read.
+  const killing = writerFor({ runScript: async (name, args, options) => { if (args[1] === 'test') { fs.writeFileSync(path.join(args[5], args[6]), fixture('mi31-test.txt')); return '{"ok":true}' } options.onLine({ stage: 'waiting' }); throw Object.assign(new Error('SAP_TIMEOUT'), { code: 'SAP_TIMEOUT' }) }, clipboard: { writeText: () => {}, readText: () => 'R133-0032\r\nR133-0033' }, system: 'QS4', waitSeconds: 600 })
   await assert.rejects(killing.createDocument(REQUEST), unknown)
   await assert.rejects(setup({ list: 'not a MI22 list' }).writer.createDocument(REQUEST), unknown)
 })
@@ -87,7 +87,8 @@ test('any failure after the user\'s F8 in MI31 is unknown: SAP may have created 
 test('a create script that breaks after the hand-over to F8 is unknown; one that breaks in the test run is passed on', async t => {
   t.mock.method(console, 'error', () => {})
   const writer = failAt => writerFor({
-    runScript: async (name, args) => {
+    runScript: async (name, args, options) => {
+      if (args[1] === 'create') options.onLine({ stage: 'waiting' })
       if (args[1] === failAt) throw Object.assign(new Error('SAP_SCRIPT_FAILED'), { code: 'SAP_SCRIPT_FAILED' })
       fs.writeFileSync(path.join(args[5], args[6]), fixture('mi31-test.txt'))
       return '{"ok":true}'
@@ -96,6 +97,31 @@ test('a create script that breaks after the hand-over to F8 is unknown; one that
   })
   await assert.rejects(writer('create').createDocument(REQUEST), { code: 'PIDOC_UNKNOWN', detail: 'SAP_SCRIPT_FAILED' })
   await assert.rejects(writer('test').createDocument(REQUEST), { code: 'SAP_SCRIPT_FAILED' })
+})
+
+test('a create run that fails before it hands MI31 over has created nothing, whatever the failure', async t => {
+  const logged = t.mock.method(console, 'error', () => {})
+  const writer = failure => writerFor({
+    runScript: async (name, args) => {
+      if (args[1] === 'test') { fs.writeFileSync(path.join(args[5], args[6]), fixture('mi31-test.txt')); return '{"ok":true}' }
+      return failure()
+    },
+    clipboard: { writeText: () => {}, readText: () => 'R133-0032\r\nR133-0033' }, system: 'QS4', waitSeconds: 600,
+  })
+  await assert.rejects(writer(() => '{"ok":false,"error":"left-mi31"}').createDocument(REQUEST), { code: 'PIDOC_SAP_FAILED', message: 'PIDOC_SAP_FAILED: Oprettelsen i MI31 fejlede: left-mi31' })
+  await assert.rejects(writer(() => '').createDocument(REQUEST), { code: 'PIDOC_SAP_FAILED' }, 'no answer at all')
+  for (const code of ['SAP_TIMEOUT', 'SAP_SCRIPT_FAILED']) {
+    await assert.rejects(writer(() => { throw Object.assign(new Error(code), { code }) }).createDocument(REQUEST), error => error.code === 'PIDOC_SAP_FAILED' && /intet er oprettet/i.test(error.message) && error.message.includes(code), code)
+  }
+  assert.equal(logged.mock.calls.length, 0, 'nothing is logged as unknown')
+})
+
+test('MI04, ZMS_COUNT_SERIAL and MI20 killed before the hand-over are a plain timeout: nothing is saved', async () => {
+  const runScript = async () => { throw Object.assign(new Error('SAP_TIMEOUT'), { code: 'SAP_TIMEOUT' }) }
+  const writer = writerFor({ runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
+  await assert.rejects(writer.enterSerials({ docNo: '105000893', year: '2026', material: 'INT1-0', serials: ['S1'] }), { code: 'SAP_TIMEOUT' })
+  await assert.rejects(writer.enterCounts({ docNo: '105000894', year: '2026', entries: [{ material: 'R1', qty: 3 }] }), { code: 'SAP_TIMEOUT' })
+  await assert.rejects(writer.postDocuments({ docNos: ['105000894'], year: '2026' }), { code: 'SAP_TIMEOUT' })
 })
 
 test('posting: MI20 or MI22 lists that cannot be read after the user posted are unknown, never "intet er gemt"', async t => {
@@ -288,7 +314,7 @@ test('MI04 and ZMS_COUNT_SERIAL: a failed read-back is unknown, also without a t
 })
 
 test('a script killed at the time limit while the user may have saved is unknown, not "Prøv igen"', async () => {
-  const runScript = async () => { throw Object.assign(new Error('SAP_TIMEOUT'), { code: 'SAP_TIMEOUT' }) }
+  const runScript = async (name, args, options) => { options.onLine({ stage: 'waiting' }); throw Object.assign(new Error('SAP_TIMEOUT'), { code: 'SAP_TIMEOUT' }) }
   const writer = writerFor({ runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
   await assert.rejects(writer.enterSerials({ docNo: '105000893', year: '2026', material: 'INT1-0', serials: ['S1'] }), UNKNOWN)
   await assert.rejects(writer.enterCounts({ docNo: '105000894', year: '2026', entries: [{ material: 'R1', qty: 3 }] }), UNKNOWN)
@@ -300,7 +326,7 @@ test('a script killed at the time limit while the user may have saved is unknown
 test('an unknown state is logged with the script and SAP\'s detail; the message stays the plain text', async t => {
   const logged = t.mock.method(console, 'error', () => {})
   let next = '{"ok":false,"error":"verify-failed"}'
-  const runScript = async () => { if (next instanceof Error) throw next; return next }
+  const runScript = async (name, args, options) => { if (next instanceof Error) { options.onLine({ stage: 'waiting' }); throw next } return next }
   const writer = writerFor({ runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
   await assert.rejects(writer.enterCounts({ docNo: '105000894', year: '2026', entries: [{ material: 'R1', qty: 3 }] }), UNKNOWN)
   await assert.rejects(writer.enterSerials({ docNo: '105000893', year: '2026', material: 'INT1-0', serials: ['S1'] }), UNKNOWN)
@@ -420,6 +446,49 @@ test('every PI script refuses a non-English logon after the system check and bef
     assert.match(source, /^Dim logonLanguage\r$/m, `${name}: logonLanguage is declared (Option Explicit)`)
     assert.match(source, /^logonLanguage = UCase\(Trim\(CStr\(s\.Info\.Language\)\)\)\r$/m, `${name}: reads the session's logon language`)
   }
+})
+
+// Every script that opens its own SAP session: the six PI scripts, sap-show and the two Softwareload writes.
+const SESSION_SCRIPTS = [...PI_SCRIPTS, 'sap-show.vbs', 'sl-transfer.vbs', 'sl-block.vbs']
+
+test('every session script picks the first connection to the system and client, waits 30 s for its session and checks both', () => {
+  for (const name of SESSION_SCRIPTS) {
+    const source = fs.readFileSync(path.join(__dirname, 'sap', name), 'utf8')
+    const lines = source.split('\r\n')
+    assert.ok(/^Dim [^\r\n]*\bclient\b/m.test(source), `${name}: client is declared (Option Explicit)`)
+    const read = lines.indexOf('client = CreateObject("WScript.Shell").Environment("PROCESS")("COUNTPOINT_SAP_CLIENT")')
+    assert.ok(read > 0, `${name}: reads the client CountPoint expects`)
+    assert.match(lines[read + 1], /^If Len\(client\) = 0 Then Finish False, "arguments"(, "")?$/, `${name}: no client, no run`)
+    assert.ok(read < lines.findIndex(line => line.includes('GetObject("SAPGUI")')), `${name}: the client is known before SAP is touched`)
+    const picks = lines.filter(line => /\.Children\(0\)\.Info\.SystemName = /.test(line))
+    assert.equal(picks.length, 1, `${name}: one place picks the connection`)
+    assert.match(picks[0].trim(), /^If (\S+)\.Children\(0\)\.Info\.SystemName = \w+ And \1\.Children\(0\)\.Info\.Client = \w+ Then Set \w+ = \1 : Exit (For|Function)$/, `${name}: the first connection where system and client match`)
+    if (source.includes('Function SystemConnection(')) assert.ok(lines.includes('Set conn = SystemConnection(app, systemName, client)'), `${name}: asks for the client too`)
+    const created = lines.flatMap((line, index) => (line.trim() === 'base.CreateSession' ? [index] : []))
+    assert.ok(created.length > 0, name)
+    for (const index of created) {
+      assert.deepEqual(lines.slice(index + 1, index + 5).map(line => line.trim()), ['For i = 1 To 300', 'If conn.Children.Count > before Then Exit For', 'WScript.Sleep 100', 'Next'], `${name}: waits up to 30 s for the new session`)
+    }
+    const checks = lines.filter(line => line.includes('"wrong-system"'))
+    assert.equal(checks.length, created.length, `${name}: every new session is checked`)
+    for (const line of checks) assert.match(line.trim(), /^If s\.Info\.SystemName <> systemName Or s\.Info\.Client <> client Then (Err\.Clear : )?Finish False, "wrong-system"(, "")?$/, `${name}: system and client`)
+  }
+})
+
+test('every PI script says {"stage":"waiting"} right before it waits for the user; pidoc-create only when creating', () => {
+  const STAGE = 'WScript.StdOut.WriteLine "{""stage"":""waiting""}"'
+  for (const name of PI_SCRIPTS) {
+    const lines = fs.readFileSync(path.join(__dirname, 'sap', name), 'utf8').split('\r\n')
+    assert.equal(lines.filter(line => line.includes('stage')).length, 1, `${name}: one stage line`)
+    const wait = lines.indexOf('For i = 1 To waitSeconds * 2')
+    assert.ok(wait > 0, name)
+    assert.equal(lines.indexOf('For i = 1 To waitSeconds * 2', wait + 1), -1, `${name}: one wait for the user`)
+    assert.equal(lines[wait - 1], STAGE, `${name}: the stage line comes right before the wait`)
+  }
+  const create = fs.readFileSync(path.join(__dirname, 'sap', 'pidoc-create.vbs'), 'utf8').split('\r\n')
+  const createMode = create.indexOf('If Not s.findById("wnd[0]/usr/radCALL_FB").Selected Then Finish False, "field-not-set: CALL_FB"')
+  assert.ok(createMode > create.indexOf('If mode = "test" Then', create.indexOf('Check "wnd[0]/usr/txtINVNU", reference')), 'the test run has ended before')
+  assert.ok(create.indexOf(STAGE) > createMode, 'never in test mode')
 })
 
 test('one material needs no clipboard; bad requests and a second run at once are refused', async () => {

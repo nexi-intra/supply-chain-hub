@@ -17,7 +17,7 @@ Const PLANT = "D301"
 Const MAX_SERIALS = 500
 Const GRID_ID = "wnd[0]/usr/cntlGRID1/shellcont/shell/shellcont[1]/shell"
 Const TARGET_FIELD = "wnd[1]/usr/sub:SAPLSPO4:0300/ctxtSVALD-VALUE[0,21]"
-Dim systemName, mode, target, source, outDir, inFile, errFile, tcode, app, conn, base, s, i, before, beforeIds, fso, ownId, doc
+Dim systemName, mode, target, source, outDir, inFile, errFile, tcode, app, conn, base, s, i, before, beforeIds, fso, ownId, doc, client
 Dim wanted, asked, firstSerial, text, lines, key, re
 
 Function JsonText(value)
@@ -77,15 +77,15 @@ Sub CloseOwnSession()
   Set s = Nothing
 End Sub
 
-' The connection to <system> only; never another system.
-Function SystemConnection(engine, wantedSystem)
+' The first connection to <system> in the client CountPoint expects; never another system or client.
+Function SystemConnection(engine, wantedSystem, wantedClient)
   On Error Resume Next
   Dim n, candidate
   Set SystemConnection = Nothing
   For n = 0 To engine.Children.Count - 1
     Set candidate = engine.Children(CInt(n))
     If candidate.Children.Count > 0 Then
-      If candidate.Children(0).Info.SystemName = wantedSystem Then Set SystemConnection = candidate : Exit Function
+      If candidate.Children(0).Info.SystemName = wantedSystem And candidate.Children(0).Info.Client = wantedClient Then Set SystemConnection = candidate : Exit Function
     End If
   Next
   Err.Clear
@@ -277,6 +277,8 @@ Set fso = CreateObject("Scripting.FileSystemObject")
 Set re = New RegExp
 re.IgnoreCase = True
 If Err.Number <> 0 Then Err.Clear : Finish False, "arguments"
+client = CreateObject("WScript.Shell").Environment("PROCESS")("COUNTPOINT_SAP_CLIENT")
+If Len(client) = 0 Then Finish False, "arguments"
 If mode = "rep" Then
   tcode = "ZMS_REP"
 ElseIf mode = "prep" Then
@@ -308,7 +310,7 @@ Err.Clear
 
 Set app = GetObject("SAPGUI").GetScriptingEngine
 If Err.Number <> 0 Then Err.Clear : Finish False, "sap-not-running"
-Set conn = SystemConnection(app, systemName)
+Set conn = SystemConnection(app, systemName, client)
 If conn Is Nothing Then Err.Clear : Finish False, "not-logged-in-" & systemName
 Set base = Nothing
 For i = 0 To conn.Children.Count - 1
@@ -321,7 +323,7 @@ For i = 0 To conn.Children.Count - 1
   beforeIds = beforeIds & conn.Children(CInt(i)).Id & "|"
 Next
 base.CreateSession
-For i = 1 To 100
+For i = 1 To 300
   If conn.Children.Count > before Then Exit For
   WScript.Sleep 100
 Next
@@ -332,7 +334,7 @@ Next
 If s Is Nothing Then Err.Clear : Finish False, "session-not-created"
 ownId = s.Id
 WaitIdle
-If s.Info.SystemName <> systemName Then Err.Clear : Finish False, "wrong-system"
+If s.Info.SystemName <> systemName Or s.Info.Client <> client Then Err.Clear : Finish False, "wrong-system"
 ' SAP's answers below ("successfully created", the log) are read in English; another logon language could hide a
 ' posted document, so nothing is pressed unless the session is in English.
 Dim logonLanguage

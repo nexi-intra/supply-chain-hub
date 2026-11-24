@@ -15,7 +15,7 @@ Const MAX_SERIALS = 50
 Const ITEM_TABS = "/subSUB_ITEMDETAIL:SAPLMIGO:0303/subSUB_DETAIL:SAPLMIGO:0305/tabsTS_GOITEM"
 Const TRANS_AREA = "/tabpOK_GOITEM_TRANS/ssubSUB_TS_GOITEM_TRANS:SAPLMIGO:0390"
 Const SERIAL_TABLE = "/tabpOK_GOITEM_SERIAL/ssubSUB_TS_GOITEM_SERIAL:SAPLMIGO:0360/tblSAPLMIGOTV_GOSERIAL"
-Dim systemName, outDir, inFile, material, bwart, app, conn, base, s, i, before, beforeIds, fso, ownId, doc
+Dim systemName, outDir, inFile, material, bwart, app, conn, base, s, i, before, beforeIds, fso, ownId, doc, client
 Dim serials, count, text, lines, value, re, carrier, firstLine, tabs, matches
 
 Function JsonText(value)
@@ -75,15 +75,15 @@ Sub CloseOwnSession()
   Set s = Nothing
 End Sub
 
-' The connection to <system> only; never another system.
-Function SystemConnection(engine, wantedSystem)
+' The first connection to <system> in the client CountPoint expects; never another system or client.
+Function SystemConnection(engine, wantedSystem, wantedClient)
   On Error Resume Next
   Dim n, candidate
   Set SystemConnection = Nothing
   For n = 0 To engine.Children.Count - 1
     Set candidate = engine.Children(CInt(n))
     If candidate.Children.Count > 0 Then
-      If candidate.Children(0).Info.SystemName = wantedSystem Then Set SystemConnection = candidate : Exit Function
+      If candidate.Children(0).Info.SystemName = wantedSystem And candidate.Children(0).Info.Client = wantedClient Then Set SystemConnection = candidate : Exit Function
     End If
   Next
   Err.Clear
@@ -227,6 +227,8 @@ Set fso = CreateObject("Scripting.FileSystemObject")
 Set re = New RegExp
 re.IgnoreCase = True
 If Err.Number <> 0 Then Err.Clear : Finish False, "arguments"
+client = CreateObject("WScript.Shell").Environment("PROCESS")("COUNTPOINT_SAP_CLIENT")
+If Len(client) = 0 Then Finish False, "arguments"
 If bwart <> "344" And bwart <> "343" Then Finish False, "movement-type-not-allowed"
 If Len(material) = 0 Or Len(material) > 40 Then Finish False, "material-missing"
 text = fso.OpenTextFile(outDir & "\" & inFile, 1).ReadAll
@@ -248,7 +250,7 @@ Err.Clear
 
 Set app = GetObject("SAPGUI").GetScriptingEngine
 If Err.Number <> 0 Then Err.Clear : Finish False, "sap-not-running"
-Set conn = SystemConnection(app, systemName)
+Set conn = SystemConnection(app, systemName, client)
 If conn Is Nothing Then Err.Clear : Finish False, "not-logged-in-" & systemName
 Set base = Nothing
 For i = 0 To conn.Children.Count - 1
@@ -261,7 +263,7 @@ For i = 0 To conn.Children.Count - 1
   beforeIds = beforeIds & conn.Children(CInt(i)).Id & "|"
 Next
 base.CreateSession
-For i = 1 To 100
+For i = 1 To 300
   If conn.Children.Count > before Then Exit For
   WScript.Sleep 100
 Next
@@ -272,7 +274,7 @@ Next
 If s Is Nothing Then Err.Clear : Finish False, "session-not-created"
 ownId = s.Id
 WaitIdle
-If s.Info.SystemName <> systemName Then Err.Clear : Finish False, "wrong-system"
+If s.Info.SystemName <> systemName Or s.Info.Client <> client Then Err.Clear : Finish False, "wrong-system"
 ' "Document is O.K." and "Material document ... posted" are read in English; another logon language could hide a
 ' posted document, so nothing is entered unless the session is in English.
 Dim logonLanguage

@@ -13,7 +13,7 @@ Option Explicit
 On Error Resume Next
 
 Const PLANT = "D301"
-Dim systemName, mode, sloc, stockType, reference, outDir, outFile, waitSeconds, material, fromClipboard
+Dim systemName, mode, sloc, stockType, reference, outDir, outFile, waitSeconds, material, fromClipboard, client
 Dim app, conn, base, s, i, before, beforeIds, fso, ownId, title
 
 Function JsonText(value)
@@ -118,6 +118,8 @@ Set s = Nothing
 title = ""
 Set fso = CreateObject("Scripting.FileSystemObject")
 If Err.Number <> 0 Then Err.Clear : Finish False, "arguments"
+client = CreateObject("WScript.Shell").Environment("PROCESS")("COUNTPOINT_SAP_CLIENT")
+If Len(client) = 0 Then Finish False, "arguments"
 If mode <> "test" And mode <> "create" Then Finish False, "invalid-mode"
 If stockType <> "unrestricted" And stockType <> "blocked" Then Finish False, "invalid-stock-type"
 If Len(sloc) <> 4 Or Len(material) = 0 Or Len(reference) = 0 Or Len(reference) > 16 Then Finish False, "arguments"
@@ -130,7 +132,7 @@ If Err.Number <> 0 Then Err.Clear : Finish False, "sap-not-running"
 Set conn = Nothing
 For i = 0 To app.Children.Count - 1
   If app.Children(CInt(i)).Children.Count > 0 Then
-    If app.Children(CInt(i)).Children(0).Info.SystemName = systemName Then Set conn = app.Children(CInt(i))
+    If app.Children(CInt(i)).Children(0).Info.SystemName = systemName And app.Children(CInt(i)).Children(0).Info.Client = client Then Set conn = app.Children(CInt(i)) : Exit For
   End If
 Next
 Err.Clear
@@ -146,7 +148,7 @@ For i = 0 To conn.Children.Count - 1
   beforeIds = beforeIds & conn.Children(CInt(i)).Id & "|"
 Next
 base.CreateSession
-For i = 1 To 100
+For i = 1 To 300
   If conn.Children.Count > before Then Exit For
   WScript.Sleep 100
 Next
@@ -157,7 +159,7 @@ Next
 If s Is Nothing Then Err.Clear : Finish False, "session-not-created"
 ownId = s.Id
 WaitIdle
-If s.Info.SystemName <> systemName Then Finish False, "wrong-system"
+If s.Info.SystemName <> systemName Or s.Info.Client <> client Then Finish False, "wrong-system"
 Err.Clear
 ' The window title ("Created") and the MI22 list are read in English; another logon language could hide a created
 ' document, so nothing is filled unless the session is in English.
@@ -248,6 +250,7 @@ s.findById("wnd[0]").Restore
 s.findById("wnd[0]").SetFocus
 s.findById("wnd[0]/sbar").Text = ""
 Err.Clear
+WScript.StdOut.WriteLine "{""stage"":""waiting""}"
 For i = 1 To waitSeconds * 2
   WScript.Sleep 500
   If Not SessionOpen() Then Set s = Nothing : Finish False, "cancelled"

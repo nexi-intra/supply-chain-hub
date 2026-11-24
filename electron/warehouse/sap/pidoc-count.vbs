@@ -9,7 +9,7 @@ Option Explicit
 On Error Resume Next
 
 Const SUB_AREA = "wnd[0]/usr/sub:SAPMM07I:0731/"
-Dim systemName, docNo, year, outDir, inFile, waitSeconds, app, conn, base, s, i, before, beforeIds, ownId
+Dim systemName, docNo, year, outDir, inFile, waitSeconds, app, conn, base, s, i, before, beforeIds, ownId, client
 Dim fso, text, lines, parts, wanted, filled, r, field, material, qty, page, message, list, row, wrong, timedOut
 
 Function JsonText(value)
@@ -85,6 +85,8 @@ Set s = Nothing
 timedOut = False
 Set fso = CreateObject("Scripting.FileSystemObject")
 If Err.Number <> 0 Then Err.Clear : Finish False, "arguments", ""
+client = CreateObject("WScript.Shell").Environment("PROCESS")("COUNTPOINT_SAP_CLIENT")
+If Len(client) = 0 Then Finish False, "arguments", ""
 If Len(docNo) < 9 Or Len(docNo) > 10 Or Len(year) <> 4 Then Finish False, "arguments", ""
 text = fso.OpenTextFile(outDir & "\" & inFile, 1).ReadAll
 If Err.Number <> 0 Then Err.Clear : Finish False, "in-file-missing", ""
@@ -103,7 +105,7 @@ If Err.Number <> 0 Then Err.Clear : Finish False, "sap-not-running", ""
 Set conn = Nothing
 For i = 0 To app.Children.Count - 1
   If app.Children(CInt(i)).Children.Count > 0 Then
-    If app.Children(CInt(i)).Children(0).Info.SystemName = systemName Then Set conn = app.Children(CInt(i))
+    If app.Children(CInt(i)).Children(0).Info.SystemName = systemName And app.Children(CInt(i)).Children(0).Info.Client = client Then Set conn = app.Children(CInt(i)) : Exit For
   End If
 Next
 Err.Clear
@@ -119,7 +121,7 @@ For i = 0 To conn.Children.Count - 1
   beforeIds = beforeIds & conn.Children(CInt(i)).Id & "|"
 Next
 base.CreateSession
-For i = 1 To 100
+For i = 1 To 300
   If conn.Children.Count > before Then Exit For
   WScript.Sleep 100
 Next
@@ -130,7 +132,7 @@ Next
 If s Is Nothing Then Err.Clear : Finish False, "session-not-created", ""
 ownId = s.Id
 WaitIdle
-If s.Info.SystemName <> systemName Then Finish False, "wrong-system", ""
+If s.Info.SystemName <> systemName Or s.Info.Client <> client Then Finish False, "wrong-system", ""
 Err.Clear
 ' Like the other PI scripts, this one only runs on an English logon (SAP's messages are passed on as read), so nothing
 ' is filled unless the session is in English.
@@ -195,6 +197,7 @@ Err.Clear
 ' Hand over to the user: Save.
 s.findById("wnd[0]").Restore
 s.findById("wnd[0]").SetFocus
+WScript.StdOut.WriteLine "{""stage"":""waiting""}"
 For i = 1 To waitSeconds * 2
   WScript.Sleep 500
   If Not SessionOpen() Then Set s = Nothing : Finish False, "cancelled", ""

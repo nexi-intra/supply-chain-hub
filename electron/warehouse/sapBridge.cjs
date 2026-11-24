@@ -46,32 +46,46 @@ function createCscriptRunner({ scriptDir, cscriptPath = defaultCscriptPath(), ex
         if (error) return reject(codeError(error.killed || error.signal ? 'SAP_TIMEOUT' : 'SAP_SCRIPT_FAILED'))
         resolve(String(stdout))
       })
-      if (options.onLine && child?.stdout) child.stdout.on('data', stageLines(options.onLine))
+      if (options.onLine && child?.stdout) {
+        const lines = stageLines(options.onLine)
+        child.stdout.on('data', lines)
+        child.stdout.on('end', lines.flush)
+      }
     })
   }
 }
 
-/** A `data` listener that passes each complete stdout line that is JSON with a `stage` field to `onLine`. */
+/**
+ * A `data` listener that passes each complete stdout line that is JSON with a `stage` field to `onLine`. Its `flush()`
+ * (when stdout ends) passes on a last line that has no line break.
+ */
 function stageLines(onLine) {
   let pending = ''
-  return chunk => {
-    const lines = (pending + String(chunk)).split(/\r?\n/)
-    pending = lines.pop()
-    for (const line of lines) {
-      let parsed
-      try {
-        parsed = JSON.parse(line)
-      } catch {
-        continue
-      }
-      if (!parsed || typeof parsed !== 'object' || !Object.hasOwn(parsed, 'stage')) continue
-      try {
-        onLine(parsed)
-      } catch (error) {
-        console.error('CountPoint: SAP stage line handler failed', error)
-      }
+  const pass = line => {
+    let parsed
+    try {
+      parsed = JSON.parse(line)
+    } catch {
+      return
+    }
+    if (!parsed || typeof parsed !== 'object' || !Object.hasOwn(parsed, 'stage')) return
+    try {
+      onLine(parsed)
+    } catch (error) {
+      console.error('CountPoint: SAP stage line handler failed', error)
     }
   }
+  const listener = chunk => {
+    const lines = (pending + String(chunk)).split(/\r?\n/)
+    pending = lines.pop()
+    for (const line of lines) pass(line)
+  }
+  listener.flush = () => {
+    const line = pending
+    pending = ''
+    if (line) pass(line)
+  }
+  return listener
 }
 
 function parseLastJsonLine(output) {
