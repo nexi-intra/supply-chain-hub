@@ -10,7 +10,7 @@ type SapActionButtonProps = Omit<ComponentProps<typeof Button>, 'onClick'> & {
 }
 
 /** A button for anything that talks to SAP: disabled with an explanation until SAP is ready, and re-checked right before it runs. */
-export function SapActionButton({ onAction, children, disabled, ...props }: SapActionButtonProps) {
+export function SapActionButton({ onAction, children, disabled, loading, ...props }: SapActionButtonProps) {
   const { status, refresh } = useSapStatus()
   const [running, setRunning] = useState(false)
   const ready = status?.ready === true
@@ -31,7 +31,7 @@ export function SapActionButton({ onAction, children, disabled, ...props }: SapA
   }
 
   const button = (
-    <Button {...props} disabled={disabled || !ready} loading={running} onClick={() => handleClick()}>
+    <Button {...props} disabled={disabled || !ready} loading={running || loading} onClick={() => handleClick()}>
       {children}
     </Button>
   )

@@ -1,6 +1,7 @@
 import { CheckCircle, FilePlus, ListChecks, Printer, Question, Trash, Warning } from '@phosphor-icons/react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { SapActionButton } from '@/components/warehouse/SapActionButton'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { formatDateTime, formatNumber } from '@/lib/warehouse/format'
 import { cn } from '@/lib/utils'
@@ -66,14 +67,14 @@ export function PiDocsSection({ list, selected, busy, figuresAt, onCreate, onPri
         <h3 className="text-sm font-semibold">{t('SAP-dokumenter', 'SAP documents')}</h3>
         {list.system !== 'PS4' && <Badge variant="outline" className="border-amber-500 text-amber-700 dark:text-amber-300">Test-SAP {list.system}</Badge>}
         {postable.length > 1 && (
-          <Button size="sm" variant="outline" className="ml-auto" disabled={busy !== null} loading={busy === 'post'} onClick={() => onPost(postable)}>
+          <SapActionButton size="sm" variant="outline" className="ml-auto" disabled={busy !== null} loading={busy === 'post'} onAction={() => onPost(postable)}>
             <CheckCircle size={16} /> {t('Bogfør alle', 'Post all')} ({postable.length})
-          </Button>
+          </SapActionButton>
         )}
         {list.canCreate && (
-          <Button size="sm" className={postable.length > 1 ? '' : 'ml-auto'} disabled={!selected || busy !== null} loading={busy === 'create'} onClick={onCreate}>
+          <SapActionButton size="sm" className={postable.length > 1 ? '' : 'ml-auto'} disabled={!selected || busy !== null} loading={busy === 'create'} onAction={onCreate}>
             <FilePlus size={16} /> {selected ? t(`Opret SAP-dokument (${selected.materials.length}${selected.materials.length > 1 ? ' af maks. 20' : ''})`, `Create SAP document (${selected.materials.length}${selected.materials.length > 1 ? ' of max. 20' : ''})`) : t('Vælg materialer i tabellen', 'Choose materials in the table')}
-          </Button>
+          </SapActionButton>
         )}
       </div>
       {!list.writeEnabled && (
@@ -106,20 +107,20 @@ export function PiDocsSection({ list, selected, busy, figuresAt, onCreate, onPri
                 {doc.postedBy && t(` · bogført af ${doc.postedBy.name}${doc.materialDoc ? ` (mat.dok. ${doc.materialDoc})` : ''} · difference ${formatNumber(amount(doc))} DKK`, ` · posted by ${doc.postedBy.name}${doc.materialDoc ? ` (mat. doc. ${doc.materialDoc})` : ''} · difference ${formatNumber(amount(doc))} DKK`)}
               </span>
               {doc.next === 'print' && doc.canNext
-                ? <Button size="sm" variant="outline" disabled={busy !== null} loading={busy === doc.id} onClick={() => onPrint(doc)}><Printer size={16} /> Print</Button>
+                ? <SapActionButton size="sm" variant="outline" disabled={busy !== null} loading={busy === doc.id} onAction={() => onPrint(doc)}><Printer size={16} /> Print</SapActionButton>
                 : doc.next === 'count' && doc.canNext
                   ? (
                     <span className="flex items-center gap-2">
                       <span className={cn('text-xs', figuresToday ? 'text-muted-foreground' : 'text-amber-700 dark:text-amber-300')}>
                         {figuresAt === null ? t('Dagens SAP-tal er ikke hentet', "Today's SAP figures are not fetched") : t(`SAP-tal fra ${formatDateTime(figuresAt)}`, `SAP figures from ${formatDateTime(figuresAt)}`)}
                       </span>
-                      <Button size="sm" variant="outline" disabled={busy !== null} loading={busy === doc.id} onClick={() => onCount(doc)}><ListChecks size={16} /> {t('Læg antal på', 'Enter quantity')}</Button>
+                      <SapActionButton size="sm" variant="outline" disabled={busy !== null} loading={busy === doc.id} onAction={() => onCount(doc)}><ListChecks size={16} /> {t('Læg antal på', 'Enter quantity')}</SapActionButton>
                     </span>
                   )
                   : doc.next === 'post' && doc.canNext
-                    ? <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => onPost([doc])}><CheckCircle size={16} /> {t('Bogfør', 'Post')}</Button>
+                    ? <SapActionButton size="sm" variant="outline" disabled={busy !== null} onAction={() => onPost([doc])}><CheckCircle size={16} /> {t('Bogfør', 'Post')}</SapActionButton>
                     : doc.next && <span className="text-xs text-muted-foreground">{waitingFor()[doc.next]}</span>}
-              {doc.canDelete && <Button size="sm" variant="ghost" className="text-destructive" disabled={busy !== null} loading={busy === `delete:${doc.id}`} onClick={() => onDelete(doc)}><Trash size={16} /> {t('Slet i SAP', 'Delete in SAP')}</Button>}
+              {doc.canDelete && <SapActionButton size="sm" variant="ghost" className="text-destructive" disabled={busy !== null} loading={busy === `delete:${doc.id}`} onAction={() => onDelete(doc)}><Trash size={16} /> {t('Slet i SAP', 'Delete in SAP')}</SapActionButton>}
               {doc.status === 'unknown' && (
                 <span className="flex basis-full flex-wrap items-center gap-2">
                   <span role="alert" className="flex items-center gap-1 text-xs font-medium text-red-700 dark:text-red-300">

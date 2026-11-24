@@ -508,6 +508,15 @@ export interface PiDoc {
   deletedBy?: { email: string; name: string; at: number; message: string }
 }
 
+/** What "Tjek i SAP" proposes; `outcome` null: the app cannot tell (e.g. several documents on one reference). */
+export interface PiDocCheck {
+  outcome: 'saved' | 'missing' | null
+  docNo: string | null
+  /** Starts with the time of the check. */
+  reason: string
+  summary: string
+}
+
 export interface PiDocList {
   system: string
   /** False while CountPoint may not write to this SAP system yet (PS4 until it is enabled). */
@@ -1261,6 +1270,8 @@ export interface WarehouseBridge {
     remove(request: { id: string; docId: string }): Promise<PiDocList>
   /** Managers only, on an unknown document, with a reason: `saved` needs the SAP document number (a count or posting: its own). SAP is not touched. */
   resolve(request: { id: string; docId: string; outcome: 'saved' | 'missing'; docNo?: string; reason: string }): Promise<PiDocList>
+  /** "Tjek i SAP": reads MI22/MI20 for an unknown document and proposes a decision (same right as `resolve`). Nothing is saved and SAP is not changed. */
+  check(request: { id: string; docId: string }): Promise<PiDocCheck>
   }
   sapCheck: {
     overview(): Promise<SapCheckOverview>

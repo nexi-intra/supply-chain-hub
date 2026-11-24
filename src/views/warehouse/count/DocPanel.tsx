@@ -343,7 +343,7 @@ export function DocPanel({ id, open, state }: PanelProps) {
             onConfirm={reason => void postDocs(serialConfirm.items, { docIds: serialConfirm.flagged.map(item => item.id), reason })}
           />
         )}
-        {resolving && <ResolveDialog item={resolving} onCancel={() => setResolving(null)} onResolve={request => void resolveDoc(resolving, request)} />}
+        {resolving && <ResolveDialog countId={id} item={resolving} onCancel={() => setResolving(null)} onResolve={request => void resolveDoc(resolving, request)} />}
       </CardContent>
     </Card>
   )
@@ -451,15 +451,33 @@ const resolveTexts = (item: PiDoc) => {
   }
 }
 
-/** A manager's decision on a document SAP may or may not have: what SAP shows, the document number and why. */
-function ResolveDialog({ item, onCancel, onResolve }: { item: PiDoc; onCancel: () => void; onResolve: (request: { outcome: 'saved' | 'missing'; docNo: string; reason: string }) => void }) {
+/** A manager's decision on a document SAP may or may not have: what SAP shows, the document number and why. "Tjek i SAP" only proposes it. */
+export function ResolveDialog({ countId, item, onCancel, onResolve }: { countId: string; item: PiDoc; onCancel: () => void; onResolve: (request: { outcome: 'saved' | 'missing'; docNo: string; reason: string }) => void }) {
   const [outcome, setOutcome] = useState<'saved' | 'missing' | null>(null)
   const [docNo, setDocNo] = useState('')
   const [reason, setReason] = useState('')
+  const [summary, setSummary] = useState<string | null>(null)
+  const [checkFailed, setCheckFailed] = useState<string | null>(null)
   const texts = resolveTexts(item)
   // Same rule as the backend (9 or 10 digits); a count or posting must name the document itself.
   const validNo = /^\d{9,10}$/.test(docNo.trim()) && (!item.docNo || docNo.trim() === item.docNo)
   const ready = outcome !== null && reason.trim() !== '' && (outcome === 'missing' || validNo)
+  // SAP is only read; when it cannot tell (outcome null), only the reason is filled and the choice is left to the manager.
+  const checkSap = async () => {
+    setCheckFailed(null)
+    try {
+      const proposal = await window.electronWarehouse!.piDocs.check({ id: countId, docId: item.id })
+      setSummary(proposal.summary)
+      if (proposal.outcome) {
+        setOutcome(proposal.outcome)
+        if (proposal.docNo) setDocNo(proposal.docNo)
+      }
+      setReason(proposal.reason)
+    } catch (error) {
+      setSummary(null)
+      setCheckFailed(errorMessage(error, t('Tjekket i SAP fejlede.', 'The check in SAP failed.')))
+    }
+  }
   const choice = (value: 'saved' | 'missing', label: string, help: string) => (
     <button type="button" aria-pressed={outcome === value} onClick={() => setOutcome(value)} className={cn('rounded-md border px-3 py-2 text-left text-sm', outcome === value ? 'border-primary bg-primary/10' : 'hover:bg-muted/50')}>
       <span className="block font-medium">{label}</span>
@@ -473,6 +491,12 @@ function ResolveDialog({ item, onCancel, onResolve }: { item: PiDoc; onCancel: (
           <DialogTitle>{texts.title}</DialogTitle>
           <DialogDescription>{texts.description}</DialogDescription>
         </DialogHeader>
+        <div className="flex flex-wrap items-center gap-2">
+          <SapActionButton size="sm" variant="outline" onAction={checkSap}>{t('Tjek i SAP', 'Check in SAP')}</SapActionButton>
+          <span className="text-xs text-muted-foreground">{t('Læser SAP og foreslår et svar. Intet gemmes.', 'Reads SAP and proposes an answer. Nothing is saved.')}</span>
+        </div>
+        {summary && <p role="status" className="rounded-md border bg-muted/40 px-3 py-2 text-sm">{summary}</p>}
+        {checkFailed && <p role="alert" className="text-sm text-destructive">{checkFailed}</p>}
         <div className="grid gap-2">
           {choice('saved', texts.saved, texts.savedHelp)}
           {choice('missing', texts.missing, texts.missingHelp)}
