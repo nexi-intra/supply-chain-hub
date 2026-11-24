@@ -24,7 +24,7 @@ BOOLEAN_TERNARY = re.compile(
     rf"\bda(?P<between>\s*\?\s*)(?P<yes>{LITERAL})(?P<colon>\s*:\s*)(?P<no>{LITERAL})",
     re.MULTILINE,
 )
-BOOLEAN_LANGUAGE_FILES = {"AccessContextPicker.tsx", "ObserverWorkspace.tsx", "UpdateNotification.tsx"}
+BOOLEAN_LANGUAGE_FILES = {"UpdateNotification.tsx"}
 
 OVERRIDES = {
     "Cancel": "Peruuta",

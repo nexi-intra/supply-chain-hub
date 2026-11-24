@@ -23,6 +23,7 @@ export function DataStorageManager() {
   const isDesktopApp = !!window.electronKv
   const [storageInfo, setStorageInfo] = useState<StorageInfo | null>(null)
   const [isBusy, setIsBusy] = useState(false)
+  const [isRestoring, setIsRestoring] = useState(false)
   const [isSyncing, setIsSyncing] = useState(false)
   const [pendingImport, setPendingImport] = useState<BackupFile | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -97,17 +98,22 @@ export function DataStorageManager() {
     }
   }
 
+  // Waits: every dataset is written back (the screen reloads afterwards). The dialog closes on the click, so the import
+  // button spins and a "Gendanner …" toast shows until it is done.
   const handleConfirmImport = async () => {
     if (!pendingImport) return
     setIsBusy(true)
+    setIsRestoring(true)
+    const restoring = toast.loading(`${t.dataStorageManager.restoreAction} …`)
     try {
       const count = await restoreBackup(pendingImport)
-      toast.success(`${count} ${t.dataStorageManager.datasetsRestoredSuffix}`)
+      toast.success(`${count} ${t.dataStorageManager.datasetsRestoredSuffix}`, { id: restoring })
       setTimeout(() => window.location.reload(), 1200)
     } catch (error) {
       console.error('Backup-import fejlede:', error)
-      toast.error(t.dataStorageManager.restoreFailed)
+      toast.error(t.dataStorageManager.restoreFailed, { id: restoring })
       setIsBusy(false)
+      setIsRestoring(false)
     } finally {
       setPendingImport(null)
     }
@@ -226,6 +232,7 @@ export function DataStorageManager() {
           <Button
             variant="outline"
             disabled={isBusy}
+            loading={isRestoring}
             className="gap-2"
             onClick={() => fileInputRef.current?.click()}
           >
@@ -253,7 +260,7 @@ export function DataStorageManager() {
             <AlertDialogDescription>
               {pendingImport && (
                 <>
-                  {t.dataStorageManager.restoreDialogFromPrefix} {new Date(pendingImport.exportedAt).toLocaleString(language === 'en' ? 'en-US' : language === 'fi' ? 'fi-FI' : 'da-DK')} {t.dataStorageManager.restoreDialogContainsMiddle}{' '}
+                  {t.dataStorageManager.restoreDialogFromPrefix} {new Date(pendingImport.exportedAt).toLocaleString(language === 'en' ? 'en-US' : language === 'fi' ? 'fi-FI' : language === 'sv' ? 'sv-SE' : 'da-DK')} {t.dataStorageManager.restoreDialogContainsMiddle}{' '}
                   {Object.keys(pendingImport.data).length} {t.dataStorageManager.restoreDialogDatasetsMiddle}
                 </>
               )}

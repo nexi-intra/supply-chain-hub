@@ -1,0 +1,5 @@
+﻿
+		Material	Material Description	Plnt	MTyp
+		R162-0717	Ethernet Cable RJ45 2m	D301	ZFER
+		R162-0717	Ethernet Cable RJ45 2m	D300	ZFER
+		R133-0032	Move3500 12V DC car charger	D301	ZFER

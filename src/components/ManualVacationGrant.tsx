@@ -26,10 +26,11 @@ interface ManualVacationGrantProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   managerEmail: string
-  onSuccess: () => void
+  /** Called at once with the vacation being granted; `saved` resolves when it is saved (false if it was not). */
+  onGranted: (entry: VacationEntry, saved: Promise<boolean>) => void
 }
 
-export function ManualVacationGrant({ open, onOpenChange, managerEmail, onSuccess }: ManualVacationGrantProps) {
+export function ManualVacationGrant({ open, onOpenChange, managerEmail, onGranted }: ManualVacationGrantProps) {
   const { t } = useLanguage()
   const [users, setUsers] = useState<User[]>([])
   const [selectedUser, setSelectedUser] = useState('')
@@ -37,7 +38,6 @@ export function ManualVacationGrant({ open, onOpenChange, managerEmail, onSucces
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
   const [notes, setNotes] = useState('')
-  const [isSubmitting, setIsSubmitting] = useState(false)
 
   useEffect(() => {
     const loadUsers = async () => {
@@ -82,70 +82,69 @@ export function ManualVacationGrant({ open, onOpenChange, managerEmail, onSucces
       return
     }
 
-    setIsSubmitting(true)
-
-    try {
-      const newVacation: VacationEntry = {
-        id: newId('vacation'),
-        userId: selectedUser,
-        userEmail: selectedUser,
-        // Altid 'yyyy-MM-dd' — fulde ISO-strenge gav tidszone-tvetydighed på tværs af views.
-        startDate: startDate,
-        endDate: grantType === 'single' ? startDate : endDate,
-        notes: notes.trim() || undefined,
-        status: 'approved',
-        reviewedBy: managerEmail,
-        reviewedAt: new Date().toISOString(),
-        isSingleDay: grantType === 'single',
-        manuallyGranted: true
-      }
-
-      await appendToKvArray('vacation-entries', [newVacation])
-
-      try {
-        const emailContent = manualVacationGrantEmail(managerEmail, start, end, grantType === 'single', notes.trim() || undefined)
-
-        const newEmail = {
-          id: newId('email'),
-          from: managerEmail,
-          to: selectedUser,
-          subject: emailContent.subject,
-          message: emailContent.body,
-          timestamp: Date.now(),
-          read: false
-        }
-
-        await appendToKvArray('emails', [newEmail])
-
-        const notification = {
-          id: newId('notif'),
-          type: 'email' as const,
-          message: grantType === 'single' ? t.manualVacationGrant.gotDayOffNotification : t.manualVacationGrant.gotVacationNotification,
-          timestamp: Date.now(),
-          read: false,
-          from: managerEmail,
-          emailId: newEmail.id
-        }
-
-        await appendToKvArray('email-notifications', [notification])
-      } catch (emailError) {
-        console.error('Error sending vacation grant email:', emailError)
-      }
-
-      toast.success(grantType === 'single' ? t.manualVacationGrant.dayOffGranted : t.manualVacationGrant.vacationGranted)
-      setSelectedUser('')
-      setGrantType('single')
-      setStartDate('')
-      setEndDate('')
-      setNotes('')
-      onOpenChange(false)
-      onSuccess()
-    } catch (error) {
-      console.error('Error granting vacation:', error)
-      toast.error(t.manualVacationGrant.grantFailed)
-    } finally {
-      setIsSubmitting(false)
+    // Granted at once: the dialog closes, the vacation shows in the Manager Panel and it is saved in the background
+    // (a write to M: takes 20+ s). A failed save reopens the dialog with the choices.
+    const form = { selectedUser, grantType, startDate, endDate, notes }
+    const newVacation: VacationEntry = {
+      id: newId('vacation'),
+      userId: selectedUser,
+      userEmail: selectedUser,
+      // Altid 'yyyy-MM-dd' — fulde ISO-strenge gav tidszone-tvetydighed på tværs af views.
+      startDate: startDate,
+      endDate: grantType === 'single' ? startDate : endDate,
+      notes: notes.trim() || undefined,
+      status: 'approved',
+      reviewedBy: managerEmail,
+      reviewedAt: new Date().toISOString(),
+      isSingleDay: grantType === 'single',
+      manuallyGranted: true
     }
+    const saved = appendToKvArray('vacation-entries', [newVacation]).then(() => true, error => {
+      console.error('Error granting vacation:', error)
+      return false
+    })
+    onGranted(newVacation, saved)
+    toast.success(grantType === 'single' ? t.manualVacationGrant.dayOffGranted : t.manualVacationGrant.vacationGranted)
+    onOpenChange(false)
+    setSelectedUser('')
+    setGrantType('single')
+    setStartDate('')
+    setEndDate('')
+    setNotes('')
+
+    if (!(await saved)) {
+      toast.error(t.manualVacationGrant.grantFailed)
+      setSelectedUser(form.selectedUser)
+      setGrantType(form.grantType)
+      setStartDate(form.startDate)
+      setEndDate(form.endDate)
+      setNotes(form.notes)
+      onOpenChange(true)
+      return
+    }
+
+    const emailContent = manualVacationGrantEmail(managerEmail, start, end, form.grantType === 'single', form.notes.trim() || undefined)
+    const newEmail = {
+      id: newId('email'),
+      from: managerEmail,
+      to: form.selectedUser,
+      subject: emailContent.subject,
+      message: emailContent.body,
+      timestamp: Date.now(),
+      read: false
+    }
+    const notification = {
+      id: newId('notif'),
+      type: 'email' as const,
+      message: form.grantType === 'single' ? t.manualVacationGrant.gotDayOffNotification : t.manualVacationGrant.gotVacationNotification,
+      timestamp: Date.now(),
+      read: false,
+      from: managerEmail,
+      emailId: newEmail.id
+    }
+    // The mail and its notification are independent keys: saved at the same time, in the background.
+    void Promise.all([appendToKvArray('emails', [newEmail]), appendToKvArray('email-notifications', [notification])])
+      .catch(emailError => console.error('Error sending vacation grant email:', emailError))
   }
 
   return (
@@ -234,17 +233,16 @@ export function ManualVacationGrant({ open, onOpenChange, managerEmail, onSucces
               type="button"
               variant="outline"
               onClick={() => onOpenChange(false)}
-              disabled={isSubmitting}
             >
               {t.common.cancel}
             </Button>
             <Button
               type="submit"
-              disabled={isSubmitting || !selectedUser || !startDate || (grantType === 'vacation' && !endDate)}
+              disabled={!selectedUser || !startDate || (grantType === 'vacation' && !endDate)}
               className="gap-2"
             >
               <Gift size={18} weight="bold" />
-              {isSubmitting ? t.manualVacationGrant.granting : (grantType === 'single' ? t.manualVacationGrant.grantDayOff : t.manualVacationGrant.grantVacation)}
+              {grantType === 'single' ? t.manualVacationGrant.grantDayOff : t.manualVacationGrant.grantVacation}
             </Button>
           </DialogFooter>
         </form>

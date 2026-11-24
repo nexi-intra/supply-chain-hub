@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -42,8 +42,8 @@ export function ClientVersionManager({ managerEmail, users }: ClientVersionManag
   const [history, setHistory] = useState<UpdateManifest[]>([])
   const [clientVersions, setClientVersions] = useState<Record<string, ClientVersionEntry>>({})
   const [pendingRequests, setPendingRequests] = useState<Record<string, { requestedAt: number; version?: string }>>({})
+  const sendingRequests = useRef<Record<string, { requestedAt: number; requestedBy: string; version: string }>>({})
   const [selectedVersions, setSelectedVersions] = useState<Record<string, string>>({})
-  const [busyEmail, setBusyEmail] = useState<string | null>(null)
   const [currentTeam, setCurrentTeam] = useState<RegisteredTeam | null>(null)
   const [otherTeamRows, setOtherTeamRows] = useState<VersionRow[]>([])
   const [teamFilter, setTeamFilter] = useState('all')
@@ -60,7 +60,8 @@ export function ClientVersionManager({ managerEmail, users }: ClientVersionManag
       setStatus(statusResult)
       setHistory(historyResult || [])
       setClientVersions(versions || {})
-      setPendingRequests(requests || {})
+      // A request still on its way to M: stays shown when the list is read again meanwhile.
+      setPendingRequests({ ...(requests || {}), ...sendingRequests.current })
     } catch (error) {
       console.error('Kunne ikke hente klient-versioner:', error)
     }
@@ -124,27 +125,31 @@ export function ClientVersionManager({ managerEmail, users }: ClientVersionManag
 
   const getSelectedVersion = (email: string) => selectedVersions[email] || history[0]?.version || latestVersion
 
-  const handleForceUpdate = async (email: string) => {
+  // The request shows as pending at once; it is saved in the background and taken away again if that fails.
+  const handleForceUpdate = (email: string) => {
     const version = getSelectedVersion(email)
     if (!version) {
       toast.error(t.clientVersionManager.noVersionToPush)
       return
     }
-    setBusyEmail(email)
-    try {
-      await setKvObjectField('force-update-requests', email, {
-        requestedAt: Date.now(),
-        requestedBy: managerEmail,
-        version,
-      })
-      toast.success(`${t.clientVersionManager.sentToPrefix}${version} ${t.clientVersionManager.sentToMiddle} ${email} ${t.clientVersionManager.sentToSuffix}`)
-      await refresh()
-    } catch (error) {
-      console.error('Kunne ikke sende tvungen opdatering:', error)
-      toast.error(t.clientVersionManager.forceUpdateFailed)
-    } finally {
-      setBusyEmail(null)
-    }
+    const request = { requestedAt: Date.now(), requestedBy: managerEmail, version }
+    sendingRequests.current[email] = request
+    setPendingRequests(current => ({ ...current, [email]: request }))
+    toast.success(`${t.clientVersionManager.sentToPrefix}${version} ${t.clientVersionManager.sentToMiddle} ${email} ${t.clientVersionManager.sentToSuffix}`)
+    void setKvObjectField('force-update-requests', email, request).then(
+      () => { if (sendingRequests.current[email] === request) delete sendingRequests.current[email] },
+      error => {
+        console.error('Kunne ikke sende tvungen opdatering:', error)
+        if (sendingRequests.current[email] === request) delete sendingRequests.current[email]
+        setPendingRequests(current => {
+          if (current[email] !== request) return current
+          const rest = { ...current }
+          delete rest[email]
+          return rest
+        })
+        toast.error(t.clientVersionManager.forceUpdateFailed)
+      },
+    )
   }
 
   const ownRows: VersionRow[] = users.map((user) => ({
@@ -261,7 +266,7 @@ export function ClientVersionManager({ managerEmail, users }: ClientVersionManag
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={neverSeen || busyEmail === email || !!pending || history.length === 0}
+                      disabled={neverSeen || !!pending || history.length === 0}
                       onClick={() => handleForceUpdate(email)}
                       className="gap-1.5"
                     >

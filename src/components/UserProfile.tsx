@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
-import { SignOut, User, UserGear, Gear, Crown } from '@phosphor-icons/react'
+import { NisseSpot } from '@/components/christmas/NisseSpot'
+import { SignOut, User, UserGear, Gear, Crown, ArrowsLeftRight } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -20,10 +21,18 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { toast } from 'sonner'
 import { hashPassword, verifyPassword } from '@/lib/passwords'
+import { saveInBackground } from '@/lib/saveInBackground'
+import { trackPendingWrite } from '@/lib/pendingWrites'
 import { useLanguage } from '@/contexts/LanguageContext'
+import { DesktopNotificationsSetting } from '@/components/DesktopNotificationsSetting'
+import { useMyHubs } from '@/hooks/useMyHubs'
+import { getHubAccessLabels } from '@/lib/hubAccessLabels'
+import { requestHubSwitch } from '@/lib/hubSwitch'
 
 interface UserProfileProps {
   userEmail: string
+  /** The user's full name; until it is known, a name is read from the e-mail ("jacob.remmer@..." -> "Jacob Remmer"). */
+  displayName?: string
   onLogout: () => void
   onAdminClick?: () => void
   showAdmin?: boolean
@@ -40,13 +49,27 @@ interface UserData {
   isManager?: boolean
 }
 
-export function UserProfile({ userEmail, onLogout, onAdminClick, showAdmin, onCreatorClick, showCreator, hideEmail = false }: UserProfileProps) {
-  const { t } = useLanguage()
+/** The full name when known and not just the e-mail again, otherwise the e-mail's local part written as a name. */
+export function shownName(email: string, fullName?: string): string {
+  const name = fullName?.trim()
+  if (name && name.toLowerCase() !== email.trim().toLowerCase()) return name
+  return email.split('@')[0]
+    .split(/[._-]+/)
+    .filter(Boolean)
+    .map(part => part.charAt(0).toLocaleUpperCase() + part.slice(1))
+    .join(' ')
+}
+
+export function UserProfile({ userEmail, displayName, onLogout, onAdminClick, showAdmin, onCreatorClick, showCreator, hideEmail = false }: UserProfileProps) {
+  const { t, language } = useLanguage()
+  const { hubs } = useMyHubs()
+  const waitingElsewhere = hubs.filter(hub => !hub.active).reduce((sum, hub) => sum + hub.pending, 0)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [phoneNumber, setPhoneNumber] = useState('')
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [saving, setSaving] = useState(false)
 
   const handleOpenSettings = async () => {
     const usersData = (await window.kv.get<Record<string, UserData>>('users')) || {}
@@ -63,6 +86,8 @@ export function UserProfile({ userEmail, onLogout, onAdminClick, showAdmin, onCr
   }
 
   const handleSaveSettings = async () => {
+    if (saving) return
+    setSaving(true)
     try {
       const usersData = (await window.kv.get<Record<string, UserData>>('users')) || {}
       const userData = usersData[userEmail]
@@ -116,7 +141,9 @@ export function UserProfile({ userEmail, onLogout, onAdminClick, showAdmin, onCr
         toast.success(t.profile.passwordUpdated)
       } else if (phoneNumber !== userData.phone) {
         if (window.electronAuth) {
-          await window.electronAuth.profile({ phone: phoneNumber })
+          // Only the phone number: nothing to check first, so the dialog closes at once and the save (up to 90 s on the
+          // shared drive) runs in the background.
+          void saveInBackground(trackPendingWrite(window.electronAuth.profile({ phone: phoneNumber })), { failure: t.profile.errors.generic })
           toast.success(t.profile.settingsUpdated)
           setSettingsOpen(false)
           return
@@ -136,6 +163,8 @@ export function UserProfile({ userEmail, onLogout, onAdminClick, showAdmin, onCr
     } catch (error) {
       console.error('Error in handleSaveSettings:', error)
       toast.error(t.profile.errors.generic)
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -150,11 +179,11 @@ export function UserProfile({ userEmail, onLogout, onAdminClick, showAdmin, onCr
             <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center">
               <User size={18} weight="bold" className="text-primary-foreground" />
             </div>
-            {!hideEmail && <span className="text-sm font-medium hidden sm:inline">{userEmail}</span>}
+            {!hideEmail && <span className="text-sm font-medium hidden sm:inline">{shownName(userEmail, displayName)}</span>}
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56">
-          <DropdownMenuLabel>{t.profile.menuMyAccount}</DropdownMenuLabel>
+          <DropdownMenuLabel className="flex items-center justify-between">{t.profile.menuMyAccount}<NisseSpot spot="profile-menu" pose="stand" /></DropdownMenuLabel>
           <DropdownMenuSeparator />
           <DropdownMenuItem className="text-muted-foreground text-sm">
             {userEmail}
@@ -167,6 +196,13 @@ export function UserProfile({ userEmail, onLogout, onAdminClick, showAdmin, onCr
             <Gear size={16} className="mr-2" />
             {t.profile.menuSettings}
           </DropdownMenuItem>
+          {hubs.length > 1 && (
+            <DropdownMenuItem onClick={() => requestHubSwitch()} className="cursor-pointer">
+              <ArrowsLeftRight size={16} className="mr-2" />
+              <span className="flex-1">{getHubAccessLabels(language).switchHub}</span>
+              {waitingElsewhere > 0 && <span className="ml-2 rounded-full bg-[oklch(0.55_0.16_25)] px-2 text-xs font-semibold text-white">{waitingElsewhere}</span>}
+            </DropdownMenuItem>
+          )}
           {showCreator && onCreatorClick && (
             <DropdownMenuItem 
               onClick={onCreatorClick}
@@ -216,6 +252,8 @@ export function UserProfile({ userEmail, onLogout, onAdminClick, showAdmin, onCr
               />
             </div>
 
+            <DesktopNotificationsSetting />
+
             <div className="border-t pt-4">
               <h4 className="text-sm font-medium mb-4">{t.profile.changePassword}</h4>
               <div className="space-y-4">
@@ -253,7 +291,7 @@ export function UserProfile({ userEmail, onLogout, onAdminClick, showAdmin, onCr
             <Button variant="outline" onClick={() => setSettingsOpen(false)}>
               {t.profile.cancel}
             </Button>
-            <Button onClick={handleSaveSettings}>
+            <Button onClick={handleSaveSettings} loading={saving}>
               {t.profile.saveChanges}
             </Button>
           </div>

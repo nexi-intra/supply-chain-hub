@@ -4,40 +4,43 @@
 import { fileStorage } from './fileStorage'
 import type { Guide, GuideVersionEntry, GuideDraft } from './guideTypes'
 import { collectImageIds } from './guideTypes'
+import { LIBRARY_KEYS, type LibraryKind } from './libraryConfig'
 
 const MAX_VERSION_ENTRIES = 50
 const draftWrites = new Map<string, Promise<void>>()
 
-function queueDraftWrite(guideId: string, operation: () => Promise<void>): Promise<void> {
-  const previous = draftWrites.get(guideId) || Promise.resolve()
+function queueDraftWrite(key: string, operation: () => Promise<void>): Promise<void> {
+  const previous = draftWrites.get(key) || Promise.resolve()
   const queued = previous.then(operation, operation)
-  draftWrites.set(guideId, queued)
+  draftWrites.set(key, queued)
   void queued.finally(() => {
-    if (draftWrites.get(guideId) === queued) draftWrites.delete(guideId)
+    if (draftWrites.get(key) === queued) draftWrites.delete(key)
   }).catch(() => {})
   return queued
 }
 
-export function versionsKey(guideId: string): string {
-  return `guide-versions-${guideId}`
+export function versionsKey(guideId: string, kind: LibraryKind = 'guides'): string {
+  return `${LIBRARY_KEYS[kind].versionsPrefix}${guideId}`
 }
 
-export function draftKey(guideId: string): string {
-  return `guide-draft-${guideId}`
+export function draftKey(guideId: string, kind: LibraryKind = 'guides'): string {
+  return `${LIBRARY_KEYS[kind].draftPrefix}${guideId}`
 }
 
 /** Autogemmer en kladde af den guide der lige nu redigeres (se GuideEditor.tsx). */
-export async function saveDraft(draft: GuideDraft): Promise<void> {
-  await queueDraftWrite(draft.guideId, () => window.kv.set(draftKey(draft.guideId), draft))
+export async function saveDraft(draft: GuideDraft, kind: LibraryKind = 'guides'): Promise<void> {
+  const key = draftKey(draft.guideId, kind)
+  await queueDraftWrite(key, () => window.kv.set(key, draft))
 }
 
-export async function getDraft(guideId: string): Promise<GuideDraft | undefined> {
-  return window.kv.get<GuideDraft>(draftKey(guideId))
+export async function getDraft(guideId: string, kind: LibraryKind = 'guides'): Promise<GuideDraft | undefined> {
+  return window.kv.get<GuideDraft>(draftKey(guideId, kind))
 }
 
 /** Ryddes ved succesfuldt gem, eller når brugeren aktivt forkaster/annullerer. */
-export async function deleteDraft(guideId: string): Promise<void> {
-  await queueDraftWrite(guideId, () => window.kv.delete(draftKey(guideId)))
+export async function deleteDraft(guideId: string, kind: LibraryKind = 'guides'): Promise<void> {
+  const key = draftKey(guideId, kind)
+  await queueDraftWrite(key, () => window.kv.delete(key))
 }
 
 /**
@@ -45,8 +48,8 @@ export async function deleteDraft(guideId: string): Promise<void> {
  * på drevet), så her filtreres på `savedBy` — en kladde er kun ejerens eget
  * ugemte arbejde og hører ikke hjemme i kollegers oversigt.
  */
-export async function listDrafts(userEmail: string): Promise<GuideDraft[]> {
-  const prefix = draftKey('')
+export async function listDrafts(userEmail: string, kind: LibraryKind = 'guides'): Promise<GuideDraft[]> {
+  const prefix = draftKey('', kind)
   const keys = (await window.kv.keys()).filter((key) => key.startsWith(prefix))
   const drafts = await Promise.all(keys.map((key) => window.kv.get<GuideDraft>(key).catch(() => undefined)))
   return drafts
@@ -69,12 +72,12 @@ export function bumpVersion(version?: string): string {
   return ((Math.round(parsed * 100) + 1) / 100).toFixed(2)
 }
 
-export async function getVersionHistory(guideId: string): Promise<GuideVersionEntry[]> {
-  return (await window.kv.get<GuideVersionEntry[]>(versionsKey(guideId))) || []
+export async function getVersionHistory(guideId: string, kind: LibraryKind = 'guides'): Promise<GuideVersionEntry[]> {
+  return (await window.kv.get<GuideVersionEntry[]>(versionsKey(guideId, kind))) || []
 }
 
 /** Gemmer et snapshot af guidens indhold som ny version (nyeste først, beskåret til 50). */
-export async function saveVersionSnapshot(guide: Guide, savedBy: string, changeNote?: string): Promise<void> {
+export async function saveVersionSnapshot(guide: Guide, savedBy: string, changeNote?: string, kind: LibraryKind = 'guides'): Promise<void> {
   const entry: GuideVersionEntry = {
     version: guide.version || '1.00',
     savedAt: Date.now(),
@@ -96,25 +99,24 @@ export async function saveVersionSnapshot(guide: Guide, savedBy: string, changeN
       fileSize: guide.fileSize,
       preserveWordLayout: guide.preserveWordLayout,
       previewPdfUrl: guide.previewPdfUrl,
+      originalPdfUrl: guide.originalPdfUrl,
+      originalPdfName: guide.originalPdfName,
       sharedWithTeamCodes: guide.sharedWithTeamCodes,
     },
   }
-  const history = await getVersionHistory(guide.id)
-  await window.kv.set(versionsKey(guide.id), [entry, ...history].slice(0, MAX_VERSION_ENTRIES))
+  const history = await getVersionHistory(guide.id, kind)
+  await window.kv.set(versionsKey(guide.id, kind), [entry, ...history].slice(0, MAX_VERSION_ENTRIES))
 }
 
 /** Sletter versionshistorik og alle billeder når en guide slettes. */
-export async function deleteGuideArtifacts(guide: Guide): Promise<void> {
-  try {
-    await window.kv.delete(versionsKey(guide.id))
-  } catch (error) {
-    console.error('Kunne ikke slette versionshistorik:', error)
-  }
-  for (const imageId of collectImageIds(guide)) {
-    try {
-      await fileStorage.deleteFile(`kv://${imageId}`)
-    } catch (error) {
+export async function deleteGuideArtifacts(guide: Guide, kind: LibraryKind = 'guides'): Promise<void> {
+  // Uafhaengige noegler, saa sletningerne sendes samtidig i stedet for en rundtur til M: pr. billede.
+  await Promise.all([
+    window.kv.delete(versionsKey(guide.id, kind)).catch((error) => {
+      console.error('Kunne ikke slette versionshistorik:', error)
+    }),
+    ...collectImageIds(guide).map((imageId) => fileStorage.deleteFile(`kv://${imageId}`).catch((error) => {
       console.error(`Kunne ikke slette billede ${imageId}:`, error)
-    }
-  }
+    })),
+  ])
 }

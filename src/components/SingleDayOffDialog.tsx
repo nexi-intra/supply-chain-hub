@@ -78,6 +78,8 @@ export function SingleDayOffDialog({ userEmail }: SingleDayOffDialogProps) {
     setOpen(false)
 
     void (async () => {
+      const usersRead = window.kv.get<Record<string, { email: string; password: string; fullName: string; isManager: boolean }>>('users')
+      usersRead.catch(() => {})
       try {
         await appendToKvArray('vacation-entries', [newVacation])
       } catch (error) {
@@ -87,7 +89,7 @@ export function SingleDayOffDialog({ userEmail }: SingleDayOffDialogProps) {
       }
 
       try {
-        const usersData = await window.kv.get<Record<string, { email: string; password: string; fullName: string; isManager: boolean }>>('users')
+        const usersData = await usersRead
         const managers = Object.values(usersData || {}).filter(user => user.isManager)
         const requesterName = usersData?.[userEmail]?.fullName || userEmail
 
@@ -141,8 +143,8 @@ export function SingleDayOffDialog({ userEmail }: SingleDayOffDialogProps) {
           }
         ]
 
-        await appendToKvArray('emails', outgoingEmails)
-        await appendToKvArray('email-notifications', outgoingNotifications)
+        // Uafhængige nøgler: gemmes samtidig (hver gemning tager op mod et halvt minut på M:).
+        await Promise.all([appendToKvArray('emails', outgoingEmails), appendToKvArray('email-notifications', outgoingNotifications)])
       } catch (emailError) {
         console.error('Error sending day off request emails:', emailError)
       }

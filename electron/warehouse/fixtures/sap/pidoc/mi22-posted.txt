@@ -1,0 +1,12 @@
+﻿
+	Material					Material Description					Plnt	Location	S	Special stock descr.
+	PhysInvDoc	Item	Batch	Period	Plan. Date		Count Date	STy	Phys. Inv. No.	Doc. Status
+
+	INT4100-7920-0					LANE3600 PCI PTS 6.x.					D301	D000
+	105000893	   1		2026.10	19.10.2026		20.10.2026	1
+
+	R133-0032					Move3500 12V DC car charger					D301	D000
+	105000894	   1		2026.10	19.10.2026		20.10.2026	1	CPMVF8IW7A
+
+	R133-0033					IWL Car Charger					D301	D000
+	105000894	   2		2026.10	19.10.2026		20.10.2026	1	CPMVF8IW7A

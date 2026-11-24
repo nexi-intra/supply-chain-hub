@@ -26,6 +26,7 @@ export function UpdateNotification({ suppressed = false }: UpdateNotificationPro
 
   const da = language === 'da'
   const fi = language === 'fi'
+  const sv = language === 'sv'
 
   useEffect(() => {
     const api = window.electronUpdates
@@ -79,6 +80,17 @@ export function UpdateNotification({ suppressed = false }: UpdateNotificationPro
         error: 'Päivitys epäonnistui',
       }[phase]
     }
+    if (sv) {
+      return {
+        comparing: 'Letar efter ändrade filer…',
+        downloading: 'Laddar ner uppdatering…',
+        verifying: 'Kontrollerar filen…',
+        extracting: 'Packar upp…',
+        ready: 'Klar — startar om…',
+        restarting: 'Startar om appen…',
+        error: 'Uppdateringen misslyckades',
+      }[phase]
+    }
     return {
       comparing: 'Finding changed files…',
       downloading: 'Downloading update…',
@@ -103,7 +115,7 @@ export function UpdateNotification({ suppressed = false }: UpdateNotificationPro
       toast.error(
         error instanceof Error && error.message
           ? error.message
-          : da ? 'Opdateringen kunne ikke startes' : fi ? 'Päivitystä ei voitu käynnistää' : 'The update could not be started'
+          : da ? 'Opdateringen kunne ikke startes' : fi ? 'Päivitystä ei voitu käynnistää' : sv ? 'Uppdateringen kunde inte startas' : 'The update could not be started'
       )
       setIsInstalling(false)
     }
@@ -115,25 +127,25 @@ export function UpdateNotification({ suppressed = false }: UpdateNotificationPro
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkle size={22} weight="duotone" className="text-primary" />
-            {da ? 'Ny version tilgængelig' : fi ? 'Uusi versio saatavilla' : 'New version available'}
+            {da ? 'Ny version tilgængelig' : fi ? 'Uusi versio saatavilla' : sv ? 'Ny version tillgänglig' : 'New version available'}
           </DialogTitle>
           <DialogDescription>
             {da
               ? 'Opdateringen hentes i baggrunden, mens du kan arbejde videre. Når den er klar, genstarter appen selv — alle data bevares.'
-              : fi ? 'Päivitys latautuu taustalla, kun jatkat työskentelyä. Kun sovellus on valmis, se käynnistyy uudelleen ja kaikki tiedot säilytetään.' : 'The update downloads in the background while you keep working. When it is ready the app restarts itself and all data is kept.'}
+              : fi ? 'Päivitys latautuu taustalla, kun jatkat työskentelyä. Kun sovellus on valmis, se käynnistyy uudelleen ja kaikki tiedot säilytetään.' : sv ? 'Uppdateringen laddas ner i bakgrunden medan du arbetar vidare. När den är klar startar appen om sig själv och all data bevaras.' : 'The update downloads in the background while you keep working. When it is ready the app restarts itself and all data is kept.'}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">
           <div className="flex items-center gap-2">
-            <Badge variant="secondary">{da ? 'Nuværende' : fi ? 'Kuluva' : 'Current'}: {currentVersion || '…'}</Badge>
+            <Badge variant="secondary">{da ? 'Nuværende' : fi ? 'Kuluva' : sv ? 'Nuvarande' : 'Current'}: {currentVersion || '…'}</Badge>
             <span className="text-muted-foreground">→</span>
-            <Badge>{da ? 'Ny' : fi ? 'Uusi' : 'New'}: {manifest.version}</Badge>
+            <Badge>{da ? 'Ny' : fi ? 'Uusi' : sv ? 'Ny' : 'New'}: {manifest.version}</Badge>
           </div>
           {manifest.notes && !isInstalling && (
             <div className="rounded-lg border bg-muted/40 p-3">
               <p className="text-xs font-semibold text-muted-foreground mb-1">
-                {da ? 'Nyt i denne version' : fi ? "Mitä uutta?" : "What's new"}
+                {da ? 'Nyt i denne version' : fi ? "Mitä uutta?" : sv ? 'Nytt i den här versionen' : "What's new"}
               </p>
               <p className="text-sm whitespace-pre-wrap">{manifest.notes}</p>
             </div>
@@ -152,7 +164,7 @@ export function UpdateNotification({ suppressed = false }: UpdateNotificationPro
                   {progress.fileCount !== undefined
                     ? (da
                       ? `Kun ændrede filer hentes: ${progress.fileCount} filer (${formatMb(progress.totalBytes)})`
-                      : fi ? `Vain muuttuneet tiedostot ladataan: ${progress.fileCount}-tiedostot (${formatMb(progress.totalBytes)})` : `Only changed files are downloaded: ${progress.fileCount} files (${formatMb(progress.totalBytes)})`)
+                      : fi ? `Vain muuttuneet tiedostot ladataan: ${progress.fileCount}-tiedostot (${formatMb(progress.totalBytes)})` : sv ? `Bara ändrade filer laddas ner: ${progress.fileCount} filer (${formatMb(progress.totalBytes)})` : `Only changed files are downloaded: ${progress.fileCount} files (${formatMb(progress.totalBytes)})`)
                     : formatMb(progress.totalBytes)}
                 </p>
               )}
@@ -162,11 +174,11 @@ export function UpdateNotification({ suppressed = false }: UpdateNotificationPro
 
         <DialogFooter className="gap-2 sm:gap-0">
           <Button variant="outline" onClick={() => setDismissedVersion(manifest.version)} disabled={isInstalling}>
-            {da ? 'Senere' : fi ? 'Myöhemmin' : 'Later'}
+            {da ? 'Senere' : fi ? 'Myöhemmin' : sv ? 'Senare' : 'Later'}
           </Button>
           <Button onClick={handleInstall} disabled={isInstalling} className="gap-2">
             <DownloadSimple size={18} />
-            {isInstalling ? (da ? 'Opdaterer…' : fi ? 'Päivitetään...' : 'Updating…') : (da ? 'Opdater nu' : fi ? 'Päivitä nyt' : 'Update now')}
+            {isInstalling ? (da ? 'Opdaterer…' : fi ? 'Päivitetään...' : sv ? 'Uppdaterar…' : 'Updating…') : (da ? 'Opdater nu' : fi ? 'Päivitä nyt' : sv ? 'Uppdatera nu' : 'Update now')}
           </Button>
         </DialogFooter>
       </DialogContent>

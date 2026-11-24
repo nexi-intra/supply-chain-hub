@@ -7,7 +7,7 @@
 const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
-const { withFileLock } = require('./fileLock.cjs')
+const { withFileLock, withFileLockAsync } = require('./fileLock.cjs')
 
 function registryDir(platformRoot) {
   return path.join(platformRoot, '_registry')
@@ -25,22 +25,108 @@ function platformConfigPath(platformRoot) {
   return path.join(registryDir(platformRoot), 'platform-config.json')
 }
 
-function accessViewsPath(platformRoot) {
-  return path.join(registryDir(platformRoot), 'access-views.json')
+// Laesninger mod M: koster 100-1500 ms og blev lavet SYNKRONT ved hvert IPC-kald
+// (auth-opslag: teams, user-directory, manager-access, creator-email), hvilket
+// frøs hele appen i sekunder. Registret aendres sjaeldent, saa laesninger deles i
+// CACHE_TTL_MS. Efter TTL serveres kopien stadig straks og opfriskes asynkront i
+// baggrunden; kun den allerfoerste laesning af en fil er synkron. Mutationer (locked/withIdentityTransaction) laeser ALTID frisk,
+// saa en skrivning aldrig bygger paa en foraeldet kopi og overskriver en kollegas
+// aendring, og enhver skrivning fra denne klient rydder cachen for filen.
+const CACHE_TTL_MS = 30000
+const readCache = new Map()
+let freshDepth = 0
+// Set only while an async mutation's synchronous part runs: { files: resolved path -> fresh value, writes: path -> data }.
+let transaction = null
+
+function invalidateCache(filePath) {
+  if (filePath === undefined) readCache.clear()
+  else readCache.delete(path.resolve(filePath))
+}
+
+// Igangvaerende asynkrone laesninger pr. fil (single-flight), delt af
+// baggrunds-opfriskning og prefetchAsync.
+const refreshes = new Map()
+
+function isRegistryObject(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function refreshAsync(key) {
+  const running = refreshes.get(key)
+  if (running) return running
+  const startEntry = readCache.get(key)
+  // Et resultat maa kun lande hvis ingen skrivning/frisk laesning har aendret
+  // cache-posten i mellemtiden; ellers ville en aeldre filversion overskrive en nyere.
+  const settle = value => { if (readCache.get(key) === startEntry) readCache.set(key, { at: Date.now(), value }) }
+  const promise = fs.promises.readFile(key, 'utf8')
+    .then(text => {
+      const value = JSON.parse(text)
+      if (isRegistryObject(value)) settle(value)
+    })
+    .catch(error => {
+      if (error && error.code === 'ENOENT') settle(undefined)
+      // Andre fejl: behold den eksisterende cache; den synkrone laeser rapporterer dem ved behov.
+    })
+    .finally(() => { refreshes.delete(key) })
+  refreshes.set(key, promise)
+  return promise
+}
+
+/** Resolves when every background registry refresh in progress has finished. */
+async function whenRefreshed() {
+  while (refreshes.size > 0) await Promise.all([...refreshes.values()])
 }
 
 function readJsonSafe(filePath, fallback) {
+  const key = path.resolve(filePath)
+  // Inside an async mutation the files were read fresh (asynchronously) under the lock.
+  if (transaction && transaction.files.has(key)) return structuredClone(transaction.files.get(key) ?? fallback)
+  const cached = freshDepth === 0 && readCache.get(key)
+  if (cached) {
+    // Udloebet cache serveres straks; en synkron SMB-laesning ville fryse main-traaden.
+    if (Date.now() - cached.at >= CACHE_TTL_MS) refreshAsync(key)
+    return structuredClone(cached.value ?? fallback)
+  }
   try {
     const value = JSON.parse(fs.readFileSync(filePath, 'utf8'))
-    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Registret har et ugyldigt format')
+    if (!isRegistryObject(value)) throw new Error('Registret har et ugyldigt format')
+    readCache.set(key, { at: Date.now(), value: structuredClone(value) })
     return value
   } catch (error) {
-    if (error.code === 'ENOENT') return fallback
+    if (error.code === 'ENOENT') {
+      readCache.set(key, { at: Date.now(), value: undefined })
+      return fallback
+    }
+    readCache.delete(key)
     throw error
   }
 }
 
+function withFreshReads(callback) {
+  freshDepth++
+  try { return callback() } finally { freshDepth-- }
+}
+
+/** Loads the registry files the auth check needs without blocking the main thread; the synchronous readers then hit the cache. */
+async function prefetchAsync(platformRoot) {
+  const files = [teamsPath(platformRoot), userDirectoryPath(platformRoot), managerAccessPath(platformRoot), platformConfigPath(platformRoot)]
+  await Promise.all(files.map(filePath => {
+    const key = path.resolve(filePath)
+    const cached = readCache.get(key)
+    if (cached && Date.now() - cached.at < CACHE_TTL_MS) return undefined
+    // Anything but ENOENT is left to the synchronous reader, which reports it exactly as before.
+    return refreshAsync(key)
+  }))
+}
+
 function writeJsonAtomic(filePath, data) {
+  if (transaction) {
+    // Collected and written asynchronously when the (synchronous) mutation has decided everything.
+    transaction.files.set(path.resolve(filePath), structuredClone(data))
+    transaction.writes.set(filePath, data)
+    return
+  }
+  invalidateCache(filePath)
   fs.mkdirSync(path.dirname(filePath), { recursive: true })
   const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`
   fs.writeFileSync(tmp, JSON.stringify(data, null, 2))
@@ -50,6 +136,7 @@ function writeJsonAtomic(filePath, data) {
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
       fs.renameSync(tmp, filePath)
+      readCache.set(path.resolve(filePath), { at: Date.now(), value: structuredClone(data) })
       return
     } catch (error) {
       lastError = error
@@ -79,79 +166,6 @@ function writeUserDirectory(platformRoot, userDirectory) {
   writeJsonAtomic(userDirectoryPath(platformRoot), userDirectory)
 }
 
-/**
- * Skrivebeskyttede samlevisninger. De er ikke teams og har derfor ingen egen
- * datamappe eller brugerliste. En person kan være tildelt flere visninger uden
- * at blive oprettet som medlem i de teams, visningen læser fra.
- * @returns {Record<string, { name: string, teamIds: string[], userEmails: string[], createdAt: string, updatedAt: string }>}
- */
-function readAccessViews(platformRoot) {
-  return readJsonSafe(accessViewsPath(platformRoot), {})
-}
-
-function writeAccessViews(platformRoot, views) {
-  writeJsonAtomic(accessViewsPath(platformRoot), views)
-}
-
-function normalizeAccessViewInput(platformRoot, input, existing) {
-  const name = String(input?.name || '').trim()
-  if (!name) throw new Error('Samlevisningen skal have et navn')
-
-  const teams = readTeams(platformRoot)
-  const teamIds = [...new Set((input?.teamIds || []).map((id) => String(id).trim()).filter(Boolean))]
-  if (teamIds.length < 2) throw new Error('En samlevisning skal indeholde mindst to teams')
-  const unknownTeam = teamIds.find((teamId) => !teams[teamId])
-  if (unknownTeam) throw new Error(`Ukendt team: ${unknownTeam}`)
-
-  const userEmails = [...new Set((input?.userEmails || [])
-    .map((email) => String(email).trim().toLowerCase())
-    .filter(Boolean))]
-
-  const now = new Date().toISOString()
-  return {
-    name,
-    teamIds,
-    userEmails,
-    createdAt: existing?.createdAt || now,
-    updatedAt: now,
-  }
-}
-
-function listAccessViews(platformRoot) {
-  return Object.entries(readAccessViews(platformRoot)).map(([viewId, view]) => ({ viewId, ...view }))
-}
-
-function listAccessViewsForEmail(platformRoot, email) {
-  const normalizedEmail = String(email || '').trim().toLowerCase()
-  if (!normalizedEmail) return []
-  return listAccessViews(platformRoot).filter((view) => Array.isArray(view.userEmails) && view.userEmails.includes(normalizedEmail))
-}
-
-function createAccessView(platformRoot, input) {
-  const views = readAccessViews(platformRoot)
-  const viewId = String(input?.viewId || crypto.randomUUID())
-  if (views[viewId]) throw new Error(`Samlevisningen "${viewId}" findes allerede`)
-  views[viewId] = normalizeAccessViewInput(platformRoot, input)
-  writeAccessViews(platformRoot, views)
-  return { viewId, ...views[viewId] }
-}
-
-function updateAccessView(platformRoot, viewId, input) {
-  const views = readAccessViews(platformRoot)
-  if (!views[viewId]) throw new Error('Samlevisningen findes ikke')
-  views[viewId] = normalizeAccessViewInput(platformRoot, input, views[viewId])
-  writeAccessViews(platformRoot, views)
-  return { viewId, ...views[viewId] }
-}
-
-function deleteAccessView(platformRoot, viewId) {
-  const views = readAccessViews(platformRoot)
-  if (!views[viewId]) return false
-  delete views[viewId]
-  writeAccessViews(platformRoot, views)
-  return true
-}
-
 function normalizeTeam(teamId, team) {
   return {
     teamId,
@@ -166,6 +180,12 @@ function normalizeTeam(teamId, team) {
 function lookupTeamForEmail(platformRoot, email) {
   const normalizedEmail = String(email || '').trim().toLowerCase()
   if (!normalizedEmail) return null
+  const found = findTeamForEmail(platformRoot, normalizedEmail)
+  // A colleague may have assigned this person seconds ago on another PC; a miss is always confirmed fresh.
+  return found || withFreshReads(() => findTeamForEmail(platformRoot, normalizedEmail))
+}
+
+function findTeamForEmail(platformRoot, normalizedEmail) {
   const userDirectory = readUserDirectory(platformRoot)
   const teamId = userDirectory[normalizedEmail]
   if (!teamId) return null
@@ -189,6 +209,62 @@ function assignUserToTeam(platformRoot, email, teamId) {
   if (Object.hasOwn(userDirectory, normalizedEmail) && userDirectory[normalizedEmail] !== teamId) throw new Error('Emailen er allerede tilknyttet et andet team')
   userDirectory[normalizedEmail] = teamId
   writeUserDirectory(platformRoot, userDirectory)
+}
+
+function forgetUser(platformRoot, email) {
+  const normalizedEmail = String(email || '').trim().toLowerCase()
+  if (!normalizedEmail) return false
+  const access = readManagerAccess(platformRoot)
+  if (Object.hasOwn(access, normalizedEmail)) {
+    delete access[normalizedEmail]
+    writeJsonAtomic(managerAccessPath(platformRoot), access)
+  }
+  const userDirectory = readUserDirectory(platformRoot)
+  if (!Object.hasOwn(userDirectory, normalizedEmail)) return false
+  delete userDirectory[normalizedEmail]
+  writeUserDirectory(platformRoot, userDirectory)
+  return true
+}
+
+// Manager rights in teams other than the person's home team. Only the creator writes this;
+// the person's account, password and profile stay in the home team.
+function managerAccessPath(platformRoot) {
+  return path.join(registryDir(platformRoot), 'manager-access.json')
+}
+
+/** @returns {Record<string, { teamIds: string[], updatedAt: string }>} */
+function readManagerAccess(platformRoot) {
+  return readJsonSafe(managerAccessPath(platformRoot), {})
+}
+
+function listManagerAccess(platformRoot) {
+  return Object.entries(readManagerAccess(platformRoot))
+    .map(([email, entry]) => ({ email, teamIds: Array.isArray(entry?.teamIds) ? entry.teamIds : [], updatedAt: entry?.updatedAt || null }))
+    .sort((a, b) => a.email.localeCompare(b.email))
+}
+
+function managerTeamsForEmail(platformRoot, email) {
+  const normalizedEmail = String(email || '').trim().toLowerCase()
+  const teamIds = readManagerAccess(platformRoot)[normalizedEmail]?.teamIds
+  if (!normalizedEmail || !Array.isArray(teamIds)) return []
+  const home = readUserDirectory(platformRoot)[normalizedEmail]
+  return listTeams(platformRoot).filter(team => team.teamId !== home && teamIds.includes(team.teamId))
+}
+
+function setManagerAccess(platformRoot, email, teamIds) {
+  const normalizedEmail = String(email || '').trim().toLowerCase()
+  const home = readUserDirectory(platformRoot)[normalizedEmail]
+  if (!normalizedEmail || !home) throw new Error('Personen er ikke oprettet i et team')
+  const wanted = [...new Set((Array.isArray(teamIds) ? teamIds : []).map(id => String(id).trim()).filter(Boolean))]
+  const teams = readTeams(platformRoot)
+  const unknown = wanted.find(teamId => !Object.hasOwn(teams, teamId))
+  if (unknown) throw new Error(`Ukendt team: ${unknown}`)
+  if (wanted.includes(home)) throw new Error('Personens eget team kan ikke tilføjes som ekstra team')
+  const access = readManagerAccess(platformRoot)
+  if (wanted.length) access[normalizedEmail] = { teamIds: wanted, updatedAt: new Date().toISOString() }
+  else delete access[normalizedEmail]
+  writeJsonAtomic(managerAccessPath(platformRoot), access)
+  return { email: normalizedEmail, teamIds: wanted }
 }
 
 /** Opretter et nyt team i registret og returnerer dets teamId. */
@@ -248,41 +324,96 @@ function setCreatorEmail(platformRoot, email) {
 // capability expires after the synchronous callback and is never exposed to IPC.
 function withIdentityTransaction(platformRoot, callback) {
   if (typeof callback !== 'function' || require('node:util').types.isAsyncFunction(callback)) throw new Error('Registry transaction must be synchronous')
-  return withFileLock(path.join(registryDir(platformRoot), 'mutation.lock'), () => {
+  return withFileLock(path.join(registryDir(platformRoot), 'mutation.lock'), () => withFreshReads(() => {
     let active = true
-    const files = { directory: userDirectoryPath(platformRoot), views: accessViewsPath(platformRoot) }
+    const files = { directory: userDirectoryPath(platformRoot), managerAccess: managerAccessPath(platformRoot) }
     const target = key => { if (!active || !Object.hasOwn(files, key)) throw new Error('Invalid registry transaction capability'); return files[key] }
     try {
       const result = callback({ get: key => readJsonSafe(target(key), {}), set: (key, value) => writeJsonAtomic(target(key), value) })
       if (result && typeof result.then === 'function') throw new Error('Registry transaction must be synchronous')
       return result
     } finally { active = false }
-  })
+  }))
 }
-const locked = mutate => (platformRoot, ...args) => withFileLock(path.join(registryDir(platformRoot), 'mutation.lock'), () => mutate(platformRoot, ...args))
+const locked = mutate => (platformRoot, ...args) => withFileLock(path.join(registryDir(platformRoot), 'mutation.lock'), () => withFreshReads(() => mutate(platformRoot, ...args)))
+
+async function writeJsonAtomicAsync(filePath, data) {
+  invalidateCache(filePath)
+  await fs.promises.mkdir(path.dirname(filePath), { recursive: true })
+  const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`
+  await fs.promises.writeFile(tmp, JSON.stringify(data, null, 2))
+  let lastError
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      await fs.promises.rename(tmp, filePath)
+      readCache.set(path.resolve(filePath), { at: Date.now(), value: structuredClone(data) })
+      return
+    } catch (error) {
+      lastError = error
+      if (!['EPERM', 'EACCES'].includes(error.code)) break
+      await new Promise(resolve => setTimeout(resolve, 10 * (attempt + 1)))
+    }
+  }
+  await fs.promises.unlink(tmp).catch(() => {})
+  throw lastError
+}
+
+async function readFreshAsync(filePath) {
+  try {
+    const value = JSON.parse(await fs.promises.readFile(filePath, 'utf8'))
+    if (!isRegistryObject(value)) throw new Error('Registret har et ugyldigt format')
+    return value
+  } catch (error) {
+    if (error.code === 'ENOENT') return undefined
+    throw error
+  }
+}
+
+// Async twin of `locked`: the same lock file and the same mutation code, but every read and write on the share is
+// awaited, so the main process (the whole app) never waits for M:. The registry files are read fresh in parallel
+// under the lock, the synchronous mutation runs against them (no await inside it, so nothing interleaves), and the
+// files it changed are written in parallel before the lock is released.
+const lockedAsync = mutate => (platformRoot, ...args) => withFileLockAsync(path.join(registryDir(platformRoot), 'mutation.lock'), async () => {
+  const paths = [teamsPath(platformRoot), userDirectoryPath(platformRoot), managerAccessPath(platformRoot), platformConfigPath(platformRoot)]
+  const values = await Promise.all(paths.map(readFreshAsync))
+  const pending = { files: new Map(paths.map((filePath, index) => [path.resolve(filePath), values[index]])), writes: new Map() }
+  let result
+  transaction = pending
+  try { result = mutate(platformRoot, ...args) } finally { transaction = null }
+  await Promise.all([...pending.writes].map(([filePath, data]) => writeJsonAtomicAsync(filePath, data)))
+  return result
+})
 module.exports = {
+  invalidateCache,
+  prefetchAsync,
+  whenRefreshed,
   registryDir,
   teamsPath,
   userDirectoryPath,
   platformConfigPath,
-  accessViewsPath,
   readTeams,
   writeTeams: locked(writeTeams),
   readUserDirectory,
   writeUserDirectory: locked(writeUserDirectory),
-  readAccessViews,
-  writeAccessViews: locked(writeAccessViews),
-  listAccessViews,
-  listAccessViewsForEmail,
-  createAccessView: locked(createAccessView),
-  updateAccessView: locked(updateAccessView),
-  deleteAccessView: locked(deleteAccessView),
   lookupTeamForEmail,
   listTeams,
   assignUserToTeam: locked(assignUserToTeam),
+  /** Removes a deleted account from the e-mail -> team directory and its extra manager access. */
+  forgetUser: locked(forgetUser),
+  managerAccessPath,
+  listManagerAccess,
+  managerTeamsForEmail,
+  setManagerAccess: locked(setManagerAccess),
   createTeam: locked(createTeam),
   updateTeam: locked(updateTeam),
   getCreatorEmail,
   setCreatorEmail: locked(setCreatorEmail),
+  // Async twins for the IPC handlers (never block the main process on M:).
+  assignUserToTeamAsync: lockedAsync(assignUserToTeam),
+  forgetUserAsync: lockedAsync(forgetUser),
+  setManagerAccessAsync: lockedAsync(setManagerAccess),
+  createTeamAsync: lockedAsync(createTeam),
+  updateTeamAsync: lockedAsync(updateTeam),
+  setCreatorEmailAsync: lockedAsync(setCreatorEmail),
   withIdentityTransaction,
 }

@@ -1,0 +1,495 @@
+// Errors from the main process arrive as "Error invoking remote method '…': Error: CODE" or "…: Error: CODE: Danish detail".
+import DETAILS_EN from './errorDetailsEn.json'
+import { currentWarehouseLanguage } from './text'
+
+const CODE_PATTERN = /\b([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)(?=$|: )/g
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : typeof error === 'string' ? error : ''
+}
+
+export function errorCode(error: unknown): string | null {
+  const matches = [...errorText(error).matchAll(CODE_PATTERN)]
+  return matches.length ? matches[matches.length - 1][1] : null
+}
+
+/** The Danish explanation the main process put after the code, if any. */
+export function errorDetail(error: unknown): string | null {
+  const text = errorText(error)
+  const matches = [...text.matchAll(CODE_PATTERN)]
+  const last = matches[matches.length - 1]
+  if (!last || last.index === undefined) return null
+  const rest = text.slice(last.index + last[0].length)
+  return rest.startsWith(': ') && rest.slice(2).trim() ? rest.slice(2).trim() : null
+}
+
+const LIST_MARK = 'Gælder: '
+
+/** The materials the main process listed at the end of its detail ("… Gælder: A, B"), as for DOC_STOCK_MISSING. */
+export function errorMaterials(error: unknown): string[] {
+  const detail = errorDetail(error) || ''
+  const at = detail.lastIndexOf(LIST_MARK)
+  return at < 0 ? [] : detail.slice(at + LIST_MARK.length).split(', ').map(item => item.trim()).filter(Boolean)
+}
+
+const MESSAGES: Record<string, string> = {
+  WAREHOUSE_TEAM_NOT_ALLOWED: 'Arbejdsværktøjer er kun for TCD og TRR. Åbn TCD- eller TRR-hubben.',
+  AUTH_REQUIRED: 'Du skal logge ind igen.',
+  AUTH_CONTEXT_CHANGED: 'Du skiftede hub undervejs. Visningen er genindlæst – tjek resultatet.',
+  TEAM_NOT_ALLOWED: 'Du har ikke adgang til det team.',
+  IPC_FORBIDDEN: 'Handlingen blev afvist.',
+  STORAGE_UNAVAILABLE: 'Kan ikke nå data på M: lige nu. Prøv igen om lidt.',
+  SAP_NOT_READY: 'SAP er ikke klar. Log på SAP og luk eventuelle pop-ups (se SAP-indikatoren øverst).',
+  SAP_TIMEOUT: 'SAP svarede ikke i tide. Prøv igen.',
+  SAP_SCRIPT_FAILED: 'SAP-scriptet kunne ikke køre. Er SAP GUI åben?',
+  SAP_INVALID_ARGUMENT: 'Ugyldige data til SAP.',
+  COUNT_NOT_FOUND: 'Optællingen findes ikke (længere).',
+  COUNT_DELETED: 'Optællingen er slettet.',
+  COUNT_CLOSED: 'Optællingen er afsluttet.',
+  COUNT_NOT_MEMBER: 'Du deltager ikke i optællingen. Anmod om at deltage.',
+  COUNT_OWNER_ONLY: 'Kun den ansvarlige for optællingen kan gøre det.',
+  COUNT_PIDOCS_ACTIVE: 'Optællingen har SAP-dokumenter, der ikke er bogført. Slet oprettede og printede i SAP (MI02), bogfør talte (Bogfør), og lad en manager afklare ukendte.',
+  MANAGER_ONLY: 'Kun managers kan gøre det.',
+  ROLE_INVALID: 'Rollen kan ikke ændres for den bruger.',
+  ADMIN_ONLY: 'Kun admins og managers kan gøre det.',
+  MATERIAL_LOCKED: 'En anden tæller materialet. Anmod om at tælle med.',
+  MATERIAL_APPROVED: 'Materialet er godkendt og tælles ikke længere.',
+  MATERIAL_NOT_FOUND: 'Materialet er ikke i optællingen.',
+  SUBMIT_HAS_DIFF: 'Der er en difference på materialet.',
+  LINE_SERIAL_MANAGED: 'Materialet har serienumre. Scan eller importér dem, eller brug Fjern serienummer.',
+  APPROVAL_SERIAL_LINES: 'Materialet har tællelinjer med antal, men har serienumre. Slet linjerne under Tilbehør og tællelister, før materialet kan godkendes.',
+  APPROVED_WITH_SERIAL_LINES: 'Godkendt med tællelinjer med antal. Nulstil materialet, slet linjen og godkend igen.',
+  APPROVAL_FOUND_ELSEWHERE: 'Serienumre, der mangler her, er fundet i en anden optælling i statussen. Godkendes de som manglende, afskrives varer, der er fundet. Flyt dem i SAP, eller godkend alligevel.',
+  PIDOC_SERIAL_LINES: 'Dokumentet kan ikke bogføres, fordi et materiale blev godkendt med tællelinjer med antal. Ret antallet i SAP med MI05. Bagefter kan en manager bogføre dokumentet her med en begrundelse.',
+  REQUEST_NOT_FOUND: 'Anmodningen findes ikke (længere).',
+  CLIPBOARD_INVALID: 'Teksten kunne ikke kopieres.',
+  CLIPBOARD_REFUSED: 'Windows afviste udklipsholderen, så intet blev kopieret, og den kan stadig indeholde noget gammelt. Vent et øjeblik, og prøv igen.',
+  SERIAL_NOT_FOUND: 'Serienummeret er ikke registreret som fundet.',
+  SAP_CHECK_NOT_FOUND: 'SAP-tjekket findes ikke (længere).',
+  SAP_CHECK_NOTHING: 'Der er ingen fejl at sende.',
+  SAP_CHECK_SCOPE_INVALID: 'Vælg TCD, TRR eller hele D301.',
+  SAP_CHECK_SETTINGS_INVALID: 'Skriv gyldige mailadresser adskilt af semikolon.',
+  OUTLOOK_UNAVAILABLE: 'Klassisk Outlook kunne ikke åbnes. Excel-filen er gemt i rapportmappen.',
+  OUTLOOK_FAILED: 'Outlook-kladden kunne ikke laves. Prøv igen.',
+  STATUS_NONE: 'En manager skal starte en status, før der kan oprettes optællinger.',
+  STATUS_ALREADY_OPEN: 'Der er allerede en igangværende status.',
+  STATUS_INVALID: 'Ugyldig status. Vælg år og kvartal.',
+  STATUS_NOT_FOUND: 'Statussen findes ikke.',
+  STATUS_LOCKED: 'Statussen er godkendt og låst – intet kan ændres.',
+  SCOPE_TAKEN: 'En del af udvalget tælles allerede i en anden optælling i statussen.',
+  STATUS_NOT_READY: 'Alle optællinger skal være afsluttet og alle materialer godkendt eller bogført.',
+  STATUS_NOT_LOCKED: 'Statussen er ikke låst.',
+  UNLOCK_REASON: 'Skriv hvorfor statussen låses op.',
+  REPORT_UNAVAILABLE: 'Rapporten kunne ikke dannes.',
+  SERIAL_RULES_TCD_ONLY: 'Serienummerregler bruges kun af TCD.',
+  RULE_INVALID: 'Ugyldig regel.',
+  SAP_NO_ACCESS: 'Du har ikke adgang til transaktionen i SAP.',
+  SAP_EXPORT_FAILED: 'Opslaget i SAP fejlede. Prøv igen.',
+  SAP_EXPORT_EMPTY: 'SAP-eksporten kom tom tilbage, så tallene er ikke brugt. Prøv igen.',
+  DOC_STOCK_MISSING: 'Dagens SAP-tal mangler godkendte materialer, som SAP havde på lager ved godkendelsen. Tallene er ikke gemt.',
+  PIDOC_ZERO_CONFIRM: 'Serienummerlisten er tom, men SAP har lager i dag. Bekræft, at antallet skal være 0.',
+  PIDOC_MISSING_CONFIRM: 'Dagens SAP-tal har ingen linje for godkendte materialer, som SAP havde på lager ved godkendelsen. Hent dagens SAP-tal igen, eller bekræft antallet.',
+  PREVIEW_EXPIRED: 'Forhåndsvisningen er udløbet. Hent data fra SAP igen.',
+  REFETCH_OUTDATED: 'En anden har hentet SAP igen imens. Hent igen for at se forskellene.',
+  PLACEMENTS_NOT_FOUND: 'Placeringsarket blev ikke fundet på M:.',
+  KV_CONFLICT: 'Data blev ændret af en anden. Prøv igen.',
+  KV_LOCK_BUSY: 'Lageret er optaget lige nu. Prøv igen om et øjeblik.',
+  REPORT_NOT_FOUND: 'Rapporten blev ikke fundet.',
+  SAP_WRITE_SYSTEM_NOT_ALLOWED: 'Appen må kun ændre i det SAP-system, den er sat op til. Intet er ændret i SAP.',
+  PIDOC_FORBIDDEN: 'Du må ikke tage det trin på SAP-dokumentet.',
+  PIDOC_EXISTS: 'Materialet har allerede et SAP-dokument.',
+  PIDOC_MIXED: 'Brugte terminaler, tilbehør og materialer med/uden serienumre skal på hver sit dokument.',
+  PIDOC_ONE_NEW: 'Nye terminaler (-0) får ét dokument pr. materiale.',
+  PIDOC_TOO_MANY: 'Højst 20 materialer pr. optællingsdokument.',
+  PIDOC_CHECK_ERRORS: "SAP's Check fandt fejl i serienumrene – intet er opdateret.",
+  PIDOC_NOT_COUNTED: 'SAP viser ikke dokumentet som talt.',
+  PIDOC_NO_QTY: 'Hent dagens SAP-tal, før antallet lægges på.',
+  PIDOC_DOC_STALE: 'Hent dagens SAP-tal igen, før antallet lægges på.',
+  DOC_NOT_FETCHED: 'Hent dagens SAP-tal først – serienumrene til dokumentet kommer derfra.',
+  PIDOC_CHANGED: 'Dokumentet er ændret i mellemtiden. Prøv igen.',
+  PIDOC_NOT_DELETED: 'Dokumentet er ikke slettet i SAP.',
+  PIDOC_ACTIVE: 'Materialet har et aktivt SAP-dokument. Er det oprettet eller printet, så slet det i SAP (MI02). Er der lagt antal på, så bogfør det (Bogfør). Er det ukendt, skal en manager afklare det. Er materialet godkendt med tællelinjer med antal, så nulstil det bagefter, slet linjen og godkend igen.',
+  COUNT_MATERIAL_POSTED: 'Materialet er bogført i SAP og kan ikke ændres. Lav en ny optælling, hvis der skal rettes mere.',
+  UNPOST_REASON: 'Skriv hvorfor Bogført i SAP fortrydes.',
+  UNPOST_PIDOC: 'Materialet ligger på et SAP-dokument, så Bogført i SAP kan ikke fortrydes.',
+  PIDOC_BUSY: 'Der er allerede et SAP-dokument i gang på denne PC.',
+  PIDOC_CANCELLED: 'SAP-vinduet blev lukket – der er ikke ændret noget.',
+  PIDOC_TIMEOUT: 'Der blev ikke trykket i SAP i tide – der er ikke ændret noget.',
+  PIDOC_NOT_CREATED: 'SAP oprettede ikke dokumentet.',
+  PIDOC_NOT_POSSIBLE: 'SAP vil ikke oprette dokumentet. Der er ikke oprettet noget.',
+  PIDOC_SAP_FAILED: 'SAP-trinnet fejlede. Prøv igen.',
+  PIDOC_SAP_LANGUAGE: 'Log på SAP på engelsk (EN), og prøv igen.',
+  PIDOC_UNKNOWN: 'Optælling ved ikke, om SAP har gemt. Tjek dokumentet i SAP (MI03).',
+  PIDOC_SAVE_FAILED: 'SAP har gemt, men det kunne ikke gemmes på M:. Det er gemt på denne PC og kommer med senere.',
+  // Placeringer
+  DATE_INVALID: 'Ugyldig dato.',
+  LOCATIONS_LIVE: 'Placeringer er taget i brug – placeringsarket kan ikke importeres igen.',
+  LOCATIONS_MANAGER_ONLY: 'Kun managere og Placerings admins kan vedligeholde placeringer og fortryde.',
+  LOCATIONS_NOT_EMPTY: 'Der findes allerede placeringer. Vælg Erstat alt for at importere igen.',
+  LOCATION_EXISTS: 'Placeringen findes allerede.',
+  LOCATION_FULL: 'Placeringen er fuld.',
+  LOCATION_INACTIVE: 'Placeringen er deaktiveret.',
+  LOCATION_INVALID: 'Ugyldig placering. Tjek navn, type, formål og kapacitet.',
+  LOCATION_NOT_EMPTY: 'Der står paller på placeringen.',
+  LOCATION_NOT_FOUND: 'Placeringen findes ikke.',
+  LOCATION_RESERVED: 'Placeringen er reserveret og kan ikke bruges til paller.',
+  MATERIAL_INVALID: 'Ugyldigt materialenummer.',
+  MATERIAL_MISMATCH: 'Materialet hører ikke til pluk-pladsen.',
+  NOT_PICK_PLACE: 'Placeringen er ikke en pluk-plads.',
+  UNDO_CONFLICT: 'Handlingen kan ikke fortrydes – noget er ændret siden.',
+  LOCATION_IS_SHELF: 'Pladsen er en hylde – brug Læg på hylde.',
+  NOT_A_SHELF: 'Pladsen er ikke en lagerhylde.',
+  STOCK_TOO_LOW: 'Der er ikke så mange på hylden.',
+  STOCK_GONE: 'Materialet er ikke på hylden længere.',
+  RACK_INVALID: 'Ugyldig reol – 1 til 20 hylder.',
+  RACK_NOT_EMPTY: 'Reolen har hylder med indhold – tøm dem først.',
+  UNDO_NOT_POSSIBLE: 'Handlingen kan ikke fortrydes.',
+  UNDO_ALREADY: 'Handlingen er allerede fortrudt.',
+  UNDO_NOT_FOUND: 'Handlingen findes ikke i loggen.',
+  OUTBOX_ID_INVALID: 'Handlingen mangler et id.',
+  OUTBOX_METHOD_NOT_ALLOWED: 'Handlingen kan ikke gemmes lokalt.',
+  OUTBOX_SAVE_FAILED: 'Handlingen kunne ikke gemmes på denne pc, så den er ikke registreret. Prøv igen.',
+  PALLETS_INVALID: 'Ingen paller at sætte på plads.',
+  PALLET_GONE: 'Pallen er ikke der længere – en anden har taget eller flyttet den.',
+  PALLET_CHANGED: 'Pallen er ændret imens. Se den igen.',
+  STOCK_CHANGED: 'Antallet er ændret imens. Tæl igen, eller gem alligevel.',
+  SERIAL_ON_PALLET: 'Et serienummer står allerede på en anden palle. Tjek, om pallen allerede er sat på plads.',
+  PLACEMENTS_INVALID: 'Placeringsarket har ikke det forventede indhold.',
+  QUANTITY_INVALID: 'Ugyldigt antal.',
+  SERIES_TOO_LARGE: 'Højst 500 placeringer ad gangen.',
+  SLOC_INVALID: 'Storage location skal skrives som D000.',
+  // Tegningen
+  LAYOUT_INVALID: 'Tegningen er ugyldig. Tjek navne, typer og kapaciteter.',
+  LAYOUT_NO_DRAFT: 'Der er ingen kladde til tegningen.',
+  LAYOUT_DRAFT_BUSY: 'En anden redigerer tegningen. Overtag kladden for at rette.',
+  LAYOUT_STALE: 'Tegningen eller kladden er ændret et andet sted imens – hent den nye og ret igen.',
+  LAYOUT_BLOCKED: 'Tegningen kan ikke udgives – ret det, der stopper udgivelsen, først.',
+  LAYOUT_OWNS_PLACES: 'Pladser oprettes nu på tegningen.',
+  LOCATION_ON_DRAWING: 'Ret navn, type og kapacitet på tegningen.',
+  // Stempelkort
+  TIMECLOCK_INVALID: 'Ugyldig opgave eller tid.',
+  TIMECLOCK_RUNNING: 'Uret kører allerede. Stop det eller skift opgave.',
+  TIMECLOCK_NOT_RUNNING: 'Der kører ikke noget ur.',
+  TIMECLOCK_PAUSED: 'Uret holder allerede pause.',
+  TIMECLOCK_NOT_PAUSED: 'Uret holder ikke pause.',
+  TIMECLOCK_LONG_RUN: 'Uret har kørt i over 10 timer. Vælg hvornår du stoppede.',
+  TIMECLOCK_NOT_FOUND: 'Registreringen findes ikke (længere).',
+  TIMECLOCK_SOFTWARELOAD_ELSEWHERE: 'Softwareload kører i en anden hub. Stop det der først.',
+  // Softwareload
+  SOFTWARELOAD_INVALID: 'Ugyldige oplysninger til opgaven.',
+  SOFTWARELOAD_RUNNING: 'Der kører allerede en softwareload-opgave.',
+  SOFTWARELOAD_NOT_RUNNING: 'Der kører ikke nogen softwareload-opgave.',
+  SOFTWARELOAD_NOT_PENDING: 'Opgaven venter ikke på SAP.',
+  SOFTWARELOAD_DUPLICATE: 'Serienummeret er allerede scannet i opgaven.',
+  SOFTWARELOAD_PAUSED: 'Opgaven holder allerede pause.',
+  SOFTWARELOAD_NOT_PAUSED: 'Opgaven holder ikke pause.',
+  SOFTWARELOAD_TIMECLOCK_LONG_RUN: 'Stempelkortet har kørt i over 10 timer. Stop det i Stempelkort med det rigtige sluttidspunkt, og start eller fortsæt så opgaven.',
+  SOFTWARELOAD_TIMECLOCK_ELSEWHERE: 'Stempelkort kører i en anden hub. Stop det der først.',
+  SOFTWARELOAD_LONG_RUN: 'Opgaven har kørt i over 10 timer. Vælg hvornår du stoppede.',
+  SOFTWARELOAD_BUSY: 'Opgaven er ved at blive afsluttet eller flyttet i SAP. Vent til det er færdigt, eller se under Venter på SAP.',
+  SOFTWARELOAD_WRITE_DISABLED: 'Softwareload må endnu ikke flytte i dette SAP-system.',
+  SOFTWARELOAD_SAP_FAILED: 'SAP-trinnet fejlede. Prøv igen.',
+  SOFTWARELOAD_SAP_LANGUAGE: 'Appen kan kun læse SAP\'s svar på engelsk. Log på SAP på engelsk (EN), og prøv igen.',
+  SOFTWARELOAD_SAVE_FAILED: 'SAP har flyttet, men det kunne ikke gemmes på M:. Det er gemt på denne PC og kommer med senere.',
+  SOFTWARELOAD_CHANGED: 'Opgaven er rettet imens. Se oversigten igen.',
+  SOFTWARELOAD_KIF_CHANGED: 'Terminalerne er flyttet i SAP, siden du så planen. Se planen igen.',
+  SOFTWARELOAD_PLAN_CHANGED: 'Terminalerne står et andet sted i SAP, end da du så planen. Se planen igen.',
+  SOFTWARELOAD_ALREADY_FINISHED: 'Opgaven er allerede afsluttet. Se Venter på SAP eller søg på et af serienumrene.',
+  SOFTWARELOAD_NOT_FOUND: 'Opgaven, flytningen eller kommentaren findes ikke (længere).',
+  SOFTWARELOAD_NOT_FINISHED: 'Opgaven er ikke afsluttet. En opgave, der kører eller venter på SAP, kan ikke slettes.',
+  // Login and the Hub's own checks before a warehouse call
+  AUTH_FORBIDDEN: 'Du har ikke adgang til at gøre det.',
+  AUTH_UNTRUSTED_WINDOW: 'Handlingen blev afvist, fordi den ikke kom fra Hubbens eget vindue.',
+  AUTH_CREDENTIALS: 'Forkert email/brugernavn eller adgangskode.',
+  AUTH_PENDING: 'Din konto afventer godkendelse af en manager.',
+  AUTH_REJECTED: 'Din anmodning om adgang er blevet afvist. Kontakt en manager.',
+  // Optælling, also when the backend sends no detail
+  COUNT_INVALID: 'Optællingens oplysninger er ikke gyldige. Tjek navnet (højst 80 tegn).',
+  PLACEMENT_INVALID: 'Skriv et navn til placeringen (højst 60 tegn).',
+  MEMBER_NOT_FOUND: 'Deltageren er ikke (længere) med i optællingen.',
+  CLAIM_INVALID: 'Skriv navnet på området.',
+  CLAIM_TAKEN: 'En anden tæller allerede området.',
+  APPROVAL_INVALID: 'Godkendelsen er ikke gyldig. Se materialet igen.',
+  JOURNAL_CLOSED: 'Optællingen blev lukket på denne PC imens. Åbn den igen, og prøv igen.',
+  LINE_INVALID: 'Tællelinjen er ikke gyldig.',
+  SCOPE_INVALID: 'Vælg mindst én storage location og én lagertype.',
+  IMPORT_INVALID: 'Importen er ikke gyldig. Tjek placeringen og materialedokumentet.',
+  IMPORT_TOO_LARGE: 'Importen er for stor.',
+  IMPORT_EMPTY: 'Der er ingen serienumre at importere.',
+  IMPORT_FILE_TYPE: 'Vælg en Excel-, CSV- eller tekstfil.',
+  IMPORT_FILE_TOO_LARGE: 'Filen er for stor.',
+  MATDOC_INVALID: 'Skriv materialedokumentet som fx "4900229137" eller "4900229137 2026 01".',
+  PLACEMENTS_FORMAT: 'Placeringsarket har ikke de forventede kolonner.',
+  REPORT_OPEN_FAILED: 'Rapporten kunne ikke åbnes.',
+  PIDOC_EMPTY: 'Vælg mindst ét materiale.',
+  PIDOC_INVALID: 'Udvalget kan ikke bruges til et SAP-dokument.',
+  PIDOC_NOT_APPROVED: 'Kun godkendte materialer kan komme på et SAP-dokument.',
+  SAP_FORMAT: 'SAP-eksporten har ikke det forventede format. Prøv igen.',
+  SAP_SCRIPT_NOT_ALLOWED: 'Appen må ikke køre det SAP-script. Intet er ændret i SAP.',
+  SAP_SHOW_INVALID: 'Dokumentet kan ikke vises i SAP.',
+  SAP_SHOW_FAILED: 'SAP kunne ikke vise dokumentet. Tjek, at du er logget på SAP og har færre end 6 vinduer åbne.',
+  // Placeringer: a transaction left by an earlier action is finished first
+  TX_JOURNAL_KEYS: 'En tidligere handling er ikke gjort færdig på M:. Prøv igen om et øjeblik.',
+  UNEXPECTED_ERROR: 'Der skete en uventet fejl. Prøv igen.',
+}
+
+// The backend's detail text is Danish; in English the code's own text is shown instead, except for the codes below,
+// whose detail is the point (SAP's own message, what was invalid, the document number).
+const EN_WITH_DETAIL: Record<string, string> = {
+  SOFTWARELOAD_SAP_FAILED: 'The SAP step failed',
+  SOFTWARELOAD_INVALID: 'Invalid details for the task',
+  SOFTWARELOAD_SAVE_FAILED: 'SAP made the move, but it could not be saved on M:',
+}
+
+// The other clock runs in another hub: in English the hub is taken from the Danish detail.
+const EN_IN_HUB: Record<string, (hub: string) => string> = {
+  SOFTWARELOAD_TIMECLOCK_ELSEWHERE: hub => `Your time card is running in ${hub}. Stop it there first.`,
+  TIMECLOCK_SOFTWARELOAD_ELSEWHERE: hub => `Softwareload is running in ${hub}. Stop it there first.`,
+}
+
+// The person, place or number named in the backend's Danish detail, put into an English sentence (the detail itself is
+// Danish). The patterns are shared with electron/warehouse/errorDetailsEn.test.cjs, which runs them on the details the
+// services really produce. A detail in another form gets the code's own English text.
+const EN_FROM_DETAIL: Record<string, string[][]> = DETAILS_EN
+
+function englishFromDetail(code: string, detail: string): string | null {
+  for (const [pattern, text] of EN_FROM_DETAIL[code] || []) {
+    const regex = new RegExp(pattern)
+    if (regex.test(detail)) return detail.replace(regex, text)
+  }
+  return null
+}
+
+export function errorMessage(error: unknown, fallback?: string): string {
+  const code = errorCode(error)
+  if (currentWarehouseLanguage() === 'en') {
+    const detail = errorDetail(error)
+    if (code && detail && EN_WITH_DETAIL[code]) return `${EN_WITH_DETAIL[code]}: ${detail}`
+    const hub = code && EN_IN_HUB[code] ? /\b(TCD|TRR)\b/.exec(detail || '')?.[1] : undefined
+    if (code && hub) return EN_IN_HUB[code](hub)
+    const english = code && detail ? englishFromDetail(code, detail) : null
+    if (english) return english
+    return (code && MESSAGES_EN[code]) || fallback || MESSAGES_EN.UNEXPECTED_ERROR
+  }
+  return errorDetail(error) || (code && MESSAGES[code]) || fallback || MESSAGES.UNEXPECTED_ERROR
+}
+
+/**
+ * A scan in Optælling refused because M: is away. Every such refusal comes before the scan is written to this PC's
+ * journal, and the scan queue drops the serial, so the person is told to scan that serial again.
+ */
+export function scanErrorMessage(error: unknown, serial: string): string {
+  if (errorCode(error) !== 'STORAGE_UNAVAILABLE') return errorMessage(error)
+  return currentWarehouseLanguage() === 'en'
+    ? `The scan of ${serial} was not saved because the data on M: cannot be reached right now. Scan it again shortly.`
+    : `Scanningen af ${serial} er ikke gemt, fordi data på M: ikke kan nås lige nu. Scan den igen om lidt.`
+}
+
+const MESSAGES_EN: Record<string, string> = {
+  WAREHOUSE_TEAM_NOT_ALLOWED: 'Work Tools is only for TCD and TRR. Open the TCD or TRR hub.',
+  AUTH_REQUIRED: 'Please log in again.',
+  AUTH_CONTEXT_CHANGED: 'You switched hub meanwhile. The view has been reloaded – check the result.',
+  TEAM_NOT_ALLOWED: 'You do not have access to that team.',
+  IPC_FORBIDDEN: 'The action was refused.',
+  STORAGE_UNAVAILABLE: 'The data on M: cannot be reached right now. Try again shortly.',
+  SAP_NOT_READY: 'SAP is not ready. Log on to SAP and close any pop-ups (see the SAP indicator at the top).',
+  SAP_TIMEOUT: 'SAP did not answer in time. Try again.',
+  SAP_SCRIPT_FAILED: 'The SAP script could not run. Is SAP GUI open?',
+  SAP_INVALID_ARGUMENT: 'Invalid data for SAP.',
+  SAP_SHOW_INVALID: 'The document cannot be shown in SAP.',
+  SAP_SHOW_FAILED: 'SAP could not show the document. Make sure you are logged on to SAP and have fewer than 6 windows open.',
+  COUNT_NOT_FOUND: 'The count does not exist (any more).',
+  COUNT_DELETED: 'The count has been deleted.',
+  COUNT_CLOSED: 'The count is closed.',
+  COUNT_NOT_MEMBER: 'You are not taking part in the count. Ask to join.',
+  COUNT_OWNER_ONLY: 'Only the person responsible for the count can do that.',
+  COUNT_PIDOCS_ACTIVE: 'The count has SAP documents that are not posted. Delete created and printed ones in SAP (MI02), post counted ones (Post), and let a manager resolve unknown ones.',
+  COUNT_CREATE_FAILED: 'The count could not be created. Try again.',
+  MANAGER_ONLY: 'Only managers can do that.',
+  ROLE_INVALID: 'The role cannot be changed for that user.',
+  ADMIN_ONLY: 'Only admins and managers can do that.',
+  MATERIAL_LOCKED: 'Someone else is counting the material. Ask to help.',
+  MATERIAL_APPROVED: 'The material is approved and no longer counted.',
+  MATERIAL_NOT_FOUND: 'The material is not part of the count.',
+  SUBMIT_HAS_DIFF: 'The material has a difference.',
+  REQUEST_NOT_FOUND: 'The request does not exist (any more).',
+  CLIPBOARD_INVALID: 'The text could not be copied.',
+  CLIPBOARD_REFUSED: 'Windows refused the clipboard, so nothing was copied, and it may still hold something old. Wait a moment and try again.',
+  SERIAL_NOT_FOUND: 'The serial number is not registered as found.',
+  SERIAL_INVALID: 'Invalid serial number.',
+  PLACE_REQUIRED: 'Choose or type a location first.',
+  QTY_INVALID: 'Type a valid quantity.',
+  LINE_INVALID: 'The count line is not valid.',
+  LINE_NOT_FOUND: 'The count line does not exist (any more).',
+  LINE_SERIAL_MANAGED: 'The material has serial numbers. Scan or import them, or use Remove serial number.',
+  APPROVAL_SERIAL_LINES: 'The material has count lines with a quantity, but it has serial numbers. Delete the lines under Accessories and count lists before the material can be approved.',
+  APPROVED_WITH_SERIAL_LINES: 'Approved with count lines with a quantity. Reset the material, delete the line and approve again.',
+  APPROVAL_FOUND_ELSEWHERE: 'Serial numbers missing here were found in another count of the status. If they are approved as missing, goods that were found are written off. Move them in SAP, or approve anyway.',
+  PIDOC_SERIAL_LINES: 'The document cannot be posted because a material was approved with count lines with a quantity. Correct the count in SAP with MI05. After that a manager can post the document here with a reason.',
+  IMPORT_TOO_LARGE: 'The import is too large.',
+  IMPORT_EMPTY: 'There are no serial numbers to import.',
+  MATDOC_INVALID: 'Type the material document like "4900229137" or "4900229137 2026 01".',
+  SAP_CHECK_NOT_FOUND: 'The SAP check does not exist (any more).',
+  SAP_CHECK_NOTHING: 'There are no errors to send.',
+  SAP_CHECK_SCOPE_INVALID: 'Choose TCD, TRR or all of D301.',
+  SAP_CHECK_SETTINGS_INVALID: 'Type valid e-mail addresses separated by semicolons.',
+  OUTLOOK_UNAVAILABLE: 'Classic Outlook could not be opened. The Excel file is saved in the reports folder.',
+  OUTLOOK_FAILED: 'The Outlook draft could not be made. Try again.',
+  STATUS_NONE: 'A manager must start a status before counts can be created.',
+  STATUS_ALREADY_OPEN: 'A status is already in progress.',
+  STATUS_INVALID: 'Invalid status. Choose year and quarter.',
+  STATUS_NOT_FOUND: 'The status does not exist.',
+  STATUS_LOCKED: 'The status is approved and locked – nothing can be changed.',
+  SCOPE_TAKEN: 'Part of the selection is already counted in another count in the status.',
+  SCOPE_INVALID: 'Choose at least one storage location and one stock type.',
+  STATUS_NOT_READY: 'All counts must be closed and all materials approved or posted.',
+  STATUS_NOT_LOCKED: 'The status is not locked.',
+  UNLOCK_REASON: 'Say why the status is unlocked.',
+  REPORT_UNAVAILABLE: 'The report could not be made.',
+  SERIAL_RULES_TCD_ONLY: 'Serial number rules are only used by TCD.',
+  RULE_INVALID: 'Invalid rule.',
+  SAP_NO_ACCESS: 'You do not have access to the transaction in SAP.',
+  SAP_EXPORT_FAILED: 'The SAP lookup failed. Try again.',
+  SAP_EXPORT_EMPTY: 'The SAP export came back empty, so the figures were not used. Try again.',
+  DOC_STOCK_MISSING: "Today's SAP figures lack approved materials that SAP had in stock at approval. The figures were not saved.",
+  PIDOC_ZERO_CONFIRM: 'The serial number list is empty, but SAP has stock today. Confirm that the quantity is 0.',
+  PIDOC_MISSING_CONFIRM: "Today's SAP figures have no line for approved materials that SAP had in stock at approval. Fetch today's SAP figures again, or confirm the quantity.",
+  PREVIEW_EXPIRED: 'The preview has expired. Fetch the data from SAP again.',
+  REFETCH_OUTDATED: 'Someone else fetched SAP again meanwhile. Fetch again to see the differences.',
+  PLACEMENTS_NOT_FOUND: 'The placement sheet was not found on M:.',
+  KV_CONFLICT: 'Someone else changed the data. Try again.',
+  KV_LOCK_BUSY: 'The storage is busy right now. Try again in a moment.',
+  REPORT_NOT_FOUND: 'The report was not found.',
+  REPORT_OPEN_FAILED: 'The report could not be opened.',
+  SAP_WRITE_SYSTEM_NOT_ALLOWED: 'The app may only change the SAP system it is set up for. Nothing was changed in SAP.',
+  PIDOC_FORBIDDEN: 'You may not take that step on the SAP document.',
+  PIDOC_EXISTS: 'The material already has a SAP document.',
+  PIDOC_MIXED: 'Used terminals, accessories and materials with/without serial numbers each need their own document.',
+  PIDOC_ONE_NEW: 'New terminals (-0) get one document per material.',
+  PIDOC_TOO_MANY: 'At most 20 materials per count document.',
+  PIDOC_EMPTY: 'Choose at least one material.',
+  PIDOC_INVALID: 'The selection is not valid for a SAP document.',
+  PIDOC_NOT_APPROVED: 'Only approved materials can go on a SAP document.',
+  PIDOC_CHECK_ERRORS: "SAP's Check found errors in the serial numbers – nothing was updated.",
+  PIDOC_NOT_COUNTED: 'SAP does not show the document as counted.',
+  PIDOC_NO_QTY: "Fetch today's SAP figures before entering the quantity.",
+  PIDOC_DOC_STALE: "Fetch today's SAP figures before entering the quantity.",
+  DOC_NOT_FETCHED: "Fetch today's SAP figures first – the serial numbers for the document come from there.",
+  PIDOC_CHANGED: 'The document has changed meanwhile. Try again.',
+  PIDOC_NOT_DELETED: 'The document was not deleted in SAP.',
+  PIDOC_ACTIVE: 'The material has an active SAP document. If it is created or printed, delete it in SAP (MI02). If a quantity is entered, post it (Post). If it is unknown, a manager must resolve it. If the material was approved with count lines with a quantity, then reset it afterwards, delete the line and approve again.',
+  COUNT_MATERIAL_POSTED: 'The material is posted in SAP and cannot be changed. Make a new count if more needs correcting.',
+  UNPOST_REASON: 'Say why Posted in SAP is undone.',
+  UNPOST_PIDOC: 'The material is on a SAP document, so Posted in SAP cannot be undone.',
+  PIDOC_BUSY: 'A SAP document is already in progress on this PC.',
+  PIDOC_CANCELLED: 'The SAP window was closed – nothing was changed.',
+  PIDOC_TIMEOUT: 'Nothing was pressed in SAP in time – nothing was changed.',
+  PIDOC_NOT_CREATED: 'SAP did not create the document.',
+  PIDOC_NOT_POSSIBLE: 'SAP will not create the document. Nothing was created.',
+  PIDOC_SAP_FAILED: 'The SAP step failed. Try again.',
+  PIDOC_SAP_LANGUAGE: 'Log on to SAP in English (EN) and try again.',
+  PIDOC_UNKNOWN: 'Stock count does not know whether SAP saved it. Check the document in SAP (MI03).',
+  PIDOC_SAVE_FAILED: 'SAP saved it, but it could not be saved on M:. It is kept on this PC and saved later.',
+  // Placeringer
+  DATE_INVALID: 'Invalid date.',
+  LOCATIONS_LIVE: 'Locations are in use – the placement sheet can no longer be imported.',
+  LOCATIONS_MANAGER_ONLY: 'Only managers and Placerings admins can maintain locations and undo.',
+  LOCATIONS_NOT_EMPTY: 'There are already locations. Choose Replace all to import again.',
+  LOCATION_EXISTS: 'The location already exists.',
+  LOCATION_FULL: 'The location is full.',
+  LOCATION_INACTIVE: 'The location is deactivated.',
+  LOCATION_INVALID: 'Invalid location. Check name, type, purpose and capacity.',
+  LOCATION_NOT_EMPTY: 'There are pallets on the location.',
+  LOCATION_NOT_FOUND: 'The location does not exist.',
+  LOCATION_RESERVED: 'The location is reserved and cannot take pallets.',
+  MATERIAL_INVALID: 'Invalid material number.',
+  MATERIAL_MISMATCH: 'The material does not belong to the pick place.',
+  NOT_PICK_PLACE: 'The location is not a pick place.',
+  UNDO_CONFLICT: 'The action cannot be undone – something has changed since.',
+  LOCATION_IS_SHELF: 'The place is a shelf – use Put on shelf.',
+  NOT_A_SHELF: 'The place is not a storage shelf.',
+  STOCK_TOO_LOW: 'There are not that many on the shelf.',
+  STOCK_GONE: 'The material is no longer on the shelf.',
+  RACK_INVALID: 'Invalid rack – 1 to 20 shelves.',
+  RACK_NOT_EMPTY: 'The rack has shelves with stock – empty them first.',
+  UNDO_NOT_POSSIBLE: 'The action cannot be undone.',
+  UNDO_ALREADY: 'The action has already been undone.',
+  UNDO_NOT_FOUND: 'The action is not in the log.',
+  OUTBOX_ID_INVALID: 'The action has no id.',
+  OUTBOX_METHOD_NOT_ALLOWED: 'The action cannot be saved locally.',
+  OUTBOX_SAVE_FAILED: 'The action could not be saved on this PC, so it is not registered. Try again.',
+  PALLETS_INVALID: 'No pallets to put away.',
+  PALLET_GONE: 'The pallet is no longer there – someone else took or moved it.',
+  PALLET_CHANGED: 'The pallet was changed meanwhile. Look at it again.',
+  STOCK_CHANGED: 'The quantity was changed meanwhile. Count again, or save anyway.',
+  SERIAL_ON_PALLET: 'A serial number is already on another pallet. Check whether the pallet has already been put away.',
+  PLACEMENTS_INVALID: 'The placement sheet does not have the expected content.',
+  QUANTITY_INVALID: 'Invalid quantity.',
+  SERIES_TOO_LARGE: 'At most 500 locations at a time.',
+  SLOC_INVALID: 'Write the storage location like D000.',
+  // Drawing
+  LAYOUT_INVALID: 'The drawing is invalid. Check names, types and capacities.',
+  LAYOUT_NO_DRAFT: 'There is no draft of the drawing.',
+  LAYOUT_DRAFT_BUSY: 'Someone else is editing the drawing. Take over the draft to edit.',
+  LAYOUT_STALE: 'The drawing or the draft was changed elsewhere meanwhile – fetch the new one and edit again.',
+  LAYOUT_BLOCKED: 'The drawing cannot be published – fix what stops the publish first.',
+  LAYOUT_OWNS_PLACES: 'Locations are now created on the drawing.',
+  LOCATION_ON_DRAWING: 'Change name, type and capacity on the drawing.',
+  // Time card
+  TIMECLOCK_INVALID: 'Invalid task or time.',
+  TIMECLOCK_RUNNING: 'The clock is already running. Stop it or switch task.',
+  TIMECLOCK_NOT_RUNNING: 'No clock is running.',
+  TIMECLOCK_PAUSED: 'The clock is already on a break.',
+  TIMECLOCK_NOT_PAUSED: 'The clock is not on a break.',
+  TIMECLOCK_LONG_RUN: 'The clock has run for more than 10 hours. Choose when you stopped.',
+  TIMECLOCK_NOT_FOUND: 'The registration does not exist (any more).',
+  TIMECLOCK_SOFTWARELOAD_ELSEWHERE: 'Softwareload is running in another hub. Stop it there first.',
+  // Softwareload
+  SOFTWARELOAD_INVALID: 'Invalid details for the task.',
+  SOFTWARELOAD_RUNNING: 'A softwareload task is already running.',
+  SOFTWARELOAD_NOT_RUNNING: 'No softwareload task is running.',
+  SOFTWARELOAD_NOT_PENDING: 'The task is not waiting for SAP.',
+  SOFTWARELOAD_DUPLICATE: 'The serial number is already scanned in the task.',
+  SOFTWARELOAD_PAUSED: 'The task is already on a break.',
+  SOFTWARELOAD_NOT_PAUSED: 'The task is not on a break.',
+  SOFTWARELOAD_TIMECLOCK_LONG_RUN: 'Your time card has run for more than 10 hours. Stop it in Time card with the right end time, then start or resume the task.',
+  SOFTWARELOAD_TIMECLOCK_ELSEWHERE: 'Your time card is running in another hub. Stop it there first.',
+  SOFTWARELOAD_LONG_RUN: 'The task has run for more than 10 hours. Choose when you stopped.',
+  SOFTWARELOAD_BUSY: 'The task is being finished or moved in SAP. Wait until it is done, or check Waiting for SAP.',
+  SOFTWARELOAD_WRITE_DISABLED: 'Softwareload may not move anything in this SAP system yet.',
+  SOFTWARELOAD_SAP_FAILED: 'The SAP step failed. Try again.',
+  SOFTWARELOAD_SAP_LANGUAGE: "The app can only read SAP's answers in English. Log on to SAP in English (EN) and try again.",
+  SOFTWARELOAD_SAVE_FAILED: 'SAP made the move, but it could not be saved on M:. It is kept on this PC and saved later.',
+  SOFTWARELOAD_CHANGED: 'The task was edited meanwhile. Check the overview again.',
+  SOFTWARELOAD_KIF_CHANGED: 'The terminals were moved in SAP after you saw the plan. Check the plan again.',
+  SOFTWARELOAD_PLAN_CHANGED: 'SAP has the terminals elsewhere than when you saw the plan. Check the plan again.',
+  SOFTWARELOAD_ALREADY_FINISHED: 'The task is already finished. Check Waiting for SAP or search one of its serial numbers.',
+  SOFTWARELOAD_NOT_FOUND: 'The task, the move or the comment does not exist (any more).',
+  SOFTWARELOAD_NOT_FINISHED: 'The task is not finished. A task that is running or waiting for SAP cannot be deleted.',
+  // Login and the Hub's own checks before a warehouse call
+  AUTH_FORBIDDEN: 'You do not have access to do that.',
+  AUTH_UNTRUSTED_WINDOW: "The action was refused because it did not come from the Hub's own window.",
+  AUTH_CREDENTIALS: 'Incorrect email/username or password.',
+  AUTH_PENDING: 'Your account is awaiting approval from a manager.',
+  AUTH_REJECTED: 'Your access request has been rejected. Contact a manager.',
+  // Stock count
+  COUNT_INVALID: 'The details of the count are not valid. Check the name (at most 80 characters).',
+  PLACEMENT_INVALID: 'Type a name for the location (at most 60 characters).',
+  MEMBER_NOT_FOUND: 'The participant is not part of the count (any more).',
+  CLAIM_INVALID: 'Type the name of the area.',
+  CLAIM_TAKEN: 'Someone else is already counting the area.',
+  APPROVAL_INVALID: 'The approval is not valid. Look at the material again.',
+  JOURNAL_CLOSED: 'The count was closed on this PC meanwhile. Open it again and try again.',
+  IMPORT_INVALID: 'The import is not valid. Check the location and the material document.',
+  IMPORT_FILE_TYPE: 'Choose an Excel, CSV or text file.',
+  IMPORT_FILE_TOO_LARGE: 'The file is too large.',
+  PLACEMENTS_FORMAT: 'The placement sheet does not have the expected columns.',
+  SAP_FORMAT: 'The SAP export does not have the expected format. Try again.',
+  SAP_SCRIPT_NOT_ALLOWED: 'The app may not run that SAP script. Nothing was changed in SAP.',
+  // Locations: a transaction left by an earlier action is finished first
+  TX_JOURNAL_KEYS: 'An earlier action is not finished on M:. Try again in a moment.',
+  UNEXPECTED_ERROR: 'Something unexpected went wrong. Try again.',
+}
+
+/** The codes with a Danish text (for the test that every one also has an English text). */
+export const danishCodes = () => Object.keys(MESSAGES).filter(code => code !== 'UNEXPECTED_ERROR')

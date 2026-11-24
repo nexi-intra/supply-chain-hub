@@ -20,6 +20,15 @@ test('replay guard preserves a blocked queue without touching network data and c
   assert.deepEqual(resilient.retrySyncNow(), { succeeded: 1, failed: 0, remaining: 0 })
   assert.equal(real.get('synthetic'), 'queued')
 })
+test('the resilient store forwards watch visibility to the network store', t => {
+  const local = temporaryLocalStore(t), real = temporaryNetworkStore(t)
+  const calls = []
+  const network = { ...withControllableConnection(real), setWatchVisibility: visible => calls.push(visible) }
+  const resilient = createResilientStore(network, local)
+  resilient.setWatchVisibility(false)
+  resilient.setWatchVisibility(true)
+  assert.deepEqual(calls, [false, true])
+})
 test('invalidation cancels delayed mirrors of reads as well as writes', async t => {
   const local = temporaryLocalStore(t), real = temporaryNetworkStore(t), resilient = createResilientStore(real, local)
   real.set('synthetic', 'old'); resilient.get('synthetic')

@@ -1,11 +1,13 @@
 import type { Guide } from './guideTypes'
+import type { LibraryKind } from './libraryConfig'
 
-export interface AssistantScope { token: string; viewId?: string }
+export interface AssistantScope { token: string }
 export interface AssistantSource {
-  kind: 'guide' | 'shifts' | 'calendar' | 'homeOffice' | 'highscores' | 'module'
+  kind: 'guide' | 'shifts' | 'calendar' | 'homeOffice' | 'highscores' | 'module' | 'warehouse'
   teamId: string
   title: string
   guideId?: string
+  library?: LibraryKind
   reference?: string
   version?: string
   revision?: string
@@ -14,9 +16,11 @@ export interface AssistantSource {
   moduleId?: string
   recordId?: string
 }
+export type AssistantActionType = 'vacation-request' | 'personal-todo' | 'sick-leave' | 'home-office-day' | 'note' | 'message' | 'team-todo' | 'high-five'
 export interface AssistantActionProposal {
-  type: 'vacation-request' | 'personal-todo'
-  params: Record<string, string>
+  type: AssistantActionType
+  /** Strings, except `isPersonal` on a note. */
+  params: Record<string, string | boolean>
   summary: string
 }
 export interface AssistantAnswer {
@@ -33,6 +37,8 @@ export interface AssistantAnswer {
   metrics?: { totalMs: number; loadMs: number; tokens?: number }
   /** Kun ved mode 'action-proposal' med en genkendt handling — se HubAssistant.tsx. */
   actionProposal?: AssistantActionProposal
+  /** A button that opens a module (Optælling's live answers): view, deep-link params and the button text. */
+  navigation?: { view: string; params?: { tab?: string; itemId?: string }; label: string }
 }
 export interface AssistantStatus { installed: boolean; running: boolean; busy: boolean; vision: boolean; freeGiB: number; minimumFreeGiB?: number; model: string; sharedAvailable?: boolean; provisioning?: boolean; provisionProgress?: number }
 export interface AssistantProvisionProgress { copied: number; total: number; ratio: number }
@@ -45,8 +51,8 @@ export interface AssistantApi {
   onProvisionProgress(callback: (progress: AssistantProvisionProgress) => void): () => void
   onContextChanged(callback: () => void): () => void
   onGuidesChanged(callback: () => void): () => void
-  guide(request: AssistantScope & { teamId: string; guideId: string }): Promise<Guide>
-  image(request: AssistantScope & { teamId: string; guideId: string; imageId: string }): Promise<string>
+  guide(request: AssistantScope & { teamId: string; guideId: string; library?: LibraryKind }): Promise<Guide>
+  image(request: AssistantScope & { teamId: string; guideId: string; imageId: string; library?: LibraryKind }): Promise<string>
   record(request: AssistantScope & { teamId: string; moduleId: string; recordId: string; language: string }): Promise<{ title: string; text: string }>
 }
 declare global { interface Window { electronAssistant?: AssistantApi } }

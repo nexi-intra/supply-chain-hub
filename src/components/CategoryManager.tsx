@@ -13,7 +13,7 @@ import { Separator } from '@/components/ui/separator'
 import { Trash, Plus, PencilSimple, Check, X } from '@phosphor-icons/react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
-import { useLanguage } from '@/contexts/LanguageContext'
+import { useLibraryLanguage } from '@/contexts/LibraryContext'
 
 interface CategoryManagerProps {
   open: boolean
@@ -30,7 +30,7 @@ export function CategoryManager({
   onUpdateCategories,
   guides,
 }: CategoryManagerProps) {
-  const { t } = useLanguage()
+  const { t } = useLibraryLanguage()
   const [newCategory, setNewCategory] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')

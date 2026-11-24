@@ -55,3 +55,11 @@ test('English and Finnish factual responses stay local and concise', () => {
   assert.equal(conciseGuideFact(evidence, { question: 'what is the new cloud ip address', language: 'en' }).text, 'The current IP address is 192.0.2.10. [1]')
   assert.equal(conciseGuideFact(evidence, { question: 'mikä on uusi cloud ip-osoite', language: 'fi' }).text, 'Nykyinen IP-osoite on 192.0.2.10. [1]')
 })
+
+test('a knowledge fallback quotes the exact result code rather than the heading or a similar code', () => {
+  const evidence = answer([source('1. Rejection Reason\n2. 2:10 - A different error\n3. 2:1 - Cancelled by Cancel Key Pressed', { library: 'knowledge', reference: '1.3' })])
+  const result = conciseGuideFallback(evidence, { question: 'what does rejection reason 2:1 mean?', language: 'en' })
+  assert.match(result.text, /2:1 - Cancelled by Cancel Key Pressed \[1\]/)
+  assert.doesNotMatch(result.text, /Rejection Reason|2:10/)
+  assert.equal(result.sources, evidence.sources)
+})

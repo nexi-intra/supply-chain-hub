@@ -28,4 +28,6 @@ export interface ElectronTranslationApi {
 export interface ElectronShellApi {
   /** Åbner en fil eller mappe i standardprogrammet/Stifinder; kaster hvis stien er ugyldig. */
   openPath(path: string): Promise<void>
+  /** Retter stavekontrollen til appens sprog (main slår den fra, hvis sproget ikke har en ordbog). */
+  setSpellcheckLanguage?(language: string): Promise<string[]>
 }

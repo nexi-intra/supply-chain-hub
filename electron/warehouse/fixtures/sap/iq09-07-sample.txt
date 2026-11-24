@@ -1,0 +1,10 @@
+﻿15.10.2026                     Dynamic List Display                                                                              1
+
+
+	Plnt	Location	Serial Number	Material	Material Description	UserStatus	Manuf. Serial Number
+
+	D301	D002	NCB200492103	INT4300-4921-0-R	SmartPOS N950 PCI PTS 6.x Used P2PE	DREP
+	D301	D003	NCB200492432	INT4300-4921-0-R	SmartPOS N950 PCI PTS 6.x Used P2PE	DREP
+	D301	D000	470060250206000009	R092-0036	Simcard Telenor	DREP
+	D301	D003	X6D400000391	INT4700-4100-0-R	Smart Station X70 Used	DREP
+	D301	D003	X7D400000460	INT4350-4100-0-R	Smart Station P70 PCI PTS 7.x P2PE	DREP

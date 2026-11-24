@@ -56,7 +56,7 @@ const UI_TEXT = {
       `Jeg fandt ${count} relevant${count === 1 ? '' : 'e'} afsnit i ${guides} guide${guides === 1 ? '' : 's'}. Svaret er citeret direkte fra biblioteket:`,
     noHits: (q: string) => `Jeg fandt ikke noget i guidebiblioteket, der matcher "${q}". Prøv andre søgeord — eller opret en guide om emnet, hvis det mangler.`,
     empty: 'Der er ingen guides i biblioteket endnu. Opret den første guide via "Ny guide"-knappen.',
-    translatedFrom: { da: 'Oversat fra dansk', en: 'Oversat fra engelsk', fi: 'Oversat fra finsk' },
+    translatedFrom: { da: 'Oversat fra dansk', en: 'Oversat fra engelsk', fi: 'Oversat fra finsk', sv: 'Oversat fra svensk' },
     openGuide: 'Åbn guide',
     placeholder: 'Spørg om noget fra guiderne…',
   },
@@ -66,7 +66,7 @@ const UI_TEXT = {
       `I found ${count} relevant section${count === 1 ? '' : 's'} in ${guides} guide${guides === 1 ? '' : 's'}. The answer is quoted directly from the library:`,
     noHits: (q: string) => `I couldn't find anything in the guide library matching "${q}". Try different keywords — or create a guide on the topic if it's missing.`,
     empty: 'There are no guides in the library yet. Create the first one via the "Ny guide" button.',
-    translatedFrom: { da: 'Translated from Danish', en: 'Translated from English', fi: 'Translated from Finnish' },
+    translatedFrom: { da: 'Translated from Danish', en: 'Translated from English', fi: 'Translated from Finnish', sv: 'Translated from Swedish' },
     openGuide: 'Open guide',
     placeholder: 'Ask about anything in the guides…',
   },
@@ -76,9 +76,19 @@ const UI_TEXT = {
       `Löysin ${count} asiaankuuluvaa osiota ${guides} oppaasta. Vastaus on lainattu suoraan kirjastosta:`,
     noHits: (q: string) => `Opaskirjastosta ei löytynyt hakua ”${q}” vastaavaa sisältöä. Kokeile muita hakusanoja tai luo aiheesta uusi opas.`,
     empty: 'Kirjastossa ei ole vielä oppaita. Luo ensimmäinen opas Uusi opas -painikkeella.',
-    translatedFrom: { da: 'Käännetty tanskasta', en: 'Käännetty englannista', fi: 'Käännetty suomesta' },
+    translatedFrom: { da: 'Käännetty tanskasta', en: 'Käännetty englannista', fi: 'Käännetty suomesta', sv: 'Käännetty ruotsista' },
     openGuide: 'Avaa opas',
     placeholder: 'Kysy jotain oppaista…',
+  },
+  sv: {
+    greeting: 'Hej! Ställ en fråga så hittar jag svaret i guidebiblioteket och citerar de relevanta stegen.',
+    found: (count: number, guides: number) =>
+      `Jag hittade ${count} relevant${count === 1 ? ' avsnitt' : 'a avsnitt'} i ${guides} guide${guides === 1 ? '' : 'r'}. Svaret är citerat direkt från biblioteket:`,
+    noHits: (q: string) => `Jag hittade inget i guidebiblioteket som matchar "${q}". Prova andra sökord — eller skapa en guide om ämnet om den saknas.`,
+    empty: 'Det finns inga guider i biblioteket ännu. Skapa den första guiden med knappen "Ny guide".',
+    translatedFrom: { da: 'Översatt från danska', en: 'Översatt från engelska', fi: 'Översatt från finska', sv: 'Översatt från svenska' },
+    openGuide: 'Öppna guide',
+    placeholder: 'Fråga om något i guiderna…',
   },
 } as const
 

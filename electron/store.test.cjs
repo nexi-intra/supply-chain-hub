@@ -3,7 +3,7 @@ const assert = require('node:assert/strict')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
-const { createStore } = require('./store.cjs')
+const { createStore, decideWatchTick, whenWritesSettled } = require('./store.cjs')
 
 test('trusted multi-key capabilities read fresh data, lock every key, and expire', t => {
   const { directory, store } = temporaryStore(t), other = createStore(directory)
@@ -27,6 +27,83 @@ test('asynchronous multi-key callbacks are rejected before running and failures 
   assert.equal(store.get('a'), undefined)
   assert.throws(() => store.withLockedKeys(['a'], () => { throw new Error('synthetic failure') }), /synthetic failure/)
   assert.ok(!fs.existsSync(path.join(directory, 'a.json.lock')))
+})
+
+test('withLockedKeysAsync: fresh data, every key locked, writes and deletes applied, capabilities expire', async t => {
+  const { directory, store } = temporaryStore(t), other = createStore(directory)
+  store.set('a', { old: true }); other.set('a', { fresh: true })
+  let escaped
+  const result = await store.withLockedKeysAsync(['b', 'a', 'a'], tx => {
+    escaped = tx
+    assert.deepEqual(tx.get('a'), { fresh: true })
+    assert.ok(fs.existsSync(path.join(directory, 'a.json.lock')))
+    assert.ok(fs.existsSync(path.join(directory, 'b.json.lock')))
+    assert.throws(() => tx.set('unlocked', 1), /Invalid transaction capability/)
+    tx.set('b', [1]); tx.delete('a')
+    assert.deepEqual(tx.get('b'), [1], 'a value set in the transaction is read back')
+    assert.equal(tx.get('a'), undefined)
+    return 'done'
+  })
+  assert.equal(result, 'done')
+  assert.equal(store.get('a', { skipCache: true }), undefined); assert.deepEqual(other.get('b', { skipCache: true }), [1])
+  assert.throws(() => escaped.get('b'), /Invalid transaction capability/)
+  assert.deepEqual(fs.readdirSync(directory).filter(name => name.endsWith('.lock') || name.endsWith('.tmp')), [])
+})
+
+test('withLockedKeysAsync: a failing or asynchronous transaction writes nothing and releases its locks', async t => {
+  const { directory, store } = temporaryStore(t)
+  store.set('a', 1)
+  await assert.rejects(store.withLockedKeysAsync(['a'], async tx => { tx.set('a', 'must not write') }), /synchronous/)
+  await assert.rejects(store.withLockedKeysAsync(['a', 'b'], tx => { tx.set('a', 2); tx.set('b', 2); throw new Error('synthetic failure') }), /synthetic failure/)
+  assert.equal(store.get('a', { skipCache: true }), 1)
+  assert.equal(store.get('b', { skipCache: true }), undefined)
+  assert.deepEqual(fs.readdirSync(directory).filter(name => name.endsWith('.lock') || name.endsWith('.tmp')), [])
+})
+
+test('withLockedKeysAsync: deleteAfterCommit removes a key (a journal) only after every write landed, in the set order', async t => {
+  const { store } = temporaryStore(t)
+  const renamed = []
+  const rename = fs.promises.rename
+  t.mock.method(fs.promises, 'rename', async (from, to) => { renamed.push(path.basename(String(to))); return rename(from, to) })
+  const journal = { a: 1, b: 1 }
+  await store.withLockedKeysAsync(['a', 'b', 'journal'], tx => {
+    tx.set('journal', journal); tx.set('b', 1); tx.set('a', 1); tx.deleteAfterCommit('journal')
+    assert.deepEqual(tx.get('journal'), journal, 'still readable in the transaction')
+  })
+  assert.deepEqual(renamed, ['journal.json', 'b.json', 'a.json'])
+  assert.equal(store.get('journal', { skipCache: true }), undefined)
+  t.mock.method(fs.promises, 'rename', async (from, to) => {
+    if (path.basename(String(to)) === 'a.json') throw Object.assign(new Error('EIO'), { code: 'EIO' })
+    return rename(from, to)
+  })
+  await assert.rejects(store.withLockedKeysAsync(['a', 'b', 'journal'], tx => { tx.set('journal', { a: 2, b: 2 }); tx.set('b', 2); tx.set('a', 2); tx.deleteAfterCommit('journal') }), { code: 'EIO' })
+  assert.deepEqual([store.get('journal', { skipCache: true }), store.get('b', { skipCache: true }), store.get('a', { skipCache: true })], [{ a: 2, b: 2 }, 2, 1], 'a failed write keeps the journal')
+  await assert.rejects(store.withLockedKeysAsync(['a'], tx => tx.deleteAfterCommit('other')), /Invalid transaction capability/)
+})
+
+test('withLockedKeysAsync keeps the event loop running: a write to M: takes seconds and must not freeze the app', async t => {
+  const { store } = temporaryStore(t)
+  let ticked = false
+  let sawTick = false
+  setImmediate(() => { ticked = true })
+  await store.withLockedKeysAsync(['a'], tx => { sawTick = ticked; tx.set('a', 1) })
+  assert.equal(sawTick, true)
+})
+
+test('withLockedKeysAsync does not hold its other locks while it waits for a busy one, and goes on when it is free', async t => {
+  const { directory, store } = temporaryStore(t)
+  const other = createStore(directory)
+  const busy = path.join(directory, 'b.json.lock')
+  fs.writeFileSync(busy, 'another-pc:owner')
+  const done = store.withLockedKeysAsync(['a', 'b'], tx => { tx.set('a', `${tx.get('a')}+A`); tx.set('b', 'B') })
+  // Holding a while waiting for b would block this until b is free (or the lock retries run out, ~7 s); it must get through now.
+  const startedAt = Date.now()
+  await other.withLockedKeysAsync(['a'], tx => { tx.set('a', 'other') })
+  assert.ok(Date.now() - startedAt < 3000, `the other client waited ${Date.now() - startedAt} ms for a`)
+  assert.ok(fs.existsSync(busy), 'b is still busy, so the first transaction is still waiting')
+  fs.unlinkSync(busy)
+  await done
+  assert.deepEqual([store.get('a', { skipCache: true }), store.get('b', { skipCache: true })], ['other+A', 'B'])
 })
 
 test('trusted migration mutation uses fresh data and releases the lock if backup fails', (t) => {
@@ -89,6 +166,27 @@ test('async writes self-heal a provably abandoned lock but never steal a fresh o
   await assert.rejects(store.setAsync('tasks', [{ id: 'b' }]), { code: 'KV_LOCK_BUSY' })
   assert.equal(fs.readFileSync(lockFile, 'utf8'), '99999:live-owner')
   assert.deepEqual(store.get('tasks', { skipCache: true }), [{ id: 'a' }])
+})
+
+test('whenWritesSettled resolves true once pending writes finish', async (t) => {
+  const { store } = temporaryStore(t)
+  const write = store.setAsync('pending', { value: 42 })
+  assert.equal(await whenWritesSettled(5000), true)
+  assert.deepEqual(store.get('pending', { skipCache: true }), { value: 42 })
+  await write
+})
+
+test('whenWritesSettled resolves false when the timeout passes first', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  const lockFile = path.join(directory, 'held.json.lock')
+  fs.writeFileSync(lockFile, '99999:other-owner')
+  const write = store.setAsync('held', 1)
+  const started = Date.now()
+  assert.equal(await whenWritesSettled(100), false)
+  assert.ok(Date.now() - started < 200, `took ${Date.now() - started} ms`)
+  fs.rmSync(lockFile, { force: true })
+  await write
+  assert.equal(await whenWritesSettled(1000), true)
 })
 
 test('append replay is idempotent but cannot overwrite an existing different record', (t) => {
@@ -182,6 +280,108 @@ test('missing keys return undefined', (t) => {
   assert.equal(store.get('missing'), undefined)
 })
 
+test('mutateAsync reads, changes and writes under one lock, skips on undefined and serializes concurrent callers', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  assert.deepEqual(await store.mutateAsync('counter', current => (current === undefined ? { n: 1 } : undefined)), { n: 1 })
+  assert.deepEqual(await store.getAsync('counter', { skipCache: true }), { n: 1 })
+  assert.equal(await store.mutateAsync('counter', () => undefined), undefined)
+  assert.deepEqual(await store.getAsync('counter', { skipCache: true }), { n: 1 })
+
+  const other = createStore(directory)
+  await Promise.all(Array.from({ length: 8 }, (_, i) => (i % 2 ? other : store).mutateAsync('counter', current => ({ n: current.n + 1 }))))
+  assert.deepEqual(await store.getAsync('counter', { skipCache: true }), { n: 9 })
+  assert.ok(!fs.existsSync(path.join(directory, 'counter.json.lock')))
+
+  await assert.rejects(store.mutateAsync('counter', async () => ({ n: 0 })), /synchronous/)
+  await assert.rejects(store.mutateAsync('counter', () => { throw new Error('nope') }), /nope/)
+  assert.deepEqual(await store.getAsync('counter', { skipCache: true }), { n: 9 })
+  assert.ok(!fs.existsSync(path.join(directory, 'counter.json.lock')))
+})
+
+const fileMtime = (directory, key) => fs.statSync(path.join(directory, `${key}.json`)).mtimeMs
+const assertNoLeftovers = (directory) => {
+  const left = fs.readdirSync(directory)
+  assert.ok(!left.some(name => name.endsWith('.tmp')), `tmp left: ${left}`)
+  assert.ok(!left.some(name => name.endsWith('.lock')), `lock left: ${left}`)
+}
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+test('updateAsync with an unchanged field value does not rewrite the file', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  await store.setAsync('client-versions', { a: { v: 1 } })
+  const before = fileMtime(directory, 'client-versions')
+  await pause(25)
+  assert.deepEqual(await store.updateAsync('client-versions', { op: 'setField', field: 'a', value: { v: 1 } }), { a: { v: 1 } })
+  assert.deepEqual((await store.updateDetailedAsync('client-versions', { op: 'setField', field: 'a', value: { v: 1 } })).value, { a: { v: 1 } })
+  assert.deepEqual(store.update('client-versions', { op: 'setField', field: 'a', value: { v: 1 } }), { a: { v: 1 } })
+  assert.equal(fileMtime(directory, 'client-versions'), before)
+  assert.deepEqual(await store.getAsync('client-versions'), { a: { v: 1 } })
+  assertNoLeftovers(directory)
+})
+
+test('mutateAsync returning an equal value does not rewrite the file', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  const value = { n: 3, list: [1, 2] }
+  await store.setAsync('counter', value)
+  const before = fileMtime(directory, 'counter')
+  await pause(25)
+  assert.deepEqual(await store.mutateAsync('counter', current => structuredClone(current)), value)
+  assert.deepEqual(store.mutate('counter', current => structuredClone(current)), value)
+  assert.equal(fileMtime(directory, 'counter'), before)
+  assertNoLeftovers(directory)
+})
+
+test('upsert of an identical item does not rewrite the file', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  const sameItem = { id: '1', name: 'Vagt' }
+  await store.setAsync('shifts', [sameItem, { id: '2', name: 'Anden' }])
+  const before = fileMtime(directory, 'shifts')
+  await pause(25)
+  assert.deepEqual(await store.updateAsync('shifts', { op: 'upsert', items: [sameItem] }), [sameItem, { id: '2', name: 'Anden' }])
+  assert.deepEqual(store.update('shifts', { op: 'upsert', items: [sameItem] }), [sameItem, { id: '2', name: 'Anden' }])
+  assert.equal(fileMtime(directory, 'shifts'), before)
+  assertNoLeftovers(directory)
+})
+
+test('a real change is still written', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  await store.setAsync('client-versions', { a: { v: 1 } })
+  const before = fileMtime(directory, 'client-versions')
+  await pause(25)
+  assert.deepEqual(await store.updateAsync('client-versions', { op: 'setField', field: 'a', value: { v: 2 } }), { a: { v: 2 } })
+  assert.notEqual(fileMtime(directory, 'client-versions'), before)
+  assert.deepEqual(await store.getAsync('client-versions', { skipCache: true }), { a: { v: 2 } })
+  const mid = fileMtime(directory, 'client-versions')
+  await pause(25)
+  assert.deepEqual(await store.mutateAsync('client-versions', current => { current.a.v = 3; return current }), { a: { v: 3 } })
+  assert.notEqual(fileMtime(directory, 'client-versions'), mid)
+  assert.deepEqual(await store.getAsync('client-versions', { skipCache: true }), { a: { v: 3 } })
+  assertNoLeftovers(directory)
+})
+
+test('sweepStaleTempFilesAsync removes only temp files that are old by both name and mtime', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  store.set('index', { ok: true })
+  const day = 24 * 60 * 60 * 1000
+  const old = Date.now() - 2 * day
+  const write = (name, mtimeMs) => {
+    const file = path.join(directory, name)
+    fs.writeFileSync(file, 'x')
+    fs.utimesSync(file, new Date(mtimeMs), new Date(mtimeMs))
+    return name
+  }
+  const stale = write(`index.json.123.${old}.deadbeef.tmp`, old)
+  const freshName = write(`index.json.123.${Date.now()}.deadbeef.tmp`, old)
+  const freshMtime = write(`index.json.123.${old}.cafebabe.tmp`, Date.now())
+  const foreign = write('notes.tmp', old)
+
+  assert.deepEqual(await store.sweepStaleTempFilesAsync(), [stale])
+  const left = fs.readdirSync(directory)
+  for (const name of [freshName, freshMtime, foreign, 'index.json']) assert.ok(left.includes(name), name)
+  assert.ok(!left.includes(stale))
+  assert.deepEqual(store.get('index'), { ok: true })
+})
+
 test('getAsync mirrors get: decrypts, caches, and reports missing keys as undefined', async (t) => {
   const { store } = temporaryStore(t)
   assert.equal(await store.getAsync('missing'), undefined)
@@ -262,6 +462,49 @@ test('many concurrent getAsync calls run in parallel rather than one at a time',
   store.invalidate()
   const values = await Promise.all(Array.from({ length: 12 }, (_, i) => store.getAsync(`k${i}`)))
   assert.deepEqual(values, Array.from({ length: 12 }, (_, i) => i))
+})
+
+test('an unthrottled getAsync skips the read-slot queue while every slot is held by slow reads', async (t) => {
+  const { store } = temporaryStore(t)
+  for (let i = 0; i < 6; i++) store.set(`slow${i}`, i)
+  store.set('control', 'ok')
+  store.invalidate()
+  const readFile = fs.promises.readFile
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  t.mock.method(fs.promises, 'readFile', async (file, ...rest) => {
+    if (path.basename(file).startsWith('slow')) await gate
+    return readFile(file, ...rest)
+  })
+  t.after(() => release())
+  const order = []
+  const slow = Array.from({ length: 6 }, (_, i) => store.getAsync(`slow${i}`).then(() => order.push(`slow${i}`)))
+  const fast = store.getAsync('control', { skipCache: true, unthrottled: true }).then(value => { order.push('control'); return value })
+  const winner = await Promise.race([fast, sleep(1000).then(() => 'timeout')])
+  assert.equal(winner, 'ok')
+  assert.deepEqual(order, ['control'])
+  release()
+  await Promise.all(slow)
+})
+
+test('without the option a read still waits for a free read slot', async (t) => {
+  const { store } = temporaryStore(t)
+  for (let i = 0; i < 6; i++) store.set(`slow${i}`, i)
+  store.set('control', 'ok')
+  store.invalidate()
+  const readFile = fs.promises.readFile
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  t.mock.method(fs.promises, 'readFile', async (file, ...rest) => {
+    if (path.basename(file).startsWith('slow')) await gate
+    return readFile(file, ...rest)
+  })
+  t.after(() => release())
+  const slow = Array.from({ length: 6 }, (_, i) => store.getAsync(`slow${i}`))
+  const result = await Promise.race([store.getAsync('control', { skipCache: true }), sleep(150).then(() => 'queued')])
+  assert.equal(result, 'queued')
+  release()
+  await Promise.all(slow)
 })
 
 test('values survive encrypted writes and reads', (t) => {
@@ -444,4 +687,230 @@ test('watch reports connection loss and recovery via onConnectionChange', async 
   await reconnected
   assert.deepEqual(events, [false, true])
   assert.equal(store.isConnected(), true)
+})
+
+test('decideWatchTick skips an unchanged directory, scans on change, defers within the gap and runs the safety scan', () => {
+  const config = { safetyScanMs: 30000, hiddenSafetyScanMs: 120000, minScanGapMs: 2000 }
+  const base = { visible: true, dirMtimeMs: 100, lastDirMtimeMs: 100, nowMs: 100000, lastFullScanAtMs: 99000, lastChangeScanAtMs: null, forceFull: false }
+  const cases = [
+    [{}, 'skip'],
+    [{ dirMtimeMs: 200, lastChangeScanAtMs: 99500 }, 'defer'],
+    [{ dirMtimeMs: 200, lastChangeScanAtMs: 97500 }, 'full'],
+    [{ lastFullScanAtMs: 70000 }, 'full'],
+    [{ lastFullScanAtMs: 70000, visible: false }, 'skip'],
+    [{ forceFull: true, lastChangeScanAtMs: 99500 }, 'full'],
+  ]
+  for (const [overrides, expected] of cases) {
+    assert.equal(decideWatchTick({ ...base, ...overrides }, config), expected, JSON.stringify(overrides))
+  }
+})
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+test('an unchanged directory is not rescanned file by file', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  for (let index = 0; index < 20; index++) store.set(`setting-${index}`, index)
+  const stat = fs.promises.stat
+  let fileStats = 0
+  t.mock.method(fs.promises, 'stat', async (file, ...rest) => {
+    if (path.resolve(file) !== path.resolve(directory)) fileStats++
+    return stat(file, ...rest)
+  })
+  const stop = store.watch(() => {}, () => {}, { intervalMs: 30, safetyScanMs: 60000 })
+  t.after(() => stop())
+  await sleep(200)
+  assert.equal(fileStats, 0)
+})
+
+test('a write from another store instance is reported on the next tick', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  const other = createStore(directory)
+  const changed = []
+  const stop = store.watch(keys => changed.push(...keys), () => {}, { intervalMs: 30, minScanGapMs: 0 })
+  t.after(() => stop())
+  other.set('k', 1)
+  for (let waited = 0; waited < 500 && !changed.includes('k'); waited += 10) await sleep(10)
+  assert.ok(changed.includes('k'))
+})
+
+test('watch with initialScan async does no synchronous directory or file I/O and still reports a later change', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  const other = createStore(directory)
+  for (let index = 0; index < 5; index++) store.set(`setting-${index}`, index)
+  let syncCalls = 0, syncScans = 0
+  const readdirSync = fs.readdirSync, statSync = fs.statSync
+  const isScan = target => path.resolve(String(target)) === path.resolve(directory)
+  t.mock.method(fs, 'readdirSync', (target, ...rest) => { syncCalls++; if (isScan(target)) syncScans++; return readdirSync(target, ...rest) })
+  t.mock.method(fs, 'statSync', (target, ...rest) => { syncCalls++; if (isScan(target)) syncScans++; return statSync(target, ...rest) })
+  const changed = []
+  const stop = store.watch(keys => changed.push(...keys), () => {}, { intervalMs: 20, minScanGapMs: 0, initialScan: 'async' })
+  t.after(() => stop())
+  assert.equal(syncCalls, 0, 'watch() returns before any synchronous scan')
+  assert.equal(store.isConnected(), true, 'connection stays optimistic while the first scan runs')
+  await sleep(150)
+  assert.deepEqual(changed, [], 'the initial scan reports nothing')
+  other.set('setting-1', 'changed')
+  for (let waited = 0; waited < 1000 && !changed.includes('setting-1'); waited += 10) await sleep(10)
+  assert.ok(changed.includes('setting-1'))
+  assert.equal(syncScans, 0, 'the watcher never scans the directory synchronously')
+})
+
+test('a directory change that touched no data file does not start the change-scan gap', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  const other = createStore(directory)
+  store.set('existing', 1)
+  const changed = []
+  const stop = store.watch(keys => changed.push(...keys), () => {}, { intervalMs: 20, safetyScanMs: 60000, minScanGapMs: 5000 })
+  t.after(() => stop())
+  await sleep(60)
+  // Kun en laasefil kommer og gaar: mappens mtime skifter, men ingen noegle er aendret.
+  const lock = path.join(directory, 'existing.json.lock')
+  fs.writeFileSync(lock, 'x'); fs.unlinkSync(lock)
+  await sleep(150)
+  assert.deepEqual(changed, [])
+  other.set('k', 1)
+  for (let waited = 0; waited < 1500 && !changed.includes('k'); waited += 10) await sleep(10)
+  assert.ok(changed.includes('k'), 'the real write is not deferred by the lock-only scan')
+})
+
+test('the safety scan finds a change that left the directory mtime untouched', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  const other = createStore(directory)
+  // Hele sekunder, saa utimes kan saette praecis samme mtime tilbage.
+  const previous = new Date(Math.floor(Date.now() / 1000) * 1000 - 60000)
+  fs.utimesSync(directory, previous, previous)
+  const changed = []
+  const watchStartedAt = Date.now()
+  const stop = store.watch(keys => changed.push(...keys), () => {}, { intervalMs: 20, safetyScanMs: 1000, minScanGapMs: 0 })
+  t.after(() => stop())
+  other.set('k', 2)
+  fs.utimesSync(directory, previous, previous)
+  const writtenAt = Date.now()
+  await sleep(Math.max(0, writtenAt + 100 - Date.now()))
+  // Kun meningsfuldt hvis sikkerheds-scannen (1 s efter watch-start) ikke kan vaere naaet endnu.
+  if (Date.now() - watchStartedAt < 1000) assert.ok(!changed.includes('k'), 'mappens mtime er uaendret: ingen scanning endnu')
+  for (let waited = 0; waited < 3000 && !changed.includes('k'); waited += 20) await sleep(20)
+  assert.ok(changed.includes('k'), 'sikkerheds-scannen skal finde aendringen')
+})
+
+test('a hidden watcher slows down and becoming visible scans at once', async (t) => {
+  const { directory, store } = temporaryStore(t)
+  const other = createStore(directory)
+  const changed = []
+  const stop = store.watch(keys => changed.push(...keys), () => {}, { intervalMs: 20, hiddenIntervalMs: 5000, hiddenSafetyScanMs: 60000 })
+  t.after(() => stop())
+  store.setWatchVisibility(false)
+  other.set('k', 3)
+  await sleep(150)
+  assert.ok(!changed.includes('k'), 'skjult watcher tikker kun hvert 5. sekund')
+  store.setWatchVisibility(true)
+  for (let waited = 0; waited < 100 && !changed.includes('k'); waited += 5) await sleep(5)
+  assert.ok(changed.includes('k'), 'synlig igen: scanner med det samme')
+})
+
+test('setWatchVisibility is safe before watch() and after stop', (t) => {
+  const { store } = temporaryStore(t)
+  store.setWatchVisibility(false)
+  const stop = store.watch(() => {}, () => {}, { intervalMs: 20 })
+  stop()
+  store.setWatchVisibility(true)
+  store.setWatchVisibility(false)
+})
+
+test('statAsync reports a key file change marker without reading it, and undefined when missing', async (t) => {
+  const { store } = temporaryStore(t)
+  assert.equal(await store.statAsync('missing'), undefined)
+  await store.setAsync('game', { revision: 1 })
+  const first = await store.statAsync('game')
+  assert.ok(first.size > 0 && first.mtimeMs > 0)
+  await new Promise(resolve => setTimeout(resolve, 20))
+  await store.setAsync('game', { revision: 2, more: 'data' })
+  const second = await store.statAsync('game')
+  assert.ok(second.mtimeMs !== first.mtimeMs || second.size !== first.size)
+})
+
+// ---------- A save writes into a prepared temp file instead of creating one (creating a file on M: costs 2-15 s) ----------
+const { createPreparedFiles: createPreparedFilesForStore, PREPARED_FILE_PATTERN } = require('./preparedFiles.cjs')
+async function preparedStore(t) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-store-prepared-'))
+  const pool = createPreparedFilesForStore()
+  t.after(async () => { await pool.closeAll(); fs.rmSync(directory, { recursive: true, force: true }) })
+  pool.want(directory, 2)
+  await pool.whenIdle()
+  return { directory, pool, store: createStore(directory, { preparedFiles: pool }) }
+}
+
+test('a save with a prepared temp file creates no new file during the save', async t => {
+  const { store } = await preparedStore(t)
+  const opened = []
+  const realOpen = fs.promises.open
+  t.mock.method(fs.promises, 'open', (file, flags, ...rest) => { opened.push([path.basename(String(file)), flags]); return realOpen(file, flags, ...rest) })
+  await store.setAsync('k', { a: 1 })
+  t.mock.restoreAll()
+  const tmpOpens = opened.filter(([name]) => name.endsWith('.tmp'))
+  // The save itself writes into a prepared file; the pool may make the next one ready in the background meanwhile.
+  assert.ok(tmpOpens.some(([name, flags]) => PREPARED_FILE_PATTERN.test(name) && flags === 'r+'), JSON.stringify(tmpOpens))
+  assert.ok(!tmpOpens.some(([name]) => /\.json\.\d+\.\d+\.[0-9a-f]{8}\.tmp$/.test(name)), 'no temp file is created the old way')
+  assert.ok(tmpOpens.filter(([, flags]) => flags !== 'r+').every(([name]) => name.startsWith('~hub-prep-')), JSON.stringify(tmpOpens))
+  assert.deepEqual(await store.getAsync('k', { skipCache: true }), { a: 1 })
+})
+
+test('a failed write into a prepared file is never reused, and the save is done the ordinary way', async t => {
+  const { store, pool, directory } = await preparedStore(t)
+  await store.setAsync('k', { v: 'old' })
+  await pool.whenIdle()
+  const ready = fs.readdirSync(directory).filter(name => name.startsWith('~hub-prep-'))
+  const realOpen = fs.promises.open
+  let failed = null
+  t.mock.method(fs.promises, 'open', async (file, flags, ...rest) => {
+    const handle = await realOpen(file, flags, ...rest)
+    if (flags === 'r+' && !failed && String(file).endsWith('.tmp')) {
+      failed = path.basename(String(file))
+      handle.write = async () => { throw Object.assign(new Error('disk trouble'), { code: 'EIO' }) }
+    }
+    return handle
+  })
+  await store.setAsync('k', { v: 'new' })
+  t.mock.restoreAll()
+  assert.ok(ready.includes(failed), 'the failing write was into a prepared file')
+  assert.deepEqual(await store.getAsync('k', { skipCache: true }), { v: 'new' })
+  await pool.whenIdle()
+  assert.ok(!fs.existsSync(path.join(directory, failed)), 'the half-written prepared file is deleted')
+  for (let file = pool.takeTmp(directory); file; file = pool.takeTmp(directory)) assert.notEqual(path.basename(file), failed)
+})
+
+// The app runs for days; another client's sweep may delete a prepared file that waited for over 24 h.
+test('a prepared file that has disappeared does not fail the save', async t => {
+  const { store, directory } = await preparedStore(t)
+  for (const name of fs.readdirSync(directory).filter(entry => entry.startsWith('~hub-prep-'))) fs.unlinkSync(path.join(directory, name))
+  await store.setAsync('k', { v: 1 })
+  assert.deepEqual(await store.getAsync('k', { skipCache: true }), { v: 1 })
+})
+
+test('prepared files never show up as keys, in a scan or in a dump', async t => {
+  const { store, directory } = await preparedStore(t)
+  await store.setAsync('real', 1)
+  assert.ok(fs.readdirSync(directory).some(name => PREPARED_FILE_PATTERN.test(name)), 'prepared files are there')
+  assert.deepEqual(await store.keysAsync(), ['real'])
+  const scan = await store.scanDirectoryAsync(null)
+  assert.deepEqual(Object.keys(Object.fromEntries(scan.snapshot)).map(name => name.replace(/\.json$/, '')), ['real'])
+  assert.deepEqual(Object.keys(await store.dumpAllAsync()), ['real'])
+})
+
+test('sweep removes prepared files left behind for over 24 h, from any pid, and keeps recent ones', async t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-sweep-prepared-'))
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
+  const store = createStore(directory)
+  const day = 24 * 60 * 60 * 1000
+  const oldMs = Date.now() - 2 * day
+  const old = new Date(oldMs)
+  const put = (name, mtime) => { const file = path.join(directory, name); fs.writeFileSync(file, 'x'); if (mtime) fs.utimesSync(file, mtime, mtime); return name }
+  const oldPrep = put(`~hub-prep-999-${oldMs}-0123abcd.tmp`, old)
+  const oldOwner = put(`~hub-owner-999-${oldMs}-89abcdef.lockowner`, old)
+  const recentName = put(`~hub-prep-999-${Date.now()}-0123abce.tmp`, old)
+  const recentMtime = put(`~hub-owner-999-${oldMs}-0123abcf.lockowner`)
+  const removed = await store.sweepStaleTempFilesAsync()
+  assert.deepEqual(removed.sort(), [oldOwner, oldPrep].sort())
+  assert.ok(fs.existsSync(path.join(directory, recentName)), 'a recent name is kept even with an old mtime')
+  assert.ok(fs.existsSync(path.join(directory, recentMtime)), 'a fresh mtime (an owner file in use as a lock) is kept')
 })

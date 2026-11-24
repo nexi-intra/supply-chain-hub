@@ -13,17 +13,21 @@ function placeholders(value: string) {
   return value.match(/\{[^{}]+\}/g) || []
 }
 
-describe('Finnish UI translations', () => {
+describe.each(['fi', 'sv'] as const)('%s UI translations', language => {
+  it('exists as a selectable language', () => {
+    expect(Object.keys(translations)).toContain(language)
+  })
+
   it('contains every English translation key', () => {
     const englishKeys = leafEntries(translations.en).map(([key]) => key)
-    const finnishKeys = leafEntries(translations.fi).map(([key]) => key)
-    expect(finnishKeys).toEqual(englishKeys)
+    const localKeys = leafEntries((translations as Record<string, unknown>)[language]).map(([key]) => key)
+    expect(localKeys).toEqual(englishKeys)
   })
 
   it('preserves interpolation placeholders', () => {
-    const finnish = new Map(leafEntries(translations.fi))
+    const local = new Map(leafEntries((translations as Record<string, unknown>)[language]))
     for (const [key, english] of leafEntries(translations.en)) {
-      expect(placeholders(finnish.get(key) || ''), key).toEqual(placeholders(english))
+      expect(placeholders(local.get(key) || ''), key).toEqual(placeholders(english))
     }
   })
 })

@@ -7,22 +7,25 @@ const { createAuthService, hashPassword, verifyPassword, sessionKey, loadDeviceS
 
 function memory() {
   const values = new Map()
+  const get = key => structuredClone(values.get(key))
+  const mutate = (key, callback) => { const next = callback(structuredClone(values.get(key))); if (next !== undefined) values.set(key, structuredClone(next)); return structuredClone(next) }
+  const update = (key, operation) => mutate(key, current => {
+    const next = { ...(current || {}) }
+    if (operation.op === 'deleteField') delete next[operation.field]
+    else next[operation.field] = structuredClone(operation.value)
+    return next
+  })
   return {
-    get: key => structuredClone(values.get(key)),
-    mutate(key, callback) { const next = callback(structuredClone(values.get(key))); if (next !== undefined) values.set(key, structuredClone(next)); return structuredClone(next) },
-    update(key, operation) { return this.mutate(key, current => {
-      const next = { ...(current || {}) }
-      if (operation.op === 'deleteField') delete next[operation.field]
-      else next[operation.field] = structuredClone(operation.value)
-      return next
-    }) },
+    get, mutate, update,
+    async getAsync(key) { return get(key) },
+    async mutateAsync(key, callback) { return mutate(key, callback) },
+    async updateAsync(key, operation) { return update(key, operation) },
   }
 }
 function fixture() {
   const team = { teamId: 'a', folderName: 'A' }, second = { teamId: 'b', folderName: 'B' }
   const teams = [team], assignments = new Map([['user@example.test', 'a'], ['creator@example.test', 'a']])
   const stores = new Map([['a', memory()], ['b', memory()]]), sessions = memory()
-  const views = [{ viewId: 'both', teamIds: ['a', 'b'], userEmails: ['user@example.test'] }]
   let clock = 1000000, root = 'synthetic-root', selected
   stores.get('a').mutate('users', () => ({
     'user@example.test': { email: 'user@example.test', username: 'sample', fullName: 'Synthetic User', password: 'secret123', status: 'approved', role: 'user', phone: '123' },
@@ -33,13 +36,12 @@ function fixture() {
       listTeams: () => structuredClone(teams),
       lookupTeamForEmail: (_, email) => teams.find(item => item.teamId === assignments.get(email)),
       getCreatorEmail: () => 'creator@example.test',
-      listAccessViewsForEmail: (_, email) => structuredClone(views.filter(view => view.userEmails.includes(email))),
       assignUserToTeam: (_, email, id) => assignments.set(email, id),
     },
     getRoot: () => root, openTeam: item => stores.get(item.teamId), openSessions: () => sessions,
     switchTeam: item => { selected = item.teamId }, deviceSecret: Buffer.alloc(32, 7), now: () => clock,
   }
-  return { auth: createAuthService(deps), deps, sessions, teams, second, assignments, views, users: stores.get('a'), stores,
+  return { auth: createAuthService(deps), deps, sessions, teams, second, assignments, users: stores.get('a'), stores,
     changeUser(change) { stores.get('a').mutate('users', users => ({ ...users, 'user@example.test': { ...users['user@example.test'], ...change } })) },
     advance: value => { clock += value }, changeRoot: () => { root = 'other-root' }, selected: () => selected,
     login: { email: 'user@example.test', password: 'secret123' },
@@ -49,7 +51,7 @@ const code = expected => error => error.code === expected
 test('recovery login does not upgrade a creator password, expire other sessions or remove a previous affected-user session', async () => {
   const f = fixture(), previous = await f.auth.login(1, f.login)
   const originalPassword = f.users.get('users')['creator@example.test'].password
-  const auth = createAuthService({ ...f.deps, runAuthentication: (_, callback) => callback({ recovering: true }) })
+  const auth = createAuthService({ ...f.deps, runAuthentication: (_, callback) => callback({ recovering: true }), runAuthenticationAsync: async (_, callback) => callback({ recovering: true }) })
   const user = await auth.login(2, f.login)
   const expired = { authVersion: 1, email: 'user@example.test', expiresAt: 1 }
   f.sessions.mutate('active-sessions', sessions => ({ ...sessions, expired }))
@@ -151,13 +153,6 @@ test('bursts of authorization checks reuse one session snapshot until the window
   assert.equal(reads, 0)
   f.advance(500); f.auth.current(1); assert.equal(reads, 1)
 })
-test('selected access views must be assigned and never grant manager privileges', async () => {
-  const f = fixture(); f.changeUser({ role: 'manager' }); await f.auth.login(1, f.login)
-  assert.throws(() => f.auth.selectView(1, 'unassigned'), code('AUTH_FORBIDDEN'))
-  assert.equal(f.auth.selectView(1, 'both').viewId, 'both')
-  assert.throws(() => f.auth.requireRole(1, 'manager'), code('AUTH_FORBIDDEN'))
-  f.views.splice(0); f.advance(500); assert.throws(() => f.auth.current(1), code('AUTH_FORBIDDEN'))
-})
 test('logout during asynchronous login prevents a late login from recreating the session', async () => {
   const f = fixture(), pending = f.auth.login(1, f.login)
   f.auth.logout(1)
@@ -178,6 +173,20 @@ test('signup ignores requested privileges and creates only a pending regular use
   assert.equal(await verifyPassword('test123', user.password), true)
   await assert.rejects(f.auth.login(1, { email, password: 'test123' }), code('AUTH_PENDING'))
 })
+test('signup tells every manager with one write per key, not two writes per manager', async () => {
+  const f = fixture(), email = 'new@example.test'
+  f.users.mutate('users', users => ({ ...users,
+    'boss@example.test': { email: 'boss@example.test', fullName: 'Boss', password: 'x', status: 'approved', role: 'manager' },
+    'chief@example.test': { email: 'chief@example.test', fullName: 'Chief', password: 'x', status: 'approved', role: 'manager' },
+  }))
+  const writes = []
+  f.users.update = (key, operation) => { writes.push({ key, operation }) }
+  await f.auth.signup(1, { email, password: 'test123', fullName: 'New User', phone: '123' })
+  assert.deepEqual(writes.map(write => write.key), ['emails', 'email-notifications'])
+  assert.deepEqual(writes[0].operation.items.map(item => item.to).sort(), ['boss@example.test', 'chief@example.test'])
+  assert.deepEqual(writes[1].operation.items.map(item => item.id), writes[0].operation.items.map(item => `${item.id}-notification`))
+  assert.ok(writes[1].operation.items.every(item => item.type === 'user-signup' && item.read === false))
+})
 test('signup rejects reserved creator, duplicate email and invalid typed fields', async () => {
   const f = fixture(), request = { email: f.login.email, password: 'test123', fullName: 'Test', phone: '123' }
   await assert.rejects(f.auth.signup(1, { ...request, email: 'creator@example.test' }), code('AUTH_RESERVED'))
@@ -196,8 +205,8 @@ test('profile changes are limited to own phone; password change requires old pas
 })
 test('logout removes its token only; remember renewal remains signed', async () => {
   const f = fixture(), first = await f.auth.login(1, f.login), second = await f.auth.login(2, f.login)
-  f.advance(1000); assert.ok(f.auth.renew(1).expiresAt > first.expiresAt)
-  f.auth.logout(1)
+  f.advance(1000); assert.ok((await f.auth.renew(1)).expiresAt > first.expiresAt)
+  await f.auth.logout(1)
   assert.equal(f.sessions.get('active-sessions')[sessionKey(first.token)], undefined)
   assert.equal(f.auth.current(2).token, second.token)
 })
@@ -216,4 +225,282 @@ test('device secret is persisted without overwrite and malformed existing secret
   const invalid = path.join(directory, 'invalid'); fs.writeFileSync(invalid, 'invalid')
   assert.throws(() => loadDeviceSecret(invalid), code('AUTH_DEVICE_KEY_INVALID'))
   assert.equal(fs.readFileSync(invalid, 'utf8'), 'invalid')
+})
+
+function asyncSessions(f) {
+  // Mirrors store.getAsync: the read resolves later, so tests can act while it is in flight.
+  let reads = 0, gate = null
+  f.sessions.getAsync = async key => { if (key === 'active-sessions') reads++; if (gate) await gate.promise; return f.sessions.get(key) }
+  return {
+    reads: () => reads,
+    hold() { let release; gate = { promise: new Promise(resolve => { release = resolve }) }; return () => { const open = gate; gate = null; release(); return open } },
+  }
+}
+test('currentAsync reads the shared drive asynchronously, caches for contextTtlMs and shares one resolve per window', async () => {
+  const f = fixture(), auth = createAuthService({ ...f.deps, contextTtlMs: 15000 })
+  await auth.login(1, f.login)
+  const io = asyncSessions(f)
+  f.advance(15000)
+  const [a, b, c] = await Promise.all([auth.currentAsync(1), auth.currentAsync(1), auth.currentAsync(1)])
+  assert.equal(io.reads(), 1, 'concurrent calls share one read')
+  assert.deepEqual([a.email, b.email, c.email], [f.login.email, f.login.email, f.login.email])
+  // Snapshottet var forældet: kaldene fik det straks, og den ene genlaesning koerer i baggrunden.
+  await drainResolves()
+  f.advance(14000); await auth.currentAsync(1); auth.current(1)
+  assert.equal(io.reads(), 1, 'within the window nothing is read again, sync current() included')
+  f.advance(1000); await auth.currentAsync(1)
+  assert.equal(io.reads(), 2)
+})
+test('a role change seen by the watcher (invalidateAll) during an asynchronous resolve is never cached', async () => {
+  const f = fixture(), auth = createAuthService({ ...f.deps, contextTtlMs: 15000 })
+  await auth.login(1, f.login)
+  const io = asyncSessions(f)
+  f.advance(15000)
+  const release = io.hold()
+  const pending = auth.currentAsync(1)
+  f.changeUser({ role: 'manager' }); auth.invalidateAll()
+  release()
+  await pending
+  assert.equal((await auth.currentAsync(1)).role, 'manager')
+  assert.equal(io.reads(), 2, 'the result of a resolve that overlapped an invalidation was not cached')
+})
+test('logout while an asynchronous resolve is in flight fails it and caches nothing', async () => {
+  const f = fixture(), auth = createAuthService({ ...f.deps, contextTtlMs: 15000 })
+  await auth.login(1, f.login)
+  const io = asyncSessions(f)
+  // Over 60 s: intet snapshot maa serveres, saa kaldet venter paa resolven.
+  f.advance(60000)
+  const release = io.hold()
+  const pending = auth.currentAsync(1)
+  const loggedOut = auth.logout(1)
+  release()
+  await assert.rejects(pending, code('AUTH_REQUIRED'))
+  await assert.rejects(auth.currentAsync(1), code('AUTH_REQUIRED'))
+  await loggedOut
+})
+test('logout while a background revalidation is in flight caches nothing', async () => {
+  const f = fixture(), auth = createAuthService({ ...f.deps, contextTtlMs: 15000 })
+  await auth.login(1, f.login)
+  const io = asyncSessions(f)
+  f.advance(15000)
+  const release = io.hold()
+  assert.equal((await auth.currentAsync(1)).email, f.login.email, 'served before the logout')
+  const loggedOut = auth.logout(1)
+  release()
+  await drainResolves()
+  await assert.rejects(auth.currentAsync(1), code('AUTH_REQUIRED'))
+  assert.throws(() => auth.current(1), code('AUTH_REQUIRED'))
+  await loggedOut
+})
+function syncForbidden(store) {
+  for (const name of ['get', 'mutate', 'update', 'set']) store[name] = () => { throw new Error('SYNC_CALLED') }
+}
+test('login, resume, renew and logout never call synchronous store methods', async () => {
+  const f = fixture(), peek = f.sessions.get
+  syncForbidden(f.sessions); for (const store of f.stores.values()) syncForbidden(store)
+  let prefetches = 0
+  const auth = createAuthService({ ...f.deps, registry: { ...f.deps.registry, prefetchAsync: async () => { prefetches++ } } })
+  const actor = await auth.login(1, { ...f.login, email: 'sample' })
+  assert.equal(actor.email, f.login.email)
+  assert.equal((await auth.resume(2, actor.token)).email, f.login.email)
+  f.advance(1000)
+  assert.ok((await auth.renew(1)).expiresAt > actor.expiresAt)
+  assert.ok(peek('active-sessions')[sessionKey(actor.token)])
+  await auth.logout(1)
+  assert.equal(peek('active-sessions')[sessionKey(actor.token)], undefined)
+  assert.ok(prefetches >= 2)
+  await assert.rejects(auth.currentAsync(1), code('AUTH_REQUIRED'))
+})
+function gatedAuthentication() {
+  let release, entered
+  const reached = new Promise(resolve => { entered = resolve })
+  const gate = new Promise(resolve => { release = resolve })
+  return { reached, release: () => release(), runAuthenticationAsync: async (_, callback) => { entered(); await gate; return callback({ recovering: false }) } }
+}
+test('logout while login waits for the account lock prevents the login from creating a session or binding', { timeout: 10000 }, async () => {
+  const f = fixture(), lock = gatedAuthentication()
+  f.changeUser({ password: await hashPassword(f.login.password) })
+  const auth = createAuthService({ ...f.deps, runAuthenticationAsync: lock.runAuthenticationAsync })
+  const pending = auth.login(1, f.login)
+  await lock.reached
+  await auth.logout(1)
+  lock.release()
+  await assert.rejects(pending, code('AUTH_REQUIRED'))
+  assert.deepEqual(f.sessions.get('active-sessions') || {}, {})
+  await assert.rejects(auth.currentAsync(1), code('AUTH_REQUIRED'))
+})
+test('logout while resume waits for the account lock is not undone by restoring the previous binding', { timeout: 10000 }, async () => {
+  const f = fixture(), first = await f.auth.login(1, f.login), second = await f.auth.login(2, f.login)
+  let lock = null
+  const auth = createAuthService({ ...f.deps, runAuthenticationAsync: (email, callback) => lock ? lock.runAuthenticationAsync(email, callback) : callback({ recovering: false }) })
+  await auth.resume(1, first.token)
+  lock = gatedAuthentication()
+  const pending = auth.resume(1, second.token)
+  await lock.reached
+  await auth.logout(1)
+  lock.release()
+  await assert.rejects(pending, code('AUTH_REQUIRED'))
+  await assert.rejects(auth.currentAsync(1), code('AUTH_REQUIRED'))
+  assert.ok(f.sessions.get('active-sessions')[sessionKey(first.token)], 'only the token bound at logout is removed')
+})
+test('renew and logout are asynchronous and logout clears the binding before its first await', async () => {
+  const f = fixture(), actor = await f.auth.login(1, f.login)
+  const renewing = f.auth.renew(1)
+  assert.equal(typeof renewing.then, 'function'); await renewing
+  const loggingOut = f.auth.logout(1)
+  assert.equal(typeof loggingOut.then, 'function')
+  assert.throws(() => f.auth.current(1), code('AUTH_REQUIRED'))
+  await loggingOut
+  assert.equal(f.sessions.get('active-sessions')[sessionKey(actor.token)], undefined)
+})
+test('reads made while holding the account lock during login and renew skip the read-slot queue', async () => {
+  const f = fixture(), reads = []
+  let locked = false
+  for (const store of [f.sessions, ...f.stores.values()]) {
+    const real = store.getAsync
+    store.getAsync = async (key, options) => { reads.push({ key, locked, unthrottled: options?.unthrottled === true }); return real(key, options) }
+  }
+  const auth = createAuthService({ ...f.deps, runAuthenticationAsync: async (_email, callback) => { locked = true; try { return await callback({ recovering: false }) } finally { locked = false } } })
+  const actor = await auth.login(1, f.login)
+  f.advance(1000)
+  await auth.renew(1)
+  const inside = reads.filter(read => read.locked)
+  assert.ok(inside.some(read => read.key === 'users') && inside.some(read => read.key === 'active-sessions'), JSON.stringify(reads))
+  assert.deepEqual(inside.filter(read => !read.unthrottled), [], 'every read under the account lock is unthrottled')
+  assert.ok(reads.filter(read => !read.locked).every(read => !read.unthrottled), 'reads outside the lock keep the queue')
+  assert.ok(actor.token)
+})
+test('a logout that lands after the login session write but before binding removes that session and leaves no binding', async () => {
+  const f = fixture(), realMutate = f.sessions.mutateAsync
+  let loggedOut = null
+  f.sessions.mutateAsync = async (key, callback) => {
+    const result = await realMutate(key, callback)
+    if (key === 'active-sessions' && !loggedOut) loggedOut = f.auth.logout(1)
+    return result
+  }
+  await assert.rejects(f.auth.login(1, f.login), code('AUTH_REQUIRED'))
+  await loggedOut
+  assert.ok(loggedOut, 'logout ran between the session write and the binding')
+  assert.deepEqual(f.sessions.get('active-sessions'), {}, 'the session written by the login is removed again')
+  assert.throws(() => f.auth.current(1), code('AUTH_REQUIRED'))
+  await assert.rejects(f.auth.currentAsync(1), code('AUTH_REQUIRED'))
+  assert.equal(f.selected(), undefined, 'no team switch after the aborted login')
+})
+
+const settled = () => new Promise(resolve => setImmediate(resolve))
+async function drainResolves() { for (let i = 0; i < 20; i++) await settled() }
+async function answersAtOnce(promise, release) {
+  // Svarer kaldet foer drevet (holdt tilbage) har svaret? Frigiver altid bagefter, saa testen aldrig haenger.
+  let answered = false
+  const tracked = promise.then(value => { answered = true; return value }, error => { answered = true; throw error })
+  await settled()
+  const atOnce = answered
+  release()
+  return { atOnce, result: tracked }
+}
+test('currentAsync serves a stale actor at once and revalidates', async () => {
+  const f = fixture(), auth = createAuthService({ ...f.deps, contextTtlMs: 15000 })
+  await auth.login(1, f.login)
+  const io = asyncSessions(f)
+  f.advance(16000)
+  const hold = io.hold(), { atOnce, result } = await answersAtOnce(auth.currentAsync(1), hold)
+  assert.equal(atOnce, true, 'the caller does not wait for the shared drive')
+  assert.equal((await result).email, f.login.email)
+  assert.equal(io.reads(), 1, 'one background revalidation was started')
+  await drainResolves()
+  f.advance(14000); await auth.currentAsync(1)
+  assert.equal(io.reads(), 1, 'the background revalidation renewed the snapshot')
+})
+test('a session revoked elsewhere is rejected after soft revalidation', async () => {
+  const f = fixture(), auth = createAuthService({ ...f.deps, contextTtlMs: 15000 })
+  const actor = await auth.login(1, f.login)
+  const io = asyncSessions(f)
+  f.advance(1000)
+  f.sessions.update('active-sessions', { op: 'deleteField', field: sessionKey(actor.token) })
+  const release = io.hold()
+  auth.revalidateAll()
+  assert.equal(io.reads(), 1, 'revalidation starts at once, without waiting for an IPC call')
+  const { atOnce, result } = await answersAtOnce(auth.currentAsync(1), release)
+  assert.equal(atOnce, true, 'the stale snapshot is served while the revalidation is in flight')
+  assert.equal((await result).token, actor.token)
+  await drainResolves()
+  await assert.rejects(auth.currentAsync(1), code('AUTH_REQUIRED'))
+  assert.throws(() => auth.current(1), code('AUTH_REQUIRED'))
+})
+test('a role change elsewhere is applied after soft revalidation', async () => {
+  const f = fixture(), auth = createAuthService({ ...f.deps, contextTtlMs: 15000 })
+  await auth.login(1, f.login)
+  const io = asyncSessions(f)
+  f.advance(1000)
+  f.changeUser({ role: 'manager' })
+  auth.revalidateAll()
+  await drainResolves()
+  assert.equal(io.reads(), 1)
+  assert.equal((await auth.currentAsync(1)).role, 'manager')
+  assert.equal(auth.requireRole(1, 'manager').role, 'manager')
+  assert.equal(io.reads(), 1, 'the caller reused the revalidated snapshot')
+})
+test('requireRoleAsync checks a fresh actor without a synchronous read and denies a demoted user', async () => {
+  const f = fixture(), auth = createAuthService({ ...f.deps, contextTtlMs: 15000 })
+  f.changeUser({ role: 'manager' })
+  await auth.login(1, f.login)
+  await auth.login(2, { email: 'creator@example.test', password: 'creator123' })
+  const io = asyncSessions(f)
+  f.users.get = () => { throw new Error('synchronous read of the shared drive') }
+  assert.equal((await auth.requireRoleAsync(1, 'manager')).role, 'manager')
+  assert.equal(io.reads(), 0, 'a fresh snapshot is used as is')
+  f.advance(16000)
+  f.changeUser({ role: 'user' })
+  assert.equal((await auth.currentAsync(2)).role, 'creator')
+  await drainResolves()
+  const reads = io.reads()
+  await assert.rejects(auth.requireRoleAsync(1, 'manager'), code('AUTH_FORBIDDEN'))
+  assert.equal(io.reads(), reads + 1, 'the stale manager snapshot was re-read before the role check')
+  await assert.rejects(auth.requireRoleAsync(1, 'creator'), code('AUTH_FORBIDDEN'))
+  assert.equal((await auth.requireRoleAsync(2, 'creator')).role, 'creator')
+  assert.equal((await auth.requireRoleAsync(2, 'manager')).role, 'creator')
+})
+test('hard invalidate(sender) still forces a fresh resolve', async () => {
+  const f = fixture(), auth = createAuthService({ ...f.deps, contextTtlMs: 15000 })
+  const actor = await auth.login(1, f.login)
+  await auth.resume(2, actor.token)
+  const io = asyncSessions(f)
+  f.advance(1000)
+  f.changeUser({ role: 'manager' }); auth.invalidateAll()
+  const hold = io.hold(), { atOnce, result } = await answersAtOnce(auth.currentAsync(1), hold)
+  assert.equal(atOnce, false, 'after a hard invalidation the caller waits for the drive')
+  assert.equal((await result).role, 'manager')
+  await auth.logout(2)
+  await assert.rejects(auth.currentAsync(2), code('AUTH_REQUIRED'))
+})
+test('a stale entry older than 60 s is not served', async () => {
+  const f = fixture(), auth = createAuthService({ ...f.deps, contextTtlMs: 15000 })
+  const actor = await auth.login(1, f.login)
+  const io = asyncSessions(f)
+  f.sessions.update('active-sessions', { op: 'deleteField', field: sessionKey(actor.token) })
+  f.advance(60000)
+  const hold = io.hold(), { atOnce, result } = await answersAtOnce(auth.currentAsync(1), hold)
+  assert.equal(atOnce, false, 'the caller waits for the drive')
+  await assert.rejects(result, code('AUTH_REQUIRED'))
+})
+test('renew does not rewrite a remembered session renewed less than 30 days ago', async () => {
+  const f = fixture()
+  const actor = await f.auth.login(1, { ...f.login, rememberMe: true })
+  const writes = []
+  const realMutate = f.sessions.mutateAsync
+  f.sessions.mutateAsync = (...args) => { writes.push(args[0]); return realMutate(...args) }
+  f.advance(24 * 60 * 60 * 1000)
+  const renewed = await f.auth.renew(1)
+  assert.equal(renewed.expiresAt, actor.expiresAt, 'still valid for 364 days: nothing to renew')
+  assert.deepEqual(writes, [], 'no write to the shared drive')
+  f.advance(64 * 24 * 60 * 60 * 1000)
+  const later = await f.auth.renew(1)
+  assert.ok(later.expiresAt > actor.expiresAt, 'renewed once it has run for more than 30 days')
+  assert.deepEqual(writes, ['active-sessions'])
+})
+test('renew still refuses a session that is no longer valid, also when it skips the write', async () => {
+  const f = fixture()
+  const actor = await f.auth.login(1, { ...f.login, rememberMe: true })
+  f.sessions.mutate('active-sessions', sessions => { const copy = { ...sessions }; delete copy[sessionKey(actor.token)]; return copy })
+  await assert.rejects(f.auth.renew(1), code('AUTH_REQUIRED'))
 })

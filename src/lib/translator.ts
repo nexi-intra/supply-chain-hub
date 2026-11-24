@@ -4,7 +4,12 @@
 // resultatet som automatisk oversat. Ordbogen deles med søgeindekset, så
 // danske søgninger rammer engelske guides og omvendt.
 
-export type GuideLanguage = 'da' | 'en' | 'fi'
+import type { Language } from './translations'
+
+export type GuideLanguage = Language
+
+/** Languages a guide can be shown in (original or translated). */
+export const GUIDE_LANGUAGES: GuideLanguage[] = ['da', 'en', 'fi', 'sv']
 
 // Fraser oversættes før enkeltord (længste først). [da, en]
 const PHRASES: Array<[string, string]> = [
@@ -133,6 +138,34 @@ const FI_WORDS: Array<[string, string]> = [
   ['without', 'ilman'], ['from', 'alkaen'], ['in', 'sisällä'], ['under', 'alla'], ['over', 'yli'],
 ]
 
+// Teknisk engelsk↔svensk fallback med samme ordforråd som den finske.
+const SV_WORDS: Array<[string, string]> = [
+  ['press', 'tryck'], ['click', 'klicka'], ['select', 'välj'], ['open', 'öppna'],
+  ['close', 'stäng'], ['insert', 'sätt in'], ['remove', 'ta bort'], ['connect', 'anslut'],
+  ['disconnect', 'koppla från'], ['scan', 'skanna'], ['print', 'skriv ut'], ['enter', 'ange'],
+  ['confirm', 'bekräfta'], ['cancel', 'avbryt'], ['save', 'spara'], ['delete', 'radera'],
+  ['start', 'starta'], ['stop', 'stoppa'], ['restart', 'starta om'],
+  ['check', 'kontrollera'], ['verify', 'verifiera'], ['wait', 'vänta'], ['run', 'kör'],
+  ['pack', 'packa'], ['place', 'placera'], ['attach', 'fäst'],
+  ['terminal', 'terminal'], ['payment terminal', 'betalterminal'], ['receipt', 'kvitto'],
+  ['power', 'ström'], ['cable', 'kabel'], ['screen', 'skärm'], ['button', 'knapp'],
+  ['menu', 'meny'], ['settings', 'inställningar'], ['order', 'order'], ['delivery', 'leverans'],
+  ['shipment', 'försändelse'], ['label', 'etikett'], ['printer', 'skrivare'],
+  ['keyboard', 'tangentbord'], ['mouse', 'mus'], ['network', 'nätverk'],
+  ['error', 'fel'], ['warning', 'varning'], ['problem', 'problem'], ['guide', 'guide'],
+  ['step', 'steg'], ['section', 'avsnitt'], ['page', 'sida'], ['number', 'nummer'],
+  ['country', 'land'], ['agreement', 'avtal'], ['box', 'låda'], ['bag', 'påse'],
+  ['warehouse', 'lager'], ['address', 'adress'], ['field', 'fält'], ['icon', 'ikon'],
+  ['card', 'kort'], ['user', 'användare'], ['password', 'lösenord'], ['username', 'användarnamn'],
+  ['update', 'uppdatering'], ['installation', 'installation'], ['configuration', 'konfiguration'],
+  ['battery', 'batteri'], ['charger', 'laddare'], ['new', 'ny'], ['old', 'gammal'],
+  ['next', 'nästa'], ['previous', 'föregående'], ['first', 'först'], ['then', 'sedan'],
+  ['when', 'när'], ['if', 'om'], ['now', 'nu'], ['again', 'igen'],
+  ['always', 'alltid'], ['never', 'aldrig'], ['ready', 'klar'], ['correct', 'rätt'],
+  ['wrong', 'fel'], ['works', 'fungerar'], ['and', 'och'], ['or', 'eller'], ['with', 'med'],
+  ['without', 'utan'], ['from', 'från'], ['in', 'i'], ['under', 'under'], ['over', 'över'],
+]
+
 function buildMaps(): { daToEn: Map<string, string>; enToDa: Map<string, string> } {
   const daToEn = new Map<string, string>()
   const enToDa = new Map<string, string>()
@@ -149,6 +182,13 @@ function buildMaps(): { daToEn: Map<string, string>; enToDa: Map<string, string>
 const { daToEn, enToDa } = buildMaps()
 const enToFi = new Map(FI_WORDS)
 const fiToEn = new Map<string, string>(FI_WORDS.map(([en, fi]) => [fi, en] as [string, string]))
+// 'error' and 'wrong' are both 'fel'; the first English word wins on the way back.
+const enToSv = new Map(SV_WORDS)
+const svToEn = new Map<string, string>([...SV_WORDS].reverse().map(([en, sv]) => [sv, en] as [string, string]))
+const WORD_LISTS: Partial<Record<GuideLanguage, { fromEn: Map<string, string>; toEn: Map<string, string> }>> = {
+  fi: { fromEn: enToFi, toEn: fiToEn },
+  sv: { fromEn: enToSv, toEn: svToEn },
+}
 
 /** Ordpar (da, en) til tosproget søge-udvidelse. */
 export function getDictionaryPairs(): Array<[string, string]> {
@@ -157,23 +197,23 @@ export function getDictionaryPairs(): Array<[string, string]> {
 
 const DA_MARKERS = new Set(['og', 'ikke', 'det', 'der', 'til', 'på', 'med', 'som', 'af', 'skal', 'kan', 'når', 'hvis', 'eller', 'også', 'være', 'bliver', 'derefter', 'vælg', 'tryk', 'åbn', 'indsæt'])
 const EN_MARKERS = new Set(['the', 'and', 'not', 'that', 'this', 'with', 'from', 'will', 'can', 'when', 'if', 'or', 'also', 'be', 'is', 'are', 'then', 'select', 'press', 'open', 'insert', 'into'])
-const FI_MARKERS = new Set(['ja', 'ei', 'että', 'tämä', 'kanssa', 'alkaen', 'voi', 'kun', 'jos', 'tai', 'myös', 'on', 'ovat', 'sitten', 'valitse', 'paina', 'avaa', 'aseta'])
+const FI_MARKERS = new Set(['ja', 'ei', 'että', 'tämä', 'kanssa', 'alkaen', 'voi', 'kun', 'jos', 'tai', 'myös', 'on', 'ovat', 'sitten', 'valitse', 'paina', 'avaa', 'aseta', 'joka', 'tallenna'])
+const SV_MARKERS = new Set(['och', 'inte', 'det', 'är', 'att', 'på', 'med', 'som', 'av', 'ska', 'kan', 'när', 'om', 'eller', 'också', 'vara', 'blir', 'sedan', 'välj', 'tryck', 'öppna', 'klicka', 'för', 'till', 'från', 'du', 'jag', 'har', 'menyn', 'knappen'])
 
-/** Heuristisk sprogdetektion: æ/ø/å + stopords-flertal. Ved uafgjort (fx enkeltord) bruges fallback. */
+/** Heuristisk sprogdetektion: stopord + bogstaver. æ/ø er kun dansk; å deles af dansk/svensk, ä/ö af svensk/finsk. */
 export function detectLanguage(text: string, fallback: GuideLanguage = 'en'): GuideLanguage {
-  if (/[æøå]/i.test(text)) return 'da'
-  if (/[äö]/i.test(text)) return 'fi'
+  if (/[æø]/i.test(text)) return 'da'
   const tokens = text.toLowerCase().split(/[^a-zæøåäö]+/).filter(Boolean)
-  let daScore = 0
-  let enScore = 0
-  let fiScore = 0
+  const score: Record<GuideLanguage, number> = { da: 0, en: 0, fi: 0, sv: 0 }
   for (const token of tokens) {
-    if (DA_MARKERS.has(token)) daScore++
-    if (EN_MARKERS.has(token)) enScore++
-    if (FI_MARKERS.has(token)) fiScore++
+    if (DA_MARKERS.has(token)) score.da++
+    if (EN_MARKERS.has(token)) score.en++
+    if (FI_MARKERS.has(token)) score.fi++
+    if (SV_MARKERS.has(token)) score.sv++
   }
-  const scores: Array<[GuideLanguage, number]> = [['da', daScore], ['en', enScore], ['fi', fiScore]]
-  scores.sort((a, b) => b[1] - a[1])
+  if (/å/i.test(text)) { score.da++; score.sv++ }
+  if (/[äö]/i.test(text)) { score.fi++; score.sv++ }
+  const scores = (Object.entries(score) as Array<[GuideLanguage, number]>).sort((a, b) => b[1] - a[1])
   if (scores[0][1] === scores[1][1]) return fallback
   return scores[0][0]
 }
@@ -191,27 +231,20 @@ function matchCase(source: string, translated: string): string {
 export function translateText(text: string, from: GuideLanguage, to: GuideLanguage): string {
   if (from === to || !text.trim()) return text
 
-  // Dansk↔finsk går via engelsk i den deterministiske fallback. Den neurale
-  // motor prøver direkte modeller/pivot før denne kode nås.
-  if (from === 'da' && to === 'fi') return translateText(translateText(text, 'da', 'en'), 'en', 'fi')
-  if (from === 'fi' && to === 'da') return translateText(translateText(text, 'fi', 'en'), 'en', 'da')
+  // Without a direct word list (da↔fi, da↔sv, fi↔sv) the fallback pivots through English,
+  // just like the neural engine does.
+  if (from !== 'en' && to !== 'en') return translateText(translateText(text, from, 'en'), 'en', to)
+
+  const list = WORD_LISTS[from === 'en' ? to : from]
+  if (list) {
+    const words = from === 'en' ? list.fromEn : list.toEn
+    return text.replace(/[A-Za-zÄÖÅäöå]+/g, (word) => {
+      const translated = words.get(word.toLowerCase())
+      return translated === undefined ? word : matchCase(word, translated)
+    })
+  }
 
   let result = text
-
-  if (from === 'en' && to === 'fi') {
-    result = result.replace(/[A-Za-z]+/g, (word) => {
-      const translated = enToFi.get(word.toLowerCase())
-      return translated === undefined ? word : matchCase(word, translated)
-    })
-    return result
-  }
-  if (from === 'fi' && to === 'en') {
-    result = result.replace(/[A-Za-zÄÖäö]+/g, (word) => {
-      const translated = fiToEn.get(word.toLowerCase())
-      return translated === undefined ? word : matchCase(word, translated)
-    })
-    return result
-  }
 
   // Frase-pas: længste fraser først, case-insensitivt, bevar stort begyndelsesbogstav.
   const phrases = [...PHRASES].sort((a, b) => (from === 'da' ? b[0].length - a[0].length : b[1].length - a[1].length))

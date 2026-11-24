@@ -14,6 +14,16 @@ test('only account-derived employee and birthday IDs move, never opaque IDs', ()
   assert.equal(personalKey(`app-language-user_${old.toUpperCase()}`, old, next), `app-language-user_${next}`)
 })
 const old = 'old@example.test', next = 'new@example.test'
+test('improvement operational invitation references follow a rename while audit actors remain historical', () => {
+  const value = [{ createdBy: old, assignments: [{ email: old, invitedBy: old }], notifications: [{ recipientEmail: old }], history: [{ actorEmail: old, actorName: 'Original name', message: old }] }]
+  const result = migrateReferences('improvement-cases', value, old, next)
+  assert.equal(result[0].assignments[0].email, next)
+  assert.equal(result[0].assignments[0].invitedBy, next)
+  assert.equal(result[0].notifications[0].recipientEmail, next)
+  assert.equal(result[0].history[0].actorEmail, old)
+  assert.equal(result[0].history[0].message, old)
+  assert.equal(value[0].assignments[0].invitedBy, old)
+})
 test('reference migration changes identities in nested modules but never user-written text or stable record ids', () => {
   const value = { userId: `user_${old}`, employeeId: old, creatorEmail: old, title: old, content: old, comment: old, notes: old, password: old, id: `message-${old}`, teamMembers: [{ email: old, name: 'Keep Name' }], sharedWith: [old], proposedGuide: { createdBy: old, sections: [{ steps: [{ text: old, imageIds: ['unchanged'] }] }] } }
   const result = migrateReferences('projects', value, old, next)
@@ -35,4 +45,52 @@ test('root email mappings cannot overwrite existing target settings', () => {
 })
 test('binary files, private control records and sessions are not treated as ordinary reference data', () => {
   for (const key of ['file_a_chunk_0', 'file_a_meta', '__offline-queue__', 'users', 'active-sessions', 'account-migration-journal']) assert.equal(relevantKey(key), false)
+})
+test('multiplayer index emails follow a rename but display names and opaque values stay', () => {
+  const value = {
+    games: [{ id: 'g1', players: [{ email: old, name: old, teamCode: 'SC' }, { email: 'other@example.test', name: 'Other', teamCode: 'OPS' }], turn: old, winner: old, scores: [1, 2] },
+      { id: 'g2', players: [{ email: 'other@example.test' }, { email: old }], turn: null, winner: 'draw' }],
+    notifications: [{ id: 'n1', gameId: 'g1', recipientEmail: old, actorEmail: old, type: 'turn' }],
+    operations: [{ operationId: 'op1', fingerprint: 'abc', actorEmail: old, gameId: 'g1' }],
+    topWords: [{ id: 'g1:0', word: 'HUND', score: 14, language: 'da', email: old, at: '2026-10-01T10:00:00.000Z' }],
+  }
+  const result = migrateReferences('multiplayer-index', value, old, next)
+  assert.equal(result.topWords[0].email, next)
+  assert.equal(result.topWords[0].word, 'HUND')
+  assert.equal(result.games[0].players[0].email, next)
+  assert.equal(result.games[0].players[0].name, old)
+  assert.equal(result.games[0].players[1].email, 'other@example.test')
+  assert.equal(result.games[0].turn, next)
+  assert.equal(result.games[0].winner, next)
+  assert.equal(result.games[1].players[1].email, next)
+  assert.equal(result.games[1].winner, 'draw')
+  assert.equal(result.games[1].turn, null)
+  assert.equal(result.notifications[0].recipientEmail, next)
+  assert.equal(result.notifications[0].actorEmail, next)
+  assert.equal(result.operations[0].actorEmail, next)
+  assert.equal(result.operations[0].fingerprint, 'abc')
+  assert.equal(value.games[0].turn, old)
+  assert.equal(migrateReferences('multiplayer-command', { opponentEmail: old }, old, next).opponentEmail, old)
+  assert.equal(migrateReferences('multiplayer-index', { opponentEmail: old }, old, next).opponentEmail, next)
+  assert.equal(relevantKey('multiplayer-index'), true)
+})
+test('high-five sender, recipient and operation actor emails follow a rename but names and messages stay', () => {
+  const value = {
+    items: [{ id: 'h1', senderEmail: old, senderName: old, recipientEmail: 'other@example.test', recipientName: 'Other', emoji: '🙌', message: `Thanks ${old}`, readAt: null },
+      { id: 'h2', senderEmail: 'other@example.test', recipientEmail: old, recipientName: 'Old Name', message: 'Hi', readAt: null }],
+    operations: [{ id: 'op1', fingerprint: 'abc', actorEmail: old, itemId: 'h1' }],
+  }
+  const result = migrateReferences('high-fives', value, old, next)
+  assert.equal(result.items[0].senderEmail, next)
+  assert.equal(result.items[0].senderName, old)
+  assert.equal(result.items[0].message, `Thanks ${old}`)
+  assert.equal(result.items[0].recipientEmail, 'other@example.test')
+  assert.equal(result.items[1].senderEmail, 'other@example.test')
+  assert.equal(result.items[1].recipientEmail, next)
+  assert.equal(result.operations[0].actorEmail, next)
+  assert.equal(result.operations[0].fingerprint, 'abc')
+  assert.equal(value.items[0].senderEmail, old)
+  assert.equal(migrateReferences('high-fives', { recipientEmail: old }, old, next).recipientEmail, next)
+  assert.equal(migrateReferences('other-key', { senderEmail: old }, old, next).senderEmail, old)
+  assert.equal(relevantKey('high-fives'), true)
 })

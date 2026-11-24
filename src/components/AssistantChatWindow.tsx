@@ -1,16 +1,18 @@
 import type { ReactNode } from 'react'
 import { GearSix, Minus, X } from '@phosphor-icons/react'
 import { HubertIcon } from './HubertIcon'
+import type { Language } from '@/lib/translations'
 
 export const CHAT_WIDTHS = { compact: 360, standard: 440, wide: 560 } as const
 export type ChatWidth = keyof typeof CHAT_WIDTHS
 const TEXT = {
-  da: { title: 'Hubert', settings: 'Indstillinger', width: 'Bredde', compact: 'Smal', standard: 'Normal', wide: 'Bred', minimize: 'Minimér', close: 'Luk' },
-  en: { title: 'Hubert', settings: 'Settings', width: 'Width', compact: 'Compact', standard: 'Standard', wide: 'Wide', minimize: 'Minimize', close: 'Close' },
-  fi: { title: 'Hubert', settings: 'Asetukset', width: 'Leveys', compact: 'Kapea', standard: 'Normaali', wide: 'Leveä', minimize: 'Pienennä', close: 'Sulje' },
+  da: { title: 'Hubert', settings: 'Indstillinger', width: 'Bredde', compact: 'Smal', standard: 'Normal', wide: 'Bred', minimize: 'Minimér', close: 'Luk', credit: 'Huberts 3D-model: Meshy (CC BY 4.0)' },
+  en: { title: 'Hubert', settings: 'Settings', width: 'Width', compact: 'Compact', standard: 'Standard', wide: 'Wide', minimize: 'Minimize', close: 'Close', credit: "Hubert's 3D model: Meshy (CC BY 4.0)" },
+  fi: { title: 'Hubert', settings: 'Asetukset', width: 'Leveys', compact: 'Kapea', standard: 'Normaali', wide: 'Leveä', minimize: 'Pienennä', close: 'Sulje', credit: 'Hubertin 3D-malli: Meshy (CC BY 4.0)' },
+  sv: { title: 'Hubert', settings: 'Inställningar', width: 'Bredd', compact: 'Smal', standard: 'Normal', wide: 'Bred', minimize: 'Minimera', close: 'Stäng', credit: 'Huberts 3D-modell: Meshy (CC BY 4.0)' },
 }
 export function AssistantChatWindow({ language, width, onWidthChange, onMinimize, onClose, status, ready, settings, children }: {
-  language: 'da' | 'en' | 'fi'; width: ChatWidth; onWidthChange: (value: ChatWidth) => void
+  language: Language; width: ChatWidth; onWidthChange: (value: ChatWidth) => void
   onMinimize: () => void; onClose: () => void; status: string; ready: boolean; settings: ReactNode; children: ReactNode
 }) {
   const t = TEXT[language]
@@ -24,6 +26,7 @@ export function AssistantChatWindow({ language, width, onWidthChange, onMinimize
         <div className="absolute right-3 top-12 z-10 w-56 rounded-md border bg-popover p-3 text-popover-foreground shadow-lg">
           <label className="flex items-center justify-between gap-3 text-xs">{t.width}<select aria-label={t.width} value={width} onChange={event => onWidthChange(event.target.value as ChatWidth)} className="rounded-md border bg-background px-2 py-1.5 text-xs"><option value="compact">{t.compact}</option><option value="standard">{t.standard}</option><option value="wide">{t.wide}</option></select></label>
           <div className="mt-3 space-y-3 border-t pt-3">{settings}</div>
+          <p className="mt-3 border-t pt-2 text-[10px] text-muted-foreground">{t.credit}</p>
         </div>
       </details>
       <button type="button" aria-label={t.minimize} title={t.minimize} onClick={onMinimize} className="flex size-8 items-center justify-center rounded-lg bg-white/10 hover:bg-white/20"><Minus size={18} /></button>

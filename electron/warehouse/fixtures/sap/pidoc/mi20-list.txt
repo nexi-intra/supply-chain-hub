@@ -1,0 +1,6 @@
+﻿
+	PhysInvDoc	Item	Material	Batch	Plnt	Location	     Book Quantity	      Qty Counted	    Difference qty	BUn	 Difference Amt.	Crcy	S
+
+	105000893	   1	INT4100-7920-0		D301	D000	            1,000	           1,000	            0,000	EA	           0,00	DKK
+	105000894	   1	R133-0032		D301	D000	          483,000	         480,000	-3,000	EA	         151,59	DKK
+	105000894	   2	R133-0033		D301	D000	           23,000	           0,000	-23,000	EA	       3.877,20	DKK

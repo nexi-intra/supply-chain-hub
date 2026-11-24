@@ -1,9 +1,12 @@
 import { useTheme } from '@/contexts/ThemeContext'
-import { Moon, Sun, Check } from '@phosphor-icons/react'
+import { useChristmas } from '@/contexts/ChristmasContext'
+import { christmasLabels } from '@/lib/christmas'
+import { Moon, Sun, Check, Snowflake } from '@phosphor-icons/react'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
@@ -11,7 +14,8 @@ import { useLanguage } from '@/contexts/LanguageContext'
 
 export function ThemeToggle() {
   const { theme, setTheme } = useTheme()
-  const { t } = useLanguage()
+  const { t, language } = useLanguage()
+  const christmas = useChristmas()
 
   const themeLabels = {
     light: t.theme?.light || 'Light',
@@ -39,6 +43,16 @@ export function ThemeToggle() {
           <Moon className="mr-2" />
           {themeLabels.dark}
         </DropdownMenuItem>
+        {christmas.season && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => christmas.setEnabled(!christmas.enabled)} className="gap-2 cursor-pointer">
+              {christmas.enabled ? <Check weight="bold" /> : <span className="w-4" />}
+              <Snowflake className="mr-2" />
+              {christmasLabels(language).toggle}
+            </DropdownMenuItem>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   )

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Sparkle } from '@phosphor-icons/react'
+import { HubMark } from '@/components/HubMark'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -38,12 +38,12 @@ export function WhatsNewDialog() {
     <Dialog open onOpenChange={(open) => { if (!open) setEntries(null) }}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Sparkle size={22} weight="fill" className="text-accent" />
-            {language === 'da' ? 'Nyheder i Supply Chain Hub' : language === 'fi' ? "Mitä uutta Supply Chain Hubissa?" : "What's new in Supply Chain Hub"}
+          <DialogTitle className="flex items-center gap-2.5">
+            <HubMark size={28} decorative />
+            {language === 'da' ? 'Nyheder i Supply Chain Hub' : language === 'fi' ? "Mitä uutta Supply Chain Hubissa?" : language === 'sv' ? 'Nyheter i Supply Chain Hub' : "What's new in Supply Chain Hub"}
           </DialogTitle>
           <DialogDescription>
-            {language === 'da' ? 'Appen er blevet opdateret. Her er hvad der er nyt.' : language === 'fi' ? 'Sovellus on päivitetty. Täällä se on uutta.' : 'The app has been updated. Here’s what’s new.'}
+            {language === 'da' ? 'Appen er blevet opdateret. Her er hvad der er nyt.' : language === 'fi' ? 'Sovellus on päivitetty. Täällä se on uutta.' : language === 'sv' ? 'Appen har uppdaterats. Här är det som är nytt.' : 'The app has been updated. Here’s what’s new.'}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-2 max-h-[50vh] overflow-y-auto">
@@ -63,7 +63,7 @@ export function WhatsNewDialog() {
         </div>
         <DialogFooter>
           <Button onClick={() => setEntries(null)} className="w-full">
-            {language === 'da' ? 'Fedt, tak!' : language === 'fi' ? 'Hienoa, kiitos!' : 'Great, thanks!'}
+            {language === 'da' ? 'Fedt, tak!' : language === 'fi' ? 'Hienoa, kiitos!' : language === 'sv' ? 'Toppen, tack!' : 'Great, thanks!'}
           </Button>
         </DialogFooter>
       </DialogContent>

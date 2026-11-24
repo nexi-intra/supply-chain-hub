@@ -69,6 +69,22 @@ test('login preparation warms only authorized published guides before the first 
   assert.ok(!answer.text.includes('DRAFT_NOT_PUBLISHED'))
   assert.ok(!answer.text.includes('OUTSIDE_GUIDE_SECRET'))
 })
+test('knowledge articles are answered through the real worker, edits show at once and revalidation checks the library', t => {
+  const { runtime, store, config } = fixture(t)
+  const article = { id: 'kb-lm', title: 'LocalMode result handling', version: '1.00', sections: [{ heading: 'Rejection Reason', steps: [{ text: '2:1 | Cancelled by Cancel Key Pressed', imageIds: [] }] }] }
+  store.set('knowledge-articles', [article])
+  const request = { token: 'valid', question: 'hvad betyder rejection reason 2:1', language: 'da' }
+  const answer = runtime.call('query', [request], config)
+  const source = answer.sources.find(item => item.library === 'knowledge')
+  assert.ok(source, JSON.stringify(answer.sources))
+  assert.match(answer.text, /Cancelled by Cancel Key Pressed/)
+  runtime.call('revalidateSources', [request, answer], config)
+  store.set('knowledge-articles', [{ ...article, version: '1.01', sections: [{ heading: 'Rejection Reason', steps: [{ text: '2:1 | Cancelled on the terminal', imageIds: [] }] }] }])
+  assert.match(runtime.call('query', [request], config).text, /Cancelled on the terminal/)
+  assert.throws(() => runtime.call('revalidateSources', [request, answer], config), /ændret under svaret/)
+  store.delete('knowledge-articles')
+  assert.throws(() => runtime.call('revalidateSources', [request, answer], config), /ikke adgang/)
+})
 test('editing/deleting a cached guide is reflected without restarting or retaining stale IP', t => {
   const { query, store } = fixture(t)
   query()
@@ -103,25 +119,25 @@ test('account approval and manager privileges are read fresh, not remembered wit
 test('external guide access revocation and expiry remove cached evidence immediately', t => {
   const { outside, runtime, request, config, two } = fixture(t)
   outside.set('guide-access-requests', [{ guideId: 'other', requestingUserEmail: 'me@test', requestingTeamCode: 'ONE', status: 'approved', expiresAt: new Date(Date.now() + 60000).toISOString() }])
-  assert.equal(runtime.call('getGuide', ['valid', undefined, two.teamId, 'other'], config).guide.id, 'other')
+  assert.equal(runtime.call('getGuide', ['valid', two.teamId, 'other'], config).guide.id, 'other')
   outside.set('guide-access-requests', [])
-  assert.throws(() => runtime.call('getGuide', ['valid', undefined, two.teamId, 'other'], config), /ikke adgang/)
+  assert.throws(() => runtime.call('getGuide', ['valid', two.teamId, 'other'], config), /ikke adgang/)
   assert.ok(!JSON.stringify(runtime.call('query', [{ ...request, question: 'guide cloud external' }], config)).includes('OUTSIDE_GUIDE_SECRET'))
 })
 test('removing shared-guide team membership invalidates cache without disclosing old guide', t => {
   const { shared, runtime, config, one } = fixture(t)
   shared.set('shared-guides', [{ id: 'shared', title: 'Shared', content: 'SHARED_GUIDE_TEST', sharedWithTeamCodes: [one.folderName] }])
-  assert.equal(runtime.call('getGuide', ['valid', undefined, one.teamId, 'shared'], config).guide.id, 'shared')
+  assert.equal(runtime.call('getGuide', ['valid', one.teamId, 'shared'], config).guide.id, 'shared')
   shared.set('shared-guides', [{ id: 'shared', title: 'Shared', content: 'SHARED_GUIDE_TEST', sharedWithTeamCodes: [] }])
-  assert.throws(() => runtime.call('getGuide', ['valid', undefined, one.teamId, 'shared'], config), /ikke adgang/)
+  assert.throws(() => runtime.call('getGuide', ['valid', one.teamId, 'shared'], config), /ikke adgang/)
 })
 test('Hubert never revives an older approval after a newer rejection in the guide library', t => {
   const { outside, runtime, request, config, two } = fixture(t)
   const approval = { guideId: 'other', requestingUserEmail: 'me@test', requestingTeamCode: 'ONE', status: 'approved', requestedAt: '2026-09-01T00:00:00Z', expiresAt: new Date(Date.now() + 60000).toISOString() }
   outside.set('guide-access-requests', [approval])
-  assert.equal(runtime.call('getGuide', ['valid', undefined, two.teamId, 'other'], config).guide.id, 'other')
+  assert.equal(runtime.call('getGuide', ['valid', two.teamId, 'other'], config).guide.id, 'other')
   outside.set('guide-access-requests', [approval, { ...approval, status: 'rejected', requestedAt: '2026-09-02T00:00:00Z' }])
-  assert.throws(() => runtime.call('getGuide', ['valid', undefined, two.teamId, 'other'], config), /ikke adgang/)
+  assert.throws(() => runtime.call('getGuide', ['valid', two.teamId, 'other'], config), /ikke adgang/)
   assert.ok(!JSON.stringify(runtime.call('query', [{ ...request, question: 'cloud external guide' }], config)).includes('OUTSIDE_GUIDE_SECRET'))
 })
 test('source revalidation rejects an edit made during model generation, even at same version', t => {
@@ -144,13 +160,14 @@ test('worker dispatcher refuses arbitrary key, path and write operations', t => 
 })
 test('actual subprocess RPC preserves guide authorization and can reuse its cache', async t => {
   const { config, request } = fixture(t)
-  const client = createAssistantWorkerClient({ getState: () => config, timeoutMs: 10000 })
+  // Generous timeout: the full suite runs the CPU-heavy training banks in parallel, and this test checks authorization, not latency.
+  const client = createAssistantWorkerClient({ getState: () => config, timeoutMs: 30000 })
   t.after(() => client.stop())
   const first = await client.session().query(request)
   const second = await client.session().query(request)
   assert.match(first.text, /192\.0\.2\.10/)
   assert.equal(first.text, second.text)
-  await assert.rejects(() => client.session().getGuide('valid', undefined, 'TWO', 'other'), /ikke adgang/)
+  await assert.rejects(() => client.session().getGuide('valid', 'TWO', 'other'), /ikke adgang/)
 })
 function slowClient(t, options = {}) {
   const state = { platformRoot: 'synthetic', activeDir: 'synthetic', currentFolder: 'ONE' }
