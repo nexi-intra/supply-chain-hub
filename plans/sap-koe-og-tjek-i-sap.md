@@ -46,11 +46,11 @@
 - Produces: `bridge.handOver(job)` hvor `job(release)` returnerer et promise. Køen holdes, til `release()` kaldes eller jobbet slutter (også ved fejl).
 - Produces: hver skrivning i `createPiDocWriter` (opret både prøvekørsel og oprettelse, print, serienumre, antal, bogføring, sletning) kører gennem `bridge.handOver`, kører først `status` og `computeSapState(..., { system, client: '100' })`, og afviser med `SAP_NOT_READY` (med `sapState`), når SAP ikke er klar. `onWaiting()` kaldes ved `{"stage":"waiting"}` og ikke før.
 
-- [ ] Skriv tests: runneren sætter `COUNTPOINT_SAP_CLIENT`. `onLine` får `{stage:'waiting'}` før scriptet slutter. Et `exclusive`-job sat i kø under en `handOver` starter først efter `release()`. Køen slippes, når jobbet kaster en fejl før `release()`. En PI-skrivning med SAP ikke klar afviser med `SAP_NOT_READY` og kører intet skrivescript. `onWaiting` kaldes ikke, når scriptet fejler før overdragelsen.
-- [ ] Kør testene og se dem fejle.
-- [ ] Implementér. `execFile` beholdes, og stdout læses linje for linje via `child.stdout.on('data')`.
-- [ ] Kør alle lagertests og electron-tests, og se dem bestå.
-- [ ] Commit.
+- [x] Skriv tests: runneren sætter `COUNTPOINT_SAP_CLIENT`. `onLine` får `{stage:'waiting'}` før scriptet slutter. Et `exclusive`-job sat i kø under en `handOver` starter først efter `release()`. Køen slippes, når jobbet kaster en fejl før `release()`. En PI-skrivning med SAP ikke klar afviser med `SAP_NOT_READY` og kører intet skrivescript. `onWaiting` kaldes ikke, når scriptet fejler før overdragelsen.
+- [x] Kør testene og se dem fejle.
+- [x] Implementér. `execFile` beholdes, og stdout læses linje for linje via `child.stdout.on('data')`.
+- [x] Kør alle lagertests og electron-tests, og se dem bestå.
+- [x] Commit.
 
 ### Task 2: Scripts vælger system og klient, venter længere på sessionen og melder overdragelsen
 
@@ -63,11 +63,11 @@
 - Produces: alle ni scripts læser klienten med `CreateObject("WScript.Shell").Environment("PROCESS")("COUNTPOINT_SAP_CLIENT")` og afslutter med fejlen `arguments`, når den er tom. Forbindelsen er den første, hvor både `Info.SystemName` og `Info.Client` passer (`Exit For`). Efter `CreateSession` ventes op til 30 sekunder (300 gange 100 ms) på den nye session, og sessionen afvises med `wrong-system`, medmindre både system og klient passer.
 - Produces: de seks PI-scripts skriver `{"stage":"waiting"}` på stdout lige før ventesløjfen, hvor brugeren får skærmen. `pidoc-create.vbs` gør det kun i tilstanden `create`.
 
-- [ ] Skriv kildetekst-tests: hvert af de ni scripts læser `COUNTPOINT_SAP_CLIENT`, sammenligner `Info.Client` i forbindelsesløkken og efter `CreateSession`, og venter 300 gange. De seks PI-scripts skriver stage-linjen før ventesløjfen.
-- [ ] Kør testene og se dem fejle.
-- [ ] Ret de ni scripts.
-- [ ] Kør alle lagertests og se dem bestå.
-- [ ] Commit.
+- [x] Skriv kildetekst-tests: hvert af de ni scripts læser `COUNTPOINT_SAP_CLIENT`, sammenligner `Info.Client` i forbindelsesløkken og efter `CreateSession`, og venter 300 gange. De seks PI-scripts skriver stage-linjen før ventesløjfen.
+- [x] Kør testene og se dem fejle.
+- [x] Ret de ni scripts.
+- [x] Kør alle lagertests og se dem bestå.
+- [x] Commit.
 
 ## Fase 2: Bogføringen læser ikke udklipsholderen igen
 
@@ -83,11 +83,11 @@
 - Produces: ny brug `pidoc-post.vbs <system> <year> <outDir> <listFile> <statusFile> <waitSeconds> <doc> <low> <high> [clipboard]`. `<low>` og `<high>` er det mindste og største af dokumentnumrene. MI22 udfyldes med `IM_IBLNR-LOW = low` og `IM_IBLNR-HIGH = high`, og begge tjekkes med `Check`. MI20 bruger stadig udklipsholderen til flere dokumenter. Passer tredje forsøg i `UploadClipboard` ikke, afsluttes med `multiple-selection-failed`.
 - `postDocuments` filtrerer allerede MI22-listen på de valgte numre og melder numre, MI22 ikke viser, som ukendte. Det beholdes.
 
-- [ ] Skriv tests: `postDocuments` sender low og high (talmæssigt mindst og størst, også når listen ikke er sorteret). Et dokument i intervallet, som ikke er valgt, påvirker ikke resultatet. Kildetekst: MI22-delen kalder ikke `UploadClipboard`.
-- [ ] Kør testene og se dem fejle.
-- [ ] Implementér.
-- [ ] Kør alle lagertests og se dem bestå.
-- [ ] Commit.
+- [x] Skriv tests: `postDocuments` sender low og high (talmæssigt mindst og størst, også når listen ikke er sorteret). Et dokument i intervallet, som ikke er valgt, påvirker ikke resultatet. Kildetekst: MI22-delen kalder ikke `UploadClipboard`.
+- [x] Kør testene og se dem fejle.
+- [x] Implementér.
+- [x] Kør alle lagertests og se dem bestå.
+- [x] Commit.
 
 ## Fase 3: MI31 lukket efter F8
 
@@ -102,11 +102,11 @@
 - Produces: i ventesløjfen husker scriptet, om sessionen har været optaget (`Busy`) eller har forladt skærm 1000. Lukker brugeren vinduet, åbner scriptet en ny session på samme forbindelse og slår referencen op i MI22, kun med visning (som `pidoc-post.vbs` gør efter et lukket vindue). Findes dokumenter, gemmes listen, og svaret er `{"ok":true}`. Findes intet, og sessionen har været optaget, er svaret `closed-unknown`. Findes intet ellers, er svaret `cancelled` som i dag. Kan den nye session ikke åbnes, er svaret `closed-unknown`, hvis sessionen har været optaget, ellers `cancelled`.
 - `closed-unknown` er ikke i `beforeF8`, så appen melder `PIDOC_UNKNOWN`.
 
-- [ ] Skriv tests: `createDocument` med svaret `closed-unknown` kaster `PIDOC_UNKNOWN`. Med `{"ok":true}` og en MI22-liste efter et lukket vindue returneres dokumenterne. Kildetekst: løkken husker `Busy`, og MI22-opslaget efter lukning bruger referencen.
-- [ ] Kør testene og se dem fejle.
-- [ ] Implementér.
-- [ ] Kør alle lagertests og se dem bestå.
-- [ ] Commit.
+- [x] Skriv tests: `createDocument` med svaret `closed-unknown` kaster `PIDOC_UNKNOWN`. Med `{"ok":true}` og en MI22-liste efter et lukket vindue returneres dokumenterne. Kildetekst: løkken husker `Busy`, og MI22-opslaget efter lukning bruger referencen.
+- [x] Kør testene og se dem fejle.
+- [x] Implementér.
+- [x] Kør alle lagertests og se dem bestå.
+- [x] Commit.
 
 ## Fase 4: "Tjek i SAP"
 
@@ -130,11 +130,11 @@
   - `reason` begynder med `Tjek i SAP <dd.mm.yyyy hh:mm>:` og siger kort, hvad MI22 og MI20 viste. SAP ændres ikke, og intet gemmes.
 - Produces: IPC-kanalen `pidocs:check` med `{ id, docId }`.
 
-- [ ] Skriv tests for `checkDocument` (fil-svar via en falsk runner), for `check` på de tre trin, flere dokumenter, rettigheder og et dokument, der ikke er ukendt, og for at kanalen er registreret.
-- [ ] Kør testene og se dem fejle.
-- [ ] Implementér.
-- [ ] Kør alle lagertests og electron-tests, og se dem bestå.
-- [ ] Commit.
+- [x] Skriv tests for `checkDocument` (fil-svar via en falsk runner), for `check` på de tre trin, flere dokumenter, rettigheder og et dokument, der ikke er ukendt, og for at kanalen er registreret.
+- [x] Kør testene og se dem fejle.
+- [x] Implementér.
+- [x] Kør alle lagertests og electron-tests, og se dem bestå.
+- [x] Commit.
 
 ### Task 6: Knappen i afklaringsdialogen
 
@@ -148,11 +148,11 @@
 - Consumes: `pidocs:check` fra Task 5.
 - Produces: `ResolveDialog` får knappen "Tjek i SAP" (`SapActionButton`). Svaret udfylder valget, dokumentnummeret og begrundelsen, og `summary` vises over valgene. Manageren trykker selv "Gem afklaringen". Ved `outcome: null` udfyldes kun begrundelsen. Fejl vises i dialogen.
 
-- [ ] Skriv tests: knappen kalder `check` og udfylder valg, nummer og begrundelse. `null` vælger intet. En fejl vises.
-- [ ] Kør testene og se dem fejle.
-- [ ] Implementér.
-- [ ] Kør vitest og tsc, og se dem bestå.
-- [ ] Commit.
+- [x] Skriv tests: knappen kalder `check` og udfylder valg, nummer og begrundelse. `null` vælger intet. En fejl vises.
+- [x] Kør testene og se dem fejle.
+- [x] Implementér.
+- [x] Kør vitest og tsc, og se dem bestå.
+- [x] Commit.
 
 ## Fase 5: QS4 sammen med Jacob
 
