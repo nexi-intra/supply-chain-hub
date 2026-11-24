@@ -216,6 +216,10 @@ s.findById("wnd[0]/usr/chkXWART").Selected = False
 ' Always: a material counted earlier in the year must still get a new document (the guide leaves this off).
 s.findById("wnd[0]/usr/chkXIMAT").Selected = True
 s.findById("wnd[0]/usr/chkXICHA").Selected = False
+' The count is entered as today's SAP stock plus the approved difference, so the book stock must not be frozen at creation
+' and the document must not block postings (both would otherwise come from the user's own SAP memory).
+s.findById("wnd[0]/usr/chkXBUFI").Selected = False
+s.findById("wnd[0]/usr/chkSPERR").Selected = False
 s.findById("wnd[0]/usr/txtINVNU").Text = reference
 s.findById("wnd[0]/usr/txtXBLNI").Text = reference
 If Err.Number <> 0 Then Err.Clear : Finish False, "mi31-screen-changed"
@@ -224,6 +228,8 @@ Check "wnd[0]/usr/ctxtR_MATNR-LOW", material
 Check "wnd[0]/usr/ctxtR_WERKS-LOW", PLANT
 Check "wnd[0]/usr/ctxtR_LGORT-LOW", sloc
 If Not s.findById("wnd[0]/usr/chkXIMAT").Selected Then Finish False, "field-not-set: XIMAT"
+If s.findById("wnd[0]/usr/chkXBUFI").Selected Then Finish False, "field-not-set: XBUFI"
+If s.findById("wnd[0]/usr/chkSPERR").Selected Then Finish False, "field-not-set: SPERR"
 
 If mode = "test" Then
   ' Only ever pressed in test mode, and only after confirming test mode is selected.
