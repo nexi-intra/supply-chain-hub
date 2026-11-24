@@ -5,6 +5,9 @@ const { createSapBridge, createCscriptRunner, defaultCscriptPath } = require('./
 
 const READY = JSON.stringify({ running: true, scripting: true, connections: [{ disabledByServer: false, sessions: [{ busy: false, popup: false, system: 'PS4', client: '100', user: 'JREMMER', transaction: 'SESSION_MANAGER' }] }] })
 
+/** A queued SAP job must start soon; a stuck queue fails the test instead of hanging it. */
+const soon = (promise, what = 'the queued job') => Promise.race([promise, new Promise((resolve, reject) => setTimeout(() => reject(new Error(`${what} never ran`)), 1000).unref())])
+
 test('status runs the status script and returns the computed state', async () => {
   const calls = []
   const bridge = createSapBridge({ runScript: async (name) => { calls.push(name); return `noise\r\n${READY}\r\n` } })
@@ -49,6 +52,78 @@ test('SAP jobs never overlap', async () => {
   assert.deepEqual(order, ['first:start', 'first:end', 'second'])
   await assert.rejects(bridge.exclusive(async () => { throw new Error('boom') }), /boom/)
   assert.equal(await bridge.exclusive(async () => 'still works'), 'still works')
+})
+
+test('a handed-over job holds the queue until it releases it', async () => {
+  const bridge = createSapBridge({ runScript: async () => READY })
+  const order = []
+  let release, finish
+  const writing = bridge.handOver(async handOver => {
+    order.push('write:start')
+    release = handOver
+    await new Promise(resolve => { finish = resolve })
+    order.push('write:end')
+    return 'written'
+  })
+  const next = bridge.exclusive(async () => { order.push('next') })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(order, ['write:start'], 'nothing else drives SAP before the hand-over')
+  release()
+  await soon(next)
+  assert.deepEqual(order, ['write:start', 'next'], 'the queue goes on while the user works in SAP')
+  release()
+  finish()
+  assert.equal(await writing, 'written')
+  assert.deepEqual(order, ['write:start', 'next', 'write:end'])
+})
+
+test('a handed-over job that ends or fails before the hand-over frees the queue', async () => {
+  const bridge = createSapBridge({ runScript: async () => READY })
+  await assert.rejects(bridge.handOver(async () => { throw new Error('script died') }), /script died/)
+  assert.equal(await soon(bridge.exclusive(async () => 'after a failure')), 'after a failure')
+  assert.equal(await bridge.handOver(async () => 'done'), 'done')
+  assert.equal(await soon(bridge.exclusive(async () => 'after an end')), 'after an end')
+  let finish
+  const failing = bridge.handOver(() => new Promise((resolve, reject) => { finish = reject }))
+  const waiting = bridge.exclusive(async () => 'waited')
+  await new Promise(resolve => setImmediate(resolve))
+  finish(new Error('late failure'))
+  await assert.rejects(failing, /late failure/)
+  assert.equal(await soon(waiting), 'waited')
+})
+
+test('the runner gives every script the expected client', async () => {
+  const calls = []
+  const execFile = (file, args, options, callback) => { calls.push(options); callback(null, READY) }
+  await createCscriptRunner({ scriptDir: 'C:\\app\\sap', cscriptPath: 'cscript.exe', execFile })('status')
+  await createCscriptRunner({ scriptDir: 'C:\\app\\sap', cscriptPath: 'cscript.exe', execFile, system: 'QS4', client: '200' })('pidoc-print', ['QS4', '105000893'])
+  assert.deepEqual(calls.map(options => [options.env.COUNTPOINT_SAP_SYSTEM, options.env.COUNTPOINT_SAP_CLIENT]), [['PS4', '100'], ['QS4', '200']])
+})
+
+test('the runner passes stage lines on while the script runs; the answer stays the whole output', async () => {
+  const { EventEmitter } = require('node:events')
+  let child, done
+  const execFile = (file, args, options, callback) => {
+    child = { stdout: new EventEmitter() }
+    done = callback
+    return child
+  }
+  const lines = []
+  const run = createCscriptRunner({ scriptDir: 'C:\\app\\sap', cscriptPath: 'cscript.exe', execFile })
+  const answer = run('pidoc-count', ['PS4', '105000894'], { onLine: line => lines.push(line) })
+  let settled = false
+  answer.then(() => { settled = true }, () => { settled = true })
+  child.stdout.emit('data', 'noise\r\n{"stage":"wai')
+  assert.deepEqual(lines, [], 'half a line waits for the rest')
+  child.stdout.emit('data', 'ting"}\r\n{"ok":true,"note":"no stage"}\r\nnot json\r\n{"stage":"verify","n":1}\n')
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(lines, [{ stage: 'waiting' }, { stage: 'verify', n: 1 }])
+  assert.equal(settled, false, 'the hand-over comes before the script ends')
+  const output = 'noise\r\n{"stage":"waiting"}\r\n{"ok":true}\r\n'
+  done(null, output)
+  assert.equal(await answer, output)
+  const quiet = createCscriptRunner({ scriptDir: 'C:\\app\\sap', cscriptPath: 'cscript.exe', execFile: (file, args, options, callback) => { callback(null, '{"ok":true}') } })
+  assert.equal(await quiet('status', [], { onLine: () => { throw new Error('never') } }), '{"ok":true}', 'no child to listen to is fine')
 })
 
 test('the runner only starts allow-listed scripts with the 32-bit host and safe arguments', async () => {

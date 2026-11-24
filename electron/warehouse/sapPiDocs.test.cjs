@@ -4,6 +4,18 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { createPiDocWriter } = require('./sapPiDocs.cjs')
+const { createSapBridge } = require('./sapBridge.cjs')
+const { createFixtureRunner } = require('./sapFixtures.cjs')
+
+const readyFor = system => JSON.stringify({ running: true, scripting: true, connections: [{ disabledByServer: false, sessions: [{ busy: false, popup: false, system, client: '100', user: 'JREMMER', transaction: 'SESSION_MANAGER' }] }] })
+const BRIDGE = { exclusive: job => job(), handOver: job => job(() => {}) }
+
+/** A queued SAP job must start soon; a stuck queue fails the test instead of hanging it. */
+const soon = (promise, what = 'the queued job') => Promise.race([promise, new Promise((resolve, reject) => setTimeout(() => reject(new Error(`${what} never ran`)), 1000).unref())])
+/** SAP is ready: the status check before each write is answered here, so `runScript` only sees the write scripts. */
+function writerFor({ runScript, system, ...options }) {
+  return createPiDocWriter({ bridge: BRIDGE, runScript: (name, ...rest) => (name === 'status' ? Promise.resolve(readyFor(system)) : runScript(name, ...rest)), system, ...options })
+}
 
 const fixture = name => fs.readFileSync(path.join(__dirname, 'fixtures', 'sap', 'pidoc', name), 'utf8')
 const MI22 = [
@@ -19,15 +31,15 @@ const MI22 = [
 function setup({ testLog = fixture('mi31-test.txt'), createResult = { ok: true, title: 'PI Documents Were Created Directly' }, list = MI22 } = {}) {
   const calls = []
   const clip = []
-  const bridge = { exclusive: job => job() }
   const runScript = async (name, args, options) => {
     calls.push({ name, args, options })
     const dir = args[5]
     if (args[1] === 'test') { fs.writeFileSync(path.join(dir, args[6]), testLog); return JSON.stringify({ ok: true, title: 'x' }) }
+    options.onLine({ stage: 'waiting' })
     if (createResult.ok) fs.writeFileSync(path.join(dir, args[6]), list)
     return JSON.stringify(createResult)
   }
-  const writer = createPiDocWriter({ bridge, runScript, clipboard: { writeText: text => clip.push(text), readText: () => clip.at(-1) }, system: 'QS4', tempRoot: os.tmpdir(), waitSeconds: 600 })
+  const writer = writerFor({ runScript, clipboard: { writeText: text => clip.push(text), readText: () => clip.at(-1) }, system: 'QS4', tempRoot: os.tmpdir(), waitSeconds: 600 })
   return { writer, calls, clip }
 }
 
@@ -67,15 +79,14 @@ test('any failure after the user\'s F8 in MI31 is unknown: SAP may have created 
     await assert.rejects(setup({ createResult: { ok: false, error } }).writer.createDocument(REQUEST), error => error.code === unknown.code && error.message === unknown.message && typeof error.detail === 'string', error)
   }
   // A script killed at the time limit, or one whose MI22 list cannot be read.
-  const killing = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript: async (name, args) => { if (args[1] === 'test') { fs.writeFileSync(path.join(args[5], args[6]), fixture('mi31-test.txt')); return '{"ok":true}' } throw Object.assign(new Error('SAP_TIMEOUT'), { code: 'SAP_TIMEOUT' }) }, clipboard: { writeText: () => {}, readText: () => 'R133-0032\r\nR133-0033' }, system: 'QS4', waitSeconds: 600 })
+  const killing = writerFor({ runScript: async (name, args) => { if (args[1] === 'test') { fs.writeFileSync(path.join(args[5], args[6]), fixture('mi31-test.txt')); return '{"ok":true}' } throw Object.assign(new Error('SAP_TIMEOUT'), { code: 'SAP_TIMEOUT' }) }, clipboard: { writeText: () => {}, readText: () => 'R133-0032\r\nR133-0033' }, system: 'QS4', waitSeconds: 600 })
   await assert.rejects(killing.createDocument(REQUEST), unknown)
   await assert.rejects(setup({ list: 'not a MI22 list' }).writer.createDocument(REQUEST), unknown)
 })
 
 test('a create script that breaks after the hand-over to F8 is unknown; one that breaks in the test run is passed on', async t => {
   t.mock.method(console, 'error', () => {})
-  const writer = failAt => createPiDocWriter({
-    bridge: { exclusive: job => job() },
+  const writer = failAt => writerFor({
     runScript: async (name, args) => {
       if (args[1] === failAt) throw Object.assign(new Error('SAP_SCRIPT_FAILED'), { code: 'SAP_SCRIPT_FAILED' })
       fs.writeFileSync(path.join(args[5], args[6]), fixture('mi31-test.txt'))
@@ -90,8 +101,7 @@ test('a create script that breaks after the hand-over to F8 is unknown; one that
 test('posting: MI20 or MI22 lists that cannot be read after the user posted are unknown, never "intet er gemt"', async t => {
   t.mock.method(console, 'error', () => {})
   const unknown = { code: 'PIDOC_UNKNOWN', message: 'PIDOC_UNKNOWN: Optælling ved ikke, om SAP har gemt. Tjek dokumentet i SAP (MI03).' }
-  const posting = files => createPiDocWriter({
-    bridge: { exclusive: job => job() },
+  const posting = files => writerFor({
     runScript: async (name, args) => {
       for (const [index, text] of Object.entries(files)) fs.writeFileSync(path.join(args[2], args[Number(index)]), text)
       return '{"ok":true,"screens":"x"}'
@@ -112,7 +122,7 @@ test('a material SAP skipped after F8 is reported as missing', async () => {
 test('printing: MI21 to the right system, spool only in QS4; cancelling is reported', async () => {
   const calls = []
   const runScript = async (name, args) => { calls.push({ name, args }); return JSON.stringify(args[1] === '105000999' ? { ok: false, error: 'cancelled' } : { ok: true, message: 'Spool request 123 generated' }) }
-  const make = system => createPiDocWriter({ bridge: { exclusive: job => job() }, runScript, clipboard: null, system, waitSeconds: 300 })
+  const make = system => writerFor({ runScript, clipboard: null, system, waitSeconds: 300 })
   assert.deepEqual(await make('QS4').printDocument({ docNo: '105000893', year: '2026', sloc: 'd000' }), { message: 'Spool request 123 generated' })
   assert.deepEqual(calls[0], { name: 'pidoc-print', args: ['QS4', '105000893', '2026', 'D000', '0', '300'] })
   await make('PS4').printDocument({ docNo: '105000893', year: '2026', sloc: 'D000' })
@@ -129,7 +139,7 @@ test('serials: ZMS_COUNT_SERIAL per material; Check errors come back per serial 
     if (next.error === 'check-errors') fs.writeFileSync(path.join(args[4], args[6]), '\uFEFFS9\tThis serialnumber is in storage loc D006 according to system (EQBS)\r\n')
     return JSON.stringify(next)
   }
-  const writer = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
+  const writer = writerFor({ runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
   assert.deepEqual(await writer.enterSerials({ docNo: '105000893', year: '2026', material: 'int1-0', serials: ['s1', 'S2', 'S1'] }), { counted: 2, serials: 2, newSerials: 0 })
   assert.deepEqual([calls[0].name, calls[0].args.slice(0, 4), calls[0].file], ['pidoc-serials', ['QS4', '105000893', '2026', 'INT1-0'], 'S1\r\nS2'])
   next = { ok: false, error: 'check-errors', errors: 1 }
@@ -140,7 +150,7 @@ test('serials: ZMS_COUNT_SERIAL per material; Check errors come back per serial 
 test('serials: SAP\'s counted quantity is read as a SAP number; a count that differs from the serials sent stops', async () => {
   let next
   const runScript = async () => JSON.stringify(next)
-  const writer = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
+  const writer = writerFor({ runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
   const many = Array.from({ length: 1234 }, (_, index) => `S${index}`)
   next = { ok: true, message: '', newSerials: 0, counted: '1.234', serials: '1234' }
   assert.equal((await writer.enterSerials({ docNo: '105000893', year: '2026', material: 'INT1-0', serials: many })).counted, 1234, '"1.234" is 1234, not 1.234')
@@ -173,7 +183,7 @@ test('the MI04 read-back lets a wanted material missing from the grid pass, as b
 test('quantities: MI04 for the whole document; 0 is allowed (Zero Count)', async () => {
   const calls = []
   const runScript = async (name, args) => { calls.push({ name, args, file: fs.readFileSync(path.join(args[3], args[4]), 'utf8') }); return '{"ok":true,"message":"Count entered for phys. inv. doc. 105000894","items":2}' }
-  const writer = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
+  const writer = writerFor({ runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
   assert.deepEqual(await writer.enterCounts({ docNo: '105000894', year: '2026', entries: [{ material: 'r133-0032', qty: 480 }, { material: 'R133-0033', qty: 0 }] }), { message: 'Count entered for phys. inv. doc. 105000894' })
   assert.deepEqual([calls[0].name, calls[0].args.slice(0, 3), calls[0].file], ['pidoc-count', ['QS4', '105000894', '2026'], 'R133-0032\t480\r\nR133-0033\t0'])
   await assert.rejects(writer.enterCounts({ docNo: '105000894', year: '2026', entries: [{ material: 'R1', qty: -1 }] }), { code: 'PIDOC_INVALID' })
@@ -189,7 +199,7 @@ test('posting: MI20 for several documents; MI22 decides what was posted; the mat
     fs.copyFileSync(path.join(__dirname, 'fixtures', 'sap', 'pidoc', 'mi22-posted.txt'), path.join(args[2], args[4]))
     return JSON.stringify({ ok: true, ticked: 1, screens: 'SAPMSSY0/120/1 > SAPMM07I/701/1 [] > SAPMSSY0/120/1 [Diffs in phys. inv. doc. 105000894 posted with m. doc. 4905204847]' })
   }
-  const writer = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript, clipboard: { writeText: text => clip.push(text), readText: () => clip.at(-1) }, system: 'QS4', waitSeconds: 300 })
+  const writer = writerFor({ runScript, clipboard: { writeText: text => clip.push(text), readText: () => clip.at(-1) }, system: 'QS4', waitSeconds: 300 })
   const result = await writer.postDocuments({ docNos: ['105000893', '105000894', '105000999'], year: '2026' })
   assert.deepEqual(result.posted, ['105000893', '105000894'])
   assert.deepEqual(result.open, [], 'nothing MI22 lists as active')
@@ -210,7 +220,7 @@ test('posting: after a timeout MI22 still decides what was posted; a timeout wit
     if (next.ok) fs.copyFileSync(path.join(__dirname, 'fixtures', 'sap', 'pidoc', 'mi22-posted.txt'), path.join(args[2], args[4]))
     return JSON.stringify(next)
   }
-  const writer = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
+  const writer = writerFor({ runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
   next = { ok: true, ticked: 1, timedOut: true, screens: 'SAPMSSY0/120/1 > SAPMM07I/701/1 []' }
   const result = await writer.postDocuments({ docNos: ['105000894'], year: '2026' })
   assert.deepEqual([result.posted, result.open], [['105000894'], []])
@@ -227,7 +237,7 @@ test('posting: after a timeout MI22 still decides what was posted; a timeout wit
 test('MI04 and ZMS_COUNT_SERIAL after a timeout: the read-back decides; when it fails the state is unknown', async () => {
   let next
   const runScript = async () => JSON.stringify(next)
-  const writer = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
+  const writer = writerFor({ runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
   const counts = () => writer.enterCounts({ docNo: '105000894', year: '2026', entries: [{ material: 'R1', qty: 3 }] })
   const serials = () => writer.enterSerials({ docNo: '105000893', year: '2026', material: 'INT1-0', serials: ['S1', 'S2'] })
   next = { ok: true, message: '', items: 1, timedOut: true }
@@ -250,7 +260,7 @@ test('posting: a document MI22 lists as active is open; one MI22 does not list i
     return JSON.stringify({ ok: true, ticked: 1, screens: 'SAPMSSY0/120/1' })
   }
   const clip = []
-  const writer = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript, clipboard: { writeText: text => clip.push(text), readText: () => clip.at(-1) }, system: 'QS4', waitSeconds: 300 })
+  const writer = writerFor({ runScript, clipboard: { writeText: text => clip.push(text), readText: () => clip.at(-1) }, system: 'QS4', waitSeconds: 300 })
   const result = await writer.postDocuments({ docNos: ['100000784', '105000900', '105000999'], year: '2026' })
   assert.deepEqual([result.posted, result.open, result.unknown], [['100000784'], ['105000900'], ['105000999']])
 })
@@ -258,7 +268,7 @@ test('posting: a document MI22 lists as active is open; one MI22 does not list i
 test('posting: any failure after the hand-over (the screens are logged) is unknown; MI22 checks its document selection', async () => {
   let next
   const runScript = async (name, args) => { fs.copyFileSync(path.join(__dirname, 'fixtures', 'sap', 'pidoc', 'mi20-list.txt'), path.join(args[2], args[3])); return JSON.stringify(next) }
-  const writer = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
+  const writer = writerFor({ runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
   next = { ok: false, error: "field-not-set: wnd[0]/usr/txtIM_IBLNR-LOW = 'HELLO'", screens: 'SAPMSSY0/120/1 > SAPMM07I/701/1 []' }
   await assert.rejects(writer.postDocuments({ docNos: ['105000894'], year: '2026' }), UNKNOWN)
   next = { ok: false, error: "field-not-set: wnd[0]/usr/txtIM_IBLNR-LOW = ''", screens: '' }
@@ -272,18 +282,18 @@ test('posting: any failure after the hand-over (the screens are logged) is unkno
 
 test('MI04 and ZMS_COUNT_SERIAL: a failed read-back is unknown, also without a timeout', async () => {
   const runScript = async () => '{"ok":false,"error":"verify-failed"}'
-  const writer = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
+  const writer = writerFor({ runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
   await assert.rejects(writer.enterCounts({ docNo: '105000894', year: '2026', entries: [{ material: 'R1', qty: 3 }] }), UNKNOWN)
   await assert.rejects(writer.enterSerials({ docNo: '105000893', year: '2026', material: 'INT1-0', serials: ['S1'] }), UNKNOWN)
 })
 
 test('a script killed at the time limit while the user may have saved is unknown, not "Prøv igen"', async () => {
   const runScript = async () => { throw Object.assign(new Error('SAP_TIMEOUT'), { code: 'SAP_TIMEOUT' }) }
-  const writer = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
+  const writer = writerFor({ runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
   await assert.rejects(writer.enterSerials({ docNo: '105000893', year: '2026', material: 'INT1-0', serials: ['S1'] }), UNKNOWN)
   await assert.rejects(writer.enterCounts({ docNo: '105000894', year: '2026', entries: [{ material: 'R1', qty: 3 }] }), UNKNOWN)
   await assert.rejects(writer.postDocuments({ docNos: ['105000894'], year: '2026' }), UNKNOWN)
-  const failing = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript: async () => { throw Object.assign(new Error('SAP_SCRIPT_FAILED'), { code: 'SAP_SCRIPT_FAILED' }) }, clipboard: null, system: 'QS4', waitSeconds: 300 })
+  const failing = writerFor({ runScript: async () => { throw Object.assign(new Error('SAP_SCRIPT_FAILED'), { code: 'SAP_SCRIPT_FAILED' }) }, clipboard: null, system: 'QS4', waitSeconds: 300 })
   await assert.rejects(failing.enterCounts({ docNo: '105000894', year: '2026', entries: [{ material: 'R1', qty: 3 }] }), { code: 'SAP_SCRIPT_FAILED' }, 'other failures are passed on')
 })
 
@@ -291,7 +301,7 @@ test('an unknown state is logged with the script and SAP\'s detail; the message 
   const logged = t.mock.method(console, 'error', () => {})
   let next = '{"ok":false,"error":"verify-failed"}'
   const runScript = async () => { if (next instanceof Error) throw next; return next }
-  const writer = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
+  const writer = writerFor({ runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
   await assert.rejects(writer.enterCounts({ docNo: '105000894', year: '2026', entries: [{ material: 'R1', qty: 3 }] }), UNKNOWN)
   await assert.rejects(writer.enterSerials({ docNo: '105000893', year: '2026', material: 'INT1-0', serials: ['S1'] }), UNKNOWN)
   next = '{"ok":false,"error":"read-failed","screens":"SAPMSSY0/120/1"}'
@@ -320,7 +330,7 @@ test('deleting: only CountPoint documents; deleted = SAP message and no longer a
   let next = { ok: true, message: 'Physical inventory document 105000903 deleted', screens: '' }
   const calls = []
   const runScript = async (name, args) => { calls.push({ name, args }); fs.writeFileSync(path.join(args[4], args[5]), '\tMaterial\tPlnt\tLocation\r\n\tPhysInvDoc\tItem\tPlan. Date\tSTy\tPhys. Inv. No.\tDoc. Status\r\n\tList does not contain any data'); return JSON.stringify(next) }
-  const writer = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
+  const writer = writerFor({ runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
   assert.deepEqual(await writer.deleteDocument({ docNo: '105000903', year: '2026', reference: 'cpmvgftism' }), { deleted: true, message: 'Physical inventory document 105000903 deleted' })
   assert.deepEqual([calls[0].name, calls[0].args.slice(0, 4)], ['pidoc-delete', ['QS4', '105000903', '2026', 'CPMVGFTISM']])
   next = { ok: false, error: 'not-countpoint-document' }
@@ -351,7 +361,7 @@ test('Electron 44 clipboard: MI31 and MI20 start only when the clipboard really 
     fs.writeFileSync(path.join(args[5], args[6]), args[1] === 'test' ? fixture('mi31-test.txt') : MI22)
     return JSON.stringify({ ok: true, title: 'x' })
   }
-  const writer = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript, clipboard, system: 'QS4', tempRoot: os.tmpdir(), waitSeconds: 600 })
+  const writer = writerFor({ runScript, clipboard, system: 'QS4', tempRoot: os.tmpdir(), waitSeconds: 600 })
   await writer.createDocument(REQUEST)
   await writer.postDocuments({ docNos: ['105000893', '105000894'], year: '2026' })
   assert.deepEqual(seen, [
@@ -365,7 +375,7 @@ test('a clipboard that refuses the text stops the SAP document before SAP is tou
   const calls = []
   const runScript = async name => { calls.push(name); return '{"ok":true}' }
   const clipboard = { writeText: () => Promise.reject(new Error('OpenClipboard failed')) }
-  const writer = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript, clipboard, system: 'QS4', tempRoot: os.tmpdir(), waitSeconds: 600 })
+  const writer = writerFor({ runScript, clipboard, system: 'QS4', tempRoot: os.tmpdir(), waitSeconds: 600 })
   await assert.rejects(writer.createDocument(REQUEST), /OpenClipboard failed/)
   await assert.rejects(writer.postDocuments({ docNos: ['105000893', '105000894'], year: '2026' }), /OpenClipboard failed/)
   assert.deepEqual(calls, [], 'no SAP script ran with whatever was on the clipboard before')
@@ -375,7 +385,7 @@ test('Windows silently refusing the clipboard (Electron 44 still resolves) stops
   const calls = []
   const runScript = async name => { calls.push(name); return '{"ok":true}' }
   const clipboard = { writeText: async () => {}, readText: async () => '105000111\r\n105000222' }
-  const writer = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript, clipboard, system: 'QS4', tempRoot: os.tmpdir(), waitSeconds: 600 })
+  const writer = writerFor({ runScript, clipboard, system: 'QS4', tempRoot: os.tmpdir(), waitSeconds: 600 })
   await assert.rejects(writer.createDocument(REQUEST), { code: 'CLIPBOARD_REFUSED', message: /^CLIPBOARD_REFUSED: Udklipsholderen/ })
   await assert.rejects(writer.postDocuments({ docNos: ['105000893', '105000894'], year: '2026' }), { code: 'CLIPBOARD_REFUSED', message: /^CLIPBOARD_REFUSED: Udklipsholderen/ })
   assert.deepEqual(calls, [], 'MI31/MI20 never start with the old clipboard text')
@@ -384,7 +394,7 @@ test('Windows silently refusing the clipboard (Electron 44 still resolves) stops
 test('a SAP session not logged on in English stops every PI script with "Log på SAP på engelsk"', async () => {
   const names = []
   const runScript = async name => { names.push(name); return '{"ok":false,"error":"language-not-supported"}' }
-  const writer = createPiDocWriter({ bridge: { exclusive: job => job() }, runScript, clipboard: null, system: 'PS4', tempRoot: os.tmpdir(), waitSeconds: 300 })
+  const writer = writerFor({ runScript, clipboard: null, system: 'PS4', tempRoot: os.tmpdir(), waitSeconds: 300 })
   const refused = { code: 'PIDOC_SAP_LANGUAGE', message: 'PIDOC_SAP_LANGUAGE: Log på SAP på engelsk (EN), og prøv igen' }
   await assert.rejects(writer.createDocument({ ...REQUEST, materials: ['R133-0032'] }), refused)
   await assert.rejects(writer.printDocument({ docNo: '105000893', year: '2026', sloc: 'D000' }), refused)
@@ -423,4 +433,85 @@ test('one material needs no clipboard; bad requests and a second run at once are
   const first = slow.writer.createDocument(REQUEST)
   await assert.rejects(slow.writer.createDocument(REQUEST), { code: 'PIDOC_BUSY' })
   await first
+})
+
+// Every write in createPiDocWriter, with the options (onWaiting) it is called with.
+const WRITES = {
+  create: (writer, options) => writer.createDocument(REQUEST, options),
+  print: (writer, options) => writer.printDocument({ docNo: '105000893', year: '2026', sloc: 'D000' }, options),
+  serials: (writer, options) => writer.enterSerials({ docNo: '105000893', year: '2026', material: 'INT1-0', serials: ['S1', 'S2'] }, options),
+  count: (writer, options) => writer.enterCounts({ docNo: '105000894', year: '2026', entries: [{ material: 'R1', qty: 3 }] }, options),
+  post: (writer, options) => writer.postDocuments({ docNos: ['105000893', '105000894'], year: '2026' }, options),
+  delete: (writer, options) => writer.deleteDocument({ docNo: '105000903', year: '2026', reference: 'CPX12345' }, options),
+}
+const isHandOver = (name, args) => name !== 'status' && !(name === 'pidoc-create' && args[1] === 'test')
+
+test('every PI write checks SAP (system and client 100) first and runs no write script when SAP is not ready', async () => {
+  const names = []
+  const clip = []
+  const otherClient = JSON.stringify({ running: true, scripting: true, connections: [{ disabledByServer: false, sessions: [{ busy: false, popup: false, system: 'QS4', client: '200', user: 'JREMMER', transaction: 'SESSION_MANAGER' }] }] })
+  const runScript = async name => { names.push(name); return name === 'status' ? otherClient : '{"ok":true}' }
+  const writer = createPiDocWriter({ bridge: BRIDGE, runScript, clipboard: { writeText: text => clip.push(text), readText: () => clip.at(-1) }, system: 'QS4', tempRoot: os.tmpdir(), waitSeconds: 300 })
+  for (const [name, write] of Object.entries(WRITES)) {
+    let waited = 0
+    await assert.rejects(write(writer, { onWaiting: () => waited++ }), { code: 'SAP_NOT_READY', sapState: 'wrong-system' }, name)
+    assert.equal(waited, 0, name)
+  }
+  assert.deepEqual(names, Object.keys(WRITES).map(() => 'status'), 'only the status script ran')
+  assert.deepEqual(clip, [], 'not even the clipboard was touched')
+})
+
+test('every PI write holds the SAP queue from the status check until the script hands SAP to the user', async () => {
+  for (const [name, write] of Object.entries(WRITES)) {
+    const order = []
+    const clip = []
+    const fixtures = createFixtureRunner(path.join(__dirname, 'fixtures', 'sap'), { readClipboard: () => clip.at(-1), system: 'QS4' })
+    let other, finish
+    const bridge = createSapBridge({ runScript: fixtures, expected: { system: 'QS4', client: '100' } })
+    const runScript = async (script, args, options) => {
+      if (script === 'status') {
+        order.push('status')
+        other = bridge.exclusive(async () => order.push('other'))
+      } else if (isHandOver(script, args)) {
+        order.push('script')
+        await new Promise(resolve => setImmediate(resolve))
+        options.onLine({ stage: 'waiting' })
+        await new Promise(resolve => { finish = resolve })
+        order.push('script:end')
+      } else order.push('test run')
+      return fixtures(script, args, options)
+    }
+    const writer = createPiDocWriter({ bridge, runScript, clipboard: { writeText: text => clip.push(text), readText: () => clip.at(-1) }, system: 'QS4', tempRoot: os.tmpdir(), waitSeconds: 300 })
+    const writing = write(writer, { onWaiting: () => order.push('onWaiting') })
+    writing.catch(() => {})
+    for (let turn = 0; !finish && turn < 100; turn++) await new Promise(resolve => setTimeout(resolve, 5))
+    assert.ok(finish, `${name}: the script hands SAP over (${order.join(', ')})`)
+    await soon(other, `${name}: another SAP job`)
+    assert.deepEqual(order, ['status', ...(name === 'create' ? ['test run'] : []), 'script', 'onWaiting', 'other'], `${name}: another SAP job runs only once the user has SAP`)
+    finish()
+    await writing
+    assert.equal(order.at(-1), 'script:end', name)
+  }
+})
+
+test('a PI script that fails before the hand-over never calls onWaiting and frees the SAP queue', async t => {
+  t.mock.method(console, 'error', () => {})
+  for (const [name, write] of Object.entries(WRITES)) {
+    for (const failure of [() => '{"ok":false,"error":"sap-busy"}', () => { throw Object.assign(new Error('SAP_SCRIPT_FAILED'), { code: 'SAP_SCRIPT_FAILED' }) }]) {
+      const clip = []
+      const fixtures = createFixtureRunner(path.join(__dirname, 'fixtures', 'sap'), { readClipboard: () => clip.at(-1), system: 'QS4' })
+      const bridge = createSapBridge({ runScript: fixtures, expected: { system: 'QS4', client: '100' } })
+      let other
+      const runScript = async (script, args, options) => {
+        if (script === 'status') other = bridge.exclusive(async () => 'other ran')
+        if (isHandOver(script, args)) return failure()
+        return fixtures(script, args, options)
+      }
+      const writer = createPiDocWriter({ bridge, runScript, clipboard: { writeText: text => clip.push(text), readText: () => clip.at(-1) }, system: 'QS4', tempRoot: os.tmpdir(), waitSeconds: 300 })
+      let waited = 0
+      await assert.rejects(write(writer, { onWaiting: () => waited++ }), undefined, name)
+      assert.equal(waited, 0, name)
+      assert.equal(await soon(other, `${name}: another SAP job`), 'other ran', `${name}: the queue is free again`)
+    }
+  }
 })

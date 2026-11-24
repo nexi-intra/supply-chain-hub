@@ -115,7 +115,7 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   const fixturesDir = !isPackaged && env.TCD_HUB_SAP_FIXTURES_DIR ? path.resolve(env.TCD_HUB_SAP_FIXTURES_DIR) : null
   const runScript = fixturesDir
     ? createFixtureRunner(fixturesDir, { readClipboard: () => clipboard.readText(), system: config.sapSystem })
-    : createCscriptRunner({ scriptDir: unpacked(path.join(scriptsDir, 'sap')), system: config.sapSystem })
+    : createCscriptRunner({ scriptDir: unpacked(path.join(scriptsDir, 'sap')), system: config.sapSystem, client: sapExpected.client })
   const sap = createSapBridge({ runScript, expected: sapExpected })
   const fetcher = createSapFetcher({ bridge: sap, runScript, clipboard, expected: sapExpected })
   const emit = (channel, payload) => broadcast(`warehouse:${channel}`, payload)
@@ -216,7 +216,7 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   const cachedRoleOf = user => roleCache.roleOf(user)
   const dropRoles = () => roleCache.drop()
   const piDocs = createPiDocService({
-    counts, repo: countRepo, roles, system: config.sapSystem, writeEnabled: WRITE_SYSTEMS.includes(config.sapSystem), writer: createPiDocWriter({ bridge: sap, runScript, clipboard, system: config.sapSystem }),
+    counts, repo: countRepo, roles, system: config.sapSystem, writeEnabled: WRITE_SYSTEMS.includes(config.sapSystem), writer: createPiDocWriter({ bridge: sap, runScript, clipboard, system: config.sapSystem, expected: sapExpected }),
     // What a PI script did is written here before M:, so a drive that fails right after SAP changed never loses it.
     journalDir: path.join(localDir, 'pidoc-journal'),
   })

@@ -1,6 +1,7 @@
 // Runs CountPoint's fixed SAP GUI scripts with the 32-bit script host (SAP GUI
 // is 32-bit; 64-bit COM cannot load its type library). Only scripts on the
-// allow-list can run, one SAP job at a time, each with a timeout.
+// allow-list can run, one SAP job at a time (a write frees the queue once it has
+// handed SAP to the user), each with a timeout.
 const fs = require('node:fs')
 const path = require('node:path')
 const childProcess = require('node:child_process')
@@ -30,10 +31,10 @@ function defaultCscriptPath(env = process.env, exists = fs.existsSync) {
   return exists(wow64) ? wow64 : path.join(root, 'System32', 'cscript.exe')
 }
 
-function createCscriptRunner({ scriptDir, cscriptPath = defaultCscriptPath(), execFile = childProcess.execFile, timeoutMs = 15000, writeSystems = WRITE_SYSTEMS, system = 'PS4' }) {
-  // `system` is the configured SAP system. Read scripts pick the connection to it (env COUNTPOINT_SAP_SYSTEM); write
-  // scripts get it as their first argument, and only it.
-  const env = { ...process.env, COUNTPOINT_SAP_SYSTEM: system }
+function createCscriptRunner({ scriptDir, cscriptPath = defaultCscriptPath(), execFile = childProcess.execFile, timeoutMs = 15000, writeSystems = WRITE_SYSTEMS, system = 'PS4', client = EXPECTED.client }) {
+  // `system` is the configured SAP system and `client` the expected client. Scripts pick the connection to them (env
+  // COUNTPOINT_SAP_SYSTEM, COUNTPOINT_SAP_CLIENT); write scripts also get the system as their first argument, and only it.
+  const env = { ...process.env, COUNTPOINT_SAP_SYSTEM: system, COUNTPOINT_SAP_CLIENT: client }
   return function runScript(name, args = [], options = {}) {
     const write = Object.hasOwn(WRITE_SCRIPTS, name)
     if (!write && !Object.hasOwn(SCRIPTS, name)) return Promise.reject(codeError('SAP_SCRIPT_NOT_ALLOWED'))
@@ -41,11 +42,35 @@ function createCscriptRunner({ scriptDir, cscriptPath = defaultCscriptPath(), ex
     if (write && (args[0] !== system || !(SCRIPT_WRITE_SYSTEMS[name] || writeSystems).includes(args[0]))) return Promise.reject(codeError('SAP_WRITE_SYSTEM_NOT_ALLOWED'))
     const script = path.join(scriptDir, write ? WRITE_SCRIPTS[name] : SCRIPTS[name])
     return new Promise((resolve, reject) => {
-      execFile(cscriptPath, ['//NoLogo', '//E:vbscript', script, ...args], { timeout: options.timeoutMs || timeoutMs, windowsHide: true, encoding: 'utf8', maxBuffer: 1024 * 1024, env }, (error, stdout) => {
+      const child = execFile(cscriptPath, ['//NoLogo', '//E:vbscript', script, ...args], { timeout: options.timeoutMs || timeoutMs, windowsHide: true, encoding: 'utf8', maxBuffer: 1024 * 1024, env }, (error, stdout) => {
         if (error) return reject(codeError(error.killed || error.signal ? 'SAP_TIMEOUT' : 'SAP_SCRIPT_FAILED'))
         resolve(String(stdout))
       })
+      if (options.onLine && child?.stdout) child.stdout.on('data', stageLines(options.onLine))
     })
+  }
+}
+
+/** A `data` listener that passes each complete stdout line that is JSON with a `stage` field to `onLine`. */
+function stageLines(onLine) {
+  let pending = ''
+  return chunk => {
+    const lines = (pending + String(chunk)).split(/\r?\n/)
+    pending = lines.pop()
+    for (const line of lines) {
+      let parsed
+      try {
+        parsed = JSON.parse(line)
+      } catch {
+        continue
+      }
+      if (!parsed || typeof parsed !== 'object' || !Object.hasOwn(parsed, 'stage')) continue
+      try {
+        onLine(parsed)
+      } catch (error) {
+        console.error('CountPoint: SAP stage line handler failed', error)
+      }
+    }
   }
 }
 
@@ -66,6 +91,19 @@ function createSapBridge({ runScript, expected = EXPECTED, now = Date.now, cache
     return run
   }
 
+  /**
+   * A job that hands SAP to the user: it gets `release` and holds the queue until it calls it (the user has the screen)
+   * or ends, also when it fails. Other SAP jobs may run while the user works in SAP.
+   */
+  function handOver(job) {
+    let release
+    const released = new Promise(resolve => { release = () => resolve() })
+    const start = () => job(release)
+    const run = queue.then(start, start)
+    queue = Promise.race([released, run.then(() => {}, () => {})])
+    return run
+  }
+
   function status({ fresh = false } = {}) {
     if (!fresh && last && now() - last.at < cacheMs) return Promise.resolve(last.value)
     if (pendingStatus) return pendingStatus
@@ -82,7 +120,7 @@ function createSapBridge({ runScript, expected = EXPECTED, now = Date.now, cache
     return pendingStatus
   }
 
-  return { status, exclusive }
+  return { status, exclusive, handOver }
 }
 
 module.exports = { createSapBridge, createCscriptRunner, defaultCscriptPath, SCRIPTS, WRITE_SCRIPTS, WRITE_SYSTEMS, SCRIPT_WRITE_SYSTEMS, SOFTWARELOAD_WRITE_SYSTEMS }

@@ -6,6 +6,7 @@ const os = require('node:os')
 const path = require('node:path')
 const { parseSapNumber, parseMi31Log, parseMi22, parseMi20 } = require('./core/sapParsers.cjs')
 const { putOnClipboard, CLIPBOARD_REFUSED } = require('./clipboardText.cjs')
+const { computeSapState, EXPECTED } = require('./sapState.cjs')
 
 const TEST_TIMEOUT_MS = 3 * 60 * 1000
 const WAIT_SECONDS = 15 * 60
@@ -56,8 +57,27 @@ function beforeF8(error) {
     || /^not-logged-in-/.test(text) || /^field-not-set: /.test(text)
 }
 
-function createPiDocWriter({ bridge, runScript, clipboard, system, tempRoot = os.tmpdir(), waitSeconds = WAIT_SECONDS }) {
+function createPiDocWriter({ bridge, runScript, clipboard, system, expected = { system, client: EXPECTED.client }, tempRoot = os.tmpdir(), waitSeconds = WAIT_SECONDS }) {
   let writing = false
+
+  /**
+   * One write in the SAP queue: SAP is checked first, and the queue is held until the script says the user has SAP
+   * ({"stage":"waiting"}; then `onWaiting()` is called) or ends, also when it fails. `work(onLine)` passes `onLine` to
+   * the script that hands SAP to the user.
+   */
+  function inQueue(onWaiting, work) {
+    return bridge.handOver(async release => {
+      const state = computeSapState(lastJsonLine(await runScript('status')) || {}, expected)
+      if (!state.ready) throw writeError('SAP_NOT_READY', 'SAP er ikke klar', { sapState: state.state })
+      let handedOver = false
+      return work(line => {
+        if (line?.stage !== 'waiting' || handedOver) return
+        handedOver = true
+        release()
+        onWaiting()
+      })
+    })
+  }
 
   /** A script that hands SAP to the user: killed at the time limit, the user may have saved meanwhile. */
   async function runWaiting(name, args, options) {
@@ -68,12 +88,12 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, tempRoot = os
       throw error
     }
   }
-  async function exclusiveWrite(job) {
+  async function exclusiveWrite(onWaiting, job) {
     if (writing) throw writeError('PIDOC_BUSY', 'Der er allerede et SAP-dokument i gang på denne PC')
     writing = true
     const dir = await fs.promises.mkdtemp(path.join(tempRoot, 'countpoint-pidoc-'))
     try {
-      return await job(dir)
+      return await inQueue(onWaiting, onLine => job(dir, onLine))
     } finally {
       writing = false
       await fs.promises.rm(dir, { recursive: true, force: true })
@@ -85,10 +105,9 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, tempRoot = os
     checkDoc({ docNo, year })
     const list = [...new Set((serials || []).map(item => String(item).trim().toUpperCase()).filter(Boolean))]
     if (!list.length || list.some(item => !/^[A-Z0-9]{1,40}$/.test(item))) throw writeError('PIDOC_INVALID', 'Ugyldige serienumre')
-    return exclusiveWrite(async dir => {
+    return exclusiveWrite(onWaiting, async (dir, onLine) => {
       await fs.promises.writeFile(path.join(dir, 'serials.txt'), list.join('\r\n'), 'utf8')
-      onWaiting()
-      const result = lastJsonLine(await runWaiting('pidoc-serials', [system, String(docNo), String(year), String(material).toUpperCase(), dir, 'serials.txt', 'errors.txt', String(waitSeconds)], { timeoutMs: (waitSeconds + 300) * 1000 }))
+      const result = lastJsonLine(await runWaiting('pidoc-serials', [system, String(docNo), String(year), String(material).toUpperCase(), dir, 'serials.txt', 'errors.txt', String(waitSeconds)], { timeoutMs: (waitSeconds + 300) * 1000, onLine }))
       if (result?.error === 'check-errors') {
         const errors = (await fs.promises.readFile(path.join(dir, 'errors.txt'), 'utf8').catch(() => '')).replace(/^\uFEFF/, '').split(/\r?\n/).filter(Boolean).map(line => { const [serial, message] = line.split('\t'); return { serial, message: message || '' } })
         const shown = errors.slice(0, 5).map(item => `${item.serial}: ${item.message}`).join('; ')
@@ -110,10 +129,9 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, tempRoot = os
   async function enterCounts({ docNo, year, entries }, { onWaiting = () => {} } = {}) {
     checkDoc({ docNo, year })
     if (!entries?.length || entries.some(entry => !/^[A-Z0-9-]{1,40}$/i.test(entry.material) || !Number.isInteger(entry.qty) || entry.qty < 0)) throw writeError('PIDOC_INVALID', 'Ugyldige antal')
-    return exclusiveWrite(async dir => {
+    return exclusiveWrite(onWaiting, async (dir, onLine) => {
       await fs.promises.writeFile(path.join(dir, 'count.txt'), entries.map(entry => `${entry.material.toUpperCase()}\t${entry.qty}`).join('\r\n'), 'utf8')
-      onWaiting()
-      const result = lastJsonLine(await runWaiting('pidoc-count', [system, String(docNo), String(year), dir, 'count.txt', String(waitSeconds)], { timeoutMs: (waitSeconds + 300) * 1000 }))
+      const result = lastJsonLine(await runWaiting('pidoc-count', [system, String(docNo), String(year), dir, 'count.txt', String(waitSeconds)], { timeoutMs: (waitSeconds + 300) * 1000, onLine }))
       if (result?.error === 'cancelled') throw writeError('PIDOC_CANCELLED', 'SAP-vinduet blev lukket uden Gem – intet er gemt')
       if (/^not-counted/.test(result?.error || '')) throw writeError('PIDOC_NOT_COUNTED', `SAP viser ikke de rigtige antal (${result.error.slice(13)})`)
       if (!result?.ok && (result?.timedOut || result?.error === 'verify-failed')) throw unknownState('pidoc-count', result?.error)
@@ -122,14 +140,14 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, tempRoot = os
     })
   }
 
-  async function run(dir, mode, { sloc, stockType, reference, materials }, file, timeoutMs) {
+  async function run(dir, mode, { sloc, stockType, reference, materials }, file, timeoutMs, onLine) {
     const many = materials.length > 1
     if (many && !(await putOnClipboard(clipboard, materials.join('\r\n')))) throw writeError('CLIPBOARD_REFUSED', CLIPBOARD_REFUSED)
     const args = [system, mode, sloc, stockType, reference, dir, file, String(mode === 'test' ? 60 : waitSeconds), materials[0], ...(many ? ['clipboard'] : [])]
-    return lastJsonLine(await runScript('pidoc-create', args, { timeoutMs }))
+    return lastJsonLine(await runScript('pidoc-create', args, { timeoutMs, onLine }))
   }
 
-  /** `onWaiting()` is called when the filled MI31 screen is waiting for the user's F8. */
+  /** `onWaiting()` is called when the script says the filled MI31 screen is waiting for the user's F8. */
   async function createDocument({ sloc, stockType, reference, materials }, { onWaiting = () => {} } = {}) {
     const request = { sloc: String(sloc || '').toUpperCase(), stockType, reference: String(reference || '').toUpperCase(), materials: [...new Set(materials.map(item => String(item).toUpperCase()))] }
     if (!/^[A-Z0-9]{4}$/.test(request.sloc) || !['unrestricted', 'blocked'].includes(stockType) || !REFERENCE.test(request.reference) || !request.materials.length) throw writeError('PIDOC_INVALID', 'Ugyldig forespørgsel')
@@ -138,27 +156,26 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, tempRoot = os
     writing = true
     const dir = await fs.promises.mkdtemp(path.join(tempRoot, 'countpoint-pidoc-'))
     try {
-      const log = await bridge.exclusive(async () => {
-        const result = await run(dir, 'test', request, 'test.txt', TEST_TIMEOUT_MS)
-        if (!result?.ok) throw scriptFailure(result, 'Prøvekørslen i MI31')
-        return parseMi31Log(await fs.promises.readFile(path.join(dir, 'test.txt'), 'utf8'))
+      // The test run and the start of the create run hold the SAP queue; it is handed on with the filled screen.
+      const result = await inQueue(onWaiting, async onLine => {
+        const tested = await run(dir, 'test', request, 'test.txt', TEST_TIMEOUT_MS)
+        if (!tested?.ok) throw scriptFailure(tested, 'Prøvekørslen i MI31')
+        const log = parseMi31Log(await fs.promises.readFile(path.join(dir, 'test.txt'), 'utf8'))
+        const listed = new Set(log.items.filter(item => item.sloc === request.sloc).map(item => item.material))
+        const missing = request.materials.filter(material => !listed.has(material))
+        if (log.errors > 0 || missing.length) {
+          const problems = log.items.filter(item => item.message).map(item => `${item.material}: ${item.message}`)
+          throw writeError('PIDOC_NOT_POSSIBLE', `SAP vil ikke oprette dokument for ${missing.join(', ') || 'alle materialer'}${problems.length ? ` (${problems.join('; ')})` : ''}. Der er ikke oprettet noget`, { missing, problems })
+        }
+        // From the hand-over on SAP may create the documents: a failure after the user's F8 leaves that unknown.
+        try {
+          return await run(dir, 'create', request, 'mi22.txt', (waitSeconds + 120) * 1000, onLine)
+        } catch (error) {
+          // Killed at the time limit, or the script broke after the hand-over: the user may have pressed F8.
+          if (error?.code === 'SAP_TIMEOUT' || error?.code === 'SAP_SCRIPT_FAILED') throw unknownState('pidoc-create', error.code)
+          throw error
+        }
       })
-      const listed = new Set(log.items.filter(item => item.sloc === request.sloc).map(item => item.material))
-      const missing = request.materials.filter(material => !listed.has(material))
-      if (log.errors > 0 || missing.length) {
-        const problems = log.items.filter(item => item.message).map(item => `${item.material}: ${item.message}`)
-        throw writeError('PIDOC_NOT_POSSIBLE', `SAP vil ikke oprette dokument for ${missing.join(', ') || 'alle materialer'}${problems.length ? ` (${problems.join('; ')})` : ''}. Der er ikke oprettet noget`, { missing, problems })
-      }
-      onWaiting()
-      // From the hand-over on SAP may create the documents: a failure after the user's F8 leaves that unknown.
-      let result
-      try {
-        result = await run(dir, 'create', request, 'mi22.txt', (waitSeconds + 120) * 1000)
-      } catch (error) {
-        // Killed at the time limit, or the script broke after the hand-over: the user may have pressed F8.
-        if (error?.code === 'SAP_TIMEOUT' || error?.code === 'SAP_SCRIPT_FAILED') throw unknownState('pidoc-create', error.code)
-        throw error
-      }
       if (!result?.ok && !beforeF8(result?.error)) throw unknownState('pidoc-create', result?.error || 'no-answer')
       if (!result?.ok) throw scriptFailure(result, 'Oprettelsen i MI31')
       let found
@@ -188,10 +205,9 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, tempRoot = os
     const list = [...new Set((docNos || []).map(String))]
     if (!list.length || list.some(docNo => !/^\d{9,10}$/.test(docNo)) || !/^\d{4}$/.test(String(year || ''))) throw writeError('PIDOC_INVALID', 'Ugyldige dokumenter')
     if (list.length > 1 && !clipboard) throw writeError('PIDOC_SAP_FAILED', 'Udklipsholderen er ikke tilgængelig')
-    return exclusiveWrite(async dir => {
+    return exclusiveWrite(onWaiting, async (dir, onLine) => {
       if (list.length > 1 && !(await putOnClipboard(clipboard, list.join('\r\n')))) throw writeError('CLIPBOARD_REFUSED', CLIPBOARD_REFUSED)
-      onWaiting()
-      const result = lastJsonLine(await runWaiting('pidoc-post', [system, String(year), dir, 'mi20.txt', 'mi22.txt', String(waitSeconds), list[0], ...(list.length > 1 ? ['clipboard'] : [])], { timeoutMs: (waitSeconds + 300) * 1000 }))
+      const result = lastJsonLine(await runWaiting('pidoc-post', [system, String(year), dir, 'mi20.txt', 'mi22.txt', String(waitSeconds), list[0], ...(list.length > 1 ? ['clipboard'] : [])], { timeoutMs: (waitSeconds + 300) * 1000, onLine }))
       // The screens are logged from the hand-over on: any failure after it (MI22 not read, a timeout, a closed window
       // without a session for MI22) leaves the user's posting unknown.
       if (!result?.ok && (result?.timedOut || result?.error === 'closed-unknown' || result?.screens)) throw unknownState('pidoc-post', result?.error)
@@ -218,9 +234,8 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, tempRoot = os
   async function deleteDocument({ docNo, year, reference }, { onWaiting = () => {} } = {}) {
     checkDoc({ docNo, year })
     if (!REFERENCE.test(String(reference || '').toUpperCase())) throw writeError('PIDOC_INVALID', 'Dokumentet mangler CountPoints kode')
-    return exclusiveWrite(async dir => {
-      onWaiting()
-      const result = lastJsonLine(await runScript('pidoc-delete', [system, String(docNo), String(year), String(reference).toUpperCase(), dir, 'mi22.txt', String(waitSeconds)], { timeoutMs: (waitSeconds + 300) * 1000 }))
+    return exclusiveWrite(onWaiting, async (dir, onLine) => {
+      const result = lastJsonLine(await runScript('pidoc-delete', [system, String(docNo), String(year), String(reference).toUpperCase(), dir, 'mi22.txt', String(waitSeconds)], { timeoutMs: (waitSeconds + 300) * 1000, onLine }))
       if (result?.error === 'not-countpoint-document') throw writeError('PIDOC_FORBIDDEN', `${docNo} er ikke oprettet af CountPoint – slet det i SAP selv`)
       if (result?.error === 'already-counted') throw writeError('PIDOC_FORBIDDEN', `Der er lagt antal på ${docNo} i SAP – det kan ikke slettes`)
       if (result?.error === 'already-deleted') return { deleted: true, message: 'Allerede slettet i SAP' }
@@ -240,12 +255,13 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, tempRoot = os
     if (writing) throw writeError('PIDOC_BUSY', 'Der er allerede et SAP-dokument i gang på denne PC')
     writing = true
     try {
-      onWaiting()
-      const printNow = system === 'QS4' ? '0' : '1'
-      const result = lastJsonLine(await runScript('pidoc-print', [system, request.docNo, request.year, request.sloc, printNow, String(waitSeconds)], { timeoutMs: (waitSeconds + 120) * 1000 }))
-      if (result?.error === 'cancelled') throw writeError('PIDOC_CANCELLED', 'Udskriften blev annulleret – dokumentet er ikke printet')
-      if (!result?.ok) throw scriptFailure(result, 'Udskriften i MI21')
-      return { message: String(result.message || '') }
+      return await inQueue(onWaiting, async onLine => {
+        const printNow = system === 'QS4' ? '0' : '1'
+        const result = lastJsonLine(await runScript('pidoc-print', [system, request.docNo, request.year, request.sloc, printNow, String(waitSeconds)], { timeoutMs: (waitSeconds + 120) * 1000, onLine }))
+        if (result?.error === 'cancelled') throw writeError('PIDOC_CANCELLED', 'Udskriften blev annulleret – dokumentet er ikke printet')
+        if (!result?.ok) throw scriptFailure(result, 'Udskriften i MI21')
+        return { message: String(result.message || '') }
+      })
     } finally {
       writing = false
     }
