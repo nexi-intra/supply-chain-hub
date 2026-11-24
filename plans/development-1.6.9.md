@@ -25,15 +25,18 @@ Oprettet: 2026-11-24. Ingen build, release eller push uden godkendelse.
 
 Udgangspunkt 24.11: `npm audit` viser 31 sårbarheder (13 høje, 17 mellem, 1 lav, 0 kritiske). GitHub viser 50 på `main`, som har en ældre pakkeliste.
 
-- [ ] Electron 44.0.0 → seneste 44.x (mindst 44.9.1 for den høje advisory om eMudhra certifikater).
-- [ ] Vite 7.3.2 → seneste 7.3.x (mindst 7.3.7, launch-editor og `server.fs`).
-- [ ] Zod 4.4.3 → mindst 4.6.6 (hukommelsesforbrug ved store samlinger).
-- [ ] Opdater de faste `overrides` i package.json, som selv er blevet sårbare: `postcss` 8.5.10 → mindst 8.5.23, `minimatch` 3.1.3 → mindst 3.1.4, og typescript-estree's `minimatch` 9.0.7.
-- [ ] `npm audit fix` uden `--force` for de transitive pakker (brace-expansion, js-yaml, nanoid, flatted, fast-uri, undici, xmldom, source-map-js, esbuild, ajv, vitest m.fl.).
-- [ ] Vurder resten, hvor npm kun foreslår en nedgradering (minimatch under electron-builder og uuid under exceljs). Ingen nedgradering af electron-builder eller exceljs.
-- [ ] Verifikation: tsc, alle testsuiter, `npm.cmd run electron:build` og `node scripts/verify-packaged-release.cjs release/win-unpacked`.
+- [x] Electron 44.0.0 → 44.11.5 (mindst 44.9.1 for den høje advisory om eMudhra certifikater).
+- [x] Vite 7.3.2 → 7.3.8 (mindst 7.3.7, launch-editor og `server.fs`).
+- [x] Zod 4.4.3 → 4.6.7 (hukommelsesforbrug ved store samlinger).
+- [x] Opdater de faste `overrides` i package.json, som selv er blevet sårbare: `postcss` 8.5.10 → 8.5.33, eslints `minimatch` 3.1.3 → 3.1.5. Overriden af typescript-estree's `minimatch` er fjernet, fordi typescript-eslint 8.74.0 selv bruger minimatch 11.
+- [x] `npm audit fix` uden `--force` for de transitive pakker (brace-expansion, js-yaml, nanoid, flatted, fast-uri, undici, xmldom, source-map-js, esbuild, vitest m.fl.). eslint 9.39.1 → 9.39.5 for ajv 6.14.
+- [x] Vurder resten, hvor npm kun foreslår en nedgradering. Løst uden nedgradering: `"minimatch@>=7.0.0 <11.0.1": "11.0.9"` (bruges kun af electron-builder ved build, samme API) og `exceljs` → `uuid` 11.1.1 (exceljs bruger kun `v4`).
+- [x] Verifikation: tsc 0 fejl, node-tests 2268/2270 (1 skip, kun den kendte assistantWorker-timeout under fuld belastning, 18/18 alene), vitest 1796 bestået (1 skip), `npm.cmd run electron:build` bestået med Electron 44.11.5, Word→PDF fra den pakkede app.asar bestået.
+- [ ] Login-delen af `verify-packaged-release` mangler: den pakkede app bruger altid `%APPDATA%\tcd-hub`, så den lukker straks, når 1.6.8 kører på samme PC (single-instance lås). Kør igen, når 1.6.8 er lukket.
 - [ ] Start dev-vinduet og kontroller login, forsiden og et Optælling-dokument på en lokal kopi.
-- [ ] Commit med før/efter tal fra `npm audit`.
+- [x] Commit med før/efter tal fra `npm audit`: 31 (13 høje, 17 mellem, 1 lav) → 0.
+
+Bemærk: eslint 9 er markeret som ikke længere understøttet (eslint 10 findes). Projektet har ingen `eslint.config.js`, så `npm run lint` har aldrig virket. Ikke en del af denne opgave.
 
 ## Fase 3 - nye tiltag
 

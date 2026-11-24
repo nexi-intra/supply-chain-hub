@@ -8,6 +8,12 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.6.9',
+    items: [
+      'Sikkerhedsopdateringer: appens motor (Electron) og en række indbyggede pakker er opdateret til versioner, hvor kendte sikkerhedshuller er lukket',
+    ],
+  },
+  {
     version: '1.6.8',
     items: [
       'Optælling: tallene er nu ens på alle PC\'er. Når nogen henter SAP igen, får alle, der har optællingen åben, de nye SAP-tal med det samme. Før blev de gamle tal stående, indtil appen blev genstartet',

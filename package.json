@@ -145,7 +145,7 @@
         "tw-animate-css": "^1.2.4",
         "uuid": "^11.1.1",
         "vaul": "^1.1.2",
-        "zod": "^4.4.3"
+        "zod": "^4.6.7"
     },
     "devDependencies": {
         "@electron/asar": "3.4.1",
@@ -155,18 +155,18 @@
         "@types/react-dom": "^19.0.4",
         "@vitejs/plugin-react-swc": "^4.2.2",
         "cross-env": "^7.0.3",
-        "electron": "^44.0.0",
+        "electron": "^44.11.5",
         "electron-builder": "^26.15.3",
-        "eslint": "^9.28.0",
+        "eslint": "^9.39.5",
         "eslint-plugin-react-hooks": "^7.1.1",
         "eslint-plugin-react-refresh": "^0.4.19",
         "globals": "^17.11.0",
         "playwright-core": "1.63.0",
         "tailwindcss": "^4.1.11",
         "typescript": "~5.7.2",
-        "typescript-eslint": "^8.38.0",
-        "vite": "^7.3.2",
-        "vitest": "^4.1.11"
+        "typescript-eslint": "^8.74.0",
+        "vite": "^7.3.8",
+        "vitest": "^4.1.12"
     },
     "workspaces": {
         "packages": [
@@ -177,18 +177,19 @@
         "picomatch": "4.0.4",
         "path-to-regexp": "8.4.0",
         "lodash": "4.18.0",
-        "postcss": "8.5.10",
+        "postcss": "8.5.33",
         "eslint": {
-            "minimatch": "3.1.3"
+            "minimatch": "3.1.5"
         },
         "@eslint/config-array": {
-            "minimatch": "3.1.3"
+            "minimatch": "3.1.5"
         },
         "@eslint/eslintrc": {
-            "minimatch": "3.1.3"
+            "minimatch": "3.1.5"
         },
-        "@typescript-eslint/typescript-estree": {
-            "minimatch": "9.0.7"
+        "minimatch@>=7.0.0 <11.0.1": "11.0.9",
+        "exceljs": {
+            "uuid": "11.1.1"
         }
     }
 }
