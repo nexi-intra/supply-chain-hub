@@ -450,6 +450,38 @@ test('every PI script refuses a non-English logon after the system check and bef
 
 // Every script that opens its own SAP session: the six PI scripts, sap-show and the two Softwareload writes.
 const SESSION_SCRIPTS = [...PI_SCRIPTS, 'sap-show.vbs', 'sl-transfer.vbs', 'sl-block.vbs']
+const CONNECTION_FUNCTIONS = [
+  'Function ConnectionMatches(c, wantedSystem, wantedClient)',
+  '  On Error Resume Next',
+  '  Dim n, sys, cl',
+  '  ConnectionMatches = False',
+  '  n = 0',
+  '  sys = ""',
+  '  cl = ""',
+  '  Err.Clear',
+  '  n = c.Children.Count',
+  '  If Err.Number <> 0 Or n = 0 Then Err.Clear : Exit Function',
+  '  sys = CStr(c.Children(0).Info.SystemName)',
+  '  cl = CStr(c.Children(0).Info.Client)',
+  '  If Err.Number <> 0 Then Err.Clear : Exit Function',
+  '  ConnectionMatches = (sys = wantedSystem And cl = wantedClient)',
+  'End Function',
+  '',
+  "' The first connection to <wantedSystem> in <wantedClient>; never another system or client.",
+  'Function SystemConnection(engine, wantedSystem, wantedClient)',
+  '  On Error Resume Next',
+  '  Dim n, total, candidate',
+  '  Set SystemConnection = Nothing',
+  '  total = 0',
+  '  total = engine.Children.Count',
+  '  For n = 0 To total - 1',
+  '    Set candidate = Nothing',
+  '    Set candidate = engine.Children(CInt(n))',
+  '    If ConnectionMatches(candidate, wantedSystem, wantedClient) Then Set SystemConnection = candidate : Exit Function',
+  '  Next',
+  '  Err.Clear',
+  'End Function',
+].join('\r\n')
 
 test('every session script picks the first connection to the system and client, waits 30 s for its session and checks both', () => {
   for (const name of SESSION_SCRIPTS) {
@@ -460,10 +492,12 @@ test('every session script picks the first connection to the system and client, 
     assert.ok(read > 0, `${name}: reads the client CountPoint expects`)
     assert.match(lines[read + 1], /^If Len\(client\) = 0 Then Finish False, "arguments"(, "")?$/, `${name}: no client, no run`)
     assert.ok(read < lines.findIndex(line => line.includes('GetObject("SAPGUI")')), `${name}: the client is known before SAP is touched`)
-    const picks = lines.filter(line => /\.Children\(0\)\.Info\.SystemName = /.test(line))
-    assert.equal(picks.length, 1, `${name}: one place picks the connection`)
-    assert.match(picks[0].trim(), /^If (\S+)\.Children\(0\)\.Info\.SystemName = \w+ And \1\.Children\(0\)\.Info\.Client = \w+ Then Set \w+ = \1 : Exit (For|Function)$/, `${name}: the first connection where system and client match`)
-    if (source.includes('Function SystemConnection(')) assert.ok(lines.includes('Set conn = SystemConnection(app, systemName, client)'), `${name}: asks for the client too`)
+    // Under On Error Resume Next an error in an If condition runs the Then branch: the connection's details are read only
+    // in ConnectionMatches, which cannot raise, and the search stops only on its confirmed match.
+    assert.ok(source.includes(CONNECTION_FUNCTIONS), `${name}: the guarded connection pick`)
+    assert.equal(source.split('Function ConnectionMatches(').length, 2, `${name}: one matcher`)
+    assert.deepEqual(lines.filter(line => /\bInfo\.(SystemName|Client)\b/.test(line) && !/^If s\.Info\.SystemName <> /.test(line.trim())), ['  sys = CStr(c.Children(0).Info.SystemName)', '  cl = CStr(c.Children(0).Info.Client)'], `${name}: no other place reads a connection's system or client`)
+    assert.deepEqual(lines.filter(line => line.includes('SystemConnection(app')), ['Set conn = SystemConnection(app, systemName, client)'], `${name}: asks for the system and the client`)
     const created = lines.flatMap((line, index) => (line.trim() === 'base.CreateSession' ? [index] : []))
     assert.ok(created.length > 0, name)
     for (const index of created) {

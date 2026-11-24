@@ -80,6 +80,39 @@ Sub SetFields(names, value)
   Next
 End Sub
 
+' Whether connection c is on <wantedSystem> in <wantedClient>. Its details are read here only: one that cannot be read
+' never matches (under On Error Resume Next an error in an If condition would run the Then branch).
+Function ConnectionMatches(c, wantedSystem, wantedClient)
+  On Error Resume Next
+  Dim n, sys, cl
+  ConnectionMatches = False
+  n = 0
+  sys = ""
+  cl = ""
+  Err.Clear
+  n = c.Children.Count
+  If Err.Number <> 0 Or n = 0 Then Err.Clear : Exit Function
+  sys = CStr(c.Children(0).Info.SystemName)
+  cl = CStr(c.Children(0).Info.Client)
+  If Err.Number <> 0 Then Err.Clear : Exit Function
+  ConnectionMatches = (sys = wantedSystem And cl = wantedClient)
+End Function
+
+' The first connection to <wantedSystem> in <wantedClient>; never another system or client.
+Function SystemConnection(engine, wantedSystem, wantedClient)
+  On Error Resume Next
+  Dim n, total, candidate
+  Set SystemConnection = Nothing
+  total = 0
+  total = engine.Children.Count
+  For n = 0 To total - 1
+    Set candidate = Nothing
+    Set candidate = engine.Children(CInt(n))
+    If ConnectionMatches(candidate, wantedSystem, wantedClient) Then Set SystemConnection = candidate : Exit Function
+  Next
+  Err.Clear
+End Function
+
 systemName = WScript.Arguments(0)
 docNo = WScript.Arguments(1)
 year = WScript.Arguments(2)
@@ -95,11 +128,7 @@ If Len(docNo) < 9 Or Len(docNo) > 10 Or Len(year) <> 4 Or Len(sloc) <> 4 Then Fi
 Set app = GetObject("SAPGUI").GetScriptingEngine
 If Err.Number <> 0 Then Err.Clear : Finish False, "sap-not-running"
 Set conn = Nothing
-For i = 0 To app.Children.Count - 1
-  If app.Children(CInt(i)).Children.Count > 0 Then
-    If app.Children(CInt(i)).Children(0).Info.SystemName = systemName And app.Children(CInt(i)).Children(0).Info.Client = client Then Set conn = app.Children(CInt(i)) : Exit For
-  End If
-Next
+Set conn = SystemConnection(app, systemName, client)
 Err.Clear
 If conn Is Nothing Then Finish False, "not-logged-in-" & systemName
 Set base = Nothing

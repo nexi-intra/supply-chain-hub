@@ -77,16 +77,35 @@ Sub CloseOwnSession()
   Set s = Nothing
 End Sub
 
-' The first connection to <system> in the client CountPoint expects; never another system or client.
+' Whether connection c is on <wantedSystem> in <wantedClient>. Its details are read here only: one that cannot be read
+' never matches (under On Error Resume Next an error in an If condition would run the Then branch).
+Function ConnectionMatches(c, wantedSystem, wantedClient)
+  On Error Resume Next
+  Dim n, sys, cl
+  ConnectionMatches = False
+  n = 0
+  sys = ""
+  cl = ""
+  Err.Clear
+  n = c.Children.Count
+  If Err.Number <> 0 Or n = 0 Then Err.Clear : Exit Function
+  sys = CStr(c.Children(0).Info.SystemName)
+  cl = CStr(c.Children(0).Info.Client)
+  If Err.Number <> 0 Then Err.Clear : Exit Function
+  ConnectionMatches = (sys = wantedSystem And cl = wantedClient)
+End Function
+
+' The first connection to <wantedSystem> in <wantedClient>; never another system or client.
 Function SystemConnection(engine, wantedSystem, wantedClient)
   On Error Resume Next
-  Dim n, candidate
+  Dim n, total, candidate
   Set SystemConnection = Nothing
-  For n = 0 To engine.Children.Count - 1
+  total = 0
+  total = engine.Children.Count
+  For n = 0 To total - 1
+    Set candidate = Nothing
     Set candidate = engine.Children(CInt(n))
-    If candidate.Children.Count > 0 Then
-      If candidate.Children(0).Info.SystemName = wantedSystem And candidate.Children(0).Info.Client = wantedClient Then Set SystemConnection = candidate : Exit Function
-    End If
+    If ConnectionMatches(candidate, wantedSystem, wantedClient) Then Set SystemConnection = candidate : Exit Function
   Next
   Err.Clear
 End Function
