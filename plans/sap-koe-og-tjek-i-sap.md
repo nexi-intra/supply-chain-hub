@@ -156,9 +156,12 @@
 
 ## Fase 5: QS4 sammen med Jacob
 
-- [ ] Opret, print, serienumre og bogfør i QS4 med harnessen. Ingen `session-not-created`, og "SAP venter på dig" kommer først, når SAP-vinduet er klar.
+- [ ] Opret, print, serienumre og bogfør i QS4 med harnessen. Ingen `session-not-created`, og harnessen melder 'venter' først, når SAP-vinduet er klar.
 - [ ] Bogfør to dokumenter, og kopiér noget andet under ventetiden. Resultatet er rigtigt, fordi MI22 ikke længere læser udklipsholderen.
+- [ ] Bogfør to dokumenter med stor afstand mellem numrene (fx et gammelt og et nyt). MI22-listen med intervallet skal stadig hentes inden for tidsgrænsen.
 - [ ] Luk MI31 lige efter F8. Svaret er dokumenterne eller "ukendt", aldrig "intet oprettet".
 - [ ] "Tjek i SAP" på et ukendt dokument fra hvert trin (oprettet, talt og bogført).
 - [ ] En hentning (MB52) startet under en PI-ventetid kører, når PI-scriptet har sin session.
+- [ ] Under en PI-ventetid: start en hentning, der åbner og lukker sin egen session. PI-scriptet må ikke tro, at vinduet er lukket.
+- [ ] Notér hvilken beskedtype og tekst MI22 og MI20 giver, når der ikke er data (forventet S eller I).
 - [ ] Notér resultaterne i `plans/arbejdsvaerktoejer-gennemgang.md` og sæt kryds ved 5.3, 5.4 og 7.1.

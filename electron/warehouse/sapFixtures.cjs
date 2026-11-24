@@ -6,10 +6,14 @@ const path = require('node:path')
 const ready = system => JSON.stringify({ running: true, scripting: true, connections: [{ disabledByServer: false, sessions: [{ busy: false, popup: false, system, client: '100', user: 'FIXTURE', transaction: 'SESSION_MANAGER' }] }] })
 const FILES = { mb52: 'mb52-sample.txt', '01': 'iq09-01-sample.txt', '07': 'iq09-07-sample.txt' }
 
+// The scripts that hand SAP to the user say {"stage":"waiting"} before their answer, like the real ones.
+const WAITING = new Set(['pidoc-print', 'pidoc-serials', 'pidoc-count', 'pidoc-post', 'pidoc-delete'])
+
 function createFixtureRunner(dir, { readClipboard = () => '', system = 'PS4' } = {}) {
   let nextDoc = 105900001
-  return async function runScript(name, args = []) {
+  return async function runScript(name, args = [], options = {}) {
     if (name === 'status') return ready(system)
+    if (WAITING.has(name) || (name === 'pidoc-create' && args[1] === 'create')) options?.onLine?.({ stage: 'waiting' })
     if (name === 'pidoc-create') {
       const [, mode, sloc, , reference, outDir, outFile, , material, clip] = args
       const materials = clip ? (await readClipboard()).split(/\r?\n/).map(item => item.trim()).filter(Boolean) : [material]

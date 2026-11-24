@@ -46,13 +46,38 @@ Sub WaitIdle()
   Next
 End Sub
 
+' Whether CountPoint's own session (ownId) is still open. Other SAP jobs open and close sessions on the same connection
+' meanwhile, so the list can change while it is read: a pass that fails or sees the count change is repeated (three
+' times at most), and "closed" needs a clean pass without ownId, confirmed by a second one 300 ms later.
 Function SessionOpen()
-  Dim n
-  SessionOpen = False
-  Err.Clear
-  For n = 0 To conn.Children.Count - 1
-    If conn.Children(CInt(n)).Id = ownId Then SessionOpen = True
+  On Error Resume Next
+  Dim attempt, total, after, k, id, found, misses
+  SessionOpen = True
+  misses = 0
+  For attempt = 1 To 4
+    Err.Clear
+    found = False
+    total = -1
+    after = -2
+    total = conn.Children.Count
+    For k = 0 To total - 1
+      id = ""
+      id = CStr(conn.Children(CInt(k)).Id)
+      If id = ownId Then found = True
+    Next
+    after = conn.Children.Count
+    If Err.Number <> 0 Or after <> total Then
+      Err.Clear
+      WScript.Sleep 100
+    ElseIf found Then
+      Exit Function
+    Else
+      misses = misses + 1
+      If misses = 2 Then SessionOpen = False : Exit Function
+      WScript.Sleep 300
+    End If
   Next
+  SessionOpen = (misses = 0)
   Err.Clear
 End Function
 
@@ -219,7 +244,17 @@ For i = 0 To conn.Children.Count - 1
   If InStr(beforeIds, "|" & conn.Children(CInt(i)).Id & "|") = 0 Then Set s = conn.Children(CInt(i))
 Next
 If s Is Nothing Then Err.Clear : Finish False, "session-not-created"
-ownId = s.Id
+' The session is tracked (and closed at the end) by its id: one whose id cannot be read is closed right away.
+Err.Clear
+ownId = ""
+ownId = CStr(s.Id)
+If Err.Number <> 0 Or Len(ownId) = 0 Then
+  Err.Clear
+  s.findById("wnd[0]/tbar[0]/okcd").Text = "/i"
+  s.findById("wnd[0]").sendVKey 0
+  Set s = Nothing
+  Finish False, "session-not-created"
+End If
 WaitIdle
 If s.Info.SystemName <> systemName Or s.Info.Client <> client Then Finish False, "wrong-system"
 Err.Clear
@@ -289,7 +324,13 @@ If i > waitSeconds * 2 Then
   Err.Clear
 End If
 If s Is Nothing Then
-  ' The user closed the window: open a fresh session only to read the status (display only).
+  ' The user closed the window: open a fresh session only to read the status (display only). Other SAP jobs may have
+  ' opened sessions of their own meanwhile, so the new one is told from the sessions open right before it is made.
+  before = conn.Children.Count
+  beforeIds = "|"
+  For i = 0 To conn.Children.Count - 1
+    beforeIds = beforeIds & conn.Children(CInt(i)).Id & "|"
+  Next
   base.CreateSession
   For i = 1 To 300
     If conn.Children.Count > before Then Exit For
@@ -300,7 +341,17 @@ If s Is Nothing Then
     If InStr(beforeIds, "|" & conn.Children(CInt(i)).Id & "|") = 0 Then Set s = conn.Children(CInt(i))
   Next
   If s Is Nothing Then Finish False, "closed-unknown"
-  ownId = s.Id
+  ' The session is tracked (and closed at the end) by its id: one whose id cannot be read is closed right away.
+  Err.Clear
+  ownId = ""
+  ownId = CStr(s.Id)
+  If Err.Number <> 0 Or Len(ownId) = 0 Then
+    Err.Clear
+    s.findById("wnd[0]/tbar[0]/okcd").Text = "/i"
+    s.findById("wnd[0]").sendVKey 0
+    Set s = Nothing
+    Finish False, "closed-unknown"
+  End If
   WaitIdle
   If s.Info.SystemName <> systemName Or s.Info.Client <> client Then Finish False, "wrong-system"
   Err.Clear

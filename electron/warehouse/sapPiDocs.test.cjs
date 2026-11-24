@@ -75,6 +75,8 @@ test('closing SAP without F8 or a timeout is reported; nothing was created', asy
 test('a closed MI31 window is looked up in MI22: listed documents are created, a busy session without any is unknown', async t => {
   t.mock.method(console, 'error', () => {})
   await assert.rejects(setup({ createResult: { ok: false, error: 'closed-unknown' } }).writer.createDocument(REQUEST), { code: 'PIDOC_UNKNOWN', detail: 'closed-unknown' })
+  // No F8 seen by the time limit, but SAP was seen working (F8 maybe pressed just before it) and MI22 lists nothing yet.
+  await assert.rejects(setup({ createResult: { ok: false, error: 'timeout-unknown' } }).writer.createDocument(REQUEST), { code: 'PIDOC_UNKNOWN', detail: 'timeout-unknown' })
   // Closed after F8: MI31's "Created" title was never read, the fresh session's MI22 list under the reference decides.
   const otherSloc = ['\tR133-0034\t\t\t\t\tcharger\t\t\t\t\tD301\tD010', '\t105000901\t1\t\t0000.00\t19.10.2026\t\t\t1\tCPABC123\tDoc. Active']
   const { writer } = setup({ createResult: { ok: true, title: '' }, list: [MI22, ...otherSloc].join('\r\n') })
@@ -106,7 +108,7 @@ test('pidoc-create.vbs: a window closed after the hand-over is looked up by the 
   assert.deepEqual(loop.slice(f8 + 4, f8 + 6), ['    ElseIf transactionNow <> "MI31" Then', '      busySeen = True'], 'leaving MI31 behind a popup is working')
   // Right after the wait (also at the time limit) a closed window is looked up; later failures on a closed window too.
   assert.equal(lines[end + 1], 'If Not SessionOpen() Then LookUpClosed')
-  assert.equal(lines[end + 2], 'If i > waitSeconds * 2 Then Finish False, "timeout"')
+  assert.equal(lines[end + 2], 'If i > waitSeconds * 2 Then AfterTimeout')
   assert.deepEqual(sub(lines, 'Sub LookUpClosed()'), ['Sub LookUpClosed()', '  On Error Resume Next', '  freshTried = True', '  openingFresh = True', '  OpenOwnSession', '  openingFresh = False', '  ReadCreated ClosedAnswer()', 'End Sub'])
   const finish = sub(lines, 'Sub Finish(ok, message)')
   const after = finish.indexOf('  If Not ok And handedOver And Not freshTried Then')
@@ -122,12 +124,49 @@ test('pidoc-create.vbs: a window closed after the hand-over is looked up by the 
   assert.deepEqual(open.slice(id - 1, id + 8), ['  Err.Clear', '  ownId = ""', '  ownId = CStr(s.Id)', '  If Err.Number <> 0 Or Len(ownId) = 0 Then', '    Err.Clear', '    s.findById("wnd[0]/tbar[0]/okcd").Text = "/i"', '    s.findById("wnd[0]").sendVKey 0', '    Set s = Nothing', '    Finish False, "session-not-created"'])
   // One MI22 lookup, shared with the run where F8 was seen; filled with the reference and never touching MI31.
   assert.equal(source.split('/nMI22').length, 2, 'one MI22 lookup')
-  assert.deepEqual(lines.filter(line => line.trim().startsWith('ReadCreated ')).map(line => line.trim()), ['ReadCreated ClosedAnswer()', 'ReadCreated "created-but-not-found"'])
+  assert.deepEqual(lines.filter(line => line.trim().startsWith('ReadCreated ')).map(line => line.trim()), ['ReadCreated ClosedAnswer()', 'ReadCreated "timeout-unknown"', 'ReadCreated "created-but-not-found"'])
   const read = sub(lines, 'Sub ReadCreated(notFound)')
   assert.ok(read.includes('  s.findById("wnd[0]/usr/ctxtIM_INVNU-LOW").Text = reference'))
   assert.ok(read.includes('  Check "wnd[0]/usr/ctxtIM_INVNU-LOW", reference'))
   assert.ok(read.includes('  If screen = "1000" Then Finish False, notFound'))
   assert.equal(source.split('.sendVKey 8').length - 1, 2, 'F8 only in the test run and in MI22')
+})
+
+test('pidoc-create.vbs: a timeout after SAP was seen working is never "timeout"; F8 seen once SAP is idle goes on, otherwise MI22 decides', () => {
+  const lines = fs.readFileSync(path.join(__dirname, 'sap', 'pidoc-create.vbs'), 'utf8').split('\r\n')
+  // "timeout" (nothing created, the app invites a retry) only when SAP was never seen working.
+  assert.deepEqual(lines.filter(line => line.includes('"timeout"') && !line.trim().startsWith("'")).map(line => line.trim()), ['If Not busySeen Then Finish False, "timeout"'])
+  assert.deepEqual(sub(lines, 'Sub AfterTimeout()'), [
+    'Sub AfterTimeout()',
+    '  On Error Resume Next',
+    '  If Not busySeen Then Finish False, "timeout"',
+    '  WaitIdle',
+    '  If Not SessionOpen() Then LookUpClosed',
+    '  If F8Pressed() Then Exit Sub',
+    '  ClosePopups',
+    '  ReadCreated "timeout-unknown"',
+    'End Sub',
+  ])
+  // The F8 condition of the wait, read into variables first: anything unreadable is not F8 (then MI22 decides).
+  assert.deepEqual(sub(lines, 'Function F8Pressed()'), [
+    'Function F8Pressed()',
+    '  On Error Resume Next',
+    '  Dim transactionRead, screenRead, windowsRead',
+    '  F8Pressed = False',
+    '  transactionRead = ""',
+    '  screenRead = ""',
+    '  windowsRead = 0',
+    '  Err.Clear',
+    '  transactionRead = CStr(s.Info.Transaction)',
+    '  screenRead = CStr(s.Info.ScreenNumber)',
+    '  windowsRead = s.Children.Count',
+    '  If Err.Number <> 0 Then Err.Clear : Exit Function',
+    '  F8Pressed = (windowsRead = 1 And (screenRead <> "1000" Or transactionRead <> "MI31"))',
+    'End Function',
+  ])
+  const popups = sub(lines, 'Sub ClosePopups()')
+  assert.equal(popups[1], '  On Error Resume Next')
+  assert.ok(popups.includes('    s.findById("wnd[" & (s.Children.Count - 1) & "]").sendVKey 12'), 'F12 cancels; nothing is saved')
 })
 
 test('any failure after the user\'s F8 in MI31 is unknown: SAP may have created the documents', async t => {
@@ -575,6 +614,20 @@ const CONNECTION_FUNCTIONS = [
   'End Function',
 ].join('\r\n')
 
+test('every new session is told from the sessions open right before it is made (other SAP jobs open their own meanwhile)', () => {
+  const FRESH = ['before = conn.Children.Count', 'beforeIds = "|"', 'For i = 0 To conn.Children.Count - 1', 'beforeIds = beforeIds & conn.Children(CInt(i)).Id & "|"', 'Next']
+  for (const name of SESSION_SCRIPTS) {
+    const lines = fs.readFileSync(path.join(__dirname, 'sap', name), 'utf8').split('\r\n')
+    const created = lines.flatMap((line, index) => (line.trim() === 'base.CreateSession' ? [index] : []))
+    assert.ok(created.length > 0, name)
+    for (const index of created) {
+      const listed = lines.slice(index - 5, index).map(line => line.trim())
+      const prepared = lines.slice(index - 2, index).map(line => line.trim())
+      assert.ok(JSON.stringify(listed) === JSON.stringify(FRESH) || prepared[0] === 'PrepareNewSession', `${name}:${index + 1}`)
+    }
+  }
+})
+
 test('every session script picks the first connection to the system and client, waits 30 s for its session and checks both', () => {
   for (const name of SESSION_SCRIPTS) {
     const source = fs.readFileSync(path.join(__dirname, 'sap', name), 'utf8')
@@ -641,6 +694,99 @@ const WRITES = {
   delete: (writer, options) => writer.deleteDocument({ docNo: '105000903', year: '2026', reference: 'CPX12345' }, options),
 }
 const isHandOver = (name, args) => name !== 'status' && !(name === 'pidoc-create' && args[1] === 'test')
+
+test('a SAP_TIMEOUT or SAP_SCRIPT_FAILED after the hand-over is unknown for every waiting write; before it the failure is passed on', async t => {
+  t.mock.method(console, 'error', () => {})
+  const waiting = {
+    serials: WRITES.serials,
+    count: WRITES.count,
+    post: writer => writer.postDocuments({ docNos: ['105000894'], year: '2026' }),
+    delete: WRITES.delete,
+  }
+  for (const code of ['SAP_TIMEOUT', 'SAP_SCRIPT_FAILED']) {
+    for (const handedOver of [true, false]) {
+      const runScript = async (name, args, options) => {
+        if (handedOver) options.onLine({ stage: 'waiting' })
+        throw Object.assign(new Error(code), { code })
+      }
+      const writer = writerFor({ runScript, clipboard: null, system: 'QS4', waitSeconds: 300 })
+      for (const [name, write] of Object.entries(waiting)) {
+        const expected = handedOver ? { code: 'PIDOC_UNKNOWN', detail: code } : { code }
+        await assert.rejects(write(writer), expected, `${name}: ${code} ${handedOver ? 'after' : 'before'} the hand-over`)
+      }
+    }
+  }
+})
+
+// Another SAP job (a fetch, Softwareload, "Tjek i SAP") opens and closes sessions on the same connection while a PI script
+// waits: a session list that changes or fails while it is read must never look like the user closed the window.
+const SESSION_OPEN = [
+  'Function SessionOpen()',
+  '  On Error Resume Next',
+  '  Dim attempt, total, after, k, id, found, misses',
+  '  SessionOpen = True',
+  '  misses = 0',
+  '  For attempt = 1 To 4',
+  '    Err.Clear',
+  '    found = False',
+  '    total = -1',
+  '    after = -2',
+  '    total = conn.Children.Count',
+  '    For k = 0 To total - 1',
+  '      id = ""',
+  '      id = CStr(conn.Children(CInt(k)).Id)',
+  '      If id = ownId Then found = True',
+  '    Next',
+  '    after = conn.Children.Count',
+  '    If Err.Number <> 0 Or after <> total Then',
+  '      Err.Clear',
+  '      WScript.Sleep 100',
+  '    ElseIf found Then',
+  '      Exit Function',
+  '    Else',
+  '      misses = misses + 1',
+  '      If misses = 2 Then SessionOpen = False : Exit Function',
+  '      WScript.Sleep 300',
+  '    End If',
+  '  Next',
+  '  SessionOpen = (misses = 0)',
+  '  Err.Clear',
+  'End Function',
+].join('\r\n')
+
+test('every PI script calls its own window closed only after a clean pass without it, confirmed 300 ms later', () => {
+  assert.equal(PI_SCRIPTS.length, 7)
+  for (const name of PI_SCRIPTS) {
+    const source = fs.readFileSync(path.join(__dirname, 'sap', name), 'utf8')
+    assert.ok(source.includes(SESSION_OPEN), `${name}: the guarded SessionOpen`)
+    assert.equal(source.split('Function SessionOpen()').length, 2, `${name}: one SessionOpen`)
+    // The session list is read only in SessionOpen (and when a session is opened): no other place compares with ownId.
+    const outside = source.replace(SESSION_OPEN, '').split('\r\n').filter(line => /\bownId\b/.test(line) && /conn\.Children/.test(line))
+    assert.deepEqual(outside, [], `${name}: no unguarded check of the own session`)
+  }
+})
+
+test('every script that opens its own session reads its id for sure; one whose id cannot be read is closed right away', () => {
+  for (const name of [...PI_SCRIPTS, 'sl-transfer.vbs', 'sl-block.vbs']) {
+    const lines = fs.readFileSync(path.join(__dirname, 'sap', name), 'utf8').split('\r\n')
+    const reads = lines.flatMap((line, index) => (/^\s*ownId = (?!"")/.test(line) ? [index] : []))
+    assert.ok(reads.length > 0, name)
+    for (const index of reads) {
+      assert.deepEqual(lines.slice(index - 2, index + 6).map(line => line.trim()), [
+        'Err.Clear',
+        'ownId = ""',
+        'ownId = CStr(s.Id)',
+        'If Err.Number <> 0 Or Len(ownId) = 0 Then',
+        'Err.Clear',
+        's.findById("wnd[0]/tbar[0]/okcd").Text = "/i"',
+        's.findById("wnd[0]").sendVKey 0',
+        'Set s = Nothing',
+      ], `${name}:${index + 1}`)
+      assert.match(lines[index + 6].trim(), /^Finish False, "(session-not-created|closed-unknown)"(, "")?$/, `${name}:${index + 1}`)
+      assert.equal(lines[index + 7].trim(), 'End If', `${name}:${index + 1}`)
+    }
+  }
+})
 
 test('every PI write checks SAP (system and client 100) first and runs no write script when SAP is not ready', async () => {
   const names = []

@@ -27,3 +27,32 @@ test('fake SAP reads the materials and documents from an async (Electron 44) cli
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('fake SAP says {"stage":"waiting"} before it answers for every write that waits for the user; pidoc-create only when creating', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sap-fixtures-'))
+  try {
+    const runScript = createFixtureRunner(FIXTURES, { system: 'QS4' })
+    const seen = []
+    const run = async (name, args) => {
+      let answered = false
+      const output = runScript(name, args, { onLine: line => seen.push([name, args[1], line, answered]) })
+      await output.then(() => { answered = true })
+    }
+    fs.writeFileSync(path.join(dir, 'serials.txt'), 'S1\r\nS2', 'utf8')
+    await run('pidoc-create', ['QS4', 'test', 'D000', 'unrestricted', 'CPTEST01', dir, 'test.txt', '60', 'R092-0039'])
+    await run('pidoc-create', ['QS4', 'create', 'D000', 'unrestricted', 'CPTEST01', dir, 'mi22.txt', '900', 'R092-0039'])
+    await run('pidoc-print', ['QS4', '105900001', '2026', 'D000', '0', '900'])
+    await run('pidoc-serials', ['QS4', '105900001', '2026', 'INT1-0', dir, 'serials.txt', 'errors.txt', '900'])
+    await run('pidoc-count', ['QS4', '105900001', '2026', dir, 'count.txt', '900'])
+    await run('pidoc-post', ['QS4', '2026', dir, 'mi20.txt', 'mi22.txt', '900', '105900001', '105900001', '105900001'])
+    await run('pidoc-delete', ['QS4', '105900001', '2026', 'CPTEST01', dir, 'mi22.txt', '900'])
+    await run('pidoc-check', [dir, 'mi22.txt', 'mi20.txt', '2026', 'CPTEST01', '-'])
+    assert.deepEqual(seen.map(([name, second]) => (name === 'pidoc-create' ? `${name} ${second}` : name)), ['pidoc-create create', 'pidoc-print', 'pidoc-serials', 'pidoc-count', 'pidoc-post', 'pidoc-delete'])
+    for (const [name, , line, answered] of seen) {
+      assert.deepEqual(line, { stage: 'waiting' }, name)
+      assert.equal(answered, false, `${name}: before the answer`)
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})

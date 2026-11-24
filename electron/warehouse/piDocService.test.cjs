@@ -758,7 +758,14 @@ test('"Tjek i SAP" for an unknown create: one document on the reference is saved
   const saved = await service.check(MONA, 'c1', 'CPREF1')
   assert.deepEqual([saved.outcome, saved.docNo], ['saved', '105000900'])
   readable(saved, 'MI22', '105000900')
+  assert.equal(saved.summary, 'SAP har oprettet dokument 105000900.', 'every material is in the document')
   assert.deepEqual(state.calls, [['check', { reference: 'CPREF1', docNo: null, year: '2026' }]], 'MI22 by the reference only')
+  // SAP left a material out of the document: still the proposal, but the manager is told which one is missing.
+  sap.check = async () => ({ docs: [listed('105000900', ['r1'], ACTIVE)], counted: [] })
+  const partial = await service.check(MONA, 'c1', 'CPREF1')
+  assert.deepEqual([partial.outcome, partial.docNo], ['saved', '105000900'])
+  readable(partial, 'MI22', '105000900')
+  assert.equal(partial.summary, 'SAP har oprettet dokument 105000900, men R2 er ikke med i dokumentet.')
   sap.check = async () => ({ docs: [listed('105000900', ['R1', 'R2'], POSTED)], counted: [] })
   assert.deepEqual(Object.values(await service.check(MONA, 'c1', 'CPREF1')).slice(0, 2), ['saved', '105000900'], 'created and posted since')
 
@@ -773,6 +780,8 @@ test('"Tjek i SAP" for an unknown create: one document on the reference is saved
   const missing = await service.check(MONA, 'c1', 'CPREF1')
   assert.deepEqual([missing.outcome, missing.docNo], ['missing', null])
   readable(missing, 'MI22', 'CPREF1', 'No data selected')
+  // MI31 may still be open (or SAP still creating): nothing listed yet is not the last word.
+  assert.equal(missing.summary, 'SAP har ikke oprettet noget dokument. Er MI31-vinduet stadig åbent, så luk det og tjek igen.')
 
   sap.check = async () => ({ docs: [listed('105000900', ['R1'], ACTIVE), listed('105000901', ['R2'], ACTIVE)], counted: [] })
   const several = await service.check(MONA, 'c1', 'CPREF1')

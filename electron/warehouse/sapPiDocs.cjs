@@ -50,8 +50,10 @@ function unknownState(name, detail) {
 /**
  * pidoc-create.vbs answers that end before the user's F8 in MI31 (nothing can have been created): the checks before the
  * screen is handed over, a closed window that MI22 lists nothing for and that was never seen working ("cancelled"), and
- * no F8 in time. Every other failure comes after F8 (MI31's answer or the MI22 lookup, also the check of its reference
- * field, and "closed-unknown": a closed window seen working with nothing in MI22), so SAP may have created the documents.
+ * no F8 in time while SAP was never seen working ("timeout"). Every other failure comes after F8 (MI31's answer or the
+ * MI22 lookup, also the check of its reference field, "closed-unknown": a closed window seen working with nothing in
+ * MI22, and "timeout-unknown": the time limit after SAP was seen working, with nothing in MI22), so SAP may have created
+ * the documents.
  */
 function beforeF8(error) {
   const text = String(error || '')
@@ -94,13 +96,16 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, expected = { 
     return watch
   }
 
-  /** A script that hands SAP to the user: killed at the time limit after the hand-over, the user may have saved meanwhile. */
+  /**
+   * A script that hands SAP to the user: killed at the time limit or broken after the hand-over, the user may have saved
+   * meanwhile. Before the hand-over the user never had the screen, so the failure is passed on.
+   */
   async function runWaiting(name, args, options) {
     const watch = watchHandOver(options.onLine)
     try {
       return await runScript(name, args, { ...options, onLine: watch.onLine })
     } catch (error) {
-      if (error?.code === 'SAP_TIMEOUT' && watch.handedOver) throw unknownState(name, error.code)
+      if ((error?.code === 'SAP_TIMEOUT' || error?.code === 'SAP_SCRIPT_FAILED') && watch.handedOver) throw unknownState(name, error.code)
       throw error
     }
   }
@@ -260,7 +265,7 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, expected = { 
     checkDoc({ docNo, year })
     if (!REFERENCE.test(String(reference || '').toUpperCase())) throw writeError('PIDOC_INVALID', 'Dokumentet mangler CountPoints kode')
     return exclusiveWrite(onWaiting, async (dir, onLine) => {
-      const result = lastJsonLine(await runScript('pidoc-delete', [system, String(docNo), String(year), String(reference).toUpperCase(), dir, 'mi22.txt', String(waitSeconds)], { timeoutMs: (waitSeconds + 300) * 1000, onLine }))
+      const result = lastJsonLine(await runWaiting('pidoc-delete', [system, String(docNo), String(year), String(reference).toUpperCase(), dir, 'mi22.txt', String(waitSeconds)], { timeoutMs: (waitSeconds + 300) * 1000, onLine }))
       if (result?.error === 'not-countpoint-document') throw writeError('PIDOC_FORBIDDEN', `${docNo} er ikke oprettet af CountPoint – slet det i SAP selv`)
       if (result?.error === 'already-counted') throw writeError('PIDOC_FORBIDDEN', `Der er lagt antal på ${docNo} i SAP – det kan ikke slettes`)
       if (result?.error === 'already-deleted') return { deleted: true, message: 'Allerede slettet i SAP' }

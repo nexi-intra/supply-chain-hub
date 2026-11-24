@@ -11,6 +11,8 @@
 ' When the user closes the window instead (or later, before the answer), a fresh session on the same connection looks the
 ' reference up in MI22 (display only): documents listed = created ({"ok":true}); none listed = "closed-unknown" when SAP
 ' was seen working (busy, out of the selection screen, F8, or state unreadable) after the hand-over, else "cancelled".
+' No F8 by the time limit is "timeout" only when SAP was never seen working; otherwise MI22 decides (none listed =
+' "timeout-unknown").
 ' Output: {"ok":true,"title":"..."} or {"ok":false,"error":"..."}.
 Option Explicit
 On Error Resume Next
@@ -58,13 +60,38 @@ Sub WaitIdle()
   Next
 End Sub
 
+' Whether CountPoint's own session (ownId) is still open. Other SAP jobs open and close sessions on the same connection
+' meanwhile, so the list can change while it is read: a pass that fails or sees the count change is repeated (three
+' times at most), and "closed" needs a clean pass without ownId, confirmed by a second one 300 ms later.
 Function SessionOpen()
-  Dim k
-  SessionOpen = False
-  Err.Clear
-  For k = 0 To conn.Children.Count - 1
-    If conn.Children(CInt(k)).Id = ownId Then SessionOpen = True
+  On Error Resume Next
+  Dim attempt, total, after, k, id, found, misses
+  SessionOpen = True
+  misses = 0
+  For attempt = 1 To 4
+    Err.Clear
+    found = False
+    total = -1
+    after = -2
+    total = conn.Children.Count
+    For k = 0 To total - 1
+      id = ""
+      id = CStr(conn.Children(CInt(k)).Id)
+      If id = ownId Then found = True
+    Next
+    after = conn.Children.Count
+    If Err.Number <> 0 Or after <> total Then
+      Err.Clear
+      WScript.Sleep 100
+    ElseIf found Then
+      Exit Function
+    Else
+      misses = misses + 1
+      If misses = 2 Then SessionOpen = False : Exit Function
+      WScript.Sleep 300
+    End If
   Next
+  SessionOpen = (misses = 0)
   Err.Clear
 End Function
 
@@ -212,6 +239,49 @@ Sub LookUpClosed()
   OpenOwnSession
   openingFresh = False
   ReadCreated ClosedAnswer()
+End Sub
+
+' No F8 seen by the time limit. SAP never seen working: F8 was not pressed, nothing is created ("timeout"). Seen working
+' (F8 maybe pressed just before the limit): once SAP is idle, F8 seen now goes on as usual (title and MI22); otherwise
+' open popups are cancelled (nothing is saved by that) and MI22 decides: documents listed are created, none is
+' "timeout-unknown" (SAP may still be creating). A window closed meanwhile is looked up like any closed window.
+Sub AfterTimeout()
+  On Error Resume Next
+  If Not busySeen Then Finish False, "timeout"
+  WaitIdle
+  If Not SessionOpen() Then LookUpClosed
+  If F8Pressed() Then Exit Sub
+  ClosePopups
+  ReadCreated "timeout-unknown"
+End Sub
+
+' The wait's F8 condition (MI31's selection screen gone without a popup), read into variables first: anything
+' unreadable is not F8 (under On Error Resume Next an error in an If condition would run the Then branch).
+Function F8Pressed()
+  On Error Resume Next
+  Dim transactionRead, screenRead, windowsRead
+  F8Pressed = False
+  transactionRead = ""
+  screenRead = ""
+  windowsRead = 0
+  Err.Clear
+  transactionRead = CStr(s.Info.Transaction)
+  screenRead = CStr(s.Info.ScreenNumber)
+  windowsRead = s.Children.Count
+  If Err.Number <> 0 Then Err.Clear : Exit Function
+  F8Pressed = (windowsRead = 1 And (screenRead <> "1000" Or transactionRead <> "MI31"))
+End Function
+
+' Cancels open popups (F12); nothing is saved by that.
+Sub ClosePopups()
+  On Error Resume Next
+  Err.Clear
+  Do While s.Children.Count > 1
+    s.findById("wnd[" & (s.Children.Count - 1) & "]").sendVKey 12
+    WaitIdle
+    If Err.Number <> 0 Then Exit Do
+  Loop
+  Err.Clear
 End Sub
 
 ' Whether connection c is on <wantedSystem> in <wantedClient>. Its details are read here only: one that cannot be read
@@ -408,7 +478,7 @@ For i = 1 To waitSeconds * 2
   Err.Clear
 Next
 If Not SessionOpen() Then LookUpClosed
-If i > waitSeconds * 2 Then Finish False, "timeout"
+If i > waitSeconds * 2 Then AfterTimeout
 WaitIdle
 title = s.findById("wnd[0]").Text
 If s.Info.Transaction <> "MI31" Then Finish False, "left-mi31"

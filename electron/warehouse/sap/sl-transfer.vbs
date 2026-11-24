@@ -351,7 +351,17 @@ For i = 0 To conn.Children.Count - 1
   If InStr(beforeIds, "|" & conn.Children(CInt(i)).Id & "|") = 0 Then Set s = conn.Children(CInt(i))
 Next
 If s Is Nothing Then Err.Clear : Finish False, "session-not-created"
-ownId = s.Id
+' The session is tracked (and closed at the end) by its id: one whose id cannot be read is closed right away.
+Err.Clear
+ownId = ""
+ownId = CStr(s.Id)
+If Err.Number <> 0 Or Len(ownId) = 0 Then
+  Err.Clear
+  s.findById("wnd[0]/tbar[0]/okcd").Text = "/i"
+  s.findById("wnd[0]").sendVKey 0
+  Set s = Nothing
+  Finish False, "session-not-created"
+End If
 WaitIdle
 If s.Info.SystemName <> systemName Or s.Info.Client <> client Then Err.Clear : Finish False, "wrong-system"
 ' SAP's answers below ("successfully created", the log) are read in English; another logon language could hide a

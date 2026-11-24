@@ -513,11 +513,18 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
       const numbers = found.docs.map(item => item.docNo)
       if (numbers.length === 1) {
         const [only] = found.docs
-        if (only.active || only.posted) return answer('saved', only.docNo, `MI22 viser dokument ${only.docNo} på referencen ${doc.reference}.`, `SAP har oprettet dokument ${only.docNo}.`)
+        if (only.active || only.posted) {
+          // SAP may leave a material out of the document: still the proposal, but the manager is told which one.
+          const inDoc = new Set(only.materials.map(material => String(material).toUpperCase()))
+          const left = [...new Set((doc.lines || []).map(line => String(line.material).toUpperCase()))].filter(material => !inDoc.has(material))
+          const summary = left.length ? `SAP har oprettet dokument ${only.docNo}, men ${names(left)} er ikke med i dokumentet.` : `SAP har oprettet dokument ${only.docNo}.`
+          return answer('saved', only.docNo, `MI22 viser dokument ${only.docNo} på referencen ${doc.reference}.`, summary)
+        }
         return answer(null, null, `MI22 viser dokument ${only.docNo} på referencen ${doc.reference} ${statusText(only)}.`, `SAP har dokument ${only.docNo} ${statusText(only)}. Tjek det i SAP (MI03).`)
       }
       const said = found.messages?.mi22 ? ` (SAP: ${found.messages.mi22})` : ''
-      if (!numbers.length) return answer('missing', null, `MI22 viser intet dokument på referencen ${doc.reference}${said}.`, 'SAP har ikke oprettet noget dokument.')
+      // MI31 may still be open, or SAP still creating: nothing listed yet is only final once the window is closed.
+      if (!numbers.length) return answer('missing', null, `MI22 viser intet dokument på referencen ${doc.reference}${said}.`, 'SAP har ikke oprettet noget dokument. Er MI31-vinduet stadig åbent, så luk det og tjek igen.')
       return answer(null, null, `MI22 viser ${numbers.length} dokumenter på referencen ${doc.reference}: ${numbers.join(', ')}.`, `SAP har ${numbers.length} dokumenter på referencen: ${numbers.join(', ')}. Optælling vælger ikke ét af dem. Tjek dem i SAP (MI03).`)
     }
     const listed = found.docs.find(item => item.docNo === doc.docNo)
