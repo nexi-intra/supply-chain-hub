@@ -463,6 +463,7 @@ function flow(t, { docs = {}, rows = ROWS } = {}) {
     counts: async () => ({ message: 'ok' }),
     serials: async request => ({ counted: request.serials.length, serials: request.serials.length, newSerials: 0 }),
     post: async request => ({ posted: request.docNos, open: [], unknown: [], materialDocs: {}, differences: [] }),
+    check: async () => ({ docs: [], counted: [] }),
   }
   const answered = async (name, request, answer) => {
     state.calls.push([name, request])
@@ -477,6 +478,7 @@ function flow(t, { docs = {}, rows = ROWS } = {}) {
     enterSerials: request => answered('serials', request, sap.serials),
     postDocuments: request => answered('post', request, sap.post),
     deleteDocument: request => answered('delete', request, async () => ({ deleted: true, message: 'deleted' })),
+    checkDocument: request => answered('check', request, sap.check),
   }
   const counts = {
     countDoc: async () => ({ fetchedAt: state.clock, rows }),
@@ -723,4 +725,103 @@ test('an unknown count resolved as not entered goes back to printed without ente
   assert.deepEqual(state.stored['105000901'].sapUnknown.materials, [{ material: 'R1', qty: 5 }, { material: 'R2', qty: 2 }])
   await service.resolve(MONA, 'c1', '105000901', { outcome: 'missing', reason: 'MI03 viser intet antal' })
   assert.deepEqual([state.stored['105000901'].status, state.stored['105000901'].entered], ['printed', undefined])
+})
+// ---- "Tjek i SAP": a proposal for the manager's decision; SAP is only read and nothing is saved ----
+
+const STAMP = 'Tjek i SAP 23.11.2026 09:00: '
+const mark = (step, status, extra = {}) => ({ step, status, by: { email: 'anna@x', name: 'Anna', at: 1 }, detail: 'verify-failed', ...extra })
+const listed = (docNo, materials, active) => ({ docNo, materials, active })
+/** The texts a manager reads: they start with the time of the check and join no sentences with a dash. */
+function readable(result, ...lists) {
+  assert.ok(result.reason.startsWith(STAMP), result.reason)
+  for (const list of lists) assert.match(result.reason, new RegExp(list), result.reason)
+  for (const text of [result.reason, result.summary]) {
+    assert.equal(typeof text, 'string')
+    assert.ok(text.length > 0 && text.length <= 300, text)
+    assert.doesNotMatch(text, / [–—-] /, text)
+  }
+}
+
+test('"Tjek i SAP" for an unknown create: one document on the reference is saved with its number, none is missing, several are left to the manager', async t => {
+  const { state, sap, service } = flow(t)
+  sap.create = async () => { throw sapUnknown() }
+  await assert.rejects(service.create(MONA, 'c1', CREATE), { code: 'PIDOC_UNKNOWN' })
+  state.calls.length = 0
+  const before = structuredClone(state.stored)
+  const writes = state.writes.length
+
+  sap.check = async () => ({ docs: [listed('105000900', ['R1', 'R2'], true)], counted: [] })
+  const saved = await service.check(MONA, 'c1', 'CPREF1')
+  assert.deepEqual([saved.outcome, saved.docNo], ['saved', '105000900'])
+  readable(saved, 'MI22', '105000900')
+  assert.deepEqual(state.calls, [['check', { reference: 'CPREF1', docNo: null, year: '2026' }]], 'MI22 by the reference only')
+
+  sap.check = async () => ({ docs: [], counted: [] })
+  const missing = await service.check(MONA, 'c1', 'CPREF1')
+  assert.deepEqual([missing.outcome, missing.docNo], ['missing', null])
+  readable(missing, 'MI22', 'CPREF1')
+
+  sap.check = async () => ({ docs: [listed('105000900', ['R1'], true), listed('105000901', ['R2'], true)], counted: [] })
+  const several = await service.check(MONA, 'c1', 'CPREF1')
+  assert.deepEqual([several.outcome, several.docNo], [null, null], 'the app never picks one of them')
+  readable(several, 'MI22', '105000900', '105000901')
+  assert.match(several.summary, /105000900/)
+  assert.match(several.summary, /105000901/)
+
+  assert.deepEqual(state.stored, before, 'nothing is saved')
+  assert.equal(state.writes.length, writes)
+})
+
+test('"Tjek i SAP" for an unknown count: MI20 decides by the materials sent; a document no longer active is saved', async t => {
+  const sent = [{ material: 'R1', qty: 5 }, { material: 'R2', qty: 2 }]
+  const lines = [{ material: 'R1' }, { material: 'R2' }, { material: 'R3' }]
+  const docs = { 105000901: sapDoc('105000901', 'printed', { lines, sapUnknown: mark('count', 'printed', { materials: sent }) }) }
+  const { state, sap, service } = flow(t, { docs, rows: COUNT_ROWS })
+  const before = structuredClone(state.stored)
+  const cases = [
+    [{ docs: [listed('105000901', ['R1', 'R2', 'R3'], true)], counted: ['R1', 'R2'] }, 'saved'],
+    [{ docs: [listed('105000901', ['R1', 'R2', 'R3'], false)], counted: [] }, 'saved'],
+    [{ docs: [listed('105000901', ['R1', 'R2', 'R3'], true)], counted: [] }, 'missing'],
+    [{ docs: [listed('105000901', ['R1', 'R2', 'R3'], true)], counted: ['R3'] }, 'missing'],
+    [{ docs: [listed('105000901', ['R1', 'R2', 'R3'], true)], counted: ['R1'] }, null],
+  ]
+  for (const [answer, outcome] of cases) {
+    sap.check = async () => answer
+    const result = await service.check(MONA, 'c1', '105000901')
+    assert.deepEqual([result.outcome, result.docNo], [outcome, '105000901'], JSON.stringify(answer))
+    readable(result, 'MI22', 'MI20')
+  }
+  assert.deepEqual(state.calls[0], ['check', { reference: 'CP105000901', docNo: '105000901', year: '2026' }])
+  assert.deepEqual(state.stored, before, 'still unknown: the manager decides')
+})
+
+test('"Tjek i SAP" for an unknown posting: no longer active in MI22 is saved, active is missing, not listed is left to the manager', async t => {
+  const docs = { 105000902: sapDoc('105000902', 'counted', { sapUnknown: mark('post', 'counted') }) }
+  const { state, sap, service } = flow(t, { docs, rows: COUNT_ROWS })
+  const cases = [
+    [{ docs: [listed('105000902', ['R1'], false)], counted: [] }, 'saved'],
+    [{ docs: [listed('105000902', ['R1'], true)], counted: ['R1'] }, 'missing'],
+    [{ docs: [], counted: [] }, null],
+    [{ docs: [listed('105000903', ['R1'], false)], counted: [] }, null],
+  ]
+  for (const [answer, outcome] of cases) {
+    sap.check = async () => answer
+    const result = await service.check(MONA, 'c1', '105000902')
+    assert.deepEqual([result.outcome, result.docNo], [outcome, '105000902'], JSON.stringify(answer))
+    readable(result, 'MI22', '105000902')
+  }
+  assert.equal(state.stored['105000902'].sapUnknown.step, 'post')
+  assert.deepEqual(state.marked, [], 'nothing is marked "Bogført i SAP"')
+})
+
+test('"Tjek i SAP" needs the right to resolve: a manager and a document waiting for a decision; SAP is not asked otherwise', async t => {
+  const docs = { 105000901: sapDoc('105000901', 'printed', { sapUnknown: mark('count', 'printed', { materials: [{ material: 'R1', qty: 5 }] }) }), 105000902: sapDoc('105000902', 'counted') }
+  const { state, sap, service } = flow(t, { docs, rows: COUNT_ROWS })
+  await assert.rejects(service.check(ANNA, 'c1', '105000901'), { code: 'PIDOC_FORBIDDEN', message: /Kun managers/ })
+  await assert.rejects(service.check(MONA, 'c1', '105000902'), { code: 'PIDOC_FORBIDDEN', message: /venter ikke på en afklaring/ })
+  await assert.rejects(service.check(MONA, 'c1', '105000999'), { code: 'PIDOC_FORBIDDEN' })
+  assert.deepEqual(state.calls, [])
+  sap.check = async () => { throw Object.assign(new Error('SAP_NOT_READY: SAP er ikke klar'), { code: 'SAP_NOT_READY', sapState: 'not-logged-in' }) }
+  await assert.rejects(service.check(MONA, 'c1', '105000901'), { code: 'SAP_NOT_READY' })
+  assert.equal(state.stored['105000901'].sapUnknown.step, 'count')
 })

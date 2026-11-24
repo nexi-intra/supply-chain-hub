@@ -59,7 +59,7 @@ test('every Optælling channel is registered once under "warehouse:"', () => {
   const { handlers, registered } = setup()
   assert.equal(handlers.size, registered.channels.length)
   assert.ok(registered.channels.length >= 65, `${registered.channels.length} channels`)
-  for (const channel of ['me', 'counts:list', 'statuses:archive', 'pidocs:post', 'sap-check:run', 'sap:show-doc']) assert.ok(handlers.has(`warehouse:${channel}`), channel)
+  for (const channel of ['me', 'counts:list', 'statuses:archive', 'pidocs:post', 'pidocs:check', 'sap-check:run', 'sap:show-doc']) assert.ok(handlers.has(`warehouse:${channel}`), channel)
   assert.equal([...handlers.keys()].some(channel => /^warehouse:(auth|updates|app):/.test(channel)), false, 'no own login or updates inside the Hub')
 })
 

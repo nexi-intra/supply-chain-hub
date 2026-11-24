@@ -71,6 +71,8 @@ const defaultReference = () => `CP${crypto.randomBytes(6).toString('hex').toUppe
 const pad = value => String(value).padStart(2, '0')
 // Same as formatDateTime in the count screens (src/lib/warehouse/format.ts).
 const dateTime = ms => { const date = new Date(ms); return `${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}` }
+/** Up to five materials by name, the rest as a number. */
+const names = list => (list.length > 5 ? `${list.slice(0, 5).join(', ')} og ${list.length - 5} flere` : list.join(', '))
 
 /**
  * The quantities entered come from the SAP figures of the day; old ones would post SAP's movements since then as a
@@ -487,7 +489,51 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
     return list(user, id)
   }
 
-  return { list, create, print, count, post, remove, resolve }
+  /**
+   * "Tjek i SAP": a proposal for the manager's decision on an unknown document, from what MI22 (by the document's
+   * reference) and MI20 (its counted items) show. Same right as `resolve`. SAP is only read and nothing is saved: the
+   * manager still decides with `resolve`. `outcome` is 'saved', 'missing' or null (the app cannot tell, e.g. several
+   * documents on one reference: it never picks one of them); `reason` starts with the time of the check.
+   */
+  async function check(user, id, docId) {
+    const { docs, role } = await context(user, id)
+    const doc = docs.find(item => item.id === docId)
+    const refused = refusal({ action: 'resolve', role, email: user.email, doc })
+    if (refused) throw codeError('PIDOC_FORBIDDEN', refused)
+    if (!doc.reference) throw codeError('PIDOC_INVALID', 'Dokumentet mangler CountPoints kode og kan ikke slås op i SAP. Tjek det i SAP (MI03)')
+    const step = doc.sapUnknown?.step || 'create'
+    const year = doc.year || String(new Date(doc.createdBy?.at || now()).getFullYear())
+    const found = await writer.checkDocument({ reference: doc.reference, docNo: step === 'create' ? null : doc.docNo, year })
+    const stamp = `Tjek i SAP ${dateTime(now())}: `
+    const answer = (outcome, docNo, reason, summary) => ({ outcome, docNo, reason: clean(stamp + reason, 300), summary: clean(summary, 300) })
+    if (step === 'create') {
+      const numbers = found.docs.map(item => item.docNo)
+      if (numbers.length === 1) return answer('saved', numbers[0], `MI22 viser dokument ${numbers[0]} på referencen ${doc.reference}.`, `SAP har oprettet dokument ${numbers[0]}.`)
+      if (!numbers.length) return answer('missing', null, `MI22 viser intet dokument på referencen ${doc.reference}.`, 'SAP har ikke oprettet noget dokument.')
+      return answer(null, null, `MI22 viser ${numbers.length} dokumenter på referencen ${doc.reference}: ${numbers.join(', ')}.`, `SAP har ${numbers.length} dokumenter på referencen: ${numbers.join(', ')}. Optælling vælger ikke ét af dem. Tjek dem i SAP (MI03).`)
+    }
+    const listed = found.docs.find(item => item.docNo === doc.docNo)
+    const inMi22 = !listed ? `MI22 viser ikke ${doc.docNo} på referencen ${doc.reference}.` : listed.active ? `MI22 viser ${doc.docNo} som aktivt.` : `MI22 viser ${doc.docNo} som ikke længere aktivt.`
+    if (step === 'post') {
+      if (!listed) return answer(null, doc.docNo, inMi22, `MI22 viser ikke ${doc.docNo}. Tjek dokumentet i SAP (MI03).`)
+      if (listed.active) return answer('missing', doc.docNo, inMi22, `${doc.docNo} er ikke bogført i SAP.`)
+      return answer('saved', doc.docNo, inMi22, `${doc.docNo} er ikke længere aktivt i SAP og er bogført.`)
+    }
+    // A count: the materials SAP was given when it went unknown (older marks: every line).
+    const recorded = Array.isArray(doc.sapUnknown?.materials) ? doc.sapUnknown.materials.map(item => item?.material).filter(Boolean) : []
+    const sent = recorded.length ? recorded : doc.lines.map(line => line.material)
+    const counted = new Set(found.counted.map(material => String(material).toUpperCase()))
+    const hit = sent.filter(material => counted.has(String(material).toUpperCase()))
+    const miss = sent.filter(material => !counted.has(String(material).toUpperCase()))
+    const inMi20 = !miss.length ? `MI20 viser ${names(hit)} som talt.` : !hit.length ? `MI20 viser ingen af ${names(miss)} som talt.` : `MI20 viser ${names(hit)} som talt, men ikke ${names(miss)}.`
+    const reason = `${inMi22} ${inMi20}`
+    if (!miss.length || (listed && !listed.active)) return answer('saved', doc.docNo, reason, `SAP har antallet på ${doc.docNo}.`)
+    if (!listed) return answer(null, doc.docNo, reason, `MI22 viser ikke ${doc.docNo}. Tjek dokumentet i SAP (MI03).`)
+    if (!hit.length) return answer('missing', doc.docNo, reason, `SAP har ikke antallet på ${doc.docNo}.`)
+    return answer(null, doc.docNo, reason, `SAP har kun antallet for ${names(hit)} på ${doc.docNo}. Tjek dokumentet i SAP (MI03).`)
+  }
+
+  return { list, create, print, count, post, remove, resolve, check }
 }
 
 module.exports = { createPiDocService }

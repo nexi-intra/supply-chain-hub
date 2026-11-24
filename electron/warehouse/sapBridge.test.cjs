@@ -232,7 +232,10 @@ test('read scripts are not tied to the configured system', async () => {
   await run('status')
   await run('sap-show', ['PS4', 'pidoc', '105900001', '2026'])
   await run('sl-lookup', ['prep', 'C:\\t', 'out.txt', '393031157352189282'])
-  assert.deepEqual(calls.map(call => path.basename(call.args[2])), ['status.vbs', 'sap-show.vbs', 'sl-lookup.vbs'])
+  await run('pidoc-check', ['C:\\t', 'mi22.txt', 'mi20.txt', '2026', 'CPABC123', '-'])
+  assert.deepEqual(calls.map(call => path.basename(call.args[2])), ['status.vbs', 'sap-show.vbs', 'sl-lookup.vbs', 'pidoc-check.vbs'])
+  assert.deepEqual(calls[3].args.slice(3), ['C:\\t', 'mi22.txt', 'mi20.txt', '2026', 'CPABC123', '-'], '"Tjek i SAP" gets no system argument')
+  assert.deepEqual([calls[3].options.env.COUNTPOINT_SAP_SYSTEM, calls[3].options.env.COUNTPOINT_SAP_CLIENT], ['QS4', '100'])
   assert.equal(calls[0].options.env.COUNTPOINT_SAP_SYSTEM, 'QS4')
 })
 

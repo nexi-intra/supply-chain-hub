@@ -409,6 +409,7 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   }))
   handle('pidocs:delete', (user, p) => piDocs.remove(user, p.id, p.docId))
   handle('pidocs:resolve', (user, p) => piDocs.resolve(user, p.id, p.docId, { outcome: p.outcome, docNo: typeof p.docNo === 'string' ? p.docNo : '', reason: typeof p.reason === 'string' ? p.reason : '' }))
+  handle('pidocs:check', (user, p) => piDocs.check(user, p.id, p.docId))
   handle('roles:me', async user => ({ role: await roles.roleOf(user), locationAdmin: await roles.isLocationAdmin(user) }))
   handle('roles:list', user => roles.list(user))
   handle('roles:set-admin', async (user, p) => { try { return await roles.setAdmin(user, { email: p.email, admin: p.admin === true }) } finally { dropRoles() } })

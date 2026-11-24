@@ -519,16 +519,20 @@ test('a SAP session not logged on in English stops every PI script with "Log på
   assert.deepEqual(names, ['pidoc-create', 'pidoc-print', 'pidoc-serials', 'pidoc-count', 'pidoc-post', 'pidoc-delete'])
 })
 
-// The scripts cannot run here (they change SAP); their source is checked instead.
+// The scripts cannot run here (they change SAP); their source is checked instead. pidoc-check.vbs only reads ("Tjek i
+// SAP"), but it opens its own session on the same rules.
 const PI_SCRIPTS = fs.readdirSync(path.join(__dirname, 'sap')).filter(name => /^pidoc-.*\.vbs$/.test(name))
+const PI_WRITE_SCRIPTS = PI_SCRIPTS.filter(name => name !== 'pidoc-check.vbs')
 
 test('every PI script refuses a non-English logon after the system check and before any transaction is filled', () => {
-  assert.deepEqual(PI_SCRIPTS.sort(), ['pidoc-count.vbs', 'pidoc-create.vbs', 'pidoc-delete.vbs', 'pidoc-post.vbs', 'pidoc-print.vbs', 'pidoc-serials.vbs'])
+  assert.deepEqual(PI_SCRIPTS.sort(), ['pidoc-check.vbs', 'pidoc-count.vbs', 'pidoc-create.vbs', 'pidoc-delete.vbs', 'pidoc-post.vbs', 'pidoc-print.vbs', 'pidoc-serials.vbs'])
   for (const name of PI_SCRIPTS) {
     const source = fs.readFileSync(path.join(__dirname, 'sap', name), 'utf8')
     const system = source.indexOf('"wrong-system"')
     const refusal = source.indexOf('If logonLanguage <> "EN" And logonLanguage <> "E" Then Finish False, "language-not-supported"')
-    const firstTransaction = source.indexOf('okcd").Text = "/n', source.indexOf('\nsystemName = WScript.Arguments(0)'))
+    const main = source.search(/\nsystemName = /)
+    const firstTransaction = source.indexOf('okcd").Text = "/n', main)
+    assert.ok(main > 0, `${name}: the main part starts with the system`)
     assert.ok(system > 0 && refusal > system, `${name}: the language is checked after the system`)
     assert.ok(firstTransaction > refusal, `${name}: the language is checked before the first transaction`)
     assert.match(source, /^Dim logonLanguage\r$/m, `${name}: logonLanguage is declared (Option Explicit)`)
@@ -536,7 +540,7 @@ test('every PI script refuses a non-English logon after the system check and bef
   }
 })
 
-// Every script that opens its own SAP session: the six PI scripts, sap-show and the two Softwareload writes.
+// Every script that opens its own SAP session: the seven PI scripts ("Tjek i SAP" too), sap-show and the two Softwareload writes.
 const SESSION_SCRIPTS = [...PI_SCRIPTS, 'sap-show.vbs', 'sl-transfer.vbs', 'sl-block.vbs']
 const CONNECTION_FUNCTIONS = [
   'Function ConnectionMatches(c, wantedSystem, wantedClient)',
@@ -597,9 +601,10 @@ test('every session script picks the first connection to the system and client, 
   }
 })
 
-test('every PI script says {"stage":"waiting"} right before it waits for the user; pidoc-create only when creating', () => {
+test('every PI write script says {"stage":"waiting"} right before it waits for the user; pidoc-create only when creating', () => {
   const STAGE = 'WScript.StdOut.WriteLine "{""stage"":""waiting""}"'
-  for (const name of PI_SCRIPTS) {
+  assert.equal(PI_WRITE_SCRIPTS.length, 6)
+  for (const name of PI_WRITE_SCRIPTS) {
     const lines = fs.readFileSync(path.join(__dirname, 'sap', name), 'utf8').split('\r\n')
     assert.equal(lines.filter(line => line.includes('stage')).length, 1, `${name}: one stage line`)
     const wait = lines.indexOf('For i = 1 To waitSeconds * 2')
@@ -705,4 +710,88 @@ test('a PI script that fails before the hand-over never calls onWaiting and free
       assert.equal(await soon(other, `${name}: another SAP job`), 'other ran', `${name}: the queue is free again`)
     }
   }
+})
+
+// ---- "Tjek i SAP": reads only, nothing is changed ----
+
+/** A pidoc-check runner that saves the lists it is given (null: SAP lists nothing) and answers like the script. */
+function checkSetup({ mi22 = MI22, mi20 = fixture('mi20-list.txt'), answer = null, status = readyFor('QS4') } = {}) {
+  const calls = []
+  const queue = []
+  const bridge = { exclusive: job => { queue.push('exclusive'); return job() }, handOver: () => { throw new Error('a read never hands SAP over') } }
+  const runScript = async (name, args, options) => {
+    calls.push({ name, args, options })
+    if (name === 'status') return status
+    const [dir, mi22File, mi20File, , , docNo] = args
+    const result = answer || { ok: true, mi22: mi22 === null ? 'empty' : 'saved', mi20: docNo === '-' ? 'skipped' : mi20 === null ? 'empty' : 'saved' }
+    if (result.mi22 === 'saved' && mi22 !== null) fs.writeFileSync(path.join(dir, mi22File), mi22)
+    if (result.mi20 === 'saved' && mi20 !== null) fs.writeFileSync(path.join(dir, mi20File), mi20)
+    return `noise\r\n${JSON.stringify(result)}`
+  }
+  const writer = createPiDocWriter({ bridge, runScript, clipboard: null, system: 'QS4', tempRoot: os.tmpdir(), waitSeconds: 300 })
+  return { writer, calls, queue }
+}
+
+test('"Tjek i SAP": MI22 by the reference and MI20 for the document, in the SAP queue after the status check', async () => {
+  const { writer, calls, queue } = checkSetup()
+  const result = await writer.checkDocument({ reference: 'cpabc123', docNo: '105000894', year: '2026' })
+  // MI22: only rows with the reference (100000784 has none); MI20: only the document asked about (not 105000893).
+  assert.deepEqual(result, { docs: [{ docNo: '105000900', materials: ['R133-0032', 'R133-0033'], active: true }], counted: ['R133-0032', 'R133-0033'] })
+  assert.deepEqual(calls.map(call => call.name), ['status', 'pidoc-check'])
+  assert.deepEqual(calls[1].args.slice(1), ['mi22.txt', 'mi20.txt', '2026', 'CPABC123', '105000894'])
+  assert.ok(calls[1].options.timeoutMs >= 60 * 1000, 'two lists need more than the default 15 s')
+  assert.equal(calls[1].options.onLine, undefined, 'nobody waits for the user')
+  assert.deepEqual(queue, ['exclusive'], 'a read: the queue is held to the end, never handed over')
+  assert.equal(fs.existsSync(calls[1].args[0]), false, 'the lists are removed again')
+})
+
+test('"Tjek i SAP": without a document number only MI22 is read; empty lists and a document no longer active', async () => {
+  const unknownCreate = checkSetup({ mi22: null })
+  assert.deepEqual(await unknownCreate.writer.checkDocument({ reference: 'CPABC123', docNo: null, year: '2026' }), { docs: [], counted: [] })
+  assert.equal(unknownCreate.calls[1].args[5], '-')
+  const posted = checkSetup({ mi22: fixture('mi22-posted.txt'), mi20: null })
+  assert.deepEqual(await posted.writer.checkDocument({ reference: 'CPMVF8IW7A', docNo: '105000894', year: '2026' }), { docs: [{ docNo: '105000894', materials: ['R133-0032', 'R133-0033'], active: false }], counted: [] })
+})
+
+test('"Tjek i SAP": SAP not ready, a non-English logon, a bad request or an unreadable list stop it; nothing is guessed', async () => {
+  const otherClient = JSON.stringify({ running: true, scripting: true, connections: [{ disabledByServer: false, sessions: [{ busy: false, popup: false, system: 'QS4', client: '200', user: 'JREMMER', transaction: 'SESSION_MANAGER' }] }] })
+  const notReady = checkSetup({ status: otherClient })
+  await assert.rejects(notReady.writer.checkDocument({ reference: 'CPABC123', docNo: '105000894', year: '2026' }), { code: 'SAP_NOT_READY', sapState: 'wrong-system' })
+  assert.deepEqual(notReady.calls.map(call => call.name), ['status'])
+  const english = checkSetup({ answer: { ok: false, error: 'language-not-supported' } })
+  await assert.rejects(english.writer.checkDocument({ reference: 'CPABC123', docNo: null, year: '2026' }), { code: 'PIDOC_SAP_LANGUAGE' })
+  const bad = checkSetup()
+  for (const request of [{ reference: 'x y', docNo: null, year: '2026' }, { reference: 'CPABC123', docNo: '12345', year: '2026' }, { reference: 'CPABC123', docNo: null, year: '26' }]) {
+    await assert.rejects(bad.writer.checkDocument(request), { code: 'PIDOC_INVALID' }, JSON.stringify(request))
+  }
+  assert.deepEqual(bad.calls, [], 'SAP is not asked')
+  await assert.rejects(checkSetup({ mi22: 'not a MI22 list' }).writer.checkDocument({ reference: 'CPABC123', docNo: null, year: '2026' }), { code: 'PIDOC_SAP_FAILED' })
+  await assert.rejects(checkSetup({ answer: { ok: true, mi22: 'saved', mi20: 'skipped' }, mi22: null }).writer.checkDocument({ reference: 'CPABC123', docNo: null, year: '2026' }), { code: 'PIDOC_SAP_FAILED' }, 'a list said saved but missing')
+})
+
+test('"Tjek i SAP" against the fake SAP of dev mode', async () => {
+  const fixtures = createFixtureRunner(path.join(__dirname, 'fixtures', 'sap'), { system: 'QS4' })
+  const writer = createPiDocWriter({ bridge: BRIDGE, runScript: fixtures, clipboard: null, system: 'QS4', tempRoot: os.tmpdir(), waitSeconds: 300 })
+  assert.deepEqual(await writer.checkDocument({ reference: 'CPABC123', docNo: null, year: '2026' }), { docs: [], counted: [] })
+  assert.deepEqual(await writer.checkDocument({ reference: 'CPABC123', docNo: '105900001', year: '2026' }), { docs: [{ docNo: '105900001', materials: ['FIXTURE'], active: true }], counted: ['FIXTURE'] })
+})
+
+test('pidoc-check.vbs only lists MI22 and MI20, never hands SAP over and closes its own session', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'sap', 'pidoc-check.vbs'), 'utf8')
+  const lines = source.split('\r\n')
+  assert.equal(source.split('\n').length, lines.length, 'CRLF line endings')
+  assert.equal(lines.filter(line => line.includes('stage')).length, 0, 'no stage line: nobody waits for the user')
+  assert.equal(/waitSeconds/.test(source), false)
+  assert.deepEqual([...source.matchAll(/okcd"\)\.Text = "(\/n[^"]*)"/g)].map(match => match[1]), ['/nMI22', '/nMI20'], 'only the two lists')
+  assert.deepEqual([...new Set([...source.matchAll(/sendVKey (\d+)/g)].map(match => match[1]))].sort(), ['0', '12', '8'], 'Enter, F8 to list, F12 to cancel a popup; never Save')
+  assert.equal(/tbar\[1\]/.test(source), false, 'no application toolbar button (Select All, Post Difference)')
+  const system = lines.indexOf('systemName = CreateObject("WScript.Shell").Environment("PROCESS")("COUNTPOINT_SAP_SYSTEM")')
+  assert.ok(system > 0, 'the system CountPoint is set to')
+  assert.equal(lines[system + 1], 'If Len(systemName) = 0 Then Finish False, "arguments"')
+  assert.ok(lines.includes('s.findById("wnd[0]/usr/ctxtIM_INVNU-LOW").Text = reference'), 'MI22 by the reference')
+  assert.ok(lines.some(line => line.trim() === 's.findById("wnd[0]/usr/txtIM_IBLNR-LOW").Text = docNo'), 'MI20 for the document')
+  assert.ok(lines.some(line => line.trim() === 's.findById("wnd[1]/usr/ctxtDY_FILE_ENCODING").Text = "4110"'), 'saved as UTF-8 text (%pc)')
+  assert.ok(lines.some(line => line.trim() === 'If screen = "1000" Then ClosePopups : RunList = "empty" : Exit Function'), 'a list with nothing gives no file and "empty"')
+  const finish = source.slice(source.indexOf('Sub Finish('), source.indexOf('End Sub', source.indexOf('Sub Finish(')))
+  assert.ok(finish.indexOf('CloseOwnSession') > 0 && finish.indexOf('CloseOwnSession') < finish.indexOf('WScript.StdOut.WriteLine'), 'the own session is closed before the answer')
 })

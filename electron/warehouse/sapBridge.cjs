@@ -8,7 +8,7 @@ const path = require('node:path')
 const childProcess = require('node:child_process')
 const { computeSapState, EXPECTED } = require('./sapState.cjs')
 
-const SCRIPTS = Object.freeze({ status: 'status.vbs', export: 'export.vbs', matdoc: 'matdoc.vbs', longserno: 'longserno.vbs', stockcheck: 'stockcheck.vbs', mm60: 'mm60.vbs', 'sap-show': 'sap-show.vbs', 'sl-lookup': 'sl-lookup.vbs' })
+const SCRIPTS = Object.freeze({ status: 'status.vbs', export: 'export.vbs', matdoc: 'matdoc.vbs', longserno: 'longserno.vbs', stockcheck: 'stockcheck.vbs', mm60: 'mm60.vbs', 'sap-show': 'sap-show.vbs', 'sl-lookup': 'sl-lookup.vbs', 'pidoc-check': 'pidoc-check.vbs' })
 // Scripts that CHANGE SAP. Their first argument is the SAP system. The runner refuses it unless it is the system this
 // installation is configured for AND on WRITE_SYSTEMS; the scripts themselves do not check it.
 const WRITE_SCRIPTS = Object.freeze({ 'pidoc-create': 'pidoc-create.vbs', 'pidoc-print': 'pidoc-print.vbs', 'pidoc-serials': 'pidoc-serials.vbs', 'pidoc-count': 'pidoc-count.vbs', 'pidoc-post': 'pidoc-post.vbs', 'pidoc-delete': 'pidoc-delete.vbs', 'sl-transfer': 'sl-transfer.vbs', 'sl-block': 'sl-block.vbs' })

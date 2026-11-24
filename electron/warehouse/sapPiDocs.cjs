@@ -9,6 +9,8 @@ const { putOnClipboard, CLIPBOARD_REFUSED } = require('./clipboardText.cjs')
 const { computeSapState, EXPECTED } = require('./sapState.cjs')
 
 const TEST_TIMEOUT_MS = 3 * 60 * 1000
+// "Tjek i SAP": its own session, MI22 and MI20.
+const CHECK_TIMEOUT_MS = 3 * 60 * 1000
 const WAIT_SECONDS = 15 * 60
 const REFERENCE = /^[A-Z0-9]{4,16}$/
 
@@ -290,7 +292,45 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, expected = { 
     }
   }
 
-  return { createDocument, printDocument, enterSerials, enterCounts, postDocuments, deleteDocument }
+  /**
+   * "Tjek i SAP" (read only): MI22 for the documents with `reference` and, with `docNo`, MI20 for that document. Runs in
+   * the SAP queue after the same status check as the writes, but holds the queue to the end: nobody waits for the user.
+   * `docs` are the documents MI22 lists with the reference (active: still "Doc. Active"); `counted` the materials MI20
+   * lists as counted on `docNo`.
+   */
+  async function checkDocument({ reference, docNo = null, year }) {
+    const request = { reference: String(reference || '').toUpperCase(), docNo: docNo === null || docNo === undefined || docNo === '' ? null : String(docNo), year: String(year || '') }
+    if (!REFERENCE.test(request.reference) || (request.docNo !== null && !/^\d{9,10}$/.test(request.docNo)) || !/^\d{4}$/.test(request.year)) throw writeError('PIDOC_INVALID', 'Ugyldigt dokument')
+    return bridge.exclusive(async () => {
+      const state = computeSapState(lastJsonLine(await runScript('status')) || {}, expected)
+      if (!state.ready) throw writeError('SAP_NOT_READY', 'SAP er ikke klar', { sapState: state.state })
+      const dir = await fs.promises.mkdtemp(path.join(tempRoot, 'countpoint-pidoc-'))
+      try {
+        const result = lastJsonLine(await runScript('pidoc-check', [dir, 'mi22.txt', 'mi20.txt', request.year, request.reference, request.docNo || '-'], { timeoutMs: CHECK_TIMEOUT_MS }))
+        if (!result?.ok) throw scriptFailure(result, 'Tjek i SAP')
+        let rows
+        let listed
+        try {
+          rows = result.mi22 === 'empty' ? [] : parseMi22(await fs.promises.readFile(path.join(dir, 'mi22.txt'), 'utf8')).filter(doc => doc.physInvNo === request.reference)
+          listed = request.docNo === null || result.mi20 === 'empty' ? [] : parseMi20(await fs.promises.readFile(path.join(dir, 'mi20.txt'), 'utf8')).filter(item => item.docNo === request.docNo)
+        } catch (error) {
+          throw writeError('PIDOC_SAP_FAILED', `Tjek i SAP kunne ikke læse listerne (${error?.code || error?.message})`)
+        }
+        const byDoc = new Map()
+        for (const row of rows) {
+          if (!byDoc.has(row.docNo)) byDoc.set(row.docNo, { docNo: row.docNo, materials: [], active: false })
+          const doc = byDoc.get(row.docNo)
+          if (!doc.materials.includes(row.material)) doc.materials.push(row.material)
+          if (/active/i.test(row.status)) doc.active = true
+        }
+        return { docs: [...byDoc.values()], counted: [...new Set(listed.map(item => item.material))] }
+      } finally {
+        await fs.promises.rm(dir, { recursive: true, force: true })
+      }
+    })
+  }
+
+  return { createDocument, printDocument, enterSerials, enterCounts, postDocuments, deleteDocument, checkDocument }
 }
 
 module.exports = { createPiDocWriter }
