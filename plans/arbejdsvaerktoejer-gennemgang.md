@@ -29,25 +29,33 @@ Sidste testkørsel er grøn:
 | Trin 3 i 5.2 (kontakt i konfigurationen) | Det er en ny funktion (forslag 7.18). |
 | "Tjek i SAP"-knappen fra 2.4 og 7.1 | Den kræver et nyt SAP-script og en QS4-test. Indtil da afklarer en manager et ukendt dokument med en begrundelse. |
 
-### Skal testes i QS4 før udgivelse
+### QS4-test 24.11.2026
 
-Ændringerne i PI-scripts og SAP-eksport er kun læst igennem, ikke kørt mod SAP:
+Kørt i QS4 (klient 100) med appens egne PI-scripts gennem `sapPiDocs.cjs` og `sapBridge.cjs` med system QS4. Jacob trykkede F8, Print, Update Count, Post Difference og Gem. Intet på M: er rørt, og den rigtige decemberstatus er ikke brugt. Testdokumenterne 105000913, 105000914 og 105000915 er alle bogført bagefter, så der står ingen åbne testdokumenter i QS4.
 
-1. Dansk logon giver "Log på SAP på engelsk (EN), og prøv igen" i alle seks PI-trin, og engelsk logon virker hele vejen.
-2. ZMS_COUNT_SERIAL med mindst 1000 serienumre. Antallet MENGE skal læses rigtigt, og en slettet række skal stoppe med "SAP har talt N-1".
-3. MI04 med materialer uden serienumre. Hvis de står i ZMS_COUNT_SERIAL-listen, kan tjekket "alle materialer fundet" komme tilbage.
-4. `/n` fra MI04 og fra MI20's Post Difference med ugemte data må ikke give en popup, der hænger.
-5. Timeout i MI20 med flere dokumenter og et nummer kopieret imens. Resultatet skal være "Ukendt i SAP" og ikke "Ikke bogført".
-6. Timeout i MI04 og serienumre: gemt og forladt giver "talt", ikke gemt giver "ikke talt".
-7. Tidsforbrug: 15 minutters ventetid plus tilbagelæsning skal holde sig inden for 300 sekunder.
-8. IQ09 uden resultat: hvilken besked (id) giver SAP? Appen godtager IH 047 som "ingen serienumre".
-9. MB52 må ikke blive stående på startskærmen ved normal brug.
-10. MI31 "Freeze book inventory": er beholdningen frosset på appens PI-dokumenter? Er den det, regnes antallet forkert.
-11. MI05 på et talt dokument og derefter "Bogfør alligevel" fra Hub med begrundelse. Det rettede antal skal bogføres.
-12. Lukker brugeren MI31, mens SAP arbejder efter F8, bør det give "ukendt" og ikke "intet oprettet". Det kræver en ændring i scriptet.
+1. [x] Dansk logon (DA) stopper med "Log på SAP på engelsk (EN), og prøv igen", før noget bliver udfyldt. Prøvet med print. Kontrollen er den samme linje i alle seks PI-scripts, og det er låst af en test. Engelsk logon virkede hele vejen gennem opret, print, serienumre og bogfør.
+2. [x] 1.525 serienumre på INT4100-7822-0-R (D001, dokument 105000915). SAP's "1.525" blev læst som 1525, og der kom 0 nye serienumre. En slettet række på 105000913 gav "SAP har talt 2 … sendt 3".
+3. [ ] MI04 med materialer uden serienumre. **Ikke muligt:** QS4 har kun lager af materialer med serienumre. Tjekket "alle materialer fundet" forbliver fjernet.
+4. [x] `/n` fra MI20 efter Post Difference uden at gemme gav ingen popup.
+5. [x] Et andet nummer kopieret under MI20 gav "Ukendt i SAP" (Check af IM_IBLNR-LOW fangede det).
+6. [x] Serienumre: gemt giver "talt". MI04-delen kan ikke prøves (se punkt 3).
+7. [x] Timeout: opret uden F8 gav "intet er gemt", og MI20 uden bogføring gav "Ikke bogført" med differencerne. Tiden holdt sig inden for grænsen.
+8. [x] IQ09 uden resultat giver IH 047, type S, "No objects were selected". Det passer med appen.
+9. [x] MB52 går direkte til listen (skærm 120) og bliver ikke stående på startskærmen.
+10. [x] "Freeze book inventory" og "Set posting block" var slået fra. Scriptet sætter nu begge til fra og tjekker det (commit 6389f4c).
+11. [x] MI05 rettede 105000915 fra 1.525 til 1.524. Appens bogføring gav talt 1524 og difference −1, materialebilag 4905204966. Selve knappen "Bogfør alligevel" med begrundelse i Hub skal stadig prøves i appen (se nedenfor).
+12. [ ] Lukker brugeren MI31, mens SAP arbejder efter F8. **Udskudt:** det kræver en ændring i scriptet og hører sammen med 5.3 og 5.4.
+
+Nye fund fra testen:
+
+- To SAP-scripts på samme PC på én gang kan give en misvisende fejl. MI31 sagde "Du har ikke adgang", fordi et andet script kørte samtidig. Det hører sammen med SAP-køen i 5.4. Appen kører kun ét PI-script ad gangen (`PIDOC_BUSY`), og en fælles kø for alle SAP-scripts er en del af 5.4.
+- Står dokumentet åbent i MI05 i en anden session, låser SAP det i MI20 ("User … blocks physical inventory document"). Når brugeren lukker den anden session og trykker Post igen, går det godt, og appen melder det, SAP faktisk bogførte. Ugemte MI05-rettelser går tabt, hvis brugeren skriver `/n` uden at gemme.
+- Efter en timeout, hvor brugeren selv har skrevet `/n`, kan scriptets egen session blive stående på startskærmen. Det er kun kosmetisk.
+- Beløbet i differencerne er 0 i QS4. Det skyldes sandsynligvis manglende værdisætning i QS4 og skal holdes øje med i PS4.
 
 ### Skal prøves i appen
 
+- "Bogfør alligevel" fra Hub med en managers begrundelse på et dokument, der er rettet i MI05. Scriptdelen er bestået i QS4 (punkt 11).
 - En rigtig scanner i Placeringer: Enter i materialevælgeren og i søgningen skal tage det, der lige er scannet.
 - Finske og svenske ord i Huberts linje "Andre paller", fx "pois käytöstä" og "inaktiverad".
 - At "lukket pænt" (exitedAt) når frem til M: inden for 10 sekunder ved lukning. Ellers kommer der falske "har ikke sendt"-advarsler.
