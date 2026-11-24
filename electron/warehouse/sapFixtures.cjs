@@ -28,12 +28,12 @@ function createFixtureRunner(dir, { readClipboard = () => '', system = 'PS4' } =
     if (name === 'pidoc-check') {
       // "Tjek i SAP": a document number is listed as active and counted; without one MI22 has nothing on the reference.
       const [outDir, mi22File, mi20File, , reference, docNo] = args
-      if (docNo === '-') return '{"ok":true,"mi22":"empty","mi20":"skipped"}'
+      if (docNo === '-') return '{"ok":true,"mi22":"empty","mi20":"skipped","mi22Message":"S: (fixture) nothing on the reference","mi20Message":""}'
       const mi22 = ['\tMaterial\t\t\t\t\tMaterial Description\t\t\t\t\tPlnt\tLocation', '\tPhysInvDoc\tItem\tBatch\tPeriod\tPlan. Date\t\tCount Date\tSTy\tPhys. Inv. No.\tDoc. Status', '\tFIXTURE\t\t\t\t\tFixture\t\t\t\t\tD301\tD000', `\t${docNo}\t1\t\t0000.00\t19.10.2026\t\t20.10.2026\t1\t${reference}\tDoc. Active`]
       const mi20 = ['\tPhysInvDoc\tItem\tMaterial\tBatch\tPlnt\tLocation\tBook Quantity\tQty Counted\tDifference qty\tBUn\tDifference Amt.\tCrcy', `\t${docNo}\t1\tFIXTURE\t\tD301\tD000\t10,000\t9,000\t1,000-\tEA\t50,00\tDKK`]
       await fs.promises.writeFile(path.join(outDir, mi22File), mi22.join('\r\n'), 'utf8')
       await fs.promises.writeFile(path.join(outDir, mi20File), mi20.join('\r\n'), 'utf8')
-      return '{"ok":true,"mi22":"saved","mi20":"saved"}'
+      return '{"ok":true,"mi22":"saved","mi20":"saved","mi22Message":"","mi20Message":""}'
     }
     if (name === 'sap-show') return '{"ok":true}'
     if (name === 'pidoc-serials') {

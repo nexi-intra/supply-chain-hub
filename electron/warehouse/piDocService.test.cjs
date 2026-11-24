@@ -730,7 +730,11 @@ test('an unknown count resolved as not entered goes back to printed without ente
 
 const STAMP = 'Tjek i SAP 23.11.2026 09:00: '
 const mark = (step, status, extra = {}) => ({ step, status, by: { email: 'anna@x', name: 'Anna', at: 1 }, detail: 'verify-failed', ...extra })
-const listed = (docNo, materials, active) => ({ docNo, materials, active })
+const ACTIVE = 'Doc. Active'
+const POSTED = ''
+const DELETED = 'Doc. Deleted'
+/** A document as MI22 lists it: posted shows no status at all (mi22-posted.txt). */
+const listed = (docNo, materials, status) => ({ docNo, materials, active: /active/i.test(status), posted: !status, status })
 /** The texts a manager reads: they start with the time of the check and join no sentences with a dash. */
 function readable(result, ...lists) {
   assert.ok(result.reason.startsWith(STAMP), result.reason)
@@ -750,18 +754,27 @@ test('"Tjek i SAP" for an unknown create: one document on the reference is saved
   const before = structuredClone(state.stored)
   const writes = state.writes.length
 
-  sap.check = async () => ({ docs: [listed('105000900', ['R1', 'R2'], true)], counted: [] })
+  sap.check = async () => ({ docs: [listed('105000900', ['R1', 'R2'], ACTIVE)], counted: [] })
   const saved = await service.check(MONA, 'c1', 'CPREF1')
   assert.deepEqual([saved.outcome, saved.docNo], ['saved', '105000900'])
   readable(saved, 'MI22', '105000900')
   assert.deepEqual(state.calls, [['check', { reference: 'CPREF1', docNo: null, year: '2026' }]], 'MI22 by the reference only')
+  sap.check = async () => ({ docs: [listed('105000900', ['R1', 'R2'], POSTED)], counted: [] })
+  assert.deepEqual(Object.values(await service.check(MONA, 'c1', 'CPREF1')).slice(0, 2), ['saved', '105000900'], 'created and posted since')
 
-  sap.check = async () => ({ docs: [], counted: [] })
+  // One document with another status (deleted in MI02): SAP made it, but it holds nothing; the manager decides.
+  sap.check = async () => ({ docs: [listed('105000900', ['R1', 'R2'], DELETED)], counted: [] })
+  const deleted = await service.check(MONA, 'c1', 'CPREF1')
+  assert.deepEqual([deleted.outcome, deleted.docNo], [null, null])
+  readable(deleted, 'MI22', '105000900', DELETED)
+  assert.match(deleted.summary, /Doc\. Deleted/)
+
+  sap.check = async () => ({ docs: [], counted: [], messages: { mi22: 'S: No data selected', mi20: '' } })
   const missing = await service.check(MONA, 'c1', 'CPREF1')
   assert.deepEqual([missing.outcome, missing.docNo], ['missing', null])
-  readable(missing, 'MI22', 'CPREF1')
+  readable(missing, 'MI22', 'CPREF1', 'No data selected')
 
-  sap.check = async () => ({ docs: [listed('105000900', ['R1'], true), listed('105000901', ['R2'], true)], counted: [] })
+  sap.check = async () => ({ docs: [listed('105000900', ['R1'], ACTIVE), listed('105000901', ['R2'], ACTIVE)], counted: [] })
   const several = await service.check(MONA, 'c1', 'CPREF1')
   assert.deepEqual([several.outcome, several.docNo], [null, null], 'the app never picks one of them')
   readable(several, 'MI22', '105000900', '105000901')
@@ -772,43 +785,59 @@ test('"Tjek i SAP" for an unknown create: one document on the reference is saved
   assert.equal(state.writes.length, writes)
 })
 
-test('"Tjek i SAP" for an unknown count: MI20 decides by the materials sent; a document no longer active is saved', async t => {
+test('"Tjek i SAP" for an unknown count: MI20 decides by the materials sent; a posted document is saved, a deleted one is left to the manager', async t => {
   const sent = [{ material: 'R1', qty: 5 }, { material: 'R2', qty: 2 }]
   const lines = [{ material: 'R1' }, { material: 'R2' }, { material: 'R3' }]
-  const docs = { 105000901: sapDoc('105000901', 'printed', { lines, sapUnknown: mark('count', 'printed', { materials: sent }) }) }
+  const docs = {
+    105000901: sapDoc('105000901', 'printed', { lines, sapUnknown: mark('count', 'printed', { materials: sent }) }),
+    105000905: sapDoc('105000905', 'printed', { lines: [], sapUnknown: mark('count', 'printed', { materials: [] }) }),
+  }
   const { state, sap, service } = flow(t, { docs, rows: COUNT_ROWS })
   const before = structuredClone(state.stored)
+  const all = ['R1', 'R2', 'R3']
   const cases = [
-    [{ docs: [listed('105000901', ['R1', 'R2', 'R3'], true)], counted: ['R1', 'R2'] }, 'saved'],
-    [{ docs: [listed('105000901', ['R1', 'R2', 'R3'], false)], counted: [] }, 'saved'],
-    [{ docs: [listed('105000901', ['R1', 'R2', 'R3'], true)], counted: [] }, 'missing'],
-    [{ docs: [listed('105000901', ['R1', 'R2', 'R3'], true)], counted: ['R3'] }, 'missing'],
-    [{ docs: [listed('105000901', ['R1', 'R2', 'R3'], true)], counted: ['R1'] }, null],
+    [{ docs: [listed('105000901', all, ACTIVE)], counted: ['R1', 'R2'] }, 'saved'],
+    [{ docs: [listed('105000901', all, POSTED)], counted: [] }, 'saved'],
+    [{ docs: [listed('105000901', all, DELETED)], counted: [] }, null],
+    [{ docs: [listed('105000901', all, ACTIVE)], counted: [] }, 'missing'],
+    [{ docs: [listed('105000901', all, ACTIVE)], counted: ['R3'] }, 'missing'],
+    [{ docs: [listed('105000901', all, ACTIVE)], counted: ['R1'] }, null],
   ]
   for (const [answer, outcome] of cases) {
     sap.check = async () => answer
     const result = await service.check(MONA, 'c1', '105000901')
     assert.deepEqual([result.outcome, result.docNo], [outcome, '105000901'], JSON.stringify(answer))
     readable(result, 'MI22', 'MI20')
+    if (answer.docs[0].status === DELETED) assert.match(`${result.reason} ${result.summary}`, /Doc\. Deleted[^]*Doc\. Deleted/, 'the status in reason and summary')
   }
   assert.deepEqual(state.calls[0], ['check', { reference: 'CP105000901', docNo: '105000901', year: '2026' }])
+  // Nothing known as sent: "every one of them counted" says nothing.
+  sap.check = async () => ({ docs: [listed('105000905', ['R1'], ACTIVE)], counted: ['R1'] })
+  const unknownSent = await service.check(MONA, 'c1', '105000905')
+  assert.deepEqual([unknownSent.outcome, unknownSent.docNo], [null, '105000905'])
+  readable(unknownSent, 'MI22', 'MI20')
   assert.deepEqual(state.stored, before, 'still unknown: the manager decides')
 })
 
-test('"Tjek i SAP" for an unknown posting: no longer active in MI22 is saved, active is missing, not listed is left to the manager', async t => {
+test('"Tjek i SAP" for an unknown posting: posted (no status) in MI22 is saved, active is missing, another status or not listed is left to the manager', async t => {
   const docs = { 105000902: sapDoc('105000902', 'counted', { sapUnknown: mark('post', 'counted') }) }
   const { state, sap, service } = flow(t, { docs, rows: COUNT_ROWS })
   const cases = [
-    [{ docs: [listed('105000902', ['R1'], false)], counted: [] }, 'saved'],
-    [{ docs: [listed('105000902', ['R1'], true)], counted: ['R1'] }, 'missing'],
+    [{ docs: [listed('105000902', ['R1'], POSTED)], counted: [] }, 'saved'],
+    [{ docs: [listed('105000902', ['R1'], ACTIVE)], counted: ['R1'] }, 'missing'],
+    [{ docs: [listed('105000902', ['R1'], DELETED)], counted: [] }, null],
     [{ docs: [], counted: [] }, null],
-    [{ docs: [listed('105000903', ['R1'], false)], counted: [] }, null],
+    [{ docs: [listed('105000903', ['R1'], POSTED)], counted: [] }, null],
   ]
   for (const [answer, outcome] of cases) {
     sap.check = async () => answer
     const result = await service.check(MONA, 'c1', '105000902')
     assert.deepEqual([result.outcome, result.docNo], [outcome, '105000902'], JSON.stringify(answer))
     readable(result, 'MI22', '105000902')
+    if (answer.docs[0]?.status === DELETED) {
+      assert.match(result.reason, /Doc\. Deleted/)
+      assert.match(result.summary, /Doc\. Deleted/)
+    }
   }
   assert.equal(state.stored['105000902'].sapUnknown.step, 'post')
   assert.deepEqual(state.marked, [], 'nothing is marked "Bogført i SAP"')

@@ -4,14 +4,17 @@
 ' expects (COUNTPOINT_SAP_CLIENT); never another system or client. Saves the MI22 list of the documents with <reference>
 ' (plant D301) to <mi22File> and, unless <docNo> is "-", the MI20 list of <docNo> (plant D301, <year>) to <mi20File>.
 ' F8 only executes these display lists: nothing in MI20 is ticked, posted or saved. Nobody waits for the user, and the
-' session is closed at the end. A list SAP has nothing for (it stays on selection screen 1000) gives no file and "empty".
-' Output: {"ok":true,"mi22":"saved|empty","mi20":"saved|empty|skipped"} or {"ok":false,"error":"..."}.
+' session is closed at the end. A list SAP has nothing for gives no file and "empty": it stays on selection screen 1000
+' with an S, I or W message, which is returned (mi22Message, mi20Message: "<type>: <text>"). Screen 1000 with any other
+' message (E, A, none, unreadable) is SAP refusing the selection, never "nothing listed": "list-error: ...".
+' Output: {"ok":true,"mi22":"saved|empty","mi20":"saved|empty|skipped","mi22Message":"...","mi20Message":"..."} or
+' {"ok":false,"error":"..."}.
 Option Explicit
 On Error Resume Next
 
 Const PLANT = "D301"
 Dim systemName, client, outDir, mi22File, mi20File, year, reference, docNo
-Dim app, conn, base, s, before, beforeIds, ownId, fso, mi22, mi20
+Dim app, conn, base, s, before, beforeIds, ownId, fso, mi22, mi20, mi22Message, mi20Message, listMessage
 
 Function JsonText(value)
   Dim t
@@ -27,7 +30,7 @@ Sub Finish(ok, message)
   On Error Resume Next
   CloseOwnSession
   If ok Then
-    WScript.StdOut.WriteLine "{""ok"":true,""mi22"":" & JsonText(mi22) & ",""mi20"":" & JsonText(mi20) & "}"
+    WScript.StdOut.WriteLine "{""ok"":true,""mi22"":" & JsonText(mi22) & ",""mi20"":" & JsonText(mi20) & ",""mi22Message"":" & JsonText(mi22Message) & ",""mi20Message"":" & JsonText(mi20Message) & "}"
   Else
     WScript.StdOut.WriteLine "{""ok"":false,""error"":" & JsonText(message) & "}"
   End If
@@ -114,9 +117,34 @@ Function SaveList(file)
   SaveList = fso.FileExists(outDir & "\" & file)
 End Function
 
+' The text of the open popup, "" when none is open, "(popup)" when one is open but its text cannot be read.
+Function PopupText()
+  Dim n, t
+  PopupText = ""
+  n = 0
+  Err.Clear
+  n = s.Children.Count
+  If Err.Number <> 0 Or n < 2 Then Err.Clear : Exit Function
+  t = ""
+  t = CStr(s.findById("wnd[" & (n - 1) & "]").PopupDialogText)
+  If Err.Number <> 0 Or Len(Trim(t)) = 0 Then
+    Err.Clear
+    t = ""
+    t = CStr(s.findById("wnd[" & (n - 1) & "]/usr/txtMESSTXT1").Text)
+  End If
+  If Err.Number <> 0 Then Err.Clear : t = ""
+  t = Trim(t)
+  If Len(t) = 0 Then t = "(popup)"
+  PopupText = t
+End Function
+
 ' Executes the filled display list (F8) and saves it to <file>: "saved", or "empty" when SAP lists nothing.
+' SAP stays on selection screen 1000 both when it lists nothing and when it refuses the selection (e.g. no authorization
+' for the plant): only a status bar message read as S, I or W is "nothing listed" (listMessage keeps it). Anything else
+' (E, A, no message, unreadable) ends the run with "list-error", so CountPoint never reads a refusal as "no document".
 Function RunList(file)
-  Dim screen
+  Dim screen, kind, text, popup
+  listMessage = ""
   Err.Clear
   s.findById("wnd[0]").sendVKey 8
   WaitIdle
@@ -124,7 +152,22 @@ Function RunList(file)
   screen = ""
   screen = CStr(s.Info.ScreenNumber)
   If Err.Number <> 0 Then Err.Clear : Finish False, "read-failed"
-  If screen = "1000" Then ClosePopups : RunList = "empty" : Exit Function
+  If screen = "1000" Then
+    ' Read before any popup is cancelled: the message may be all SAP says.
+    popup = PopupText()
+    Err.Clear
+    kind = ""
+    text = ""
+    kind = UCase(Trim(CStr(s.findById("wnd[0]/sbar").MessageType)))
+    text = Trim(CStr(s.findById("wnd[0]/sbar").Text))
+    If Err.Number <> 0 Then Err.Clear : kind = ""
+    If Len(popup) > 0 Then text = Trim(text & " [" & popup & "]")
+    listMessage = kind & ": " & text
+    If kind <> "S" And kind <> "I" And kind <> "W" Then Finish False, "list-error: " & listMessage
+    ClosePopups
+    RunList = "empty"
+    Exit Function
+  End If
   If Not SaveList(file) Then Err.Clear : Finish False, "read-failed"
   RunList = "saved"
 End Function
@@ -214,6 +257,8 @@ End Function
 Set s = Nothing
 mi22 = ""
 mi20 = "skipped"
+mi22Message = ""
+mi20Message = ""
 If WScript.Arguments.Count < 6 Then Err.Clear : Finish False, "arguments"
 systemName = CreateObject("WScript.Shell").Environment("PROCESS")("COUNTPOINT_SAP_SYSTEM")
 If Len(systemName) = 0 Then Finish False, "arguments"
@@ -264,6 +309,7 @@ If Err.Number <> 0 Then Err.Clear : Finish False, "mi22-screen-changed"
 Check "wnd[0]/usr/ctxtIM_INVNU-LOW", reference
 Check "wnd[0]/usr/ctxtIM_WERKS-LOW", PLANT
 mi22 = RunList(mi22File)
+mi22Message = listMessage
 
 ' MI20: the counted items of <docNo>, listed only (never ticked, never "Post Difference").
 If docNo <> "-" Then
@@ -285,5 +331,6 @@ If docNo <> "-" Then
   Check "wnd[0]/usr/ctxtIM_WERKS-LOW", PLANT
   Check "wnd[0]/usr/txtGJAHR-LOW", year
   mi20 = RunList(mi20File)
+  mi20Message = listMessage
 End If
 Finish True, ""

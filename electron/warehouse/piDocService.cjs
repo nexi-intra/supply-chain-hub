@@ -506,18 +506,32 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
     const found = await writer.checkDocument({ reference: doc.reference, docNo: step === 'create' ? null : doc.docNo, year })
     const stamp = `Tjek i SAP ${dateTime(now())}: `
     const answer = (outcome, docNo, reason, summary) => ({ outcome, docNo, reason: clean(stamp + reason, 300), summary: clean(summary, 300) })
+    // MI22 shows a posted document without any status and an open one as "Doc. Active"; any other status (e.g. deleted in
+    // MI02) is neither, so the app proposes nothing for it.
+    const statusText = item => `med status "${item.status}"`
     if (step === 'create') {
       const numbers = found.docs.map(item => item.docNo)
-      if (numbers.length === 1) return answer('saved', numbers[0], `MI22 viser dokument ${numbers[0]} på referencen ${doc.reference}.`, `SAP har oprettet dokument ${numbers[0]}.`)
-      if (!numbers.length) return answer('missing', null, `MI22 viser intet dokument på referencen ${doc.reference}.`, 'SAP har ikke oprettet noget dokument.')
+      if (numbers.length === 1) {
+        const [only] = found.docs
+        if (only.active || only.posted) return answer('saved', only.docNo, `MI22 viser dokument ${only.docNo} på referencen ${doc.reference}.`, `SAP har oprettet dokument ${only.docNo}.`)
+        return answer(null, null, `MI22 viser dokument ${only.docNo} på referencen ${doc.reference} ${statusText(only)}.`, `SAP har dokument ${only.docNo} ${statusText(only)}. Tjek det i SAP (MI03).`)
+      }
+      const said = found.messages?.mi22 ? ` (SAP: ${found.messages.mi22})` : ''
+      if (!numbers.length) return answer('missing', null, `MI22 viser intet dokument på referencen ${doc.reference}${said}.`, 'SAP har ikke oprettet noget dokument.')
       return answer(null, null, `MI22 viser ${numbers.length} dokumenter på referencen ${doc.reference}: ${numbers.join(', ')}.`, `SAP har ${numbers.length} dokumenter på referencen: ${numbers.join(', ')}. Optælling vælger ikke ét af dem. Tjek dem i SAP (MI03).`)
     }
     const listed = found.docs.find(item => item.docNo === doc.docNo)
-    const inMi22 = !listed ? `MI22 viser ikke ${doc.docNo} på referencen ${doc.reference}.` : listed.active ? `MI22 viser ${doc.docNo} som aktivt.` : `MI22 viser ${doc.docNo} som ikke længere aktivt.`
+    const inMi22 = !listed ? `MI22 viser ikke ${doc.docNo} på referencen ${doc.reference}.`
+      : listed.active ? `MI22 viser ${doc.docNo} som aktivt.`
+        : listed.posted ? `MI22 viser ${doc.docNo} uden status (bogført).`
+          : `MI22 viser ${doc.docNo} ${statusText(listed)}.`
+    const otherStatus = Boolean(listed) && !listed.active && !listed.posted
+    const otherSummary = () => `MI22 viser ${doc.docNo} ${statusText(listed)}. Tjek dokumentet i SAP (MI03).`
     if (step === 'post') {
       if (!listed) return answer(null, doc.docNo, inMi22, `MI22 viser ikke ${doc.docNo}. Tjek dokumentet i SAP (MI03).`)
       if (listed.active) return answer('missing', doc.docNo, inMi22, `${doc.docNo} er ikke bogført i SAP.`)
-      return answer('saved', doc.docNo, inMi22, `${doc.docNo} er ikke længere aktivt i SAP og er bogført.`)
+      if (listed.posted) return answer('saved', doc.docNo, inMi22, `${doc.docNo} er bogført i SAP.`)
+      return answer(null, doc.docNo, inMi22, otherSummary())
     }
     // A count: the materials SAP was given when it went unknown (older marks: every line).
     const recorded = Array.isArray(doc.sapUnknown?.materials) ? doc.sapUnknown.materials.map(item => item?.material).filter(Boolean) : []
@@ -525,9 +539,14 @@ function createPiDocService({ counts, repo, roles, writer, system, writeEnabled 
     const counted = new Set(found.counted.map(material => String(material).toUpperCase()))
     const hit = sent.filter(material => counted.has(String(material).toUpperCase()))
     const miss = sent.filter(material => !counted.has(String(material).toUpperCase()))
-    const inMi20 = !miss.length ? `MI20 viser ${names(hit)} som talt.` : !hit.length ? `MI20 viser ingen af ${names(miss)} som talt.` : `MI20 viser ${names(hit)} som talt, men ikke ${names(miss)}.`
+    const inMi20 = !sent.length ? `MI20 viser ${found.counted.length ? names(found.counted) : 'intet'} som talt.`
+      : !miss.length ? `MI20 viser ${names(hit)} som talt.`
+        : !hit.length ? `MI20 viser ingen af ${names(miss)} som talt.`
+          : `MI20 viser ${names(hit)} som talt, men ikke ${names(miss)}.`
     const reason = `${inMi22} ${inMi20}`
-    if (!miss.length || (listed && !listed.active)) return answer('saved', doc.docNo, reason, `SAP har antallet på ${doc.docNo}.`)
+    if (otherStatus) return answer(null, doc.docNo, reason, otherSummary())
+    if ((sent.length && !miss.length) || listed?.posted) return answer('saved', doc.docNo, reason, `SAP har antallet på ${doc.docNo}.`)
+    if (!sent.length) return answer(null, doc.docNo, reason, `Optælling ved ikke, hvilke materialer SAP fik. Tjek dokumentet i SAP (MI03).`)
     if (!listed) return answer(null, doc.docNo, reason, `MI22 viser ikke ${doc.docNo}. Tjek dokumentet i SAP (MI03).`)
     if (!hit.length) return answer('missing', doc.docNo, reason, `SAP har ikke antallet på ${doc.docNo}.`)
     return answer(null, doc.docNo, reason, `SAP har kun antallet for ${names(hit)} på ${doc.docNo}. Tjek dokumentet i SAP (MI03).`)

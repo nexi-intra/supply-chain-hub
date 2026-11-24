@@ -295,8 +295,9 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, expected = { 
   /**
    * "Tjek i SAP" (read only): MI22 for the documents with `reference` and, with `docNo`, MI20 for that document. Runs in
    * the SAP queue after the same status check as the writes, but holds the queue to the end: nobody waits for the user.
-   * `docs` are the documents MI22 lists with the reference (active: still "Doc. Active"); `counted` the materials MI20
-   * lists as counted on `docNo`.
+   * `docs` are the documents MI22 lists with the reference: `active` (still "Doc. Active"), `posted` (no status on any
+   * row) and SAP's `status` text; `counted` the materials MI20 lists as counted on `docNo`; `messages` what SAP said for
+   * a list it had nothing for.
    */
   async function checkDocument({ reference, docNo = null, year }) {
     const request = { reference: String(reference || '').toUpperCase(), docNo: docNo === null || docNo === undefined || docNo === '' ? null : String(docNo), year: String(year || '') }
@@ -318,12 +319,18 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, expected = { 
         }
         const byDoc = new Map()
         for (const row of rows) {
-          if (!byDoc.has(row.docNo)) byDoc.set(row.docNo, { docNo: row.docNo, materials: [], active: false })
+          if (!byDoc.has(row.docNo)) byDoc.set(row.docNo, { docNo: row.docNo, materials: [], statuses: [], blank: true })
           const doc = byDoc.get(row.docNo)
+          const status = String(row.status || '').trim()
           if (!doc.materials.includes(row.material)) doc.materials.push(row.material)
-          if (/active/i.test(row.status)) doc.active = true
+          if (status && !doc.statuses.includes(status)) doc.statuses.push(status)
+          if (status) doc.blank = false
         }
-        return { docs: [...byDoc.values()], counted: [...new Set(listed.map(item => item.material))] }
+        // A posted document shows no status on any of its rows; "Doc. Active" is still open; any other status (e.g. deleted
+        // in MI02) is neither, and its text is passed on.
+        const docs = [...byDoc.values()].map(({ docNo, materials, statuses, blank }) => ({ docNo, materials, active: statuses.some(status => /active/i.test(status)), posted: blank, status: statuses.join(', ') }))
+        const messages = { mi22: String(result.mi22Message || ''), mi20: String(result.mi20Message || '') }
+        return { docs, counted: [...new Set(listed.map(item => item.material))], messages }
       } finally {
         await fs.promises.rm(dir, { recursive: true, force: true })
       }

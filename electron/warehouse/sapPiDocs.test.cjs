@@ -714,6 +714,8 @@ test('a PI script that fails before the hand-over never calls onWaiting and free
 
 // ---- "Tjek i SAP": reads only, nothing is changed ----
 
+// The text SAP gives for an empty list is still to be seen in QS4; this one is made up.
+const NO_DATA = 'S: No data selected'
 /** A pidoc-check runner that saves the lists it is given (null: SAP lists nothing) and answers like the script. */
 function checkSetup({ mi22 = MI22, mi20 = fixture('mi20-list.txt'), answer = null, status = readyFor('QS4') } = {}) {
   const calls = []
@@ -723,7 +725,7 @@ function checkSetup({ mi22 = MI22, mi20 = fixture('mi20-list.txt'), answer = nul
     calls.push({ name, args, options })
     if (name === 'status') return status
     const [dir, mi22File, mi20File, , , docNo] = args
-    const result = answer || { ok: true, mi22: mi22 === null ? 'empty' : 'saved', mi20: docNo === '-' ? 'skipped' : mi20 === null ? 'empty' : 'saved' }
+    const result = answer || { ok: true, mi22: mi22 === null ? 'empty' : 'saved', mi20: docNo === '-' ? 'skipped' : mi20 === null ? 'empty' : 'saved', mi22Message: mi22 === null ? NO_DATA : '', mi20Message: docNo !== '-' && mi20 === null ? NO_DATA : '' }
     if (result.mi22 === 'saved' && mi22 !== null) fs.writeFileSync(path.join(dir, mi22File), mi22)
     if (result.mi20 === 'saved' && mi20 !== null) fs.writeFileSync(path.join(dir, mi20File), mi20)
     return `noise\r\n${JSON.stringify(result)}`
@@ -736,7 +738,7 @@ test('"Tjek i SAP": MI22 by the reference and MI20 for the document, in the SAP 
   const { writer, calls, queue } = checkSetup()
   const result = await writer.checkDocument({ reference: 'cpabc123', docNo: '105000894', year: '2026' })
   // MI22: only rows with the reference (100000784 has none); MI20: only the document asked about (not 105000893).
-  assert.deepEqual(result, { docs: [{ docNo: '105000900', materials: ['R133-0032', 'R133-0033'], active: true }], counted: ['R133-0032', 'R133-0033'] })
+  assert.deepEqual(result, { docs: [{ docNo: '105000900', materials: ['R133-0032', 'R133-0033'], active: true, posted: false, status: 'Doc. Active' }], counted: ['R133-0032', 'R133-0033'], messages: { mi22: '', mi20: '' } })
   assert.deepEqual(calls.map(call => call.name), ['status', 'pidoc-check'])
   assert.deepEqual(calls[1].args.slice(1), ['mi22.txt', 'mi20.txt', '2026', 'CPABC123', '105000894'])
   assert.ok(calls[1].options.timeoutMs >= 60 * 1000, 'two lists need more than the default 15 s')
@@ -745,12 +747,20 @@ test('"Tjek i SAP": MI22 by the reference and MI20 for the document, in the SAP 
   assert.equal(fs.existsSync(calls[1].args[0]), false, 'the lists are removed again')
 })
 
-test('"Tjek i SAP": without a document number only MI22 is read; empty lists and a document no longer active', async () => {
+test('"Tjek i SAP": without a document number only MI22 is read; empty lists with SAP\'s message, a posted document (no status)', async () => {
   const unknownCreate = checkSetup({ mi22: null })
-  assert.deepEqual(await unknownCreate.writer.checkDocument({ reference: 'CPABC123', docNo: null, year: '2026' }), { docs: [], counted: [] })
+  assert.deepEqual(await unknownCreate.writer.checkDocument({ reference: 'CPABC123', docNo: null, year: '2026' }), { docs: [], counted: [], messages: { mi22: NO_DATA, mi20: '' } })
   assert.equal(unknownCreate.calls[1].args[5], '-')
   const posted = checkSetup({ mi22: fixture('mi22-posted.txt'), mi20: null })
-  assert.deepEqual(await posted.writer.checkDocument({ reference: 'CPMVF8IW7A', docNo: '105000894', year: '2026' }), { docs: [{ docNo: '105000894', materials: ['R133-0032', 'R133-0033'], active: false }], counted: [] })
+  assert.deepEqual(await posted.writer.checkDocument({ reference: 'CPMVF8IW7A', docNo: '105000894', year: '2026' }), { docs: [{ docNo: '105000894', materials: ['R133-0032', 'R133-0033'], active: false, posted: true, status: '' }], counted: [], messages: { mi22: '', mi20: NO_DATA } })
+})
+
+test('"Tjek i SAP": a document with another status than active or none (e.g. deleted) is neither active nor posted', async () => {
+  const deleted = MI22
+    .replace('\t105000900\t1\t\t0000.00\t19.10.2026\t\t\t1\tCPABC123\tDoc. Active', '\t105000900\t1\t\t0000.00\t19.10.2026\t\t\t1\tCPABC123\t')
+    .replace('\t105000900\t2\t\t0000.00\t19.10.2026\t\t\t1\tCPABC123\tDoc. Active', '\t105000900\t2\t\t0000.00\t19.10.2026\t\t\t1\tCPABC123\tDoc. Deleted')
+  const { writer } = checkSetup({ mi22: deleted })
+  assert.deepEqual((await writer.checkDocument({ reference: 'CPABC123', docNo: null, year: '2026' })).docs, [{ docNo: '105000900', materials: ['R133-0032', 'R133-0033'], active: false, posted: false, status: 'Doc. Deleted' }], 'posted only when every row has no status')
 })
 
 test('"Tjek i SAP": SAP not ready, a non-English logon, a bad request or an unreadable list stop it; nothing is guessed', async () => {
@@ -766,14 +776,15 @@ test('"Tjek i SAP": SAP not ready, a non-English logon, a bad request or an unre
   }
   assert.deepEqual(bad.calls, [], 'SAP is not asked')
   await assert.rejects(checkSetup({ mi22: 'not a MI22 list' }).writer.checkDocument({ reference: 'CPABC123', docNo: null, year: '2026' }), { code: 'PIDOC_SAP_FAILED' })
+  await assert.rejects(checkSetup({ answer: { ok: false, error: 'list-error: E: You have no authorization for plant D301' } }).writer.checkDocument({ reference: 'CPABC123', docNo: null, year: '2026' }), { code: 'PIDOC_SAP_FAILED', message: /list-error: E: You have no authorization/ }, 'SAP refusing the selection is never "nothing listed"')
   await assert.rejects(checkSetup({ answer: { ok: true, mi22: 'saved', mi20: 'skipped' }, mi22: null }).writer.checkDocument({ reference: 'CPABC123', docNo: null, year: '2026' }), { code: 'PIDOC_SAP_FAILED' }, 'a list said saved but missing')
 })
 
 test('"Tjek i SAP" against the fake SAP of dev mode', async () => {
   const fixtures = createFixtureRunner(path.join(__dirname, 'fixtures', 'sap'), { system: 'QS4' })
   const writer = createPiDocWriter({ bridge: BRIDGE, runScript: fixtures, clipboard: null, system: 'QS4', tempRoot: os.tmpdir(), waitSeconds: 300 })
-  assert.deepEqual(await writer.checkDocument({ reference: 'CPABC123', docNo: null, year: '2026' }), { docs: [], counted: [] })
-  assert.deepEqual(await writer.checkDocument({ reference: 'CPABC123', docNo: '105900001', year: '2026' }), { docs: [{ docNo: '105900001', materials: ['FIXTURE'], active: true }], counted: ['FIXTURE'] })
+  assert.deepEqual(await writer.checkDocument({ reference: 'CPABC123', docNo: null, year: '2026' }), { docs: [], counted: [], messages: { mi22: 'S: (fixture) nothing on the reference', mi20: '' } })
+  assert.deepEqual(await writer.checkDocument({ reference: 'CPABC123', docNo: '105900001', year: '2026' }), { docs: [{ docNo: '105900001', materials: ['FIXTURE'], active: true, posted: false, status: 'Doc. Active' }], counted: ['FIXTURE'], messages: { mi22: '', mi20: '' } })
 })
 
 test('pidoc-check.vbs only lists MI22 and MI20, never hands SAP over and closes its own session', () => {
@@ -791,7 +802,28 @@ test('pidoc-check.vbs only lists MI22 and MI20, never hands SAP over and closes 
   assert.ok(lines.includes('s.findById("wnd[0]/usr/ctxtIM_INVNU-LOW").Text = reference'), 'MI22 by the reference')
   assert.ok(lines.some(line => line.trim() === 's.findById("wnd[0]/usr/txtIM_IBLNR-LOW").Text = docNo'), 'MI20 for the document')
   assert.ok(lines.some(line => line.trim() === 's.findById("wnd[1]/usr/ctxtDY_FILE_ENCODING").Text = "4110"'), 'saved as UTF-8 text (%pc)')
-  assert.ok(lines.some(line => line.trim() === 'If screen = "1000" Then ClosePopups : RunList = "empty" : Exit Function'), 'a list with nothing gives no file and "empty"')
   const finish = source.slice(source.indexOf('Sub Finish('), source.indexOf('End Sub', source.indexOf('Sub Finish(')))
   assert.ok(finish.indexOf('CloseOwnSession') > 0 && finish.indexOf('CloseOwnSession') < finish.indexOf('WScript.StdOut.WriteLine'), 'the own session is closed before the answer')
+  assert.ok(finish.includes('""mi22Message"":" & JsonText(mi22Message)') && finish.includes('""mi20Message"":" & JsonText(mi20Message)'), 'the message SAP gave for an empty list is answered')
+})
+
+test('pidoc-check.vbs: a list stays "empty" only on an S, I or W message; SAP refusing the selection on screen 1000 is an error', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'sap', 'pidoc-check.vbs'), 'utf8')
+  const start = source.indexOf('Function RunList(')
+  const runList = source.slice(start, source.indexOf('End Function', start))
+  const at = text => runList.indexOf(text)
+  const empty = at('RunList = "empty"')
+  assert.ok(empty > 0 && runList.split('RunList = "empty"').length === 2, 'one way to "empty"')
+  assert.ok(at('If screen = "1000" Then') > 0 && at('If screen = "1000" Then') < empty)
+  // Read before the popups are cancelled: SAP's message may be all there is.
+  for (const read of ['popup = PopupText()', 'kind = UCase(Trim(CStr(s.findById("wnd[0]/sbar").MessageType)))', 'text = Trim(CStr(s.findById("wnd[0]/sbar").Text))']) {
+    assert.ok(at(read) > at('If screen = "1000" Then') && at(read) < at('ClosePopups'), read)
+  }
+  assert.ok(at('kind = ""') < at('kind = UCase('), 'no message read is no type')
+  assert.ok(at('If Err.Number <> 0 Then Err.Clear : kind = ""') > at('text = Trim('), 'an unreadable status bar is no type')
+  const refuse = at('If kind <> "S" And kind <> "I" And kind <> "W" Then Finish False, "list-error: " & listMessage')
+  assert.ok(refuse > at('listMessage = kind & ": " & text') && refuse < at('ClosePopups') && at('ClosePopups') < empty, 'E, A, blank or unreadable never reach "empty"')
+  const lines = source.split('\r\n')
+  assert.equal(lines[lines.indexOf('mi22 = RunList(mi22File)') + 1], 'mi22Message = listMessage')
+  assert.equal(lines[lines.indexOf('  mi20 = RunList(mi20File)') + 1], '  mi20Message = listMessage')
 })
