@@ -32,7 +32,7 @@ Udgangspunkt 24.11: `npm audit` viser 31 sårbarheder (13 høje, 17 mellem, 1 la
 - [x] `npm audit fix` uden `--force` for de transitive pakker (brace-expansion, js-yaml, nanoid, flatted, fast-uri, undici, xmldom, source-map-js, esbuild, vitest m.fl.). eslint 9.39.1 → 9.39.5 for ajv 6.14.
 - [x] Vurder resten, hvor npm kun foreslår en nedgradering. Løst uden nedgradering: `"minimatch@>=7.0.0 <11.0.1": "11.0.9"` (bruges kun af electron-builder ved build, samme API) og `exceljs` → `uuid` 11.1.1 (exceljs bruger kun `v4`).
 - [x] Verifikation: tsc 0 fejl, node-tests 2268/2270 (1 skip, kun den kendte assistantWorker-timeout under fuld belastning, 18/18 alene), vitest 1796 bestået (1 skip), `npm.cmd run electron:build` bestået med Electron 44.11.5, Word→PDF fra den pakkede app.asar bestået.
-- [ ] Login-delen af `verify-packaged-release` mangler: den pakkede app bruger altid `%APPDATA%\tcd-hub`, så den lukker straks, når 1.6.8 kører på samme PC (single-instance lås). Kør igen, når 1.6.8 er lukket.
+- [x] `verify-packaged-release` bestået med 1.6.8 lukket: login åbner i den pakkede 1.6.9 (40.553 ASAR-filer), Word→PDF bestået. Bemærk: den pakkede app bruger altid `%APPDATA%\tcd-hub`, så testen lukker straks med kode 0, hvis Supply Chain Hub kører på samme PC (single-instance lås).
 - [ ] Start dev-vinduet og kontroller login, forsiden og et Optælling-dokument på en lokal kopi.
 - [x] Commit med før/efter tal fra `npm audit`: 31 (13 høje, 17 mellem, 1 lav) → 0.
 
