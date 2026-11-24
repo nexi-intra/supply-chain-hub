@@ -49,7 +49,7 @@ Oprettet 2026-11-18. Ønsket af Jacob. Værdi-opgaven (indkøbsværdi i stedet f
 - [x] Changelog 1.6.8 i `src/lib/changelog.ts`.
 - [x] tsc 0 fejl, node-tests 1553/1553, vitest 1687 bestået (1 sprunget over).
 - [x] Opdater `plans/development-1.6.8.md`.
-- [ ] Prøv det af i appen med to PC'er (eller to brugerprofiler): "Hent SAP igen" på den ene, tallene følger med på den anden; anmod om at deltage og se klokken hos en admin.
+- [x] Prøv det af i appen med to brugerprofiler (24.11.2026): to testvinduer med hver sin brugermappe på samme lokale kopi af TCD-data. "Hent SAP igen" i vindue 1 ("D005 terminaler") gav "SAP hentet 13:08" i vindue 2 uden at røre det. En scanning i vindue 2 (Ekstra / ukendte 1.081 til 1.082) og en fortrydelse (tilbage til 1.081) slog igennem i vindue 1. Klokken ved "anmod om at deltage" er ikke prøvet, fordi begge Jacobs konti er managere og derfor er med fra start. Det dækkes af enhedstestene og holdes øje med efter udrulningen.
 
 ## Fase 5 - parkeret: værdi fra SAP
 
