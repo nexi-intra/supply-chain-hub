@@ -156,12 +156,13 @@
 
 ## Fase 5: QS4 sammen med Jacob
 
-- [ ] Opret, print, serienumre og bogfør i QS4 med harnessen. Ingen `session-not-created`, og harnessen melder 'venter' først, når SAP-vinduet er klar.
-- [ ] Bogfør to dokumenter, og kopiér noget andet under ventetiden. Resultatet er rigtigt, fordi MI22 ikke længere læser udklipsholderen.
-- [ ] Bogfør to dokumenter med stor afstand mellem numrene (fx et gammelt og et nyt). MI22-listen med intervallet skal stadig hentes inden for tidsgrænsen.
-- [ ] Luk MI31 lige efter F8. Svaret er dokumenterne eller "ukendt", aldrig "intet oprettet".
-- [ ] "Tjek i SAP" på et ukendt dokument fra hvert trin (oprettet, talt og bogført).
-- [ ] En hentning (MB52) startet under en PI-ventetid kører, når PI-scriptet har sin session.
-- [ ] Under en PI-ventetid: start en hentning, der åbner og lukker sin egen session. PI-scriptet må ikke tro, at vinduet er lukket.
-- [ ] Notér hvilken beskedtype og tekst MI22 og MI20 giver, når der ikke er data (forventet S eller I).
-- [ ] Notér resultaterne i `plans/arbejdsvaerktoejer-gennemgang.md` og sæt kryds ved 5.3, 5.4 og 7.1.
+Kørt 24.11.2026 kl. 12.15 til 12.40 i QS4 (klient 100, engelsk) med harnessen. Jacob trykkede i SAP. Testdokumenterne 105000923 og 105000924 er bogført, og der står intet åbent.
+
+- [x] Opret, print, serienumre og bogfør i QS4 med harnessen. Ingen `session-not-created`, og "venter" kom først, da MI31, printvinduet og ZMS stod klar. Check fangede et serienummer, der ikke var på lager (NXC600007645), og intet blev opdateret.
+- [x] Bogfør to dokumenter (105000923 og 105000924), mens udklipsholderen indeholdt "R162-0717". Begge blev meldt bogført.
+- [x] Stor afstand mellem numrene er prøvet direkte i MI22 med intervallet 100000000 til 105000924. Det tog 3 sekunder med session. Der fandtes ikke to egne dokumenter med stor afstand.
+- [x] Luk MI31 lige efter F8. Appen fandt 105000924 i MI22. Luk MI31 uden F8 gav først "ukendt" (fund: MI22 viser en tom liste på skærm 120, ikke skærm 1000). Rettet i a068953, og derefter gav det "intet er gemt" som det skal.
+- [x] "Tjek i SAP" fra hvert trin: referencen fandt 105000923 som aktiv, MI20 viste materialet talt, efter bogføring var dokumentet `posted`, og en ukendt reference gav ingen dokumenter.
+- [x] Under ZMS-ventetiden åbnede og lukkede to andre sessioner (et hjælpescript uden om appens kø). ZMS-scriptet ventede videre og talte rigtigt bagefter. At appens egen kø slipper ved overdragelsen, er dækket af enhedstests og er ikke prøvet med appen i QS4.
+- [x] MI22 og MI20 uden data viser en tom liste på skærm 120 uden nogen besked. Skærm 1000 med en besked sker kun ved fejl, og så giver "Tjek i SAP" intet forslag.
+- [x] Resultaterne er noteret i `plans/arbejdsvaerktoejer-gennemgang.md`, og 5.3, 5.4 og 7.1 er krydset af.

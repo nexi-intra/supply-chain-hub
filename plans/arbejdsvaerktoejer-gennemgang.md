@@ -25,9 +25,9 @@ Sidste testkørsel er grøn:
 | Punkt | Hvorfor |
 |---|---|
 | 3.11 og 3.12 | De ændrer historik og `meta`, som 1.6.6 og 1.6.7 bruger til at undgå dobbelte handlinger. Bør vente, til alle PC'er kører 1.6.8. |
-| 5.3 og VBS-delen af 5.4 | De ændrer seks SAP-skrivescripts og skal testes i QS4 først. JavaScript-delen af 5.4 er lavet: en ufuldstændig MI22-læsning giver nu "ukendt" og ikke "åben". |
 | Trin 3 i 5.2 (kontakt i konfigurationen) | Det er en ny funktion (forslag 7.18). |
-| "Tjek i SAP"-knappen fra 2.4 og 7.1 | Den kræver et nyt SAP-script og en QS4-test. Indtil da afklarer en manager et ukendt dokument med en begrundelse. |
+
+5.3, 5.4, 7.1 og QS4-punkt 12 blev lavet 24.11.2026 efter planen `plans/sap-koe-og-tjek-i-sap.md` og testet i QS4 samme dag (se dens Fase 5).
 
 ### QS4-test 24.11.2026
 
@@ -44,7 +44,7 @@ Kørt i QS4 (klient 100) med appens egne PI-scripts gennem `sapPiDocs.cjs` og `s
 9. [x] MB52 går direkte til listen (skærm 120) og bliver ikke stående på startskærmen.
 10. [x] "Freeze book inventory" og "Set posting block" var slået fra. Scriptet sætter nu begge til fra og tjekker det (commit 6389f4c).
 11. [x] MI05 rettede 105000915 fra 1.525 til 1.524. Appens bogføring gav talt 1524 og difference −1, materialebilag 4905204966. Selve knappen "Bogfør alligevel" med begrundelse i Hub skal stadig prøves i appen (se nedenfor).
-12. [ ] Lukker brugeren MI31, mens SAP arbejder efter F8. **Udskudt:** det kræver en ændring i scriptet og hører sammen med 5.3 og 5.4.
+12. [x] Lukker brugeren MI31, mens SAP arbejder efter F8. **Lavet 24.11.2026:** scriptet slår referencen op i MI22 i en ny session. QS4: lukket lige efter F8 gav dokument 105000924, og lukket uden F8 gav "intet er gemt".
 
 Hele forløbet i appen (24.11.2026, lokal kopi af TCD-data, QS4): en ny optælling for D004 i "Status Q4 2026", INT4100-3841-0-R godkendt med 2 serienumre, "Hent dagens SAP-tal", opret (105000916), print, "Læg antal på" og bogfør. SAP bogførte "without differences", og appen markerede materialet "Bogført i SAP" med difference 0 DKK. Kopien lå i `%LOCALAPPDATA%\sch-qs4-testdata` med `TCD_HUB_DATA_DIR`, så M: og decemberstatussen er ikke rørt. "Læg antal på" blev kørt gennem appens egne IPC-handlere som en midlertidig Optælling-admin, der kun fandtes i kopiens rolleliste. Den er fjernet igen.
 
@@ -561,7 +561,7 @@ Rapporten fandt ingen kritiske fejl her. Den fandt ingen vej, hvor en terminal f
   - **Risiko ved ændringen:** Lav, for alle nuværende kald sender allerede det konfigurerede system.
   - **Hvor:** `electron/warehouse/sapBridge.cjs:10-17` og `:32-39`; `electron/warehouse/config.cjs:9`; `electron/warehouse/register.cjs:186`; `electron/warehouse/softwareload/softwareloadSap.cjs:52`
 
-- [ ] **5.3 Klient 100 tjekkes aldrig ved PI-dokumenter eller "Vis i SAP" (shared.md I4) (usikkert)**
+- [x] **5.3 Klient 100 tjekkes aldrig ved PI-dokumenter eller "Vis i SAP" (shared.md I4) (usikkert)**
   Det er usikkert, om en skrivning til en forkert klient kan ske i praksis. At tjekket af SAP-tilstand mangler, er sikkert.
   - **Hvad sker der i dag:** Kun indikatoren, hentningerne og Softwareload tjekker for klient 100. PI-dokumentskrivninger tjekker ikke SAP-tilstanden, og scripts vælger forbindelse kun på systemnavn og tager den sidste, der passer, mens indikatoren tager den første. Har en manager både PS4/100 og PS4 på en anden klient åben, kan MI31 køre på den anden klient, og står den sidste PS4-forbindelse på logon-skærmen, kommer en forvirrende fejl, selvom indikatoren var grøn.
   - **Hvorfor det betyder noget:** Indikatoren lover PS4/100, men skrivninger kan lande et andet sted eller fejle uventet.
@@ -574,7 +574,7 @@ Rapporten fandt ingen kritiske fejl her. Den fandt ingen vej, hvor en terminal f
   - **Risiko ved ændringen:** Middel, fordi seks skrivescripts ændres og skal prøves i QS4 først, men brugere med én forbindelse mærker intet.
   - **Hvor:** `electron/warehouse/sapState.cjs:22-29`; `electron/warehouse/register.cjs:79`; `electron/warehouse/sapPiDocs.cjs`; `src/views/warehouse/count/DocPanel.tsx:102`, `:119`, `:131`, `:146`, `:159`; `electron/warehouse/sap/pidoc-create.vbs:130-135` (samme løkke i de øvrige `pidoc-*.vbs`); `sap/sl-transfer.vbs:82-91`; `sap/sap-show.vbs:36-41` og `:67`
 
-- [ ] **5.4 Bogføring af PI-dokumenter læser udklipsholderen igen efter op til 15 minutter, og PI-skrivninger kører uden om SAP-køen (shared.md I2)**
+- [x] **5.4 Bogføring af PI-dokumenter læser udklipsholderen igen efter op til 15 minutter, og PI-skrivninger kører uden om SAP-køen (shared.md I2)**
   - **Hvad sker der i dag:** Ved flere dokumenter lægges numrene på udklipsholderen, MI20 udfyldes, og scriptet venter op til 15 minutter på, at manageren bogfører. Derefter udfyldes MI22 fra udklipsholderen igen uden kontrol, så har manageren kopieret et materialenummer imens, melder Hub de 3 dokumenter som stadig åbne, selvom SAP har bogført dem. Samtidig kan en Softwareload-flytning eller et MM60-opslag køre på samme PC, fordi PI-skrivninger ikke går gennem køen.
   - **Hvorfor det betyder noget:** Optællingsdokumentet viser bogførte dokumenter som ikke bogført, og næste "Bogfør" fejler eller forvirrer.
   - **Hvad skal ændres:**
@@ -725,7 +725,7 @@ Rapporten fandt ingen kritiske fejl her. Den fandt ingen vej, hvor en terminal f
 
 **Optælling**
 
-- [ ] **7.1 "Tjek i SAP" på hvert SAP-dokument (count.md S1).** Én knap, der kun læser MI22 og sætter dokumentets status ud fra SAP. Managere kan rette de fastlåste tilstande fra 2.2, 2.4 og 2.5 uden at åbne SAP.
+- [x] **7.1 "Tjek i SAP" på hvert SAP-dokument (count.md S1).** Lavet som en knap i afklaringsdialogen for ukendte dokumenter: den læser MI22 og MI20 og udfylder forslaget, og manageren gemmer selv. Én knap, der kun læser MI22 og sætter dokumentets status ud fra SAP. Managere kan rette de fastlåste tilstande fra 2.2, 2.4 og 2.5 uden at åbne SAP.
 - [ ] **7.2 Vis hvor et "manglende" serienummer blev fundet i statussen (count.md S2).** "Fundet i 'D000 terminaler' på Palle 14.2 af Anna" i Mangler-listerne og ved godkendelse. Godkendere flytter varen i stedet for at afskrive den (bygger på 2.6).
 - [ ] **7.3 Markér talte materialer, hvis SAP-antal ændrede sig ved "Hent SAP igen" (count.md S3).** Rækken mærkes "Allerede talt, tæl igen", og efter at de nye tal er taget i brug, kan materialet sendes tilbage til optælling. Det undgår en falsk minusdifference efter en varemodtagelse.
 - [ ] **7.4 Deltagernes synkronisering i "Deltagere" (count.md S4).** "Sidst sendt 10:42" eller "Offline med ventende scanninger" pr. deltager og i bekræftelsen ved "Afslut". Ejeren kan se, om der mangler scanninger, før optællingen lukkes (hører sammen med 2.11).
