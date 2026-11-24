@@ -79,8 +79,25 @@ test('a closed MI31 window is looked up in MI22: listed documents are created, a
   await assert.rejects(setup({ createResult: { ok: false, error: 'timeout-unknown' } }).writer.createDocument(REQUEST), { code: 'PIDOC_UNKNOWN', detail: 'timeout-unknown' })
   // Closed after F8: MI31's "Created" title was never read, the fresh session's MI22 list under the reference decides.
   const otherSloc = ['\tR133-0034\t\t\t\t\tcharger\t\t\t\t\tD301\tD010', '\t105000901\t1\t\t0000.00\t19.10.2026\t\t\t1\tCPABC123\tDoc. Active']
-  const { writer } = setup({ createResult: { ok: true, title: '' }, list: [MI22, ...otherSloc].join('\r\n') })
+  const { writer } = setup({ createResult: { ok: true, title: '', closed: true, busySeen: false }, list: [MI22, ...otherSloc].join('\r\n') })
   assert.deepEqual(await writer.createDocument(REQUEST), { docs: [{ docNo: '105000900', materials: ['R133-0032', 'R133-0033'] }], missing: [] })
+})
+
+test('MI22 shows an empty list after a closed window or the time limit: cancelled or timeout unless SAP was seen working', async t => {
+  t.mock.method(console, 'error', () => {})
+  // QS4: MI22 with nothing on the reference goes to an empty list (not screen 1000), so the script answers ok with it.
+  const otherSloc = ['\tR133-0034\t\t\t\t\tcharger\t\t\t\t\tD301\tD010', '\t105000901\t1\t\t0000.00\t19.10.2026\t\t\t1\tCPABC123\tDoc. Active']
+  const empty = MI22.split('\r\n').slice(0, 2).join('\r\n')
+  const create = (createResult, list = empty) => setup({ createResult: { ok: true, title: '', ...createResult }, list }).writer.createDocument(REQUEST)
+  await assert.rejects(create({ closed: true, busySeen: false }), { code: 'PIDOC_CANCELLED' })
+  await assert.rejects(create({ closed: true, busySeen: false }, [empty, ...otherSloc].join('\r\n')), { code: 'PIDOC_CANCELLED' }, 'only the reference in this sloc counts')
+  await assert.rejects(create({ closed: true, busySeen: true }), { code: 'PIDOC_UNKNOWN', detail: 'closed-unknown' })
+  await assert.rejects(create({ closed: true }), { code: 'PIDOC_UNKNOWN', detail: 'closed-unknown' }, 'no busySeen: never "nothing created"')
+  await assert.rejects(create({ timedOut: true, busySeen: true }), { code: 'PIDOC_UNKNOWN', detail: 'timeout-unknown' })
+  await assert.rejects(create({ timedOut: true, busySeen: false }), { code: 'PIDOC_TIMEOUT' })
+  assert.deepEqual(await create({ timedOut: true, busySeen: true }, MI22), { docs: [{ docNo: '105000900', materials: ['R133-0032', 'R133-0033'] }], missing: [] })
+  // The normal F8 path is unchanged: an empty list there is returned as it is (the service treats it as not listed).
+  assert.deepEqual(await create({ title: 'PI Documents Were Created Directly' }), { docs: [], missing: ['R133-0032', 'R133-0033'] })
 })
 
 const sub = (lines, header) => lines.slice(lines.indexOf(header), lines.indexOf(header.startsWith('Function') ? 'End Function' : 'End Sub', lines.indexOf(header)) + 1)
@@ -109,13 +126,26 @@ test('pidoc-create.vbs: a window closed after the hand-over is looked up by the 
   // Right after the wait (also at the time limit) a closed window is looked up; later failures on a closed window too.
   assert.equal(lines[end + 1], 'If Not SessionOpen() Then LookUpClosed')
   assert.equal(lines[end + 2], 'If i > waitSeconds * 2 Then AfterTimeout')
-  assert.deepEqual(sub(lines, 'Sub LookUpClosed()'), ['Sub LookUpClosed()', '  On Error Resume Next', '  freshTried = True', '  openingFresh = True', '  OpenOwnSession', '  openingFresh = False', '  ReadCreated ClosedAnswer()', 'End Sub'])
+  assert.deepEqual(sub(lines, 'Sub LookUpClosed()'), ['Sub LookUpClosed()', '  On Error Resume Next', '  freshTried = True', '  openingFresh = True', '  OpenOwnSession', '  openingFresh = False', '  lookedUp = "closed"', '  ReadCreated ClosedAnswer()', 'End Sub'])
   const finish = sub(lines, 'Sub Finish(ok, message)')
   const after = finish.indexOf('  If Not ok And handedOver And Not freshTried Then')
   assert.deepEqual(finish.slice(after, after + 3), ['  If Not ok And handedOver And Not freshTried Then', '    If Not SessionOpen() Then LookUpClosed', '  End If'], 'a failure on a window closed after the hand-over is looked up, once')
   assert.ok(after < finish.indexOf('  CloseOwnSession'), 'before the own session is closed')
   assert.ok(finish.includes('  If openingFresh And Not ok Then message = ClosedAnswer()'), 'a fresh session that cannot be opened or used is never "before F8"')
   assert.deepEqual(sub(lines, 'Function ClosedAnswer()'), ['Function ClosedAnswer()', '  ClosedAnswer = "cancelled"', '  If busySeen Then ClosedAnswer = "closed-unknown"', 'End Function'])
+  // SAP shows an empty MI22 list rather than staying on screen 1000: the ok answer after a closed window or the time
+  // limit says so, with busySeen, and the app decides between "cancelled"/"timeout" and unknown.
+  assert.match(source, /^Dim [^\r\n]*\blookedUp\b/m)
+  assert.ok(lines.indexOf('lookedUp = ""') > 0 && lines.indexOf('lookedUp = ""') < lines.indexOf('systemName = WScript.Arguments(0)') + 20)
+  assert.ok(finish.includes('    WScript.StdOut.WriteLine "{""ok"":true,""title"":" & JsonText(title) & LookupTail() & "}"'))
+  assert.deepEqual(sub(lines, 'Function LookupTail()').slice(1), [
+    '  LookupTail = ""',
+    '  If lookedUp = "closed" Then LookupTail = ",""closed"":true"',
+    '  If lookedUp = "timeout" Then LookupTail = ",""timedOut"":true"',
+    '  If Len(LookupTail) = 0 Then Exit Function',
+    '  If busySeen Then LookupTail = LookupTail & ",""busySeen"":true" Else LookupTail = LookupTail & ",""busySeen"":false"',
+    'End Function',
+  ])
   // One session opener for the MI31 session and the fresh one; the id it tracks (and closes) is read for sure.
   assert.equal(lines.filter(line => line.trim() === 'OpenOwnSession').length, 2)
   const open = sub(lines, 'Sub OpenOwnSession()')
@@ -135,7 +165,7 @@ test('pidoc-create.vbs: a window closed after the hand-over is looked up by the 
 test('pidoc-create.vbs: a timeout after SAP was seen working is never "timeout"; F8 seen once SAP is idle goes on, otherwise MI22 decides', () => {
   const lines = fs.readFileSync(path.join(__dirname, 'sap', 'pidoc-create.vbs'), 'utf8').split('\r\n')
   // "timeout" (nothing created, the app invites a retry) only when SAP was never seen working.
-  assert.deepEqual(lines.filter(line => line.includes('"timeout"') && !line.trim().startsWith("'")).map(line => line.trim()), ['If Not busySeen Then Finish False, "timeout"'])
+  assert.deepEqual(lines.filter(line => /Finish[^"]*"timeout"/.test(line) && !line.trim().startsWith("'")).map(line => line.trim()), ['If Not busySeen Then Finish False, "timeout"'])
   assert.deepEqual(sub(lines, 'Sub AfterTimeout()'), [
     'Sub AfterTimeout()',
     '  On Error Resume Next',
@@ -144,6 +174,7 @@ test('pidoc-create.vbs: a timeout after SAP was seen working is never "timeout";
     '  If Not SessionOpen() Then LookUpClosed',
     '  If F8Pressed() Then Exit Sub',
     '  ClosePopups',
+    '  lookedUp = "timeout"',
     '  ReadCreated "timeout-unknown"',
     'End Sub',
   ])

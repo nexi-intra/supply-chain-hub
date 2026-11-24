@@ -209,6 +209,12 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, expected = { 
       } catch (error) {
         throw unknownState('pidoc-create', error?.code || error?.message)
       }
+      // After a closed window or the time limit SAP shows an empty MI22 list when nothing has the reference: nothing was
+      // created unless SAP was seen working after the hand-over (then it may still be creating).
+      if ((result.closed || result.timedOut) && !found.length) {
+        if (result.busySeen !== false) throw unknownState('pidoc-create', result.closed ? 'closed-unknown' : 'timeout-unknown')
+        throw scriptFailure({ error: result.closed ? 'cancelled' : 'timeout' }, 'Oprettelsen i MI31')
+      }
       const byDoc = new Map()
       for (const doc of found) {
         if (!byDoc.has(doc.docNo)) byDoc.set(doc.docNo, [])

@@ -9,18 +9,20 @@
 ' Opens its OWN session on the connection to <system> (refuses any other system), fills MI31 exactly like the guide and
 ' WAITS for the user to press F8. Never presses F8 itself. Then saves the MI22 list of the new documents (%pc) as text.
 ' When the user closes the window instead (or later, before the answer), a fresh session on the same connection looks the
-' reference up in MI22 (display only): documents listed = created ({"ok":true}); none listed = "closed-unknown" when SAP
-' was seen working (busy, out of the selection screen, F8, or state unreadable) after the hand-over, else "cancelled".
-' No F8 by the time limit is "timeout" only when SAP was never seen working; otherwise MI22 decides (none listed =
-' "timeout-unknown").
-' Output: {"ok":true,"title":"..."} or {"ok":false,"error":"..."}.
+' reference up in MI22 (display only). The list is saved and the answer carries "closed":true and busySeen (SAP seen
+' working: busy, out of the selection screen, F8, or state unreadable after the hand-over); SAP shows an empty list when
+' nothing has the reference, and the app makes that "cancelled" (never seen working) or unknown. Should MI22 stay on its
+' selection screen instead, the answer is "closed-unknown" (seen working) or "cancelled".
+' No F8 by the time limit is "timeout" only when SAP was never seen working; otherwise MI22 decides the same way
+' ("timedOut":true and busySeen; "timeout-unknown" when MI22 stays on its selection screen).
+' Output: {"ok":true,"title":"..."[,"closed":true|"timedOut":true,"busySeen":...]} or {"ok":false,"error":"..."}.
 Option Explicit
 On Error Resume Next
 
 Const PLANT = "D301"
 Dim systemName, mode, sloc, stockType, reference, outDir, outFile, waitSeconds, material, fromClipboard, client
 Dim app, conn, base, s, i, before, beforeIds, fso, ownId, title
-Dim busySeen, busyNow, transactionNow, screenNow, windowsNow, openingFresh, handedOver, freshTried
+Dim busySeen, busyNow, transactionNow, screenNow, windowsNow, openingFresh, handedOver, freshTried, lookedUp
 
 Function JsonText(value)
   Dim t
@@ -44,7 +46,7 @@ Sub Finish(ok, message)
   ' A closed window's fresh session that cannot be opened or used (another system) is as good as none.
   If openingFresh And Not ok Then message = ClosedAnswer()
   If ok Then
-    WScript.StdOut.WriteLine "{""ok"":true,""title"":" & JsonText(title) & "}"
+    WScript.StdOut.WriteLine "{""ok"":true,""title"":" & JsonText(title) & LookupTail() & "}"
   Else
     WScript.StdOut.WriteLine "{""ok"":false,""error"":" & JsonText(message) & "}"
   End If
@@ -151,6 +153,17 @@ Function ClosedAnswer()
   If busySeen Then ClosedAnswer = "closed-unknown"
 End Function
 
+' After a closed window or the time limit MI22 decides. SAP shows an empty list when nothing has the reference (it does
+' not stay on screen 1000), so the ok answer says which lookup it was and whether SAP was seen working: the app makes an
+' empty list "cancelled"/"timeout" or unknown from that.
+Function LookupTail()
+  LookupTail = ""
+  If lookedUp = "closed" Then LookupTail = ",""closed"":true"
+  If lookedUp = "timeout" Then LookupTail = ",""timedOut"":true"
+  If Len(LookupTail) = 0 Then Exit Function
+  If busySeen Then LookupTail = LookupTail & ",""busySeen"":true" Else LookupTail = LookupTail & ",""busySeen"":false"
+End Function
+
 ' The created documents, found by the Physical Inventory Number CountPoint stamped on them (read only). Ends the run:
 ' the list is saved, or <notFound> is the answer when MI22 lists none.
 Sub ReadCreated(notFound)
@@ -238,6 +251,7 @@ Sub LookUpClosed()
   openingFresh = True
   OpenOwnSession
   openingFresh = False
+  lookedUp = "closed"
   ReadCreated ClosedAnswer()
 End Sub
 
@@ -252,6 +266,7 @@ Sub AfterTimeout()
   If Not SessionOpen() Then LookUpClosed
   If F8Pressed() Then Exit Sub
   ClosePopups
+  lookedUp = "timeout"
   ReadCreated "timeout-unknown"
 End Sub
 
@@ -333,6 +348,7 @@ busySeen = False
 openingFresh = False
 handedOver = False
 freshTried = False
+lookedUp = ""
 Set fso = CreateObject("Scripting.FileSystemObject")
 If Err.Number <> 0 Then Err.Clear : Finish False, "arguments"
 client = CreateObject("WScript.Shell").Environment("PROCESS")("COUNTPOINT_SAP_CLIENT")
