@@ -32,9 +32,9 @@ Oprettet: 2026-11-18. Ingen build, release eller push.
 
 ## Fase 3 - senere, kun efter godkendelse
 
-- [ ] Releasebuild 1.6.8: `npm.cmd run electron:build` og `node scripts/verify-packaged-release.cjs release/win-unpacked`.
-- [ ] Udgiv zip'en (brugerens trin).
-- [ ] Aftal push af `develop/1.6.5` til `develop/1.6.8`, PR og release-tags, når det er relevant.
+- [x] Releasebuild 1.6.8 (24.11, fra commit `740a762`): `npm.cmd run electron:build` → `release/Supply Chain Hub-1.6.8-win.zip` (241.425.498 bytes), `node scripts/verify-packaged-release.cjs release/win-unpacked` bestået (login, Word→PDF, 40.517 ASAR-filer), app.asar i zip = verificeret win-unpacked, exe 1.6.8, de nye SAP-scripts (fx `pidoc-check.vbs`) er med. SHA-256 `9A1522C37D860F4AB9E24628655685CD8D874FC0AD9826E3F475231263D5C62D`. Før build: tsc 0 fejl, lager 834/835, electron 1317/1317, vitest 1796 bestået.
+- [x] GitHub-release [Supply Chain Hub 1.6.8](https://github.com/nexi-intra/supply-chain-hub/releases/tag/v1.6.8) med zip'en, tag `v1.6.8` på `740a762`, og `develop/1.6.8` og `release/1.6.8` er pushet (209 nye commits gennemsøgt for kodeord og nøgler uden fund).
+- [ ] Udgiv zip'en på opdateringsdrevet på M: (brugerens trin). Managere og admins skal have 1.6.8 før de andre.
 
 ## Backlog
 
