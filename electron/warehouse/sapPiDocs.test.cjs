@@ -72,6 +72,49 @@ test('closing SAP without F8 or a timeout is reported; nothing was created', asy
   await assert.rejects(setup({ createResult: { ok: false, error: 'field-not-set: wnd[0]/usr/txtINVNU' } }).writer.createDocument(REQUEST), { code: 'PIDOC_SAP_FAILED' })
 })
 
+test('a closed MI31 window is looked up in MI22: listed documents are created, a busy session without any is unknown', async t => {
+  t.mock.method(console, 'error', () => {})
+  await assert.rejects(setup({ createResult: { ok: false, error: 'closed-unknown' } }).writer.createDocument(REQUEST), { code: 'PIDOC_UNKNOWN', detail: 'closed-unknown' })
+  // Closed after F8: MI31's "Created" title was never read, the fresh session's MI22 list under the reference decides.
+  const otherSloc = ['\tR133-0034\t\t\t\t\tcharger\t\t\t\t\tD301\tD010', '\t105000901\t1\t\t0000.00\t19.10.2026\t\t\t1\tCPABC123\tDoc. Active']
+  const { writer } = setup({ createResult: { ok: true, title: '' }, list: [MI22, ...otherSloc].join('\r\n') })
+  assert.deepEqual(await writer.createDocument(REQUEST), { docs: [{ docNo: '105000900', materials: ['R133-0032', 'R133-0033'] }], missing: [] })
+})
+
+test('pidoc-create.vbs: a window closed while waiting is looked up by the reference in MI22 in a fresh session', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'sap', 'pidoc-create.vbs'), 'utf8')
+  assert.equal(source.split('\n').length, source.split('\r\n').length, 'CRLF')
+  const lines = source.split('\r\n')
+  assert.match(source, /^Dim [^\r\n]*\bbusySeen\b[^\r\n]*\bopeningFresh\b/m, 'declared (Option Explicit)')
+  const wait = lines.indexOf('For i = 1 To waitSeconds * 2')
+  const end = lines.indexOf('Next', wait)
+  const loop = lines.slice(wait, end)
+  assert.ok(lines.slice(0, wait).includes('busySeen = False'), 'nothing seen before the wait')
+  assert.ok(loop.includes('  If Not SessionOpen() Then Set s = Nothing : Exit For'), 'a closed window ends the wait, not the run')
+  assert.ok(loop.includes('  busyNow = s.Busy'), 'the loop reads Busy')
+  assert.ok(loop.includes('      busySeen = True'), 'and remembers it')
+  assert.ok(loop.includes('      If Err.Number = 0 And transactionNow <> "MI31" Then busySeen = True'), 'as it remembers leaving MI31')
+  // Right after the wait: the closed window gets a fresh session on the same connection and MI22 by the reference.
+  assert.equal(lines[end + 1], 'If s Is Nothing Then')
+  const closed = lines.slice(end + 1, lines.indexOf('End If', end + 1))
+  assert.ok(closed.includes('  openingFresh = True'))
+  assert.ok(closed.includes('  If base Is Nothing Then Finish False, ClosedAnswer()'), 'no session to open it from')
+  assert.ok(closed.includes('  base.CreateSession'))
+  assert.ok(closed.includes('  If s Is Nothing Then Err.Clear : Finish False, ClosedAnswer()'), 'the fresh session cannot be opened')
+  assert.deepEqual(closed.slice(-2), ['  openingFresh = False', '  ReadCreated ClosedAnswer()'], 'MI22 by the reference; nothing listed is cancelled or unknown')
+  assert.ok(source.includes(['Function ClosedAnswer()', '  ClosedAnswer = "cancelled"', '  If busySeen Then ClosedAnswer = "closed-unknown"', 'End Function'].join('\r\n')))
+  // Until MI22 is reached (also a fresh session on another system) a failure is never "before F8" after a closed window.
+  assert.ok(source.includes(['  On Error Resume Next', '  CloseOwnSession', "  ' A closed window's fresh session that cannot be opened or used (another system) is as good as none.", '  If openingFresh And Not ok Then message = ClosedAnswer()'].join('\r\n')))
+  // One MI22 lookup, shared with the run where F8 was seen; filled with the reference and never touching MI31.
+  assert.equal(source.split('/nMI22').length, 2, 'one MI22 lookup')
+  assert.deepEqual(lines.filter(line => line.trim().startsWith('ReadCreated ')).map(line => line.trim()), ['ReadCreated ClosedAnswer()', 'ReadCreated "created-but-not-found"'])
+  const sub = lines.slice(lines.indexOf('Sub ReadCreated(notFound)'), lines.indexOf('End Sub', lines.indexOf('Sub ReadCreated(notFound)')))
+  assert.ok(sub.includes('  s.findById("wnd[0]/usr/ctxtIM_INVNU-LOW").Text = reference'))
+  assert.ok(sub.includes('  Check "wnd[0]/usr/ctxtIM_INVNU-LOW", reference'))
+  assert.ok(sub.includes('  If screen = "1000" Then Finish False, notFound'))
+  assert.equal(source.split('.sendVKey 8').length - 1, 2, 'F8 only in the test run and in MI22')
+})
+
 test('any failure after the user\'s F8 in MI31 is unknown: SAP may have created the documents', async t => {
   t.mock.method(console, 'error', () => {})
   const unknown = { code: 'PIDOC_UNKNOWN', message: 'PIDOC_UNKNOWN: Optælling ved ikke, om SAP har gemt. Tjek dokumentet i SAP (MI03).' }

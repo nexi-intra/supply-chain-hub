@@ -8,6 +8,9 @@
 '   and <material> is the first of them, used to check the upload.
 ' Opens its OWN session on the connection to <system> (refuses any other system), fills MI31 exactly like the guide and
 ' WAITS for the user to press F8. Never presses F8 itself. Then saves the MI22 list of the new documents (%pc) as text.
+' When the user closes the window instead, a fresh session on the same connection looks the reference up in MI22 (display
+' only): documents listed = created ({"ok":true}); none listed = "closed-unknown" when SAP was seen working (busy or out
+' of MI31) while waiting, else "cancelled".
 ' Output: {"ok":true,"title":"..."} or {"ok":false,"error":"..."}.
 Option Explicit
 On Error Resume Next
@@ -15,6 +18,7 @@ On Error Resume Next
 Const PLANT = "D301"
 Dim systemName, mode, sloc, stockType, reference, outDir, outFile, waitSeconds, material, fromClipboard, client
 Dim app, conn, base, s, i, before, beforeIds, fso, ownId, title
+Dim busySeen, busyNow, transactionNow, openingFresh
 
 Function JsonText(value)
   Dim t
@@ -27,7 +31,11 @@ Function JsonText(value)
 End Function
 
 Sub Finish(ok, message)
+  ' Always answers: called from ReadCreated too, where an error closing the session must not skip the answer.
+  On Error Resume Next
   CloseOwnSession
+  ' A closed window's fresh session that cannot be opened or used (another system) is as good as none.
+  If openingFresh And Not ok Then message = ClosedAnswer()
   If ok Then
     WScript.StdOut.WriteLine "{""ok"":true,""title"":" & JsonText(title) & "}"
   Else
@@ -104,6 +112,58 @@ Function SaveList()
   SaveList = fso.FileExists(outDir & "\" & outFile)
 End Function
 
+' The answer for a closed window when MI22 lists nothing (or cannot be read): SAP may still be creating once the session
+' was seen busy or out of MI31 while waiting; otherwise F8 was never pressed.
+Function ClosedAnswer()
+  ClosedAnswer = "cancelled"
+  If busySeen Then ClosedAnswer = "closed-unknown"
+End Function
+
+' The created documents, found by the Physical Inventory Number CountPoint stamped on them (read only). Ends the run:
+' the list is saved, or <notFound> is the answer when MI22 lists none.
+Sub ReadCreated(notFound)
+  On Error Resume Next
+  Dim screen
+  Err.Clear
+  s.findById("wnd[0]/tbar[0]/okcd").Text = "/nMI22"
+  s.findById("wnd[0]").sendVKey 0
+  WaitIdle
+  If s.Info.Transaction <> "MI22" Then Err.Clear : Finish False, "no-access-mi22"
+  SetFields Array("ctxtIM_MATNR-LOW", "ctxtIM_MATNR-HIGH", "ctxtIM_WERKS-HIGH", "ctxtIM_LGORT-HIGH", "ctxtIM_CHARG-LOW", "txtIM_IBLNR-LOW", "txtIM_IBLNR-HIGH", _
+    "ctxtIM_INVNU-HIGH", "ctxtZLDAT-LOW", "ctxtZLDAT-HIGH", "ctxtGIDAT-LOW", "ctxtGIDAT-HIGH", "txtBUCHP-LOW", "txtBUCHP-HIGH", "ctxtPA_VARI"), ""
+  s.findById("wnd[0]/usr/ctxtIM_WERKS-LOW").Text = PLANT
+  s.findById("wnd[0]/usr/ctxtIM_LGORT-LOW").Text = sloc
+  s.findById("wnd[0]/usr/ctxtIM_INVNU-LOW").Text = reference
+  If Err.Number <> 0 Then Err.Clear : Finish False, "mi22-screen-changed"
+  Check "wnd[0]/usr/ctxtIM_INVNU-LOW", reference
+  s.findById("wnd[0]").sendVKey 8
+  WaitIdle
+  ' Only a screen that was really read counts as "nothing listed" (an error in an If condition runs its Then branch).
+  screen = ""
+  Err.Clear
+  screen = CStr(s.Info.ScreenNumber)
+  If Err.Number <> 0 Then Err.Clear : Finish False, "read-failed"
+  If screen = "1000" Then Finish False, notFound
+  If Not SaveList() Then Err.Clear : Finish False, "read-failed"
+  Finish True, ""
+End Sub
+
+' A session that is not busy to open a new session from (base), and the sessions open before it (before, beforeIds).
+Sub PrepareNewSession()
+  On Error Resume Next
+  Dim n
+  Set base = Nothing
+  For n = 0 To conn.Children.Count - 1
+    If Not conn.Children(CInt(n)).Busy Then Set base = conn.Children(CInt(n)) : Exit For
+  Next
+  before = conn.Children.Count
+  beforeIds = "|"
+  For n = 0 To conn.Children.Count - 1
+    beforeIds = beforeIds & conn.Children(CInt(n)).Id & "|"
+  Next
+  Err.Clear
+End Sub
+
 ' Whether connection c is on <wantedSystem> in <wantedClient>. Its details are read here only: one that cannot be read
 ' never matches (under On Error Resume Next an error in an If condition would run the Then branch).
 Function ConnectionMatches(c, wantedSystem, wantedClient)
@@ -149,6 +209,8 @@ material = UCase(Trim(WScript.Arguments(8)))
 fromClipboard = (WScript.Arguments.Count > 9)
 Set s = Nothing
 title = ""
+busySeen = False
+openingFresh = False
 Set fso = CreateObject("Scripting.FileSystemObject")
 If Err.Number <> 0 Then Err.Clear : Finish False, "arguments"
 client = CreateObject("WScript.Shell").Environment("PROCESS")("COUNTPOINT_SAP_CLIENT")
@@ -167,15 +229,8 @@ Set conn = SystemConnection(app, systemName, client)
 Err.Clear
 If conn Is Nothing Then Finish False, "not-logged-in-" & systemName
 Set base = Nothing
-For i = 0 To conn.Children.Count - 1
-  If Not conn.Children(CInt(i)).Busy Then Set base = conn.Children(CInt(i)) : Exit For
-Next
+PrepareNewSession
 If base Is Nothing Then Finish False, "sap-busy"
-before = conn.Children.Count
-beforeIds = "|"
-For i = 0 To conn.Children.Count - 1
-  beforeIds = beforeIds & conn.Children(CInt(i)).Id & "|"
-Next
 base.CreateSession
 For i = 1 To 300
   If conn.Children.Count > before Then Exit For
@@ -282,36 +337,56 @@ Err.Clear
 WScript.StdOut.WriteLine "{""stage"":""waiting""}"
 For i = 1 To waitSeconds * 2
   WScript.Sleep 500
-  If Not SessionOpen() Then Set s = Nothing : Finish False, "cancelled"
+  If Not SessionOpen() Then Set s = Nothing : Exit For
+  ' Remembered for a closed window: SAP may be working after F8 once the session was busy or out of MI31 (a screen change
+  ' without a popup is F8 below; with a popup the screen number is the popup's). A value that cannot be read proves nothing.
+  Err.Clear
+  busyNow = False
+  busyNow = s.Busy
+  If Err.Number = 0 Then
+    If busyNow Then
+      busySeen = True
+    Else
+      transactionNow = s.Info.Transaction
+      If Err.Number = 0 And transactionNow <> "MI31" Then busySeen = True
+    End If
+  End If
+  Err.Clear
   ' Pressed F8 = the selection screen is gone without a popup (the multiple selection is a popup, not F8).
   If Not s.Busy Then
     If s.Children.Count = 1 And (CStr(s.Info.ScreenNumber) <> "1000" Or s.Info.Transaction <> "MI31") Then Exit For
   End If
   Err.Clear
 Next
+If s Is Nothing Then
+  ' The user closed the window, maybe after F8 while SAP was still creating: a fresh session on the same connection looks
+  ' the reference up in MI22 (display only), as pidoc-post.vbs does after a closed window.
+  openingFresh = True
+  PrepareNewSession
+  If base Is Nothing Then Finish False, ClosedAnswer()
+  base.CreateSession
+  For i = 1 To 300
+    If conn.Children.Count > before Then Exit For
+    WScript.Sleep 100
+  Next
+  WScript.Sleep 300
+  For i = 0 To conn.Children.Count - 1
+    If InStr(beforeIds, "|" & conn.Children(CInt(i)).Id & "|") = 0 Then Set s = conn.Children(CInt(i))
+  Next
+  If s Is Nothing Then Err.Clear : Finish False, ClosedAnswer()
+  ownId = s.Id
+  WaitIdle
+  If s.Info.SystemName <> systemName Or s.Info.Client <> client Then Finish False, "wrong-system"
+  Err.Clear
+  openingFresh = False
+  ReadCreated ClosedAnswer()
+End If
 If i > waitSeconds * 2 Then Finish False, "timeout"
 WaitIdle
 title = s.findById("wnd[0]").Text
 If s.Info.Transaction <> "MI31" Then Finish False, "left-mi31"
 If InStr(1, title, "Created", vbTextCompare) = 0 Then Finish False, "not-created: " & title & " " & s.findById("wnd[0]/sbar").Text
-
-' The created documents, found by the Physical Inventory Number CountPoint stamped on them (read only).
-s.findById("wnd[0]/tbar[0]/okcd").Text = "/nMI22"
-s.findById("wnd[0]").sendVKey 0
-WaitIdle
-If s.Info.Transaction <> "MI22" Then Err.Clear : Finish False, "no-access-mi22"
-SetFields Array("ctxtIM_MATNR-LOW", "ctxtIM_MATNR-HIGH", "ctxtIM_WERKS-HIGH", "ctxtIM_LGORT-HIGH", "ctxtIM_CHARG-LOW", "txtIM_IBLNR-LOW", "txtIM_IBLNR-HIGH", _
-  "ctxtIM_INVNU-HIGH", "ctxtZLDAT-LOW", "ctxtZLDAT-HIGH", "ctxtGIDAT-LOW", "ctxtGIDAT-HIGH", "txtBUCHP-LOW", "txtBUCHP-HIGH", "ctxtPA_VARI"), ""
-s.findById("wnd[0]/usr/ctxtIM_WERKS-LOW").Text = PLANT
-s.findById("wnd[0]/usr/ctxtIM_LGORT-LOW").Text = sloc
-s.findById("wnd[0]/usr/ctxtIM_INVNU-LOW").Text = reference
-If Err.Number <> 0 Then Err.Clear : Finish False, "mi22-screen-changed"
-Check "wnd[0]/usr/ctxtIM_INVNU-LOW", reference
-s.findById("wnd[0]").sendVKey 8
-WaitIdle
-If CStr(s.Info.ScreenNumber) = "1000" Then Err.Clear : Finish False, "created-but-not-found"
-If Not SaveList() Then Err.Clear : Finish False, "read-failed"
-Finish True, ""
+ReadCreated "created-but-not-found"
 
 Sub SetFields(names, value)
   Dim name

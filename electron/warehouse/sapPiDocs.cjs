@@ -47,8 +47,9 @@ function unknownState(name, detail) {
 
 /**
  * pidoc-create.vbs answers that end before the user's F8 in MI31 (nothing can have been created): the checks before the
- * screen is handed over, a closed window and no F8 in time. Every other failure comes after F8 (MI31's answer or the
- * MI22 lookup, also the check of its reference field), so SAP may have created the documents.
+ * screen is handed over, a closed window that MI22 lists nothing for and that was never seen working ("cancelled"), and
+ * no F8 in time. Every other failure comes after F8 (MI31's answer or the MI22 lookup, also the check of its reference
+ * field, and "closed-unknown": a closed window seen working with nothing in MI22), so SAP may have created the documents.
  */
 function beforeF8(error) {
   const text = String(error || '')
