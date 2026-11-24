@@ -1,7 +1,8 @@
 // Runs CountPoint's fixed SAP GUI scripts with the 32-bit script host (SAP GUI
 // is 32-bit; 64-bit COM cannot load its type library). Only scripts on the
-// allow-list can run, one SAP job at a time (a write frees the queue once it has
-// handed SAP to the user), each with a timeout.
+// allow-list can run, one SAP job at a time, each with a timeout. A PI write holds
+// the queue from its SAP status check until its script has its own session and
+// hands SAP to the user ({"stage":"waiting"}) or ends; then other jobs may run.
 const fs = require('node:fs')
 const path = require('node:path')
 const childProcess = require('node:child_process')

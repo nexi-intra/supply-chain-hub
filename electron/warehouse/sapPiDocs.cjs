@@ -216,7 +216,9 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, expected = { 
 
   /**
    * MI20 for several documents: they are ticked, the user presses "Post Difference" and Save. Which documents were really
-   * posted is read from MI22 afterwards (no longer "Doc. Active"); SAP's messages give the material documents.
+   * posted is read from MI22 afterwards (no longer "Doc. Active"); SAP's messages give the material documents. MI22 is
+   * filled with the interval lowest..highest number (the clipboard may have changed meanwhile), so its list is filtered
+   * to the chosen documents.
    */
   async function postDocuments({ docNos, year }, { onWaiting = () => {} } = {}) {
     const list = [...new Set((docNos || []).map(String))]
@@ -224,7 +226,10 @@ function createPiDocWriter({ bridge, runScript, clipboard, system, expected = { 
     if (list.length > 1 && !clipboard) throw writeError('PIDOC_SAP_FAILED', 'Udklipsholderen er ikke tilgængelig')
     return exclusiveWrite(onWaiting, async (dir, onLine) => {
       if (list.length > 1 && !(await putOnClipboard(clipboard, list.join('\r\n')))) throw writeError('CLIPBOARD_REFUSED', CLIPBOARD_REFUSED)
-      const result = lastJsonLine(await runWaiting('pidoc-post', [system, String(year), dir, 'mi20.txt', 'mi22.txt', String(waitSeconds), list[0], ...(list.length > 1 ? ['clipboard'] : [])], { timeoutMs: (waitSeconds + 300) * 1000, onLine }))
+      const numbers = list.map(BigInt)
+      const low = String(numbers.reduce((a, b) => (b < a ? b : a)))
+      const high = String(numbers.reduce((a, b) => (b > a ? b : a)))
+      const result = lastJsonLine(await runWaiting('pidoc-post', [system, String(year), dir, 'mi20.txt', 'mi22.txt', String(waitSeconds), list[0], low, high, ...(list.length > 1 ? ['clipboard'] : [])], { timeoutMs: (waitSeconds + 300) * 1000, onLine }))
       // The screens are logged from the hand-over on: any failure after it (MI22 not read, a timeout, a closed window
       // without a session for MI22) leaves the user's posting unknown.
       if (!result?.ok && (result?.timedOut || result?.error === 'closed-unknown' || result?.screens)) throw unknownState('pidoc-post', result?.error)

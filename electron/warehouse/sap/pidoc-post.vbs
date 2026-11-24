@@ -1,6 +1,8 @@
 ' CountPoint - post the differences of PI documents with MI20 (CHANGES SAP: the user presses "Post Difference" and Save).
-' Usage: pidoc-post.vbs <system> <year> <outDir> <listFile> <statusFile> <waitSeconds> <doc> [clipboard]
+' Usage: pidoc-post.vbs <system> <year> <outDir> <listFile> <statusFile> <waitSeconds> <doc> <low> <high> [clipboard]
 '   With "clipboard" CountPoint has put all documents on the clipboard (one per line); <doc> is the first of them.
+'   <low> and <high> are the smallest and largest document number; MI22 reads that interval (not the clipboard, which
+'   the user may have changed while posting) and CountPoint keeps only its own documents from the list.
 ' Opens its OWN session on <system> (refuses any other), lists the documents in MI20, saves the list (%pc), ticks exactly
 ' those documents and WAITS for the user. When the user is back on the list (or closes the window, or the wait times out)
 ' the documents are looked up in MI22 (display only) and that list is saved to <statusFile>.
@@ -9,7 +11,7 @@ Option Explicit
 On Error Resume Next
 
 Const PLANT = "D301"
-Dim systemName, year, outDir, listFile, statusFile, waitSeconds, firstDoc, fromClipboard, client
+Dim systemName, year, outDir, listFile, statusFile, waitSeconds, firstDoc, lowDoc, highDoc, fromClipboard, client
 Dim app, conn, base, s, i, before, beforeIds, ownId, fso, ticked, screens, last, current, leftList, timedOut
 
 Function JsonText(value)
@@ -101,6 +103,7 @@ Sub UploadClipboard(button, field)
     If UCase(Trim(s.findById("wnd[0]/usr/" & field).Text)) = UCase(firstDoc) Then Exit Sub
     WScript.Sleep 500
   Next
+  Finish False, "multiple-selection-failed"
 End Sub
 
 Function SaveList(file)
@@ -175,7 +178,9 @@ listFile = WScript.Arguments(3)
 statusFile = WScript.Arguments(4)
 waitSeconds = CLng(WScript.Arguments(5))
 firstDoc = WScript.Arguments(6)
-fromClipboard = (WScript.Arguments.Count > 7)
+lowDoc = WScript.Arguments(7)
+highDoc = WScript.Arguments(8)
+fromClipboard = (WScript.Arguments.Count > 9)
 Set s = Nothing
 ticked = 0
 screens = ""
@@ -184,7 +189,7 @@ Set fso = CreateObject("Scripting.FileSystemObject")
 If Err.Number <> 0 Then Err.Clear : Finish False, "arguments"
 client = CreateObject("WScript.Shell").Environment("PROCESS")("COUNTPOINT_SAP_CLIENT")
 If Len(client) = 0 Then Finish False, "arguments"
-If Len(year) <> 4 Or Len(firstDoc) < 9 Then Finish False, "arguments"
+If Len(year) <> 4 Or Len(firstDoc) < 9 Or Len(lowDoc) < 9 Or Len(highDoc) < 9 Then Finish False, "arguments"
 If fso.FileExists(outDir & "\" & listFile) Then fso.DeleteFile outDir & "\" & listFile
 If fso.FileExists(outDir & "\" & statusFile) Then fso.DeleteFile outDir & "\" & statusFile
 
@@ -309,8 +314,10 @@ WaitIdle
 SetFields Array("ctxtIM_MATNR-LOW", "ctxtIM_MATNR-HIGH", "ctxtIM_WERKS-HIGH", "ctxtIM_LGORT-LOW", "ctxtIM_LGORT-HIGH", "ctxtIM_CHARG-LOW", _
   "txtIM_IBLNR-LOW", "txtIM_IBLNR-HIGH", "ctxtIM_INVNU-LOW", "ctxtIM_INVNU-HIGH", "ctxtZLDAT-LOW", "ctxtZLDAT-HIGH", "ctxtGIDAT-LOW", "ctxtGIDAT-HIGH", _
   "txtBUCHP-LOW", "txtBUCHP-HIGH", "ctxtPA_VARI"), ""
-If fromClipboard Then UploadClipboard "btn%_IM_IBLNR_%_APP_%-VALU_PUSH", "txtIM_IBLNR-LOW" Else s.findById("wnd[0]/usr/txtIM_IBLNR-LOW").Text = firstDoc
-Check "wnd[0]/usr/txtIM_IBLNR-LOW", firstDoc
+s.findById("wnd[0]/usr/txtIM_IBLNR-LOW").Text = lowDoc
+s.findById("wnd[0]/usr/txtIM_IBLNR-HIGH").Text = highDoc
+Check "wnd[0]/usr/txtIM_IBLNR-LOW", lowDoc
+Check "wnd[0]/usr/txtIM_IBLNR-HIGH", highDoc
 s.findById("wnd[0]/usr/ctxtIM_WERKS-LOW").Text = PLANT
 If Err.Number <> 0 Then Err.Clear : Finish False, "mi22-screen-changed"
 s.findById("wnd[0]").sendVKey 8

@@ -232,9 +232,28 @@ test('posting: MI20 for several documents; MI22 decides what was posted; the mat
   assert.deepEqual(result.unknown, ['105000999'], 'not in MI22 = unknown, never "open"')
   assert.deepEqual(result.materialDocs, { 105000894: '4905204847' })
   assert.equal(result.differences.length, 3)
-  assert.deepEqual([calls[0].name, calls[0].args.slice(0, 2), calls[0].args.slice(-2)], ['pidoc-post', ['QS4', '2026'], ['105000893', 'clipboard']])
+  assert.deepEqual([calls[0].name, calls[0].args.slice(0, 2), calls[0].args.slice(-4)], ['pidoc-post', ['QS4', '2026'], ['105000893', '105000893', '105000999', 'clipboard']])
   assert.deepEqual(clip, ['105000893\r\n105000894\r\n105000999'])
   await assert.rejects(writer.postDocuments({ docNos: [], year: '2026' }), { code: 'PIDOC_INVALID' })
+})
+
+test('posting: MI22 gets the lowest and highest chosen number; a document in between that was not chosen is ignored', async () => {
+  const calls = []
+  const runScript = async (name, args) => {
+    calls.push(args)
+    fs.copyFileSync(path.join(__dirname, 'fixtures', 'sap', 'pidoc', 'mi20-list.txt'), path.join(args[2], args[3]))
+    fs.writeFileSync(path.join(args[2], args[4]), MI22)
+    return JSON.stringify({ ok: true, ticked: 1, screens: 'SAPMSSY0/120/1' })
+  }
+  const clip = []
+  const writer = writerFor({ runScript, clipboard: { writeText: text => clip.push(text), readText: () => clip.at(-1) }, system: 'QS4', waitSeconds: 300 })
+  const result = await writer.postDocuments({ docNos: ['105000999', '100000784'], year: '2026' })
+  assert.deepEqual(calls[0].slice(6), ['105000999', '100000784', '105000999', 'clipboard'], 'not sorted: still the smallest and largest')
+  assert.deepEqual([result.posted, result.open, result.unknown], [['100000784'], [], ['105000999']], '105000900 is in the interval but was not chosen')
+  await writer.postDocuments({ docNos: ['999999999', '1000000000', '999999998'], year: '2026' })
+  assert.deepEqual(calls[1].slice(7, 9), ['999999998', '1000000000'], 'compared as numbers, not as text')
+  await writer.postDocuments({ docNos: ['105000894'], year: '2026' })
+  assert.deepEqual(calls[2].slice(6), ['105000894', '105000894', '105000894'], 'one document: low = high, no clipboard')
 })
 
 const UNKNOWN = { code: 'PIDOC_UNKNOWN', message: 'PIDOC_UNKNOWN: Optælling ved ikke, om SAP har gemt. Tjek dokumentet i SAP (MI03).' }
@@ -301,9 +320,20 @@ test('posting: any failure after the hand-over (the screens are logged) is unkno
   await assert.rejects(writer.postDocuments({ docNos: ['105000894'], year: '2026' }), { code: 'PIDOC_SAP_FAILED' }, 'MI20 before the hand-over: nothing posted')
   const source = fs.readFileSync(path.join(__dirname, 'sap', 'pidoc-post.vbs'), 'utf8')
   const mi22 = source.indexOf('okcd").Text = "/nMI22"')
-  const upload = source.indexOf('If fromClipboard Then UploadClipboard', mi22)
-  assert.ok(mi22 > 0 && upload > mi22)
-  assert.equal(source.slice(upload).split('\r\n')[1], 'Check "wnd[0]/usr/txtIM_IBLNR-LOW", firstDoc', 'a wrong clipboard upload in MI22 stops')
+  assert.ok(mi22 > 0)
+  assert.equal(source.slice(mi22).includes('UploadClipboard'), false, 'MI22 never reads the clipboard, which the user may have changed while posting')
+  const lines = source.slice(mi22).split('\r\n')
+  const cleared = lines.findIndex(line => line.endsWith('"txtBUCHP-LOW", "txtBUCHP-HIGH", "ctxtPA_VARI"), ""'))
+  assert.ok(cleared > 0)
+  assert.deepEqual(lines.slice(cleared + 1, cleared + 5), [
+    's.findById("wnd[0]/usr/txtIM_IBLNR-LOW").Text = lowDoc',
+    's.findById("wnd[0]/usr/txtIM_IBLNR-HIGH").Text = highDoc',
+    'Check "wnd[0]/usr/txtIM_IBLNR-LOW", lowDoc',
+    'Check "wnd[0]/usr/txtIM_IBLNR-HIGH", highDoc',
+  ], 'MI22 is filled with the interval after the fields are cleared, and both ends are checked')
+  assert.ok(source.includes('\r\nlowDoc = WScript.Arguments(7)\r\nhighDoc = WScript.Arguments(8)\r\nfromClipboard = (WScript.Arguments.Count > 9)\r\n'))
+  const sub = source.indexOf('Sub UploadClipboard(')
+  assert.match(source.slice(sub, source.indexOf('End Sub', sub)), /\r\n  Next\r\n  Finish False, "multiple-selection-failed"\r\n$/, 'three failed uploads stop the script')
 })
 
 test('MI04 and ZMS_COUNT_SERIAL: a failed read-back is unknown, also without a timeout', async () => {

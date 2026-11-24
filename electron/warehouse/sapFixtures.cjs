@@ -36,7 +36,7 @@ function createFixtureRunner(dir, { readClipboard = () => '', system = 'PS4' } =
       return JSON.stringify({ ok: true, message: `Physical inventory document ${args[1]} deleted`, screens: '' })
     }
     if (name === 'pidoc-post') {
-      const [, , outDir, listFile, statusFile, , firstDoc, clip] = args
+      const [, , outDir, listFile, statusFile, , firstDoc, , , clip] = args
       const docs = clip ? (await readClipboard()).split(/\r?\n/).map(item => item.trim()).filter(Boolean) : [firstDoc]
       const list = ['\tPhysInvDoc\tItem\tMaterial\tBatch\tPlnt\tLocation\tBook Quantity\tQty Counted\tDifference qty\tBUn\tDifference Amt.\tCrcy', ...docs.map(doc => `\t${doc}\t1\tFIXTURE\t\tD301\tD000\t10,000\t9,000\t1,000-\tEA\t50,00\tDKK`)]
       const status = ['\tMaterial\t\t\t\t\tMaterial Description\t\t\t\t\tPlnt\tLocation', '\tPhysInvDoc\tItem\tBatch\tPeriod\tPlan. Date\t\tCount Date\tSTy\tPhys. Inv. No.\tDoc. Status', '\tFIXTURE\t\t\t\t\tFixture\t\t\t\t\tD301\tD000', ...docs.map(doc => `\t${doc}\t1\t\t2026.10\t19.10.2026\t\t20.10.2026\t1\t\t`)]
