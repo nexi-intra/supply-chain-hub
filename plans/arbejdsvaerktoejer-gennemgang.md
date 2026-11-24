@@ -46,7 +46,15 @@ Kørt i QS4 (klient 100) med appens egne PI-scripts gennem `sapPiDocs.cjs` og `s
 11. [x] MI05 rettede 105000915 fra 1.525 til 1.524. Appens bogføring gav talt 1524 og difference −1, materialebilag 4905204966. Selve knappen "Bogfør alligevel" med begrundelse i Hub skal stadig prøves i appen (se nedenfor).
 12. [ ] Lukker brugeren MI31, mens SAP arbejder efter F8. **Udskudt:** det kræver en ændring i scriptet og hører sammen med 5.3 og 5.4.
 
+Hele forløbet i appen (24.11.2026, lokal kopi af TCD-data, QS4): en ny optælling for D004 i "Status Q4 2026", INT4100-3841-0-R godkendt med 2 serienumre, "Hent dagens SAP-tal", opret (105000916), print, "Læg antal på" og bogfør. SAP bogførte "without differences", og appen markerede materialet "Bogført i SAP" med difference 0 DKK. Kopien lå i `%LOCALAPPDATA%\sch-qs4-testdata` med `TCD_HUB_DATA_DIR`, så M: og decemberstatussen er ikke rørt. "Læg antal på" blev kørt gennem appens egne IPC-handlere som en midlertidig Optælling-admin, der kun fandtes i kopiens rolleliste. Den er fjernet igen.
+
 Nye fund fra testen:
+
+- "Bogfør alligevel" kan ikke fremkaldes i 1.6.8, fordi en tællelinje med antal på et materiale med serienumre allerede stoppes ved "Gem linje" og ved godkendelse. Dialogen er kun til optællinger godkendt i 1.6.7.
+- Fire-øjne-reglen (kun en Optælling-admin, som ikke har oprettet dokumentet, må lægge antal på) betyder, at hele forløbet kræver to personer. Det er bevidst, men det skal med i vejledningen.
+- "Hent dagens SAP-tal" tog cirka 2,5 minut i QS4, fordi IQ09 henter alle serienumre på D301.
+- Et forsøg fejlede med `session-not-created`, og den session, SAP åbnede for sent, blev stående på startskærmen. Et nyt forsøg virkede. Det hører sammen med punkt 5.4.
+- Overskriften viser "Gemt på M:", selv når datamappen er lokal. Det er kun kosmetisk.
 
 - To SAP-scripts på samme PC på én gang kan give en misvisende fejl. MI31 sagde "Du har ikke adgang", fordi et andet script kørte samtidig. Det hører sammen med SAP-køen i 5.4. Appen kører kun ét PI-script ad gangen (`PIDOC_BUSY`), og en fælles kø for alle SAP-scripts er en del af 5.4.
 - Står dokumentet åbent i MI05 i en anden session, låser SAP det i MI20 ("User … blocks physical inventory document"). Når brugeren lukker den anden session og trykker Post igen, går det godt, og appen melder det, SAP faktisk bogførte. Ugemte MI05-rettelser går tabt, hvis brugeren skriver `/n` uden at gemme.
@@ -55,7 +63,7 @@ Nye fund fra testen:
 
 ### Skal prøves i appen
 
-- "Bogfør alligevel" fra Hub med en managers begrundelse på et dokument, der er rettet i MI05. Scriptdelen er bestået i QS4 (punkt 11).
+- "Bogfør alligevel" fra Hub kan kun prøves på en optælling, der er godkendt i 1.6.7 med tællelinjer med antal. 1.6.8 lader ikke situationen opstå. Scriptdelen (MI05 og så bogføring) er bestået i QS4 (punkt 11).
 - En rigtig scanner i Placeringer: Enter i materialevælgeren og i søgningen skal tage det, der lige er scannet.
 - Finske og svenske ord i Huberts linje "Andre paller", fx "pois käytöstä" og "inaktiverad".
 - At "lukket pænt" (exitedAt) når frem til M: inden for 10 sekunder ved lukning. Ellers kommer der falske "har ikke sendt"-advarsler.
@@ -63,7 +71,7 @@ Nye fund fra testen:
 ### Kendte risici med blandede versioner
 
 - Managere og admins skal opdateres til 1.6.8 først. En PC på 1.6.7 kender ikke de nye spærringer: den kan nulstille bogførte materialer, lægge antal på med gamle eller tomme SAP-tal og handle på PI-dokumenter, som 1.6.8 har markeret som ukendte.
-- Fejlen i "Tjek SAP-fejl" (1.1) findes også i den udgivne 1.6.7. Det er Jacobs beslutning, om der skal laves en hotfix af 1.6.7.
+- Fejlen i "Tjek SAP-fejl" (1.1) findes også i den udgivne 1.6.7. Jacob har besluttet (24.11.2026), at der ikke laves en hotfix. Rettelsen kommer med i 1.6.8.
 
 Hele forløbet med commits og afgørelser står i `.superpowers/sdd/arbejdsvaerktoejer-gennemgang/progress.md`.
 
