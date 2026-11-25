@@ -681,6 +681,9 @@
   },
   "guideViewer": {
     "imageLoadFailed": "Kuvaa ei voitu ladata",
+    "zoomOut": "Loitonna",
+    "zoomIn": "Lähennä",
+    "zoomReset": "Takaisin 100 %:iin",
     "docxGenerated": "DOCX luotu! Word laskee sisällön sivunumerot itse avattuna.",
     "docxGenerationFailed": "DOCX-tiedostoa ei voitu luoda",
     "exportedToPrefix": "Viety",

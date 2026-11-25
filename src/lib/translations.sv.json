@@ -681,6 +681,9 @@
   },
   "guideViewer": {
     "imageLoadFailed": "Bilden kunde inte läsas in",
+    "zoomOut": "Zooma ut",
+    "zoomIn": "Zooma in",
+    "zoomReset": "Tillbaka till 100 %",
     "docxGenerated": "DOCX skapad! Word beräknar själv sidnumren i innehållsförteckningen när filen öppnas.",
     "docxGenerationFailed": "Kunde inte skapa DOCX-filen",
     "exportedToPrefix": "Exporterad till",

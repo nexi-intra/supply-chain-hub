@@ -664,6 +664,9 @@ const baseTranslations = {
     },
     guideViewer: {
       imageLoadFailed: "Billede kunne ikke indlæses",
+      zoomOut: "Zoom ud",
+      zoomIn: "Zoom ind",
+      zoomReset: "Tilbage til 100 %",
       docxGenerated: "DOCX genereret! Word beregner selv indholdsfortegnelsens sidetal ved åbning.",
       docxGenerationFailed: "Kunne ikke generere DOCX-filen",
       exportedToPrefix: "Eksporteret til",
@@ -2329,6 +2332,9 @@ const baseTranslations = {
     },
     guideViewer: {
       imageLoadFailed: "Image could not be loaded",
+      zoomOut: "Zoom out",
+      zoomIn: "Zoom in",
+      zoomReset: "Back to 100 %",
       docxGenerated: "DOCX generated! Word calculates the table of contents page numbers itself when opened.",
       docxGenerationFailed: "Could not generate the DOCX file",
       exportedToPrefix: "Exported to",
