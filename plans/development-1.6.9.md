@@ -40,7 +40,7 @@ Bemærk: eslint 9 er markeret som ikke længere understøttet (eslint 10 findes)
 
 ## Fase 3 - nye tiltag
 
-- [ ] (tilføjes efterhånden)
+- [ ] Guides og Knowledge Library: zoom i en åben guide. Se `plans/guide-zoom-design.md` og `plans/guide-zoom-plan.md`.
 - [ ] Registrer brugerrettede ændringer i `src/lib/changelog.ts` under en ny 1.6.9-post, kun for ting der faktisk er lavet.
 
 ## Fase 4 - senere, kun efter godkendelse
