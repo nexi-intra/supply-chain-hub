@@ -25,6 +25,8 @@ import { GuideRichText } from '@/components/GuideRichText'
 import { GuideLinkPreview } from '@/components/GuideLinkPreview'
 import { findGuideBacklinks, resolveGuideLink, type GuideLinkEntry, type GuideLinkTarget } from '@/lib/guideLinks'
 import { GUIDE_RICH_TEXT_LABELS } from '@/lib/guideRichTextLabels'
+import { GuideZoomControl } from '@/components/GuideZoomControl'
+import { GUIDE_ZOOM_DEFAULT, guideZoomPdfUrl, guideZoomShortcut, readGuideZoom, saveGuideZoom, stepGuideZoom } from '@/lib/guideZoom'
 
 export function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob)
@@ -409,6 +411,40 @@ export function GuideViewer({ guide: sourceGuide, open, onOpenChange, onEdit, fi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewMode, hasOriginalFile, originalHtml, guide?.id])
 
+  const [zoom, setZoom] = useState(readGuideZoom)
+  const [scrollArea, setScrollArea] = useState<HTMLDivElement | null>(null)
+  const changeZoom = (next: number | ((current: number) => number)) => {
+    setZoom(current => {
+      const value = typeof next === 'function' ? next(current) : next
+      saveGuideZoom(value)
+      return value
+    })
+  }
+  useEffect(() => {
+    if (!open) return
+    // Capture + preventDefault: the hidden app menu would otherwise zoom the whole window on Ctrl +/−/0.
+    const onKeyDown = (event: KeyboardEvent) => {
+      const action = guideZoomShortcut(event)
+      if (!action) return
+      event.preventDefault()
+      event.stopPropagation()
+      changeZoom(current => action === 'reset' ? GUIDE_ZOOM_DEFAULT : stepGuideZoom(current, action === 'in' ? 1 : -1))
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
+  }, [open])
+  useEffect(() => {
+    if (!open || !scrollArea) return
+    const onWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey || event.deltaY === 0) return
+      event.preventDefault()
+      changeZoom(current => stepGuideZoom(current, event.deltaY < 0 ? 1 : -1))
+    }
+    scrollArea.addEventListener('wheel', onWheel, { passive: false })
+    return () => scrollArea.removeEventListener('wheel', onWheel)
+  }, [open, scrollArea])
+  const sheetZoom = { zoom: zoom / 100 }
+
   if (!guide || !model) return null
 
   const hasSections = model.sections.length > 0
@@ -490,6 +526,8 @@ export function GuideViewer({ guide: sourceGuide, open, onOpenChange, onEdit, fi
                   {t.guideViewer.edit}
                 </Button>
               )}
+              <GuideZoomControl zoom={zoom} onChange={changeZoom}
+                labels={{ zoomOut: t.guideViewer.zoomOut, zoomIn: t.guideViewer.zoomIn, zoomReset: t.guideViewer.zoomReset }} />
               {originalPdfUrl && (
                 <div className="flex items-center gap-1 rounded-lg border p-0.5 bg-muted/40 self-stretch sm:self-end">
                   <Button variant={viewMode !== 'pdf' ? 'default' : 'ghost'} size="sm" className="h-7 px-2.5 text-xs flex-1" onClick={() => setViewMode('sections')}>
@@ -613,11 +651,11 @@ export function GuideViewer({ guide: sourceGuide, open, onOpenChange, onEdit, fi
           </div>
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto min-h-0 px-4 sm:px-6 py-4 sm:py-6 bg-muted/40">
+        <div ref={setScrollArea} className="flex-1 overflow-y-auto min-h-0 px-4 sm:px-6 py-4 sm:py-6 bg-muted/40">
           {viewMode === 'pdf' && originalPdfUrl ? (
             <div className="mx-auto h-full min-h-[65vh] max-w-[1200px]">
               {originalPdfObjectUrl ? (
-                <iframe src={originalPdfObjectUrl} title={guide.originalPdfName || guide.title} className="h-full min-h-[65vh] w-full border-0 bg-white" />
+                <iframe key={zoom} src={guideZoomPdfUrl(originalPdfObjectUrl, zoom)} title={guide.originalPdfName || guide.title} className="h-full min-h-[65vh] w-full border-0 bg-white" />
               ) : (
                 <div className="flex min-h-[65vh] flex-col items-center justify-center gap-4 text-center">
                   <FilePdf size={48} className="text-primary" />
@@ -628,7 +666,7 @@ export function GuideViewer({ guide: sourceGuide, open, onOpenChange, onEdit, fi
           ) : viewMode === 'file' && guide.preserveWordLayout && hasOriginalFile ? (
             <div className="mx-auto h-full min-h-[65vh] max-w-[1200px]">
               {pdfPreviewUrl ? (
-                <iframe src={pdfPreviewUrl} title={guide.title} className="h-full min-h-[65vh] w-full border-0 bg-white" />
+                <iframe key={zoom} src={guideZoomPdfUrl(pdfPreviewUrl, zoom)} title={guide.title} className="h-full min-h-[65vh] w-full border-0 bg-white" />
               ) : (
                 <div className="flex min-h-[65vh] flex-col items-center justify-center gap-4 text-center">
                   <FileDoc size={48} className="text-primary" />
@@ -640,7 +678,7 @@ export function GuideViewer({ guide: sourceGuide, open, onOpenChange, onEdit, fi
               )}
             </div>
           ) : viewMode === 'original' && hasOriginalFile ? (
-            <div className="max-w-[1000px] mx-auto">
+            <div className="max-w-[1000px] mx-auto" style={sheetZoom}>
               {guide.preserveWordLayout && <p className="text-sm text-muted-foreground mb-3">{t.guideViewer.simplifiedPreviewHint}</p>}
               <div className="bg-white text-gray-900 rounded-sm shadow-xl border border-gray-300 overflow-hidden px-10 py-8">
               {isLoadingOriginal || originalHtml === null ? (
@@ -658,7 +696,7 @@ export function GuideViewer({ guide: sourceGuide, open, onOpenChange, onEdit, fi
             </div>
           ) : hasSections ? (
             // A4-lignende ark der spejler den genererede DOCX (lys uanset tema, som Word).
-            <div className="max-w-[1000px] mx-auto bg-white text-gray-900 rounded-sm shadow-xl border border-gray-300 overflow-hidden">
+            <div className="max-w-[1000px] mx-auto bg-white text-gray-900 rounded-sm shadow-xl border border-gray-300 overflow-hidden" style={sheetZoom}>
               <div className="px-10 pt-6 pb-2 border-b border-gray-200">
                 <div className="flex items-start justify-between gap-4">
                   <div className="text-[11px] leading-snug text-gray-500">
@@ -735,7 +773,7 @@ export function GuideViewer({ guide: sourceGuide, open, onOpenChange, onEdit, fi
               </div>
             </div>
           ) : (guide.fileUrl || guide.wordFileData) ? (
-            <div className="flex flex-col items-center justify-center py-8 sm:py-12 px-4 sm:px-6">
+            <div className="flex flex-col items-center justify-center py-8 sm:py-12 px-4 sm:px-6" style={sheetZoom}>
               <div className="max-w-2xl w-full space-y-4 sm:space-y-6">
                 <div className="flex flex-col items-center text-center space-y-4">
                   <div className="h-20 w-20 sm:h-24 sm:w-24 rounded-md bg-primary/10 flex items-center justify-center">
@@ -778,7 +816,7 @@ export function GuideViewer({ guide: sourceGuide, open, onOpenChange, onEdit, fi
               </div>
             </div>
           ) : (
-            <div className="max-w-none bg-background rounded-lg shadow-sm border border-border p-6 sm:p-8 lg:p-12">
+            <div className="max-w-none bg-background rounded-lg shadow-sm border border-border p-6 sm:p-8 lg:p-12" style={sheetZoom}>
               <p className="whitespace-pre-wrap break-words">{linkifyText(guide.content)}</p>
             </div>
           )}

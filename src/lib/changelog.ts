@@ -11,6 +11,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     version: '1.6.9',
     items: [
       'Sikkerhedsopdateringer: appens motor (Electron) og en række indbyggede pakker er opdateret til versioner, hvor kendte sikkerhedshuller er lukket',
+      'Guides og Knowledge Library: zoom ind og ud i en åben guide med knapperne øverst, Ctrl og musehjulet eller Ctrl + og Ctrl −. Tekst og billeder bliver større sammen, også i PDF-visningerne, og din zoom huskes på PC\'en',
     ],
   },
   {

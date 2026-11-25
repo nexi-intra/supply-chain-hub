@@ -46,7 +46,7 @@
   - `guideZoomShortcut(event: { ctrlKey: boolean; metaKey?: boolean; altKey?: boolean; key: string; target?: EventTarget | null }): 'in' | 'out' | 'reset' | null`
   - `guideZoomPdfUrl(url: string, zoom: number): string`
 
-- [ ] **Step 1: Skriv de fejlende tests** i `src/lib/guideZoom.test.ts` (stub `localStorage` med et simpelt `Map`-objekt via `vi.stubGlobal`):
+- [x] **Step 1: Skriv de fejlende tests** i `src/lib/guideZoom.test.ts` (stub `localStorage` med et simpelt `Map`-objekt via `vi.stubGlobal`):
   - `steps up and down along the fixed steps`: `stepGuideZoom(100, 1) === 110`, `stepGuideZoom(100, -1) === 90`, `stepGuideZoom(67, -1) === 50`.
   - `stays within bounds`: `stepGuideZoom(300, 1) === 300`, `stepGuideZoom(50, -1) === 50`.
   - `remembers the zoom`: `saveGuideZoom(150)` og så `readGuideZoom() === 150`.
@@ -54,10 +54,10 @@
   - `maps keyboard shortcuts`: med `ctrlKey: true` giver `'+'` og `'='` `'in'`, `'-'` giver `'out'`, `'0'` giver `'reset'`. Uden `ctrlKey`, med `altKey: true` eller `key: 'a'` giver den `null`.
   - `ignores shortcuts in editable targets`: `target` er et objekt med `tagName: 'INPUT'`, `'TEXTAREA'` eller `isContentEditable: true` giver `null`.
   - `adds the zoom to a PDF address`: `guideZoomPdfUrl('blob:x/1', 150) === 'blob:x/1#zoom=150'` og `guideZoomPdfUrl('blob:x/1#page=2', 80) === 'blob:x/1#zoom=80'`.
-- [ ] **Step 2: Kør og se dem fejle:** `npx.cmd vitest run src/lib/guideZoom.test.ts` (FAIL, modulet findes ikke).
-- [ ] **Step 3: Implementér `src/lib/guideZoom.ts`** med signaturerne ovenfor. `readGuideZoom` accepterer kun værdier, der står i `GUIDE_ZOOM_STEPS`. `stepGuideZoom` med en værdi uden for listen går til nærmeste trin i den retning. Editérbart mål tjekkes duck-typed (`tagName`, `isContentEditable`), så testen kører i node.
-- [ ] **Step 4: Kør igen:** samme kommando, alle tests PASS.
-- [ ] **Step 5: Commit** `feat(guides): hjælpemodul til zoom i åbne guides`.
+- [x] **Step 2: Kør og se dem fejle:** `npx.cmd vitest run src/lib/guideZoom.test.ts` (FAIL, modulet findes ikke).
+- [x] **Step 3: Implementér `src/lib/guideZoom.ts`** med signaturerne ovenfor. `readGuideZoom` accepterer kun værdier, der står i `GUIDE_ZOOM_STEPS`. `stepGuideZoom` med en værdi uden for listen går til nærmeste trin i den retning. Editérbart mål tjekkes duck-typed (`tagName`, `isContentEditable`), så testen kører i node.
+- [x] **Step 4: Kør igen:** samme kommando, alle tests PASS.
+- [x] **Step 5: Commit** `feat(guides): hjælpemodul til zoom i åbne guides`.
 
 ### Task 2: Zoomkontrol og tekster
 
@@ -75,13 +75,13 @@
   - fi: `"Loitonna"`, `"Lähennä"`, `"Takaisin 100 %:iin"`
   - sv: `"Zooma ut"`, `"Zooma in"`, `"Tillbaka till 100 %"`
 
-- [ ] **Step 1: Skriv de fejlende tests** med `renderToStaticMarkup` (som `src/components/HubMark.test.tsx`):
+- [x] **Step 1: Skriv de fejlende tests** med `renderToStaticMarkup` (som `src/components/HubMark.test.tsx`):
   - `shows the current zoom`: `zoom={125}` giver `125 %` i markup, og knapperne har `aria-label="Zoom ud"` og `aria-label="Zoom ind"`, og procentknappen har `title="Tilbage til 100 %"`.
   - `disables buttons at the bounds`: ved `zoom={50}` er "Zoom ud"-knappen `disabled`, ved `zoom={300}` er "Zoom ind"-knappen `disabled`, ved `zoom={100}` er ingen af dem.
-- [ ] **Step 2: Kør og se dem fejle:** `npx.cmd vitest run src/components/GuideZoomControl.test.tsx`.
-- [ ] **Step 3: Implementér komponenten** med samme udtryk som de eksisterende segmentknapper i guideviseren (`rounded-lg border p-0.5 bg-muted/40`, `Button size="sm" variant="ghost" className="h-7 px-2.5 text-xs"`), ikonerne `Minus`/`Plus` fra `@phosphor-icons/react`, og procent som `{zoom} %`. Klik på procenten kalder `onChange(GUIDE_ZOOM_DEFAULT)`. Tilføj de nye nøgler i alle fire sprog.
-- [ ] **Step 4: Kør igen:** komponenttesten og `npx.cmd vitest run src/lib/libraryTerms.test.ts` PASS, og `npx.cmd tsc -b` uden fejl.
-- [ ] **Step 5: Commit** `feat(guides): zoomkontrol til guidevisningen`.
+- [x] **Step 2: Kør og se dem fejle:** `npx.cmd vitest run src/components/GuideZoomControl.test.tsx`.
+- [x] **Step 3: Implementér komponenten** med samme udtryk som de eksisterende segmentknapper i guideviseren (`rounded-lg border p-0.5 bg-muted/40`, `Button size="sm" variant="ghost" className="h-7 px-2.5 text-xs"`), ikonerne `Minus`/`Plus` fra `@phosphor-icons/react`, og procent som `{zoom} %`. Klik på procenten kalder `onChange(GUIDE_ZOOM_DEFAULT)`. Tilføj de nye nøgler i alle fire sprog.
+- [x] **Step 4: Kør igen:** komponenttesten og `npx.cmd vitest run src/lib/libraryTerms.test.ts` PASS, og `npx.cmd tsc -b` uden fejl.
+- [x] **Step 5: Commit** `feat(guides): zoomkontrol til guidevisningen`.
 
 ### Task 3: Zoom i guideviseren
 
@@ -93,21 +93,27 @@
 **Interfaces:**
 - Consumes: alt fra Task 1 og `GuideZoomControl` fra Task 2.
 
-- [ ] **Step 1: Tilstand.** `const [zoom, setZoom] = useState(readGuideZoom)` og en `changeZoom(next: number)`, der sætter tilstanden og kalder `saveGuideZoom`.
-- [ ] **Step 2: Kontrollen.** Læg `GuideZoomControl` i værktøjslinjen i højre kolonne (samme kolonne som sprog- og visningsknapperne), med labels fra `t.guideViewer`. Den vises i alle visninger.
-- [ ] **Step 3: Arket.** Læg `style={{ zoom: zoom / 100 }}` på den inderste indholdscontainer i hver af disse grene: tekstvisningen (A4-arket, `max-w-[1000px] mx-auto bg-white ...`), "Original Word" (`max-w-[1000px] mx-auto`), den vedhæftede Word uden sektioner og ren tekst (`guide.content`). Ikke på `DialogHeader` og ikke på scroll-containeren `flex-1 overflow-y-auto`, så scrollbaren bliver i normal størrelse.
-- [ ] **Step 4: PDF.** Begge iframes (`originalPdfObjectUrl` og `pdfPreviewUrl`) får `src={guideZoomPdfUrl(url, zoom)}` og `key={zoom}`, så PDF-viseren åbner med den nye zoom.
-- [ ] **Step 5: Taster og musehjul,** kun mens `open` er sand, med oprydning i effektens return:
+- [x] **Step 1: Tilstand.** `const [zoom, setZoom] = useState(readGuideZoom)` og en `changeZoom(next: number)`, der sætter tilstanden og kalder `saveGuideZoom`.
+- [x] **Step 2: Kontrollen.** Læg `GuideZoomControl` i værktøjslinjen i højre kolonne (samme kolonne som sprog- og visningsknapperne), med labels fra `t.guideViewer`. Den vises i alle visninger.
+- [x] **Step 3: Arket.** Læg `style={{ zoom: zoom / 100 }}` på den inderste indholdscontainer i hver af disse grene: tekstvisningen (A4-arket, `max-w-[1000px] mx-auto bg-white ...`), "Original Word" (`max-w-[1000px] mx-auto`), den vedhæftede Word uden sektioner og ren tekst (`guide.content`). Ikke på `DialogHeader` og ikke på scroll-containeren `flex-1 overflow-y-auto`, så scrollbaren bliver i normal størrelse.
+- [x] **Step 4: PDF.** Begge iframes (`originalPdfObjectUrl` og `pdfPreviewUrl`) får `src={guideZoomPdfUrl(url, zoom)}` og `key={zoom}`, så PDF-viseren åbner med den nye zoom.
+- [x] **Step 5: Taster og musehjul,** kun mens `open` er sand, med oprydning i effektens return:
   - `keydown` på `window` med `capture: true`: `guideZoomShortcut(event)` og ved et resultat `event.preventDefault()`, `event.stopPropagation()` og `changeZoom` (in/out via `stepGuideZoom`, reset til `GUIDE_ZOOM_DEFAULT`).
   - `wheel` på scroll-containeren (ref) med `{ passive: false }`: ved `ctrlKey` `preventDefault()` og ét trin ind ved `deltaY < 0`, ét trin ud ved `deltaY > 0`.
   - Brug en ref eller funktionel `setZoom`, så lytteren ikke læser en gammel zoom.
-- [ ] **Step 6: Kontroller i dev-vinduet** (port 5070, separat profil, se `plans/development-1.6.9.md`) på en guide i både Guides og Knowledge Library:
+- [x] **Step 6: Kontroller i dev-vinduet** (port 5070, separat profil, se `plans/development-1.6.9.md`) på en guide i både Guides og Knowledge Library:
   - knapperne zoomer arket, og procenten følger med
   - Ctrl + / Ctrl − / Ctrl 0 og Ctrl + musehjul zoomer kun arket, mens overskrift og knapper bliver i normal størrelse
   - de to PDF-visninger åbner med samme zoom
   - zoom huskes til næste guide og efter genstart
   - et link til en anden guide og et hop til et bestemt trin lander rigtigt ved 200 %
   - efter guiden er lukket, er forsiden i normal størrelse
-- [ ] **Step 7: Tilføj en linje i 1.6.9-posten i `src/lib/changelog.ts`:** `'Guides og Knowledge Library: zoom ind og ud i en åben guide med knapperne øverst, Ctrl og musehjulet eller Ctrl + og Ctrl −. Tekst og billeder bliver større sammen, også i PDF-visningerne, og din zoom huskes på PC\'en'`. Sæt flueben i `plans/development-1.6.9.md` fase 3 med henvisning til denne plan.
-- [ ] **Step 8: Fuld kontrol:** `npx.cmd tsc -b` uden fejl og `npx.cmd vitest run` bestået.
-- [ ] **Step 9: Commit** `feat(guides): zoom i åbne guides og vidensartikler`.
+- [x] **Step 7: Tilføj en linje i 1.6.9-posten i `src/lib/changelog.ts`:** `'Guides og Knowledge Library: zoom ind og ud i en åben guide med knapperne øverst, Ctrl og musehjulet eller Ctrl + og Ctrl −. Tekst og billeder bliver større sammen, også i PDF-visningerne, og din zoom huskes på PC\'en'`. Sæt flueben i `plans/development-1.6.9.md` fase 3 med henvisning til denne plan.
+- [x] **Step 8: Fuld kontrol:** `npx.cmd tsc -b` uden fejl og `npx.cmd vitest run` bestået.
+- [x] **Step 9: Commit** `feat(guides): zoom i åbne guides og vidensartikler`.
+
+## Resultat
+
+- Prøvet i dev-vinduet 25.11 på guiden "PUUILO Software update": knapper, Ctrl +/−/0 og Ctrl + musehjul zoomer kun arket (vinduets zoomfaktor forblev 1, overskriften 24 px). Ved 200 % fylder arket bredden, og teksten brydes om, så der ikke kommer vandret scroll. "Forenklet preview" zoomer også billederne. Jacob bekræftede med rigtige tastetryk, at kun arket voksede.
+- PDF: ingen guides i TCD har PDF-visninger. Prøvet i et Electron 44.11.5-forsøg: #zoom virker på en ny iframe, men ikke ved kun at ændre fragmentet, derfor key={zoom}. Electrons PDF-viser har ingen egne plus og minus.
+- Knowledge Base er tom i TCD. Den bruger samme guidevindue.
