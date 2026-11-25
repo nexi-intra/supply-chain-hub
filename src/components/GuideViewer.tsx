@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -26,7 +26,7 @@ import { GuideLinkPreview } from '@/components/GuideLinkPreview'
 import { findGuideBacklinks, resolveGuideLink, type GuideLinkEntry, type GuideLinkTarget } from '@/lib/guideLinks'
 import { GUIDE_RICH_TEXT_LABELS } from '@/lib/guideRichTextLabels'
 import { GuideZoomControl } from '@/components/GuideZoomControl'
-import { GUIDE_ZOOM_DEFAULT, guideZoomPdfUrl, guideZoomShortcut, readGuideZoom, saveGuideZoom, stepGuideZoom } from '@/lib/guideZoom'
+import { GUIDE_ZOOM_DEFAULT, createGuideZoomWheel, guideZoomPdfUrl, guideZoomShortcut, readGuideZoom, saveGuideZoom, stepGuideZoom, subscribeGuideZoom } from '@/lib/guideZoom'
 
 export function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob)
@@ -411,14 +411,10 @@ export function GuideViewer({ guide: sourceGuide, open, onOpenChange, onEdit, fi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewMode, hasOriginalFile, originalHtml, guide?.id])
 
-  const [zoom, setZoom] = useState(readGuideZoom)
+  const zoom = useSyncExternalStore(subscribeGuideZoom, readGuideZoom)
   const [scrollArea, setScrollArea] = useState<HTMLDivElement | null>(null)
   const changeZoom = (next: number | ((current: number) => number)) => {
-    setZoom(current => {
-      const value = typeof next === 'function' ? next(current) : next
-      saveGuideZoom(value)
-      return value
-    })
+    saveGuideZoom(typeof next === 'function' ? next(readGuideZoom()) : next)
   }
   useEffect(() => {
     if (!open) return
@@ -435,10 +431,12 @@ export function GuideViewer({ guide: sourceGuide, open, onOpenChange, onEdit, fi
   }, [open])
   useEffect(() => {
     if (!open || !scrollArea) return
+    const wheelStep = createGuideZoomWheel()
     const onWheel = (event: WheelEvent) => {
       if (!event.ctrlKey || event.deltaY === 0) return
       event.preventDefault()
-      changeZoom(current => stepGuideZoom(current, event.deltaY < 0 ? 1 : -1))
+      const step = wheelStep(event.deltaY)
+      if (step) changeZoom(current => stepGuideZoom(current, step))
     }
     scrollArea.addEventListener('wheel', onWheel, { passive: false })
     return () => scrollArea.removeEventListener('wheel', onWheel)

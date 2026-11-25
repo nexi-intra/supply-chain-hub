@@ -4,6 +4,13 @@ export const GUIDE_ZOOM_STEPS: readonly number[] = [50, 67, 75, 80, 90, 100, 110
 export const GUIDE_ZOOM_DEFAULT = 100
 
 const STORAGE_KEY = 'guide-viewer-zoom'
+const listeners = new Set<() => void>()
+
+// Several viewers stay mounted (library, assistant, editor preview); all follow the saved zoom.
+export function subscribeGuideZoom(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => { listeners.delete(listener) }
+}
 
 export function readGuideZoom(): number {
   try {
@@ -16,6 +23,20 @@ export function readGuideZoom(): number {
 
 export function saveGuideZoom(zoom: number): void {
   try { localStorage.setItem(STORAGE_KEY, String(zoom)) } catch { /* only a convenience */ }
+  for (const listener of listeners) listener()
+}
+
+// A mouse notch is about 100; a touchpad pinch sends many small deltas that must add up to one step.
+export function createGuideZoomWheel(threshold = 100): (deltaY: number) => 1 | -1 | 0 {
+  let total = 0
+  return deltaY => {
+    if (Math.sign(deltaY) !== Math.sign(total)) total = 0
+    total += deltaY
+    if (Math.abs(total) < threshold) return 0
+    const step = total < 0 ? 1 : -1
+    total = 0
+    return step
+  }
 }
 
 export function stepGuideZoom(zoom: number, direction: 1 | -1): number {

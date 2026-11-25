@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { GUIDE_ZOOM_DEFAULT, guideZoomPdfUrl, guideZoomShortcut, readGuideZoom, saveGuideZoom, stepGuideZoom } from './guideZoom'
+import { GUIDE_ZOOM_DEFAULT, createGuideZoomWheel, guideZoomPdfUrl, guideZoomShortcut, readGuideZoom, saveGuideZoom, stepGuideZoom, subscribeGuideZoom } from './guideZoom'
 
 const KEY = 'guide-viewer-zoom'
 
@@ -62,5 +62,22 @@ describe('guideZoom', () => {
   it('adds the zoom to a PDF address', () => {
     expect(guideZoomPdfUrl('blob:x/1', 150)).toBe('blob:x/1#zoom=150')
     expect(guideZoomPdfUrl('blob:x/1#page=2', 80)).toBe('blob:x/1#zoom=80')
+  })
+
+  it('steps once per notch but collects small touchpad deltas', () => {
+    const wheel = createGuideZoomWheel()
+    expect(wheel(-100)).toBe(1)
+    expect(wheel(120)).toBe(-1)
+    const steps = Array.from({ length: 30 }, () => wheel(-4)).filter(step => step !== 0)
+    expect(steps).toEqual([1])
+  })
+
+  it('tells every open viewer when the zoom changes', () => {
+    const seen: number[] = []
+    const unsubscribe = subscribeGuideZoom(() => seen.push(readGuideZoom()))
+    saveGuideZoom(150)
+    unsubscribe()
+    saveGuideZoom(200)
+    expect(seen).toEqual([150])
   })
 })
