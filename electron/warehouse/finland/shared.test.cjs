@@ -90,6 +90,34 @@ test('release does not free a lock someone else has taken since', async () => {
   assert.equal((await shared.lock.current()).action, 'fix-review')
 })
 
+test('a lock without a usable ttl gets the default two minutes', async () => {
+  for (const ttlMs of [0, -5, NaN, Infinity, 'x', null]) {
+    const { shared, clock } = setup()
+    await shared.lock.acquire(ANNA, { day: '2026-11-19', action: 'write-day', ttlMs })
+    assert.equal((await shared.lock.current()).expiresAt, clock.now + 2 * 60000, `ttlMs ${String(ttlMs)}`)
+    await assert.rejects(shared.lock.acquire(BO, { day: '2026-11-19', action: 'write-day' }), { code: 'FINLAND_LOCKED' })
+  }
+})
+
+test("another PC's not-sent marks and written keys are seen at once, not from the read cache", async () => {
+  const { shared, dir } = setup()
+  const other = createFinlandShared({ store: createStore(dir), now: () => Date.UTC(2026, 10, 19, 9) })
+  // This PC writes and reads first, so each value sits in its read cache (a missing file is never cached).
+  const FIRST = { ...PARCEL, tracking: 'JJD000390000000000001' }
+  await shared.notSent.mark(ANNA, FIRST)
+  await shared.dayLog.record(ANNA, '2026-11-19', ['0|Z'])
+  await (await shared.lock.acquire(ANNA, { day: '2026-11-19', action: 'write-day', ttlMs: 60000 }))()
+  assert.deepEqual((await shared.notSent.list()).map(entry => entry.tracking), [FIRST.tracking])
+  assert.deepEqual([...await shared.dayLog.recentKeys()], ['0|Z'])
+  assert.equal(await shared.lock.current(), null)
+  await other.notSent.mark(BO, PARCEL)
+  await other.dayLog.record(BO, '2026-11-19', ['1|A'])
+  await other.lock.acquire(BO, { day: '2026-11-19', action: 'write-day', ttlMs: 60000 })
+  assert.deepEqual((await shared.notSent.list()).map(entry => entry.tracking).sort(), [FIRST.tracking, PARCEL.tracking].sort())
+  assert.deepEqual([...await shared.dayLog.recentKeys()].sort(), ['0|Z', '1|A'])
+  assert.equal((await shared.lock.current()).email, 'bo@x.test')
+})
+
 test('recent keys are forgotten after 30 minutes', async () => {
   const { shared, clock } = setup()
   const start = clock.now

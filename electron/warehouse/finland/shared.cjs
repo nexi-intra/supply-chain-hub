@@ -51,9 +51,12 @@ function createFinlandShared({ store, now = Date.now }) {
     return fs.promises.access(store.dataDir).then(() => true, () => false)
   }
 
-  /** A missing key is empty only while the folder is there; with M: down it must not read as "nothing marked". */
+  /**
+   * A missing key is empty only while the folder is there; with M: down it must not read as "nothing marked".
+   * Always from the file, never the read cache: another PC may just have marked a parcel, written keys or taken the lock.
+   */
   async function read(key) {
-    const value = await store.getAsync(key)
+    const value = await store.getAsync(key, { skipCache: true })
     if (value === undefined && store.dataDir && !(await folderExists())) throw codeError('STORAGE_UNAVAILABLE', 'Finlandsforsendelsers fælles data kan ikke læses lige nu')
     return value
   }
@@ -112,18 +115,20 @@ function createFinlandShared({ store, now = Date.now }) {
      * Takes the write lock on the sheet, or throws FINLAND_LOCKED while someone else holds one that has not expired.
      * The same person may take her own lock again. The returned release frees the lock only while it is still this
      * acquisition's (a token per acquisition), so an expired lock taken by someone else, or taken again by the same
-     * person, is never freed by an old release.
+     * person, is never freed by an old release. A `ttlMs` that is not a positive number gets the default two minutes;
+     * the time is taken once the file lock is held, so waiting for it does not shorten the lock.
      */
-    async acquire(user, { day, action, ttlMs = DEFAULT_LOCK_TTL_MS } = {}) {
+    async acquire(user, { day, action, ttlMs } = {}) {
       const email = lower(user.email)
       const token = crypto.randomUUID()
-      const at = now()
-      const value = { email, name: nameOf(user), day: text(day), action: text(action), at, expiresAt: at + Math.max(0, Number(ttlMs) || 0), token }
+      const ttl = Number.isFinite(ttlMs) && ttlMs > 0 ? ttlMs : DEFAULT_LOCK_TTL_MS
+      let at
       await store.mutateAsync(LOCK_KEY, current => {
-        if (isObject(current) && current.email !== email && current.expiresAt > now()) {
+        at = now()
+        if (isObject(current) && current.email !== email && current.expiresAt > at) {
           throw codeError('FINLAND_LOCKED', `FINLAND_LOCKED: ${current.name || current.email} skriver ${dayMonth(current.day)} i arket lige nu`)
         }
-        return value
+        return { email, name: nameOf(user), day: text(day), action: text(action), at, expiresAt: at + ttl, token }
       })
       return async function release() {
         await store.mutateAsync(LOCK_KEY, current => isObject(current) && current.email === email && current.at === at && current.token === token ? null : undefined)
