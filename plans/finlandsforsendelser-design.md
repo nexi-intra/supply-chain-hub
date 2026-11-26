@@ -1,4 +1,4 @@
-# Finlandsforsendelser og værktøjer pr. team: design
+﻿# Finlandsforsendelser og værktøjer pr. team: design
 
 Status: udkast til godkendelse (26.11.2026). Bygges i 1.6.9 efter godkendelse og plan.
 
@@ -57,7 +57,7 @@ Samtidig er Arbejdsværktøjer i dag låst til TCD og TRR som helhed. Jacob vil 
 
 ## Tilgange
 
-1. **Bygges helt ind i hubben (valgt).** Logik og tests flyttes til `electron/warehouse/finland/`. SAP går gennem `sapBridge`, Excel-scripts pakkes som hubbens SAP-scripts, fælles data i `_lagerstyring`, admin-rollen i `roles.cjs`, skærme i React med hubbens komponenter og fire sprog. Mest arbejde, men værktøjet opfører sig som resten af hubben, og det fælles virker.
+1. **Bygges helt ind i hubben (valgt).** Logik og tests flyttes til `electron/warehouse/finland/`. SAP går gennem `sapBridge`, Excel-scripts pakkes som hubbens SAP-scripts, fælles data i `_lagerstyring`, admin-rollen i `roles.cjs`, skærme i React med hubbens komponenter og modulets sprog. Mest arbejde, men værktøjet opfører sig som resten af hubben, og det fælles virker.
 2. Backend ind i hubben, appens nuværende HTML-skærme vises i hubben. Hurtigere, men ser anderledes ud, kun dansk, og to måder at bygge skærme på. Fravalgt.
 3. Appen forbliver selvstændig og startes fra hubben. Ingen deling, ingen roller, SAP-kald kan støde sammen. Opfylder ikke kravene. Fravalgt.
 
@@ -154,7 +154,7 @@ Regler:
 
 ### H. Skærmene
 
-Bygges i React i `src/views/warehouse/finland/` med hubbens komponenter (Card, Button, Badge, Tabs osv.) og på hubbens fire sprog (da, en, fi, sv). Indholdet er det samme som i appen i dag:
+Bygges i React i `src/views/warehouse/finland/` med hubbens komponenter (Card, Button, Badge, Tabs osv.). Teksterne følger Arbejdsværktøjer: dansk og engelsk via `t(dansk, engelsk)` i `src/lib/warehouse/text.ts`, hvor finsk og svensk får engelsk, ligesom i de andre værktøjer. (Builderens beslutning) Indholdet er det samme som i appen i dag:
 
 - **Skriv ind:** kalender med farve pr. dag, dagens kolli i grupperne Mangler, Skal tjekkes, Ikke sendt og Står i arket, knappen "Skriv N kolli i arket", rettelser fra listen til tjek, "Ikke sendt" og "Sæt ind igen", sletning af række med bekræftelse (kun admin).
 - **Tilføj række i hånden** (fx DSV) med tjek og forhåndsvisning.
