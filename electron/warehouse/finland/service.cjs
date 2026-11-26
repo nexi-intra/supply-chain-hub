@@ -200,9 +200,11 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
   }
 
   async function snapshot(user) {
-    const [notSent, settings, dayLog, lock, own, others] = await Promise.all([
+    const [notSent, settings, dayLog, lock, own, others, admin] = await Promise.all([
       shared.notSent.list(), shared.settings.get(), shared.dayLog.days(), shared.lock.current(), draftsOf(user).all(), shared.drafts.others(user.email),
+      isAdmin(user),
     ])
+    const myEmail = String(user.email || '').trim().toLowerCase()
     const notSentByKey = new Map(notSent.map(e => [keyOfEntry(e), e]))
     const days = parcels ? dayOverview(parcels, buildSheetIndex(sheetRows), new Set(notSentByKey.keys())) : []
     const todayIso = today()
@@ -213,7 +215,10 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
       loadedAt,
       sheet: sheet ? { ...sheet, isTest: !!settings.isTest } : null,
       dayLog,
-      lock: lock ? { byName: lock.name || lock.email, day: lock.day, action: lock.action } : null,
+      // The window shows the delete button only to admins; deleteNotSentRow checks again.
+      isAdmin: !!admin,
+      // `mine` by e-mail, since two people can share a name.
+      lock: lock ? { byName: lock.name || lock.email, day: lock.day, action: lock.action, mine: lock.email === myEmail } : null,
       followUp: followUpSnapshot(user, own, others),
       days: days.map(d => ({
         date: d.date,

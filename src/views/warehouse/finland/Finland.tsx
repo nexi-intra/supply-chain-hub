@@ -9,7 +9,6 @@ import { backendText, kolli } from '@/lib/warehouse/finlandText'
 import { describeSapState } from '@/lib/warehouse/sapStatus'
 import { t } from '@/lib/warehouse/text'
 import type { FinlandManualInput, FinlandNotSentRow, FinlandParcelRow, FinlandReviewRow, FinlandSnapshot } from '@/types/finland'
-import type { WarehouseUser } from '@/types/warehouse'
 import { Calendar } from './Calendar'
 import { NoticeBox, type Notice, type Working } from './common'
 import { ManualRow } from './ManualRow'
@@ -33,12 +32,22 @@ function orderTypesOf(snapshot: FinlandSnapshot | null): string[] {
   return [...counts].sort((a, b) => b[1] - a[1]).map(([type]) => type)
 }
 
-/** "Anna Holm skriver 19. november i arket lige nu". */
-export function lockText(lock: NonNullable<FinlandSnapshot['lock']>): string {
+/** "Anna Holm skriver 19. november i arket lige nu", by the action the main process holds the lock for. */
+export function lockText(lock: Pick<NonNullable<FinlandSnapshot['lock']>, 'byName' | 'day' | 'action'>): string {
+  const name = lock.byName
+  // The main process's action strings (service.cjs) start with their verb: skriver, retter, gemmer opfølgning, sletter række.
+  const verb = lock.action.split(' ')[0]
+  if (verb === 'sletter') return t(`${name} sletter en række i arket lige nu.`, `${name} is deleting a row in the sheet right now.`)
+  if (verb === 'gemmer') return t(`${name} gemmer opfølgning i arket lige nu.`, `${name} is saving follow-up in the sheet right now.`)
   const day = ISO_DAY.test(lock.day) ? shortDay(lock.day) : ''
+  if (verb === 'retter') {
+    return day
+      ? t(`${name} retter ${day} i arket lige nu.`, `${name} is correcting ${day} in the sheet right now.`)
+      : t(`${name} retter i arket lige nu.`, `${name} is correcting the sheet right now.`)
+  }
   return day
-    ? t(`${lock.byName} skriver ${day} i arket lige nu.`, `${lock.byName} is writing ${day} in the sheet right now.`)
-    : t(`${lock.byName} skriver i arket lige nu.`, `${lock.byName} is writing in the sheet right now.`)
+    ? t(`${name} skriver ${day} i arket lige nu.`, `${name} is writing ${day} in the sheet right now.`)
+    : t(`${name} skriver i arket lige nu.`, `${name} is writing in the sheet right now.`)
 }
 
 /** The orange "N kolli er ikke gemt i arket" and the "Testark" badge, shown in the tool's title bar next to the SAP light. */
@@ -67,7 +76,7 @@ export function FinlandMarks({ pending, isTest }: { pending: number; isTest: boo
  * fetched by itself: SAP and the sheet are read only when the person presses "Hent fra SAP" or "Læs arket". The lock
  * and the day log come with every answer from the main process, so they are as fresh as the person's last action.
  */
-export function Finland({ user, headerSlot, onBusyChange }: { user: WarehouseUser; headerSlot: HTMLElement | null; onBusyChange?: (busy: boolean) => void }) {
+export function Finland({ headerSlot, onBusyChange }: { headerSlot: HTMLElement | null; onBusyChange?: (busy: boolean) => void }) {
   const bridge = window.electronWarehouse!.finland
   const { status: sap } = useSapStatus()
   const [tab, setTab] = useState<Tab>('write')
@@ -94,8 +103,7 @@ export function Finland({ user, headerSlot, onBusyChange }: { user: WarehouseUse
     bridge.settings().then(settings => setIsTestSetting(settings.isTest)).catch(() => {})
   }, [bridge])
 
-  const myName = user.fullName.trim() || user.email.trim().toLowerCase()
-  const lockedBy = data?.lock && data.lock.byName !== myName ? data.lock : null
+  const lockedBy = data?.lock && !data.lock.mine ? data.lock : null
   const isTest = data?.sheet ? data.sheet.isTest : isTestSetting
   const pending = data?.followUp.pendingTotal ?? 0
   const sapDescription = describeSapState(sap, 'finland')
@@ -257,6 +265,7 @@ export function Finland({ user, headerSlot, onBusyChange }: { user: WarehouseUse
         lastWrite={data.dayLog[day.date]}
         working={working}
         writeBlocked={!!lockedBy}
+        isAdmin={data.isAdmin}
         confirmDelete={confirmDelete}
         onWrite={() => writeDay(day.date)}
         onFix={fixReview}

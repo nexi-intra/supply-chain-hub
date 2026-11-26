@@ -12,6 +12,8 @@ interface NotSentGroupProps {
   busy: boolean
   /** The sheet may not be written now (an action runs, or someone else holds the write lock). */
   writeBlocked: boolean
+  /** Finland admin: only an admin sees "Slet række N i arket" and its confirmation (the main process checks again). */
+  isAdmin: boolean
   deleting: boolean
   onAskDelete: (key: string | null) => void
   onDelete: (row: FinlandNotSentRow, sheetRow: number) => void
@@ -22,10 +24,10 @@ const sheetPlace = (r: FinlandNotSentRow) => (r.sheetRows.length
   ? t(`Står i række ${r.sheetRows.map(s => s.row).join(', ')}`, `On row ${r.sheetRows.map(s => s.row).join(', ')}`)
   : t('Står ikke i arket', 'Not in the sheet'))
 
-/** The day's parcels marked "Ikke sendt": never written; a row already in the sheet can be deleted after a red confirmation. */
-export function NotSentGroup({ rows, confirmKey, busy, writeBlocked, deleting, onAskDelete, onDelete, onRestore }: NotSentGroupProps) {
+/** The day's parcels marked "Ikke sendt": never written; an admin can delete a row already in the sheet after a red confirmation. */
+export function NotSentGroup({ rows, confirmKey, busy, writeBlocked, isAdmin, deleting, onAskDelete, onDelete, onRestore }: NotSentGroupProps) {
   if (!rows.length) return null
-  const confirming = rows.find(r => r.key === confirmKey && r.sheetRows.length === 1)
+  const confirming = isAdmin ? rows.find(r => r.key === confirmKey && r.sheetRows.length === 1) : undefined
   return (
     <div className="space-y-2">
       <GroupTitle title={t('Ikke sendt, bliver ikke skrevet', 'Not sent, will not be written')} count={rows.length} />
@@ -45,7 +47,7 @@ export function NotSentGroup({ rows, confirmKey, busy, writeBlocked, deleting, o
               </td>
               <td className="px-3 py-2">
                 <div className="flex flex-wrap justify-end gap-1.5">
-                  {one && (
+                  {one && isAdmin && (
                     <Button size="sm" variant="destructive" disabled={busy || writeBlocked} onClick={() => onAskDelete(r.key)}>
                       {t(`Slet række ${one.row} i arket`, `Delete row ${one.row} in the sheet`)}
                     </Button>

@@ -145,7 +145,7 @@ export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
       {counting && tool === 'locations' && <Locations key={language} user={counting} initial={start.locations} />}
       {user && tool === 'timeclock' && <Timeclock key={language} user={user} />}
       {counting && tool === 'softwareload' && <Softwareload key={language} user={counting} onOpenTimeclock={() => setTool('timeclock')} onBusyChange={setToolBusy} />}
-      {user && tool === 'finland' && <Finland key={language} user={user} headerSlot={finlandMarks} onBusyChange={setToolBusy} />}
+      {user && tool === 'finland' && <Finland key={language} headerSlot={finlandMarks} onBusyChange={setToolBusy} />}
       {counting && tool === 'counts' && (
         <>
           <WarehouseContent key={language} user={counting} view={view} onNavigate={setView} />

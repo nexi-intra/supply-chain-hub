@@ -15,6 +15,8 @@ export interface WriteDayProps {
   working: Working
   /** Someone else holds the write lock: the buttons that write the sheet wait. */
   writeBlocked: boolean
+  /** Finland admin: only then is "Slet række N i arket" shown. */
+  isAdmin: boolean
   confirmDelete: string | null
   onWrite: () => void
   onFix: (row: FinlandReviewRow) => void
@@ -33,7 +35,7 @@ const REASON_BY_ACTION: Record<string, [string, string]> = {
 const reasonText = (r: FinlandReviewRow) => (REASON_BY_ACTION[r.action.kind] ? t(...REASON_BY_ACTION[r.action.kind]) : backendText(r.reason))
 
 /** One day of Skriv ind: what is missing, what needs a person, what was not sent and what is in the sheet. */
-export function WriteDay({ day, lastWrite, working, writeBlocked, confirmDelete, onWrite, onFix, onMarkNotSent, onRestore, onAskDelete, onDelete }: WriteDayProps) {
+export function WriteDay({ day, lastWrite, working, writeBlocked, isAdmin, confirmDelete, onWrite, onFix, onMarkNotSent, onRestore, onAskDelete, onDelete }: WriteDayProps) {
   const busy = working !== null
   const bits = [
     t(`${kolli(day.total)} i SAP.`, `${kolli(day.total)} in SAP.`),
@@ -157,6 +159,7 @@ export function WriteDay({ day, lastWrite, working, writeBlocked, confirmDelete,
         confirmKey={confirmDelete}
         busy={busy}
         writeBlocked={writeBlocked}
+        isAdmin={isAdmin}
         deleting={working === 'delete'}
         onAskDelete={onAskDelete}
         onDelete={onDelete}

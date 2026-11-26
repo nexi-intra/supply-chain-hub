@@ -112,8 +112,10 @@ export interface FinlandSnapshot {
   sheet: { wasOpen: boolean; filterRemoved: boolean; texts: string[]; isTest: boolean } | null
   /** Who wrote each day last, when, and how many parcels in all. */
   dayLog: Record<string, { byName: string; at: number; count: number }>
-  /** The shared write lock while someone holds it. */
-  lock: { byName: string; day: string; action: string } | null
+  /** The shared write lock while someone holds it. `mine`: the person asking holds it (by e-mail, not name). */
+  lock: { byName: string; day: string; action: string; mine: boolean } | null
+  /** Finland admin (or manager): may delete a not-sent parcel's row in the sheet. */
+  isAdmin: boolean
   followUp: FinlandFollowUpView
   days: FinlandDay[]
 }

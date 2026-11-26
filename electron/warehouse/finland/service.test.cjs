@@ -163,7 +163,7 @@ test('a day someone else is writing is refused', async () => {
   const before = excel.calls.length
   await shared.lock.acquire(ANNA, { day: DAY, action: 'skriver', ttlMs: 60000 })
   const snap = await service.loadSheet(MONA)
-  assert.deepEqual(snap.lock, { byName: 'Anna Holm', day: DAY, action: 'skriver' })
+  assert.deepEqual(snap.lock, { byName: 'Anna Holm', day: DAY, action: 'skriver', mine: false })
   await assert.rejects(service.writeDay(MONA, DAY), error => {
     assert.equal(error.code, 'FINLAND_LOCKED')
     assert.match(error.message, /Anna Holm skriver 16\.11/)
@@ -171,6 +171,21 @@ test('a day someone else is writing is refused', async () => {
   })
   assert.equal(excel.calls.length, before + 1, 'only the read of "Læs arket"')
   assert.deepEqual(excel.writes(), [])
+})
+
+test('the snapshot tells the window whether the person is admin and whether the lock is their own', async () => {
+  const { pc, shared } = setup({ admins: [ADA.email] })
+  const mona = pc()
+  const ada = pc()
+  assert.equal((await mona.service.loadSheet(MONA)).isAdmin, false)
+  assert.equal((await ada.service.loadSheet(ADA)).isAdmin, true)
+  // Same name, different person: only the e-mail makes the lock one's own.
+  const namesake = { ...MONA, email: 'mona.berg@x.test' }
+  const release = await shared.lock.acquire({ ...MONA, email: 'MONA@x.test' }, { day: DAY, action: 'skriver', ttlMs: 60000 })
+  assert.equal((await mona.service.loadSheet(MONA)).lock.mine, true)
+  assert.equal((await mona.service.loadSheet(namesake)).lock.mine, false)
+  assert.equal((await ada.service.loadSheet(ADA)).lock.mine, false)
+  await release()
 })
 
 test('a write holds the lock with the day and what is done', async () => {

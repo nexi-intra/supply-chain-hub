@@ -25,7 +25,7 @@ const DAY: FinlandDay = {
 
 const noop = () => {}
 const props = (extra: Partial<WriteDayProps> = {}): WriteDayProps => ({
-  day: DAY, lastWrite: undefined, working: null, writeBlocked: false, confirmDelete: null,
+  day: DAY, lastWrite: undefined, working: null, writeBlocked: false, isAdmin: true, confirmDelete: null,
   onWrite: noop, onFix: noop, onMarkNotSent: noop, onRestore: noop, onAskDelete: noop, onDelete: noop, ...extra,
 })
 const writeButton = (html: string) => /<button[^>]*>(?:(?!<\/button>).)*Skriv 2 kolli i arket<\/button>/.exec(html)?.[0] ?? ''
@@ -52,9 +52,28 @@ describe('Finlandsforsendelser: Skriv ind', () => {
     expect(lockText({ byName: 'Anna Holm', day: '', action: 'skriver' })).toBe('Anna Holm skriver i arket lige nu.')
   })
 
+  it('the lock line says what the colleague is doing', () => {
+    expect(lockText({ byName: 'Ada Admin', day: '2026-11-20', action: 'sletter række' })).toBe('Ada Admin sletter en række i arket lige nu.')
+    expect(lockText({ byName: 'Anna Holm', day: '2026-11-19', action: 'retter' })).toBe('Anna Holm retter 19. november i arket lige nu.')
+    expect(lockText({ byName: 'Anna Holm', day: '2026-11-19', action: 'gemmer opfølgning' })).toBe('Anna Holm gemmer opfølgning i arket lige nu.')
+    setWarehouseLanguage('en')
+    expect(lockText({ byName: 'Ada Admin', day: '2026-11-20', action: 'sletter række' })).toBe('Ada Admin is deleting a row in the sheet right now.')
+  })
+
+  it('only an admin sees the delete button and its confirmation', () => {
+    const group = (isAdmin: boolean, confirmKey: string | null = null) => renderToStaticMarkup(
+      <NotSentGroup rows={[notSent([sheetRow(5)])]} confirmKey={confirmKey} busy={false} writeBlocked={false} isAdmin={isAdmin} deleting={false} onAskDelete={noop} onDelete={noop} onRestore={noop} />,
+    )
+    expect(group(true)).toContain('Slet række 5 i arket')
+    const plain = group(false, '82100003|00073215000000000003')
+    expect(plain).not.toContain('Slet række')
+    expect(plain).not.toContain('bliver slettet i arket')
+    expect(plain).toContain('Sæt ind igen')
+  })
+
   it('a not-sent parcel on one row of its own can be deleted after a confirmation showing the whole row', () => {
     const group = (rows: FinlandNotSentRow[], confirmKey: string | null = null) => renderToStaticMarkup(
-      <NotSentGroup rows={rows} confirmKey={confirmKey} busy={false} writeBlocked={false} deleting={false} onAskDelete={noop} onDelete={noop} onRestore={noop} />,
+      <NotSentGroup rows={rows} confirmKey={confirmKey} busy={false} writeBlocked={false} isAdmin deleting={false} onAskDelete={noop} onDelete={noop} onRestore={noop} />,
     )
     expect(group([notSent([sheetRow(5)])])).toContain('Slet række 5 i arket')
     expect(group([notSent([sheetRow(5, true)])])).toContain('Slet rækken i hånden')
