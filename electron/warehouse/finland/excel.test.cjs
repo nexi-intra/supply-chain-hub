@@ -40,6 +40,8 @@ test('excel error codes become the Danish texts', async () => {
   assert.equal(excelErrorText('row-not-unique'), 'Kolliet står på flere rækker i arket. Intet er slettet. Slet den forkerte række i hånden.')
   assert.equal(excelErrorText('row-shared'), 'T&T-cellen i rækken har også andre kolli. Intet er slettet. Ret rækken i hånden.')
   assert.equal(excelErrorText('delete-failed'), 'Excel kunne ikke slette rækken. Intet er slettet. Tjek arket, og prøv igen.')
+  assert.equal(excelErrorText('sheet-missing'), 'Fanen findes ikke i arket. Tjek fanens navn under Arbejdsværktøjer, Administration, Finlandsforsendelser.')
+  assert.equal(excelErrorText('table-missing'), 'Tabellen findes ikke i arket. Tjek tabellens navn under Arbejdsværktøjer, Administration, Finlandsforsendelser.')
   assert.match(excelErrorText('noget-nyt'), /noget-nyt/)
   const { excel: sheet } = excel(fakeExecFile({ ok: false, error: 'read-only' }))
   await assert.rejects(sheet.readSheet(), error => {

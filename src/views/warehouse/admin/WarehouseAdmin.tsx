@@ -3,6 +3,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { t } from '@/lib/warehouse/text'
 import type { ToolRolesView, WarehouseUser } from '@/types/warehouse'
+import { FinlandAdmin } from './FinlandAdmin'
 import { ToolRoles, type RoleTool } from './ToolRoles'
 
 const ROLE_TOOLS: readonly RoleTool[] = ['counts', 'locations', 'finland']
@@ -35,12 +36,7 @@ export function WarehouseAdmin({ user }: { user: WarehouseUser }) {
       {view && sections.map(tool => (
         <section key={tool} className="space-y-4">
           <ToolRoles tool={tool} view={view} onView={setView} />
-          {tool === 'finland' && (
-            <>
-              {/* Task 13: Finlandsforsendelser's settings (the sheet's address, tab and table) go here. */}
-              {/* Task 13: the team's drafts in Finlandsforsendelser go here. */}
-            </>
-          )}
+          {tool === 'finland' && <FinlandAdmin />}
         </section>
       ))}
     </div>

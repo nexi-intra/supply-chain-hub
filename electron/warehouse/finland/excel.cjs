@@ -15,8 +15,8 @@ function appendTimeoutMs(rowCount) {
 const MESSAGES = Object.freeze({
   'excel-missing': 'Excel kunne ikke startes på PC\'en.',
   'open-failed': 'Arket kunne ikke åbnes fra SharePoint. Åbn det i Excel-programmet, og prøv igen.',
-  'sheet-missing': 'Fanen findes ikke i arket. Tjek sheetName i config.json.',
-  'table-missing': 'Tabellen findes ikke i arket. Tjek tableName i config.json.',
+  'sheet-missing': 'Fanen findes ikke i arket. Tjek fanens navn under Arbejdsværktøjer, Administration, Finlandsforsendelser.',
+  'table-missing': 'Tabellen findes ikke i arket. Tjek tabellens navn under Arbejdsværktøjer, Administration, Finlandsforsendelser.',
   'table-changed': 'Tabellen mangler en kolonne, programmet skal bruge.',
   'read-only': 'Arket er åbnet skrivebeskyttet. Tryk "Aktivér redigering" i Excel, og prøv igen.',
   'save-failed': 'Rækkerne er skrevet, men arket kunne ikke gemmes. Gem det selv i Excel.',

@@ -171,6 +171,13 @@ export interface FinlandSettings {
   isTest: boolean
 }
 
+/** The test sheet, the default until a manager chooses another; the same as DEFAULT_SETTINGS in electron/warehouse/finland/shared.cjs. */
+export const FINLAND_TEST_SHEET: Omit<FinlandSettings, 'isTest'> = Object.freeze({
+  workbookUrl: 'https://christianiabpos.sharepoint.com/sites/NordicSupplyChain/Shared Documents/General/Testark - Ordre sendt til Finland fra Danmark.xlsx',
+  sheetName: 'Sheet1',
+  tableName: 'Table2',
+})
+
 /** One person's changes not in the sheet yet (Administration). */
 export interface FinlandDraftsPerson {
   email: string

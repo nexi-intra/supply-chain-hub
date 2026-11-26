@@ -1,0 +1,56 @@
+import { createRequire } from 'node:module'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { afterEach, describe, expect, it } from 'vitest'
+import { setWarehouseLanguage } from '@/lib/warehouse/text'
+import { FINLAND_TEST_SHEET, type FinlandDraftsPerson } from '@/types/finland'
+import { danishGenitive, draftDays, FinlandDrafts, FinlandSheetSettings } from './FinlandAdmin'
+
+const REAL = { workbookUrl: 'https://christianiabpos.sharepoint.com/sites/NordicSupplyChain/Shared Documents/Ordre.xlsx', sheetName: 'Sheet1', tableName: 'Table2', isTest: false }
+const noop = () => {}
+
+describe('Finlandsforsendelser in Administration', () => {
+  afterEach(() => setWarehouseLanguage('da'))
+
+  it('the test sheet is the one the main process starts with', () => {
+    const { TEST_WORKBOOK_URL } = createRequire(import.meta.url)('../../../../electron/warehouse/finland/shared.cjs')
+    expect(FINLAND_TEST_SHEET.workbookUrl).toBe(TEST_WORKBOOK_URL)
+  })
+
+  it('shows the active sheet with the Testark badge, and no way back while it is the test sheet', () => {
+    const html = renderToStaticMarkup(<FinlandSheetSettings settings={{ ...FINLAND_TEST_SHEET, isTest: true }} onSaved={noop} />)
+    expect(html).toContain('Værktøjet skriver i')
+    expect(html).toContain('Testark - Ordre sendt til Finland fra Danmark.xlsx')
+    expect(html).toContain('Fane Sheet1, tabel Table2')
+    expect(html).toContain('Testark</span>')
+    expect(html).toContain('Arkets adresse')
+    expect(html).not.toContain('Brug testarket igen')
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Gem<\/button>/)
+  })
+
+  it('a real sheet has no badge and offers the test sheet again', () => {
+    const html = renderToStaticMarkup(<FinlandSheetSettings settings={REAL} onSaved={noop} />)
+    expect(html).toContain('Ordre.xlsx')
+    expect(html).not.toContain('Testark</span>')
+    expect(html).toContain('Brug testarket igen')
+  })
+
+  it('lists each person with count, days, last change and a delete button', () => {
+    const person: FinlandDraftsPerson = { email: 'jens@x.dk', name: 'Jens Hansen', count: 3, byDay: { '2026-11-25': 1, '2026-11-24': 2 }, updatedAt: new Date(2026, 10, 26, 14, 5).toISOString() }
+    const html = renderToStaticMarkup(<FinlandDrafts people={[person, { ...person, email: 'anna@x.dk', name: 'Anna Holm' }]} onCleared={async () => {}} />)
+    expect(html).toContain('3 kolli')
+    expect(html).toContain('24.11, 25.11')
+    expect(html).toContain('26.11.2026 14:05')
+    expect(html).toContain('Slet Anna Holms ændringer')
+    expect(html).toContain('Slet Jens Hansens ændringer')
+    expect(renderToStaticMarkup(<FinlandDrafts people={[{ ...person, name: 'Lars Jens' }]} onCleared={async () => {}} />)).toContain('Slet Lars Jens&#x27; ændringer')
+    setWarehouseLanguage('en')
+    expect(renderToStaticMarkup(<FinlandDrafts people={[]} onCleared={async () => {}} />)).toContain('Nobody has changes that are not saved in the sheet.')
+  })
+
+  it('days are d.m oldest first, and names in s take only an apostrophe', () => {
+    expect(draftDays({ '2026-12-01': 1, '2026-11-05': 4 })).toBe('5.11, 1.12')
+    expect(draftDays({})).toBe('')
+    expect(danishGenitive('Anna')).toBe('Annas')
+    expect(danishGenitive('Jens')).toBe("Jens'")
+  })
+})
