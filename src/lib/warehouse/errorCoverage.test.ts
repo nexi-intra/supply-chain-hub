@@ -12,6 +12,7 @@ const LITERAL = /(['"`])([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)\1/g
 const NOT_ERROR_CODES = new Set([
   // SAP transactions and export columns
   'ZMS_COUNT_SERIAL', 'ZMS_REP', 'ZMS_PREP', 'WERKS_LGORT', 'USER_STAT_TXT', 'USER_STAT', 'SNO_UNR', 'SNO_BLK', 'STOCK_TYPE_ICON', 'STOCK_TYPE', 'SESSION_MANAGER',
+  'POST_CODE', 'SHIPPED_DATE',
   // What stops a drawing from being published (shown in the publish panel, not thrown)
   'NAME_TWICE', 'SPECIAL_UNKNOWN', 'TYPE_REFUSED', 'NOT_EMPTY', 'NAME_TAKEN',
   // Notes on rows of the placement sheet import (shown in the import preview, not thrown)

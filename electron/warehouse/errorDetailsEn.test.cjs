@@ -11,6 +11,8 @@ const { createCountRepository } = require('./countRepository.cjs')
 const { createCountService } = require('./countService.cjs')
 const { createLocationRepository } = require('./locations/repository.cjs')
 const { createLocationService, PLACE_REASONS } = require('./locations/service.cjs')
+const { createFinlandShared } = require('./finland/shared.cjs')
+const { createFinlandService } = require('./finland/service.cjs')
 const PATTERNS = require('../../src/lib/warehouse/errorDetailsEn.json')
 
 /** As errorMessage in English: the first pattern of the code that matches the whole detail. */
@@ -172,4 +174,24 @@ test('Optælling: open SAP documents that stop a delete or a reset keep their nu
     const detail = await refusal(anna.deleteCount(ANNA, id), 'COUNT_PIDOCS_ACTIVE')
     assert.equal(english('COUNT_PIDOCS_ACTIVE', detail), expected, detail)
   }
+})
+
+test('Finlandsforsendelser: the write lock names the person and the day in English', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'error-details-en-finland-'))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const shared = createFinlandShared({ store: createStore(root), now: () => Date.UTC(2026, 10, 19, 9) })
+  const service = createFinlandService({ shared, excel: {}, fetchParcels: async () => [], isAdmin: async () => true, now: () => Date.UTC(2026, 10, 19, 9) })
+  const detailOf = message => message.replace(/^FINLAND_LOCKED: /, '')
+
+  await shared.lock.acquire(ANNA, { day: '2026-11-19', action: 'skriver', ttlMs: 60000 })
+  const writing = detailOf(await refusal(shared.lock.acquire(BO, { day: '2026-11-20', action: 'skriver' }), 'FINLAND_LOCKED'))
+  assert.equal(english('FINLAND_LOCKED', writing), 'Anna Holm is writing 19.11 in the sheet right now.', writing)
+
+  await shared.lock.acquire(ANNA, { day: '', action: 'skriver', ttlMs: 60000 })
+  const noDay = detailOf(await refusal(shared.lock.acquire(BO, { day: '2026-11-20', action: 'skriver' }), 'FINLAND_LOCKED'))
+  assert.equal(english('FINLAND_LOCKED', noDay), 'Anna Holm is writing in the sheet right now.', noDay)
+
+  await shared.lock.acquire(ANNA, { day: '2026-11-19', action: 'sletter række', ttlMs: 60000 })
+  const deleting = detailOf(await refusal(service.restoreNotSent(BO, '80012345|JD000390007788990011'), 'FINLAND_LOCKED'))
+  assert.equal(english('FINLAND_LOCKED', deleting), 'Anna Holm is deleting a row in the sheet right now. Try again shortly.', deleting)
 })

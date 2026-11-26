@@ -62,5 +62,10 @@
     ["^Disse SAP-dokumenter er ikke bogført: (.+)\\. Vent, til det er oprettet\\.$", "These SAP documents are not posted: $1. Wait until it is created."],
     ["^Disse SAP-dokumenter er ikke bogført: (.+)\\. Vent, til de er oprettet\\.$", "These SAP documents are not posted: $1. Wait until they are created."],
     ["^Disse SAP-dokumenter er ikke bogført: (.+?)\\. (?:Slet|Bogfør|En manager|Vent) [\\s\\S]*$", "These SAP documents are not posted: $1. Delete the created and printed ones in SAP (MI02), post the counted ones (Post), let a manager resolve the unknown ones and wait for the ones being created."]
+  ],
+  "FINLAND_LOCKED": [
+    ["^(.+?) skriver (\\S+) i arket lige nu$", "$1 is writing $2 in the sheet right now."],
+    ["^(.+?) skriver +i arket lige nu$", "$1 is writing in the sheet right now."],
+    ["^(.+) sletter en række i arket lige nu\\. Prøv igen om lidt\\.$", "$1 is deleting a row in the sheet right now. Try again shortly."]
   ]
 }

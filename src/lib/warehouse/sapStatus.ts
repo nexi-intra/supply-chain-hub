@@ -10,12 +10,13 @@ export interface SapStateDescription {
 }
 
 /** The tools that show the SAP indicator. */
-export type SapTool = 'counts' | 'locations' | 'softwareload'
+export type SapTool = 'counts' | 'locations' | 'softwareload' | 'finland'
 
 const TOOL_NAMES: Record<SapTool, [string, string]> = {
   counts: ['Optælling', 'Stock count'],
   locations: ['Placeringer', 'Locations'],
   softwareload: ['Softwareload', 'Softwareload'],
+  finland: ['Finlandsforsendelser', 'Finlandsforsendelser'],
 }
 
 // {App} starts a sentence and {app} sits inside one: the tool's name, or "appen" where the tool is not known.
@@ -54,6 +55,7 @@ export function describeSapState(status: SapStatus | null, tool?: SapTool): SapS
 /** What the tool does in SAP: Optælling and Placeringer leave every posting to the user, Softwareload posts by itself. */
 export function sapToolNote(tool: SapTool, system: string): string {
   if (tool === 'locations') return t('Placeringer læser kun fra SAP (materialedokumenter og beskrivelser).', 'Locations only reads from SAP (material documents and descriptions).')
+  if (tool === 'finland') return t('Finlandsforsendelser læser kun fra SAP (ZMS_cons_info), og kun når du trykker "Hent fra SAP".', 'Finlandsforsendelser only reads from SAP (ZMS_cons_info), and only when you press "Fetch from SAP".')
   if (tool === 'softwareload') return t(`Softwareload flytter terminalerne i SAP selv, når du klikker 'Afslut og flyt i SAP' eller 'Flyt til D005'. Der bogføres i ${system}.`, `Softwareload moves the terminals in SAP itself when you click 'Finish and move in SAP' or 'Move to D005'. It posts in ${system}.`)
   return t('Optælling læser fra SAP. Optællingsdokumenter udfyldes i SAP, men du trykker altid selv F8, Gem eller Post.', 'Stock count reads from SAP. Count documents are filled in in SAP, but you always press F8, Save or Post yourself.')
 }
@@ -61,6 +63,7 @@ export function sapToolNote(tool: SapTool, system: string): string {
 /** The title of the TEST-SAP badge. */
 export function sapTestSystemNote(tool: SapTool): string {
   if (tool === 'locations') return t("Placeringer læser fra SAP's testsystem", "Locations reads from SAP's test system")
+  if (tool === 'finland') return t("Finlandsforsendelser læser fra SAP's testsystem", "Finlandsforsendelser reads from SAP's test system")
   if (tool === 'softwareload') return t("Softwareload læser fra og bogfører i SAP's testsystem", "Softwareload reads from and posts in SAP's test system")
   return t("Optælling læser fra og skriver til SAP's testsystem", "Stock count reads from and writes to SAP's test system")
 }

@@ -28,6 +28,7 @@ import { SapCheck } from './SapCheck'
 import { SerialRules } from './SerialRules'
 import { StatusView } from './StatusView'
 import { WarehouseHome, type WarehouseTool } from './WarehouseHome'
+import { Finland } from './finland/Finland'
 import { Locations } from './locations/Locations'
 import { Softwareload } from './softwareload/Softwareload'
 import { Timeclock } from './timeclock/Timeclock'
@@ -67,7 +68,7 @@ function countsView(tab: string | undefined, item: string): View {
   return { kind: 'list' }
 }
 
-/** Arbejdsværktøjer (the module was Lagerstyring) for every team; each team sees only its own tools (src/lib/warehouseTools.ts). Finlandsforsendelser has no view yet. */
+/** Arbejdsværktøjer (the module was Lagerstyring) for every team; each team sees only its own tools (src/lib/warehouseTools.ts). */
 export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
   const [user, setUser] = useState<WarehouseUser | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
@@ -83,7 +84,11 @@ export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
   // Keeps t() in step with the Hub language; the whole module re-renders below this component when it changes.
   const language = useWarehouseLanguage()
   const { language: hubLanguage } = useLanguage()
-  const sapTool: SapTool | null = counting && (tool === 'counts' || tool === 'locations' || tool === 'softwareload') ? tool : null
+  const sapTool: SapTool | null = counting && (tool === 'counts' || tool === 'locations' || tool === 'softwareload') ? tool
+    // Finlandsforsendelser is BPO's and TCD's: no counting user needed, `tool` is only 'finland' when the team has it.
+    : user && tool === 'finland' ? 'finland' : null
+  // Finlandsforsendelser puts its own marks ("N kolli er ikke gemt i arket", "Testark") next to the SAP light.
+  const [finlandMarks, setFinlandMarks] = useState<HTMLDivElement | null>(null)
 
   useEffect(() => {
     const bridge = window.electronWarehouse
@@ -96,7 +101,7 @@ export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
       if (event.key !== 'Escape' || event.defaultPrevented || isAnyModalOpen() || toolBusy) return
       // Escape goes one level up: from a tool to the Arbejdsværktøjer page, from there to the front page.
       if (tool === 'home') onNavigateBack()
-      else if (tool === 'timeclock' || tool === 'softwareload' || tool === 'admin' || TOP_LEVEL.has(view.kind)) toHome()
+      else if (tool === 'timeclock' || tool === 'softwareload' || tool === 'finland' || tool === 'admin' || TOP_LEVEL.has(view.kind)) toHome()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -117,10 +122,16 @@ export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
             {tool === 'locations' && <><span className="text-muted-foreground">·</span><span className="text-muted-foreground">{t('Placeringer', 'Locations')}</span></>}
             {tool === 'timeclock' && <><span className="text-muted-foreground">·</span><span className="text-muted-foreground">{t('Stempelkort', 'Time card')}</span></>}
             {tool === 'softwareload' && <><span className="text-muted-foreground">·</span><span className="text-muted-foreground">Softwareload</span></>}
+            {tool === 'finland' && <><span className="text-muted-foreground">·</span><span className="text-muted-foreground">Finlandsforsendelser</span></>}
             {tool === 'admin' && <><span className="text-muted-foreground">·</span><span className="text-muted-foreground">Administration</span></>}
           </h1>
           {user && <Badge variant="secondary" className="font-mono">{user.team}</Badge>}
-          {sapTool && <div className="ml-auto"><SapIndicator tool={sapTool} /></div>}
+          {sapTool && (
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              {sapTool === 'finland' && <div ref={setFinlandMarks} className="flex items-center gap-2" />}
+              <SapIndicator tool={sapTool} />
+            </div>
+          )}
         </div>
       </div>
       {failed && (
@@ -134,6 +145,7 @@ export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
       {counting && tool === 'locations' && <Locations key={language} user={counting} initial={start.locations} />}
       {user && tool === 'timeclock' && <Timeclock key={language} user={user} />}
       {counting && tool === 'softwareload' && <Softwareload key={language} user={counting} onOpenTimeclock={() => setTool('timeclock')} onBusyChange={setToolBusy} />}
+      {user && tool === 'finland' && <Finland key={language} user={user} headerSlot={finlandMarks} onBusyChange={setToolBusy} />}
       {counting && tool === 'counts' && (
         <>
           <WarehouseContent key={language} user={counting} view={view} onNavigate={setView} />
@@ -142,7 +154,7 @@ export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
       )}
     </div>
   )
-  // SAP is polled only inside Placeringer, Optælling and Softwareload (TCD and TRR tools); the tools page, Stempelkort, Finlandsforsendelser and other hubs never reach SAP.
+  // SAP is polled only inside Placeringer, Optælling, Softwareload and Finlandsforsendelser; the tools page, Stempelkort and other hubs never reach SAP.
   return sapTool ? <SapStatusProvider>{page}</SapStatusProvider> : page
 }
 
