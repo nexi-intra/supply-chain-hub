@@ -12,7 +12,7 @@ import { errorMessage } from '@/lib/warehouse/errors'
 import { formatDateTime } from '@/lib/warehouse/format'
 import { kolli } from '@/lib/warehouse/finlandText'
 import { t } from '@/lib/warehouse/text'
-import { FINLAND_TEST_SHEET, type FinlandDraftsPerson, type FinlandSettings } from '@/types/finland'
+import { FINLAND_TEST_SHEET, type FinlandDraftsCleared, type FinlandDraftsOverview, type FinlandDraftsPerson, type FinlandSettings } from '@/types/finland'
 
 type SheetValues = Omit<FinlandSettings, 'isTest'>
 
@@ -28,12 +28,33 @@ export function draftDays(byDay: Record<string, number>): string {
 export const danishGenitive = (name: string) => (/[sxz]$/i.test(name) ? `${name}'` : `${name}s`)
 
 const ALERT_CLASS = 'rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive'
+const CLEARED_SHOWN = 20
 
-/** Leaving the test sheet, or moving to another real sheet, is confirmed; a new tab or table in the same sheet is not. */
-const needsConfirm = (next: SheetValues, current: FinlandSettings) => next.workbookUrl !== FINLAND_TEST_SHEET.workbookUrl && next.workbookUrl !== current.workbookUrl
+/** What is left in the current sheet when the tool moves to another: changes not saved in it and parcels marked not sent. */
+export type LeftBehind = { drafts: number; notSent: number }
 
-/** The sheet everyone in BPO and TCD writes: its address, tab and table, with "Gem" and the way back to the test sheet. */
-export function FinlandSheetSettings({ settings, onSaved }: { settings: FinlandSettings; onSaved: (settings: FinlandSettings) => void }) {
+/** The sentence in the confirmation of a sheet switch, or null when nothing stays behind. */
+export function leftBehindText({ drafts, notSent }: LeftBehind): string | null {
+  if (!drafts && !notSent) return null
+  const changes = t(drafts === 1 ? '1 ikke gemt ændring' : `${drafts} ikke gemte ændringer`, drafts === 1 ? '1 unsaved change' : `${drafts} unsaved changes`)
+  return t(
+    `Der er ${changes} og ${kolli(notSent)} markeret som ikke sendt i det nuværende ark. De bliver ikke taget med til det nye ark.`,
+    `There ${drafts === 1 ? 'is' : 'are'} ${changes} and ${kolli(notSent)} marked as not sent in the current sheet. They are not taken along to the new sheet.`,
+  )
+}
+
+/**
+ * Moving to another real sheet is confirmed, and so is moving back to the test sheet while changes or marks would stay
+ * behind; a new tab or table in the same sheet is not.
+ */
+const needsConfirm = (next: SheetValues, current: FinlandSettings, leftBehind: LeftBehind | null) => next.workbookUrl !== current.workbookUrl
+  && (next.workbookUrl !== FINLAND_TEST_SHEET.workbookUrl || !!(leftBehind && leftBehindText(leftBehind)))
+
+/**
+ * The sheet everyone in BPO and TCD writes: its address, tab and table, with "Gem" and the way back to the test sheet.
+ * `leftBehind`: what the current sheet has that a switch leaves behind (null while unknown).
+ */
+export function FinlandSheetSettings({ settings, leftBehind = null, onSaved }: { settings: FinlandSettings; leftBehind?: LeftBehind | null; onSaved: (settings: FinlandSettings) => void }) {
   const [values, setValues] = useState<SheetValues>({ workbookUrl: settings.workbookUrl, sheetName: settings.sheetName, tableName: settings.tableName })
   const [confirm, setConfirm] = useState<SheetValues | null>(null)
   const [saving, setSaving] = useState(false)
@@ -58,10 +79,14 @@ export function FinlandSheetSettings({ settings, onSaved }: { settings: FinlandS
   const savedText = (result: FinlandSettings) => (result.isTest ? t('Værktøjet skriver nu i testarket', 'The tool now writes in the test sheet') : t('Arket er gemt', 'The sheet is saved'))
   const save = () => {
     if (!changed || !filled || saving) return
-    if (needsConfirm(next, settings)) setConfirm(next)
+    if (needsConfirm(next, settings, leftBehind)) setConfirm(next)
     else void write(next, savedText)
   }
-  const useTestSheet = () => void write(FINLAND_TEST_SHEET, () => t('Værktøjet skriver nu i testarket', 'The tool now writes in the test sheet'))
+  const useTestSheet = () => {
+    if (needsConfirm(FINLAND_TEST_SHEET, settings, leftBehind)) setConfirm(FINLAND_TEST_SHEET)
+    else void write(FINLAND_TEST_SHEET, savedText)
+  }
+  const behind = leftBehind && leftBehindText(leftBehind)
   const field = (key: keyof SheetValues) => ({ value: values[key], disabled: saving, onChange: (event: ChangeEvent<HTMLInputElement>) => setValues(current => ({ ...current, [key]: event.target.value })) })
 
   return (
@@ -109,6 +134,7 @@ export function FinlandSheetSettings({ settings, onSaved }: { settings: FinlandS
               <p className="break-all">{confirm.workbookUrl}</p>
               <p className="text-muted-foreground">{t(`Fane ${confirm.sheetName}, tabel ${confirm.tableName}`, `Tab ${confirm.sheetName}, table ${confirm.tableName}`)}</p>
             </div>
+            {behind && <p className="text-sm" data-left-behind>{behind}</p>}
             <AlertDialogFooter>
               <AlertDialogCancel disabled={saving}>{t('Fortryd', 'Cancel')}</AlertDialogCancel>
               <AlertDialogAction disabled={saving} onClick={event => { event.preventDefault(); void write(confirm, savedText) }}>{t('Ja, brug dette ark', 'Yes, use this sheet')}</AlertDialogAction>
@@ -120,8 +146,11 @@ export function FinlandSheetSettings({ settings, onSaved }: { settings: FinlandS
   )
 }
 
-/** Everyone's follow-up changes saved in the app but not in the sheet yet, the manager's own included. */
-export function FinlandDrafts({ people, onCleared }: { people: FinlandDraftsPerson[]; onCleared: () => Promise<void> }) {
+/**
+ * Everyone's follow-up changes saved in the app but not in the sheet yet, the manager's own included, and below them who
+ * deleted whose changes (`cleared`, newest first).
+ */
+export function FinlandDrafts({ people, cleared = [], onCleared }: { people: FinlandDraftsPerson[]; cleared?: FinlandDraftsCleared[]; onCleared: () => Promise<void> }) {
   const [clearing, setClearing] = useState<FinlandDraftsPerson | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -176,6 +205,19 @@ export function FinlandDrafts({ people, onCleared }: { people: FinlandDraftsPers
           </table>
         </div>
       )}
+      {cleared.length > 0 && (
+        <div className="mt-5" data-drafts-cleared>
+          <h3 className="mb-2 text-sm font-semibold">{t('Slettede ændringer', 'Deleted changes')}</h3>
+          <ul className="space-y-1 text-sm">
+            {cleared.slice(0, CLEARED_SHOWN).map(entry => (
+              <li key={`${entry.at}-${entry.email}`} className="flex flex-wrap gap-x-2">
+                <span className="tabular-nums text-muted-foreground">{formatDateTime(entry.at)}</span>
+                <span>{t(`${entry.byName} slettede ${danishGenitive(entry.name)} ændringer (${kolli(entry.count)})`, `${entry.byName} deleted ${entry.name}'s changes (${kolli(entry.count)})`)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {clearing && (
         <AlertDialog open onOpenChange={open => { if (!open && !busy) setClearing(null) }}>
           <AlertDialogContent>
@@ -200,12 +242,12 @@ export function FinlandDrafts({ people, onCleared }: { people: FinlandDraftsPers
 export function FinlandAdmin() {
   const [settings, setSettings] = useState<FinlandSettings | null>(null)
   const [settingsFailed, setSettingsFailed] = useState<string | null>(null)
-  const [people, setPeople] = useState<FinlandDraftsPerson[] | null>(null)
+  const [overview, setOverview] = useState<FinlandDraftsOverview | null>(null)
   const [draftsFailed, setDraftsFailed] = useState<string | null>(null)
 
   const loadDrafts = useCallback(async () => {
     try {
-      setPeople(await window.electronWarehouse!.finland.draftsOverview())
+      setOverview(await window.electronWarehouse!.finland.draftsOverview())
       setDraftsFailed(null)
     } catch (error) {
       setDraftsFailed(errorMessage(error))
@@ -218,20 +260,27 @@ export function FinlandAdmin() {
       .then(result => { if (current) setSettings(result) })
       .catch(error => { if (current) setSettingsFailed(errorMessage(error)) })
     window.electronWarehouse?.finland.draftsOverview()
-      .then(result => { if (current) setPeople(result) })
+      .then(result => { if (current) setOverview(result) })
       .catch(error => { if (current) setDraftsFailed(errorMessage(error)) })
     return () => { current = false }
   }, [])
+
+  // The counts are of the sheet in the settings; one read before another sheet was chosen is not shown as this one's.
+  const leftBehind = overview && settings && overview.currentSheet.workbookUrl === settings.workbookUrl ? overview.currentSheet : null
+  const saved = (result: FinlandSettings) => {
+    setSettings(result)
+    void loadDrafts()
+  }
 
   return (
     <>
       {settingsFailed && <p role="alert" className={ALERT_CLASS}>{settingsFailed}</p>}
       {!settingsFailed && !settings && <Skeleton className="h-64 rounded-xl" />}
       {/* The key starts the form over from what was saved, e.g. after "Brug testarket igen". */}
-      {settings && <FinlandSheetSettings key={`${settings.workbookUrl}\n${settings.sheetName}\n${settings.tableName}`} settings={settings} onSaved={setSettings} />}
+      {settings && <FinlandSheetSettings key={`${settings.workbookUrl}\n${settings.sheetName}\n${settings.tableName}`} settings={settings} leftBehind={leftBehind} onSaved={saved} />}
       {draftsFailed && <p role="alert" className={ALERT_CLASS}>{draftsFailed}</p>}
-      {!draftsFailed && !people && <Skeleton className="h-40 rounded-xl" />}
-      {people && !draftsFailed && <FinlandDrafts people={people} onCleared={loadDrafts} />}
+      {!draftsFailed && !overview && <Skeleton className="h-40 rounded-xl" />}
+      {overview && !draftsFailed && <FinlandDrafts people={overview.people} cleared={overview.cleared} onCleared={loadDrafts} />}
     </>
   )
 }

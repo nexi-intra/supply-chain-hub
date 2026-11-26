@@ -10,8 +10,14 @@ export interface Notice { tone: NoticeTone; lines: string[] }
 /** What the tool is doing; the buttons that would start something else wait meanwhile. */
 export type Working = null | 'load' | 'sheet' | 'write' | 'fix' | 'mark' | 'restore' | 'delete' | 'manual' | 'followup'
 
-/** Danish lines on how the sheet was opened, after the first ("Arket er åbent i Excel"), as Finland T&T shows them. */
-export const sheetNotes = (snapshot: FinlandSnapshot) => (snapshot.sheet && snapshot.sheet.texts.length > 1 ? snapshot.sheet.texts.slice(1).map(backendText) : [])
+/**
+ * The write's warnings (e.g. rows written but not logged on M:), then the Danish lines on how the sheet was opened after
+ * the first ("Arket er åbent i Excel"), as Finland T&T shows them.
+ */
+export const sheetNotes = (snapshot: FinlandSnapshot) => [
+  ...(snapshot.warnings ?? []).map(backendText),
+  ...(snapshot.sheet && snapshot.sheet.texts.length > 1 ? snapshot.sheet.texts.slice(1).map(backendText) : []),
+]
 
 const TAG: Record<string, string> = {
   DHL: 'bg-[#ffcc00] text-[#b0141a]',

@@ -2,8 +2,8 @@ import { createRequire } from 'node:module'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it } from 'vitest'
 import { setWarehouseLanguage } from '@/lib/warehouse/text'
-import { FINLAND_TEST_SHEET, type FinlandDraftsPerson } from '@/types/finland'
-import { danishGenitive, draftDays, FinlandDrafts, FinlandSheetSettings } from './FinlandAdmin'
+import { FINLAND_TEST_SHEET, type FinlandDraftsCleared, type FinlandDraftsPerson } from '@/types/finland'
+import { danishGenitive, draftDays, FinlandDrafts, FinlandSheetSettings, leftBehindText } from './FinlandAdmin'
 
 const REAL = { workbookUrl: 'https://christianiabpos.sharepoint.com/sites/NordicSupplyChain/Shared Documents/Ordre.xlsx', sheetName: 'Sheet1', tableName: 'Table2', isTest: false }
 const noop = () => {}
@@ -52,5 +52,27 @@ describe('Finlandsforsendelser in Administration', () => {
     expect(draftDays({})).toBe('')
     expect(danishGenitive('Anna')).toBe('Annas')
     expect(danishGenitive('Jens')).toBe("Jens'")
+  })
+
+  it('the sheet switch says what stays behind in the current sheet', () => {
+    expect(leftBehindText({ drafts: 3, notSent: 2 })).toBe('Der er 3 ikke gemte ændringer og 2 kolli markeret som ikke sendt i det nuværende ark. De bliver ikke taget med til det nye ark.')
+    expect(leftBehindText({ drafts: 1, notSent: 0 })).toBe('Der er 1 ikke gemt ændring og 0 kolli markeret som ikke sendt i det nuværende ark. De bliver ikke taget med til det nye ark.')
+    expect(leftBehindText({ drafts: 0, notSent: 0 })).toBeNull()
+    setWarehouseLanguage('en')
+    expect(leftBehindText({ drafts: 1, notSent: 1 })).toBe('There is 1 unsaved change and 1 parcel marked as not sent in the current sheet. They are not taken along to the new sheet.')
+  })
+
+  it('lists who deleted whose changes under the overview, newest first as given', () => {
+    const at = new Date(2026, 10, 26, 14, 5).getTime()
+    const cleared: FinlandDraftsCleared[] = [
+      { by: 'mona@x.dk', byName: 'Mona Berg', email: 'jens@x.dk', name: 'Jens', count: 3, at },
+      { by: 'mona@x.dk', byName: 'Mona Berg', email: 'anna@x.dk', name: 'Anna Holm', count: 1, at: at - 60000 },
+    ]
+    const html = renderToStaticMarkup(<FinlandDrafts people={[]} cleared={cleared} onCleared={async () => {}} />)
+    expect(html).toContain('Slettede ændringer')
+    expect(html.indexOf('Mona Berg slettede Jens&#x27; ændringer (3 kolli)')).toBeGreaterThan(-1)
+    expect(html.indexOf('Mona Berg slettede Jens&#x27; ændringer (3 kolli)')).toBeLessThan(html.indexOf('Mona Berg slettede Anna Holms ændringer (1 kolli)'))
+    expect(html).toContain('26.11.2026 14:05')
+    expect(renderToStaticMarkup(<FinlandDrafts people={[]} onCleared={async () => {}} />)).not.toContain('Slettede ændringer')
   })
 })

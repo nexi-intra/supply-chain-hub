@@ -118,6 +118,8 @@ export interface FinlandSnapshot {
   isAdmin: boolean
   followUp: FinlandFollowUpView
   days: FinlandDay[]
+  /** After a write: Danish lines on what went wrong around it though the sheet is written (e.g. not logged on M:). */
+  warnings?: string[]
 }
 
 export interface FinlandAppendResult {
@@ -130,7 +132,7 @@ export interface FinlandAppendResult {
 
 export type FinlandFixed =
   | { kind: 'already'; tracking: string }
-  | { kind: 'add'; tracking: string; row: number; skipped: number }
+  | { kind: 'add'; tracking: string; row: number | null; skipped: number }
   | { kind: 'replace'; tracking: string; row: number; oldTracking: string }
 
 export type FinlandDeleted =
@@ -188,6 +190,28 @@ export interface FinlandDraftsPerson {
   updatedAt: string
 }
 
+/** A manager's deletion of someone's changes in the app (Administration's log). */
+export interface FinlandDraftsCleared {
+  /** The manager's e-mail and name. */
+  by: string
+  byName: string
+  /** Whose changes were deleted. */
+  email: string
+  name: string
+  count: number
+  at: number
+}
+
+/** Administration's view of the changes not in the sheet yet. */
+export interface FinlandDraftsOverview {
+  /** Everyone's changes, of every sheet. */
+  people: FinlandDraftsPerson[]
+  /** The sheet written now: everyone's changes for it not in it yet, and its parcels marked not sent. */
+  currentSheet: { workbookUrl: string; drafts: number; notSent: number }
+  /** Who deleted whose changes, newest first. */
+  cleared: FinlandDraftsCleared[]
+}
+
 export interface FinlandBridge {
   /** Reads the sheet and fetches two months of parcels from SAP (FINLAND_SAP_NOT_READY when SAP is not ready). */
   load(): Promise<FinlandSnapshot>
@@ -214,7 +238,7 @@ export interface FinlandBridge {
   /** Managers and the creator only (MANAGER_ONLY). */
   setSettings(request: { workbookUrl: string; sheetName: string; tableName: string }): Promise<FinlandSettings>
   /** Managers and the creator only (MANAGER_ONLY). */
-  draftsOverview(): Promise<FinlandDraftsPerson[]>
+  draftsOverview(): Promise<FinlandDraftsOverview>
   /** Deletes the person's drafts in the app, never in the sheet. Managers and the creator only. */
   clearDrafts(request: { email: string }): Promise<{ email: string; cleared: number }>
 }

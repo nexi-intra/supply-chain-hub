@@ -29,6 +29,8 @@ const TEXTS: [string, string][] = [
   ['Arket er åbent i Excel', 'The sheet is open in Excel'],
   ['Arket er åbnet fra SharePoint', 'The sheet was opened from SharePoint'],
   ['Filteret i arket er fjernet, så alle rækker kan ses', 'The filter in the sheet was removed, so every row can be seen'],
+  // A write that is in the sheet but could not be logged on M: (service.cjs)
+  ['Arket er skrevet, men programmet kunne ikke notere det på M:. Bed kollegaer vente et par minutter, før de skriver samme dag.', 'The sheet is written, but the program could not note it on M:. Ask colleagues to wait a few minutes before they write the same day.'],
 ]
 
 const ENGLISH = new Map(TEXTS)
