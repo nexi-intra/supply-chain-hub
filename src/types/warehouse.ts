@@ -1,4 +1,5 @@
 import { t } from '@/lib/warehouse/text'
+import type { WarehouseTool } from '@/lib/warehouseTools'
 export type TeamId = 'TCD' | 'TRR'
 export type Role = 'creator' | 'manager' | 'user'
 /** Role inside CountPoint: managers come from the Hub; status managers and admins are appointed in CountPoint. */
@@ -111,6 +112,8 @@ export interface WarehouseUser {
   role: Role
   team: TeamId
   storageLocations: string[]
+  /** The tools of Arbejdsværktøjer the team may use; the window shows only these. */
+  tools: WarehouseTool[]
 }
 
 export type SapStateName =

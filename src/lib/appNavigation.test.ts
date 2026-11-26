@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 import { describe, expect, it, vi } from 'vitest'
 import type { AssistantApi, AssistantSource } from './assistantBridge'
+import { withModuleInCorner } from './hubModuleOrder'
 
 describe('one-shot navigation params', () => {
   it('peeking leaves them for the mounted view to clear, consuming clears them', async () => {
@@ -95,13 +96,15 @@ describe('Hub module tiles', () => {
     expect(modules.find((module) => module.id === 'games')).toEqual({ id: 'games', icon: 'GameController', available: 'true' })
   })
 
-  it('keeps Game Corner in the bottom-left corner of the employees\' four-column grid; managers get the Manager Panel on a row of its own', () => {
-    const everyone = modules.filter((module) => module.available === 'true').map((module) => module.id)
-    const managers = modules.filter((module) => module.available === 'true' || module.id === 'manager').map((module) => module.id)
-    expect(everyone.indexOf('games')).toBe(Math.floor((everyone.length - 1) / 4) * 4)
-    expect(everyone.indexOf('games')).toBe(8)
-    expect(managers.indexOf('games')).toBe(8)
-    expect(managers.indexOf('manager')).toBe(Math.floor((managers.length - 1) / 4) * 4)
+  it('keeps Game Corner in the bottom-left corner of the four-column grid for employees and managers', () => {
+    const everyone = modules.filter((module) => module.available === 'true')
+    const managers = modules.filter((module) => module.available === 'true' || module.id === 'manager')
+    // Arbejdsværktøjer is open to every team, so employees see it too.
+    expect(everyone.map((module) => module.id)).toContain('warehouse')
+    for (const shown of [everyone, managers]) {
+      const ordered = withModuleInCorner(shown, 'games', 4).map((module) => module.id)
+      expect(ordered.indexOf('games')).toBe(Math.floor((ordered.length - 1) / 4) * 4)
+    }
   })
 })
 

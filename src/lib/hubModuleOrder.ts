@@ -5,7 +5,7 @@ export function moduleGridColumns(width: number): number {
 
 /**
  * Puts the module `id` first in the last row of a grid with `columns` columns, i.e. in the bottom-left corner,
- * whatever number of modules the user sees (Lagerstyring and Manager are not shown to everyone).
+ * whatever number of modules the user sees (Manager is not shown to everyone).
  */
 export function withModuleInCorner<T extends { id: string }>(modules: readonly T[], id: string, columns: number): T[] {
   const corner = modules.find(module => module.id === id)

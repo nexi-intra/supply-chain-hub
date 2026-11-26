@@ -47,7 +47,7 @@ import type { RegisteredTeam } from '@/lib/electronRegistryBridge'
 import { getHomeOfficeUsersForDate } from '@/lib/homeOffice'
 import { getImprovementsLabels } from '@/lib/improvementsLabels'
 import { getLinksLabels } from '@/lib/linksLabels'
-import { getWarehouseLabels, isWarehouseTeam } from '@/lib/warehouseLabels'
+import { getWarehouseLabels } from '@/lib/warehouseLabels'
 import { moduleGridColumns, withModuleInCorner } from '@/lib/hubModuleOrder'
 import { appendToKvArray, removeFromKvArray, setKvObjectField, upsertInKvArray } from '@/lib/kvArrays'
 import { expandShiftPatterns } from '@/lib/shiftPatterns'
@@ -805,7 +805,7 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
       gradient: '',
       available: true,
     },
-    // TCD and TRR only: stock counting (Optælling) and, later, more warehouse tools.
+    // Every team opens it; the window shows only the team's own tools (src/lib/warehouseTools.ts).
     {
       id: 'warehouse',
       title: getWarehouseLabels(language).title,
@@ -813,7 +813,7 @@ export function Hub({ onNavigate, onLogout, userEmail }: HubProps) {
       icon: <Warehouse size={48} weight="duotone" />,
       color: 'oklch(0.50 0.12 95)',
       gradient: '',
-      available: isWarehouseTeam(teamId),
+      available: true,
     },
     {
       id: 'manager',

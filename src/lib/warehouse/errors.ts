@@ -33,7 +33,8 @@ export function errorMaterials(error: unknown): string[] {
 }
 
 const MESSAGES: Record<string, string> = {
-  WAREHOUSE_TEAM_NOT_ALLOWED: 'Arbejdsværktøjer er kun for TCD og TRR. Åbn TCD- eller TRR-hubben.',
+  WAREHOUSE_TEAM_NOT_ALLOWED: 'Dette værktøj er kun for TCD og TRR.',
+  WAREHOUSE_TOOL_NOT_ALLOWED: 'Dit team har ikke adgang til dette værktøj.',
   AUTH_REQUIRED: 'Du skal logge ind igen.',
   AUTH_CONTEXT_CHANGED: 'Du skiftede hub undervejs. Visningen er genindlæst – tjek resultatet.',
   TEAM_NOT_ALLOWED: 'Du har ikke adgang til det team.',
@@ -286,7 +287,8 @@ export function scanErrorMessage(error: unknown, serial: string): string {
 }
 
 const MESSAGES_EN: Record<string, string> = {
-  WAREHOUSE_TEAM_NOT_ALLOWED: 'Work Tools is only for TCD and TRR. Open the TCD or TRR hub.',
+  WAREHOUSE_TEAM_NOT_ALLOWED: 'This tool is only for TCD and TRR.',
+  WAREHOUSE_TOOL_NOT_ALLOWED: 'Your team does not have access to this tool.',
   AUTH_REQUIRED: 'Please log in again.',
   AUTH_CONTEXT_CHANGED: 'You switched hub meanwhile. The view has been reloaded – check the result.',
   TEAM_NOT_ALLOWED: 'You do not have access to that team.',

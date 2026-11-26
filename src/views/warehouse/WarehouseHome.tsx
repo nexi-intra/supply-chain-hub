@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
-import { Barcode, ClipboardText, Clock, Cpu, IdentificationCard, MapPin, Package } from '@phosphor-icons/react'
+import { Barcode, ClipboardText, Clock, Cpu, IdentificationCard, MapPin, Package, Truck } from '@phosphor-icons/react'
 import { SectionTile } from '@/components/arcade/SectionTile'
 import { t } from '@/lib/warehouse/text'
 import { withoutDeletedActive } from './pendingDeletes'
@@ -53,7 +53,16 @@ function SoftwareloadArt() {
   )
 }
 
-/** The tools of Arbejdsværktøjer, Stempelkort first (used every day by everyone). A new tool gets a tile here and its own view in Warehouse.tsx. */
+function FinlandArt() {
+  return (
+    <span className="section-art-warehouse">
+      <Truck className="section-warehouse-main" size={60} weight="duotone" />
+      <Package className="section-warehouse-side" size={46} weight="duotone" />
+    </span>
+  )
+}
+
+/** The tools of Arbejdsværktøjer, Stempelkort first (used every day by everyone). A new tool gets a tile here, its own view in Warehouse.tsx and its teams in warehouseTools.ts. */
 const tools = (): ToolTile[] => [
   {
     id: 'timeclock',
@@ -79,25 +88,43 @@ const tools = (): ToolTile[] => [
     description: t('Start en opgave, scan terminalerne og lad appen flytte dem i SAP. Søg på et serienummer for at se hvem der loadede det.', 'Start a task, scan the terminals and let the app move them in SAP. Search a serial number to see who loaded it.'),
     art: <SoftwareloadArt />,
   },
+  {
+    id: 'finland',
+    title: 'Finlandsforsendelser',
+    description: t('Kolli fra Danmark til Finland: skriv dagens kolli i arket og følg op på leveringen hos PostNord, DHL og DSV.', "Parcels from Denmark to Finland: write the day's parcels in the sheet and follow up delivery with PostNord, DHL and DSV."),
+    art: <FinlandArt />,
+  },
 ]
 
-/** The Arbejdsværktøjer hub: one large tile per tool, like the sections of the Game Corner. */
+/** The Arbejdsværktøjer hub: one large tile per tool of the person's team, like the sections of the Game Corner. */
 export function WarehouseHome({ user, onOpen }: { user: WarehouseUser; onOpen: (tool: WarehouseTool) => void }) {
+  const visible = tools().filter(tool => user.tools.includes(tool.id))
+  const hasCounts = user.tools.includes('counts')
   // A short live line on the Optælling tile; the page works without it if the drive cannot be read.
+  // Only for a team with Optælling: the main process refuses the call for any other team.
   const [activeStatus, setActiveStatus] = useState<string | null>(null)
   useEffect(() => {
+    if (!hasCounts) return
     let current = true
     window.electronWarehouse?.statuses.activeProgress()
       .then(raw => { const active = withoutDeletedActive(raw); if (current && active) setActiveStatus(`${active.name} · ${active.progress.percent} %`) })
       .catch(() => {})
     return () => { current = false }
-  }, [user.team])
+  }, [user.team, hasCounts])
+
+  if (!visible.length) {
+    return (
+      <div className="container mx-auto max-w-7xl px-4 py-8 sm:px-6">
+        <p className="text-sm text-muted-foreground">{t('Dit team har ingen værktøjer i Arbejdsværktøjer endnu.', 'Your team has no tools in Work Tools yet.')}</p>
+      </div>
+    )
+  }
 
   return (
     <div className="container mx-auto max-w-7xl space-y-6 px-4 py-8 sm:px-6">
       <p className="text-sm text-muted-foreground">{t(`Arbejdsværktøjer for team ${user.team}. Vælg et værktøj.`, `Work tools for team ${user.team}. Choose a tool.`)}</p>
       <div className="grid auto-rows-fr grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 md:gap-6">
-        {tools().map((tool, index) => (
+        {visible.map((tool, index) => (
           <motion.div key={tool.id} className="h-full" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.05, duration: 0.4 }}>
             <SectionTile
               game={`section-warehouse-${tool.id}`}

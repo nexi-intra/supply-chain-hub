@@ -60,7 +60,7 @@ function countsView(tab: string | undefined, item: string): View {
   return { kind: 'list' }
 }
 
-/** Arbejdsværktøjer for TCD and TRR (the module was Lagerstyring): Stempelkort, Placeringer and Optælling. */
+/** Arbejdsværktøjer (the module was Lagerstyring) for every team; each team sees only its own tools (src/lib/warehouseTools.ts). Finlandsforsendelser has no view yet. */
 export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
   const [user, setUser] = useState<WarehouseUser | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
@@ -130,7 +130,7 @@ export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
       )}
     </div>
   )
-  // SAP is polled only inside Placeringer, Optælling and Softwareload for a TCD/TRR person; the tools page, Stempelkort and other hubs never reach SAP.
+  // SAP is polled only inside Placeringer, Optælling and Softwareload (TCD and TRR tools); the tools page, Stempelkort, Finlandsforsendelser and other hubs never reach SAP.
   return sapTool ? <SapStatusProvider>{page}</SapStatusProvider> : page
 }
 
