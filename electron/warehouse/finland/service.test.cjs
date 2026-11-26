@@ -406,6 +406,31 @@ test('a row is deleted only when the parcel is on exactly that one row', async (
   await assert.rejects(service.deleteNotSentRow(ADA, DELETE_KEY, 3), { code: 'FINLAND_NOT_MARKED' })
 })
 
+test('no row is deleted when a colleague restores the parcel while the sheet is read under the lock', async () => {
+  const sheet = [sheetRow(2, '82100002', pn(2)), sheetRow(3, '82100001', pn(1), '2026-11-20', { received: '2026-11-22' })]
+  const { pc, shared } = setup({ sheet, parcels: DELETE_PARCELS, admins: [ADA.email] })
+  const mona = pc()
+  await mona.service.load(MONA)
+  await mona.service.markNotSent(MONA, '82100001', pn(1))
+  const ada = pc(sheet)
+  await ada.service.load(ADA)
+  const read = ada.excel.readSheet
+  let restoredUnderLock = false
+  ada.excel.readSheet = async () => {
+    if (!restoredUnderLock && await shared.lock.current()) {
+      restoredUnderLock = true
+      await mona.service.restoreNotSent(MONA, DELETE_KEY)
+    }
+    return read()
+  }
+  await assert.rejects(ada.service.deleteNotSentRow(ADA, DELETE_KEY, 3), { code: 'FINLAND_NOT_MARKED' })
+  assert.ok(restoredUnderLock, 'the restore ran during the read under the lock')
+  assert.equal(ada.excel.writes().filter(c => c.kind === 'delete').length, 0, 'deleteRow is never called')
+  assert.deepEqual(ada.excel.state.rows.map(r => r.row), [2, 3])
+  assert.equal(await shared.lock.current(), null)
+  assert.deepEqual(await shared.notSent.list(), [])
+})
+
 test('a row typed in by hand is checked against the sheet as it is now before it is written', async () => {
   const sheet = [sheetRow(2, '82100001', pn(1), '2026-11-20')]
   const { service, excel, shared } = setup({ sheet })

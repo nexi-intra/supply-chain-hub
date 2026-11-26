@@ -456,18 +456,21 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
       let deleted = null
       await sheetWrite(user, { day: entry.shippedOn, action: 'sletter række' }, async extend => {
         await refreshSheet(true)
-        const matches = sheetRowsFor(entry.delivery, entry.tracking)
+        // A colleague may have pressed "Sæt ind igen" while the lock was taken and the sheet read; restoring takes no lock.
+        const current = (await shared.notSent.list()).find(e => keyOfEntry(e) === key)
+        if (!current) throw codeError('FINLAND_NOT_MARKED', 'Kolliet er ikke længere markeret som ikke sendt. Intet er slettet.')
+        const matches = sheetRowsFor(current.delivery, current.tracking)
         if (!matches.length) {
-          deleted = { kind: 'gone', tracking: entry.tracking }
+          deleted = { kind: 'gone', tracking: current.tracking }
           return
         }
         if (matches.length > 1) throw codeError('FINLAND_ROW_NOT_UNIQUE', `Kolliet står i række ${matches.map(m => m.row).join(', ')}. Intet er slettet. Slet den forkerte række i hånden.`)
         if (matches[0].row !== row) throw codeError('FINLAND_ROW_MOVED', `Arket er ændret, og kolliet står nu i række ${matches[0].row}. Intet er slettet. Tjek rækken, og prøv igen.`)
         if (trackingsInCell(matches[0].trackingText).length !== 1) throw codeError('FINLAND_ROW_SHARED', MESSAGES['row-shared'])
         await extend(SCRIPT_TIMEOUT_MS)
-        await excel.deleteRow({ row, delivery: entry.delivery, tracking: entry.tracking })
-        await shared.dayLog.record(user, entry.shippedOn, [])
-        deleted = { kind: 'deleted', tracking: entry.tracking, row }
+        await excel.deleteRow({ row, delivery: current.delivery, tracking: current.tracking })
+        await shared.dayLog.record(user, current.shippedOn, [])
+        deleted = { kind: 'deleted', tracking: current.tracking, row }
       })
       if (deleted.kind === 'deleted') {
         await draftsOf(user).remove([key])
