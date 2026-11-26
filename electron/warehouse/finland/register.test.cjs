@@ -8,7 +8,7 @@ const { trackingUrl, TRACKING_URLS } = require('./register.cjs')
 const { parcelKey } = require('./core/sheetIndex.cjs')
 
 const CHANNELS = [
-  'load', 'load-sheet', 'write-day', 'fix-review', 'save-draft', 'save-followup', 'resolve-conflict', 'check-manual',
+  'load', 'load-sheet', 'pending', 'write-day', 'fix-review', 'save-draft', 'save-followup', 'resolve-conflict', 'check-manual',
   'add-manual-row', 'mark-not-sent', 'restore-not-sent', 'delete-not-sent-row', 'open-tracking', 'settings',
   'set-settings', 'drafts-overview', 'clear-drafts',
 ]
@@ -152,6 +152,20 @@ test('a draft is the person\'s own: counted for the close warning, and managers 
   assert.deepEqual(overview.map(person => [person.email, person.name, person.count, person.byDay]), [['anna@nexi.test', 'Anna Holm', 1, { '2026-11-20': 1 }]])
   assert.deepEqual(await call('bpoBoss', 'clear-drafts', { email: 'anna@nexi.test' }), { email: 'anna@nexi.test', cleared: 1 })
   assert.equal(await registered.finlandPending({ who: 'bpo', sender: { id: 1 } }), 0)
+  await registered.closeAll()
+})
+
+test('the window counts its own drafts without reading the sheet', async () => {
+  const { call, excel, registered } = setup()
+  assert.equal(await call('bpo', 'pending'), 0)
+  assert.deepEqual(excel.calls, [], 'Excel is not touched')
+  await call('bpo', 'load-sheet')
+  await call('bpo', 'save-draft', { key: KEY, wanted: { comment: 'Ring til kunden' }, slaManual: false, base: BLANK })
+  const reads = excel.calls.length
+  assert.equal(await call('bpo', 'pending'), 1)
+  assert.equal(await call('bpoBoss', 'pending'), 0, 'another person\'s drafts are not counted')
+  assert.equal(excel.calls.length, reads, 'Excel is not touched')
+  await assert.rejects(call('trrAnna', 'pending'), /^Error: WAREHOUSE_TOOL_NOT_ALLOWED$/)
   await registered.closeAll()
 })
 

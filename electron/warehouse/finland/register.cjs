@@ -153,6 +153,9 @@ function registerFinland({ handleTool, sap, runScript, opener, platformRoot, rol
   handle('load', user => service.load(user))
   // Reads only the sheet, so Opfølgning works while SAP is not ready.
   handle('load-sheet', user => service.loadSheet(user))
+  // The person's own changes not in the sheet yet, from the shared drafts store only (never Excel), so the window's
+  // "N kolli er ikke gemt i arket" shows before the sheet is read.
+  handle('pending', user => service.pending(user))
   handle('write-day', (user, p) => service.writeDay(user, checkDate(p.date)))
   handle('fix-review', (user, p) => service.fixReview(user, ...checkParcel(p.delivery, p.tracking, 1)))
   handle('save-draft', (user, p) => service.saveDraft(user, checkKey(p.key), checkWanted(p.wanted), p.slaManual === true, checkBase(p.base)))

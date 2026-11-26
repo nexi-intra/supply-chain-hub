@@ -186,6 +186,8 @@ export interface FinlandBridge {
   load(): Promise<FinlandSnapshot>
   /** Reads only the sheet, so Opfølgning works while SAP is not ready. */
   loadSheet(): Promise<FinlandSnapshot>
+  /** How many of the person's own follow-up changes are not in the sheet yet; reads only the shared drafts, never Excel. */
+  pending(): Promise<number>
   writeDay(request: { date: string }): Promise<FinlandSnapshot & { result: FinlandAppendResult }>
   fixReview(request: { delivery: string; tracking: string }): Promise<FinlandSnapshot & { fixed: FinlandFixed }>
   /** `base`: the sheet values the form was opened with. */
