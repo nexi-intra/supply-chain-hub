@@ -288,7 +288,7 @@ function MailCard({ view, user, reload, onSettings }: { view: SapCheckOverview; 
     return (
       <Card>
         <CardContent className="flex items-center gap-3 py-4 text-sm text-muted-foreground">
-          <EnvelopeSimple size={18} /> {t('Kun admins og managers kan lave mailen til SAP-teamet. En manager kan gøre dig til admin i Manager Panel under "Roller i Arbejdsværktøjer".', 'Only admins and managers can make the mail to the SAP team. A manager can make you an admin in the Manager Panel under "Work tools roles".')}
+          <EnvelopeSimple size={18} /> {t('Kun admins og managers kan lave mailen til SAP-teamet. En manager kan gøre dig til admin under Arbejdsværktøjer, Administration.', 'Only admins and managers can make the mail to the SAP team. A manager can make you an admin under Work Tools, Administration.')}
         </CardContent>
       </Card>
     )

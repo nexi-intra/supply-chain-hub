@@ -57,12 +57,13 @@ test('the guide answers how-to questions about Placeringer in four languages', (
 })
 
 test('the guide tells a manager how to make a colleague Placerings admin, in four languages', () => {
-  const QUESTIONS = { da: ['hvordan gør jeg en kollega til placerings admin?', 'Udnævn admin, status manager eller Placerings admin', /"Roller i Arbejdsværktøjer"/], en: ['how do I make a colleague location admin?', 'Appoint an admin, a status manager or a Placerings admin', /"Work tools roles"/], fi: ['miten teen kollegasta sijaintien admin?', 'Nimeä admin, status manager tai Placerings admin', /"Työkalujen roolit"/], sv: ['hur gör jag en kollega till placeringsadmin?', 'Utse en admin, en status manager eller en Placerings admin', /"Roller i Arbetsverktyg"/] }
+  const QUESTIONS = { da: ['hvordan gør jeg en kollega til placerings admin?', 'Udnævn admin, status manager eller Placerings admin', /Åbn "Arbejdsværktøjer" på forsiden og vælg "Administration"/], en: ['how do I make a colleague location admin?', 'Appoint an admin, a status manager or a Placerings admin', /Open "Work Tools" on the front page and choose "Administration"/], fi: ['miten teen kollegasta sijaintien admin?', 'Nimeä admin, status manager tai Placerings admin', /Avaa etusivulta "Työkalut" ja valitse "Administration"/], sv: ['hur gör jag en kollega till placeringsadmin?', 'Utse en admin, en status manager eller en Placerings admin', /Öppna "Arbetsverktyg" på startsidan och välj "Administration"/] }
   for (const [language, [question, title, card]] of Object.entries(QUESTIONS)) {
     const answer = ask({ q: question, lang: language }, { role: 'manager' })
     assert.equal(answer.mode, 'app-guide', `${language}: ${question} -> ${answer.text.slice(0, 80)}`)
     assert.match(answer.text, starts(language, title), `${language}: ${question} -> ${answer.text.slice(0, 80)}`)
     assert.match(answer.text, card, language)
+    assert.doesNotMatch(answer.text, /Manager Panel|Johtajapaneeli|Rettigheder|Permissions|Behörigheter|kun i TCD|only in the TCD|vain TCD|bara i TCD/, `${language}: the roles are no longer in the Manager Panel`)
     if (language !== 'da') assert.doesNotMatch(answer.text, DANISH_GUIDE, language)
   }
 })

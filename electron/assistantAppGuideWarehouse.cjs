@@ -1,4 +1,4 @@
-// App-guide for Arbejdsværktøjer (was Lagerstyring) and its tools Stempelkort, Placeringer, Optælling and Softwareload, TCD and TRR only.
+// App-guide for Arbejdsværktøjer (was Lagerstyring), open to every team with the team's own tools; its tools Stempelkort, Placeringer, Optælling and Softwareload are TCD's and TRR's.
 // Danish base text and keywords (all languages' keywords, folded: æ->ae, ø->oe, å->aa); en/fi/sv texts are in assistantAppGuideWarehouseI18n.cjs.
 // The English UI labels quoted in en/fi/sv are the ones Optælling shows in English (fi/sv users get the English UI).
 const MANAGER = 'manager'
@@ -11,8 +11,8 @@ const WAREHOUSE_MODULE = {
   view: 'warehouse',
   title: 'Arbejdsværktøjer',
   inOverview: false,
-  summary: 'Arbejdsværktøjer findes kun i TCD- og TRR-hubben (hed før Lagerstyring). Det er en lille hub med værktøjer: Stempelkort (stempl ind og ud på dine opgaver med start, pause og stop; kun managere ser tiderne), Placeringer (hvor pallerne står, sæt på plads, tag den ældste først og fyld pluk-pladser op), Optælling (kvartalets statusoptælling af terminaler og tilbehør i plant D301 med scanning af serienumre, godkendelse, SAP-optællingsdokumenter, endelige rapporter og et arkiv over afholdte statusser) og Softwareload (scan de terminaler, du loader, på en opgave med ur, og appen flytter dem i SAP, når opgaven afsluttes; søg på et serienummer, og managere ser statistik).',
-  where: 'Åbn feltet "Arbejdsværktøjer" på forsiden (kun i TCD- og TRR-hubben) og vælg "Stempelkort", "Placeringer", "Optælling" eller "Softwareload".',
+  summary: 'Arbejdsværktøjer (hed før Lagerstyring) er åbent for alle teams og viser dit teams egne værktøjer. I TCD- og TRR-hubben er det Stempelkort (stempl ind og ud på dine opgaver med start, pause og stop; kun managere ser tiderne), Placeringer (hvor pallerne står, sæt på plads, tag den ældste først og fyld pluk-pladser op), Optælling (kvartalets statusoptælling af terminaler og tilbehør i plant D301 med scanning af serienumre, godkendelse, SAP-optællingsdokumenter, endelige rapporter og et arkiv over afholdte statusser) og Softwareload (scan de terminaler, du loader, på en opgave med ur, og appen flytter dem i SAP, når opgaven afsluttes; søg på et serienummer, og managere ser statistik).',
+  where: 'Åbn feltet "Arbejdsværktøjer" på forsiden. Det viser dit teams egne værktøjer. I TCD- og TRR-hubben vælger du "Stempelkort", "Placeringer", "Optælling" eller "Softwareload".',
   keywords: ['arbejdsvaerktoejer', 'softwareload', 'keyload', 'arbejdsvaerktoej', 'work tools', 'tyokalut', 'tyoekalut', 'arbetsverktyg', 'stempelkort', 'stemple ind', 'stempl ind', 'time card', 'timecard', 'leimauskortti', 'staempelkort', 'lagerstyring', 'lagerstyringen', 'placeringer', 'placeringerne', 'placeringsark', 'sijainnit', 'sijoitustaulukko', 'placeringar', 'warehouse management', 'optaelling', 'optaellingen', 'optaellinger', 'statusoptaelling', 'lageroptaelling', 'stock count', 'stock counts', 'stocktake', 'stock taking', 'inventory count', 'varastonhallinta', 'inventointi', 'inventoinnin', 'varaston laskenta', 'lagerstyrning', 'inventering', 'inventeringen', 'lagerinventering', 'reol', 'reoler', 'reolen', 'hylde', 'hylder', 'rack', 'racks', 'shelf', 'shelves', 'hylly', 'hyllyt', 'hyllykkoe', 'hylla', 'hyllor'],
   tasks: [
     {
@@ -186,7 +186,7 @@ const WAREHOUSE_MODULE = {
       userTask: 'warehouse-roles-info',
       keywords: ['udnaevn en admin', 'udnaevne en admin', 'udnaevner jeg en admin', 'status manager', 'admin i optaelling', 'optaellingsroller', 'hvem maa laegge antal paa', 'appoint an admin', 'appoint a status manager', 'stock count roles', 'who can enter quantities', 'nimeae admin', 'nimitaen adminin', 'inventoinnin roolit', 'utse en admin', 'utser en admin', 'inventeringsroller', 'placerings admin', 'placeringsadmin', 'lagerstyringsroller', 'location admin', 'warehouse roles', 'sijaintien admin', 'varastonhallinnan roolit', 'lagerstyrningsroller'],
       steps: [
-        'Åbn "Manager Panel" og vælg fanen "Rettigheder". Kortet "Roller i Arbejdsværktøjer" vises kun i TCD- og TRR-hubben.',
+        'Åbn "Arbejdsværktøjer" på forsiden og vælg "Administration". Siden viser rollerne i dit teams egne værktøjer, og kun managere ser den.',
         'Under "Optælling": vælg "Admin" ved en kollega, der skal være med i alle optællinger uden at anmode, godkende deltagere og lægge antal og serienumre på SAP-dokumenter, eller "Status manager" ved en, der skal have samme rettigheder som en manager i Optælling.',
         'Under "Placeringer": vælg "Placerings admin" ved en kollega, der må vedligeholde placeringer og fortryde handlinger i loggen.',
       ],
@@ -202,7 +202,7 @@ const WAREHOUSE_MODULE = {
         'Status manager: har samme rettigheder som en manager i Optælling, fx at starte, låse og slette en status, godkende materialer og bogføre SAP-dokumenter.',
         'Placerings admin: må vedligeholde placeringer og fortryde handlinger i loggen i Placeringer.',
       ],
-      notes: 'Kun managere udnævner de tre roller (i "Manager Panel" under "Rettigheder"). Spørg din manager, hvis du skal have en af dem.',
+      notes: 'Kun managere udnævner de tre roller (i "Arbejdsværktøjer" under "Administration"). Spørg din manager, hvis du skal have en af dem.',
     },
     {
       id: 'locations-put-away',
