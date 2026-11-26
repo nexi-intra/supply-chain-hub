@@ -1,11 +1,30 @@
 // The signed-in Hub person as an Optælling user. The open hub is the team; only TCD and TRR use Warehouse Management.
 const { TEAM_IDS, isAllowedTeam } = require('./teams.cjs')
+const { toolsForTeam } = require('./tools.cjs')
 
 const ROLES = new Set(['user', 'manager', 'creator'])
+const TEAM_ID = /^[A-Z][A-Z0-9]{1,15}$/
 const normalize = value => String(value || '').trim().toLowerCase()
 
 function refused() {
   return Object.assign(new Error('WAREHOUSE_TEAM_NOT_ALLOWED'), { code: 'WAREHOUSE_TEAM_NOT_ALLOWED' })
+}
+
+/** The person's name from the team's users; without a profile the e-mail is the name. */
+function fullNameOf(email, users) {
+  const profile = Object.entries(users || {}).find(([key, user]) => normalize(user?.email || key) === email)?.[1]
+  return typeof profile?.fullName === 'string' && profile.fullName.trim() ? profile.fullName.trim() : email
+}
+
+/**
+ * The signed-in Hub person in Arbejdsværktøjer, open to every team: `tools` are the tools the open hub may use (none for
+ * most teams). Each tool's channels check their own tool; the four warehouse tools still go through `warehouseUser`.
+ */
+function moduleUser(actor, users) {
+  const team = actor?.activeTeam?.teamId
+  if (typeof team !== 'string' || !TEAM_ID.test(team) || !ROLES.has(actor.role)) throw refused()
+  const email = normalize(actor.email)
+  return { email, fullName: fullNameOf(email, users), role: actor.role, team, tools: toolsForTeam(team) }
 }
 
 /**
@@ -17,8 +36,7 @@ function warehouseUser(actor, users) {
   const team = actor?.activeTeam?.teamId
   if (!isAllowedTeam(team) || !ROLES.has(actor.role)) throw refused()
   const email = normalize(actor.email)
-  const profile = Object.entries(users || {}).find(([key, user]) => normalize(user?.email || key) === email)?.[1]
-  const fullName = typeof profile?.fullName === 'string' && profile.fullName.trim() ? profile.fullName.trim() : email
+  const fullName = fullNameOf(email, users)
   const member = new Set(actor.role === 'creator' ? TEAM_IDS : (Array.isArray(actor.teams) ? actor.teams : []).map(item => item?.teamId))
   const otherTeams = TEAM_IDS.filter(id => id !== team && member.has(id))
   return { email, fullName, role: actor.role, team, ...(otherTeams.length ? { otherTeams } : {}) }
@@ -38,4 +56,4 @@ function createTeamUsersReader({ openStore, teamDir, publicUsers }) {
   }
 }
 
-module.exports = { warehouseUser, createTeamUsersReader }
+module.exports = { warehouseUser, moduleUser, createTeamUsersReader }

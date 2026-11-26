@@ -4,7 +4,8 @@ const path = require('node:path')
 const fs = require('node:fs')
 const crypto = require('node:crypto')
 const { resolveWarehouseConfig } = require('./config.cjs')
-const { warehouseUser } = require('./hubUser.cjs')
+const { warehouseUser, moduleUser } = require('./hubUser.cjs')
+const { toolsForTeam } = require('./tools.cjs')
 const { createSapBridge, createCscriptRunner, WRITE_SYSTEMS } = require('./sapBridge.cjs')
 const { createSapFetcher } = require('./sapFetch.cjs')
 const { createPiDocWriter } = require('./sapPiDocs.cjs')
@@ -120,8 +121,10 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   const fetcher = createSapFetcher({ bridge: sap, runScript, clipboard, expected: sapExpected })
   const emit = (channel, payload) => broadcast(`warehouse:${channel}`, payload)
 
+  // A hub with at least one tool keeps its data in "<team folder>\lagerstyring"; the four warehouse tools' channels still
+  // refuse every team but TCD and TRR before they get here (serviceUser).
   const dataDirOf = team => {
-    if (!isAllowedTeam(team)) throw codeError('WAREHOUSE_TEAM_NOT_ALLOWED')
+    if (!toolsForTeam(team).length) throw codeError('WAREHOUSE_TEAM_NOT_ALLOWED')
     return path.join(teamDir(team), DATA_FOLDER)
   }
   // A store on M: is opened asynchronously (fs.promises.mkdir, never mkdirSync on the main thread) and a folder that could
@@ -306,8 +309,51 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
       }
     })
   }
+  /** The Hub person for a channel open to every team (moduleUser); the team's users are only read for a well-formed hub. */
+  async function toolUser(event) {
+    const actor = await currentActor(event)
+    const { team } = moduleUser(actor, {})
+    return moduleUser(actor, await cachedUsers(team).catch(() => ({})))
+  }
+  /**
+   * A channel of one or more tools: open to every team that has at least one of `tools` (an empty list: every team),
+   * others get WAREHOUSE_TOOL_NOT_ALLOWED. Same errors and slow-call log as `handle`.
+   */
+  const handleTool = (tools, channel, fn) => {
+    channels.push(channel)
+    ipcMain.handle(`warehouse:${channel}`, async (event, payload) => {
+      const startedAt = Date.now()
+      let userMs = 0
+      try {
+        const user = await toolUser(event)
+        if (tools.length && !tools.some(tool => user.tools.includes(tool))) throw codeError('WAREHOUSE_TOOL_NOT_ALLOWED')
+        userMs = Date.now() - startedAt
+        return await fn(user, payload && typeof payload === 'object' ? payload : {}, event)
+      } catch (error) {
+        let root = ''
+        try { root = platformRoot() } catch {}
+        throw toIpcError(error, root)
+      } finally {
+        const elapsedMs = Date.now() - startedAt
+        if (elapsedMs >= SLOW_CALL_MS && !waitsForSap(channel)) console.warn(`Lagerstyring: LANGSOM ${channel} ${elapsedMs} ms (heraf bruger ${userMs} ms)`)
+      }
+    })
+  }
 
-  handle('me', user => ({ email: user.email, fullName: user.fullName, role: user.role, team: user.team, storageLocations: [...TEAMS[user.team].storageLocations] }))
+  // Every team opens the module. In TCD and TRR the role is Optælling's, as on the warehouse channels (serviceUser): a
+  // status manager is a manager, read through the same role cache.
+  handleTool([], 'me', async user => {
+    const counting = isAllowedTeam(user.team)
+    const role = counting && user.role === 'user' ? await cachedRoleOf(user).catch(() => 'user') : null
+    return {
+      email: user.email,
+      fullName: user.fullName,
+      role: role === 'status-manager' ? 'manager' : user.role,
+      team: user.team,
+      storageLocations: counting ? [...TEAMS[user.team].storageLocations] : [],
+      tools: user.tools,
+    }
+  })
   // What waits for someone in a count changed through this PC: the Hub's bell reads its count notifications again at once.
   const noticing = fn => async (user, p, event) => {
     const result = await fn(user, p, event)
@@ -326,7 +372,7 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
     await copyForPerson(p.text)
     return { ok: true }
   })
-  handle('sap:status', async (user, p) => ({ ...(await sap.status({ fresh: p.fresh === true })), expectedSystem: config.sapSystem }))
+  handleTool(['counts', 'locations', 'softwareload', 'finland'], 'sap:status', async (user, p) => ({ ...(await sap.status({ fresh: p.fresh === true })), expectedSystem: config.sapSystem }))
   handle('statuses:overview', user => counts.statusOverview(user))
   handle('statuses:active-progress', user => counts.activeProgress(user))
   handle('statuses:start', (user, p) => counts.startStatus(user, { year: p.year, quarter: p.quarter, name: p.name }))

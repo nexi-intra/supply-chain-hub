@@ -11,7 +11,7 @@ const { createArrivalOrder } = require('../ipcArrivals.cjs')
 function setup({ clipboard = { readText: () => '', writeText: () => {} }, env = {}, root = null, arrivals, outboxOptions, teamUsers, teamDir, storageConnected, currentActor } = {}) {
   if (!root) {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'warehouse-register-'))
-    for (const team of ['TCD', 'TRR', 'PIM']) fs.mkdirSync(path.join(root, team))
+    for (const team of ['TCD', 'TRR', 'PIM', 'BPO']) fs.mkdirSync(path.join(root, team))
   }
   const handlers = new Map()
   const ipcMain = { handle: (channel, listener) => handlers.set(channel, listener) }
@@ -20,6 +20,10 @@ function setup({ clipboard = { readText: () => '', writeText: () => {} }, env = 
     mona: { email: 'mona@nexi.test', role: 'manager', activeTeam: { teamId: 'TCD', folderName: 'TCD' } },
     anna: { email: 'anna@nexi.test', role: 'user', activeTeam: { teamId: 'TCD', folderName: 'TCD' } },
     pim: { email: 'mona@nexi.test', role: 'manager', activeTeam: { teamId: 'PIM', folderName: 'PIM' } },
+    // Finlandsforsendelser is the only tool of BPO; TRR has the four warehouse tools.
+    bpo: { email: 'anna@nexi.test', role: 'user', activeTeam: { teamId: 'BPO', folderName: 'BPO' } },
+    bpoBoss: { email: 'mona@nexi.test', role: 'manager', activeTeam: { teamId: 'BPO', folderName: 'BPO' } },
+    trrAnna: { email: 'anna@nexi.test', role: 'user', activeTeam: { teamId: 'TRR', folderName: 'TRR' } },
     // Lars belongs to TCD and is an extra manager in TRR (authService: `teams` = home + extra teams); the open hub differs.
     larsTcd: { email: 'lars@nexi.test', role: 'user', activeTeam: { teamId: 'TCD', folderName: 'TCD' }, teams: [{ teamId: 'TCD', folderName: 'TCD' }, { teamId: 'TRR', folderName: 'TRR' }] },
     larsTrr: { email: 'lars@nexi.test', role: 'manager', activeTeam: { teamId: 'TRR', folderName: 'TRR' }, teams: [{ teamId: 'TCD', folderName: 'TCD' }, { teamId: 'TRR', folderName: 'TRR' }] },
@@ -85,9 +89,33 @@ test('"Tjek SAP-fejl" over IPC: the check is saved in the shared store and the m
 
 test('the open hub is the team: a TCD user gets TCD and its storage locations, other hubs are refused', async () => {
   const { call } = setup()
-  assert.deepEqual(await call('anna', 'me'), { email: 'anna@nexi.test', fullName: 'Anna Holm', role: 'user', team: 'TCD', storageLocations: ['D000', 'D004', 'D005', 'D006', 'D102', 'D103', 'D104', 'D105', 'D106'] })
-  await assert.rejects(call('pim', 'me'), /^Error: WAREHOUSE_TEAM_NOT_ALLOWED$/)
+  assert.deepEqual(await call('anna', 'me'), { email: 'anna@nexi.test', fullName: 'Anna Holm', role: 'user', team: 'TCD', storageLocations: ['D000', 'D004', 'D005', 'D006', 'D102', 'D103', 'D104', 'D105', 'D106'], tools: ['timeclock', 'locations', 'counts', 'softwareload', 'finland'] })
   await assert.rejects(call('pim', 'counts:list'), /WAREHOUSE_TEAM_NOT_ALLOWED/)
+})
+
+test('me for every team: the tools of the open hub, and storage locations only where Optælling is used', async () => {
+  const { call } = setup()
+  assert.deepEqual(await call('pim', 'me'), { email: 'mona@nexi.test', fullName: 'Mona Berg', role: 'manager', team: 'PIM', storageLocations: [], tools: [] })
+  assert.deepEqual(await call('bpo', 'me'), { email: 'anna@nexi.test', fullName: 'Anna Holm', role: 'user', team: 'BPO', storageLocations: [], tools: ['finland'] })
+  assert.deepEqual((await call('bpoBoss', 'me')).role, 'manager')
+  assert.deepEqual(await call('trrAnna', 'me'), { email: 'anna@nexi.test', fullName: 'Anna Holm', role: 'user', team: 'TRR', storageLocations: ['D001', 'D002', 'D003'], tools: ['timeclock', 'locations', 'counts', 'softwareload'] })
+})
+
+test('every existing channel still refuses other teams', async () => {
+  const { call, registered } = setup()
+  const existing = registered.channels.filter(channel => !['me', 'sap:status'].includes(channel) && !/^(admin|finland):/.test(channel))
+  assert.ok(existing.length >= 60, `${existing.length} channels`)
+  for (const channel of existing) {
+    await assert.rejects(call('bpo', channel, {}), /^Error: WAREHOUSE_TEAM_NOT_ALLOWED$/, channel)
+    await assert.rejects(call('pim', channel, {}), /^Error: WAREHOUSE_TEAM_NOT_ALLOWED$/, channel)
+  }
+  await registered.closeAll()
+})
+
+test('sap:status follows the tools: a team with a SAP tool gets an answer, a team without is refused', async () => {
+  const { call } = setup()
+  assert.equal((await call('bpo', 'sap:status', {})).expectedSystem, (await call('anna', 'sap:status', {})).expectedSystem)
+  await assert.rejects(call('pim', 'sap:status', {}), /^Error: WAREHOUSE_TOOL_NOT_ALLOWED$/)
 })
 
 test('the window gets only our own codes: Node\'s ERR_* is unexpected, and a missing file is M: only when it is under the platform root', async t => {
