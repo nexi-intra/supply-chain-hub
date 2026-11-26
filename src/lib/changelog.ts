@@ -12,6 +12,10 @@ export const CHANGELOG: ChangelogEntry[] = [
     items: [
       'Sikkerhedsopdateringer: appens motor (Electron) og en række indbyggede pakker er opdateret til versioner, hvor kendte sikkerhedshuller er lukket',
       'Guides og Knowledge Library: zoom ind og ud i en åben guide med knapperne øverst, Ctrl og musehjulet eller Ctrl + og Ctrl −. Tekst og billeder bliver større sammen, også i PDF-visningerne, og din zoom huskes på PC\'en',
+      'Arbejdsværktøjer er åbent for alle teams. Hvert team ser kun sine egne værktøjer, og har teamet ingen, står der det på forsiden',
+      'Administration i Arbejdsværktøjer: managere giver roller pr. værktøj her. Rollerne er flyttet fra Manager Panel, og her vælges også arket til Finlandsforsendelser',
+      'Nyt værktøj i BPO og TCD: Finlandsforsendelser. Hent kolli fra Danmark til Finland fra SAP, og skriv dem ind i det fælles ark med "Skriv ind" eller "Tilføj række i hånden". Kolli, der ikke blev sendt, kan markeres "Ikke sendt", så ingen skriver dem ind',
+      'Finlandsforsendelser: under "Opfølgning" retter du T&T og følger leveringen hos PostNord, DHL og DSV. Kun én kan skrive i arket ad gangen, og du kan se, hvem der skriver, og om kolleger har ændringer, som ikke er gemt i arket endnu',
     ],
   },
   {
