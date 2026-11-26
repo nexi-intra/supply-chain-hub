@@ -5,22 +5,23 @@ import { useSapStatus } from '@/components/warehouse/SapStatusContext'
 import { Tabs } from '@/components/warehouse/ui'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { dayTitle, isoOf, shortDay } from '@/lib/warehouse/finlandDates'
-import { backendText, kolli } from '@/lib/warehouse/finlandText'
+import { kolli } from '@/lib/warehouse/finlandText'
 import { describeSapState } from '@/lib/warehouse/sapStatus'
 import { t } from '@/lib/warehouse/text'
 import type { FinlandManualInput, FinlandNotSentRow, FinlandParcelRow, FinlandReviewRow, FinlandSnapshot } from '@/types/finland'
 import { Calendar } from './Calendar'
-import { NoticeBox, type Notice, type Working } from './common'
+import { NoticeBox, sheetNotes, type Notice, type Working } from './common'
+import { FollowUp } from './FollowUp'
 import { ManualRow } from './ManualRow'
 import { WriteDay } from './WriteDay'
 
-type Tab = 'write'
+type Tab = 'write' | 'follow'
+
+/** How often the window asks how many of the person's changes are not in the sheet, before the sheet is read. */
+const PENDING_POLL_MS = 10_000
 
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/
 const pad = (n: number) => String(n).padStart(2, '0')
-
-/** Danish lines on how the sheet was opened, after the first ("Arket er åbent i Excel"), as Finland T&T shows them. */
-const sheetNotes = (snapshot: FinlandSnapshot) => (snapshot.sheet && snapshot.sheet.texts.length > 1 ? snapshot.sheet.texts.slice(1).map(backendText) : [])
 
 /** The order types in the sheet, most used first. */
 function orderTypesOf(snapshot: FinlandSnapshot | null): string[] {
@@ -51,13 +52,18 @@ export function lockText(lock: Pick<NonNullable<FinlandSnapshot['lock']>, 'byNam
 }
 
 /** The orange "N kolli er ikke gemt i arket" and the "Testark" badge, shown in the tool's title bar next to the SAP light. */
-export function FinlandMarks({ pending, isTest }: { pending: number; isTest: boolean }) {
+export function FinlandMarks({ pending, isTest, onOpenPending }: { pending: number; isTest: boolean; onOpenPending?: () => void }) {
   return (
     <>
       {pending > 0 && (
-        <span className="rounded-full bg-amber-500 px-3.5 py-1.5 text-xs font-bold text-amber-950 shadow-[0_0_0_3px_rgba(245,158,11,0.28)]">
+        <button
+          type="button"
+          onClick={onOpenPending}
+          title={t('Vis ændringerne, og gem dem i arket', 'Show the changes, and save them in the sheet')}
+          className="rounded-full bg-amber-500 px-3.5 py-1.5 text-xs font-bold text-amber-950 shadow-[0_0_0_3px_rgba(245,158,11,0.28)] transition hover:bg-amber-400 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        >
           {t(`${kolli(pending)} er ikke gemt i arket`, `${kolli(pending)} not saved in the sheet`)}
-        </span>
+        </button>
       )}
       {isTest && (
         <span
@@ -89,6 +95,8 @@ export function Finland({ headerSlot, onBusyChange }: { headerSlot: HTMLElement 
   const [month, setMonth] = useState<number | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   const [manualOpen, setManualOpen] = useState(false)
+  const [confirmAll, setConfirmAll] = useState(false)
+  const [polledPending, setPolledPending] = useState(0)
 
   const setWorking = useCallback((next: Working) => {
     workingRef.current = next
@@ -105,9 +113,30 @@ export function Finland({ headerSlot, onBusyChange }: { headerSlot: HTMLElement 
 
   const lockedBy = data?.lock && !data.lock.mine ? data.lock : null
   const isTest = data?.sheet ? data.sheet.isTest : isTestSetting
-  const pending = data?.followUp.pendingTotal ?? 0
+  // Before anything is read, the count comes from the shared drafts alone, so the marker shows from the start.
+  const pending = data ? data.followUp.pendingTotal : polledPending
   const sapDescription = describeSapState(sap, 'finland')
   const sapNotReady = sap !== null && !sap.ready
+
+  useEffect(() => {
+    if (data) return
+    let stopped = false
+    const poll = () => { bridge.pending().then(count => { if (!stopped) setPolledPending(count) }).catch(() => {}) }
+    poll()
+    const timer = window.setInterval(poll, PENDING_POLL_MS)
+    return () => { stopped = true; window.clearInterval(timer) }
+  }, [bridge, data])
+
+  /** Runs `call` as the tool's one action at a time; undefined when something else is running. Errors go to the caller. */
+  const exclusive = async <R,>(kind: NonNullable<Working>, call: () => Promise<R>): Promise<R | undefined> => {
+    if (workingRef.current) return undefined
+    setWorking(kind)
+    try {
+      return await call()
+    } finally {
+      setWorking(null)
+    }
+  }
 
   /** Runs one action against the main process; `done` gives the lines to show when it went well. */
   const act = async <R extends FinlandSnapshot>(kind: NonNullable<Working>, call: () => Promise<R>, done: (result: R) => string[]) => {
@@ -277,11 +306,25 @@ export function Finland({ headerSlot, onBusyChange }: { headerSlot: HTMLElement 
     )
   }
 
+  const lockLine = lockedBy && (
+    <p role="status" className="rounded-lg border border-attention/40 bg-attention-surface px-4 py-3 text-sm">
+      {lockText(lockedBy)} {t('Knapperne, der skriver i arket, venter. Tryk "Læs arket igen" om lidt.', 'The buttons that write in the sheet wait. Press "Read the sheet again" shortly.')}
+    </p>
+  )
+
+  // The orange marker: to Opfølgning, read the sheet if it is not read yet (showing the changes needs it), then every
+  // waiting change by day, as Finland T&T.
+  const openPending = async () => {
+    setTab('follow')
+    if (!data?.sheet) await loadSheet()
+    setConfirmAll(true)
+  }
+
   return (
     <div className="container mx-auto space-y-6 px-4 py-6 sm:px-6">
-      {headerSlot && createPortal(<FinlandMarks pending={pending} isTest={isTest} />, headerSlot)}
+      {headerSlot && createPortal(<FinlandMarks pending={pending} isTest={isTest} onOpenPending={openPending} />, headerSlot)}
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <Tabs<Tab> value={tab} onChange={setTab} items={[{ value: 'write', label: t('Skriv ind', 'Write in') }]} className="flex-1" />
+        <Tabs<Tab> value={tab} onChange={setTab} items={[{ value: 'write', label: t('Skriv ind', 'Write in') }, { value: 'follow', label: t('Opfølgning', 'Follow-up') }]} className="flex-1" />
         <div className="flex flex-wrap items-center gap-2">
           {loadedAt && <span className="text-xs text-muted-foreground">{t(`Hentet kl. ${pad(loadedAt.getHours())}.${pad(loadedAt.getMinutes())}`, `Fetched at ${pad(loadedAt.getHours())}:${pad(loadedAt.getMinutes())}`)}</span>}
           <Button variant="outline" disabled={working !== null} loading={working === 'sheet'} onClick={loadSheet} title={t('Læser kun arket, også uden SAP.', 'Reads only the sheet, also without SAP.')}>
@@ -298,31 +341,49 @@ export function Finland({ headerSlot, onBusyChange }: { headerSlot: HTMLElement 
         </div>
       </div>
 
-      <div className="grid gap-8 lg:grid-cols-[minmax(280px,340px)_1fr]">
-        <div className="space-y-4">
-          <Calendar
-            days={data?.days ?? []}
-            range={data?.range ?? null}
-            today={data?.today ?? isoOf(new Date())}
-            selected={selected}
-            month={month}
-            loading={working === 'load'}
-            onSelect={selectDay}
-            onMonth={setMonth}
-          />
-          <Button variant="outline" className="w-full" disabled={manualOpen} onClick={() => { setNotice(null); setManualOpen(true) }}>
-            {t('Tilføj række i hånden', 'Add a row by hand')}
-          </Button>
-        </div>
-        <section className="min-w-0 space-y-4" aria-live="polite">
-          {lockedBy && (
-            <p role="status" className="rounded-lg border border-attention/40 bg-attention-surface px-4 py-3 text-sm">
-              {lockText(lockedBy)} {t('Knapperne, der skriver i arket, venter. Tryk "Læs arket igen" om lidt.', 'The buttons that write in the sheet wait. Press "Read the sheet again" shortly.')}
-            </p>
-          )}
+      {tab === 'follow' && (lockedBy || notice) && (
+        <div className="space-y-4" aria-live="polite">
+          {lockLine}
           {notice && <NoticeBox notice={notice} />}
-          {dayPane()}
-        </section>
+        </div>
+      )}
+      <div hidden={tab !== 'follow'}>
+        <FollowUp
+          active={tab === 'follow'}
+          data={data}
+          working={working}
+          writeBlocked={!!lockedBy}
+          confirmAll={confirmAll}
+          onConfirmAll={setConfirmAll}
+          onData={setData}
+          onLoadSheet={loadSheet}
+          exclusive={exclusive}
+        />
+      </div>
+
+      <div hidden={tab !== 'write'}>
+        <div className="grid gap-8 lg:grid-cols-[minmax(280px,340px)_1fr]">
+          <div className="space-y-4">
+            <Calendar
+              days={data?.days ?? []}
+              range={data?.range ?? null}
+              today={data?.today ?? isoOf(new Date())}
+              selected={selected}
+              month={month}
+              loading={working === 'load'}
+              onSelect={selectDay}
+              onMonth={setMonth}
+            />
+            <Button variant="outline" className="w-full" disabled={manualOpen} onClick={() => { setNotice(null); setManualOpen(true) }}>
+              {t('Tilføj række i hånden', 'Add a row by hand')}
+            </Button>
+          </div>
+          <section className="min-w-0 space-y-4" aria-live="polite">
+            {lockLine}
+            {notice && <NoticeBox notice={notice} />}
+            {dayPane()}
+          </section>
+        </div>
       </div>
     </div>
   )

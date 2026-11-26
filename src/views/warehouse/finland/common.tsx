@@ -1,12 +1,17 @@
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
+import { backendText } from '@/lib/warehouse/finlandText'
 import { t } from '@/lib/warehouse/text'
+import type { FinlandSnapshot } from '@/types/finland'
 
 export type NoticeTone = 'success' | 'error' | 'info'
 export interface Notice { tone: NoticeTone; lines: string[] }
 
 /** What the tool is doing; the buttons that would start something else wait meanwhile. */
-export type Working = null | 'load' | 'sheet' | 'write' | 'fix' | 'mark' | 'restore' | 'delete' | 'manual'
+export type Working = null | 'load' | 'sheet' | 'write' | 'fix' | 'mark' | 'restore' | 'delete' | 'manual' | 'followup'
+
+/** Danish lines on how the sheet was opened, after the first ("Arket er åbent i Excel"), as Finland T&T shows them. */
+export const sheetNotes = (snapshot: FinlandSnapshot) => (snapshot.sheet && snapshot.sheet.texts.length > 1 ? snapshot.sheet.texts.slice(1).map(backendText) : [])
 
 const TAG: Record<string, string> = {
   DHL: 'bg-[#ffcc00] text-[#b0141a]',
