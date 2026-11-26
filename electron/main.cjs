@@ -134,6 +134,8 @@ let localAI = null
 let warehouse = null
 // The Hub's own window; tracking windows (Finlandsforsendelser) are BrowserWindows too, so it is never "the first one".
 let mainWindow = null
+// Every window made by createWindow: the windows that get broadcasts (a tracking window shows a courier's site and must not).
+const hubWindows = new Set()
 // Sættes når multiplayer-tjenesten findes; before-quit venter på dens indeks-skrivninger.
 let multiplayerSettled = null
 let wordChecker = null
@@ -772,8 +774,8 @@ function broadcast(channel, payload) {
     if (payload?.includes?.('users')) multiplayerHooks.usersChanged()
     if (payload?.some(key => ['guides', 'shared-guides', 'guide-access-requests', 'knowledge-articles', 'shared-knowledge-articles', 'knowledge-access-requests', 'users'].includes(key))) broadcast('assistant:guides-changed')
   }
-  for (const win of BrowserWindow.getAllWindows()) {
-    win.webContents.send(channel, payload)
+  for (const win of hubWindows) {
+    if (!win.isDestroyed()) win.webContents.send(channel, payload)
   }
 }
 
@@ -811,6 +813,7 @@ function createWindow() {
     },
   })
   mainWindow = win
+  hubWindows.add(win)
 
   // Vinduet er skjult indtil foerste maling for at undgaa et hvidt glimt. Men
   // paa et langsomt drev kan den maling traekke ud, og brugeren sidder saa og
@@ -850,6 +853,7 @@ function createWindow() {
   win.on('closed', () => diagnostics.write('info', 'window closed'))
   // No tracking window may keep the app running once the Hub's window is gone.
   win.on('closed', () => {
+    hubWindows.delete(win)
     if (mainWindow === win) mainWindow = null
     warehouse?.closeTrackingWindows()
   })
