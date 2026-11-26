@@ -5,8 +5,9 @@ import { SectionTile } from '@/components/arcade/SectionTile'
 import { t } from '@/lib/warehouse/text'
 import { withoutDeletedActive } from './pendingDeletes'
 import type { WarehouseUser } from '@/types/warehouse'
+import type { WarehouseTool } from '@/lib/warehouseTools'
 
-export type WarehouseTool = 'timeclock' | 'counts' | 'locations' | 'softwareload'
+export type { WarehouseTool }
 
 interface ToolTile {
   id: WarehouseTool
