@@ -452,6 +452,29 @@ test('a manager makes a colleague Placerings admin over IPC; that person may the
   assert.equal((await call('anna', 'locations:overview')).counts.pallets, 0)
 })
 
+test('a BPO manager sees the roles and gives Finlandsforsendelser admin over IPC; the roles file lives in BPO\\lagerstyring', async () => {
+  const { root, call, registered } = setup()
+  const before = await call('bpoBoss', 'admin:roles')
+  assert.equal(before.team, 'BPO')
+  assert.deepEqual(before.users, [
+    { email: 'mona@nexi.test', fullName: 'Mona Berg', finlandRole: 'manager' },
+    { email: 'anna@nexi.test', fullName: 'Anna Holm', finlandRole: 'user' },
+  ])
+  assert.deepEqual(await call('bpoBoss', 'admin:set-finland-admin', { email: 'anna@nexi.test', admin: true }), { email: 'anna@nexi.test', finlandAdmin: true })
+  const after = await call('bpoBoss', 'admin:roles')
+  assert.equal(after.users.find(user => user.email === 'anna@nexi.test').finlandRole, 'admin')
+  assert.equal(after.log[0].action, 'finland-admin-added')
+  assert.ok((await createStore(path.join(root, 'BPO', 'lagerstyring')).getAsync('roller')).finlandAdmins['anna@nexi.test'])
+
+  await assert.rejects(call('bpo', 'admin:roles', {}), /^Error: MANAGER_ONLY/)
+  await assert.rejects(call('bpo', 'admin:set-finland-admin', { email: 'anna@nexi.test', admin: false }), /^Error: MANAGER_ONLY/)
+  await assert.rejects(call('trrAnna', 'admin:set-finland-admin', { email: 'anna@nexi.test', admin: true }), /^Error: WAREHOUSE_TOOL_NOT_ALLOWED$/)
+  await assert.rejects(call('pim', 'admin:roles', {}), /^Error: WAREHOUSE_TOOL_NOT_ALLOWED$/)
+  const tcd = await call('mona', 'admin:roles')
+  assert.deepEqual(tcd.users.find(user => user.email === 'anna@nexi.test'), { email: 'anna@nexi.test', fullName: 'Anna Holm', role: 'user', locationRole: 'user', finlandRole: 'user' }, 'each hub has its own roles')
+  await registered.closeAll()
+})
+
 test('shelf work goes through the local queue (applied once), and racks and deletion are reached over IPC', async () => {
   const { call } = setup()
   await assert.rejects(call('anna', 'locations:create-rack', { name: 'E9', shelves: 2 }), /LOCATIONS_MANAGER_ONLY/)

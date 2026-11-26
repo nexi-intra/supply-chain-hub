@@ -124,6 +124,58 @@ test('isLocationAdmin: managers and Placerings admins yes; Optælling admin and 
   assert.equal(await roles.isLocationAdmin({ ...BO, role: 'manager', statusManager: true }), true, 'a status manager can also be Placerings admin')
 })
 
+test('a manager makes a colleague Finlandsforsendelser admin; it is logged and the Optælling role is not touched', async () => {
+  const roles = setup()
+  await roles.setRole(MONA, { email: 'anna@example.test', role: 'admin' })
+  assert.equal(await roles.isFinlandAdmin(ANNA), false)
+  assert.deepEqual(await roles.setFinlandAdmin(MONA, { email: 'Anna@Example.test', admin: true }), { email: 'anna@example.test', finlandAdmin: true })
+  assert.equal(await roles.isFinlandAdmin(ANNA), true)
+  assert.equal(await roles.isFinlandAdmin(BO), false)
+  assert.equal(await roles.isFinlandAdmin(MONA), true)
+  assert.equal(await roles.isFinlandAdmin({ ...BO, role: 'creator' }), true)
+  assert.equal(await roles.roleOf(ANNA), 'admin', 'the Optælling role is untouched')
+  assert.equal(await roles.isLocationAdmin(ANNA), false, 'nor is Placeringer')
+  assert.deepEqual((await roles.list(MONA)).log.map(entry => `${entry.action}:${entry.email}:${entry.by.name}`).slice(0, 1), ['finland-admin-added:anna@example.test:Mona'])
+  await roles.setFinlandAdmin(MONA, { email: 'anna@example.test', admin: false })
+  assert.equal(await roles.isFinlandAdmin(ANNA), false)
+  assert.equal((await roles.list(MONA)).log[0].action, 'finland-admin-removed')
+  assert.equal(await roles.roleOf(ANNA), 'admin')
+})
+
+test('only a Hub manager grants Finlandsforsendelser admin; a status manager can neither give it nor is one', async () => {
+  const roles = setup()
+  await roles.setRole(MONA, { email: 'bo@example.test', role: 'status-manager' })
+  const statusManager = { ...BO, role: 'manager', statusManager: true }
+  await assert.rejects(roles.setFinlandAdmin(statusManager, { email: 'anna@example.test', admin: true }), { code: 'MANAGER_ONLY' })
+  assert.equal(await roles.isFinlandAdmin(statusManager), false, 'a status manager from Optælling is not admin here')
+  await assert.rejects(roles.setFinlandAdmin(ANNA, { email: 'bo@example.test', admin: true }), { code: 'MANAGER_ONLY' })
+  await assert.rejects(roles.setFinlandAdmin(MONA, { email: 'trine@example.test', admin: true }), { code: 'MEMBER_NOT_FOUND' }, 'not in the team')
+  await assert.rejects(roles.setFinlandAdmin(MONA, { email: 'mona@example.test', admin: true }), { code: 'ROLE_INVALID' }, 'managers already have every right')
+  assert.equal(await roles.isFinlandAdmin(ANNA), false)
+})
+
+test('toolRoles shows each user only the roles of the tools asked for', async () => {
+  const roles = setup()
+  await roles.setRole(MONA, { email: 'anna@example.test', role: 'admin' })
+  await roles.setLocationAdmin(MONA, { email: 'anna@example.test', admin: true })
+  await roles.setFinlandAdmin(MONA, { email: 'bo@example.test', admin: true })
+
+  const finland = await roles.toolRoles(MONA, ['finland'])
+  assert.deepEqual([finland.team, finland.canEdit, finland.canGrantStatusManager], ['TCD', true, true])
+  assert.deepEqual(finland.users, [
+    { email: 'anna@example.test', fullName: 'Anna', finlandRole: 'user' },
+    { email: 'bo@example.test', fullName: 'Bo', finlandRole: 'admin' },
+    { email: 'mona@example.test', fullName: 'Mona', finlandRole: 'manager' },
+  ])
+  assert.deepEqual(finland.log.map(entry => entry.action), ['finland-admin-added'], 'only the log of the tools asked for')
+
+  const every = await roles.toolRoles(MONA, ['timeclock', 'locations', 'counts', 'softwareload', 'finland'])
+  assert.deepEqual(every.users[0], { email: 'anna@example.test', fullName: 'Anna', role: 'admin', locationRole: 'location-admin', finlandRole: 'user' })
+  assert.deepEqual(every.log.map(entry => entry.action), ['finland-admin-added', 'location-admin-added', 'admin-added'])
+  assert.deepEqual((await roles.toolRoles(ANNA, ['timeclock'])).users[0], { email: 'anna@example.test', fullName: 'Anna' })
+  assert.equal((await roles.toolRoles(ANNA, ['timeclock'])).canEdit, false)
+})
+
 test('when M: is down, a role read fails as a storage error instead of "not a Placerings admin"', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'countpoint-roles-down-'))
   const store = createStore(path.join(root, 'TCD'))

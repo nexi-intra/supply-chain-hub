@@ -2,7 +2,7 @@
 // appointed inside CountPoint and stored per team, with a log of who changed what. A status manager may do what a
 // manager may in CountPoint (main.cjs passes them on as managers, marked statusManager), except granting that role.
 // Placerings admin is a role of its own (maintains locations and undoes actions in Placeringer), independent of the
-// Optælling role; only a Hub manager gives it.
+// Optælling role; only a Hub manager gives it. Finlandsforsendelser admin works the same way (finlandAdmins).
 const fs = require('node:fs')
 
 const ROLES_KEY = 'roller'
@@ -25,14 +25,14 @@ function createRoles({ storeFor, listTeamUsers, now = Date.now }) {
     // A missing file is "no roles yet" only while the team folder is there; with M: down it must not read as "not admin".
     if (stored === undefined && store.dataDir && !(await fs.promises.access(store.dataDir).then(() => true, () => false))) throw codeError('STORAGE_UNAVAILABLE', 'Lagerstyrings data kan ikke læses lige nu')
     const value = stored || {}
-    return { admins: value.admins || {}, statusManagers: value.statusManagers || {}, locationAdmins: value.locationAdmins || {}, log: Array.isArray(value.log) ? value.log : [] }
+    return { admins: value.admins || {}, statusManagers: value.statusManagers || {}, locationAdmins: value.locationAdmins || {}, finlandAdmins: value.finlandAdmins || {}, log: Array.isArray(value.log) ? value.log : [] }
   }
 
   /** Read-change-write under the roles file's lock (the lock 1.6.6's compareAndSet uses): no extra read, no retried write. */
   async function change(team, fn) {
     let next
     await storeFor(team).mutateAsync(ROLES_KEY, current => {
-      next = fn({ admins: { ...(current?.admins || {}) }, statusManagers: { ...(current?.statusManagers || {}) }, locationAdmins: { ...(current?.locationAdmins || {}) }, log: [...(current?.log || [])] })
+      next = fn({ admins: { ...(current?.admins || {}) }, statusManagers: { ...(current?.statusManagers || {}) }, locationAdmins: { ...(current?.locationAdmins || {}) }, finlandAdmins: { ...(current?.finlandAdmins || {}) }, log: [...(current?.log || [])] })
       return next
     })
     return next
@@ -126,7 +126,59 @@ function createRoles({ storeFor, listTeamUsers, now = Date.now }) {
     return setRole(user, { email, role: admin === true ? 'admin' : 'user' })
   }
 
-  return { roleOf, list, setRole, setAdmin, isLocationAdmin, setLocationAdmin }
+  /** Finlandsforsendelser admin: a Hub manager or creator, or someone given the role; an Optælling status manager is not. */
+  async function isFinlandAdmin(user) {
+    if (isManager(user) && !user.statusManager) return true
+    return Boolean((await read(user.team)).finlandAdmins[lower(user.email)])
+  }
+
+  /** Gives or removes Finlandsforsendelser admin. Only a real (Hub) manager, never a status manager. */
+  async function setFinlandAdmin(user, { email, admin } = {}) {
+    if (!isManager(user) || user.statusManager) throw codeError('MANAGER_ONLY', 'Kun managers kan give rollen admin i Finlandsforsendelser')
+    const target = lower(email)
+    if (!EMAIL.test(target)) throw codeError('ROLE_INVALID', 'Ugyldig bruger')
+    const member = (await listTeamUsers(user.team)).find(item => item.email === target)
+    if (!member) throw codeError('MEMBER_NOT_FOUND', 'Brugeren er ikke i teamet')
+    if (member.role !== 'user') throw codeError('ROLE_INVALID', 'Managers har allerede alle rettigheder')
+    const by = { email: lower(user.email), name: user.fullName || user.email }
+    const wanted = admin === true
+    await change(user.team, value => {
+      if (Boolean(value.finlandAdmins[target]) === wanted) return value
+      if (wanted) value.finlandAdmins[target] = { name: member.fullName, by, at: now() }
+      else delete value.finlandAdmins[target]
+      value.log.push({ at: now(), by, email: target, name: member.fullName, action: wanted ? 'finland-admin-added' : 'finland-admin-removed' })
+      value.log = value.log.slice(-LOG_MAX)
+      return value
+    })
+    return { email: target, finlandAdmin: wanted }
+  }
+
+  /**
+   * The team's users with the roles of `tools` only (Arbejdsværktøjer's admin page): `role` with 'counts', `locationRole`
+   * with 'locations', `finlandRole` with 'finland'. The log holds only those roles' changes.
+   */
+  async function toolRoles(user, tools = []) {
+    const wanted = new Set(Array.isArray(tools) ? tools : [])
+    const [{ admins, statusManagers, locationAdmins, finlandAdmins, log }, users] = await Promise.all([read(user.team), listTeamUsers(user.team)])
+    const ofTool = action => /^(admin|status-manager)-/.test(action) ? 'counts' : /^location-admin-/.test(action) ? 'locations' : /^finland-admin-/.test(action) ? 'finland' : null
+    return {
+      team: user.team,
+      canEdit: isManager(user),
+      canGrantStatusManager: isManager(user) && !user.statusManager,
+      users: users.map(item => {
+        const manager = item.role !== 'user'
+        return {
+          email: item.email, fullName: item.fullName,
+          ...(wanted.has('counts') ? { role: manager ? 'manager' : statusManagers[item.email] ? 'status-manager' : admins[item.email] ? 'admin' : 'user' } : {}),
+          ...(wanted.has('locations') ? { locationRole: manager ? 'manager' : locationAdmins[item.email] ? 'location-admin' : 'user' } : {}),
+          ...(wanted.has('finland') ? { finlandRole: manager ? 'manager' : finlandAdmins[item.email] ? 'admin' : 'user' } : {}),
+        }
+      }),
+      log: log.filter(entry => wanted.has(ofTool(entry?.action))).reverse().slice(0, 50),
+    }
+  }
+
+  return { roleOf, list, setRole, setAdmin, isLocationAdmin, setLocationAdmin, isFinlandAdmin, setFinlandAdmin, toolRoles }
 }
 
 const ROLE_TTL_MS = 30000
