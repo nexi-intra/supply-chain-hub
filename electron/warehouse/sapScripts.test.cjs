@@ -7,7 +7,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const childProcess = require('node:child_process')
-const { defaultCscriptPath } = require('./sapBridge.cjs')
+const { defaultCscriptPath, SCRIPTS, WRITE_SCRIPTS } = require('./sapBridge.cjs')
 
 const FOLDERS = [path.join(__dirname, 'sap'), path.join(__dirname, 'outlook')]
 const scripts = FOLDERS.flatMap(folder => (fs.existsSync(folder) ? fs.readdirSync(folder).filter(name => name.endsWith('.vbs')).map(name => path.join(folder, name)) : []))
@@ -28,4 +28,10 @@ test('every SAP and Outlook script compiles without running', { skip: !cscript |
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('zms-cons-info.vbs is there and is a read script', () => {
+  assert.equal(SCRIPTS['zms-cons-info'], 'zms-cons-info.vbs')
+  assert.ok(!Object.hasOwn(WRITE_SCRIPTS, 'zms-cons-info'))
+  assert.ok(fs.existsSync(path.join(__dirname, 'sap', 'zms-cons-info.vbs')))
 })

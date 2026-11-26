@@ -40,7 +40,8 @@
         "asarUnpack": [
             "electron/wordToPdf.ps1",
             "electron/warehouse/sap/*.vbs",
-            "electron/warehouse/outlook/*.vbs"
+            "electron/warehouse/outlook/*.vbs",
+            "electron/warehouse/finland/excel/*.ps1"
         ],
         "files": [
             "dist/**",
