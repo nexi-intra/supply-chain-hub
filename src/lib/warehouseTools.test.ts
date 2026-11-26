@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module'
 import { describe, expect, it } from 'vitest'
-import { WAREHOUSE_TOOLS, toolsForTeam } from './warehouseTools'
+import { WAREHOUSE_TOOLS, canOpenTool, toolsForTeam, type WarehouseTool } from './warehouseTools'
 
 const require = createRequire(import.meta.url)
 const backend = require('../../electron/warehouse/tools.cjs')
@@ -15,5 +15,14 @@ describe('warehouseTools', () => {
     expect(toolsForTeam('TCD')).toEqual(['timeclock', 'locations', 'counts', 'softwareload', 'finland'])
     expect(toolsForTeam('BPO')).toEqual(['finland'])
     expect(toolsForTeam(null)).toEqual([])
+  })
+
+  it('opens only a tool of the team, and Administration only for a Hub manager', () => {
+    const user = (tools: WarehouseTool[], canAdminister: boolean) => ({ tools, canAdminister })
+    expect(canOpenTool('finland', user(['finland'], false))).toBe(true)
+    expect(canOpenTool('counts', user(['finland'], true))).toBe(false)
+    expect(canOpenTool('admin', user(['finland'], true))).toBe(true)
+    expect(canOpenTool('admin', user(['finland'], false))).toBe(false)
+    expect(canOpenTool('admin', user([], true))).toBe(false)
   })
 })

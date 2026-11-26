@@ -276,12 +276,13 @@ async function main() {
     assert.match((await api(anna.page, 'undo', { actionId: 'e2e-undo-refused', eventId: plain.result.events[0].id })).error, /LOCATIONS_MANAGER_ONLY/)
     await signIn(chef.page, 'chef@example.test')
     await chef.page.getByText('Manager Panel', { exact: true }).first().click()
-    const roles = chef.page.locator('[data-warehouse-roles]')
-    await roles.getByRole('heading', { name: /^Lagerstyringsroller/ }).waitFor({ timeout: 20000 })
+    await chef.page.getByRole('button', { name: 'Åbn Administration' }).click()
+    const roles = chef.page.locator('[data-tool-roles="locations"]')
+    await roles.getByRole('heading', { name: 'Placeringer' }).waitFor({ timeout: 20000 })
     await roles.getByLabel('Placeringsrolle for Anna Andersen').selectOption('location-admin')
     await toast(chef.page, 'Anna Andersen er nu Placerings admin')
     await roles.screenshot({ path: path.join(evidence, '07-lagerstyringsroller.jpg'), type: 'jpeg', quality: 80 })
-    console.log('ok - manageren gør Anna til Placerings admin i Manager Panel (kortet "Lagerstyringsroller"); en almindelig bruger kan ikke fortryde')
+    console.log('ok - manageren gør Anna til Placerings admin under Administration i Arbejdsværktøjer; en almindelig bruger kan ikke fortryde')
 
     const oldest = (await api(anna.page, 'materialCard', { material: 'R162-0717' })).result.reserve[0]
     assert.equal(`${oldest.location}:${oldest.quantity}`, 'A1.1:85')

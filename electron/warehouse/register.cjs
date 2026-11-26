@@ -352,6 +352,8 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
       team: user.team,
       storageLocations: counting ? [...TEAMS[user.team].storageLocations] : [],
       tools: user.tools,
+      // Administration in the module: the plain Hub role only, an Optælling status manager does not administer it.
+      canAdminister: user.role === 'manager' || user.role === 'creator',
     }
   })
   // What waits for someone in a count changed through this PC: the Hub's bell reads its count notifications again at once.

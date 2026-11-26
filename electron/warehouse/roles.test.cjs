@@ -149,7 +149,7 @@ test('only a Hub manager grants Finlandsforsendelser admin; a status manager can
   await assert.rejects(roles.setFinlandAdmin(statusManager, { email: 'anna@example.test', admin: true }), { code: 'MANAGER_ONLY' })
   assert.equal(await roles.isFinlandAdmin(statusManager), false, 'a status manager from Optælling is not admin here')
   await assert.rejects(roles.setFinlandAdmin(ANNA, { email: 'bo@example.test', admin: true }), { code: 'MANAGER_ONLY' })
-  await assert.rejects(roles.setFinlandAdmin(MONA, { email: 'trine@example.test', admin: true }), { code: 'MEMBER_NOT_FOUND' }, 'not in the team')
+  await assert.rejects(roles.setFinlandAdmin(MONA, { email: 'trine@example.test', admin: true }), { code: 'ROLE_INVALID' }, 'not in the team')
   await assert.rejects(roles.setFinlandAdmin(MONA, { email: 'mona@example.test', admin: true }), { code: 'ROLE_INVALID' }, 'managers already have every right')
   assert.equal(await roles.isFinlandAdmin(ANNA), false)
 })

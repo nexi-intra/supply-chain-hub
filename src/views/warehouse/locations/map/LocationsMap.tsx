@@ -9,7 +9,7 @@ import { errorMessage } from '@/lib/warehouse/errors'
 import { contextOf, findSlot, frontData, placeOfSlot, searchMap, type MapHitPlace } from '@/lib/warehouse/layout/map'
 import type { LocationsTarget } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
-import type { LayoutItem, LayoutItemType, LocationList, MapContents, WarehouseLayout, WarehouseUser } from '@/types/warehouse'
+import type { LayoutItem, LayoutItemType, LocationList, MapContents, WarehouseLayout, CountingUser } from '@/types/warehouse'
 import { LayoutCanvas, type CanvasPointer, type FloorView } from '../layout/LayoutCanvas'
 import { RackFront, STATUS_FILL, type SlotStatus } from '../layout/RackFront'
 import { MapHits } from './MapHits'
@@ -36,7 +36,7 @@ function titleOf(item: LayoutItem): string {
 }
 
 /** "Kort over lageret": the published drawing for everyone in the hub – find a place or a material, see what stands on each place. Read only. */
-export function LocationsMap({ user, focus, drawing, version, onOpen }: { user: WarehouseUser; focus?: string; drawing: LocationList['drawing']; version: number; onOpen: (target: LocationsTarget) => void }) {
+export function LocationsMap({ user, focus, drawing, version, onOpen }: { user: CountingUser; focus?: string; drawing: LocationList['drawing']; version: number; onOpen: (target: LocationsTarget) => void }) {
   const [layout, setLayout] = useState<WarehouseLayout | null | undefined>(undefined)
   const [data, setData] = useState<{ list: LocationList; contents: MapContents } | null>(null)
   const [layoutFailed, setLayoutFailed] = useState<string | null>(null)

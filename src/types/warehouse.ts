@@ -14,6 +14,17 @@ export interface RolesView {
   log: { at: number; by: { email: string; name: string }; email: string; name: string; action: 'admin-added' | 'admin-removed' | 'status-manager-added' | 'status-manager-removed' | 'location-admin-added' | 'location-admin-removed' }[]
 }
 
+export type FinlandRole = 'manager' | 'admin' | 'user'
+
+/** The open hub's users with the roles of its own tools only: `role` with Optælling, `locationRole` with Placeringer, `finlandRole` with Finlandsforsendelser. */
+export interface ToolRolesView {
+  team: string
+  canEdit: boolean
+  canGrantStatusManager: boolean
+  users: { email: string; fullName: string; role?: AppRole; locationRole?: RolesView['users'][number]['locationRole']; finlandRole?: FinlandRole }[]
+  log: { at: number; by: { email: string; name: string }; email: string; name: string; action: RolesView['log'][number]['action'] | 'finland-admin-added' | 'finland-admin-removed' }[]
+}
+
 export type SapErrorType = 'count-mismatch' | 'duplicate-serial' | 'stock-without-serials' | 'serials-without-stock'
 
 export interface SapError {
@@ -106,15 +117,21 @@ export interface SapCheckOverview {
   history: SapCheckEntry[]
 }
 
-export interface WarehouseUser {
+export interface WarehouseUser<Team extends string = string> {
   email: string
   fullName: string
   role: Role
-  team: TeamId
+  /** The open hub: TCD or TRR for the Optælling tools (CountingUser), any other team (BPO, ...) for its own tools. */
+  team: Team
   storageLocations: string[]
   /** The tools of Arbejdsværktøjer the team may use; the window shows only these. */
   tools: WarehouseTool[]
+  /** Hub manager or creator: sees Administration. An Optælling status manager does not. */
+  canAdminister: boolean
 }
+
+/** A person in the TCD or TRR hub: the only teams with Stempelkort, Placeringer, Optælling and Softwareload. */
+export type CountingUser = WarehouseUser<TeamId>
 
 export type SapStateName =
   | 'ready'
@@ -1261,6 +1278,11 @@ export interface WarehouseBridge {
     setAdmin(request: { email: string; admin: boolean }): Promise<{ email: string; role: AppRole }>
     setRole(request: { email: string; role: Exclude<AppRole, 'manager'> }): Promise<{ email: string; role: AppRole }>
     setLocationAdmin(request: { email: string; admin: boolean }): Promise<{ email: string; locationAdmin: boolean }>
+  }
+  /** Administration in Arbejdsværktøjer: Hub managers and creators only. */
+  admin: {
+    roles(): Promise<ToolRolesView>
+    setFinlandAdmin(request: { email: string; admin: boolean }): Promise<{ email: string; finlandAdmin: boolean }>
   }
   piDocs: {
     list(id: string): Promise<PiDocList>

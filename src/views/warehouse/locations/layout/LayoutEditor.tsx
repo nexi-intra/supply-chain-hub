@@ -13,7 +13,7 @@ import { fromSpike } from '@/lib/warehouse/layout/fromSpike'
 import { cellsOf, clampToHall } from '@/lib/warehouse/layout/geometry'
 import { duplicateNames, isPlaceSlot } from '@/lib/warehouse/layout/slots'
 import { t, warehouseLocale } from '@/lib/warehouse/text'
-import type { LayoutDraft, LayoutItem, LayoutItemType, LayoutVersion, PublishPlan, WarehouseUser } from '@/types/warehouse'
+import type { LayoutDraft, LayoutItem, LayoutItemType, LayoutVersion, PublishPlan, CountingUser } from '@/types/warehouse'
 import { Field, ItemPanel } from './ItemPanel'
 import { ITEM_TYPES, LayoutCanvas, TYPE_COLORS, typeLabel, type CanvasPointer, type FloorView } from './LayoutCanvas'
 import { PublishPanel, slotLinks } from './PublishPanel'
@@ -54,7 +54,7 @@ const isExport = (raw: unknown): raw is Pick<LayoutDraft, 'hall' | 'notes' | 'it
 }
 
 /** Tegning af lageret: the admin's editor for the hub's one draft; changes are autosaved, publishing is a separate step. */
-export function LayoutEditor({ user, onDone }: { user: WarehouseUser; onDone: () => void }) {
+export function LayoutEditor({ user, onDone }: { user: CountingUser; onDone: () => void }) {
   const bridge = window.electronWarehouse!.locations
   const [state, dispatch] = useReducer(reducer, null)
   const [loadError, setLoadError] = useState<string | null>(null)

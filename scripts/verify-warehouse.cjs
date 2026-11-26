@@ -328,12 +328,13 @@ async function main() {
 
     await toFrontPage(chef.page)
     await chef.page.getByText('Manager Panel', { exact: true }).first().click()
-    const card = chef.page.locator('[data-warehouse-roles]')
+    await chef.page.getByRole('button', { name: 'Åbn Administration' }).click()
+    const card = chef.page.locator('[data-tool-roles="counts"]')
     await card.waitFor({ timeout: 20000 })
     await card.getByLabel('Optællingsrolle for Anna Andersen').selectOption('admin')
     await chef.page.getByText('Anna Andersen er nu admin i Optælling').waitFor()
     await card.screenshot({ path: path.join(evidence, '06-manager-panel-roller.jpg'), type: 'jpeg', quality: 80 })
-    console.log('ok - manageren gør Anna til admin i Manager Panel (kortet "Lagerstyringsroller")')
+    console.log('ok - manageren gør Anna til admin under Administration i Arbejdsværktøjer (via Manager Panel)')
 
     await openCount(anna.page, ACC_NAME)
     const annaDocs = anna.page.getByRole('region', { name: 'SAP-dokumenter' })

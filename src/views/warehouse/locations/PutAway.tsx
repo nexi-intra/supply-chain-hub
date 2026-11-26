@@ -14,7 +14,7 @@ import { peekOf } from '@/lib/warehouse/layout/peek'
 import { holdSerials, holdUntilSent, keepsPlaces, placedFor, placedSummary, putAwayPlaceChecks, sendLocationAction, serialOverlapNotes, serialsOnTheirWay, startLocationsRead, withoutPutAway, withPutAway, type PlacedFound } from '@/lib/warehouse/locationActions'
 import { locationKeyOf, newActionId, reasonLabel, type LocationsTarget } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
-import type { LocationList, MapContents, PalletInput, SlotSuggestion, WarehouseLayout, WarehouseUser } from '@/types/warehouse'
+import type { LocationList, MapContents, PalletInput, SlotSuggestion, WarehouseLayout, CountingUser } from '@/types/warehouse'
 import { PlacePeek } from './map/PlacePeek'
 
 interface Draft {
@@ -51,7 +51,7 @@ const dateMs = (value: string) => new Date(`${value}T12:00:00`).getTime()
 
 /** Put one or more pallets away after goods receipt: the 49/50 number fills in the rest, the Hub suggests a place. */
 export function PutAway({ user, tags, drawing, version, onOpen, onDone }: {
-  user: WarehouseUser; tags: string[]; drawing: LocationList['drawing']; version: number; onOpen: (target: LocationsTarget) => void; onDone: () => void
+  user: CountingUser; tags: string[]; drawing: LocationList['drawing']; version: number; onOpen: (target: LocationsTarget) => void; onDone: () => void
 }) {
   const [drafts, setDrafts] = useState<Draft[]>([blank()])
   const [layout, setLayout] = useState<WarehouseLayout | null | undefined>(undefined)

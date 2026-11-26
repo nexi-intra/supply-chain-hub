@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowLeft, ShieldCheck, Check, User as UserIcon, Trash, X, Umbrella, ClockCounterClockwise, PencilSimple, Plus, Phone, CalendarBlank, Eye, Gift, LockKey, Books, Brain, Baby } from '@phosphor-icons/react'
+import { ArrowLeft, ShieldCheck, Check, User as UserIcon, Trash, X, Umbrella, ClockCounterClockwise, PencilSimple, Plus, Phone, CalendarBlank, Eye, Gift, LockKey, Books, Brain, Baby, Warehouse as WarehouseIcon } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -29,7 +29,7 @@ import { loadAccessRequests, reviewAccessRequest } from '@/lib/libraryAccess'
 import type { LibraryKind } from '@/lib/libraryConfig'
 import { cn } from '@/lib/utils'
 import { isAnyModalOpen } from '@/lib/modalStack'
-import { consumeNavigationParams, peekNavigationParams } from '@/lib/appNavigation'
+import { consumeNavigationParams, navigateTo, peekNavigationParams } from '@/lib/appNavigation'
 import { getEmployeeColorByEmail, EMPLOYEE_COLOR_OVERRIDES_KEY, EMPLOYEE_COLOR_PALETTE, type EmployeeColorOverrides } from '@/lib/employeeColors'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { getWeekNumber as getISOWeekNumber } from '@/lib/dateUtils'
@@ -37,7 +37,8 @@ import { useLanguage } from '@/contexts/LanguageContext'
 import React from 'react'
 import { ManualVacationGrant } from '@/components/ManualVacationGrant'
 import { ExtraManagersCard } from '@/components/ExtraManagersCard'
-import { WarehouseRolesCard } from '@/components/warehouse/WarehouseRolesCard'
+import { getWarehouseLabels } from '@/lib/warehouseLabels'
+import { toolsForTeam } from '@/lib/warehouseTools'
 import { ParentalLeaveDialog } from '@/components/ParentalLeaveDialog'
 import { OnboardingWizard, OffboardingWizard, type OnboardedAccount } from '@/components/OnboardingWizard'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -1279,7 +1280,7 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
               </div>
             </Card>
 
-            <WarehouseRolesCard />
+            <WarehouseAdminLinkCard />
 
             <Card className="p-6 bg-muted/30">
               <div className="space-y-4">
@@ -2434,5 +2435,41 @@ export function ManagerPanel({ onNavigateBack, onLogout, userEmail }: ManagerPan
         </DialogContent>
       </Dialog>
     </div>
+  )
+}
+
+const WAREHOUSE_ADMIN_LINK: Record<string, { text: string; button: string }> = {
+  da: { text: 'Roller i Arbejdsværktøjer findes nu i Arbejdsværktøjer under Administration.', button: 'Åbn Administration' },
+  en: { text: 'Roles in Work Tools are now found in Work Tools under Administration.', button: 'Open Administration' },
+  fi: { text: 'Työkalujen roolit löytyvät nyt Työkaluista kohdasta Administration.', button: 'Avaa Administration' },
+  sv: { text: 'Roller i Arbetsverktyg finns nu i Arbetsverktyg under Administration.', button: 'Öppna Administration' },
+}
+
+/** The roles of Arbejdsværktøjer moved to its own Administration page; only in a hub whose team has tools there. */
+function WarehouseAdminLinkCard() {
+  const { language } = useLanguage()
+  const [hasTools, setHasTools] = useState(false)
+  useEffect(() => {
+    let current = true
+    window.electronRegistry?.getCurrentTeam()
+      .then(team => { if (current) setHasTools(toolsForTeam(team?.teamId).length > 0) })
+      .catch(() => {})
+    return () => { current = false }
+  }, [])
+  if (!hasTools) return null
+  const labels = WAREHOUSE_ADMIN_LINK[language] ?? WAREHOUSE_ADMIN_LINK.en
+  return (
+    <Card className="p-6">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-start gap-3">
+          <WarehouseIcon size={28} className="shrink-0 text-primary" weight="duotone" />
+          <div>
+            <h2 className="text-2xl font-bold">{getWarehouseLabels(language).title}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">{labels.text}</p>
+          </div>
+        </div>
+        <Button variant="outline" onClick={() => navigateTo('warehouse', { tab: 'admin' })}>{labels.button}</Button>
+      </div>
+    </Card>
   )
 }

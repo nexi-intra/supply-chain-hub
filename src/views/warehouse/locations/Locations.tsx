@@ -7,7 +7,7 @@ import { errorMessage } from '@/lib/warehouse/errors'
 import type { LocationsTarget } from '@/lib/warehouse/locations'
 import { replayFailureText, startLocationsRead, startPendingRead } from '@/lib/warehouse/locationActions'
 import { t } from '@/lib/warehouse/text'
-import type { LocationList, WarehouseUser } from '@/types/warehouse'
+import type { LocationList, CountingUser } from '@/types/warehouse'
 import { Admin } from './Admin'
 import { FetchGuide } from './FetchGuide'
 import { ImportSheet } from './ImportSheet'
@@ -29,7 +29,7 @@ import { LocationsMap } from './map/LocationsMap'
  * Placeringer: where every pallet of the hub stands. The front page leads to the daily tasks and the cards; a change on
  * this PC re-reads the open view at once, a change on another PC within 15 seconds (the change stamp is polled).
  */
-export function Locations({ user, initial }: { user: WarehouseUser; initial: LocationsTarget }) {
+export function Locations({ user, initial }: { user: CountingUser; initial: LocationsTarget }) {
   const [target, setTarget] = useState<LocationsTarget>(initial)
   const [version, setVersion] = useState(0)
   const [pending, setPending] = useState(0)

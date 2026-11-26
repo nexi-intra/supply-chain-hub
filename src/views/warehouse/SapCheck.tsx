@@ -13,7 +13,7 @@ import { trackPendingWrite } from '@/lib/pendingWrites'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { fetchSteps, formatDateTime, formatNumber, stockLabel } from '@/lib/warehouse/format'
 import { cn } from '@/lib/utils'
-import type { WarehouseUser, FetchStep, MailLanguage, SapCheckOverview, SapCheckScope, SapCheckSettings, SapError, SapErrorType, TeamId } from '@/types/warehouse'
+import type { CountingUser, FetchStep, MailLanguage, SapCheckOverview, SapCheckScope, SapCheckSettings, SapError, SapErrorType, TeamId } from '@/types/warehouse'
 import { t } from '@/lib/warehouse/text'
 import { TEAM_SLOCS } from '@/lib/warehouse/teams'
 
@@ -49,7 +49,7 @@ function remark(error: SapError): string {
   return `${error.serials[0]}: ${error.locations.map(place => `${place.material} ${place.sloc} ${stockLabel(place.stockType)}`).join(' · ')}`
 }
 
-export function SapCheck({ user, onBack }: { user: WarehouseUser; onBack: () => void }) {
+export function SapCheck({ user, onBack }: { user: CountingUser; onBack: () => void }) {
   const [view, setView] = useState<SapCheckOverview | null>(null)
   const [step, setStep] = useState<FetchStep | null>(null)
   const [type, setType] = useState<SapErrorType | ''>('')
@@ -268,7 +268,7 @@ function parseAddresses(value: string): string | null {
   return list.length > 10 || list.some(address => !EMAIL.test(address)) ? null : list.join('; ')
 }
 
-function MailCard({ view, user, reload, onSettings }: { view: SapCheckOverview; user: WarehouseUser; reload: () => Promise<void>; onSettings: (settings: SapCheckSettings) => void }) {
+function MailCard({ view, user, reload, onSettings }: { view: SapCheckOverview; user: CountingUser; reload: () => Promise<void>; onSettings: (settings: SapCheckSettings) => void }) {
   const latest = view.latest!
   const [to, setTo] = useState(view.settings.to)
   const [cc, setCc] = useState(view.settings.cc)

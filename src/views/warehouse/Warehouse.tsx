@@ -13,10 +13,12 @@ import { cn } from '@/lib/utils'
 import { errorMessage } from '@/lib/warehouse/errors'
 import type { SapTool } from '@/lib/warehouse/sapStatus'
 import { t, useWarehouseLanguage } from '@/lib/warehouse/text'
-import { getWarehouseLabels } from '@/lib/warehouseLabels'
+import { isWarehouseTeam, getWarehouseLabels } from '@/lib/warehouseLabels'
+import { canOpenTool } from '@/lib/warehouseTools'
 import { targetFromItem, type LocationsTarget } from '@/lib/warehouse/locations'
 import type { Language } from '@/lib/translations'
-import type { AppRole, WarehouseUser } from '@/types/warehouse'
+import type { AppRole, CountingUser, WarehouseUser } from '@/types/warehouse'
+import { WarehouseAdmin } from './admin/WarehouseAdmin'
 import { Archive } from './Archive'
 import { CountView, type CountTab } from './count/CountView'
 import { Counts } from './Counts'
@@ -34,16 +36,21 @@ export type View = { kind: 'list' } | { kind: 'new' } | { kind: 'count'; id: str
 
 const TOP_LEVEL = new Set<View['kind']>(['list', 'archive', 'rules', 'serial-rules', 'sap-check'])
 
-type Tool = 'home' | WarehouseTool
+type Tool = 'home' | WarehouseTool | 'admin'
+
+/** Stempelkort, Placeringer, Optælling and Softwareload exist only in the TCD and TRR hubs. */
+const isCountingUser = (user: WarehouseUser): user is CountingUser => isWarehouseTeam(user.team)
 
 /**
  * Without params Arbejdsværktøjer opens on its own hub page. Deep links (Hubert, notifications) go straight into Optælling:
  * tab = counts|archive|rules|serial-rules|sap-check, itemId = count id or "status:<id>". A count from a notification
- * opens on its tab: tab = count-members|count-approval (or count). tab = timeclock opens Stempelkort, tab = softwareload Softwareload.
+ * opens on its tab: tab = count-members|count-approval (or count). tab = timeclock opens Stempelkort, tab = softwareload Softwareload,
+ * tab = admin Administration (the Manager Panel's link). A tool the person may not open shows the tools page instead.
  */
 function initialState(): { tool: Tool; view: View; locations: LocationsTarget } {
   const params = consumeNavigationParams()
   if (!params?.tab && !params?.itemId) return { tool: 'home', view: { kind: 'list' }, locations: { kind: 'home' } }
+  if (params.tab === 'admin') return { tool: 'admin', view: { kind: 'list' }, locations: { kind: 'home' } }
   if (params.tab === 'timeclock') return { tool: 'timeclock', view: { kind: 'list' }, locations: { kind: 'home' } }
   if (params.tab === 'softwareload') return { tool: 'softwareload', view: { kind: 'list' }, locations: { kind: 'home' } }
   // tab = locations: Placeringer, itemId = material:X | location:Y | pallet:Z | refill | …
@@ -65,7 +72,10 @@ export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
   const [user, setUser] = useState<WarehouseUser | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
   const [start] = useState(initialState)
-  const [tool, setTool] = useState<Tool>(start.tool)
+  const [requested, setTool] = useState<Tool>(start.tool)
+  // A tool the team does not have (an old deep link, Administration for someone who is not a Hub manager) shows the tools page.
+  const tool: Tool = requested === 'home' || (user && canOpenTool(requested, user)) ? requested : 'home'
+  const counting = user && isCountingUser(user) ? user : null
   const [view, setView] = useState<View>(start.view)
   const toHome = useCallback(() => { setTool('home'); setView({ kind: 'list' }) }, [])
   // A tool that is working (Softwareload moving in SAP or saving scans) is not left: Escape and Tilbage wait.
@@ -73,7 +83,7 @@ export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
   // Keeps t() in step with the Hub language; the whole module re-renders below this component when it changes.
   const language = useWarehouseLanguage()
   const { language: hubLanguage } = useLanguage()
-  const sapTool: SapTool | null = user && (tool === 'counts' || tool === 'locations' || tool === 'softwareload') ? tool : null
+  const sapTool: SapTool | null = counting && (tool === 'counts' || tool === 'locations' || tool === 'softwareload') ? tool : null
 
   useEffect(() => {
     const bridge = window.electronWarehouse
@@ -86,7 +96,7 @@ export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
       if (event.key !== 'Escape' || event.defaultPrevented || isAnyModalOpen() || toolBusy) return
       // Escape goes one level up: from a tool to the Arbejdsværktøjer page, from there to the front page.
       if (tool === 'home') onNavigateBack()
-      else if (tool === 'timeclock' || tool === 'softwareload' || TOP_LEVEL.has(view.kind)) toHome()
+      else if (tool === 'timeclock' || tool === 'softwareload' || tool === 'admin' || TOP_LEVEL.has(view.kind)) toHome()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -107,6 +117,7 @@ export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
             {tool === 'locations' && <><span className="text-muted-foreground">·</span><span className="text-muted-foreground">{t('Placeringer', 'Locations')}</span></>}
             {tool === 'timeclock' && <><span className="text-muted-foreground">·</span><span className="text-muted-foreground">{t('Stempelkort', 'Time card')}</span></>}
             {tool === 'softwareload' && <><span className="text-muted-foreground">·</span><span className="text-muted-foreground">Softwareload</span></>}
+            {tool === 'admin' && <><span className="text-muted-foreground">·</span><span className="text-muted-foreground">Administration</span></>}
           </h1>
           {user && <Badge variant="secondary" className="font-mono">{user.team}</Badge>}
           {sapTool && <div className="ml-auto"><SapIndicator tool={sapTool} /></div>}
@@ -119,12 +130,13 @@ export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
       )}
       {!failed && !user && <div className="container mx-auto px-4 py-8 sm:px-6"><Skeleton className="h-64 rounded-xl" /></div>}
       {user && tool === 'home' && <WarehouseHome key={language} user={user} onOpen={setTool} />}
-      {user && tool === 'locations' && <Locations key={language} user={user} initial={start.locations} />}
+      {user && tool === 'admin' && <WarehouseAdmin key={language} user={user} />}
+      {counting && tool === 'locations' && <Locations key={language} user={counting} initial={start.locations} />}
       {user && tool === 'timeclock' && <Timeclock key={language} user={user} />}
-      {user && tool === 'softwareload' && <Softwareload key={language} user={user} onOpenTimeclock={() => setTool('timeclock')} onBusyChange={setToolBusy} />}
-      {user && tool === 'counts' && (
+      {counting && tool === 'softwareload' && <Softwareload key={language} user={counting} onOpenTimeclock={() => setTool('timeclock')} onBusyChange={setToolBusy} />}
+      {counting && tool === 'counts' && (
         <>
-          <WarehouseContent key={language} user={user} view={view} onNavigate={setView} />
+          <WarehouseContent key={language} user={counting} view={view} onNavigate={setView} />
           <TableSelection />
         </>
       )}
@@ -134,7 +146,7 @@ export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
   return sapTool ? <SapStatusProvider>{page}</SapStatusProvider> : page
 }
 
-function WarehouseContent({ user, view, onNavigate }: { user: WarehouseUser; view: View; onNavigate: (view: View) => void }) {
+function WarehouseContent({ user, view, onNavigate }: { user: CountingUser; view: View; onNavigate: (view: View) => void }) {
   // Admins and status managers are appointed in Optælling, so the Hub role alone is not enough.
   const [appRole, setAppRole] = useState<AppRole>(user.role === 'user' ? 'user' : 'manager')
   const checkRole = useCallback(() => {

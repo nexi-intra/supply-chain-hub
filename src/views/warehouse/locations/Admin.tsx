@@ -14,7 +14,7 @@ import { drawnPurposeOf } from '@/lib/warehouse/layout/slots'
 import { isPlaceHidden, sendLocationAction, startLocationsRead, type LocationActionOptions } from '@/lib/warehouse/locationActions'
 import { isShelfPlace, linkedChanges, linkedPurposes, locationKeyOf, palletLimitOf, PURPOSES, purposeLabel, storedCapacityOf, TYPES, typeLabel, type LocationsTarget } from '@/lib/warehouse/locations'
 import { t } from '@/lib/warehouse/text'
-import type { DeleteResult, LayoutOwner, LocationInput, LocationList, LocationPurpose, LocationType, RackCard as RackCardData, WarehouseUser } from '@/types/warehouse'
+import type { DeleteResult, LayoutOwner, LocationInput, LocationList, LocationPurpose, LocationType, RackCard as RackCardData, CountingUser } from '@/types/warehouse'
 
 type Listed = LocationList['locations'][number]
 type Dialogs = { kind: 'create' } | { kind: 'edit'; location: Listed } | { kind: 'series' } | { kind: 'tags' } | { kind: 'rack' } | { kind: 'delete' } | { kind: 'deleted'; result: DeleteResult } | null
@@ -53,7 +53,7 @@ type SendRows = (rows: Listed[], replaced: Listed[], write: () => Promise<unknow
 
 /** Maintain the hub's places: list per area, type and "only empty"; create one, a series or a rack; edit; select many to delete or deactivate; labels. */
 // Every change shows in the list at once and is written to M: in the background (15-40 s); a refusal puts the list back.
-export function Admin({ user, version, onOpen, onChanged, onTags }: { user: WarehouseUser; version: number; onOpen: (target: LocationsTarget) => void; onChanged: () => void; onTags: (tags: string[]) => void }) {
+export function Admin({ user, version, onOpen, onChanged, onTags }: { user: CountingUser; version: number; onOpen: (target: LocationsTarget) => void; onChanged: () => void; onTags: (tags: string[]) => void }) {
   const [list, setList] = useState<LocationList | null>(null)
   const [area, setArea] = useState('')
   const [filter, setFilter] = useState('')

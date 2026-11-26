@@ -143,6 +143,10 @@ contextBridge.exposeInMainWorld('electronWarehouse', {
     setRole: request => warehouse('roles:set-role', request),
     setLocationAdmin: request => warehouse('roles:set-location-admin', request),
   },
+  admin: {
+    roles: () => warehouse('admin:roles'),
+    setFinlandAdmin: request => warehouse('admin:set-finland-admin', request),
+  },
   piDocs: {
     list: id => warehouse('pidocs:list', { id }),
     create: request => warehouse('pidocs:create', request),

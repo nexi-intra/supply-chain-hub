@@ -16,3 +16,9 @@ export function toolsForTeam(teamId: string | null | undefined): WarehouseTool[]
   if (typeof teamId !== 'string') return []
   return TOOL_IDS.filter(tool => WAREHOUSE_TOOLS[tool].includes(teamId))
 }
+
+/** Whether the window may show `tool`: one of the team's tools, or Administration for a Hub manager of a team with tools. */
+export function canOpenTool(tool: WarehouseTool | 'admin', user: { tools: readonly WarehouseTool[]; canAdminister: boolean }): boolean {
+  if (tool === 'admin') return user.canAdminister && user.tools.length > 0
+  return user.tools.includes(tool)
+}

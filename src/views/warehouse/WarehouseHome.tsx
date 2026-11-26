@@ -1,16 +1,16 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
-import { Barcode, ClipboardText, Clock, Cpu, IdentificationCard, MapPin, Package, Truck } from '@phosphor-icons/react'
+import { Barcode, ClipboardText, Clock, Cpu, IdentificationCard, MapPin, Package, Truck, UserGear, UsersThree } from '@phosphor-icons/react'
 import { SectionTile } from '@/components/arcade/SectionTile'
 import { t } from '@/lib/warehouse/text'
 import { withoutDeletedActive } from './pendingDeletes'
 import type { WarehouseUser } from '@/types/warehouse'
-import type { WarehouseTool } from '@/lib/warehouseTools'
+import { canOpenTool, type WarehouseTool } from '@/lib/warehouseTools'
 
 export type { WarehouseTool }
 
 interface ToolTile {
-  id: WarehouseTool
+  id: WarehouseTool | 'admin'
   title: string
   description: string
   art: ReactNode
@@ -62,8 +62,25 @@ function FinlandArt() {
   )
 }
 
+function AdminArt() {
+  return (
+    <span className="section-art-warehouse">
+      <UserGear className="section-warehouse-main" size={60} weight="duotone" />
+      <UsersThree className="section-warehouse-side" size={46} weight="duotone" />
+    </span>
+  )
+}
+
+/** The last tile, only for a Hub manager or creator (user.canAdminister): roles of the team's tools. */
+const adminTile = (): ToolTile => ({
+  id: 'admin',
+  title: 'Administration',
+  description: t('Giv kollegaer roller i teamets værktøjer. Kun managere ser denne side.', "Give colleagues roles in the team's tools. Only managers see this page."),
+  art: <AdminArt />,
+})
+
 /** The tools of Arbejdsværktøjer, Stempelkort first (used every day by everyone). A new tool gets a tile here, its own view in Warehouse.tsx and its teams in warehouseTools.ts. */
-const tools = (): ToolTile[] => [
+const tools = (): (ToolTile & { id: WarehouseTool })[] => [
   {
     id: 'timeclock',
     title: t('Stempelkort', 'Time card'),
@@ -97,8 +114,8 @@ const tools = (): ToolTile[] => [
 ]
 
 /** The Arbejdsværktøjer hub: one large tile per tool of the person's team, like the sections of the Game Corner. */
-export function WarehouseHome({ user, onOpen }: { user: WarehouseUser; onOpen: (tool: WarehouseTool) => void }) {
-  const visible = tools().filter(tool => user.tools.includes(tool.id))
+export function WarehouseHome({ user, onOpen }: { user: WarehouseUser; onOpen: (tool: WarehouseTool | 'admin') => void }) {
+  const visible: ToolTile[] = [...tools().filter(tool => user.tools.includes(tool.id)), ...(canOpenTool('admin', user) ? [adminTile()] : [])]
   const hasCounts = user.tools.includes('counts')
   // A short live line on the Optælling tile; the page works without it if the drive cannot be read.
   // Only for a team with Optælling: the main process refuses the call for any other team.

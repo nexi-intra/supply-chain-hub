@@ -4,7 +4,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs } from '@/components/warehouse/ui'
 import { errorMessage } from '@/lib/warehouse/errors'
 import { t } from '@/lib/warehouse/text'
-import type { SoftwareloadBridge, SoftwareloadTaskView, WarehouseUser } from '@/types/warehouse'
+import type { SoftwareloadBridge, SoftwareloadTaskView, CountingUser } from '@/types/warehouse'
 import { ErrorLine, type ReportBusy } from './common'
 import { SoftwareloadFinish } from './SoftwareloadFinish'
 import { SoftwareloadKif } from './SoftwareloadKif'
@@ -20,7 +20,7 @@ type Tab = 'task' | 'pending' | 'kif' | 'search' | 'stats'
 const STATUS_POLL_MS = 30_000
 
 /** Softwareload: the person's own timed task with scanned terminals, moved in SAP when it is finished. */
-export function Softwareload({ user, onOpenTimeclock, onBusyChange }: { user: WarehouseUser; onOpenTimeclock: () => void; onBusyChange?: (busy: boolean) => void }) {
+export function Softwareload({ user, onOpenTimeclock, onBusyChange }: { user: CountingUser; onOpenTimeclock: () => void; onBusyChange?: (busy: boolean) => void }) {
   const [tab, setTab] = useState<Tab>('task')
   const [status, setStatus] = useState<SoftwareloadStatus | null>(null)
   const [failed, setFailed] = useState<string | null>(null)

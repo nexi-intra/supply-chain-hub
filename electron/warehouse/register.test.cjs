@@ -89,16 +89,23 @@ test('"Tjek SAP-fejl" over IPC: the check is saved in the shared store and the m
 
 test('the open hub is the team: a TCD user gets TCD and its storage locations, other hubs are refused', async () => {
   const { call } = setup()
-  assert.deepEqual(await call('anna', 'me'), { email: 'anna@nexi.test', fullName: 'Anna Holm', role: 'user', team: 'TCD', storageLocations: ['D000', 'D004', 'D005', 'D006', 'D102', 'D103', 'D104', 'D105', 'D106'], tools: ['timeclock', 'locations', 'counts', 'softwareload', 'finland'] })
+  assert.deepEqual(await call('anna', 'me'), { email: 'anna@nexi.test', fullName: 'Anna Holm', role: 'user', team: 'TCD', storageLocations: ['D000', 'D004', 'D005', 'D006', 'D102', 'D103', 'D104', 'D105', 'D106'], tools: ['timeclock', 'locations', 'counts', 'softwareload', 'finland'], canAdminister: false })
   await assert.rejects(call('pim', 'counts:list'), /WAREHOUSE_TEAM_NOT_ALLOWED/)
 })
 
 test('me for every team: the tools of the open hub, and storage locations only where Optælling is used', async () => {
   const { call } = setup()
-  assert.deepEqual(await call('pim', 'me'), { email: 'mona@nexi.test', fullName: 'Mona Berg', role: 'manager', team: 'PIM', storageLocations: [], tools: [] })
-  assert.deepEqual(await call('bpo', 'me'), { email: 'anna@nexi.test', fullName: 'Anna Holm', role: 'user', team: 'BPO', storageLocations: [], tools: ['finland'] })
+  assert.deepEqual(await call('pim', 'me'), { email: 'mona@nexi.test', fullName: 'Mona Berg', role: 'manager', team: 'PIM', storageLocations: [], tools: [], canAdminister: true })
+  assert.deepEqual(await call('bpo', 'me'), { email: 'anna@nexi.test', fullName: 'Anna Holm', role: 'user', team: 'BPO', storageLocations: [], tools: ['finland'], canAdminister: false })
   assert.deepEqual((await call('bpoBoss', 'me')).role, 'manager')
-  assert.deepEqual(await call('trrAnna', 'me'), { email: 'anna@nexi.test', fullName: 'Anna Holm', role: 'user', team: 'TRR', storageLocations: ['D001', 'D002', 'D003'], tools: ['timeclock', 'locations', 'counts', 'softwareload'] })
+  assert.equal((await call('bpoBoss', 'me')).canAdminister, true)
+  assert.equal((await call('mona', 'me')).canAdminister, true)
+  assert.equal((await call('anna', 'me')).canAdminister, false)
+  assert.equal((await call('bpo', 'me')).canAdminister, false)
+  await call('mona', 'roles:set-role', { email: 'anna@nexi.test', role: 'status-manager' })
+  const statusManager = await call('anna', 'me')
+  assert.deepEqual([statusManager.role, statusManager.canAdminister], ['manager', false], 'a status manager from Optælling does not administer the module')
+  assert.deepEqual(await call('trrAnna', 'me'), { email: 'anna@nexi.test', fullName: 'Anna Holm', role: 'user', team: 'TRR', storageLocations: ['D001', 'D002', 'D003'], tools: ['timeclock', 'locations', 'counts', 'softwareload'], canAdminister: false })
 })
 
 test('every existing channel still refuses other teams', async () => {

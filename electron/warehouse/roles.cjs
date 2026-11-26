@@ -138,7 +138,7 @@ function createRoles({ storeFor, listTeamUsers, now = Date.now }) {
     const target = lower(email)
     if (!EMAIL.test(target)) throw codeError('ROLE_INVALID', 'Ugyldig bruger')
     const member = (await listTeamUsers(user.team)).find(item => item.email === target)
-    if (!member) throw codeError('MEMBER_NOT_FOUND', 'Brugeren er ikke i teamet')
+    if (!member) throw codeError('ROLE_INVALID', 'Brugeren er ikke i teamet')
     if (member.role !== 'user') throw codeError('ROLE_INVALID', 'Managers har allerede alle rettigheder')
     const by = { email: lower(user.email), name: user.fullName || user.email }
     const wanted = admin === true
