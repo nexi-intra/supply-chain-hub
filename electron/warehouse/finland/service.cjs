@@ -13,6 +13,7 @@ const { expectedSuggestion, receivedChoices, isFollowedUp, followUpDays, topComm
 const { planWrites, resolveDraft, mergeDraft } = require('./core/followUpSync.cjs')
 const { checkManualRow } = require('./core/manualRow.cjs')
 const { appendTimeoutMs, sheetStateText, MESSAGES } = require('./excel.cjs')
+const { workbookOf } = require('./shared.cjs')
 
 const BUSY_TEXT = 'Vent, programmet arbejder stadig.'
 const MONTHS_BACK = 2
@@ -34,6 +35,11 @@ const notSentText = 'Kolliet er markeret som ikke sendt. Tryk "Sæt ind igen" f�
 const sheetBusyText = 'Vent, arket bliver skrevet lige nu.'
 const DELETE_ACTION = 'sletter række'
 const keyOfEntry = e => parcelKey(e.delivery, e.tracking)
+const forWorkbook = (list, workbookUrl) => list.filter(entry => workbookOf(entry) === workbookUrl)
+// Excel stopped while writing rows, or wrote them without saving: some of them may be in the sheet.
+const PARTLY_WRITTEN = new Set(['write-failed', 'write-timeout', 'save-failed'])
+const PARTLY_WRITTEN_TEXT = 'Kolli, der ikke nåede at komme i arket, kan først skrives igen om 30 minutter, så intet kommer to gange.'
+const NOT_LOGGED_TEXT = 'Arket er skrevet, men programmet kunne ikke notere det på M:. Bed kollegaer vente et par minutter, før de skriver samme dag.'
 
 /**
  * `fetchParcels(range)` runs ZMS_CONS_INFO for { from, to } (dd.mm.yyyy) and gives the parsed parcels; SAP readiness is
@@ -82,30 +88,57 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
 
   /**
    * The order every sheet write follows. The shared not-sent list must be readable before Excel is touched. The lock is
-   * taken for reading the sheet and, through `extend(writeMs)`, again for the write's own time limit once its size is
-   * known. `work` reads the sheet, writes and logs; the lock is freed whatever happens.
+   * taken for reading the sheet and, through `extend(writeMs)`, renewed for the write's own time limit once its size is
+   * known; a lock that ran out meanwhile (a colleague may have written) stops the write. `work(extend, workbookUrl)`
+   * reads the sheet, writes and logs; the lock is freed whatever happens.
    */
   async function sheetWrite(user, { day, action }, work) {
     await shared.notSent.list()
-    let release = await shared.lock.acquire(user, { day, action, ttlMs: SCRIPT_TIMEOUT_MS + LOCK_MARGIN_MS })
-    const extend = async writeMs => {
-      release = await shared.lock.acquire(user, { day, action, ttlMs: writeMs + LOCK_MARGIN_MS })
-    }
+    const release = await shared.lock.acquire(user, { day, action, ttlMs: SCRIPT_TIMEOUT_MS + LOCK_MARGIN_MS })
+    const extend = writeMs => shared.lock.renew(release.token, { ttlMs: writeMs + LOCK_MARGIN_MS })
     try {
-      return await work(extend)
+      const { workbookUrl } = await shared.settings.get()
+      return await work(extend, workbookUrl)
     } finally {
       // A lock that cannot be freed runs out by itself; the result of the write must not be lost over it.
       await release().catch(() => {})
     }
   }
 
-  async function notSentKeys() {
-    return new Set((await shared.notSent.list()).map(keyOfEntry))
+  const currentWorkbook = async () => (await shared.settings.get()).workbookUrl
+
+  /**
+   * Appends rows to the sheet. When Excel stopped partway (or did not save), the rows are logged as written anyway (as
+   * far as M: allows), so no one writes them a second time while this PC's sheet read may not show them.
+   */
+  async function append(user, rows, placement, workbookUrl) {
+    try {
+      return await excel.appendRows(rows, placement)
+    } catch (error) {
+      if (error?.code === 'FINLAND_EXCEL_FAILED' && PARTLY_WRITTEN.has(error.excelCode)) {
+        await shared.dayLog.record(user, '', rows.map(r => parcelKey(r.delivery, r.tracking)), { workbookUrl }).catch(() => {})
+        error.message = `${error.message} ${PARTLY_WRITTEN_TEXT}`
+      }
+      throw error
+    }
   }
 
-  /** Keys that must not be written: marked not sent, or written by someone in the last 30 minutes. */
-  async function blockedKeys() {
-    const [notSent, recent] = await Promise.all([notSentKeys(), shared.dayLog.recentKeys()])
+  /** Logs a write that is in the sheet. When M: fails here the write still stands, so it becomes a warning, not an error. */
+  async function logWrite(user, day, recorded, workbookUrl, warnings) {
+    try {
+      await shared.dayLog.record(user, day, recorded, { workbookUrl })
+    } catch {
+      if (!warnings.includes(NOT_LOGGED_TEXT)) warnings.push(NOT_LOGGED_TEXT)
+    }
+  }
+
+  async function notSentKeys(workbookUrl) {
+    return new Set((await shared.notSent.list(workbookUrl)).map(keyOfEntry))
+  }
+
+  /** Keys that must not be written to the sheet: marked not sent, or written by someone in the last 30 minutes. */
+  async function blockedKeys(workbookUrl) {
+    const [notSent, recent] = await Promise.all([notSentKeys(workbookUrl), shared.dayLog.recentKeys(undefined, workbookUrl)])
     return { notSent, recent }
   }
 
@@ -200,10 +233,14 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
   }
 
   async function snapshot(user) {
-    const [notSent, settings, dayLog, lock, own, others, admin] = await Promise.all([
-      shared.notSent.list(), shared.settings.get(), shared.dayLog.days(), shared.lock.current(), draftsOf(user).all(), shared.drafts.others(user.email),
+    const settings = await shared.settings.get()
+    const book = settings.workbookUrl
+    // Only what belongs to the sheet written now: drafts and marks made in the test sheet stay out of the real one.
+    const [notSent, dayLog, lock, allOwn, others, admin] = await Promise.all([
+      shared.notSent.list(book), shared.dayLog.days(book), shared.lock.current(), draftsOf(user).all(), shared.drafts.others(user.email, book),
       isAdmin(user),
     ])
+    const own = forWorkbook(allOwn, book)
     const myEmail = String(user.email || '').trim().toLowerCase()
     const notSentByKey = new Map(notSent.map(e => [keyOfEntry(e), e]))
     const days = parcels ? dayOverview(parcels, buildSheetIndex(sheetRows), new Set(notSentByKey.keys())) : []
@@ -243,9 +280,10 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
     }
   }
 
-  /** The person's follow-up changes not in the sheet yet; known without reading the sheet. */
+  /** The person's follow-up changes for the current sheet not in it yet; known without reading the sheet. */
   async function pending(user) {
-    return (await draftsOf(user).all()).length
+    const [all, book] = await Promise.all([draftsOf(user).all(), currentWorkbook()])
+    return forWorkbook(all, book).length
   }
 
   // Reads only the sheet, so Opfølgning works while SAP is not ready.
@@ -272,19 +310,20 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
       if (!parcels) throw codeError('FINLAND_NO_SAP_LIST', 'Hent fra SAP først.')
       const dayParcels = parcels.filter(p => p.shippedOn === date)
       let result = { added: 0, skipped: 0, firstRow: null, lastRow: null, weekFormulaOk: true }
-      const written = await sheetWrite(user, { day: date, action: 'skriver' }, async extend => {
+      const warnings = []
+      const written = await sheetWrite(user, { day: date, action: 'skriver' }, async (extend, book) => {
         // Someone may have added rows since the list was shown, so the day is compared again first.
         await refreshSheet(true)
-        const { notSent, recent } = await blockedKeys()
+        const { notSent, recent } = await blockedKeys(book)
         const rows = toSheetRows(compareParcels(dayParcels, indexWithRecent(recent), null, notSent).toAdd)
         if (!rows.length) return false
         await extend(appendTimeoutMs(rows.length))
-        result = await excel.appendRows(rows, insertionPoint(sheetRows, date))
-        await shared.dayLog.record(user, date, rows.map(r => parcelKey(r.delivery, r.tracking)))
+        result = await append(user, rows, insertionPoint(sheetRows, date), book)
+        await logWrite(user, date, rows.map(r => parcelKey(r.delivery, r.tracking)), book, warnings)
         return true
       })
       if (written) await refreshSheet(true)
-      return { result, ...(await snapshot(user)) }
+      return { result, warnings, ...(await snapshot(user)) }
     })
   }
 
@@ -294,12 +333,13 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
       const parcel = findParcel(delivery, tracking)
       if (!parcel) throw notInSapError()
       const key = parcelKey(delivery, tracking)
-      if ((await notSentKeys()).has(key)) throw codeError('FINLAND_NOT_SENT', notSentText)
+      if ((await notSentKeys(await currentWorkbook())).has(key)) throw codeError('FINLAND_NOT_SENT', notSentText)
       let fixed = null
-      await sheetWrite(user, { day: parcel.shippedOn, action: 'retter' }, async extend => {
+      const warnings = []
+      await sheetWrite(user, { day: parcel.shippedOn, action: 'retter' }, async (extend, book) => {
         // The sheet is read again and the action worked out anew, so it is based on what is there now.
         await refreshSheet(true)
-        const { notSent, recent } = await blockedKeys()
+        const { notSent, recent } = await blockedKeys(book)
         if (notSent.has(key)) throw codeError('FINLAND_NOT_SENT', notSentText)
         if (recent.has(key) || buildSheetIndex(sheetRows).keys.has(key)) {
           fixed = { kind: 'already', tracking }
@@ -308,7 +348,7 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
         const action = reviewAction(parcel, parcels, sheetRows)
         if (action.kind === 'add') {
           await extend(appendTimeoutMs(1))
-          const result = await excel.appendRows(toSheetRows([parcel]), { afterRow: action.afterRow, afterDelivery: action.afterDelivery })
+          const result = await append(user, toSheetRows([parcel]), { afterRow: action.afterRow, afterDelivery: action.afterDelivery }, book)
           fixed = { kind: 'add', tracking, row: result.firstRow, skipped: result.skipped }
         } else if (action.kind === 'replace-duplicate' || action.kind === 'replace-unknown') {
           await extend(SCRIPT_TIMEOUT_MS)
@@ -318,10 +358,10 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
           const where = action.rows.length ? ` Leveringen står i række ${action.rows.join(', ')}.` : ''
           throw codeError('FINLAND_FIX_MANUAL', `Kolliet kan ikke rettes automatisk.${where} Ret det i hånden i arket.`)
         }
-        await shared.dayLog.record(user, parcel.shippedOn, [key])
+        await logWrite(user, parcel.shippedOn, [key], book, warnings)
       })
       if (fixed.kind !== 'already') await refreshSheet(true)
-      return { fixed, ...(await snapshot(user)) }
+      return { fixed, warnings, ...(await snapshot(user)) }
     })
   }
 
@@ -329,13 +369,15 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
   function saveDraft(user, key, wanted, slaManual, base) {
     return quick(() => busy === 'followup' && codeError('FINLAND_BUSY', sheetBusyText), async () => {
       const drafts = draftsOf(user)
-      const own = await drafts.all()
+      const book = await currentWorkbook()
+      const own = forWorkbook(await drafts.all(), book)
       const r = followUpRows(own, [], conflictsOf(user)).find(x => x.key === key)
       if (!r) throw codeError('FINLAND_NOT_IN_SHEET', 'Kolliet findes ikke i arket. Tryk "Hent igen".')
       if (r.duplicate) throw codeError('FINLAND_DUPLICATE', 'Kolliet står to gange i arket. Ret det under Skriv ind først.')
       const existing = own.find(d => parcelKey(d.delivery, d.tracking) === key) || null
       const next = mergeDraft({ existing, base: { ...r.sheet, ...(base || {}) }, wanted, slaManual, delivery: r.delivery, tracking: r.tracking, pickedUp: r.pickedUp })
-      if (next) await drafts.set(key, next)
+      // The draft belongs to the sheet written now; one left from another sheet under the same key is replaced.
+      if (next) await drafts.set(key, { ...next, workbookUrl: book })
       else if (existing) await drafts.remove([key])
       return snapshot(user)
     })
@@ -346,11 +388,14 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
     return exclusive('followup', async () => {
       const drafts = draftsOf(user)
       const conflicts = conflictsOf(user)
-      const forDay = async () => (await drafts.all()).filter(d => !date || d.pickedUp === date)
+      let book = await currentWorkbook()
+      const forDay = async () => forWorkbook(await drafts.all(), book).filter(d => !date || d.pickedUp === date)
       const days = [...new Set((await forDay()).map(d => d.pickedUp).filter(Boolean))].sort()
       const lockDay = date || days[0] || today()
       let result = { written: [], moved: [] }
-      const written = await sheetWrite(user, { day: lockDay, action: 'gemmer opfølgning' }, async extend => {
+      const warnings = []
+      const written = await sheetWrite(user, { day: lockDay, action: 'gemmer opfølgning' }, async (extend, lockedBook) => {
+        book = lockedBook
         await refreshSheet(true)
         const list = await forDay()
         const plan = planWrites(list, sheetRows)
@@ -359,7 +404,7 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
         result = await excel.writeFollowUp(plan.writes)
         const dayOf = new Map(list.map(d => [parcelKey(d.delivery, d.tracking), d.pickedUp]))
         const writtenDays = [...new Set(plan.writes.map(w => dayOf.get(parcelKey(w.delivery, w.tracking))).filter(Boolean))].sort()
-        for (const day of writtenDays) await shared.dayLog.record(user, day, [])
+        for (const day of writtenDays) await logWrite(user, day, [], book, warnings)
         return true
       })
       if (written) await refreshSheet(true)
@@ -375,6 +420,7 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
           conflicts: new Set(after.conflicts.map(c => c.key)).size,
           notFound: after.notFound.length,
         },
+        warnings,
         ...(await snapshot(user)),
       }
     })
@@ -384,9 +430,9 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
     return quick(() => busy === 'followup' && codeError('FINLAND_BUSY', sheetBusyText), async () => {
       const drafts = draftsOf(user)
       const conflicts = conflictsOf(user)
-      const draft = await drafts.get(key)
+      const [draft, book] = await Promise.all([drafts.get(key), currentWorkbook()])
       const conflict = (conflicts.get(key) || []).find(c => c.field === field)
-      if (!draft || !conflict) throw codeError('FINLAND_CONFLICT_GONE', 'Konflikten findes ikke længere. Tryk "Hent igen".')
+      if (!draft || workbookOf(draft) !== book || !conflict) throw codeError('FINLAND_CONFLICT_GONE', 'Konflikten findes ikke længere. Tryk "Hent igen".')
       const next = resolveDraft(draft, conflict, choice)
       if (next) await drafts.set(key, next)
       else await drafts.remove([key])
@@ -405,12 +451,13 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
   function addManualRow(user, input) {
     return exclusive('manual', async () => {
       let manual = null
-      const written = await sheetWrite(user, { day: String(input?.pickedUp || ''), action: 'skriver' }, async extend => {
+      const warnings = []
+      const written = await sheetWrite(user, { day: String(input?.pickedUp || ''), action: 'skriver' }, async (extend, book) => {
         await refreshSheet(true)
         const check = checkManualRow(input, sheetRows, new Date(now()))
         if (check.ok) {
           // Not in this PC's sheet yet is not enough: a colleague may just have written it, or it is marked not sent.
-          const { notSent, recent } = await blockedKeys()
+          const { notSent, recent } = await blockedKeys(book)
           const key = parcelKey(check.row.delivery, check.row.tracking)
           if (notSent.has(key)) Object.assign(check, { ok: false, errors: { tracking: notSentText } })
           else if (recent.has(key)) Object.assign(check, { ok: false, errors: { tracking: 'Kolliet er skrevet i arket for lidt siden. Tryk "Læs arket".' } })
@@ -420,13 +467,13 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
           return false
         }
         await extend(appendTimeoutMs(1))
-        const result = await excel.appendRows([check.row], insertionPoint(sheetRows, check.row.pickedUp))
-        await shared.dayLog.record(user, check.row.pickedUp, [parcelKey(check.row.delivery, check.row.tracking)])
+        const result = await append(user, [check.row], insertionPoint(sheetRows, check.row.pickedUp), book)
+        await logWrite(user, check.row.pickedUp, [parcelKey(check.row.delivery, check.row.tracking)], book, warnings)
         manual = { ok: true, row: result.firstRow, skipped: result.skipped, weekFormulaOk: result.weekFormulaOk, tracking: check.row.tracking }
         return true
       })
       if (written) await refreshSheet(true)
-      return { manual, ...(await snapshot(user)) }
+      return { manual, warnings, ...(await snapshot(user)) }
     })
   }
 
@@ -441,6 +488,7 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
         shippedOn: parcel.shippedOn,
         orderType: parcel.orderType,
         postalCode: parcel.postalCode,
+        workbookUrl: await currentWorkbook(),
       })
       return snapshot(user)
     })
@@ -451,7 +499,7 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
       // A delete reads the list again under its lock, but the parcel should not come back halfway through one.
       const lock = await shared.lock.current()
       if (lock?.action === DELETE_ACTION) throw codeError('FINLAND_LOCKED', `${lock.name || lock.email} sletter en række i arket lige nu. Prøv igen om lidt.`)
-      if (!(await shared.notSent.restore(key))) throw notMarkedError()
+      if (!(await shared.notSent.restore(key, await currentWorkbook()))) throw notMarkedError()
       return snapshot(user)
     })
   }
@@ -460,13 +508,14 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
   function deleteNotSentRow(user, key, row) {
     return exclusive('delete', async () => {
       if (!(await isAdmin(user))) throw codeError('FINLAND_ADMIN_ONLY', 'Kun admin kan slette en række i arket.')
-      const entry = (await shared.notSent.list()).find(e => keyOfEntry(e) === key)
+      const entry = (await shared.notSent.list(await currentWorkbook())).find(e => keyOfEntry(e) === key)
       if (!entry) throw notMarkedError()
       let deleted = null
-      await sheetWrite(user, { day: entry.shippedOn, action: DELETE_ACTION }, async extend => {
+      const warnings = []
+      await sheetWrite(user, { day: entry.shippedOn, action: DELETE_ACTION }, async (extend, book) => {
         await refreshSheet(true)
         // A colleague may have pressed "Sæt ind igen" while the lock was taken and the sheet read; restoring takes no lock.
-        const current = (await shared.notSent.list()).find(e => keyOfEntry(e) === key)
+        const current = (await shared.notSent.list(book)).find(e => keyOfEntry(e) === key)
         if (!current) throw codeError('FINLAND_NOT_MARKED', 'Kolliet er ikke længere markeret som ikke sendt. Intet er slettet.')
         const matches = sheetRowsFor(current.delivery, current.tracking)
         if (!matches.length) {
@@ -478,15 +527,15 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
         if (trackingsInCell(matches[0].trackingText).length !== 1) throw codeError('FINLAND_ROW_SHARED', MESSAGES['row-shared'])
         await extend(SCRIPT_TIMEOUT_MS)
         await excel.deleteRow({ row, delivery: current.delivery, tracking: current.tracking })
-        await shared.dayLog.record(user, current.shippedOn, [])
         deleted = { kind: 'deleted', tracking: current.tracking, row }
+        await logWrite(user, current.shippedOn, [], book, warnings)
       })
       if (deleted.kind === 'deleted') {
         await draftsOf(user).remove([key])
         conflictsOf(user).delete(key)
         await refreshSheet(true)
       }
-      return { deleted, ...(await snapshot(user)) }
+      return { deleted, warnings, ...(await snapshot(user)) }
     })
   }
 

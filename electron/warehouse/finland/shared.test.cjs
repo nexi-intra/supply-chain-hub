@@ -56,13 +56,42 @@ test('a lock held by someone else refuses with the name and day', async () => {
     assert.equal(error.message, 'FINLAND_LOCKED: Anna Holm skriver 19.11 i arket lige nu')
     return true
   })
-  const again = await shared.lock.acquire(ANNA, { day: '2026-11-20', action: 'write-day', ttlMs: 60000 })
-  assert.equal((await shared.lock.current()).day, '2026-11-20', 'the same person may take her own lock again')
-  await again()
   await release()
   assert.equal(await shared.lock.current(), null)
   const bo = await shared.lock.acquire(BO, { day: '2026-11-05', action: 'fix-review', ttlMs: 60000 })
   await bo()
+})
+
+test('the same person on another PC is refused while her first lock holds', async () => {
+  const { shared, dir } = setup()
+  const otherPc = createFinlandShared({ store: createStore(dir), now: () => Date.UTC(2026, 10, 19, 9) })
+  const first = await shared.lock.acquire(ANNA, { day: '2026-11-19', action: 'skriver', ttlMs: 60000 })
+  await assert.rejects(otherPc.lock.acquire({ ...ANNA, email: 'ANNA@x.test' }, { day: '2026-11-20', action: 'skriver', ttlMs: 60000 }), {
+    code: 'FINLAND_LOCKED',
+    message: 'FINLAND_LOCKED: Du skriver allerede i arket fra en anden pc. Prøv igen om lidt.',
+  })
+  assert.equal((await shared.lock.current()).day, '2026-11-19', 'the first lock is untouched')
+  await first()
+  await (await otherPc.lock.acquire(ANNA, { day: '2026-11-20', action: 'skriver', ttlMs: 60000 }))()
+})
+
+test('a lock is renewed only by its own acquisition while it holds', async () => {
+  const { shared, clock } = setup()
+  const anna = await shared.lock.acquire(ANNA, { day: '2026-11-19', action: 'skriver', ttlMs: 60000 })
+  clock.now += 30000
+  await shared.lock.renew(anna.token, { ttlMs: 5 * 60000 })
+  assert.equal((await shared.lock.current()).expiresAt, clock.now + 5 * 60000, 'renewed from now')
+  await assert.rejects(shared.lock.renew('another-token', { ttlMs: 60000 }), { code: 'FINLAND_LOCKED', message: 'FINLAND_LOCKED: Anna Holm skriver 19.11 i arket lige nu' })
+  await anna()
+
+  // Expired while reading, taken, written and freed by Bo in between: Anna's renew must fail, also with the lock free.
+  const again = await shared.lock.acquire(ANNA, { day: '2026-11-19', action: 'skriver', ttlMs: 60000 })
+  clock.now += 60001
+  const bo = await shared.lock.acquire(BO, { day: '2026-11-19', action: 'skriver', ttlMs: 60000 })
+  await assert.rejects(shared.lock.renew(again.token, { ttlMs: 60000 }), { code: 'FINLAND_LOCKED', message: 'FINLAND_LOCKED: Bo Jensen skriver 19.11 i arket lige nu' })
+  await bo()
+  await assert.rejects(shared.lock.renew(again.token, { ttlMs: 60000 }), { code: 'FINLAND_LOCKED', message: /Intet er skrevet/ })
+  assert.equal(await shared.lock.current(), null, 'a failed renew takes no lock')
 })
 
 test('an expired lock can be taken by someone else', async () => {
@@ -82,9 +111,10 @@ test('release does not free a lock someone else has taken since', async () => {
   await anna()
   assert.equal((await shared.lock.current()).email, 'bo@x.test')
 
-  // Her own lock taken again in the same millisecond: the first acquisition's release must not free the second.
+  // Her own expired lock taken again by her: the first acquisition's release must not free the second.
   clock.now += 60001
   const old = await shared.lock.acquire(ADA, { day: '2026-11-19', action: 'write-day', ttlMs: 60000 })
+  clock.now += 60001
   await shared.lock.acquire(ADA, { day: '2026-11-19', action: 'fix-review', ttlMs: 60000 })
   await old()
   assert.equal((await shared.lock.current()).action, 'fix-review')
@@ -193,4 +223,52 @@ test("only managers clear someone's drafts", async () => {
   assert.deepEqual(await shared.drafts.clear(ADA, 'Anna@x.test'), { email: 'anna@x.test', cleared: 1 })
   assert.deepEqual(await anna.all(), [])
   assert.deepEqual(await shared.drafts.clear(CARL, ANNA.email), { email: 'anna@x.test', cleared: 0 })
+})
+
+test('clearing drafts is logged with who, whose and how many, newest first', async () => {
+  const { shared, clock } = setup()
+  assert.deepEqual(await shared.drafts.clearedLog(), [])
+  const anna = shared.drafts(ANNA.email, ANNA.fullName)
+  await anna.set('1|A', { key: '1|A', pickedUp: '2026-11-18' })
+  await anna.set('2|B', { key: '2|B', pickedUp: '2026-11-18' })
+  await shared.drafts.clear(ADA, ANNA.email)
+  await shared.drafts.clear(ADA, ANNA.email)
+  await assert.rejects(shared.drafts.clear(BO, ANNA.email), { code: 'MANAGER_ONLY' })
+  clock.now += 60000
+  await shared.drafts(BO.email, BO.fullName).set('3|C', { key: '3|C', pickedUp: '2026-11-19' })
+  await shared.drafts.clear(CARL, BO.email)
+  assert.deepEqual(await shared.drafts.clearedLog(), [
+    { by: 'carl@x.test', byName: 'Carl', email: 'bo@x.test', name: 'Bo Jensen', count: 1, at: clock.now },
+    { by: 'ada@x.test', byName: 'Ada', email: 'anna@x.test', name: 'Anna Holm', count: 2, at: clock.now - 60000 },
+  ], 'a clear with nothing to delete is not logged')
+  assert.deepEqual(await shared.drafts.others(''), [], 'the log is not read as anyone\'s drafts')
+})
+
+test('drafts, not-sent marks and written keys are kept per sheet; without a sheet they are the test sheet\'s', async () => {
+  const { shared } = setup()
+  const REAL = 'https://christianiabpos.sharepoint.com/sites/NordicSupplyChain/Ordre.xlsx'
+  const anna = shared.drafts(ANNA.email, ANNA.fullName)
+  await anna.set('1|A', { key: '1|A', pickedUp: '2026-11-18' })
+  await anna.set('2|B', { key: '2|B', pickedUp: '2026-11-18', workbookUrl: REAL })
+  assert.deepEqual((await shared.drafts.others(BO.email, REAL)).map(o => [o.keys, o.byDay]), [[['2|B'], { '2026-11-18': 1 }]])
+  assert.deepEqual((await shared.drafts.others(BO.email, TEST_WORKBOOK_URL)).map(o => o.keys), [['1|A']])
+  assert.deepEqual((await shared.drafts.others(BO.email)).map(o => o.keys), [['1|A', '2|B']])
+
+  await shared.notSent.mark(ANNA, PARCEL)
+  assert.deepEqual(await shared.notSent.list(REAL), [])
+  assert.equal((await shared.notSent.list(TEST_WORKBOOK_URL)).length, 1)
+  assert.equal(await shared.notSent.restore(parcelKey(PARCEL.delivery, PARCEL.tracking), REAL), false, 'a test-sheet mark is not restored from the real sheet')
+  // Marked again in the real sheet: the test sheet's mark gives way.
+  const marked = await shared.notSent.mark(BO, { ...PARCEL, workbookUrl: REAL })
+  assert.equal(marked.byName, 'Bo Jensen')
+  assert.deepEqual((await shared.notSent.list(REAL)).map(e => e.byName), ['Bo Jensen'])
+  assert.deepEqual(await shared.notSent.list(TEST_WORKBOOK_URL), [])
+
+  await shared.dayLog.record(ANNA, '2026-11-19', ['1|A'])
+  await shared.dayLog.record(BO, '2026-11-19', ['2|B'], { workbookUrl: REAL })
+  assert.deepEqual([...await shared.dayLog.recentKeys(undefined, REAL)], ['2|B'])
+  assert.deepEqual([...await shared.dayLog.recentKeys(undefined, TEST_WORKBOOK_URL)], ['1|A'])
+  assert.deepEqual([...await shared.dayLog.recentKeys()].sort(), ['1|A', '2|B'])
+  assert.deepEqual(await shared.dayLog.days(REAL), { '2026-11-19': { byName: 'Bo Jensen', at: Date.UTC(2026, 10, 19, 9), count: 1, workbookUrl: REAL } }, 'the test sheet\'s count is not carried over')
+  assert.deepEqual(await shared.dayLog.days(TEST_WORKBOOK_URL), {})
 })

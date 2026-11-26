@@ -11,6 +11,9 @@ const LOCK_KEY = 'skrivelaas'
 const DAY_LOG_KEY = 'dagslog'
 const SETTINGS_KEY = 'indstillinger'
 const DRAFTS_PREFIX = 'kladder-'
+// Not under DRAFTS_PREFIX, so it is never read as someone's drafts.
+const CLEARED_LOG_KEY = 'slettede-kladder'
+const CLEARED_LOG_MAX = 200
 const RECENT_MS = 30 * 60000
 const DAY_LOG_MAX_DAYS = 120
 const DEFAULT_LOCK_TTL_MS = 2 * 60000
@@ -32,6 +35,15 @@ const isManager = user => user?.role === 'manager' || user?.role === 'creator'
 const nameOf = user => text(user.fullName) || lower(user.email)
 const isObject = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 const draftsKeyOf = email => DRAFTS_PREFIX + crypto.createHash('sha1').update(lower(email)).digest('hex').slice(0, 16)
+/** The sheet a draft, not-sent mark or written key belongs to; from before sheets were recorded, the test sheet. */
+const workbookOf = entry => (isObject(entry) && text(entry.workbookUrl)) || TEST_WORKBOOK_URL
+const inWorkbook = (entry, workbookUrl) => !workbookUrl || workbookOf(entry) === workbookUrl
+const lockTtl = ttlMs => (Number.isFinite(ttlMs) && ttlMs > 0 ? ttlMs : DEFAULT_LOCK_TTL_MS)
+
+function lockedError(current, email) {
+  if (email && current.email === email) return codeError('FINLAND_LOCKED', 'FINLAND_LOCKED: Du skriver allerede i arket fra en anden pc. Prøv igen om lidt.')
+  return codeError('FINLAND_LOCKED', `FINLAND_LOCKED: ${current.name || current.email} skriver ${dayMonth(current.day)} i arket lige nu`)
+}
 
 /** '2026-11-19' as '19.11'; anything else as it is. */
 function dayMonth(day) {
@@ -71,12 +83,16 @@ function createFinlandShared({ store, now = Date.now }) {
   }
 
   const notSent = {
-    async list() {
+    /** Every mark, or only the marks of the sheet `workbookUrl`. */
+    async list(workbookUrl = null) {
       const value = await read(NOT_SENT_KEY)
-      return Object.values(isObject(value) ? value : {}).sort((a, b) => (a.at || 0) - (b.at || 0))
+      return Object.values(isObject(value) ? value : {}).filter(entry => inWorkbook(entry, workbookUrl)).sort((a, b) => (a.at || 0) - (b.at || 0))
     },
 
-    /** Marks a parcel as not sent. Marking it again keeps who marked it first. */
+    /**
+     * Marks a parcel as not sent in the sheet `entry.workbookUrl`. Marking it again keeps who marked it first; a mark
+     * from another sheet (the test sheet) is replaced.
+     */
     async mark(user, entry = {}) {
       const delivery = text(entry.delivery)
       const tracking = text(entry.tracking)
@@ -86,21 +102,22 @@ function createFinlandShared({ store, now = Date.now }) {
         delivery, tracking,
         shippedOn: text(entry.shippedOn), orderType: text(entry.orderType), postalCode: text(entry.postalCode),
         by: lower(user.email), byName: nameOf(user), at: now(),
+        ...(text(entry.workbookUrl) ? { workbookUrl: text(entry.workbookUrl) } : {}),
       }
       let stored = marked
       await store.mutateAsync(NOT_SENT_KEY, current => {
         const list = isObject(current) ? current : {}
-        if (Object.hasOwn(list, key)) { stored = list[key]; return undefined }
+        if (Object.hasOwn(list, key) && workbookOf(list[key]) === workbookOf(marked)) { stored = list[key]; return undefined }
         return { ...list, [key]: marked }
       })
       return stored
     },
 
-    /** `key` = parcelKey(delivery, tracking). True when it was on the list. */
-    async restore(key) {
+    /** `key` = parcelKey(delivery, tracking). True when it was on the list (for the sheet `workbookUrl` when given). */
+    async restore(key, workbookUrl = null) {
       let found = false
       await store.mutateAsync(NOT_SENT_KEY, current => {
-        if (!isObject(current) || !Object.hasOwn(current, key)) return undefined
+        if (!isObject(current) || !Object.hasOwn(current, key) || !inWorkbook(current[key], workbookUrl)) return undefined
         found = true
         const next = { ...current }
         delete next[key]
@@ -112,27 +129,41 @@ function createFinlandShared({ store, now = Date.now }) {
 
   const lock = {
     /**
-     * Takes the write lock on the sheet, or throws FINLAND_LOCKED while someone else holds one that has not expired.
-     * The same person may take her own lock again. The returned release frees the lock only while it is still this
-     * acquisition's (a token per acquisition), so an expired lock taken by someone else, or taken again by the same
-     * person, is never freed by an old release. A `ttlMs` that is not a positive number gets the default two minutes;
-     * the time is taken once the file lock is held, so waiting for it does not shorten the lock.
+     * Takes the write lock on the sheet, or throws FINLAND_LOCKED while any lock that has not expired is held, also one
+     * of the same person on another PC. Each acquisition has its own token (`release.token`): only that token renews
+     * the lock (renew) or frees it (the returned release), so an expired lock taken by someone else is never freed or
+     * written under by an old acquisition. A `ttlMs` that is not a positive number gets the default two minutes; the
+     * time is taken once the file lock is held, so waiting for it does not shorten the lock.
      */
     async acquire(user, { day, action, ttlMs } = {}) {
       const email = lower(user.email)
       const token = crypto.randomUUID()
-      const ttl = Number.isFinite(ttlMs) && ttlMs > 0 ? ttlMs : DEFAULT_LOCK_TTL_MS
-      let at
+      const ttl = lockTtl(ttlMs)
       await store.mutateAsync(LOCK_KEY, current => {
-        at = now()
-        if (isObject(current) && current.email !== email && current.expiresAt > at) {
-          throw codeError('FINLAND_LOCKED', `FINLAND_LOCKED: ${current.name || current.email} skriver ${dayMonth(current.day)} i arket lige nu`)
-        }
+        const at = now()
+        if (isObject(current) && current.expiresAt > at) throw lockedError(current, email)
         return { email, name: nameOf(user), day: text(day), action: text(action), at, expiresAt: at + ttl, token }
       })
-      return async function release() {
-        await store.mutateAsync(LOCK_KEY, current => isObject(current) && current.email === email && current.at === at && current.token === token ? null : undefined)
+      async function release() {
+        await store.mutateAsync(LOCK_KEY, current => isObject(current) && current.token === token ? null : undefined)
       }
+      release.token = token
+      return release
+    },
+
+    /**
+     * Gives the lock `ttlMs` more from now, only while it is still the acquisition `token`'s and has not expired.
+     * Otherwise someone may have taken it and written in between, so FINLAND_LOCKED is thrown and nothing may be written.
+     */
+    async renew(token, { ttlMs } = {}) {
+      const ttl = lockTtl(ttlMs)
+      await store.mutateAsync(LOCK_KEY, current => {
+        const at = now()
+        const live = isObject(current) && current.expiresAt > at
+        if (live && token && current.token === token) return { ...current, expiresAt: at + ttl }
+        if (live) throw lockedError(current, '')
+        throw codeError('FINLAND_LOCKED', 'FINLAND_LOCKED: Låsen på arket løb ud, før programmet nåede at skrive. Intet er skrevet. Prøv igen.')
+      })
     },
 
     /** The lock while it holds, or null. */
@@ -143,35 +174,49 @@ function createFinlandShared({ store, now = Date.now }) {
     },
   }
 
+  // A written key is { at, workbookUrl }; from before sheets were recorded, only its time (the test sheet).
+  const keyTime = value => (typeof value === 'number' ? value : Number(value?.at) || 0)
+
   const dayLog = {
     /**
-     * What was just written to the sheet for `day`: a summary per day (last writer, when, parcels written in all) and
-     * each parcel key with its time, so a colleague's sheet read from before the write does not write it again.
+     * What was just written to the sheet `workbookUrl` for `day`: a summary per day (last writer, when, parcels written
+     * in all) and each parcel key with its time, so a colleague's sheet read from before the write does not write it
+     * again. Without a `day` only the keys are recorded (rows Excel may have written before it failed).
      */
-    async record(user, day, recorded = []) {
+    async record(user, day, recorded = [], { workbookUrl } = {}) {
       const at = now()
+      const book = text(workbookUrl)
       const list = (Array.isArray(recorded) ? recorded : []).map(String).filter(Boolean)
       await store.mutateAsync(DAY_LOG_KEY, current => {
         const days = { ...(isObject(current?.days) ? current.days : {}) }
         const keys = {}
         // Only keys within the recent window are kept, so the file stays small.
-        for (const [key, time] of Object.entries(isObject(current?.keys) ? current.keys : {})) if (time >= at - RECENT_MS) keys[key] = time
-        for (const key of list) keys[key] = at
-        if (text(day)) days[day] = { byName: nameOf(user), at, count: (Number(days[day]?.count) || 0) + list.length }
+        for (const [key, value] of Object.entries(isObject(current?.keys) ? current.keys : {})) if (keyTime(value) >= at - RECENT_MS) keys[key] = value
+        for (const key of list) keys[key] = book ? { at, workbookUrl: book } : at
+        if (text(day)) {
+          // A day written in another sheet before (the test sheet) starts its count over.
+          const before = days[day] && workbookOf(days[day]) === (book || TEST_WORKBOOK_URL) ? Number(days[day].count) || 0 : 0
+          days[day] = { byName: nameOf(user), at, count: before + list.length, ...(book ? { workbookUrl: book } : {}) }
+        }
         const kept = Object.keys(days).sort().slice(-DAY_LOG_MAX_DAYS)
         return { days: Object.fromEntries(kept.map(name => [name, days[name]])), keys }
       })
     },
 
-    async recentKeys(withinMs = RECENT_MS) {
+    /** Keys written in the last `withinMs`, to any sheet or only to the sheet `workbookUrl`. */
+    async recentKeys(withinMs = RECENT_MS, workbookUrl = null) {
       const value = await read(DAY_LOG_KEY)
       const since = now() - withinMs
-      return new Set(Object.entries(isObject(value?.keys) ? value.keys : {}).filter(([, time]) => time >= since).map(([key]) => key))
+      return new Set(Object.entries(isObject(value?.keys) ? value.keys : {})
+        .filter(([, entry]) => keyTime(entry) >= since && inWorkbook(entry, workbookUrl))
+        .map(([key]) => key))
     },
 
-    async days() {
+    /** The summary per day, of any sheet or only of the sheet `workbookUrl`. */
+    async days(workbookUrl = null) {
       const value = await read(DAY_LOG_KEY)
-      return isObject(value?.days) ? value.days : {}
+      const days = isObject(value?.days) ? value.days : {}
+      return Object.fromEntries(Object.entries(days).filter(([, entry]) => inWorkbook(entry, workbookUrl)))
     },
   }
 
@@ -238,13 +283,16 @@ function createFinlandShared({ store, now = Date.now }) {
     }
   }
 
-  /** Everyone else's drafts: per person the count per pick-up day and the parcel keys. */
-  drafts.others = async function others(email) {
+  /**
+   * Everyone else's drafts: per person the count per pick-up day and the parcel keys, of every sheet or only of the
+   * sheet `workbookUrl`.
+   */
+  drafts.others = async function others(email, workbookUrl = null) {
     const own = draftsKeyOf(email)
     const result = []
     for (const key of (await keys()).filter(name => name.startsWith(DRAFTS_PREFIX) && name !== own)) {
       const value = await store.getAsync(key)
-      const list = isObject(value?.drafts) ? value.drafts : {}
+      const list = Object.fromEntries(Object.entries(isObject(value?.drafts) ? value.drafts : {}).filter(([, draft]) => inWorkbook(draft, workbookUrl)))
       const draftKeys = Object.keys(list)
       if (!draftKeys.length) continue
       const byDay = {}
@@ -258,19 +306,31 @@ function createFinlandShared({ store, now = Date.now }) {
     return result.sort((a, b) => String(a.name).localeCompare(String(b.name), 'da'))
   }
 
-  /** Deletes someone's drafts in the app (never in the sheet). Only a manager or creator. */
+  /** Deletes someone's drafts in the app (never in the sheet), and logs who did it. Only a manager or creator. */
   drafts.clear = async function clear(manager, email) {
     if (!isManager(manager)) throw codeError('MANAGER_ONLY', 'Kun managers kan slette andres ændringer')
     const target = lower(email)
     let cleared = 0
+    let name = target
     await store.mutateAsync(draftsKeyOf(target), current => {
       cleared = Object.keys(isObject(current?.drafts) ? current.drafts : {}).length
+      name = text(current?.name) || target
       return cleared ? { ...current, drafts: {} } : undefined
     })
+    if (cleared) {
+      const entry = { by: lower(manager.email), byName: nameOf(manager), email: target, name, count: cleared, at: now() }
+      await store.mutateAsync(CLEARED_LOG_KEY, current => [...(Array.isArray(current) ? current : []), entry].slice(-CLEARED_LOG_MAX))
+    }
     return { email: target, cleared }
+  }
+
+  /** Who deleted whose drafts, newest first (the last 200). */
+  drafts.clearedLog = async function clearedLog() {
+    const value = await read(CLEARED_LOG_KEY)
+    return (Array.isArray(value) ? value : []).slice().reverse()
   }
 
   return { notSent, lock, dayLog, settings, drafts }
 }
 
-module.exports = { createFinlandShared, TEST_WORKBOOK_URL, draftsKeyOf }
+module.exports = { createFinlandShared, TEST_WORKBOOK_URL, draftsKeyOf, workbookOf }

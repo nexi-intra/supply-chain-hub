@@ -64,6 +64,8 @@
     ["^Disse SAP-dokumenter er ikke bogført: (.+?)\\. (?:Slet|Bogfør|En manager|Vent) [\\s\\S]*$", "These SAP documents are not posted: $1. Delete the created and printed ones in SAP (MI02), post the counted ones (Post), let a manager resolve the unknown ones and wait for the ones being created."]
   ],
   "FINLAND_LOCKED": [
+    ["^Du skriver allerede i arket fra en anden pc\\. Prøv igen om lidt\\.$", "You are already writing in the sheet from another PC. Try again shortly."],
+    ["^Låsen på arket løb ud, før programmet nåede at skrive\\. Intet er skrevet\\. Prøv igen\\.$", "The lock on the sheet ran out before the program could write. Nothing was written. Try again."],
     ["^(.+?) skriver (\\S+) i arket lige nu$", "$1 is writing $2 in the sheet right now."],
     ["^(.+?) skriver +i arket lige nu$", "$1 is writing in the sheet right now."],
     ["^(.+) sletter en række i arket lige nu\\. Prøv igen om lidt\\.$", "$1 is deleting a row in the sheet right now. Try again shortly."]

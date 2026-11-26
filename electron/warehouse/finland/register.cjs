@@ -29,6 +29,11 @@ function codeError(code, text) {
 
 const invalid = text => codeError('FINLAND_INVALID_INPUT', text)
 const isManager = user => user.role === 'manager' || user.role === 'creator'
+// Channels that change the sheet or the shared data; refused while M: is away, as the other warehouse writes.
+const WRITES = new Set([
+  'write-day', 'fix-review', 'save-draft', 'save-followup', 'resolve-conflict', 'add-manual-row', 'mark-not-sent',
+  'restore-not-sent', 'delete-not-sent-row', 'set-settings', 'clear-drafts',
+])
 
 /** A real calendar date as yyyy-mm-dd (2026-13-01 and 2026-02-30 are not). */
 function isDate(value) {
@@ -120,10 +125,11 @@ function closeWarning(count) {
 }
 
 /**
- * Registers the channels through register.cjs' `handleTool`. `deps` (tests only) may replace `excel`, `fetchParcels`,
- * `now` and `trackingWindows`. Returns `pending(user)` for the close warning and `closeWindows()` for the tracking windows.
+ * Registers the channels through register.cjs' `handleTool`. `storageConnected()` is false while M: is away; the writes
+ * are refused then (STORAGE_UNAVAILABLE). `deps` (tests only) may replace `excel`, `fetchParcels`, `now` and
+ * `trackingWindows`. Returns `pending(user)` for the close warning and `closeWindows()` for the tracking windows.
  */
-function registerFinland({ handleTool, sap, runScript, opener, platformRoot, roles, copyForPerson, unpacked, scriptsDir, sapSystem, userDataDir, deps = {} }) {
+function registerFinland({ handleTool, sap, runScript, opener, platformRoot, roles, copyForPerson, unpacked, scriptsDir, sapSystem, userDataDir, storageConnected = () => true, deps = {} }) {
   const now = deps.now || Date.now
   const store = opener.lazy(() => path.join(platformRoot(), '_lagerstyring', 'finlandsforsendelser'))
   const shared = createFinlandShared({ store, now })
@@ -149,7 +155,10 @@ function registerFinland({ handleTool, sap, runScript, opener, platformRoot, rol
     return tracking
   }
 
-  const handle = (name, fn) => handleTool(['finland'], `finland:${name}`, fn)
+  const handle = (name, fn) => handleTool(['finland'], `finland:${name}`, !WRITES.has(name) ? fn : (user, p, event) => {
+    if (!storageConnected()) throw codeError('STORAGE_UNAVAILABLE')
+    return fn(user, p, event)
+  })
   handle('load', user => service.load(user))
   // Reads only the sheet, so Opfølgning works while SAP is not ready.
   handle('load-sheet', user => service.loadSheet(user))
@@ -188,10 +197,20 @@ function registerFinland({ handleTool, sap, runScript, opener, platformRoot, rol
     sheetName: typeof p.sheetName === 'string' ? p.sheetName : '',
     tableName: typeof p.tableName === 'string' ? p.tableName : '',
   }))
-  // Everyone's changes not in the sheet yet, the manager's own included.
+  // Everyone's changes not in the sheet yet (the manager's own included, of every sheet), how much of it and how many
+  // not-sent marks belong to the sheet written now (they stay behind when a manager switches sheet), and who deleted
+  // whose changes.
   handle('drafts-overview', async user => {
     if (!isManager(user)) throw codeError('MANAGER_ONLY')
-    return (await shared.drafts.others('')).map(person => ({ email: person.email, name: person.name, count: person.keys.length, byDay: person.byDay, updatedAt: person.updatedAt }))
+    const { workbookUrl } = await shared.settings.get()
+    const [people, current, notSent, cleared] = await Promise.all([
+      shared.drafts.others(''), shared.drafts.others('', workbookUrl), shared.notSent.list(workbookUrl), shared.drafts.clearedLog(),
+    ])
+    return {
+      people: people.map(person => ({ email: person.email, name: person.name, count: person.keys.length, byDay: person.byDay, updatedAt: person.updatedAt })),
+      currentSheet: { workbookUrl, drafts: current.reduce((sum, person) => sum + person.keys.length, 0), notSent: notSent.length },
+      cleared: cleared.map(entry => ({ by: entry.by, byName: entry.byName, email: entry.email, name: entry.name, count: entry.count, at: entry.at })),
+    }
   })
   handle('clear-drafts', (user, p) => {
     if (typeof p.email !== 'string' || !p.email.trim() || p.email.length > 200) throw invalid('Ugyldig e-mail.')

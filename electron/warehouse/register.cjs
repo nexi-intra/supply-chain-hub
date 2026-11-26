@@ -289,9 +289,10 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
     return role === 'admin' ? { ...user, countAdmin: true } : user
   }
   const channels = []
-  // SAP channels wait for SAP (and the user's F8) by design; everything else should answer within a few seconds.
+  // SAP channels wait for SAP (and the user's F8) by design, and Finlandsforsendelser's sheet jobs wait for Excel (and
+  // SAP); everything else should answer within a few seconds.
   const SLOW_CALL_MS = 2000
-  const waitsForSap = channel => /^(sap|pidocs|sap-check):|^counts:(preview|matdoc-lookup|refetch-preview|refetch-apply|doc-fetch)$|^locations:(preview-import|lookup-document)$|^softwareload:(preview|finish|continue|pending-preview|kif-preview|kif-move)$/.test(channel)
+  const waitsForSap = channel => /^(sap|pidocs|sap-check):|^counts:(preview|matdoc-lookup|refetch-preview|refetch-apply|doc-fetch)$|^locations:(preview-import|lookup-document)$|^softwareload:(preview|finish|continue|pending-preview|kif-preview|kif-move)$|^finland:(load|load-sheet|write-day|fix-review|save-followup|add-manual-row|delete-not-sent-row)$/.test(channel)
   const handle = (channel, fn) => {
     channels.push(channel)
     ipcMain.handle(`warehouse:${channel}`, async (event, payload) => {
@@ -474,7 +475,7 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   // Finlandsforsendelser (BPO and TCD): the sheet "Ordre sendt til Finland fra Danmark", ZMS_CONS_INFO and tracking.
   const finland = registerFinland({
     handleTool, sap, runScript, opener, platformRoot, roles, copyForPerson, unpacked, scriptsDir,
-    sapSystem: config.sapSystem, userDataDir, deps: finlandDeps,
+    sapSystem: config.sapSystem, userDataDir, storageConnected, deps: finlandDeps,
   })
   handle('sap-check:overview', user => sapChecks.overview(user))
   handle('sap-check:latest', user => sapChecks.latest(user))

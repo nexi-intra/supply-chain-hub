@@ -183,13 +183,19 @@ test('Finlandsforsendelser: the write lock names the person and the day in Engli
   const service = createFinlandService({ shared, excel: {}, fetchParcels: async () => [], isAdmin: async () => true, now: () => Date.UTC(2026, 10, 19, 9) })
   const detailOf = message => message.replace(/^FINLAND_LOCKED: /, '')
 
-  await shared.lock.acquire(ANNA, { day: '2026-11-19', action: 'skriver', ttlMs: 60000 })
+  const first = await shared.lock.acquire(ANNA, { day: '2026-11-19', action: 'skriver', ttlMs: 60000 })
   const writing = detailOf(await refusal(shared.lock.acquire(BO, { day: '2026-11-20', action: 'skriver' }), 'FINLAND_LOCKED'))
   assert.equal(english('FINLAND_LOCKED', writing), 'Anna Holm is writing 19.11 in the sheet right now.', writing)
+  const otherPc = detailOf(await refusal(shared.lock.acquire(ANNA, { day: '2026-11-20', action: 'skriver' }), 'FINLAND_LOCKED'))
+  assert.equal(english('FINLAND_LOCKED', otherPc), 'You are already writing in the sheet from another PC. Try again shortly.', otherPc)
+  await first()
+  const expired = detailOf(await refusal(shared.lock.renew(first.token, { ttlMs: 60000 }), 'FINLAND_LOCKED'))
+  assert.equal(english('FINLAND_LOCKED', expired), 'The lock on the sheet ran out before the program could write. Nothing was written. Try again.', expired)
 
-  await shared.lock.acquire(ANNA, { day: '', action: 'skriver', ttlMs: 60000 })
+  const second = await shared.lock.acquire(ANNA, { day: '', action: 'skriver', ttlMs: 60000 })
   const noDay = detailOf(await refusal(shared.lock.acquire(BO, { day: '2026-11-20', action: 'skriver' }), 'FINLAND_LOCKED'))
   assert.equal(english('FINLAND_LOCKED', noDay), 'Anna Holm is writing in the sheet right now.', noDay)
+  await second()
 
   await shared.lock.acquire(ANNA, { day: '2026-11-19', action: 'sletter række', ttlMs: 60000 })
   const deleting = detailOf(await refusal(service.restoreNotSent(BO, '80012345|JD000390007788990011'), 'FINLAND_LOCKED'))

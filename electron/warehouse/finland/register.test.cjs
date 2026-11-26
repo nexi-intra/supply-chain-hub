@@ -35,7 +35,7 @@ function fakeExcel(rows = SHEET) {
   }
 }
 
-function setup() {
+function setup({ storageConnected } = {}) {
   const root = fs.mkdtempSync(path.join(ROOT, 'hub-'))
   for (const team of ['TCD', 'TRR', 'PIM', 'BPO']) fs.mkdirSync(path.join(root, team))
   const handlers = new Map()
@@ -63,6 +63,7 @@ function setup() {
     broadcast: () => {},
     isPackaged: false,
     env: { TCD_HUB_SAP_FIXTURES_DIR: path.join(__dirname, '..', 'fixtures', 'sap') },
+    ...(storageConnected ? { storageConnected } : {}),
     finlandDeps: {
       excel,
       fetchParcels: async () => { throw new Error('SAP is not used in these tests') },
@@ -149,9 +150,52 @@ test('a draft is the person\'s own: counted for the close warning, and managers 
   await assert.rejects(call('bpo', 'clear-drafts', { email: 'anna@nexi.test' }), /^Error: MANAGER_ONLY/)
   await assert.rejects(call('bpo', 'set-settings', { workbookUrl: 'https://x.test/a.xlsx', sheetName: 'A', tableName: 'B' }), /^Error: MANAGER_ONLY/)
   const overview = await call('bpoBoss', 'drafts-overview')
-  assert.deepEqual(overview.map(person => [person.email, person.name, person.count, person.byDay]), [['anna@nexi.test', 'Anna Holm', 1, { '2026-11-20': 1 }]])
+  assert.deepEqual(overview.people.map(person => [person.email, person.name, person.count, person.byDay]), [['anna@nexi.test', 'Anna Holm', 1, { '2026-11-20': 1 }]])
+  assert.deepEqual(overview.currentSheet, { workbookUrl: (await call('bpo', 'settings')).workbookUrl, drafts: 1, notSent: 0 })
+  assert.deepEqual(overview.cleared, [])
   assert.deepEqual(await call('bpoBoss', 'clear-drafts', { email: 'anna@nexi.test' }), { email: 'anna@nexi.test', cleared: 1 })
   assert.equal(await registered.finlandPending({ who: 'bpo', sender: { id: 1 } }), 0)
+  const after = await call('bpoBoss', 'drafts-overview')
+  assert.deepEqual(after.people, [])
+  assert.deepEqual(after.cleared.map(entry => [entry.by, entry.byName, entry.email, entry.name, entry.count]), [['mona@nexi.test', 'Mona Berg', 'anna@nexi.test', 'Anna Holm', 1]])
+  assert.equal(typeof after.cleared[0].at, 'number')
+  await registered.closeAll()
+})
+
+test('the switch of sheet is told what stays behind in the current sheet', async () => {
+  const { call, registered } = setup()
+  await call('bpo', 'load-sheet')
+  await call('bpo', 'save-draft', { key: KEY, wanted: { comment: 'Ring til kunden' }, slaManual: false, base: BLANK })
+  await call('bpoBoss', 'set-settings', { workbookUrl: 'https://x.test/rigtigt.xlsx', sheetName: 'Sheet1', tableName: 'Table2' })
+  const overview = await call('bpoBoss', 'drafts-overview')
+  assert.deepEqual(overview.currentSheet, { workbookUrl: 'https://x.test/rigtigt.xlsx', drafts: 0, notSent: 0 }, 'the test sheet\'s change is not the real sheet\'s')
+  assert.equal(overview.people[0].count, 1, 'it is still listed, so a manager can delete it')
+  assert.equal(await call('bpo', 'pending'), 0)
+  await registered.closeAll()
+})
+
+test('writes are refused while M: is away; reads still answer', async () => {
+  let connected = true
+  const { call, excel, registered } = setup({ storageConnected: () => connected })
+  await call('bpo', 'load-sheet')
+  connected = false
+  const reads = excel.calls.length
+  for (const [channel, payload] of [
+    ['write-day', { date: '2026-11-20' }],
+    ['fix-review', { delivery: '82100001', tracking: TRACKING }],
+    ['save-draft', { key: KEY, wanted: { comment: 'x' }, slaManual: false, base: BLANK }],
+    ['save-followup', { date: null }],
+    ['resolve-conflict', { key: KEY, field: 'comment', choice: 'mine' }],
+    ['add-manual-row', { delivery: '82100005', orderType: 'ZRO', postalCode: '00100', courier: 'DSV', tracking: '00157145000000000005', pickedUp: '2026-11-20' }],
+    ['mark-not-sent', { delivery: '82100001', tracking: TRACKING }],
+    ['restore-not-sent', { key: KEY }],
+    ['delete-not-sent-row', { key: KEY, row: 2 }],
+    ['set-settings', { workbookUrl: 'https://x.test/a.xlsx', sheetName: 'A', tableName: 'B' }],
+    ['clear-drafts', { email: 'anna@nexi.test' }],
+  ]) await assert.rejects(call('bpoBoss', channel, payload), /^Error: STORAGE_UNAVAILABLE$/, channel)
+  assert.equal(excel.calls.length, reads, 'Excel is not touched')
+  assert.equal((await call('bpo', 'settings')).sheetName, 'Sheet1')
+  assert.equal(await call('bpo', 'pending'), 0)
   await registered.closeAll()
 })
 

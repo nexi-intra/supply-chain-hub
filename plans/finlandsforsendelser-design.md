@@ -116,24 +116,26 @@ Alt fælles ligger i `<platformRoot>\_lagerstyring\finlandsforsendelser\` og skr
 
 | Nøgle | Indhold |
 |---|---|
-| `ikke-sendt` | Kolli markeret "Ikke sendt": levering, T&T, dato, order type, postnummer, hvem og hvornår |
-| `skrivelaas` | Hvem der skriver i arket lige nu, hvilken dag og hvad, og hvornår låsen udløber |
-| `dagslog` | Pr. dag: hvem der sidst skrev i arket, hvornår og hvor mange kolli |
+| `ikke-sendt` | Kolli markeret "Ikke sendt": levering, T&T, dato, order type, postnummer, hvem, hvornår og hvilket ark |
+| `skrivelaas` | Hvem der skriver i arket lige nu, hvilken dag og hvad, hvornår låsen udløber, og et token for netop den låsning |
+| `dagslog` | Pr. dag: hvem der sidst skrev i arket, hvornår og hvor mange kolli. Nyligt skrevne kolli med tidspunkt og ark |
 | `indstillinger` | Arkets adresse, fanenavn og tabelnavn |
-| `kladder\<email>` | Den enkeltes opfølgninger, der ikke er gemt i arket |
+| `kladder\<email>` | Den enkeltes opfølgninger, der ikke er gemt i arket, hver med det ark, den hører til |
+| `slettede-kladder` | De sidste 200 gange en manager har slettet andres kladder: hvem, hvis, hvor mange og hvornår |
 
 Regler:
 
-- **"Ikke sendt" uden liste er stop.** Kan den fælles liste ikke læses (fx M: er væk), må intet skrives i arket. "Skriv", "Tilføj kolliet", "Ret T&T" og "Gem i arket" viser en fejl i stedet. Markering og "Sæt ind igen" kræver også, at listen kan skrives.
-- **Skrivelås.** Alt, der skriver i arket (skriv dag, ret T&T, tilføj kolli, tilføj række i hånden, gem opfølgning, slet række), tager låsen først. Holder en anden den, afvises kaldet med navnet på personen og dagen. Låsen udløber af sig selv efter den handlings timeout plus en margen, så en hub, der lukker midt i, ikke låser andre ude. Låsen frigives, når handlingen er færdig, også ved fejl.
+- **"Ikke sendt" uden liste er stop.** Kan den fælles liste ikke læses (fx M: er væk), må intet skrives i arket. "Skriv", "Tilføj kolliet", "Ret T&T" og "Gem i arket" viser en fejl i stedet. Markering og "Sæt ind igen" kræver også, at listen kan skrives. Er M: væk, afvises alle skrivende kanaler med STORAGE_UNAVAILABLE.
+- **Skrivelås.** Alt, der skriver i arket (skriv dag, ret T&T, tilføj kolli, tilføj række i hånden, gem opfølgning, slet række), tager låsen først. Holder en anden den, afvises kaldet med navnet på personen og dagen. Det gælder også samme person på en anden pc ("Du skriver allerede i arket fra en anden pc"). Hver låsning har sit eget token. Før selve skrivningen forlænges låsen kun, hvis den stadig er samme låsning og ikke er udløbet; ellers stopper handlingen, før Excel skriver noget. Låsen udløber af sig selv efter den handlings timeout plus en margen, så en hub, der lukker midt i, ikke låser andre ude. Låsen frigives, når handlingen er færdig, også ved fejl.
 - **Kladder er personlige.** Kun ejeren kan gemme sine kladder i arket. Andres kladder læses for at vise "Navn har N kolli, der ikke er gemt" pr. dag og en advarsel på det enkelte kolli: "Navn har en ændring på dette kolli, der ikke er gemt". Advarslen stopper ikke kollegaen. Gemmer begge, fanger den eksisterende konfliktkontrol den sidste. Lukker man hubben med kladder, spørger hubben som i dag.
 - **Gamle kladder.** Under Administration kan en manager se alle kladder pr. person (antal, dage, senest ændret) og slette en persons kladder efter en bekræftelse. Det sletter kun i appen, aldrig i arket, og logges.
-- **Nyligt skrevne kolli tæller som skrevet.** Når én har skrevet i arket, kan der gå lidt tid, før kollegaens Excel ser rækkerne. Derfor gemmes de kolli, der lige er skrevet (levering og T&T), i `dagslog` med tidspunkt, først når arket er gemt. Ved "Skriv" og "Tilføj kolliet" regnes de som "står i arket" i en periode (fx 30 minutter), også hvis ens egen Excel ikke har dem endnu. Så kan der ikke komme dobbelte rækker. (Builderens beslutning)
+- **Nyligt skrevne kolli tæller som skrevet.** Når én har skrevet i arket, kan der gå lidt tid, før kollegaens Excel ser rækkerne. Derfor gemmes de kolli, der lige er skrevet (levering og T&T), i `dagslog` med tidspunkt, først når arket er gemt. Ved "Skriv" og "Tilføj kolliet" regnes de som "står i arket" i en periode (fx 30 minutter), også hvis ens egen Excel ikke har dem endnu. Så kan der ikke komme dobbelte rækker. Stopper Excel midt i en skrivning, eller kan arket ikke gemmes, gemmes de kolli, der skulle skrives, også (så godt M: tillader), fordi nogle af dem kan stå i arket. Kan `dagslog` ikke skrives efter en skrivning, der lykkedes, er handlingen stadig lykkedes og viser en advarsel. (Builderens beslutning)
+- **Data hører til et ark.** Kladder, "Ikke sendt" og nyligt skrevne kolli gemmes med arkets adresse (uden adresse: testarket). Vinduet, tællingerne, "Skriv", "Ret T&T" og "Gem i arket" bruger kun det, der hører til det ark, der skrives i nu. Så følger testperiodens data ikke med over i det rigtige ark.
 - Ved læsning af arket gælder arket. De fælles data ændrer aldrig, hvad der står i arket, de bestemmer kun, hvad der må skrives.
 
 ### E. Arket
 
-- Adressen, fanen (`Sheet1`) og tabellen (`Table2`) er en fælles indstilling, som kun managere kan ændre i Administration. Indtil den er sat, bruges testarket, og vinduet viser tydeligt "Testark" ved siden af SAP-lampen. Skift til det rigtige ark kræver en bekræftelse.
+- Adressen, fanen (`Sheet1`) og tabellen (`Table2`) er en fælles indstilling, som kun managere kan ændre i Administration. Indtil den er sat, bruges testarket, og vinduet viser tydeligt "Testark" ved siden af SAP-lampen. Skift til det rigtige ark kræver en bekræftelse, som også siger, hvor mange ikke gemte ændringer og kolli markeret som ikke sendt der er i det nuværende ark, og at de ikke tages med til det nye.
 - Excel bruges som i dag: hver person åbner arket i sin egen Excel via PowerShell og COM. Arket åbnes selv, hvis det ikke er åbent, og filtre fjernes. Det er afprøvet, at det virker, mens arket også er åbent i browseren.
 - Scripts flyttes med fra `excel/` (read-table, append-rows, fix-tracking, write-followup, delete-row, common). De pakkes med `asarUnpack` og køres med `powershell.exe -NoProfile -ExecutionPolicy Bypass -File`.
 - Alle sikkerhedsregler for skrivning flyttes uændret med: rækken findes på levering og T&T, kun berørte celler skrives, forventede værdier tjekkes igen i scriptet, et kolli med konflikt skrives slet ikke, tekst skrives med apostrof, dato i dansk format, sletning kun ved præcis én match på det godkendte rækkenummer og én T&T i cellen.

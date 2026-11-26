@@ -7,7 +7,7 @@ const { createStore } = require('../../store.cjs')
 const { parseSapList } = require('./core/sapList.cjs')
 const { parcelKey } = require('./core/sheetIndex.cjs')
 const { courierFor } = require('./core/courier.cjs')
-const { createFinlandShared } = require('./shared.cjs')
+const { createFinlandShared, TEST_WORKBOOK_URL } = require('./shared.cjs')
 const { createFinlandService } = require('./service.cjs')
 
 const MONA = { email: 'mona@x.test', fullName: 'Mona Berg', role: 'user', team: 'TCD', tools: ['finland'] }
@@ -130,7 +130,7 @@ test('writing a day writes the missing parcels at the day and logs who wrote the
   assert.deepEqual(appended(excel), missing.map(keyOf))
   assert.equal(snap.result.added, 3)
   assert.equal(snap.days.find(d => d.date === DAY).status, 'full', 'the sheet is read again after writing')
-  assert.deepEqual(snap.dayLog[DAY], { byName: 'Mona Berg', at: NOW, count: 3 })
+  assert.deepEqual(snap.dayLog[DAY], { byName: 'Mona Berg', at: NOW, count: 3, workbookUrl: TEST_WORKBOOK_URL })
   assert.equal(snap.lock, null)
   const again = await service.writeDay(MONA, DAY)
   assert.equal(again.result.added, 0)
@@ -484,4 +484,108 @@ test('a row typed in by hand is checked against the sheet as it is now before it
   const twice = await service.addManualRow(MONA, other)
   assert.equal(twice.manual.ok, false, 'the sheet now has it')
   assert.equal(excel.writes().length, 1)
+})
+
+const REAL = 'https://christianiabpos.sharepoint.com/sites/NordicSupplyChain/Ordre.xlsx'
+const BOSS = { email: 'boss@x.test', fullName: 'Boss', role: 'manager', team: 'TCD', tools: ['finland'] }
+const useRealSheet = shared => shared.settings.set(BOSS, { workbookUrl: REAL, sheetName: 'Sheet1', tableName: 'Table2' })
+const excelFailure = excelCode => Object.assign(new Error('FINLAND_EXCEL_FAILED: Excel stoppede midt i skrivningen.'), { code: 'FINLAND_EXCEL_FAILED', excelCode })
+
+test('a write stops before Excel when the lock ran out and a colleague wrote meanwhile', async () => {
+  const { service, excel, shared, clock } = setup()
+  await service.load(MONA)
+  const read = excel.readSheet
+  let interfered = false
+  excel.readSheet = async () => {
+    const result = await read()
+    if (!interfered && await shared.lock.current()) {
+      interfered = true
+      // The read under the lock outlasts the lock; Anna takes it, writes and frees it before Mona's PC goes on.
+      clock.now += 7 * 60000
+      const anna = await shared.lock.acquire(ANNA, { day: DAY, action: 'skriver', ttlMs: 60000 })
+      await anna()
+    }
+    return result
+  }
+  await assert.rejects(service.writeDay(MONA, DAY), { code: 'FINLAND_LOCKED', message: /Intet er skrevet/ })
+  assert.ok(interfered)
+  assert.deepEqual(excel.writes(), [], 'Excel is not called')
+  assert.equal(await shared.lock.current(), null)
+})
+
+test('rows Excel may have written before it failed are not written again by a colleague', async () => {
+  for (const excelCode of ['write-failed', 'write-timeout', 'save-failed']) {
+    const { service, excel, shared, pc } = setup()
+    const missing = missingOn(await service.load(MONA), DAY)
+    excel.state.hook = async kind => { if (kind === 'append') throw excelFailure(excelCode) }
+    await assert.rejects(service.writeDay(MONA, DAY), { code: 'FINLAND_EXCEL_FAILED', message: /først skrives igen om 30 minutter/ }, excelCode)
+    assert.deepEqual([...await shared.dayLog.recentKeys()].sort(), missing.map(keyOf).sort(), excelCode)
+    assert.deepEqual(await shared.dayLog.days(), {}, 'no day summary for a write that failed')
+    const anna = pc()
+    await anna.service.load(ANNA)
+    await anna.service.writeDay(ANNA, DAY)
+    assert.deepEqual(appended(anna.excel), [], `${excelCode}: Anna's PC does not write what may be in the sheet already`)
+  }
+  // Excel refused before writing anything: nothing is held back.
+  const { service, excel, shared } = setup()
+  await service.load(MONA)
+  excel.state.hook = async kind => { if (kind === 'append') throw excelFailure('sheet-moved') }
+  await assert.rejects(service.writeDay(MONA, DAY), { code: 'FINLAND_EXCEL_FAILED' })
+  assert.deepEqual([...await shared.dayLog.recentKeys()], [])
+})
+
+test('rows written while M: cannot log them are a success with a warning', async () => {
+  const { service, shared } = setup()
+  await service.load(MONA)
+  shared.dayLog.record = async () => { throw Object.assign(new Error('EBUSY: resource busy'), { code: 'EBUSY' }) }
+  const snap = await service.writeDay(MONA, DAY)
+  assert.equal(snap.result.added, 3)
+  assert.deepEqual(snap.warnings, ['Arket er skrevet, men programmet kunne ikke notere det på M:. Bed kollegaer vente et par minutter, før de skriver samme dag.'])
+  assert.equal(snap.days.find(d => d.date === DAY).status, 'full')
+  assert.equal(await shared.lock.current(), null)
+})
+
+test('after switching to the real sheet the test sheet\'s marks and written keys do not hold it back', async () => {
+  const { service, excel, shared } = setup()
+  const missing = missingOn(await service.load(MONA), DAY)
+  await service.markNotSent(MONA, String(missing[0].delivery), missing[0].tracking)
+  await shared.dayLog.record(ANNA, DAY, [keyOf(missing[1])])
+  await useRealSheet(shared)
+  const snap = await service.writeDay(MONA, DAY)
+  assert.deepEqual(appended(excel), missing.map(keyOf))
+  assert.deepEqual(snap.days.find(d => d.date === DAY).notSent, [])
+  assert.deepEqual(snap.dayLog[DAY], { byName: 'Mona Berg', at: NOW, count: 3, workbookUrl: REAL })
+  await assert.rejects(service.restoreNotSent(MONA, keyOf(missing[0])), { code: 'FINLAND_NOT_MARKED' })
+
+  // A mark made now belongs to the real sheet.
+  await service.markNotSent(MONA, String(missing[2].delivery), missing[2].tracking)
+  assert.deepEqual((await shared.notSent.list(REAL)).map(keyOf), [keyOf(missing[2])])
+})
+
+test('after switching to the real sheet the test sheet\'s drafts are neither counted, shown nor sent', async () => {
+  const { pc, shared } = setup({ sheet: FOLLOW_SHEET })
+  const anna = pc()
+  const mona = pc()
+  await anna.service.loadSheet(ANNA)
+  await anna.service.saveDraft(ANNA, K1, { comment: 'Test' }, false, BLANK)
+  await mona.service.loadSheet(MONA)
+  await mona.service.saveDraft(MONA, K2, { comment: 'Test' }, false, BLANK)
+  await useRealSheet(shared)
+
+  assert.equal(await mona.service.pending(MONA), 0)
+  const seen = await mona.service.loadSheet(MONA)
+  assert.equal(seen.followUp.pendingTotal, 0)
+  assert.deepEqual(seen.followUp.pendingByDay, {})
+  assert.deepEqual(seen.followUp.othersByDay, {})
+  assert.deepEqual(rowOf(seen, K1).othersPending, [])
+  assert.equal(rowOf(seen, K2).pending, false)
+  const saved = await mona.service.saveFollowUp(MONA, null)
+  assert.deepEqual(mona.excel.writes(), [], 'nothing from the test sheet is sent to the real one')
+  assert.deepEqual(saved.followUpResult, { written: 0, moved: 0, conflicts: 0, notFound: 0 })
+
+  await mona.service.saveDraft(MONA, K3, { comment: 'Rigtig' }, false, BLANK)
+  assert.equal(await mona.service.pending(MONA), 1)
+  await mona.service.saveFollowUp(MONA, null)
+  assert.deepEqual(mona.excel.writes()[0].list.map(w => [w.row, w.cells]), [[4, { comment: 'Rigtig' }]])
+  assert.deepEqual((await shared.drafts(MONA.email).all()).map(d => d.workbookUrl), [TEST_WORKBOOK_URL], 'the test sheet\'s draft stays until a manager clears it')
 })
