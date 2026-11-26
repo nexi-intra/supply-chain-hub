@@ -74,3 +74,51 @@ test('the message follows the language of the app', () => {
   assert.match(savingMessage('sv').message, /Sparar/)
   assert.deepEqual(savingMessage('xx'), savingMessage('da'))
 })
+
+test('closing asks first when confirmClose has something to say, and "Bliv i programmet" keeps the window', async () => {
+  const win = fakeWindow()
+  const answer = deferred()
+  let asked = 0
+  guardCloseWhileSaving(win, {
+    hasPendingWrites: () => false,
+    whenSaved: async () => true,
+    showMessage: async () => {},
+    language: () => 'da',
+    confirmClose: () => { asked++; return answer.promise },
+  })
+  win.close()
+  win.close()
+  assert.equal(asked, 1, 'a second click on X must not ask twice')
+  assert.equal(win.closes, 0)
+  answer.resolve(false)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(win.closes, 0, 'stays open')
+  win.close()
+  assert.equal(asked, 2, 'asked again at the next close')
+})
+
+test('"Luk alligevel" goes on to the saving guard, and a failing check closes without asking', async () => {
+  const win = fakeWindow()
+  const saved = deferred()
+  const messages = []
+  guardCloseWhileSaving(win, {
+    hasPendingWrites: () => true,
+    whenSaved: () => saved.promise,
+    showMessage: (options, signal) => { messages.push(options); return new Promise(resolve => signal.addEventListener('abort', resolve)) },
+    language: () => 'da',
+    confirmClose: async () => true,
+  })
+  win.close()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(win.closes, 0, 'still waits for the write')
+  assert.equal(messages.length, 1)
+  saved.resolve(true)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(win.closes, 1)
+
+  const other = fakeWindow()
+  guardCloseWhileSaving(other, { hasPendingWrites: () => false, whenSaved: async () => true, showMessage: async () => {}, language: () => 'da', confirmClose: async () => { throw new Error('M: is away') } })
+  other.close()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(other.closes, 1)
+})

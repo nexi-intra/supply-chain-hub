@@ -102,6 +102,7 @@ const { buildEvidencePrompt } = require('./assistantPrompt.cjs')
 const { detectQuestionLanguage } = require('./assistantContext.cjs')
 const { buildUnansweredLogEntry } = require('./assistantUnansweredLog.cjs')
 const { registerWarehouse } = require('./warehouse/register.cjs')
+const { closeWarning: finlandCloseWarning } = require('./warehouse/finland/register.cjs')
 const { createTeamUsersReader } = require('./warehouse/hubUser.cjs')
 const { createDiagnosticsLog, installMainDiagnostics, createCrashRecovery } = require('./diagnostics.cjs')
 if (!app.isPackaged && process.env.TCD_HUB_USER_DATA_DIR) app.setPath('userData', process.env.TCD_HUB_USER_DATA_DIR)
@@ -118,7 +119,7 @@ if (!app.requestSingleInstanceLock()) {
   return
 }
 app.on('second-instance', () => {
-  const win = BrowserWindow.getAllWindows()[0]
+  const win = mainWindow
   if (!win || win.isDestroyed()) return
   if (win.isMinimized()) win.restore()
   win.show()
@@ -131,6 +132,8 @@ app.on('will-quit', () => diagnostics.write('info', 'will-quit'))
 // Never call app.setAppUserModelId: a new taskbar identity splits the app from users' existing pinned icons (toasts work without it).
 let localAI = null
 let warehouse = null
+// The Hub's own window; tracking windows (Finlandsforsendelser) are BrowserWindows too, so it is never "the first one".
+let mainWindow = null
 // Sættes når multiplayer-tjenesten findes; before-quit venter på dens indeks-skrivninger.
 let multiplayerSettled = null
 let wordChecker = null
@@ -774,6 +777,20 @@ function broadcast(channel, payload) {
   }
 }
 
+// The person's Finlandsforsendelser changes not in the sheet yet are kept on M:, but closing should not hide them (as
+// Finland T&T did). A quit already under way (an update, before-quit) is not held up, and a check that fails or takes
+// longer than a few seconds (M: slow or away) closes without asking.
+const FINLAND_CLOSE_CHECK_MS = 3000
+async function confirmFinlandClose(win, senderId) {
+  if (!warehouse || updateInProgress || quitFlushed) return true
+  let timer = null
+  const timedOut = new Promise(resolve => { timer = setTimeout(() => resolve(0), FINLAND_CLOSE_CHECK_MS) })
+  const count = await Promise.race([warehouse.finlandPending({ sender: { id: senderId } }).catch(() => 0), timedOut]).finally(() => clearTimeout(timer))
+  if (!count || win.isDestroyed()) return true
+  const { response } = await dialog.showMessageBox(win, finlandCloseWarning(count))
+  return response === 0
+}
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1440,
@@ -793,6 +810,7 @@ function createWindow() {
       sandbox: true,
     },
   })
+  mainWindow = win
 
   // Vinduet er skjult indtil foerste maling for at undgaa et hvidt glimt. Men
   // paa et langsomt drev kan den maling traekke ud, og brugeren sidder saa og
@@ -830,6 +848,11 @@ function createWindow() {
     if (event.level === 'error') diagnostics.write('error', 'RENDERER:', String(event.message).slice(0, 2000), `(${event.sourceId}:${event.lineNumber})`)
   })
   win.on('closed', () => diagnostics.write('info', 'window closed'))
+  // No tracking window may keep the app running once the Hub's window is gone.
+  win.on('closed', () => {
+    if (mainWindow === win) mainWindow = null
+    warehouse?.closeTrackingWindows()
+  })
   guardCloseWhileSaving(win, {
     // Placeringer: only an action not yet written to this PC's disk (outbox) holds the window; what is written is replayed.
     hasPendingWrites: () => mainActivity.isBusy(isQuitWriteChannel) || hasWritesInFlight() || Boolean(warehouse?.hasPendingWrites()),
@@ -843,6 +866,7 @@ function createWindow() {
     },
     showMessage: (options, signal) => dialog.showMessageBox(win, { ...options, signal }),
     language: () => uiLanguage,
+    confirmClose: () => confirmFinlandClose(win, senderId),
   })
 
   // Opt-in diagnostics (set TCD_HUB_DEBUG=1): also surface the full renderer console in the terminal.
@@ -1077,7 +1101,7 @@ app.whenReady().then(() => {
   })
   const desktopNotifications = createDesktopNotificationHandlers(createDesktopNotifier({
     Notification,
-    getWindow: () => BrowserWindow.getAllWindows()[0] ?? null,
+    getWindow: () => mainWindow,
     userDataDir: app.getPath('userData'),
   }))
   ipcMain.handle('notifications:desktop', async (event, request) => desktopNotifications.notify(await authService.currentAsync(event.sender.id), request))

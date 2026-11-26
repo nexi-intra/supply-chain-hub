@@ -259,6 +259,26 @@ contextBridge.exposeInMainWorld('electronWarehouse', {
     onQueued: warehouseEvents('locations:queued'),
     onImportProgress: warehouseEvents('locations:import-progress'),
   },
+  // Finlandsforsendelser (BPO and TCD): the shared sheet, SAP's parcels, follow-up drafts and the couriers' tracking pages.
+  finland: {
+    load: () => warehouse('finland:load'),
+    loadSheet: () => warehouse('finland:load-sheet'),
+    writeDay: request => warehouse('finland:write-day', request),
+    fixReview: request => warehouse('finland:fix-review', request),
+    saveDraft: request => warehouse('finland:save-draft', request),
+    saveFollowUp: request => warehouse('finland:save-followup', request),
+    resolveConflict: request => warehouse('finland:resolve-conflict', request),
+    checkManual: request => warehouse('finland:check-manual', request),
+    addManualRow: request => warehouse('finland:add-manual-row', request),
+    markNotSent: request => warehouse('finland:mark-not-sent', request),
+    restoreNotSent: request => warehouse('finland:restore-not-sent', request),
+    deleteNotSentRow: request => warehouse('finland:delete-not-sent-row', request),
+    openTracking: request => warehouse('finland:open-tracking', request),
+    settings: () => warehouse('finland:settings'),
+    setSettings: request => warehouse('finland:set-settings', request),
+    draftsOverview: () => warehouse('finland:drafts-overview'),
+    clearDrafts: request => warehouse('finland:clear-drafts', request),
+  },
 })
 contextBridge.exposeInMainWorld('electronMultiplayer', {
   snapshot: () => ipcRenderer.invoke('multiplayer:snapshot'),

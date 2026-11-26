@@ -32,6 +32,7 @@ const notInSapError = () => codeError('FINLAND_PARCEL_NOT_FOUND', 'Kolliet finde
 const notMarkedError = () => codeError('FINLAND_NOT_MARKED', 'Kolliet er ikke markeret som ikke sendt.')
 const notSentText = 'Kolliet er markeret som ikke sendt. Tryk "Sæt ind igen" først.'
 const sheetBusyText = 'Vent, arket bliver skrevet lige nu.'
+const DELETE_ACTION = 'sletter række'
 const keyOfEntry = e => parcelKey(e.delivery, e.tracking)
 
 /**
@@ -442,6 +443,9 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
 
   function restoreNotSent(user, key) {
     return quick(() => busy && busy !== 'sheet' && busyError(), async () => {
+      // A delete reads the list again under its lock, but the parcel should not come back halfway through one.
+      const lock = await shared.lock.current()
+      if (lock?.action === DELETE_ACTION) throw codeError('FINLAND_LOCKED', `${lock.name || lock.email} sletter en række i arket lige nu. Prøv igen om lidt.`)
       if (!(await shared.notSent.restore(key))) throw notMarkedError()
       return snapshot(user)
     })
@@ -454,7 +458,7 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
       const entry = (await shared.notSent.list()).find(e => keyOfEntry(e) === key)
       if (!entry) throw notMarkedError()
       let deleted = null
-      await sheetWrite(user, { day: entry.shippedOn, action: 'sletter række' }, async extend => {
+      await sheetWrite(user, { day: entry.shippedOn, action: DELETE_ACTION }, async extend => {
         await refreshSheet(true)
         // A colleague may have pressed "Sæt ind igen" while the lock was taken and the sheet read; restoring takes no lock.
         const current = (await shared.notSent.list()).find(e => keyOfEntry(e) === key)

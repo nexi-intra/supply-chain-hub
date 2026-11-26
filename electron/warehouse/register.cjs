@@ -34,6 +34,7 @@ const { createLocationRepository } = require('./locations/repository.cjs')
 const { createLocationService } = require('./locations/service.cjs')
 const { createLayoutService } = require('./locations/layoutService.cjs')
 const { createOutbox, QUEUED_METHODS } = require('./locations/outbox.cjs')
+const { registerFinland } = require('./finland/register.cjs')
 const { writeReport, writeStatusReport, writeSapCheckReport } = require('./report.cjs')
 
 const DATA_FOLDER = 'lagerstyring'
@@ -106,8 +107,9 @@ function loadDeviceId(dir) {
  * @param {ReturnType<import('../ipcArrivals.cjs')['createArrivalOrder']>} [deps.arrivals] the order IPC calls arrived in (main.cjs)
  * @param {object} [deps.outboxOptions] timing of the local queue (tests)
  * @param {() => boolean} [deps.storageConnected] false while M: is away (also when the Hub started on its local folder)
+ * @param {object} [deps.finlandDeps] Finlandsforsendelser's Excel, SAP list, clock and tracking windows (tests)
  */
-function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platformRoot, userDataDir, electron, broadcast, isPackaged, configDirs = [], scriptsDir = __dirname, env = process.env, preparedFiles = null, arrivals = null, outboxOptions = {}, storageConnected = () => true }) {
+function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platformRoot, userDataDir, electron, broadcast, isPackaged, configDirs = [], scriptsDir = __dirname, env = process.env, preparedFiles = null, arrivals = null, outboxOptions = {}, storageConnected = () => true, finlandDeps = {} }) {
   const { clipboard, dialog, shell, BrowserWindow } = electron
   const config = resolveWarehouseConfig({ env, configDirs })
   const localDir = path.join(userDataDir, 'warehouse')
@@ -469,6 +471,11 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
     return roles.toolRoles(user, user.tools)
   })
   handleTool(['finland'], 'admin:set-finland-admin', (user, p) => roles.setFinlandAdmin(user, { email: p.email, admin: p.admin === true }))
+  // Finlandsforsendelser (BPO and TCD): the sheet "Ordre sendt til Finland fra Danmark", ZMS_CONS_INFO and tracking.
+  const finland = registerFinland({
+    handleTool, sap, runScript, opener, platformRoot, roles, copyForPerson, unpacked, scriptsDir,
+    sapSystem: config.sapSystem, userDataDir, deps: finlandDeps,
+  })
   handle('sap-check:overview', user => sapChecks.overview(user))
   handle('sap-check:latest', user => sapChecks.latest(user))
   handle('sap-check:run', (user, p) => sapChecks.run(user, { scope: p.scope }))
@@ -678,6 +685,13 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
     // main.cjs calls it when M: is back, so the waiting actions need not wait for the 30 s timer, nor for the back-off
     // of a folder that could not be made while M: was away.
     replayWrites: () => { opener.forget(); return flushOutbox() },
+    // For the close warning: the window's person's Finlandsforsendelser changes not in the sheet yet (0 outside BPO/TCD).
+    finlandPending: async event => {
+      const user = await toolUser(event).catch(() => null)
+      return user?.tools.includes('finland') ? finland.pending(user) : 0
+    },
+    // main.cjs calls it when the Hub's window is closed, so no tracking window keeps the app running.
+    closeTrackingWindows: () => finland.closeWindows(),
     closeAll: () => { clearInterval(outboxTimer); return Promise.all([outbox.close(), counts.closeAll()]).then(([, closed]) => closed) },
   }
 }

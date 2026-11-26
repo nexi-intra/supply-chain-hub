@@ -419,7 +419,8 @@ test('no row is deleted when a colleague restores the parcel while the sheet is 
   ada.excel.readSheet = async () => {
     if (!restoredUnderLock && await shared.lock.current()) {
       restoredUnderLock = true
-      await mona.service.restoreNotSent(MONA, DELETE_KEY)
+      // A colleague's restore that looked at the lock just before it was taken.
+      assert.equal(await shared.notSent.restore(DELETE_KEY), true)
     }
     return read()
   }
@@ -429,6 +430,21 @@ test('no row is deleted when a colleague restores the parcel while the sheet is 
   assert.deepEqual(ada.excel.state.rows.map(r => r.row), [2, 3])
   assert.equal(await shared.lock.current(), null)
   assert.deepEqual(await shared.notSent.list(), [])
+})
+
+test('a parcel cannot be restored while someone deletes a row in the sheet', async () => {
+  const { service, shared } = setup({ parcels: DELETE_PARCELS })
+  await service.load(MONA)
+  await service.markNotSent(MONA, '82100001', pn(1))
+  const release = await shared.lock.acquire(ADA, { day: '2026-11-20', action: 'sletter række', ttlMs: 60000 })
+  await assert.rejects(service.restoreNotSent(MONA, DELETE_KEY), { code: 'FINLAND_LOCKED', message: 'FINLAND_LOCKED: Ada Admin sletter en række i arket lige nu. Prøv igen om lidt.' })
+  assert.equal((await shared.notSent.list()).length, 1, 'still marked')
+  await release()
+  // Writing other rows does not touch the parcel's row, so it does not hold a restore back.
+  const writing = await shared.lock.acquire(ADA, { day: '2026-11-20', action: 'skriver', ttlMs: 60000 })
+  await service.restoreNotSent(MONA, DELETE_KEY)
+  assert.deepEqual(await shared.notSent.list(), [])
+  await writing()
 })
 
 test('a row typed in by hand is checked against the sheet as it is now before it is written', async () => {

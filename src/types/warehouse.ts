@@ -1,5 +1,6 @@
 import { t } from '@/lib/warehouse/text'
 import type { WarehouseTool } from '@/lib/warehouseTools'
+import type { FinlandBridge } from './finland'
 export type TeamId = 'TCD' | 'TRR'
 export type Role = 'creator' | 'manager' | 'user'
 /** Role inside CountPoint: managers come from the Hub; status managers and admins are appointed in CountPoint. */
@@ -1309,6 +1310,7 @@ export interface WarehouseBridge {
   locations: LocationsBridge
   timeclock: TimeclockBridge
   softwareload: SoftwareloadBridge
+  finland: FinlandBridge
 }
 
 /** A task as the clock knows it (from the shift schedule's tasks). */

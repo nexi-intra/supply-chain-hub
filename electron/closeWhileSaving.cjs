@@ -14,15 +14,32 @@ function savingMessage(language) {
 }
 
 /**
+ * `confirmClose` (optional) is asked first: false keeps the window open, true (or a failure) goes on to close. The
+ * saving guard below still holds the window while a write is on its way.
  * @param {{ hasPendingWrites: () => boolean, whenSaved: () => Promise<unknown>,
- *   showMessage: (options: object, signal: AbortSignal) => Promise<unknown>, language: () => string }} deps
+ *   showMessage: (options: object, signal: AbortSignal) => Promise<unknown>, language: () => string,
+ *   confirmClose?: () => Promise<boolean> }} deps
  */
-function guardCloseWhileSaving(win, { hasPendingWrites, whenSaved, showMessage, language }) {
+function guardCloseWhileSaving(win, { hasPendingWrites, whenSaved, showMessage, language, confirmClose = null }) {
   let allowClose = false
   let waiting = false
+  let confirmed = false
   win.on('close', event => {
     if (allowClose) return
     if (waiting) { event.preventDefault(); return }
+    if (confirmClose && !confirmed) {
+      event.preventDefault()
+      waiting = true
+      let asking
+      try { asking = Promise.resolve(confirmClose()) } catch (error) { asking = Promise.reject(error) }
+      asking.then(answer => answer !== false, () => true).then(close => {
+        waiting = false
+        if (!close || win.isDestroyed()) return
+        confirmed = true
+        win.close()
+      })
+      return
+    }
     if (!hasPendingWrites()) return
     event.preventDefault()
     waiting = true
