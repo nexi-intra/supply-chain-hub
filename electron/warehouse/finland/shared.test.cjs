@@ -348,7 +348,8 @@ test('the timeline file is read again only when it has changed', async () => {
   reads.length = 0
   assert.deepEqual(await shared.statuses.get(['JJD1']), { JJD1: first })
   assert.deepEqual(await shared.statuses.get(['JJD1']), { JJD1: first })
-  assert.equal(reads.filter(key => key === 'nshift-status').length, 0, 'our own put is remembered')
+  assert.equal(reads.filter(key => key === 'nshift-status').length, 1, 'read once after our own put, then the copy is used')
+  reads.length = 0
   const got = await shared.statuses.get(['JJD1'])
   got.JJD1.events.length = 0
   assert.deepEqual(await shared.statuses.get(['JJD1']), { JJD1: first }, 'changing what get gave does not change the copy')

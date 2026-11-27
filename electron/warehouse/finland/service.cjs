@@ -24,8 +24,8 @@ const LOCK_MARGIN_MS = 60000
 const COURIERS = ['DHL', 'Postnord', 'DSV']
 // nShift knows the parcels booked with these; DSV is followed up by hand.
 const NSHIFT_COURIERS = ['Postnord', 'DHL']
-// A key that is missing or refused, or M: being away, fails every parcel the same way, so the first such error stops
-// the day.
+// A key that is missing or refused, or M: being away, fails every parcel the same way, so such an error stops the day
+// wherever it comes.
 const NSHIFT_STOPS = new Set(['FINLAND_NSHIFT_NOT_SET', 'FINLAND_NSHIFT_REFUSED', 'STORAGE_UNAVAILABLE'])
 // nShift not answering this many parcels in a row is taken as nShift being down, so the day does not hold the busy
 // guard for minutes of timeouts.
@@ -519,7 +519,7 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, nshift = n
             statusResult.notFound++
           }
         } catch (error) {
-          if (!statusResult.failed && NSHIFT_STOPS.has(error?.code)) {
+          if (NSHIFT_STOPS.has(error?.code)) {
             stop = error
             break
           }

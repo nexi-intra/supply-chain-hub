@@ -705,6 +705,19 @@ test('one failed parcel does not stop the day', async () => {
   }
 })
 
+test('a missing or refused key, or M: away, stops the day after other failures too', async () => {
+  const sheet = [...FOLLOW_SHEET, sheetRow(5, '82100004', pn(4), '2026-11-20'), sheetRow(6, '82100005', pn(5), '2026-11-20')]
+  for (const code of ['FINLAND_NSHIFT_NOT_SET', 'FINLAND_NSHIFT_REFUSED', 'STORAGE_UNAVAILABLE']) {
+    // pn(1) found, pn(2) failed, pn(4) stops: pn(5) is never asked.
+    const nshift = fakeNshift({ [pn(1)]: NSHIFT_ANSWERS[pn(1)], [pn(2)]: codeErr('FINLAND_NSHIFT_FAILED'), [pn(4)]: codeErr(code), [pn(5)]: timelineOf(pn(5), [DELIVERED]) })
+    const { service, shared } = setup({ sheet, nshift })
+    await service.loadSheet(MONA)
+    await assert.rejects(service.fetchStatus(MONA, { date: '2026-11-20' }), { code })
+    assert.deepEqual(nshift.calls.map(([tracking]) => tracking), [pn(1), pn(2), pn(4)], code)
+    assert.deepEqual(Object.keys(await shared.statuses.get([pn(1), pn(5)])), [pn(1)], 'what was found is stored')
+  }
+})
+
 test('three failed parcels in a row stop the day', async () => {
   const days = (n, from) => Array.from({ length: n }, (_, i) => sheetRow(from + i, `8210010${from + i}`, pn(from + i), '2026-11-20'))
   const sheet = [...FOLLOW_SHEET, ...days(5, 4)]

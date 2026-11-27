@@ -409,7 +409,7 @@ function createFinlandShared({ store, now = Date.now }) {
     async put(timelines = []) {
       const list = (Array.isArray(timelines) ? timelines : []).filter(entry => isObject(entry) && text(entry.tracking) && typeof entry.fetchedAt === 'string')
       if (!list.length) return
-      const written = await store.mutateAsync(STATUSES_KEY, current => {
+      await store.mutateAsync(STATUSES_KEY, current => {
         const next = { ...(isObject(current) ? current : {}) }
         for (const entry of list) {
           const tracking = text(entry.tracking)
@@ -422,9 +422,8 @@ function createFinlandShared({ store, now = Date.now }) {
         const kept = keys.sort((a, b) => String(next[b]?.fetchedAt || '').localeCompare(String(next[a]?.fetchedAt || ''))).slice(0, STATUSES_MAX)
         return Object.fromEntries(kept.map(tracking => [tracking, next[tracking]]))
       })
-      // The file as just written; another PC writing in the moment between is caught by its next change.
-      const stat = await store.statAsync(STATUSES_KEY).catch(() => undefined)
-      statusesCopy = stat && isObject(written) ? { ...stat, value: written } : null
+      // The next get reads the file again: a stat taken after the write could already be another PC's write.
+      statusesCopy = null
     },
   }
 
