@@ -87,6 +87,8 @@ export interface FinlandFollowUpRow {
   receivedChoices: string[]
   duplicate: boolean
   noTracking: boolean
+  /** Marked "Ikke sendt" but still in the sheet: not followed up, and an admin can delete the row. */
+  notSent?: boolean
   conflicts: FinlandConflict[]
   done: boolean
   /** The stored timeline from nShift and the rules' suggestions; null when the parcel was never fetched. */

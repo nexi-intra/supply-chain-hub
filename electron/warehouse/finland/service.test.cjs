@@ -421,6 +421,19 @@ test('a draft is refused for a parcel the sheet does not have once', async () =>
 const DELETE_PARCELS = [parcel('82100001', pn(1)), parcel('82100002', pn(2))]
 const DELETE_KEY = parcelKey('82100001', pn(1))
 
+test('Opfølgning marks a parcel not sent from its sheet row, without SAP, and shows it as marked', async () => {
+  const sheet = [sheetRow(2, '82100002', pn(2)), sheetRow(3, '0082100001', pn(1), '2026-11-17', { comment: 'x' })]
+  const { service, shared } = setup({ sheet, parcels: [], admins: [ADA.email] })
+  await service.loadSheet(ADA)
+  const snap = await service.markNotSent(ADA, '0082100001', pn(1))
+  const [entry] = await shared.notSent.list()
+  assert.deepEqual([entry.delivery, entry.tracking, entry.shippedOn, entry.orderType, entry.postalCode], ['82100001', pn(1), '2026-11-17', 'ZRO', '00100'])
+  assert.deepEqual(snap.followUp.rows.map(r => [r.row, r.notSent]), [[2, false], [3, true]])
+  await assert.rejects(service.markNotSent(ADA, '82100009', pn(9)), { code: 'FINLAND_PARCEL_NOT_FOUND' }, 'neither in SAP nor in the sheet')
+  const deleted = await service.deleteNotSentRow(ADA, DELETE_KEY, 3)
+  assert.deepEqual(deleted.followUp.rows.map(r => r.row), [2])
+})
+
 test('only admins delete a row', async () => {
   const sheet = [sheetRow(2, '82100002', pn(2)), sheetRow(3, '82100001', pn(1), '2026-11-20', { comment: 'x' })]
   const { pc, shared } = setup({ sheet, parcels: DELETE_PARCELS, admins: [ADA.email] })

@@ -27,6 +27,8 @@ export interface FollowUpDetailProps {
   busy?: boolean
   /** This parcel's status is being fetched. */
   updating?: boolean
+  /** "Ikke sendt": asks to mark the parcel (and delete its row). Left out, the button is not shown. */
+  onNotSent?: () => void
 }
 
 /** A text field that hands its value over on Enter and when it loses focus, as an input's change event. */
@@ -124,7 +126,7 @@ function Timeline({ nshift }: { nshift: NonNullable<FinlandFollowUpRow['nshift']
 }
 
 /** One parcel of Opfølgning: Expected, Received, SLA, Terminal and Comment, as Finland T&T's form. */
-export function FollowUpDetail({ row: r, form, hasDay, comments, onChange, onDateError, onResolve, onTracking, onPrevious, onNext, onUpdateStatus, busy = false, updating = false }: FollowUpDetailProps) {
+export function FollowUpDetail({ row: r, form, hasDay, comments, onChange, onDateError, onResolve, onTracking, onPrevious, onNext, onUpdateStatus, busy = false, updating = false, onNotSent }: FollowUpDetailProps) {
   if (!r || !form) {
     return <p className="py-10 text-center text-sm text-muted-foreground">{hasDay ? t('Vælg et kolli i listen.', 'Choose a parcel in the list.') : ''}</p>
   }
@@ -137,6 +139,7 @@ export function FollowUpDetail({ row: r, form, hasDay, comments, onChange, onDat
       <p className="font-mono text-lg font-semibold tracking-wide">{r.tracking || t('Intet T&T', 'No T&T')}</p>
     </div>
   )
+  if (r.notSent) return head
   if (r.duplicate || r.noTracking) {
     return (
       <div className="space-y-4">
@@ -187,6 +190,11 @@ export function FollowUpDetail({ row: r, form, hasDay, comments, onChange, onDat
           </Button>
         )}
         {r.courier === 'DSV' && <span className="text-xs text-muted-foreground">{t('T&T bliver kopieret. Sæt det ind på siden med Ctrl+V.', 'The T&T is copied. Paste it on the page with Ctrl+V.')}</span>}
+        {onNotSent && (
+          <Button variant="ghost" size="sm" className="ml-auto text-destructive hover:text-destructive" disabled={busy} title={t('Kolliet blev aldrig sendt. Det bliver markeret, så det ikke bliver skrevet ind igen.', 'The parcel was never sent. It is marked so it is not written in again.')} onClick={onNotSent}>
+            {t('Ikke sendt', 'Not sent')}
+          </Button>
+        )}
       </div>
 
       {r.nshift && <Timeline nshift={r.nshift} />}

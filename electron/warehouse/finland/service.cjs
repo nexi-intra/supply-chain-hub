@@ -212,8 +212,8 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, nshift = n
     return (parcels || []).find(p => parcelKey(p.delivery, p.tracking) === key) || null
   }
 
-  /** `timelines` holds the stored nShift timeline per T&T (shared.statuses.get). */
-  function followUpRows(own, others, conflicts, timelines = {}) {
+  /** `timelines` holds the stored nShift timeline per T&T (shared.statuses.get); `notSent` the keys marked not sent. */
+  function followUpRows(own, others, conflicts, timelines = {}, notSent = new Set()) {
     const dups = duplicateKeys(sheetRows)
     const sapByKey = new Map((parcels || []).map(p => [parcelKey(p.delivery, p.tracking), p]))
     const draftByKey = new Map(own.map(d => [parcelKey(d.delivery, d.tracking), d]))
@@ -249,6 +249,8 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, nshift = n
           receivedChoices: receivedChoices(r.pickedUp),
           duplicate: !!key && dups.has(key),
           noTracking: !tracking,
+          // Marked "Ikke sendt" while still in the sheet: it is not followed up, and an admin can delete the row.
+          notSent: !!key && notSent.has(key),
           conflicts: conflicts.get(key) || [],
           done: isFollowedUp(effective, courier),
           nshift: nshiftOf(timeline, { courier, pickedUp: r.pickedUp, effective, suggestedExpected }),
@@ -280,8 +282,8 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, nshift = n
     return result
   }
 
-  function followUpSnapshot(user, own, others, timelines) {
-    const rows = followUpRows(own, others, conflictsOf(user), timelines)
+  function followUpSnapshot(user, own, others, timelines, notSent) {
+    const rows = followUpRows(own, others, conflictsOf(user), timelines, notSent)
     return {
       days: followUpDays(rows.map(x => ({ row: x.row, delivery: x.delivery, pickedUp: x.pickedUp, courier: x.courier, followUp: x.effective }))),
       rows,
@@ -316,7 +318,7 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, nshift = n
       isAdmin: !!admin,
       // `mine` by e-mail, since two people can share a name.
       lock: lock ? { byName: lock.name || lock.email, day: lock.day, action: lock.action, mine: lock.email === myEmail } : null,
-      followUp: followUpSnapshot(user, own, others, timelines),
+      followUp: followUpSnapshot(user, own, others, timelines, new Set(notSentByKey.keys())),
       days: days.map(d => ({
         date: d.date,
         total: d.total,
@@ -596,10 +598,10 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, nshift = n
       const drafts = draftsOf(user)
       const book = await currentWorkbook()
       const own = forWorkbook(await drafts.all(), book)
-      const rows = followUpRows(own, [], conflictsOf(user), await timelinesForSheet())
+      const rows = followUpRows(own, [], conflictsOf(user), await timelinesForSheet(), await notSentKeys(book))
       let applied = 0
       for (const r of rows) {
-        if (r.pickedUp !== date || !r.key || r.duplicate || !r.nshift?.delivered) continue
+        if (r.pickedUp !== date || !r.key || r.duplicate || r.notSent || !r.nshift?.delivered) continue
         const existing = own.find(d => parcelKey(d.delivery, d.tracking) === r.key) || null
         const touched = existing ? existing.fields : {}
         const kept = Object.hasOwn(keep, r.key) ? keep[r.key] : []
@@ -672,11 +674,14 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, nshift = n
     })
   }
 
-  // Marking only changes the shared list; the sheet is not touched.
+  // Marking only changes the shared list; the sheet is not touched. A parcel not in the SAP list (Opfølgning without
+  // "Hent fra SAP") is marked from its row in the sheet.
   function markNotSent(user, delivery, tracking) {
     return quick(() => busy && busy !== 'sheet' && busyError(), async () => {
-      const parcel = findParcel(delivery, tracking)
-      if (!parcel) throw notInSapError()
+      const inSap = findParcel(delivery, tracking)
+      const inSheet = inSap ? null : sheetRowsFor(delivery, tracking)[0]
+      if (!inSap && !inSheet) throw notInSapError()
+      const parcel = inSap || { delivery: inSheet.delivery, tracking, shippedOn: inSheet.pickedUp, orderType: inSheet.orderType, postalCode: inSheet.postalCode }
       await shared.notSent.mark(user, {
         delivery: normalizeDelivery(parcel.delivery),
         tracking: normalizeTracking(parcel.tracking),

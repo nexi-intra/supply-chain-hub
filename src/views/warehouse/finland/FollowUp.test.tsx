@@ -5,6 +5,7 @@ import type { FinlandFollowUpRow, FinlandFollowUpView } from '@/types/finland'
 import { FollowUpCalendar } from './FollowUpCalendar'
 import { StatusFilter } from './FollowUp'
 import { FollowUpDetail, type FollowUpDetailProps } from './FollowUpDetail'
+import { FollowUpNotSent } from './FollowUpNotSent'
 import { openForm } from './followUpLogic'
 import { SaveAllConfirm, SuggestConfirm, SyncBar, type SyncBarProps } from './SaveConfirm'
 
@@ -167,5 +168,40 @@ describe('Finlandsforsendelser: the status filter', () => {
     expect(html).toContain('Alle')
     expect(html).not.toContain('Kan ikke følges op')
     expect(renderToStaticMarkup(<StatusFilter counts={{ ...counts, blocked: 1 }} value="all" onChange={noop} />)).toContain('Kan ikke følges op')
+  })
+})
+
+describe('Finlandsforsendelser: Ikke sendt in Opfølgning', () => {
+  afterEach(() => setWarehouseLanguage('da'))
+  const panel = (r: FinlandFollowUpRow, isAdmin: boolean) => renderToStaticMarkup(
+    <FollowUpNotSent row={r} isAdmin={isAdmin} busy={false} writeBlocked={false} working={null} onConfirm={noop} onDelete={noop} onRestore={noop} onCancel={noop} />,
+  )
+
+  it('the parcel has an "Ikke sendt" button, and a marked one shows no form', () => {
+    expect(detail(row(), { onNotSent: noop })).toContain('>Ikke sendt</button>')
+    expect(detail(row())).not.toContain('>Ikke sendt</button>')
+    const marked = detail(row({ notSent: true }), { onNotSent: noop })
+    expect(marked).toContain('00073215000000000001')
+    expect(marked).not.toContain('Expected delivery')
+  })
+
+  it('an admin marks and deletes the row in one go and sees what disappears; others only mark', () => {
+    const r = row({ row: 1601, sheet: { ...BLANK, expected: '2026-11-23', comment: 'Ring' } })
+    const admin = panel(r, true)
+    expect(admin).toContain('Ja, markér og slet række 1601')
+    expect(admin).toContain('I arket står: Expected 23-11-2026, Comment Ring')
+    expect(admin).toContain('data-not-sent')
+    const other = panel(r, false)
+    expect(other).toContain('Ja, markér som ikke sendt')
+    expect(other).toContain('Række 1601 bliver stående i arket, til en admin sletter den.')
+    expect(other).not.toContain('slet række')
+  })
+
+  it('a marked parcel still in the sheet can be deleted by an admin or put back', () => {
+    const r = row({ row: 1601, notSent: true })
+    expect(panel(r, true)).toContain('Slet række 1601 i arket')
+    expect(panel(r, true)).toContain('Sæt ind igen')
+    expect(panel(r, false)).not.toContain('Slet række')
+    expect(panel(r, false)).toContain('En admin kan slette rækken.')
   })
 })

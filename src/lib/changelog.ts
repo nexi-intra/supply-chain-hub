@@ -19,6 +19,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Finlandsforsendelser: under "Opfølgning" kan du hente status fra nShift for PostNord og DHL. Ud fra forløbet foreslår appen Received, SLA, Terminal og Comment, og du godkender stadig forslagene, før de kommer i arket',
       'Finlandsforsendelser: Expected foreslås nu efter aftalens tabel over leveringstider pr. postnummer',
       'Finlandsforsendelser: i "Opfølgning" kan du vise kun de kolli, der mangler, er fulgt op eller er for sent. Enter og piletasterne går kun mellem dem',
+      'Finlandsforsendelser: et kolli, der ikke blev sendt, kan nu også markeres "Ikke sendt" fra "Opfølgning". En admin sletter rækken i arket i samme omgang',
       'Optælling: TRR kan nu tælle blocked lager på D001, D002 og D003',
       'Optælling: ny fane "Eksport". Vælg et materiale og få dets serienumre i Excel, med en fane for fundne og en for manglende',
       'Optælling: "Importér materialedokument" i optællingsoversigten lægger en palles serienumre i den optælling, der tæller dem. Ligger de forskellige steder i SAP, eller både blocked og unblocked, importeres intet, og du kan eksportere listen til Excel og rette det i SAP',

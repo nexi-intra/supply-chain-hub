@@ -40,7 +40,7 @@ export type FollowUpStatus = 'blocked' | 'late' | 'done' | 'missing'
 export type FollowUpFilter = 'all' | FollowUpStatus
 
 export function rowStatus(r: FinlandFollowUpRow): FollowUpStatus {
-  if (r.duplicate || r.noTracking) return 'blocked'
+  if (r.duplicate || r.noTracking || r.notSent) return 'blocked'
   if (r.effective.sla === 'NOK') return 'late'
   return r.done ? 'done' : 'missing'
 }
@@ -162,7 +162,7 @@ function proposedSla(r: FinlandFollowUpRow, fields: Partial<FinlandFollowUp>): s
 export function suggestionList(rows: FinlandFollowUpRow[], day: string | null, form: FollowUpForm | null = null): { row: FinlandFollowUpRow; fields: Partial<FinlandFollowUp> }[] {
   const list: { row: FinlandFollowUpRow; fields: Partial<FinlandFollowUp> }[] = []
   for (const r of rowsOfDay(rows, day)) {
-    if (!r.key || r.duplicate || !r.nshift?.delivered) continue
+    if (!r.key || r.duplicate || r.notSent || !r.nshift?.delivered) continue
     const touchedNow = form && form.id === rowId(r) ? form.touched : []
     const proposed: Partial<Record<FinlandFollowUpField, string | null>> = { expected: r.suggestedExpected, ...r.nshift.suggestion }
     const fields: Partial<FinlandFollowUp> = {}

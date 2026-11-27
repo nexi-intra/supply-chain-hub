@@ -135,6 +135,7 @@ describe('Opfølgning: suggestions from nShift', () => {
       row({ key: 'k5', row: 9, delivery: '82100005' }),
       row({ key: 'k6', row: 10, delivery: '82100006', nshift: NSHIFT(), pickedUp: '2026-11-25' }),
       row({ key: 'k7', row: 11, delivery: '82100007', nshift: NSHIFT(), pending: true, sheet: { ...BLANK, comment: 'Ring' }, effective: { ...BLANK } }),
+      row({ key: 'k8', row: 12, delivery: '82100008', nshift: NSHIFT(), notSent: true }),
     ]
     const list = suggestionList(rows, '2026-11-24')
     expect(list.map(x => x.row.delivery)).toEqual(['82100001', '82100002', '82100007'])
@@ -216,6 +217,7 @@ describe('Opfølgning: the filter', () => {
   it('every parcel has the status of its dot: late before followed up, blocked before both', () => {
     expect(day.map(rowStatus)).toEqual(['done', 'missing', 'late', 'blocked', 'missing', 'late'])
     expect(rowStatus(row({ noTracking: true, effective: { ...BLANK, sla: 'NOK' } }))).toBe('blocked')
+    expect(rowStatus(row({ notSent: true, done: true }))).toBe('blocked')
     expect(filterCounts(day)).toEqual({ all: 6, missing: 2, done: 1, late: 2, blocked: 1 })
   })
 

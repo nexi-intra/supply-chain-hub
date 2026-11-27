@@ -10,6 +10,7 @@ import type { FinlandCourier, FinlandFollowUpField, FinlandFollowUpRow, FinlandS
 import { CourierTag, NoticeBox, sheetNotes, writtenAt, type Notice, type Working } from './common'
 import { FollowUpCalendar } from './FollowUpCalendar'
 import { FollowUpDetail } from './FollowUpDetail'
+import { FollowUpNotSent } from './FollowUpNotSent'
 import { finlandPlace } from './place'
 import { applySuggestions, changeField, chooseDefaultDay, fetchedText, filterCounts, firstInFilter, inFilter, newestFetch, nextInFilter, openForm, othersOnDay, othersOnParcel, rowId, rowStatus, rowsOfDay, savedLines, statusLines, suggestionList, wantedOf, type FollowUpFilter, type FollowUpForm, type FollowUpStatus } from './followUpLogic'
 import { SaveAllConfirm, SuggestConfirm, SyncBar } from './SaveConfirm'
@@ -41,7 +42,7 @@ const STATUS_LOOK: Record<FollowUpStatus, { dot: string; label: () => string }> 
 
 function StatusDot({ r }: { r: FinlandFollowUpRow }) {
   const look = STATUS_LOOK[rowStatus(r)]
-  return <i title={look.label()} className={cn('inline-block size-2.5 rounded-full', look.dot)} />
+  return <i title={r.notSent ? t('Ikke sendt', 'Not sent') : look.label()} className={cn('inline-block size-2.5 rounded-full', look.dot)} />
 }
 
 /** Shows only the day's parcels with one status; the dots double as the legend. "Kan ikke følges op" only when there are any. */
@@ -100,6 +101,8 @@ export function FollowUp({ active, data, working, writeBlocked, confirmAll, onCo
   const [notice, setNotice] = useState<Notice | null>(null)
   const [focusTick, setFocusTick] = useState(0)
   const [suggestOpen, setSuggestOpen] = useState(false)
+  /** rowId of the parcel whose "Ikke sendt" confirmation is open. */
+  const [notSentAsk, setNotSentAsk] = useState<string | null>(null)
   // fetch-status answered FINLAND_NSHIFT_NOT_SET; the buttons stay usable so a later setup works at once.
   const [nshiftNotSet, setNshiftNotSet] = useState(false)
   /** What "Hent status" is fetching: 'day', or the parcel's key. */
@@ -129,6 +132,7 @@ export function FollowUp({ active, data, working, writeBlocked, confirmAll, onCo
   const openRow = (r: FinlandFollowUpRow | null) => {
     setForm(r ? openForm(r) : null)
     setConfirm(false)
+    setNotSentAsk(null)
   }
 
   // New data from the main process: choose a day the first time (or keep the remembered one), and show a parcel the
@@ -145,7 +149,7 @@ export function FollowUp({ active, data, working, writeBlocked, confirmAll, onCo
       return
     }
     const r = list.find(x => rowId(x) === f.id)
-    if (!r) openRow(list[0] ?? null)
+    if (!r) openRow(firstInFilter(list, filterRef.current))
     else if (!r.pending && f.touched.length === 0) setForm(openForm(r))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data])
@@ -166,7 +170,7 @@ export function FollowUp({ active, data, working, writeBlocked, confirmAll, onCo
 
   /** Keeps the touched fields as the person's draft. Saves run one after the other, so the last answer is the newest. */
   const saveDraft = async (f: FollowUpForm, r: FinlandFollowUpRow): Promise<{ ok: boolean; data?: FinlandSnapshot }> => {
-    if (r.duplicate || r.noTracking) return { ok: false }
+    if (r.duplicate || r.noTracking || r.notSent) return { ok: false }
     const wanted = wantedOf(f)
     if (!Object.keys(wanted).length) return { ok: true }
     const call = draftQueue.current.then(() => bridge.saveDraft({ key: r.key, wanted, slaManual: f.slaManual, base: f.base }))
@@ -202,7 +206,7 @@ export function FollowUp({ active, data, working, writeBlocked, confirmAll, onCo
     const r = currentRow()
     const f = formRef.current
     let snapshot = dataRef.current
-    if (commit && r && f && !r.duplicate && !r.noTracking) {
+    if (commit && r && f && !r.duplicate && !r.noTracking && !r.notSent) {
       if (f.error) return
       const applied = applySuggestions(f, r)
       setForm(applied)
@@ -262,6 +266,55 @@ export function FollowUp({ active, data, working, writeBlocked, confirmAll, onCo
       else showError(error)
     } finally {
       setFetching(null)
+    }
+  }
+
+  /** "Ja, markér": marks the parcel not sent; for an admin its row in the sheet is deleted right after. */
+  const markNotSent = async (r: FinlandFollowUpRow) => {
+    if (working) return
+    setNotice(null)
+    const admin = !!dataRef.current?.isAdmin
+    try {
+      const marked = await exclusive('mark', () => bridge.markNotSent({ delivery: r.delivery, tracking: r.tracking }))
+      if (!marked) return
+      takeData(marked)
+      setNotSentAsk(null)
+      if (!admin) {
+        setNotice({ tone: 'success', lines: [t(`${r.delivery} er markeret som ikke sendt og bliver ikke skrevet ind igen. Række ${r.row} står stadig i arket, til en admin sletter den.`, `${r.delivery} is marked as not sent and will not be written in again. Row ${r.row} stays in the sheet until an admin deletes it.`)] })
+        return
+      }
+    } catch (error) {
+      showError(error)
+      return
+    }
+    await deleteNotSentRow(r, t(`${r.delivery} er markeret som ikke sendt, men række ${r.row} er ikke slettet.`, `${r.delivery} is marked as not sent, but row ${r.row} was not deleted.`))
+  }
+
+  const deleteNotSentRow = async (r: FinlandFollowUpRow, failedText?: string) => {
+    try {
+      const result = await exclusive('delete', () => bridge.deleteNotSentRow({ key: r.key, row: r.row }))
+      if (!result) return
+      takeData(result)
+      const d = result.deleted
+      const lines = [d.kind === 'deleted'
+        ? t(`${r.delivery} er markeret som ikke sendt, og række ${d.row} er slettet i arket. Arket er gemt.`, `${r.delivery} is marked as not sent, and row ${d.row} was deleted in the sheet. The sheet is saved.`)
+        : t(`${r.delivery} er markeret som ikke sendt. Rækken stod ikke længere i arket.`, `${r.delivery} is marked as not sent. The row was no longer in the sheet.`)]
+      setNotice({ tone: 'success', lines: [...lines, ...sheetNotes(result)] })
+    } catch (error) {
+      setNotice({ tone: 'error', lines: [...(failedText ? [failedText] : []), errorMessage(error)] })
+    }
+  }
+
+  const restoreNotSent = async (r: FinlandFollowUpRow) => {
+    if (working) return
+    setNotice(null)
+    try {
+      const result = await exclusive('restore', () => bridge.restoreNotSent({ key: r.key }))
+      if (!result) return
+      takeData(result)
+      setNotice({ tone: 'success', lines: [t(`${r.delivery} er sat ind igen og kan følges op.`, `${r.delivery} is put back and can be followed up.`)] })
+    } catch (error) {
+      showError(error)
     }
   }
 
@@ -327,6 +380,8 @@ export function FollowUp({ active, data, working, writeBlocked, confirmAll, onCo
     if (!active || !formRef.current || saving) return
     const target = event.target as HTMLElement
     if (!(target === document.body || rootRef.current?.contains(target))) return
+    // The "Ikke sendt" confirmation's buttons answer Enter themselves.
+    if (target.closest?.('[data-not-sent]')) return
     const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable
     if (event.key === 'Enter') {
       // Enter always means "next" inside the form, also on a pressed choice button, which would otherwise toggle off.
@@ -338,7 +393,7 @@ export function FollowUp({ active, data, working, writeBlocked, confirmAll, onCo
     }
     if (typing || event.ctrlKey || event.altKey || event.metaKey) return
     const r = currentRow()
-    if (!r || r.duplicate || r.noTracking) return
+    if (!r || r.duplicate || r.noTracking || r.notSent) return
     const fixedTerminal = r.courier === 'DHL' || r.courier === 'DSV'
     const k = event.key.toLowerCase()
     if (k === '1' && !fixedTerminal) change('terminal', 'Turku')
@@ -530,7 +585,21 @@ export function FollowUp({ active, data, working, writeBlocked, confirmAll, onCo
         )}
       </section>
 
-      <section ref={detailRef} aria-label={t('Kolli', 'Parcel')} className="self-start rounded-xl border bg-card p-5 lg:col-span-2 xl:sticky xl:top-4 xl:col-span-1">
+      <section ref={detailRef} aria-label={t('Kolli', 'Parcel')} className="self-start space-y-4 rounded-xl border bg-card p-5 lg:col-span-2 xl:sticky xl:top-4 xl:col-span-1">
+        {row && row.key && (row.notSent || notSentAsk === rowId(row)) && (
+          <FollowUpNotSent
+            key={rowId(row)}
+            row={row}
+            isAdmin={!!data.isAdmin}
+            busy={busy}
+            writeBlocked={writeBlocked}
+            working={working === 'mark' || working === 'delete' || working === 'restore' ? working : null}
+            onConfirm={() => void markNotSent(row)}
+            onDelete={() => void deleteNotSentRow(row)}
+            onRestore={() => void restoreNotSent(row)}
+            onCancel={() => setNotSentAsk(null)}
+          />
+        )}
         <FollowUpDetail
           row={row}
           form={form}
@@ -545,6 +614,7 @@ export function FollowUp({ active, data, working, writeBlocked, confirmAll, onCo
           onUpdateStatus={row && row.key ? () => fetchStatus({ key: row.key }) : undefined}
           busy={busy}
           updating={!!row && fetching === row.key}
+          onNotSent={row && row.key && !row.notSent && !row.duplicate && notSentAsk !== rowId(row) ? () => setNotSentAsk(rowId(row)) : undefined}
         />
       </section>
     </div>
