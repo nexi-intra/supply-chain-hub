@@ -278,6 +278,7 @@ test('every Finland user fetches status and uses the suggestions', async () => {
   assert.deepEqual(one.statusResult, { fetched: 0, notFound: 1, failed: 0 })
   assert.deepEqual(nshift.calls, [['lookup', TRACKING, '2026-11-20'], ['lookup', TRACKING, '2026-11-20']])
   assert.equal((await call('bpo', 'apply-suggestions', { date: '2026-11-20' })).applied, 0)
+  assert.equal((await call('bpo', 'apply-suggestions', { date: '2026-11-20', keep: { [KEY]: ['terminal', 'comment'] } })).applied, 0)
   assert.equal(excel.calls.length, reads, 'Excel is not touched')
   await registered.closeAll()
 })
@@ -333,6 +334,12 @@ test('invalid dates and keys are refused before the service', async () => {
     ['bpo', 'apply-suggestions', {}],
     ['bpo', 'apply-suggestions', { date: '20.11.2026' }],
     ['bpo', 'apply-suggestions', { key: KEY }],
+    ['bpo', 'apply-suggestions', { date: '2026-11-20', keep: [] }],
+    ['bpo', 'apply-suggestions', { date: '2026-11-20', keep: null }],
+    ['bpo', 'apply-suggestions', { date: '2026-11-20', keep: { [KEY]: 'terminal' } }],
+    ['bpo', 'apply-suggestions', { date: '2026-11-20', keep: { [KEY]: ['terminal', 'pickedUp'] } }],
+    ['bpo', 'apply-suggestions', { date: '2026-11-20', keep: { '82100001|ab': ['terminal'] } }],
+    ['bpo', 'apply-suggestions', { date: '2026-11-20', keep: { [KEY]: ['terminal'], '82100002|00073215000000000002': ['sla'] } }],
     ['bpoBoss', 'set-nshift-settings', {}],
     ['bpoBoss', 'set-nshift-settings', { clientId: FAKE_KEY.clientId }],
     ['bpoBoss', 'set-nshift-settings', { clientId: '   ', clientSecret: FAKE_KEY.clientSecret }],

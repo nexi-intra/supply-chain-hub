@@ -100,6 +100,24 @@ function checkStatusTarget(p) {
   return hasDate ? { date: checkDate(p.date) } : { key: checkKey(p.key) }
 }
 
+/**
+ * The fields the person touched in the open parcel, which "Brug forslagene" leaves alone: `{ [key]: field names }`, at
+ * most one parcel. Missing is nothing kept.
+ */
+function checkKeep(keep) {
+  if (keep === undefined) return {}
+  if (!keep || typeof keep !== 'object' || Array.isArray(keep)) throw invalid('Ugyldige felter.')
+  const keys = Object.keys(keep)
+  if (keys.length > 1) throw invalid('Ugyldige felter.')
+  const out = {}
+  for (const key of keys) {
+    const fields = keep[key]
+    if (!Array.isArray(fields) || !fields.every(f => FIELDS.includes(f))) throw invalid('Ugyldige felter.')
+    out[checkKey(key)] = [...new Set(fields)]
+  }
+  return out
+}
+
 /** The nShift client id and secret as typed: text of 1 to 200 characters after trimming. Never echoed in the error. */
 function checkCredentials(p) {
   const out = {}
@@ -245,7 +263,7 @@ function registerFinland({ handleTool, sap, runScript, opener, platformRoot, rol
   // Status from nShift: every Finland user fetches it and turns the suggestions into their own drafts; nothing goes in
   // the sheet before "Gem i arket".
   handle('fetch-status', (user, p) => service.fetchStatus(user, checkStatusTarget(p)))
-  handle('apply-suggestions', (user, p) => service.applySuggestions(user, { date: checkDate(p.date) }))
+  handle('apply-suggestions', (user, p) => service.applySuggestions(user, { date: checkDate(p.date), keep: checkKeep(p.keep) }))
   // The key: only a manager or the creator sees whether it is set (never the secret), sets it and tests it.
   handle('nshift-settings', user => {
     if (!isManager(user)) throw codeError('MANAGER_ONLY')

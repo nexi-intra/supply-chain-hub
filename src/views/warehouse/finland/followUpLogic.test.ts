@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { setWarehouseLanguage } from '@/lib/warehouse/text'
 import type { FinlandFollowUpRow } from '@/types/finland'
-import { applySuggestions, changeField, changesText, chooseDefaultDay, openForm, othersOnDay, othersOnParcel, savedLines, slaHint, statusLines, suggestionList, suggestionText, wantedOf } from './followUpLogic'
+import { applySuggestions, changeField, changesText, chooseDefaultDay, fetchedText, openForm, othersOnDay, othersOnParcel, savedLines, slaHint, statusLines, suggestionList, suggestionText, wantedOf } from './followUpLogic'
 
 const BLANK = { expected: '', received: '', sla: '', comment: '', terminal: '' }
 const row = (extra: Partial<FinlandFollowUpRow> = {}): FinlandFollowUpRow => ({
@@ -111,6 +111,10 @@ describe('Opfølgning: suggestions from nShift', () => {
     const values = { ...BLANK, expected: '2026-11-26', received: '2026-11-27', sla: 'NOK' }
     const inSheet = row({ nshift: NSHIFT(), sheet: values, effective: values })
     expect(wantedOf(applySuggestions(openForm(inSheet), inSheet))).toEqual({ terminal: 'Vantaa', comment: '1st attempt within SLA (25-11)' })
+    // A Received filled from nShift is not a date the person changed: the SLA in the sheet stays.
+    const noReceived = { ...BLANK, expected: '2026-11-26', sla: 'NOK' }
+    const slaInSheet = row({ nshift: NSHIFT(), sheet: noReceived, effective: noReceived })
+    expect(wantedOf(applySuggestions(openForm(slaInSheet), slaInSheet))).toEqual({ received: '2026-11-27', terminal: 'Vantaa', comment: '1st attempt within SLA (25-11)' })
   })
 
   it('without nShift the old behaviour is unchanged', () => {
@@ -148,6 +152,7 @@ describe('Opfølgning: suggestions from nShift', () => {
     expect(statusLines({ fetched: 3, notFound: 1, failed: 2 })).toBe('3 kolli hentet. 1 ikke fundet i nShift. 2 fejlede.')
     setWarehouseLanguage('en')
     expect(statusLines({ fetched: 0, notFound: 2, failed: 0 })).toBe('0 parcels fetched. 2 not found in nShift.')
+    expect(fetchedText('not a time')).toBe('')
   })
 })
 

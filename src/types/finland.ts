@@ -289,8 +289,11 @@ export interface FinlandBridge {
   clearDrafts(request: { email: string }): Promise<{ email: string; cleared: number }>
   /** Looks up one day's (`date`) or one parcel's (`key`) PostNord and DHL parcels in nShift; reads neither SAP nor the sheet. */
   fetchStatus(request: { date: string } | { key: string }): Promise<FinlandSnapshot & { statusResult: FinlandStatusResult }>
-  /** Turns the day's suggestions for delivered parcels into the person's drafts; the sheet is written by saveFollowUp. */
-  applySuggestions(request: { date: string }): Promise<FinlandSnapshot & { applied: number }>
+  /**
+   * Turns the day's suggestions for delivered parcels into the person's drafts; the sheet is written by saveFollowUp.
+   * `keep`: the fields touched in the open parcel's form (`{ [key]: fields }`, at most one parcel), which are left alone.
+   */
+  applySuggestions(request: { date: string; keep?: Record<string, FinlandFollowUpField[]> }): Promise<FinlandSnapshot & { applied: number }>
   /** Managers and the creator only (MANAGER_ONLY). Never the secret. */
   nshiftSettings(): Promise<FinlandNshiftStatus>
   /** Managers and the creator only (MANAGER_ONLY). Each 1 to 200 characters. */

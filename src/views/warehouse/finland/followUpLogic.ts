@@ -86,19 +86,20 @@ const NSHIFT_FIELDS = ['received', 'terminal', 'comment'] as const
 
 /**
  * Suggestions become changes only when the person moves on. nShift's Received, Terminal and Comment fill only empty
- * fields the person has not changed. SLA is only worked out again when a date was changed now, or when it is empty; an
- * SLA already in the sheet or set by hand is kept. nShift's SLA wins over the date rule while the dates are nShift's.
+ * fields the person has not changed. SLA is only worked out again when a date was changed now (by the person, or as
+ * the suggested Expected), or when it is empty; a Received filled from nShift is not such a change, so an SLA already
+ * in the sheet or set by hand is kept. nShift's SLA wins over the date rule while the dates are nShift's.
  */
 export function applySuggestions(form: FollowUpForm, r: FinlandFollowUpRow): FollowUpForm {
   let next = form
   if (!next.values.expected && r.suggestedExpected) next = touch(next, 'expected', r.suggestedExpected)
   if (!next.values.terminal && (r.courier === 'DHL' || r.courier === 'DSV')) next = touch(next, 'terminal', r.courier)
+  const datesChanged = next.touched.includes('expected') || next.touched.includes('received')
   const s = r.nshift?.suggestion
   for (const field of NSHIFT_FIELDS) {
     const value = s?.[field]
     if (value && !next.values[field] && !next.touched.includes(field)) next = touch(next, field, value)
   }
-  const datesChanged = next.touched.includes('expected') || next.touched.includes('received')
   if (!next.slaManual && (datesChanged || !next.values.sla)) {
     const sla = nshiftSla(r, next.values) ?? slaFor(next.values.expected, next.values.received)
     if (sla !== (next.values.sla || '')) next = touch(next, 'sla', sla)
@@ -129,6 +130,7 @@ export function suggestionList(rows: FinlandFollowUpRow[], day: string | null, f
   return list
 }
 
+// The same status ids as ATTEMPT_IDS and DELIVERED_IDS in electron/warehouse/finland/core/nshiftRules.cjs; change both.
 const FIRST_ATTEMPT = new Set([3000, 2002, 5006, 6000, 6003])
 const DELIVERED = new Set([3000, 2002])
 
@@ -176,9 +178,10 @@ export function newestFetch(rows: FinlandFollowUpRow[]): string | null {
   return newest
 }
 
-/** "Status hentet kl. 14.05", with the day when it was not today. */
+/** "Status hentet kl. 14.05", with the day when it was not today; nothing for a time that cannot be read. */
 export function fetchedText(iso: string, now: Date = new Date()): string {
   const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
   const time = `${pad(d.getHours())}.${pad(d.getMinutes())}`
   const enTime = `${pad(d.getHours())}:${pad(d.getMinutes())}`
   const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate()

@@ -240,9 +240,13 @@ export function FollowUp({ active, data, working, writeBlocked, confirmAll, onCo
     if (working || !date) return
     setNotice(null)
     try {
-      // The open parcel's last change must be a draft first, so the main process skips the fields it touched.
+      // The open parcel's last change must be a draft first, and the fields it touched are left alone even when they
+      // are back to what the sheet has (no draft then), as suggestionList shows.
       await draftQueue.current
-      const result = await exclusive('suggest', () => bridge.applySuggestions({ date }))
+      const f = formRef.current
+      const r = currentRow()
+      const keep = f && r?.key && f.id === r.key ? { [r.key]: f.touched } : undefined
+      const result = await exclusive('suggest', () => bridge.applySuggestions({ date, keep }))
       if (!result) return
       takeData(result)
       setSuggestOpen(false)

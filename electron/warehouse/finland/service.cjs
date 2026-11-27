@@ -540,9 +540,11 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, nshift = n
   /**
    * Turns nShift's suggestions into the person's drafts for every delivered parcel on `date`, as if Enter was pressed on
    * each: only fields that are empty in the sheet and not changed by the person, with the suggested Expected the rules
-   * used. The sheet is not touched; it is written by "Gem i arket" as always.
+   * used. `keep` ({ [key]: fields }) holds the fields touched in the open parcel's form; they are its person's choice
+   * even when a field set back to what the sheet has never became a draft. The sheet is not touched; it is written by
+   * "Gem i arket" as always.
    */
-  function applySuggestions(user, { date } = {}) {
+  function applySuggestions(user, { date, keep = {} } = {}) {
     return quick(() => busy === 'followup' && codeError('FINLAND_BUSY', sheetBusyText), async () => {
       if (!date) throw codeError('FINLAND_INVALID_INPUT', 'Vælg en dag.')
       const drafts = draftsOf(user)
@@ -554,10 +556,11 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, nshift = n
         if (r.pickedUp !== date || !r.key || r.duplicate || !r.nshift?.delivered) continue
         const existing = own.find(d => parcelKey(d.delivery, d.tracking) === r.key) || null
         const touched = existing ? existing.fields : {}
+        const kept = Object.hasOwn(keep, r.key) ? keep[r.key] : []
         const proposed = { expected: r.suggestedExpected, ...r.nshift.suggestion }
         const wanted = {}
         for (const field of FIELDS) {
-          if (proposed[field] && !String(r.effective[field] ?? '').trim() && !(field in touched)) wanted[field] = proposed[field]
+          if (proposed[field] && !String(r.effective[field] ?? '').trim() && !(field in touched) && !kept.includes(field)) wanted[field] = proposed[field]
         }
         if (!Object.keys(wanted).length) continue
         // A suggested SLA follows the dates like an automatic one; a manual SLA the person set stays manual.

@@ -747,6 +747,20 @@ test('apply suggestions never overwrites a filled field', async () => {
   assert.equal(again.applied, 0, 'nothing left to fill')
 })
 
+test('apply suggestions leaves the fields touched in the open parcel alone', async () => {
+  const nshift = fakeNshift(NSHIFT_ANSWERS)
+  const { service } = setup({ sheet: FOLLOW_SHEET, nshift })
+  await service.loadSheet(MONA)
+  await service.fetchStatus(MONA, { date: '2026-11-20' })
+  // Terminal clicked on and off again: never a draft, but the person's choice all the same.
+  const snap = await service.applySuggestions(MONA, { date: '2026-11-20', keep: { [K1]: ['terminal', 'comment'] } })
+  assert.equal(snap.applied, 1)
+  assert.deepEqual(rowOf(snap, K1).effective, { expected: '2026-11-24', received: '2026-11-23', sla: 'OK', comment: '', terminal: '' })
+  const other = await service.applySuggestions(MONA, { date: '2026-11-20', keep: { [K2]: ['terminal'] } })
+  assert.equal(other.applied, 1, 'a field kept on another parcel does not stop this one')
+  assert.equal(rowOf(other, K1).effective.terminal, 'Vantaa')
+})
+
 test('apply suggestions makes drafts, never sheet writes', async () => {
   const nshift = fakeNshift(NSHIFT_ANSWERS)
   const { service, excel, shared } = setup({ sheet: FOLLOW_SHEET, nshift })
