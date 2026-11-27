@@ -12,6 +12,10 @@ export const CHANGELOG: ChangelogEntry[] = [
     items: [
       'Sikkerhedsopdateringer: appens motor (Electron) og en række indbyggede pakker er opdateret til versioner, hvor kendte sikkerhedshuller er lukket',
       'Guides og Knowledge Library: zoom ind og ud i en åben guide med knapperne øverst, Ctrl og musehjulet eller Ctrl + og Ctrl −. Tekst og billeder bliver større sammen, også i PDF-visningerne, og din zoom huskes på PC\'en',
+      'Optælling: TRR kan nu tælle blocked lager på D001, D002 og D003',
+      'Optælling: ny fane "Eksport". Vælg et materiale og få dets serienumre i Excel, med en fane for fundne og en for manglende',
+      'Optælling: "Importér materialedokument" i optællingsoversigten lægger en palles serienumre i den optælling, der tæller dem. Ligger de forskellige steder i SAP, eller både blocked og unblocked, importeres intet, og du kan eksportere listen til Excel og rette det i SAP',
+      'Optælling og Softwareload: et serienummer på 24 cifre fra scanneren gemmes som de sidste 18 cifre, som SAP bruger',
     ],
   },
   {
