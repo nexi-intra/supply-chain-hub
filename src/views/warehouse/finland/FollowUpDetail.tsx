@@ -91,13 +91,13 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   )
 }
 
-/** The parcel's timeline from nShift as a short list (time, place, text), with the first attempt and delivery marked. */
+/** The parcel's timeline from nShift as a short list (time in Finnish time, place, text), with the first attempt and delivery marked. */
 function Timeline({ nshift }: { nshift: NonNullable<FinlandFollowUpRow['nshift']> }) {
   const events = timelineRows(nshift.events)
   return (
     <div className="space-y-2 rounded-lg border bg-muted/30 px-3 py-2.5 text-sm">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <b className="text-xs">{t('Forløb i nShift', 'Timeline in nShift')}</b>
+        <b className="text-xs">{t('Forløb i nShift (finsk tid)', 'Timeline in nShift (Finnish time)')}</b>
         {nshift.firstAttempt && <span className="rounded bg-primary/10 px-1.5 py-0.5 text-xs font-semibold text-primary">{t(`Første forsøg ${dayMonth(nshift.firstAttempt)}`, `First attempt ${dayMonth(nshift.firstAttempt)}`)}</span>}
         {nshift.delivered && <span className="rounded bg-ok-surface px-1.5 py-0.5 text-xs font-semibold">{t(`Afleveret ${dayMonth(nshift.delivered)}`, `Delivered ${dayMonth(nshift.delivered)}`)}</span>}
         <span className="text-xs text-muted-foreground">{fetchedText(nshift.fetchedAt)}</span>

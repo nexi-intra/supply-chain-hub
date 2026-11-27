@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { setWarehouseLanguage } from '@/lib/warehouse/text'
 import type { FinlandFollowUpRow } from '@/types/finland'
-import { applySuggestions, changeField, changesText, chooseDefaultDay, fetchedText, openForm, othersOnDay, othersOnParcel, savedLines, slaHint, statusLines, suggestionList, suggestionText, wantedOf } from './followUpLogic'
+import { applySuggestions, changeField, changesText, chooseDefaultDay, eventTime, fetchedText, openForm, othersOnDay, othersOnParcel, savedLines, slaHint, statusLines, suggestionList, suggestionText, wantedOf } from './followUpLogic'
 
 const BLANK = { expected: '', received: '', sla: '', comment: '', terminal: '' }
 const row = (extra: Partial<FinlandFollowUpRow> = {}): FinlandFollowUpRow => ({
@@ -164,6 +164,13 @@ describe('Opfølgning: suggestions from nShift', () => {
     setWarehouseLanguage('en')
     expect(statusLines({ fetched: 0, notFound: 2, failed: 0 })).toBe('0 parcels fetched. 2 not found in nShift.')
     expect(fetchedText('not a time')).toBe('')
+  })
+
+  it('timeline times are in Finnish time, also across midnight and summer time', () => {
+    expect(eventTime('2026-11-27T10:05:00.000Z')).toBe('27-11 12.05')
+    expect(eventTime('2026-11-24T22:30:00.000Z')).toBe('25-11 00.30')
+    expect(eventTime('2026-07-01T21:15:00+00:00')).toBe('02-07 00.15')
+    expect(eventTime('not a time')).toBe('')
   })
 })
 

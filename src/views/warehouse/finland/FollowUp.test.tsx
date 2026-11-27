@@ -66,6 +66,8 @@ describe('Finlandsforsendelser: Opfølgning', () => {
     const html = detail(row({ nshift }), { onUpdateStatus: noop })
     expect(html).toContain('Første forsøg 25-11')
     expect(html).toContain('Afleveret 27-11')
+    expect(html).toContain('Forløb i nShift (finsk tid)')
+    expect(html).toContain('27-11 12.05')
     expect(html.indexOf('Recipient not home')).toBeLessThan(html.indexOf('Delivered'))
     expect(html).toContain('placeholder="27-11-2026"')
     expect(html).toContain('placeholder="1st attempt within SLA (25-11)"')

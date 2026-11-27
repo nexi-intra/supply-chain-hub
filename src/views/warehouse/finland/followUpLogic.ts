@@ -171,11 +171,14 @@ export function statusLines(s: FinlandStatusResult): string {
 
 const pad = (n: number) => String(n).padStart(2, '0')
 
-/** "27-11 14.05": an event's time, in the computer's own time. */
+const HELSINKI_TIME = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Helsinki', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+
+/** "27-11 14.05": an event's time in Finnish time, as the days of "Første forsøg" and "Afleveret" are counted. */
 export function eventTime(iso: string): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return ''
-  return `${pad(d.getDate())}-${pad(d.getMonth() + 1)} ${pad(d.getHours())}.${pad(d.getMinutes())}`
+  const part = Object.fromEntries(HELSINKI_TIME.formatToParts(d).map(p => [p.type, p.value]))
+  return `${part.day}-${part.month} ${part.hour}.${part.minute}`
 }
 
 /** "27-11" for a day as yyyy-mm-dd. */
