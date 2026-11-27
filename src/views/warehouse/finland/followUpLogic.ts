@@ -35,6 +35,40 @@ export function rowsOfDay(rows: FinlandFollowUpRow[], day: string | null): Finla
 /** The first parcel still to follow up, or the first of the day. */
 export const firstOpenRow = (rows: FinlandFollowUpRow[]) => rows.find(r => !r.done && !r.duplicate) || rows[0] || null
 
+/** What a parcel's dot in the list shows: it cannot be followed up, it is late (SLA NOK), it is followed up, or it is missing. */
+export type FollowUpStatus = 'blocked' | 'late' | 'done' | 'missing'
+export type FollowUpFilter = 'all' | FollowUpStatus
+
+export function rowStatus(r: FinlandFollowUpRow): FollowUpStatus {
+  if (r.duplicate || r.noTracking) return 'blocked'
+  if (r.effective.sla === 'NOK') return 'late'
+  return r.done ? 'done' : 'missing'
+}
+
+export const inFilter = (r: FinlandFollowUpRow, filter: FollowUpFilter) => filter === 'all' || rowStatus(r) === filter
+
+export function filterCounts(rows: FinlandFollowUpRow[]): Record<FollowUpFilter, number> {
+  const counts: Record<FollowUpFilter, number> = { all: rows.length, missing: 0, done: 0, late: 0, blocked: 0 }
+  for (const r of rows) counts[rowStatus(r)]++
+  return counts
+}
+
+/** The parcel a new day opens with: the first in the filter, or the first open one when the filter has none. */
+export const firstInFilter = (rows: FinlandFollowUpRow[], filter: FollowUpFilter) =>
+  (filter === 'all' ? null : rows.find(r => inFilter(r, filter))) || firstOpenRow(rows)
+
+/**
+ * The next (`step` 1) or previous (-1) parcel in the filter, counted from the current one's place in the day, so a
+ * parcel that has just left the filter (followed up under "Mangler") still moves on from where it was. At the end of
+ * the filter the current one stays; an unknown current one gives the first in the filter.
+ */
+export function nextInFilter(rows: FinlandFollowUpRow[], currentId: string | null | undefined, step: number, filter: FollowUpFilter): FinlandFollowUpRow | null {
+  const index = rows.findIndex(r => rowId(r) === currentId)
+  if (index === -1) return rows.find(r => inFilter(r, filter)) ?? rows[0] ?? null
+  for (let i = index + step; i >= 0 && i < rows.length; i += step) if (inFilter(rows[i], filter)) return rows[i]
+  return rows[index]
+}
+
 /** The newest day before today with parcels to follow up, or else the newest day. */
 export function chooseDefaultDay(days: FinlandFollowUpView['days'], today: string): string | null {
   const open = days.filter(d => d.status !== 'done' && d.date < today)

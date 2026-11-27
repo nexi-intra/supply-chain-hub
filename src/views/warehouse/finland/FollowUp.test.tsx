@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { setWarehouseLanguage } from '@/lib/warehouse/text'
 import type { FinlandFollowUpRow, FinlandFollowUpView } from '@/types/finland'
 import { FollowUpCalendar } from './FollowUpCalendar'
+import { StatusFilter } from './FollowUp'
 import { FollowUpDetail, type FollowUpDetailProps } from './FollowUpDetail'
 import { openForm } from './followUpLogic'
 import { SaveAllConfirm, SuggestConfirm, SyncBar, type SyncBarProps } from './SaveConfirm'
@@ -151,5 +152,20 @@ describe('Finlandsforsendelser: Opfølgning', () => {
     expect(html).toContain('title="2 ændringer er ikke gemt i arket"')
     expect(html).toContain('title="Anna Holm har 3 kolli, der ikke er gemt. Bo Jensen har 1 kolli, der ikke er gemt."')
     expect(html).toContain('✓')
+  })
+})
+
+describe('Finlandsforsendelser: the status filter', () => {
+  afterEach(() => setWarehouseLanguage('da'))
+
+  it('shows each status with its count, the chosen one pressed, and "Kan ikke følges op" only when there are any', () => {
+    const counts = { all: 31, missing: 20, done: 9, late: 2, blocked: 0 }
+    const html = renderToStaticMarkup(<StatusFilter counts={counts} value="late" onChange={noop} />)
+    expect(html.match(/<button/g)).toHaveLength(4)
+    expect(button(html, 'For sent<span[^>]*>2</span>')).toContain('aria-pressed="true"')
+    expect(button(html, 'Mangler<span[^>]*>20</span>')).toContain('aria-pressed="false"')
+    expect(html).toContain('Alle')
+    expect(html).not.toContain('Kan ikke følges op')
+    expect(renderToStaticMarkup(<StatusFilter counts={{ ...counts, blocked: 1 }} value="all" onChange={noop} />)).toContain('Kan ikke følges op')
   })
 })

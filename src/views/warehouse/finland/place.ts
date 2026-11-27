@@ -8,4 +8,5 @@ export const finlandPlace: {
   month: number | null
   followDay: string | null
   followMonth: number | null
-} = { tab: 'write', selected: null, month: null, followDay: null, followMonth: null }
+  followFilter: 'all' | 'missing' | 'done' | 'late' | 'blocked'
+} = { tab: 'write', selected: null, month: null, followDay: null, followMonth: null, followFilter: 'all' }

@@ -11,7 +11,7 @@ import { CourierTag, NoticeBox, sheetNotes, writtenAt, type Notice, type Working
 import { FollowUpCalendar } from './FollowUpCalendar'
 import { FollowUpDetail } from './FollowUpDetail'
 import { finlandPlace } from './place'
-import { applySuggestions, changeField, chooseDefaultDay, fetchedText, firstOpenRow, newestFetch, openForm, othersOnDay, othersOnParcel, rowId, rowsOfDay, savedLines, statusLines, suggestionList, wantedOf, type FollowUpForm } from './followUpLogic'
+import { applySuggestions, changeField, chooseDefaultDay, fetchedText, filterCounts, firstInFilter, inFilter, newestFetch, nextInFilter, openForm, othersOnDay, othersOnParcel, rowId, rowStatus, rowsOfDay, savedLines, statusLines, suggestionList, wantedOf, type FollowUpFilter, type FollowUpForm, type FollowUpStatus } from './followUpLogic'
 import { SaveAllConfirm, SuggestConfirm, SyncBar } from './SaveConfirm'
 
 export interface FollowUpProps {
@@ -32,13 +32,44 @@ export interface FollowUpProps {
 
 const ROW_GRID = 'grid grid-cols-[12px_minmax(0,1.2fr)_minmax(0,1fr)_5.5rem_3.25rem_3.25rem_3.75rem_1.75rem] items-center gap-x-2.5'
 
+const STATUS_LOOK: Record<FollowUpStatus, { dot: string; label: () => string }> = {
+  missing: { dot: 'bg-primary/30', label: () => t('Mangler', 'Missing') },
+  done: { dot: 'bg-ok', label: () => t('Fulgt op', 'Followed up') },
+  late: { dot: 'bg-destructive', label: () => t('For sent', 'Late') },
+  blocked: { dot: 'bg-attention', label: () => t('Kan ikke følges op', 'Cannot be followed up') },
+}
+
 function StatusDot({ r }: { r: FinlandFollowUpRow }) {
-  const [className, title] = r.duplicate || r.noTracking
-    ? ['bg-attention', t('Kan ikke følges op', 'Cannot be followed up')]
-    : r.effective.sla === 'NOK'
-      ? ['bg-destructive', t('For sent', 'Late')]
-      : r.done ? ['bg-ok', t('Fulgt op', 'Followed up')] : ['bg-primary/30', t('Mangler', 'Missing')]
-  return <i title={title} className={cn('inline-block size-2.5 rounded-full', className)} />
+  const look = STATUS_LOOK[rowStatus(r)]
+  return <i title={look.label()} className={cn('inline-block size-2.5 rounded-full', look.dot)} />
+}
+
+/** Shows only the day's parcels with one status; the dots double as the legend. "Kan ikke følges op" only when there are any. */
+export function StatusFilter({ counts, value, onChange }: { counts: Record<FollowUpFilter, number>; value: FollowUpFilter; onChange: (filter: FollowUpFilter) => void }) {
+  const options: FollowUpFilter[] = ['all', 'missing', 'done', 'late', ...(counts.blocked || value === 'blocked' ? ['blocked' as const] : [])]
+  return (
+    <div role="group" aria-label={t('Vis kolli', 'Show parcels')} className="flex flex-wrap gap-1.5" data-status-filter>
+      {options.map(option => {
+        const pressed = value === option
+        return (
+          <button
+            key={option}
+            type="button"
+            aria-pressed={pressed}
+            onClick={() => onChange(option)}
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
+              pressed ? 'border-primary bg-primary text-primary-foreground' : 'bg-card text-foreground hover:border-primary/60',
+            )}
+          >
+            {option !== 'all' && <i aria-hidden="true" className={cn('inline-block size-2.5 rounded-full', STATUS_LOOK[option].dot, pressed && 'ring-1 ring-primary-foreground/70')} />}
+            {option === 'all' ? t('Alle', 'All') : STATUS_LOOK[option].label()}
+            <span className={cn('tabular-nums', pressed ? 'text-primary-foreground/80' : 'text-muted-foreground')}>{counts[option]}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
 }
 
 const short = (iso: string) => formatDate(iso).slice(0, 5)
@@ -64,6 +95,7 @@ export function FollowUp({ active, data, working, writeBlocked, confirmAll, onCo
   const [day, setDayState] = useState<string | null>(finlandPlace.followDay)
   const [form, setFormState] = useState<FollowUpForm | null>(null)
   const [month, setMonth] = useState<number | null>(finlandPlace.followMonth)
+  const [filter, setFilterState] = useState<FollowUpFilter>(finlandPlace.followFilter)
   const [confirm, setConfirm] = useState(false)
   const [notice, setNotice] = useState<Notice | null>(null)
   const [focusTick, setFocusTick] = useState(0)
@@ -74,6 +106,7 @@ export function FollowUp({ active, data, working, writeBlocked, confirmAll, onCo
   const [fetching, setFetching] = useState<string | null>(null)
   // The keys and the awaited saves need the newest values, not the ones of the render they started in.
   const dayRef = useRef(day)
+  const filterRef = useRef(filter)
   const formRef = useRef(form)
   const dataRef = useRef(data)
   const draftQueue = useRef<Promise<unknown>>(Promise.resolve())
@@ -108,7 +141,7 @@ export function FollowUp({ active, data, working, writeBlocked, confirmAll, onCo
     const list = rowsOfDay(rows, dayRef.current)
     const f = formRef.current
     if (!f) {
-      openRow(firstOpenRow(list))
+      openRow(firstInFilter(list, filterRef.current))
       return
     }
     const r = list.find(x => rowId(x) === f.id)
@@ -178,9 +211,7 @@ export function FollowUp({ active, data, working, writeBlocked, confirmAll, onCo
       if (result.data) snapshot = result.data
     }
     if (!snapshot) return
-    const list = rowsOfDay(snapshot.followUp.rows, dayRef.current)
-    const index = list.findIndex(x => rowId(x) === formRef.current?.id)
-    openRow(list[Math.min(list.length - 1, Math.max(0, index + step))] ?? null)
+    openRow(nextInFilter(rowsOfDay(snapshot.followUp.rows, dayRef.current), formRef.current?.id, step, filterRef.current))
     setFocusTick(n => n + 1)
   }
 
@@ -278,8 +309,18 @@ export function FollowUp({ active, data, working, writeBlocked, confirmAll, onCo
     setDay(date)
     setMonth(null)
     setSuggestOpen(false)
-    openRow(firstOpenRow(rowsOfDay(dataRef.current?.followUp.rows ?? [], date)))
+    openRow(firstInFilter(rowsOfDay(dataRef.current?.followUp.rows ?? [], date), filterRef.current))
     setNotice(null)
+  }
+
+  /** A filter the open parcel is not in opens the filter's first parcel, so the form shows what the list shows. */
+  const chooseFilter = (next: FollowUpFilter) => {
+    filterRef.current = next
+    finlandPlace.followFilter = next
+    setFilterState(next)
+    const list = rowsOfDay(dataRef.current?.followUp.rows ?? [], dayRef.current)
+    const r = currentRow()
+    if (!r || !inFilter(r, next)) openRow(firstInFilter(list, next))
   }
 
   const onKey = (event: KeyboardEvent) => {
@@ -334,6 +375,9 @@ export function FollowUp({ active, data, working, writeBlocked, confirmAll, onCo
 
   const view = data.followUp
   const rows = rowsOfDay(view.rows, day)
+  const counts = filterCounts(rows)
+  // The open parcel stays in the list after it has left the filter, until the person moves on.
+  const shown = rows.filter(r => inFilter(r, filter) || (!!form && rowId(r) === form.id))
   const info = view.days.find(d => d.date === day)
   const pendingOfDay = rows.filter(r => r.pending)
   const row = currentRow(data)
@@ -414,11 +458,9 @@ export function FollowUp({ active, data, working, writeBlocked, confirmAll, onCo
               )}
             </div>
 
+            <StatusFilter counts={counts} value={filter} onChange={chooseFilter} />
+
             <ul className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
-              <Legend mark={<i className="inline-block size-2.5 rounded-full bg-ok" />}>{t('Fulgt op', 'Followed up')}</Legend>
-              <Legend mark={<i className="inline-block size-2.5 rounded-full bg-primary/30" />}>{t('Mangler', 'Missing')}</Legend>
-              <Legend mark={<i className="inline-block size-2.5 rounded-full bg-destructive" />}>{t('For sent (NOK)', 'Late (NOK)')}</Legend>
-              <Legend mark={<i className="inline-block size-2.5 rounded-full bg-attention" />}>{t('Kan ikke følges op', 'Cannot be followed up')}</Legend>
               <Legend mark={<b className="text-[11px] text-primary">●</b>}>{t('Ændret i appen, ikke gemt i arket', 'Changed in the app, not saved in the sheet')}</Legend>
               <Legend mark={<Users aria-hidden="true" className="size-3.5" />}>{t('En kollega har en ændring, der ikke er gemt', 'A colleague has a change that is not saved')}</Legend>
               <Legend mark={<b>?</b>}>{t('Ikke udfyldt', 'Not filled in')}</Legend>
@@ -429,7 +471,16 @@ export function FollowUp({ active, data, working, writeBlocked, confirmAll, onCo
               <div aria-hidden="true" className={cn(ROW_GRID, 'px-3 pb-0.5 text-[11.5px] font-semibold text-muted-foreground')}>
                 <span /><span>Delivery</span><span>T&T</span><span>Courier</span><span>Expected</span><span>Received</span><span>Terminal</span><span />
               </div>
-              {rows.map(r => {
+              {shown.length === 0 && (
+                <p className="rounded-md border border-dashed px-3 py-4 text-center text-sm text-muted-foreground">
+                  {filter === 'late'
+                    ? t('Ingen kolli er for sent denne dag.', 'No parcels are late on this day.')
+                    : filter === 'missing'
+                      ? t('Alle kolli på dagen er fulgt op.', 'Every parcel on the day is followed up.')
+                      : t('Ingen kolli her denne dag.', 'No parcels here on this day.')}
+                </p>
+              )}
+              {shown.map(r => {
                 const isCurrent = !!form && rowId(r) === form.id
                 return (
                   <button

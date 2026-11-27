@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { setWarehouseLanguage } from '@/lib/warehouse/text'
 import type { FinlandFollowUpRow } from '@/types/finland'
-import { applySuggestions, changeField, changesText, chooseDefaultDay, eventTime, fetchedText, openForm, othersOnDay, othersOnParcel, savedLines, slaHint, statusLines, suggestionList, suggestionText, wantedOf } from './followUpLogic'
+import { applySuggestions, changeField, changesText, chooseDefaultDay, eventTime, fetchedText, filterCounts, firstInFilter, nextInFilter, openForm, othersOnDay, othersOnParcel, rowStatus, savedLines, slaHint, statusLines, suggestionList, suggestionText, wantedOf } from './followUpLogic'
 
 const BLANK = { expected: '', received: '', sla: '', comment: '', terminal: '' }
 const row = (extra: Partial<FinlandFollowUpRow> = {}): FinlandFollowUpRow => ({
@@ -200,5 +200,39 @@ describe('Opfølgning: colleagues and saving', () => {
         '2 kolli blev ikke fundet i arket. Tryk "Hent igen".',
       ],
     })
+  })
+})
+
+describe('Opfølgning: the filter', () => {
+  const day = [
+    row({ key: 'a', row: 1, done: true, effective: { ...BLANK, received: '2026-11-26', sla: 'OK', terminal: 'Vantaa' } }),
+    row({ key: 'b', row: 2 }),
+    row({ key: 'c', row: 3, done: true, effective: { ...BLANK, received: '2026-11-28', sla: 'NOK', terminal: 'Turku' } }),
+    row({ key: 'd', row: 4, duplicate: true }),
+    row({ key: 'e', row: 5 }),
+    row({ key: 'f', row: 6, effective: { ...BLANK, sla: 'NOK' } }),
+  ]
+
+  it('every parcel has the status of its dot: late before followed up, blocked before both', () => {
+    expect(day.map(rowStatus)).toEqual(['done', 'missing', 'late', 'blocked', 'missing', 'late'])
+    expect(rowStatus(row({ noTracking: true, effective: { ...BLANK, sla: 'NOK' } }))).toBe('blocked')
+    expect(filterCounts(day)).toEqual({ all: 6, missing: 2, done: 1, late: 2, blocked: 1 })
+  })
+
+  it('moving on goes to the next parcel in the filter, also when the current one has just left it', () => {
+    expect(nextInFilter(day, 'b', 1, 'missing')?.key).toBe('e')
+    const followedUp = day.map(r => (r.key === 'b' ? { ...r, done: true } : r))
+    expect(nextInFilter(followedUp, 'b', 1, 'missing')?.key).toBe('e')
+    expect(nextInFilter(day, 'e', -1, 'missing')?.key).toBe('b')
+    expect(nextInFilter(day, 'c', 1, 'late')?.key).toBe('f')
+    expect(nextInFilter(day, 'f', 1, 'late')?.key).toBe('f')
+    expect(nextInFilter(day, 'a', 1, 'all')?.key).toBe('b')
+    expect(nextInFilter(day, 'zz', 1, 'late')?.key).toBe('c')
+  })
+
+  it('a new day opens the first parcel in the filter, or the first open one when the filter is empty', () => {
+    expect(firstInFilter(day, 'late')?.key).toBe('c')
+    expect(firstInFilter(day, 'all')?.key).toBe('b')
+    expect(firstInFilter(day.filter(r => r.key !== 'd'), 'blocked')?.key).toBe('b')
   })
 })
