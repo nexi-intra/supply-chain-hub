@@ -12,7 +12,7 @@ import { errorMessage } from '@/lib/warehouse/errors'
 import { formatDateTime } from '@/lib/warehouse/format'
 import { kolli } from '@/lib/warehouse/finlandText'
 import { t } from '@/lib/warehouse/text'
-import { FINLAND_TEST_SHEET, type FinlandDraftsCleared, type FinlandDraftsOverview, type FinlandDraftsPerson, type FinlandSettings } from '@/types/finland'
+import { FINLAND_TEST_SHEET, type FinlandDraftsCleared, type FinlandDraftsOverview, type FinlandDraftsPerson, type FinlandNshiftStatus, type FinlandSettings } from '@/types/finland'
 
 type SheetValues = Omit<FinlandSettings, 'isTest'>
 
@@ -146,6 +146,91 @@ export function FinlandSheetSettings({ settings, leftBehind = null, onSaved }: {
   )
 }
 
+const NSHIFT_KEY_MAX = 200
+
+/** Why the typed nShift key cannot be sent (both fields 1 to 200 characters after trimming), or null when it can. */
+export function nshiftKeyProblem({ clientId, clientSecret }: { clientId: string; clientSecret: string }): string | null {
+  const ok = (value: string) => value.trim().length > 0 && value.trim().length <= NSHIFT_KEY_MAX
+  return ok(clientId) && ok(clientSecret) ? null : t('Udfyld klient-id og hemmelighed (højst 200 tegn).', 'Fill in client id and secret (at most 200 characters).')
+}
+
+/**
+ * The nShift key: whether it is set up (only the last four characters of the client id are known here), a form to save a
+ * new one and a test of the connection. The secret is never shown again and is cleared after every save.
+ */
+export function FinlandNshiftSettings({ status, onSaved }: { status: FinlandNshiftStatus; onSaved: (status: FinlandNshiftStatus) => void }) {
+  const [clientId, setClientId] = useState('')
+  const [clientSecret, setClientSecret] = useState('')
+  const [problem, setProblem] = useState<string | null>(null)
+  const [busy, setBusy] = useState<'save' | 'test' | null>(null)
+  const [tested, setTested] = useState<{ ok: boolean; text: string } | null>(null)
+
+  const save = async () => {
+    if (busy) return
+    const invalid = nshiftKeyProblem({ clientId, clientSecret })
+    setProblem(invalid)
+    if (invalid) return
+    setBusy('save')
+    setTested(null)
+    try {
+      const result = await trackPendingWrite(window.electronWarehouse!.finland.setNshiftSettings({ clientId: clientId.trim(), clientSecret: clientSecret.trim() }))
+      setClientId('')
+      toast.success(t('nShift-nøglen er gemt', 'The nShift key is saved'))
+      onSaved(result)
+    } catch (error) {
+      toast.error(errorMessage(error, t('nShift-nøglen blev ikke gemt', 'The nShift key was not saved')))
+    } finally {
+      setClientSecret('')
+      setBusy(null)
+    }
+  }
+
+  const test = async () => {
+    if (busy || !status.configured) return
+    setBusy('test')
+    setTested(null)
+    try {
+      const result = await window.electronWarehouse!.finland.testNshift()
+      setTested({ ok: true, text: t('Forbindelsen virker.', 'The connection works.') })
+      onSaved({ configured: result.configured, clientIdEnding: result.clientIdEnding })
+    } catch (error) {
+      setTested({ ok: false, text: errorMessage(error, t('Forbindelsen virker ikke.', 'The connection does not work.')) })
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <Card className="gap-0 p-6" data-finland-nshift>
+      <h2 className="text-lg font-semibold">nShift</h2>
+      <p className="mt-1 mb-4 text-sm text-muted-foreground">{t('Nøglen bruges til at hente status for kolli fra nShift i Opfølgning.', 'The key is used to fetch parcel status from nShift in Follow-up.')}</p>
+      <div className="mb-5 flex flex-wrap items-center gap-2 rounded-md border p-4" data-nshift-status>
+        {status.configured
+          ? <span className="text-sm">{t(`Sat op, klient-id slutter på ${status.clientIdEnding}`, `Set up, client id ends in ${status.clientIdEnding}`)}</span>
+          : <Badge variant="attention">{t('Ikke sat op', 'Not set up')}</Badge>}
+      </div>
+      <form className="space-y-4" autoComplete="off" onSubmit={event => { event.preventDefault(); void save() }}>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="finland-nshift-client">{t('Klient-id', 'Client id')}</Label>
+            <Input id="finland-nshift-client" autoComplete="off" value={clientId} disabled={!!busy} onChange={event => setClientId(event.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="finland-nshift-secret">{t('Hemmelighed', 'Secret')}</Label>
+            <Input id="finland-nshift-secret" type="password" autoComplete="off" value={clientSecret} disabled={!!busy} onChange={event => setClientSecret(event.target.value)} />
+          </div>
+        </div>
+        {problem && <p role="alert" className="text-sm text-destructive">{problem}</p>}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="submit" disabled={!!busy}>{t('Gem', 'Save')}</Button>
+          <Button type="button" variant="outline" disabled={!status.configured || !!busy} onClick={() => void test()}>{t('Test forbindelsen', 'Test the connection')}</Button>
+          {tested && <span role="status" className={tested.ok ? 'text-sm' : 'text-sm text-destructive'} data-nshift-tested>{tested.text}</span>}
+        </div>
+      </form>
+    </Card>
+  )
+}
+
 /**
  * Everyone's follow-up changes saved in the app but not in the sheet yet, the manager's own included, and below them who
  * deleted whose changes (`cleared`, newest first).
@@ -238,13 +323,14 @@ export function FinlandDrafts({ people, cleared = [], onCleared }: { people: Fin
   )
 }
 
-/** Finlandsforsendelser in Administration: which sheet the tool writes, and the changes not in the sheet yet. */
+/** Finlandsforsendelser in Administration: which sheet the tool writes, the nShift key, and the changes not in the sheet yet. */
 export function FinlandAdmin() {
   const [settings, setSettings] = useState<FinlandSettings | null>(null)
   const [settingsFailed, setSettingsFailed] = useState<string | null>(null)
   const [overview, setOverview] = useState<FinlandDraftsOverview | null>(null)
   const [draftsFailed, setDraftsFailed] = useState<string | null>(null)
-
+  const [nshift, setNshift] = useState<FinlandNshiftStatus | null>(null)
+  const [nshiftFailed, setNshiftFailed] = useState<string | null>(null)
   const loadDrafts = useCallback(async () => {
     try {
       setOverview(await window.electronWarehouse!.finland.draftsOverview())
@@ -262,6 +348,9 @@ export function FinlandAdmin() {
     window.electronWarehouse?.finland.draftsOverview()
       .then(result => { if (current) setOverview(result) })
       .catch(error => { if (current) setDraftsFailed(errorMessage(error)) })
+    window.electronWarehouse?.finland.nshiftSettings()
+      .then(result => { if (current) setNshift(result) })
+      .catch(error => { if (current) setNshiftFailed(errorMessage(error)) })
     return () => { current = false }
   }, [])
 
@@ -278,6 +367,9 @@ export function FinlandAdmin() {
       {!settingsFailed && !settings && <Skeleton className="h-64 rounded-xl" />}
       {/* The key starts the form over from what was saved, e.g. after "Brug testarket igen". */}
       {settings && <FinlandSheetSettings key={`${settings.workbookUrl}\n${settings.sheetName}\n${settings.tableName}`} settings={settings} leftBehind={leftBehind} onSaved={saved} />}
+      {nshiftFailed && <p role="alert" className={ALERT_CLASS}>{nshiftFailed}</p>}
+      {!nshiftFailed && !nshift && <Skeleton className="h-48 rounded-xl" />}
+      {nshift && !nshiftFailed && <FinlandNshiftSettings status={nshift} onSaved={setNshift} />}
       {draftsFailed && <p role="alert" className={ALERT_CLASS}>{draftsFailed}</p>}
       {!draftsFailed && !overview && <Skeleton className="h-40 rounded-xl" />}
       {overview && !draftsFailed && <FinlandDrafts people={overview.people} cleared={overview.cleared} onCleared={loadDrafts} />}

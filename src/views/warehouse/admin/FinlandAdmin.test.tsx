@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it } from 'vitest'
 import { setWarehouseLanguage } from '@/lib/warehouse/text'
 import { FINLAND_TEST_SHEET, type FinlandDraftsCleared, type FinlandDraftsPerson } from '@/types/finland'
-import { danishGenitive, draftDays, FinlandDrafts, FinlandSheetSettings, leftBehindText } from './FinlandAdmin'
+import { danishGenitive, draftDays, FinlandDrafts, FinlandNshiftSettings, FinlandSheetSettings, leftBehindText, nshiftKeyProblem } from './FinlandAdmin'
 
 const REAL = { workbookUrl: 'https://christianiabpos.sharepoint.com/sites/NordicSupplyChain/Shared Documents/Ordre.xlsx', sheetName: 'Sheet1', tableName: 'Table2', isTest: false }
 const noop = () => {}
@@ -74,5 +74,34 @@ describe('Finlandsforsendelser in Administration', () => {
     expect(html.indexOf('Mona Berg slettede Jens&#x27; ændringer (3 kolli)')).toBeLessThan(html.indexOf('Mona Berg slettede Anna Holms ændringer (1 kolli)'))
     expect(html).toContain('26.11.2026 14:05')
     expect(renderToStaticMarkup(<FinlandDrafts people={[]} onCleared={async () => {}} />)).not.toContain('Slettede ændringer')
+  })
+
+  it('shows whether nShift is set up without the secret', () => {
+    const html = renderToStaticMarkup(<FinlandNshiftSettings status={{ configured: true, clientIdEnding: 'ab12' }} onSaved={noop} />)
+    expect(html).toContain('nShift')
+    expect(html).toContain('Sat op, klient-id slutter på ab12')
+    expect(html).toContain('Klient-id')
+    expect(html).toContain('Hemmelighed')
+    expect(html).toMatch(/<input[^>]*type="password"[^>]*>/)
+    expect(html).not.toMatch(/<input[^>]*type="password"[^>]*value="[^"]/)
+    expect(html).toMatch(/<button[^>]*>Gem<\/button>/)
+    expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>Test forbindelsen<\/button>/)
+    const unset = renderToStaticMarkup(<FinlandNshiftSettings status={{ configured: false, clientIdEnding: '' }} onSaved={noop} />)
+    expect(unset).toContain('Ikke sat op')
+    expect(unset).not.toContain('slutter på')
+    expect(unset).toMatch(/<button[^>]*disabled=""[^>]*>Test forbindelsen<\/button>/)
+    setWarehouseLanguage('en')
+    expect(renderToStaticMarkup(<FinlandNshiftSettings status={{ configured: true, clientIdEnding: 'ab12' }} onSaved={noop} />)).toContain('Set up, client id ends in ab12')
+  })
+
+  it('the nShift key needs both fields, each at most 200 characters after trimming', () => {
+    const problem = 'Udfyld klient-id og hemmelighed (højst 200 tegn).'
+    expect(nshiftKeyProblem({ clientId: 'client', clientSecret: 'secret' })).toBeNull()
+    expect(nshiftKeyProblem({ clientId: '  ', clientSecret: 'secret' })).toBe(problem)
+    expect(nshiftKeyProblem({ clientId: 'client', clientSecret: '' })).toBe(problem)
+    expect(nshiftKeyProblem({ clientId: 'x'.repeat(200), clientSecret: ` ${'y'.repeat(200)} ` })).toBeNull()
+    expect(nshiftKeyProblem({ clientId: 'x'.repeat(201), clientSecret: 'secret' })).toBe(problem)
+    setWarehouseLanguage('en')
+    expect(nshiftKeyProblem({ clientId: '', clientSecret: '' })).toBe('Fill in client id and secret (at most 200 characters).')
   })
 })
