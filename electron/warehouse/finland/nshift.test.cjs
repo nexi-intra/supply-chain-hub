@@ -117,6 +117,17 @@ test('a parcel nShift does not know gives null', async () => {
   assert.equal(await client(nshift).lookup('UNKNOWN', '2026-11-23'), null)
 })
 
+test('of several shipments the one with a package numbered as the T&T is used', async () => {
+  const other = { shipment: { ...element('OTHER1').shipment, carrierName: 'Other carrier' }, additionalInformation: {} }
+  const nshift = fakeNshift({ lookup: () => reply(200, [other, element('TT1')]) })
+  const timeline = await client(nshift).lookup('TT1', '2026-11-23')
+  assert.equal(timeline.carrier, 'Postnord API')
+  assert.deepEqual(timeline.events.map((e) => e.place), ['VANTAA Vantaa FIN'])
+  // No match: the first.
+  const none = fakeNshift({ lookup: () => reply(200, [other, element('OTHER2')]) })
+  assert.equal((await client(none).lookup('TT1', '2026-11-23')).carrier, 'Other carrier')
+})
+
 test('a refused secret never appears in the error', async () => {
   for (const status of [400, 401]) {
     const nshift = fakeNshift({ token: () => reply(status, { error: 'invalid_client', error_description: `bad ${SECRET}` }) })

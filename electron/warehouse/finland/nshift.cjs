@@ -28,6 +28,15 @@ const refused = () => codeError('FINLAND_NSHIFT_REFUSED', REFUSED_TEXT)
 const failed = () => codeError('FINLAND_NSHIFT_FAILED', FAILED_TEXT)
 const clean = (value) => String(value == null ? '' : value).trim()
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+const sameNumber = (a, b) => clean(a).replace(/\s+/g, '').toUpperCase() === clean(b).replace(/\s+/g, '').toUpperCase()
+const list = (value) => (Array.isArray(value) ? value : [])
+
+// Of several shipments the one with a package numbered as the T&T, or else the first.
+function elementFor(answer, tracking) {
+  const hasPackage = (element) => list(element && element.shipment && element.shipment.lines)
+    .some((line) => list(line && line.packages).some((pkg) => pkg && sameNumber(pkg.number, tracking)))
+  return answer.find(hasPackage) || answer[0]
+}
 
 /** Pickup day minus 3 to plus 27 days, whole days in UTC; null for anything but a real 'YYYY-MM-DD'. */
 function searchWindow(pickedUp) {
@@ -143,7 +152,7 @@ function createNshiftClient({ credentials, fetch = globalThis.fetch, now = Date.
     if (!Array.isArray(answer)) throw failed()
     if (!answer.length) return null
     try {
-      return timelineFrom(answer[0], query)
+      return timelineFrom(elementFor(answer, query), query)
     } catch {
       throw failed()
     }
