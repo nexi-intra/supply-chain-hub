@@ -235,6 +235,26 @@ test('PostNord uses only the package with the looked-up number', () => {
   })
 })
 
+test('a delivery names only city and country, never the recipient', () => {
+  const element = {
+    shipment: {
+      carrierName: 'Postnord API',
+      events: [
+        raw('2026-11-23T20:00:00+00:00', 2003, { name1: 'KØGE PAKKETERMINAL', city: 'Køge', countryCode: 'DNK' }, 'ARRIVED'),
+        raw('2026-11-24T10:00:00+00:00', 3000, { name1: 'Matti Meikäläinen', city: 'Vantaa', countryCode: 'FIN' }, 'DELIVERED')
+      ]
+    },
+    additionalInformation: {}
+  }
+  const t = timelineFrom(element, 'TT1')
+  assert.deepEqual(t.events.map((e) => e.place), [KOEGE, 'Vantaa FIN'])
+  assert.ok(!JSON.stringify(t).includes('Matti'))
+  // Rules that match on the city still see it.
+  const f = facts(t, '2026-11-23')
+  assert.equal(f.terminal, 'Vantaa')
+  assert.equal(f.koegeHours, 14)
+})
+
 test("nShift's own events below 2000 are ignored", () => {
   const element = {
     shipment: {

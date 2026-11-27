@@ -28,10 +28,15 @@ const isConcrete = (place) => clean(place) !== '' && !/^(postnord|dhl)\b/i.test(
 
 const isPostnordCourier = (courier) => /^postnord$/i.test(clean(courier))
 
+// Only on transport and terminal events is the first address's name a carrier location. On a delivery, an attempt or a
+// booking it may be the recipient, a private person, so those events give only city and country.
+const NAMED_PLACE_IDS = [2000, 2003, 2004, 2008]
+
 function placeOf(raw) {
   const a = Array.isArray(raw.addresses) && raw.addresses[0]
   if (!a) return ''
-  return [a.name1, a.city, a.countryCode].map(clean).filter(Boolean).join(' ')
+  const parts = NAMED_PLACE_IDS.includes(Number(raw.normalizedStatusId)) ? [a.name1, a.city, a.countryCode] : [a.city, a.countryCode]
+  return parts.map(clean).filter(Boolean).join(' ')
 }
 
 function toEvent(raw) {
