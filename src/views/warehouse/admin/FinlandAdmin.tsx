@@ -12,7 +12,7 @@ import { errorMessage } from '@/lib/warehouse/errors'
 import { formatDateTime } from '@/lib/warehouse/format'
 import { kolli } from '@/lib/warehouse/finlandText'
 import { t } from '@/lib/warehouse/text'
-import { FINLAND_TEST_SHEET, type FinlandDraftsCleared, type FinlandDraftsOverview, type FinlandDraftsPerson, type FinlandNshiftStatus, type FinlandSettings } from '@/types/finland'
+import { FINLAND_STANDARD_SHEET, type FinlandDraftsCleared, type FinlandDraftsOverview, type FinlandDraftsPerson, type FinlandNshiftStatus, type FinlandSettings } from '@/types/finland'
 
 type SheetValues = Omit<FinlandSettings, 'isTest' | 'localCopy'>
 
@@ -44,14 +44,14 @@ export function leftBehindText({ drafts, notSent }: LeftBehind): string | null {
 }
 
 /**
- * Moving to another real sheet is confirmed, and so is moving back to the test sheet while changes or marks would stay
+ * Moving to another sheet is confirmed, and so is moving back to the standard sheet while changes or marks would stay
  * behind; a new tab or table in the same sheet is not.
  */
 const needsConfirm = (next: SheetValues, current: FinlandSettings, leftBehind: LeftBehind | null) => next.workbookUrl !== current.workbookUrl
-  && (next.workbookUrl !== FINLAND_TEST_SHEET.workbookUrl || !!(leftBehind && leftBehindText(leftBehind)))
+  && (next.workbookUrl !== FINLAND_STANDARD_SHEET.workbookUrl || !!(leftBehind && leftBehindText(leftBehind)))
 
 /**
- * The sheet everyone in BPO and TCD writes: its address, tab and table, with "Gem" and the way back to the test sheet.
+ * The sheet everyone in BPO and TCD writes: its address, tab and table, with "Gem" and the way back to the standard sheet.
  * `leftBehind`: what the current sheet has that a switch leaves behind (null while unknown).
  */
 export function FinlandSheetSettings({ settings, leftBehind = null, onSaved }: { settings: FinlandSettings; leftBehind?: LeftBehind | null; onSaved: (settings: FinlandSettings) => void }) {
@@ -76,15 +76,16 @@ export function FinlandSheetSettings({ settings, leftBehind = null, onSaved }: {
     }
   }
 
-  const savedText = (result: FinlandSettings) => (result.isTest ? t('Værktøjet skriver nu i testarket', 'The tool now writes in the test sheet') : t('Arket er gemt', 'The sheet is saved'))
+  const isStandard = (url: string) => url === FINLAND_STANDARD_SHEET.workbookUrl
+  const savedText = (result: FinlandSettings) => (isStandard(result.workbookUrl) ? t('Værktøjet skriver nu i standardarket', 'The tool now writes in the standard sheet') : t('Arket er gemt', 'The sheet is saved'))
   const save = () => {
     if (!changed || !filled || saving) return
     if (needsConfirm(next, settings, leftBehind)) setConfirm(next)
     else void write(next, savedText)
   }
-  const useTestSheet = () => {
-    if (needsConfirm(FINLAND_TEST_SHEET, settings, leftBehind)) setConfirm(FINLAND_TEST_SHEET)
-    else void write(FINLAND_TEST_SHEET, savedText)
+  const useStandardSheet = () => {
+    if (needsConfirm(FINLAND_STANDARD_SHEET, settings, leftBehind)) setConfirm(FINLAND_STANDARD_SHEET)
+    else void write(FINLAND_STANDARD_SHEET, savedText)
   }
   const behind = leftBehind && leftBehindText(leftBehind)
   const field = (key: keyof SheetValues) => ({ value: values[key], disabled: saving, onChange: (event: ChangeEvent<HTMLInputElement>) => setValues(current => ({ ...current, [key]: event.target.value })) })
@@ -96,13 +97,11 @@ export function FinlandSheetSettings({ settings, leftBehind = null, onSaved }: {
       <div className="mb-5 space-y-1 rounded-md border p-4" data-active-sheet>
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium">{t('Værktøjet skriver i', 'The tool writes in')}</span>
-          {settings.isTest && !settings.localCopy && <Badge variant="attention">{t('Testark', 'Test sheet')}</Badge>}
           {settings.localCopy && <Badge variant="attention">{t('Lokal kopi', 'Local copy')}</Badge>}
         </div>
         <p className="break-all text-sm">{settings.workbookUrl}</p>
         <p className="text-sm text-muted-foreground">{t(`Fane ${settings.sheetName}, tabel ${settings.tableName}`, `Tab ${settings.sheetName}, table ${settings.tableName}`)}</p>
         {settings.localCopy && <p className="text-sm text-muted-foreground">{t('Hubben er startet med en lokal kopi, så denne pc skriver kun i kopien. Arket, der er gemt nedenfor, gælder for alle andre.', 'The Hub was started with a local copy, so this PC writes only in the copy. The sheet saved below applies to everyone else.')}</p>}
-        {settings.isTest && !settings.localCopy && <p className="text-sm text-muted-foreground">{t('Det er testarket. Skriv det rigtige arks adresse nedenfor, når værktøjet skal tages i brug.', "This is the test sheet. Type the real sheet's address below when the tool is to be used.")}</p>}
       </div>
       <form className="space-y-4" onSubmit={event => { event.preventDefault(); save() }}>
         <div className="space-y-1.5">
@@ -122,7 +121,7 @@ export function FinlandSheetSettings({ settings, leftBehind = null, onSaved }: {
         </div>
         <div className="flex flex-wrap gap-2">
           <Button type="submit" disabled={!changed || !filled || saving}>{t('Gem', 'Save')}</Button>
-          {!settings.isTest && <Button type="button" variant="outline" disabled={saving} onClick={useTestSheet}>{t('Brug testarket igen', 'Use the test sheet again')}</Button>}
+          {!settings.localCopy && !isStandard(settings.workbookUrl) && <Button type="button" variant="outline" disabled={saving} onClick={useStandardSheet}>{t('Brug standardarket igen', 'Use the standard sheet again')}</Button>}
         </div>
       </form>
       {confirm && (
@@ -367,7 +366,7 @@ export function FinlandAdmin() {
     <>
       {settingsFailed && <p role="alert" className={ALERT_CLASS}>{settingsFailed}</p>}
       {!settingsFailed && !settings && <Skeleton className="h-64 rounded-xl" />}
-      {/* The key starts the form over from what was saved, e.g. after "Brug testarket igen". */}
+      {/* The key starts the form over from what was saved, e.g. after "Brug standardarket igen". */}
       {settings && <FinlandSheetSettings key={`${settings.workbookUrl}\n${settings.sheetName}\n${settings.tableName}`} settings={settings} leftBehind={leftBehind} onSaved={saved} />}
       {nshiftFailed && <p role="alert" className={ALERT_CLASS}>{nshiftFailed}</p>}
       {!nshiftFailed && !nshift && <Skeleton className="h-48 rounded-xl" />}

@@ -5,7 +5,7 @@ const os = require('node:os')
 const path = require('node:path')
 const { createStore } = require('../../store.cjs')
 const { parcelKey } = require('./core/sheetIndex.cjs')
-const { createFinlandShared, TEST_WORKBOOK_URL } = require('./shared.cjs')
+const { createFinlandShared, STANDARD_WORKBOOK_URL } = require('./shared.cjs')
 
 const ANNA = { email: 'anna@x.test', fullName: 'Anna Holm', role: 'user', team: 'BPO', tools: ['finland'] }
 const BO = { email: 'bo@x.test', fullName: 'Bo Jensen', role: 'user', team: 'TCD', tools: ['finland'] }
@@ -177,10 +177,10 @@ test('a local copy given at start wins over the shared sheet, and nothing else i
   }
 })
 
-test('settings default to the test sheet and only managers change them', async () => {
+test('settings default to the standard sheet, which is not a test sheet, and only managers change them', async () => {
   const { shared } = setup()
-  assert.equal(TEST_WORKBOOK_URL, 'https://christianiabpos.sharepoint.com/sites/NordicSupplyChain/Shared Documents/General/Testark - Ordre sendt til Finland fra Danmark.xlsx')
-  assert.deepEqual(await shared.settings.get(), { workbookUrl: TEST_WORKBOOK_URL, sheetName: 'Sheet1', tableName: 'Table2', isTest: true })
+  assert.equal(STANDARD_WORKBOOK_URL, 'https://christianiabpos.sharepoint.com/sites/NordicSupplyChain/Shared Documents/General/Testark - Ordre sendt til Finland fra Danmark.xlsx')
+  assert.deepEqual(await shared.settings.get(), { workbookUrl: STANDARD_WORKBOOK_URL, sheetName: 'Sheet1', tableName: 'Table2', isTest: false })
   const real = { workbookUrl: 'https://christianiabpos.sharepoint.com/sites/NordicSupplyChain/Ordre.xlsx', sheetName: 'Ark1', tableName: 'Ordrer' }
   await assert.rejects(shared.settings.set(ANNA, real), { code: 'MANAGER_ONLY' })
   assert.deepEqual(await shared.settings.set(ADA, real), { ...real, isTest: false })
@@ -194,7 +194,7 @@ test('settings default to the test sheet and only managers change them', async (
     { ...real, sheetName: '  ' },
     { ...real, tableName: 'x'.repeat(65) },
   ]) await assert.rejects(shared.settings.set(ADA, bad), { code: 'FINLAND_SETTINGS_INVALID' })
-  assert.deepEqual(await shared.settings.set(ADA, { workbookUrl: TEST_WORKBOOK_URL, sheetName: 'Sheet1', tableName: 'Table2' }), { workbookUrl: TEST_WORKBOOK_URL, sheetName: 'Sheet1', tableName: 'Table2', isTest: true })
+  assert.deepEqual(await shared.settings.set(ADA, { workbookUrl: STANDARD_WORKBOOK_URL, sheetName: 'Sheet1', tableName: 'Table2' }),   { workbookUrl: STANDARD_WORKBOOK_URL, sheetName: 'Sheet1', tableName: 'Table2', isTest: false })
 })
 
 test('drafts are per person and others are counted per day', async () => {
@@ -263,26 +263,26 @@ test('drafts, not-sent marks and written keys are kept per sheet; without a shee
   await anna.set('1|A', { key: '1|A', pickedUp: '2026-11-18' })
   await anna.set('2|B', { key: '2|B', pickedUp: '2026-11-18', workbookUrl: REAL })
   assert.deepEqual((await shared.drafts.others(BO.email, REAL)).map(o => [o.keys, o.byDay]), [[['2|B'], { '2026-11-18': 1 }]])
-  assert.deepEqual((await shared.drafts.others(BO.email, TEST_WORKBOOK_URL)).map(o => o.keys), [['1|A']])
+  assert.deepEqual((await shared.drafts.others(BO.email, STANDARD_WORKBOOK_URL)).map(o => o.keys), [['1|A']])
   assert.deepEqual((await shared.drafts.others(BO.email)).map(o => o.keys), [['1|A', '2|B']])
 
   await shared.notSent.mark(ANNA, PARCEL)
   assert.deepEqual(await shared.notSent.list(REAL), [])
-  assert.equal((await shared.notSent.list(TEST_WORKBOOK_URL)).length, 1)
+  assert.equal((await shared.notSent.list(STANDARD_WORKBOOK_URL)).length, 1)
   assert.equal(await shared.notSent.restore(parcelKey(PARCEL.delivery, PARCEL.tracking), REAL), false, 'a test-sheet mark is not restored from the real sheet')
   // Marked again in the real sheet: the test sheet's mark gives way.
   const marked = await shared.notSent.mark(BO, { ...PARCEL, workbookUrl: REAL })
   assert.equal(marked.byName, 'Bo Jensen')
   assert.deepEqual((await shared.notSent.list(REAL)).map(e => e.byName), ['Bo Jensen'])
-  assert.deepEqual(await shared.notSent.list(TEST_WORKBOOK_URL), [])
+  assert.deepEqual(await shared.notSent.list(STANDARD_WORKBOOK_URL), [])
 
   await shared.dayLog.record(ANNA, '2026-11-19', ['1|A'])
   await shared.dayLog.record(BO, '2026-11-19', ['2|B'], { workbookUrl: REAL })
   assert.deepEqual([...await shared.dayLog.recentKeys(undefined, REAL)], ['2|B'])
-  assert.deepEqual([...await shared.dayLog.recentKeys(undefined, TEST_WORKBOOK_URL)], ['1|A'])
+  assert.deepEqual([...await shared.dayLog.recentKeys(undefined, STANDARD_WORKBOOK_URL)], ['1|A'])
   assert.deepEqual([...await shared.dayLog.recentKeys()].sort(), ['1|A', '2|B'])
   assert.deepEqual(await shared.dayLog.days(REAL), { '2026-11-19': { byName: 'Bo Jensen', at: Date.UTC(2026, 10, 19, 9), count: 1, workbookUrl: REAL } }, 'the test sheet\'s count is not carried over')
-  assert.deepEqual(await shared.dayLog.days(TEST_WORKBOOK_URL), {})
+  assert.deepEqual(await shared.dayLog.days(STANDARD_WORKBOOK_URL), {})
 })
 
 // A made-up secret: never a real one in tests.

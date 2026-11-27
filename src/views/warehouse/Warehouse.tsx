@@ -87,7 +87,7 @@ export function Warehouse({ onNavigateBack }: { onNavigateBack: () => void }) {
   const sapTool: SapTool | null = counting && (tool === 'counts' || tool === 'locations' || tool === 'softwareload') ? tool
     // Finlandsforsendelser is BPO's and TCD's: no counting user needed, `tool` is only 'finland' when the team has it.
     : user && tool === 'finland' ? 'finland' : null
-  // Finlandsforsendelser puts its own marks ("N kolli er ikke gemt i arket", "Testark") next to the SAP light.
+  // Finlandsforsendelser puts its own marks ("N kolli er ikke gemt i arket", "Lokal kopi") next to the SAP light.
   const [finlandMarks, setFinlandMarks] = useState<HTMLDivElement | null>(null)
 
   useEffect(() => {

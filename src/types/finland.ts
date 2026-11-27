@@ -211,7 +211,7 @@ export type FinlandManualResult =
   | { ok: true; row: number | null; skipped: number; weekFormulaOk: boolean; tracking: string }
   | { ok: false; errors: Partial<Record<keyof FinlandManualInput, string>> }
 
-/** Which sheet everyone writes. `isTest`: the test sheet (the default). */
+/** Which sheet everyone writes. `isTest`: a local copy given when the Hub was started, never the shared sheet. */
 export interface FinlandSettings {
   workbookUrl: string
   sheetName: string
@@ -221,8 +221,8 @@ export interface FinlandSettings {
   localCopy?: boolean
 }
 
-/** The test sheet, the default until a manager chooses another; the same as DEFAULT_SETTINGS in electron/warehouse/finland/shared.cjs. */
-export const FINLAND_TEST_SHEET: Omit<FinlandSettings, 'isTest'> = Object.freeze({
+/** The standard sheet, the shared sheet in use, until a manager chooses another; the same as DEFAULT_SETTINGS in electron/warehouse/finland/shared.cjs. */
+export const FINLAND_STANDARD_SHEET: Omit<FinlandSettings, 'isTest'> = Object.freeze({
   workbookUrl: 'https://christianiabpos.sharepoint.com/sites/NordicSupplyChain/Shared Documents/General/Testark - Ordre sendt til Finland fra Danmark.xlsx',
   sheetName: 'Sheet1',
   tableName: 'Table2',

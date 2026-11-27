@@ -108,7 +108,7 @@ test('a BPO user reads the sheet', async () => {
   assert.deepEqual(excel.calls, ['read'])
   assert.equal(snap.followUp.rows.length, 1)
   assert.equal(snap.followUp.rows[0].key, KEY)
-  assert.equal(snap.sheet.isTest, true, 'the test sheet until a manager chooses another')
+  assert.equal(snap.sheet.isTest, false, 'the standard sheet is the shared sheet in use, not a test sheet')
   assert.equal((await call('bpo', 'settings')).sheetName, 'Sheet1')
   await registered.closeAll()
 })

@@ -85,18 +85,16 @@ describe('Finlandsforsendelser: Skriv ind', () => {
     expect(confirm).toContain('Ja, slet række 5 i arket')
   })
 
-  it('the title bar marks unsaved changes and the test sheet', () => {
-    expect(renderToStaticMarkup(<FinlandMarks pending={0} isTest={false} />)).toBe('')
-    const html = renderToStaticMarkup(<FinlandMarks pending={3} isTest />)
+  it('the title bar marks unsaved changes, and the shared sheet has no badge', () => {
+    expect(renderToStaticMarkup(<FinlandMarks pending={0} />)).toBe('')
+    const html = renderToStaticMarkup(<FinlandMarks pending={3} />)
     expect(html).toContain('3 kolli er ikke gemt i arket')
-    expect(html).toContain('Testark')
+    expect(html).not.toContain('Testark')
     setWarehouseLanguage('en')
-    expect(renderToStaticMarkup(<FinlandMarks pending={1} isTest={false} />)).toContain('1 parcel not saved in the sheet')
+    expect(renderToStaticMarkup(<FinlandMarks pending={1} />)).toContain('1 parcel not saved in the sheet')
   })
 
   it('the title bar says local copy when the Hub was started with one', () => {
-    const html = renderToStaticMarkup(<FinlandMarks pending={0} isTest localCopy />)
-    expect(html).toContain('Lokal kopi')
-    expect(html).not.toContain('>Testark<')
+    expect(renderToStaticMarkup(<FinlandMarks pending={0} localCopy />)).toContain('Lokal kopi')
   })
 })

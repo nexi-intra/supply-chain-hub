@@ -25,8 +25,9 @@ const DEFAULT_LOCK_TTL_MS = 2 * 60000
 const NAME_MAX = 64
 const URL_MAX = 2048
 
-const TEST_WORKBOOK_URL = 'https://christianiabpos.sharepoint.com/sites/NordicSupplyChain/Shared Documents/General/Testark - Ordre sendt til Finland fra Danmark.xlsx'
-const DEFAULT_SETTINGS = { workbookUrl: TEST_WORKBOOK_URL, sheetName: 'Sheet1', tableName: 'Table2' }
+// The shared sheet BPO and TCD write today (its file name says "Testark", but it is the live sheet colleagues use).
+const STANDARD_WORKBOOK_URL = 'https://christianiabpos.sharepoint.com/sites/NordicSupplyChain/Shared Documents/General/Testark - Ordre sendt til Finland fra Danmark.xlsx'
+const DEFAULT_SETTINGS = { workbookUrl: STANDARD_WORKBOOK_URL, sheetName: 'Sheet1', tableName: 'Table2' }
 
 function codeError(code, message) {
   const error = new Error(message || code)
@@ -41,7 +42,7 @@ const nameOf = user => text(user.fullName) || lower(user.email)
 const isObject = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 const draftsKeyOf = email => DRAFTS_PREFIX + crypto.createHash('sha1').update(lower(email)).digest('hex').slice(0, 16)
 /** The sheet a draft, not-sent mark or written key belongs to; from before sheets were recorded, the test sheet. */
-const workbookOf = entry => (isObject(entry) && text(entry.workbookUrl)) || TEST_WORKBOOK_URL
+const workbookOf = entry => (isObject(entry) && text(entry.workbookUrl)) || STANDARD_WORKBOOK_URL
 const inWorkbook = (entry, workbookUrl) => !workbookUrl || workbookOf(entry) === workbookUrl
 const lockTtl = ttlMs => (Number.isFinite(ttlMs) && ttlMs > 0 ? ttlMs : DEFAULT_LOCK_TTL_MS)
 
@@ -204,7 +205,7 @@ function createFinlandShared({ store, now = Date.now, workbookOverride = '' }) {
         for (const key of list) keys[key] = book ? { at, workbookUrl: book } : at
         if (text(day)) {
           // A day written in another sheet before (the test sheet) starts its count over.
-          const before = days[day] && workbookOf(days[day]) === (book || TEST_WORKBOOK_URL) ? Number(days[day].count) || 0 : 0
+          const before = days[day] && workbookOf(days[day]) === (book || STANDARD_WORKBOOK_URL) ? Number(days[day].count) || 0 : 0
           days[day] = { byName: nameOf(user), at, count: before + list.length, ...(book ? { workbookUrl: book } : {}) }
         }
         const kept = Object.keys(days).sort().slice(-DAY_LOG_MAX_DAYS)
@@ -239,7 +240,7 @@ function createFinlandShared({ store, now = Date.now, workbookOverride = '' }) {
         tableName: stored.tableName || DEFAULT_SETTINGS.tableName,
       }
       if (localCopy) return { ...result, workbookUrl: localCopy, isTest: true, localCopy: true }
-      return { ...result, isTest: result.workbookUrl === TEST_WORKBOOK_URL }
+      return { ...result, isTest: false }
     },
 
     /** Which sheet everyone writes. Only a manager or creator. */
@@ -252,7 +253,7 @@ function createFinlandShared({ store, now = Date.now, workbookOverride = '' }) {
       if (!sheetName || sheetName.length > NAME_MAX || !tableName || tableName.length > NAME_MAX) throw codeError('FINLAND_SETTINGS_INVALID', 'Fane og tabel skal udfyldes med højst 64 tegn')
       const next = { workbookUrl, sheetName, tableName, by: lower(user.email), byName: nameOf(user), at: now() }
       await store.mutateAsync(SETTINGS_KEY, current => isObject(current) && current.workbookUrl === workbookUrl && current.sheetName === sheetName && current.tableName === tableName ? undefined : next)
-      return { workbookUrl, sheetName, tableName, isTest: workbookUrl === TEST_WORKBOOK_URL }
+      return { workbookUrl, sheetName, tableName, isTest: false }
     },
   }
 
@@ -435,4 +436,4 @@ function createFinlandShared({ store, now = Date.now, workbookOverride = '' }) {
   return { notSent, lock, dayLog, settings, drafts, nshift, statuses }
 }
 
-module.exports = { createFinlandShared, TEST_WORKBOOK_URL, draftsKeyOf, workbookOf }
+module.exports = { createFinlandShared, STANDARD_WORKBOOK_URL, draftsKeyOf, workbookOf }

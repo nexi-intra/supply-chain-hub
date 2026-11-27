@@ -2,7 +2,7 @@ import { createRequire } from 'node:module'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it } from 'vitest'
 import { setWarehouseLanguage } from '@/lib/warehouse/text'
-import { FINLAND_TEST_SHEET, type FinlandDraftsCleared, type FinlandDraftsPerson } from '@/types/finland'
+import { FINLAND_STANDARD_SHEET, type FinlandDraftsCleared, type FinlandDraftsPerson } from '@/types/finland'
 import { danishGenitive, draftDays, FinlandDrafts, FinlandNshiftSettings, FinlandSheetSettings, leftBehindText, nshiftKeyProblem } from './FinlandAdmin'
 
 const REAL = { workbookUrl: 'https://christianiabpos.sharepoint.com/sites/NordicSupplyChain/Shared Documents/Ordre.xlsx', sheetName: 'Sheet1', tableName: 'Table2', isTest: false }
@@ -11,27 +11,30 @@ const noop = () => {}
 describe('Finlandsforsendelser in Administration', () => {
   afterEach(() => setWarehouseLanguage('da'))
 
-  it('the test sheet is the one the main process starts with', () => {
-    const { TEST_WORKBOOK_URL } = createRequire(import.meta.url)('../../../../electron/warehouse/finland/shared.cjs')
-    expect(FINLAND_TEST_SHEET.workbookUrl).toBe(TEST_WORKBOOK_URL)
+  it('the standard sheet is the one the main process starts with', () => {
+    const { STANDARD_WORKBOOK_URL } = createRequire(import.meta.url)('../../../../electron/warehouse/finland/shared.cjs')
+    expect(FINLAND_STANDARD_SHEET.workbookUrl).toBe(STANDARD_WORKBOOK_URL)
   })
 
-  it('shows the active sheet with the Testark badge, and no way back while it is the test sheet', () => {
-    const html = renderToStaticMarkup(<FinlandSheetSettings settings={{ ...FINLAND_TEST_SHEET, isTest: true }} onSaved={noop} />)
+  it('shows the standard sheet as the sheet in use, without a badge or a way back to itself', () => {
+    const html = renderToStaticMarkup(<FinlandSheetSettings settings={{ ...FINLAND_STANDARD_SHEET, isTest: false }} onSaved={noop} />)
     expect(html).toContain('Værktøjet skriver i')
     expect(html).toContain('Testark - Ordre sendt til Finland fra Danmark.xlsx')
     expect(html).toContain('Fane Sheet1, tabel Table2')
-    expect(html).toContain('Testark</span>')
+    expect(html).not.toContain('Testark</span>')
+    expect(html).not.toContain('rigtige ark')
     expect(html).toContain('Arkets adresse')
-    expect(html).not.toContain('Brug testarket igen')
+    expect(html).not.toContain('Brug standardarket igen')
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Gem<\/button>/)
   })
 
-  it('a real sheet has no badge and offers the test sheet again', () => {
+  it('another sheet offers the standard sheet again, a local copy does not', () => {
     const html = renderToStaticMarkup(<FinlandSheetSettings settings={REAL} onSaved={noop} />)
     expect(html).toContain('Ordre.xlsx')
-    expect(html).not.toContain('Testark</span>')
-    expect(html).toContain('Brug testarket igen')
+    expect(html).toContain('Brug standardarket igen')
+    const copy = renderToStaticMarkup(<FinlandSheetSettings settings={{ ...REAL, workbookUrl: 'C:\\Dev\\Kopi.xlsx', isTest: true, localCopy: true }} onSaved={noop} />)
+    expect(copy).toContain('Lokal kopi')
+    expect(copy).not.toContain('Brug standardarket igen')
   })
 
   it('lists each person with count, days, last change and a delete button', () => {

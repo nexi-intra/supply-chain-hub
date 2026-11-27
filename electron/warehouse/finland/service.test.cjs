@@ -7,7 +7,7 @@ const { createStore } = require('../../store.cjs')
 const { parseSapList } = require('./core/sapList.cjs')
 const { parcelKey } = require('./core/sheetIndex.cjs')
 const { courierFor } = require('./core/courier.cjs')
-const { createFinlandShared, TEST_WORKBOOK_URL } = require('./shared.cjs')
+const { createFinlandShared, STANDARD_WORKBOOK_URL } = require('./shared.cjs')
 const { createFinlandService } = require('./service.cjs')
 
 const MONA = { email: 'mona@x.test', fullName: 'Mona Berg', role: 'user', team: 'TCD', tools: ['finland'] }
@@ -158,7 +158,7 @@ test('loading reads the sheet and fetches two months from SAP', async () => {
   assert.equal(snap.defaultDay, '2026-11-24')
   assert.equal(snap.loadedAt, new Date(NOW).toISOString())
   assert.equal(missingOn(snap, DAY).length, 3)
-  assert.deepEqual(snap.sheet, { wasOpen: true, filterRemoved: false, texts: ['Arket er åbent i Excel'], isTest: true, localCopy: false })
+  assert.deepEqual(snap.sheet, { wasOpen: true, filterRemoved: false, texts: ['Arket er åbent i Excel'], isTest: false, localCopy: false })
   assert.deepEqual(snap.dayLog, {})
   assert.equal(snap.lock, null)
   assert.deepEqual(snap.followUp.othersByDay, {})
@@ -172,7 +172,7 @@ test('writing a day writes the missing parcels at the day and logs who wrote the
   assert.deepEqual(appended(excel), missing.map(keyOf))
   assert.equal(snap.result.added, 3)
   assert.equal(snap.days.find(d => d.date === DAY).status, 'full', 'the sheet is read again after writing')
-  assert.deepEqual(snap.dayLog[DAY], { byName: 'Mona Berg', at: NOW, count: 3, workbookUrl: TEST_WORKBOOK_URL })
+  assert.deepEqual(snap.dayLog[DAY], { byName: 'Mona Berg', at: NOW, count: 3, workbookUrl: STANDARD_WORKBOOK_URL })
   assert.equal(snap.lock, null)
   const again = await service.writeDay(MONA, DAY)
   assert.equal(again.result.added, 0)
@@ -642,7 +642,7 @@ test('after switching to the real sheet the test sheet\'s drafts are neither cou
   assert.equal(await mona.service.pending(MONA), 1)
   await mona.service.saveFollowUp(MONA, null)
   assert.deepEqual(mona.excel.writes()[0].list.map(w => [w.row, w.cells]), [[4, { comment: 'Rigtig' }]])
-  assert.deepEqual((await shared.drafts(MONA.email).all()).map(d => d.workbookUrl), [TEST_WORKBOOK_URL], 'the test sheet\'s draft stays until a manager clears it')
+  assert.deepEqual((await shared.drafts(MONA.email).all()).map(d => d.workbookUrl), [STANDARD_WORKBOOK_URL], 'the test sheet\'s draft stays until a manager clears it')
 })
 
 // Made-up timelines: only times, status codes and place names.
@@ -860,7 +860,7 @@ test('apply suggestions makes drafts, never sheet writes', async () => {
   const [{ updatedAt, ...draft }] = await shared.drafts(MONA.email).all()
   assert.equal(updatedAt, FETCHED_AT)
   assert.deepEqual(draft, {
-    delivery: '82100001', tracking: pn(1), pickedUp: '2026-11-20', workbookUrl: TEST_WORKBOOK_URL, slaManual: false, original: BLANK,
+    delivery: '82100001', tracking: pn(1), pickedUp: '2026-11-20', workbookUrl: STANDARD_WORKBOOK_URL, slaManual: false, original: BLANK,
     fields: { expected: '2026-11-24', received: '2026-11-23', sla: 'OK', comment: 'Delay Finland, Vanta term', terminal: 'Vantaa' },
   })
   assert.deepEqual(await shared.drafts(ANNA.email).all(), [])
