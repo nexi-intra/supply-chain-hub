@@ -48,11 +48,11 @@
 - Produces: `LEAD_TIMES: Array<{ from: number, to: number, Postnord: number, DHL: number }>` (tabellen fra designets afsnit "Leveringstider", alle rækker inkl. *forslag*), `leadDays(courier: string, postalCode: string|number): number|null` (smalleste række vinder; postnummer fyldes op til 5 cifre; ukendt kurer eller postnummer giver `null`).
 - `expectedSuggestion({ courier, postalCode, country, pickedUp })` beholder signaturen: ikke-FI eller `null` fra `leadDays` giver `null`, ellers `addWorkdays(pickedUp, leadDays(...))`.
 
-- [ ] **Step 1: Skriv de fejlende tests:** `leadDays('Postnord','00100')` 2, `leadDays('DHL','100')` 1 (mistet nul), `leadDays('Postnord','22100')` 3 og `leadDays('DHL','22100')` 2 (Åland vinder over 20000 til 25999), `leadDays('Postnord','96100')` 4, `leadDays('DHL','96100')` 3, `leadDays('Postnord','93600')` 3, `leadDays('DHL','05800')` 1, `leadDays('Postnord','59100')` 2, `leadDays('DSV','00100')` null, `leadDays('Postnord','abc')` null. Ret de eksisterende `expectedSuggestion`-tests i `followUp.test.cjs` til tabellen (fx PostNord 96100 fra en mandag giver fredag samme uge).
-- [ ] **Step 2: Kør:** `node --test electron/warehouse/finland/core/leadTimes.test.cjs electron/warehouse/finland/core/followUp.test.cjs`. Forventet: FAIL.
-- [ ] **Step 3: Implementér.**
-- [ ] **Step 4: Kør igen plus `npm.cmd run test:warehouse`.** Forventet: PASS (ret service-tests, hvis de afhang af den gamle regel).
-- [ ] **Step 5: Commit** `feat(finlandsforsendelser): Expected efter aftalens tabel over leveringstider`
+- [x] **Step 1: Skriv de fejlende tests:** `leadDays('Postnord','00100')` 2, `leadDays('DHL','100')` 1 (mistet nul), `leadDays('Postnord','22100')` 3 og `leadDays('DHL','22100')` 2 (Åland vinder over 20000 til 25999), `leadDays('Postnord','96100')` 4, `leadDays('DHL','96100')` 3, `leadDays('Postnord','93600')` 3, `leadDays('DHL','05800')` 1, `leadDays('Postnord','59100')` 2, `leadDays('DSV','00100')` null, `leadDays('Postnord','abc')` null. Ret de eksisterende `expectedSuggestion`-tests i `followUp.test.cjs` til tabellen (fx PostNord 96100 fra en mandag giver fredag samme uge).
+- [x] **Step 2: Kør:** `node --test electron/warehouse/finland/core/leadTimes.test.cjs electron/warehouse/finland/core/followUp.test.cjs`. Forventet: FAIL.
+- [x] **Step 3: Implementér.**
+- [x] **Step 4: Kør igen plus `npm.cmd run test:warehouse`.** Forventet: PASS (ret service-tests, hvis de afhang af den gamle regel).
+- [x] **Step 5: Commit** `feat(finlandsforsendelser): Expected efter aftalens tabel over leveringstider`
 
 ### Task 2: nShift-regler
 
@@ -66,11 +66,11 @@
   - `facts(timeline, pickedUp): { firstAttempt: string|null, delivered: string|null, terminal: 'Vantaa'|'Turku'|null, koegeHours: number|null, viaBrondby: boolean, terminalHours: number|null, firstScanWorkdays: number|null }` (datoer som `ÅÅÅÅ-MM-DD` i Helsinki-tid; definitioner som designets afsnit "Regler").
   - `suggest({ timeline, courier: 'Postnord'|'DHL', pickedUp, expected }): { received: string|null, sla: 'OK'|'NOK'|null, terminal: string|null, comment: string|null, firstAttempt, delivered }` efter designets tabel; Køge-, Brøndby-, terminal- og første-scanning-regler kun for `Postnord`; `1st attempt within SLA (dd-mm)` for begge; `Forgotten in warehouse` giver `sla: 'OK'`; `expected` tom giver ingen SLA og ingen forsøgs-kommentar.
 
-- [ ] **Step 1: Skriv de fejlende tests** (ét forløb pr. regel): `delivered on time gives Received, SLA OK and the terminal`, `first attempt within Expected but delivered later gives SLA OK and the attempt comment` (kommentar `1st attempt within SLA (25-11)`), `late delivery without an attempt gives NOK`, `no delivery gives no Received and no SLA`, `48 hours or more in a Finnish terminal gives the delay comment` (49 t i Vantaa → `Delay Finland, Vanta term`), `45 to 66 hours in Køge gives one extra day`, `more than 66 hours in Køge or via Brøndby gives stuck`, `a first scan two workdays late gives Forgotten in warehouse and SLA OK`, `several comments are joined in the fixed order`, `Køge rules do not apply to DHL`, `days are counted in Helsinki time` (hændelse `2026-11-25T22:30:00+00:00` er den 26.), `PostNord uses only the package with the looked-up number`, `nShift's own events below 2000 are ignored`.
-- [ ] **Step 2: Kør** `node --test electron/warehouse/finland/core/nshiftRules.test.cjs`. Forventet: FAIL.
-- [ ] **Step 3: Implementér.** Arbejdsdage som `followUp.cjs`' `addWorkdays` (lørdag og søndag springes over).
-- [ ] **Step 4: Kør igen.** Forventet: PASS.
-- [ ] **Step 5: Commit** `feat(finlandsforsendelser): regler for forslag ud fra nShifts forloeb`
+- [x] **Step 1: Skriv de fejlende tests** (ét forløb pr. regel): `delivered on time gives Received, SLA OK and the terminal`, `first attempt within Expected but delivered later gives SLA OK and the attempt comment` (kommentar `1st attempt within SLA (25-11)`), `late delivery without an attempt gives NOK`, `no delivery gives no Received and no SLA`, `48 hours or more in a Finnish terminal gives the delay comment` (49 t i Vantaa → `Delay Finland, Vanta term`), `45 to 66 hours in Køge gives one extra day`, `more than 66 hours in Køge or via Brøndby gives stuck`, `a first scan two workdays late gives Forgotten in warehouse and SLA OK`, `several comments are joined in the fixed order`, `Køge rules do not apply to DHL`, `days are counted in Helsinki time` (hændelse `2026-11-25T22:30:00+00:00` er den 26.), `PostNord uses only the package with the looked-up number`, `nShift's own events below 2000 are ignored`.
+- [x] **Step 2: Kør** `node --test electron/warehouse/finland/core/nshiftRules.test.cjs`. Forventet: FAIL.
+- [x] **Step 3: Implementér.** Arbejdsdage som `followUp.cjs`' `addWorkdays` (lørdag og søndag springes over).
+- [x] **Step 4: Kør igen.** Forventet: PASS.
+- [x] **Step 5: Commit** `feat(finlandsforsendelser): regler for forslag ud fra nShifts forloeb`
 
 ## Fase 2: Backend
 
@@ -88,11 +88,11 @@
   - Fejlkoder: `FINLAND_NSHIFT_NOT_SET: nShift er ikke sat op. En manager kan sætte det op under Administration.`, `FINLAND_NSHIFT_REFUSED: nShift afviste nøglen. Tjek klient-id og hemmelighed under Administration.`, `FINLAND_NSHIFT_FAILED: nShift svarer ikke lige nu. Prøv igen om lidt.`
   - Et tomt svar (`[]`) giver `null`.
 
-- [ ] **Step 1: Skriv de fejlende tests:** `the token is reused until shortly before it expires`, `a 401 fetches a new token once`, `the search window is pickup minus 3 to plus 27 days` (tjek body), `a parcel nShift does not know gives null`, `a refused secret never appears in the error` (fejlteksten og `String(error)` indeholder ikke hemmeligheden), `calls run one at a time with a pause`, `no credentials gives FINLAND_NSHIFT_NOT_SET`.
-- [ ] **Step 2: Kør** `node --test electron/warehouse/finland/nshift.test.cjs`. Forventet: FAIL.
-- [ ] **Step 3: Implementér.**
-- [ ] **Step 4: Kør igen.** Forventet: PASS.
-- [ ] **Step 5: Commit** `feat(finlandsforsendelser): nShift-klient med token og koe`
+- [x] **Step 1: Skriv de fejlende tests:** `the token is reused until shortly before it expires`, `a 401 fetches a new token once`, `the search window is pickup minus 3 to plus 27 days` (tjek body), `a parcel nShift does not know gives null`, `a refused secret never appears in the error` (fejlteksten og `String(error)` indeholder ikke hemmeligheden), `calls run one at a time with a pause`, `no credentials gives FINLAND_NSHIFT_NOT_SET`.
+- [x] **Step 2: Kør** `node --test electron/warehouse/finland/nshift.test.cjs`. Forventet: FAIL.
+- [x] **Step 3: Implementér.**
+- [x] **Step 4: Kør igen.** Forventet: PASS.
+- [x] **Step 5: Commit** `feat(finlandsforsendelser): nShift-klient med token og koe`
 
 ### Task 4: Fælles nøgle og svar
 
@@ -105,11 +105,11 @@
   - `nshift.credentials(): Promise<{ clientId, clientSecret } | null>` (kun til backend), `nshift.status(): Promise<{ configured: boolean, clientIdEnding: string }>`, `nshift.set(user, { clientId, clientSecret })` (kun manager/creator, ellers `MANAGER_ONLY`; tomme værdier giver `FINLAND_SETTINGS_INVALID`). Nøgle `nshift`.
   - `statuses.get(trackings: string[]): Promise<Record<string, Timeline & { fetchedAt: string }>>`, `statuses.put(timelines: Array<Timeline & { fetchedAt: string }>)` under nøglen `nshift-status` (én fil, `mutateAsync`, højst 4.000 forløb, ældste ryger først).
 
-- [ ] **Step 1: Skriv de fejlende tests:** `only managers set the nShift key`, `the status never returns the secret` (deep-search i resultatet efter hemmeligheden), `timelines are shared between two PCs`, `the oldest timelines are dropped above 4000`.
-- [ ] **Step 2: Kør** `node --test electron/warehouse/finland/shared.test.cjs`. Forventet: FAIL.
-- [ ] **Step 3: Implementér.**
-- [ ] **Step 4: Kør igen.** Forventet: PASS.
-- [ ] **Step 5: Commit** `feat(finlandsforsendelser): nShift-noegle og faelles forloeb`
+- [x] **Step 1: Skriv de fejlende tests:** `only managers set the nShift key`, `the status never returns the secret` (deep-search i resultatet efter hemmeligheden), `timelines are shared between two PCs`, `the oldest timelines are dropped above 4000`.
+- [x] **Step 2: Kør** `node --test electron/warehouse/finland/shared.test.cjs`. Forventet: FAIL.
+- [x] **Step 3: Implementér.**
+- [x] **Step 4: Kør igen.** Forventet: PASS.
+- [x] **Step 5: Commit** `feat(finlandsforsendelser): nShift-noegle og faelles forloeb`
 
 ### Task 5: Service
 
@@ -126,11 +126,11 @@
   - `applySuggestions(user, { date })`: for hvert kolli på dagen med `nshift.delivered` laves en kladde (som `saveDraft`) med de foreslåede felter, kun hvor feltet er tomt i `effective`; returnerer snapshot plus `applied: number`.
   - `nshiftStatus()`, `setNshift(user, values)`, `testNshift(user)` (kun manager/creator) videre til shared og klienten.
 
-- [ ] **Step 1: Skriv de fejlende tests:** `fetching a day stores timelines and gives suggestions on the rows`, `a delivered timeline is not fetched again for the day but is for one parcel`, `one failed parcel does not stop the day`, `apply suggestions never overwrites a filled field`, `apply suggestions makes drafts, never sheet writes` (falsk Excel fik intet skrive-kald), `DSV parcels are not looked up`.
-- [ ] **Step 2: Kør** `node --test electron/warehouse/finland/service.test.cjs`. Forventet: FAIL.
-- [ ] **Step 3: Implementér.**
-- [ ] **Step 4: Kør igen plus `npm.cmd run test:warehouse`.** Forventet: PASS.
-- [ ] **Step 5: Commit** `feat(finlandsforsendelser): hent status fra nShift og brug forslagene`
+- [x] **Step 1: Skriv de fejlende tests:** `fetching a day stores timelines and gives suggestions on the rows`, `a delivered timeline is not fetched again for the day but is for one parcel`, `one failed parcel does not stop the day`, `apply suggestions never overwrites a filled field`, `apply suggestions makes drafts, never sheet writes` (falsk Excel fik intet skrive-kald), `DSV parcels are not looked up`.
+- [x] **Step 2: Kør** `node --test electron/warehouse/finland/service.test.cjs`. Forventet: FAIL.
+- [x] **Step 3: Implementér.**
+- [x] **Step 4: Kør igen plus `npm.cmd run test:warehouse`.** Forventet: PASS.
+- [x] **Step 5: Commit** `feat(finlandsforsendelser): hent status fra nShift og brug forslagene`
 
 ### Task 6: Kanaler, preload og typer
 
@@ -142,11 +142,11 @@
 - Produces: kanalerne `finland:fetch-status` (`{ date }` eller `{ key }`, valideret som andre dato- og nøgle-input), `finland:apply-suggestions` (`{ date }`), `finland:nshift-settings`, `finland:set-nshift-settings` (`{ clientId, clientSecret }`, strenge ≤ 200 tegn), `finland:test-nshift`; preload `fetchStatus`, `applySuggestions`, `nshiftSettings`, `setNshiftSettings`, `testNshift`. Typer: `FinlandTimeline`, `FinlandNshiftRow` (rækkens `nshift`), `FinlandStatusResult`, `FinlandNshiftStatus`.
 - `waitsForSap` i `electron/warehouse/register.cjs` får `finland:(fetch-status|test-nshift)`.
 
-- [ ] **Step 1: Skriv de fejlende tests:** kanalerne findes (opdatér kanal-listen), `TRR is refused the nShift channels`, `only managers set and test the nShift key`, `the nShift settings never carry the secret`, `invalid dates and keys are refused before the service`.
-- [ ] **Step 2: Kør** `node --test electron/warehouse/finland/register.test.cjs`. Forventet: FAIL.
-- [ ] **Step 3: Implementér.**
-- [ ] **Step 4: Kør `npm.cmd run test:warehouse` og `npx.cmd vitest run src/lib/warehouse`** (errorCoverage). Forventet: PASS.
-- [ ] **Step 5: Commit** `feat(finlandsforsendelser): kanaler til status fra nShift`
+- [x] **Step 1: Skriv de fejlende tests:** kanalerne findes (opdatér kanal-listen), `TRR is refused the nShift channels`, `only managers set and test the nShift key`, `the nShift settings never carry the secret`, `invalid dates and keys are refused before the service`.
+- [x] **Step 2: Kør** `node --test electron/warehouse/finland/register.test.cjs`. Forventet: FAIL.
+- [x] **Step 3: Implementér.**
+- [x] **Step 4: Kør `npm.cmd run test:warehouse` og `npx.cmd vitest run src/lib/warehouse`** (errorCoverage). Forventet: PASS.
+- [x] **Step 5: Commit** `feat(finlandsforsendelser): kanaler til status fra nShift`
 
 ## Fase 3: Skærmene
 
@@ -162,11 +162,11 @@
 
 Indhold: knappen `Hent status fra nShift` ved dagen og `Opdater status` på kolliet; tekst `Status hentet kl. hh.mm` og efter en hentning `N kolli hentet. M ikke fundet i nShift. K fejlede.`; forløbet på kolliet som en kort liste (tid, sted, tekst) med `Første forsøg dd-mm` og `Afleveret dd-mm` fremhævet; grå forslag i felterne; knappen `Brug forslagene for alle leverede kolli på dagen` med en liste pr. kolli over felterne, der udfyldes, og knapperne `Ja, brug forslagene` og `Fortryd`. Knapperne er slået fra, når nShift ikke er sat op, med teksten `nShift er ikke sat op endnu.`
 
-- [ ] **Step 1: Skriv de fejlende tests** i `followUpLogic.test.ts`: `nShift suggestions fill only empty fields`, `the nShift SLA wins over the date rule unless SLA is set by hand`, `without nShift the old behaviour is unchanged`.
-- [ ] **Step 2: Kør** `npx.cmd vitest run src/views/warehouse/finland`. Forventet: FAIL.
-- [ ] **Step 3: Implementér logikken, derefter skærmen.**
-- [ ] **Step 4: Kør vitest og `npm.cmd run build`.** Forventet: PASS.
-- [ ] **Step 5: Commit** `feat(finlandsforsendelser): status fra nShift og forslag i Opfoelgning`
+- [x] **Step 1: Skriv de fejlende tests** i `followUpLogic.test.ts`: `nShift suggestions fill only empty fields`, `the nShift SLA wins over the date rule unless SLA is set by hand`, `without nShift the old behaviour is unchanged`.
+- [x] **Step 2: Kør** `npx.cmd vitest run src/views/warehouse/finland`. Forventet: FAIL.
+- [x] **Step 3: Implementér logikken, derefter skærmen.**
+- [x] **Step 4: Kør vitest og `npm.cmd run build`.** Forventet: PASS.
+- [x] **Step 5: Commit** `feat(finlandsforsendelser): status fra nShift og forslag i Opfoelgning`
 
 ### Task 8: Administration
 
@@ -176,16 +176,16 @@ Indhold: knappen `Hent status fra nShift` ved dagen og `Opdater status` på koll
 
 Indhold: afsnittet `nShift`: status (`Sat op, klient-id slutter på …` eller `Ikke sat op`), felterne `Klient-id` og `Hemmelighed` (password-felt, tømmes efter gem), knapperne `Gem` og `Test forbindelsen` med svaret `Forbindelsen virker.` eller fejlteksten.
 
-- [ ] **Step 1: Skriv den fejlende test:** `shows whether nShift is set up without the secret`.
-- [ ] **Step 2: Kør** `npx.cmd vitest run src/views/warehouse/admin`. Forventet: FAIL.
-- [ ] **Step 3: Implementér.**
-- [ ] **Step 4: Kør vitest og `npm.cmd run build`.** Forventet: PASS.
-- [ ] **Step 5: Commit** `feat(finlandsforsendelser): nShift-noegle under Administration`
+- [x] **Step 1: Skriv den fejlende test:** `shows whether nShift is set up without the secret`.
+- [x] **Step 2: Kør** `npx.cmd vitest run src/views/warehouse/admin`. Forventet: FAIL.
+- [x] **Step 3: Implementér.**
+- [x] **Step 4: Kør vitest og `npm.cmd run build`.** Forventet: PASS.
+- [x] **Step 5: Commit** `feat(finlandsforsendelser): nShift-noegle under Administration`
 
 ## Fase 4: Afprøvning
 
 ### Task 9: Afprøvning og changelog
 
-- [ ] **Step 1: `npm.cmd run test:warehouse`, `npx.cmd vitest run src`, `npm.cmd run build`.** Forventet: alt PASS ud over de kendte fejl fra før grenen.
+- [x] **Step 1: `npm.cmd run test:warehouse`, `npx.cmd vitest run src`, `npm.cmd run build`.** Forventet: alt PASS ud over de kendte fejl fra før grenen.
 - [ ] **Step 2: Med Jacob i dev-hubben:** sæt nShift-nøglen under Administration, `Test forbindelsen`, hent status for en dag i testarket, kontrollér forslagene på 5 kolli mod PostNords og DHL's sider, prøv `Brug forslagene for alle leverede kolli på dagen`, og gem i testarket.
-- [ ] **Step 3: `src/lib/changelog.ts`:** punkt under 1.6.9 om status fra nShift og Expected efter aftalen. Commit `docs(1.6.9): changelog for status fra nShift`.
+- [x] **Step 3: `src/lib/changelog.ts`:** punkt under 1.6.9 om status fra nShift og Expected efter aftalen. Commit `docs(1.6.9): changelog for status fra nShift`.
