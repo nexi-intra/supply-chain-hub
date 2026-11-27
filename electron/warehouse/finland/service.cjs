@@ -10,7 +10,8 @@ const { toSheetRows } = require('./core/newRows.cjs')
 const { dayOverview, defaultDay } = require('./core/dayOverview.cjs')
 const { insertionPoint } = require('./core/placement.cjs')
 const { expectedSuggestion, receivedChoices, isFollowedUp, followUpDays, topComments, duplicateKeys } = require('./core/followUp.cjs')
-const { planWrites, resolveDraft, mergeDraft } = require('./core/followUpSync.cjs')
+const { planWrites, resolveDraft, mergeDraft, FIELDS } = require('./core/followUpSync.cjs')
+const { facts, suggest } = require('./core/nshiftRules.cjs')
 const { checkManualRow } = require('./core/manualRow.cjs')
 const { appendTimeoutMs, sheetStateText, MESSAGES } = require('./excel.cjs')
 const { workbookOf } = require('./shared.cjs')
@@ -21,6 +22,10 @@ const MONTHS_BACK = 2
 const SCRIPT_TIMEOUT_MS = 5 * 60000
 const LOCK_MARGIN_MS = 60000
 const COURIERS = ['DHL', 'Postnord', 'DSV']
+// nShift knows the parcels booked with these; DSV is followed up by hand.
+const NSHIFT_COURIERS = ['Postnord', 'DHL']
+// A key that is missing or refused fails every parcel the same way, so the first such error stops the day.
+const NSHIFT_STOPS = new Set(['FINLAND_NSHIFT_NOT_SET', 'FINLAND_NSHIFT_REFUSED'])
 
 function codeError(code, text) {
   return Object.assign(new Error(text ? `${code}: ${text}` : code), { code })
@@ -40,12 +45,28 @@ const forWorkbook = (list, workbookUrl) => list.filter(entry => workbookOf(entry
 const PARTLY_WRITTEN = new Set(['write-failed', 'write-timeout', 'save-failed'])
 const PARTLY_WRITTEN_TEXT = 'Kolli, der ikke nåede at komme i arket, kan først skrives igen om 30 minutter, så intet kommer to gange.'
 const NOT_LOGGED_TEXT = 'Arket er skrevet, men programmet kunne ikke notere det på M:. Bed kollegaer vente et par minutter, før de skriver samme dag.'
+const isManager = user => (user?.role === 'manager' || user?.role === 'creator') && !user.statusManager
+const notInSheetError = () => codeError('FINLAND_NOT_IN_SHEET', 'Kolliet findes ikke i arket. Tryk "Hent igen".')
+
+/** What a row shows from nShift: the timeline, the first attempt and delivery, and the suggestions from the rules. */
+function nshiftOf(timeline, { courier, pickedUp, effective, suggestedExpected }) {
+  if (!timeline) return null
+  const s = suggest({ timeline, courier, pickedUp, expected: effective.expected || suggestedExpected })
+  return {
+    fetchedAt: timeline.fetchedAt,
+    events: timeline.events,
+    firstAttempt: s.firstAttempt,
+    delivered: s.delivered,
+    suggestion: { received: s.received, sla: s.sla, terminal: s.terminal, comment: s.comment },
+  }
+}
 
 /**
  * `fetchParcels(range)` runs ZMS_CONS_INFO for { from, to } (dd.mm.yyyy) and gives the parsed parcels; SAP readiness is
- * checked by the caller. `isAdmin(user)` says whether the user may delete rows. Users are { email, fullName, ... }.
+ * checked by the caller. `isAdmin(user)` says whether the user may delete rows. `nshift` is the nShift client
+ * (nshift.cjs). Users are { email, fullName, ... }.
  */
-function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date.now }) {
+function createFinlandService({ shared, excel, fetchParcels, isAdmin, nshift = null, now = Date.now }) {
   let busy = null
   // Quick changes to shared data (drafts, not-sent marks) run one after the other, and no sheet job starts meanwhile.
   let quickCount = 0
@@ -172,7 +193,8 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
     return (parcels || []).find(p => parcelKey(p.delivery, p.tracking) === key) || null
   }
 
-  function followUpRows(own, others, conflicts) {
+  /** `timelines` holds the stored nShift timeline per T&T (shared.statuses.get). */
+  function followUpRows(own, others, conflicts, timelines = {}) {
     const dups = duplicateKeys(sheetRows)
     const sapByKey = new Map((parcels || []).map(p => [parcelKey(p.delivery, p.tracking), p]))
     const draftByKey = new Map(own.map(d => [parcelKey(d.delivery, d.tracking), d]))
@@ -186,6 +208,10 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
         const effective = { ...sheetValues, ...(draft ? draft.fields : {}) }
         const courier = COURIERS.includes(r.courier) ? r.courier : courierFor(tracking)
         const sap = sapByKey.get(key)
+        const suggestedExpected = expectedSuggestion({
+          courier, postalCode: sap ? sap.postalCode : r.postalCode, country: sap ? sap.country : 'FI', pickedUp: r.pickedUp,
+        })
+        const timeline = tracking && Object.hasOwn(timelines, tracking) ? timelines[tracking] : null
         return {
           key,
           row: r.row,
@@ -200,16 +226,21 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
           pending: !!draft,
           slaManual: !!draft?.slaManual,
           othersPending: key ? others.filter(o => o.keys.includes(key)).map(o => o.name) : [],
-          suggestedExpected: expectedSuggestion({
-            courier, postalCode: sap ? sap.postalCode : r.postalCode, country: sap ? sap.country : 'FI', pickedUp: r.pickedUp,
-          }),
+          suggestedExpected,
           receivedChoices: receivedChoices(r.pickedUp),
           duplicate: !!key && dups.has(key),
           noTracking: !tracking,
           conflicts: conflicts.get(key) || [],
           done: isFollowedUp(effective, courier),
+          nshift: nshiftOf(timeline, { courier, pickedUp: r.pickedUp, effective, suggestedExpected }),
         }
       })
+  }
+
+  /** The stored nShift timelines for the first T&T of every row in the sheet as last read. */
+  function timelinesForSheet() {
+    const trackings = [...new Set(sheetRows.map(r => trackingsInCell(r.trackingText)[0]).filter(Boolean))]
+    return trackings.length ? shared.statuses.get(trackings) : {}
   }
 
   function othersByDay(others) {
@@ -220,8 +251,8 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
     return result
   }
 
-  function followUpSnapshot(user, own, others) {
-    const rows = followUpRows(own, others, conflictsOf(user))
+  function followUpSnapshot(user, own, others, timelines) {
+    const rows = followUpRows(own, others, conflictsOf(user), timelines)
     return {
       days: followUpDays(rows.map(x => ({ row: x.row, delivery: x.delivery, pickedUp: x.pickedUp, courier: x.courier, followUp: x.effective }))),
       rows,
@@ -236,9 +267,9 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
     const settings = await shared.settings.get()
     const book = settings.workbookUrl
     // Only what belongs to the sheet written now: drafts and marks made in the test sheet stay out of the real one.
-    const [notSent, dayLog, lock, allOwn, others, admin] = await Promise.all([
+    const [notSent, dayLog, lock, allOwn, others, admin, timelines] = await Promise.all([
       shared.notSent.list(book), shared.dayLog.days(book), shared.lock.current(), draftsOf(user).all(), shared.drafts.others(user.email, book),
-      isAdmin(user),
+      isAdmin(user), timelinesForSheet(),
     ])
     const own = forWorkbook(allOwn, book)
     const myEmail = String(user.email || '').trim().toLowerCase()
@@ -256,7 +287,7 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
       isAdmin: !!admin,
       // `mine` by e-mail, since two people can share a name.
       lock: lock ? { byName: lock.name || lock.email, day: lock.day, action: lock.action, mine: lock.email === myEmail } : null,
-      followUp: followUpSnapshot(user, own, others),
+      followUp: followUpSnapshot(user, own, others, timelines),
       days: days.map(d => ({
         date: d.date,
         total: d.total,
@@ -449,6 +480,102 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
     })
   }
 
+  const nshiftNotSetError = () => codeError('FINLAND_NSHIFT_NOT_SET', 'nShift er ikke sat op. En manager kan sætte det op under Administration.')
+
+  /**
+   * Looks up the day's PostNord and DHL parcels in nShift (`{ date }`), or one parcel (`{ key }`), and stores the
+   * timelines for everyone. For a day, parcels whose stored timeline is delivered are not fetched again. A failed
+   * parcel is counted and the rest go on. Reads neither SAP nor the sheet.
+   */
+  function fetchStatus(user, { date, key } = {}) {
+    return exclusive('nshift', async () => {
+      if (!date && !key) throw codeError('FINLAND_INVALID_INPUT', 'Vælg en dag eller et kolli.')
+      const rows = followUpRows([], [], conflictsOf(user)).filter(r => (key ? r.key === key : r.pickedUp === date))
+      if (key && !rows.length) throw notInSheetError()
+      const wanted = new Map()
+      for (const r of rows) {
+        if (NSHIFT_COURIERS.includes(r.courier) && r.tracking && !r.duplicate && !wanted.has(r.tracking)) wanted.set(r.tracking, r.pickedUp)
+      }
+      const stored = key || !wanted.size ? {} : await shared.statuses.get([...wanted.keys()])
+      const todo = [...wanted].filter(([tracking]) => !(stored[tracking] && facts(stored[tracking]).delivered))
+      if (todo.length && !nshift) throw nshiftNotSetError()
+      const statusResult = { fetched: 0, notFound: 0, failed: 0 }
+      const found = []
+      let stop = null
+      for (const [tracking, pickedUp] of todo) {
+        try {
+          const timeline = await nshift.lookup(tracking, pickedUp)
+          if (timeline) {
+            found.push({ ...timeline, tracking, fetchedAt: new Date(now()).toISOString() })
+            statusResult.fetched++
+          } else {
+            statusResult.notFound++
+          }
+        } catch (error) {
+          if (!statusResult.failed && NSHIFT_STOPS.has(error?.code)) {
+            stop = error
+            break
+          }
+          statusResult.failed++
+        }
+      }
+      if (found.length) await shared.statuses.put(found)
+      if (stop) throw stop
+      return { statusResult, ...(await snapshot(user)) }
+    })
+  }
+
+  /**
+   * Turns nShift's suggestions into the person's drafts for every delivered parcel on `date`, as if Enter was pressed on
+   * each: only fields that are empty in the sheet and not changed by the person, with the suggested Expected the rules
+   * used. The sheet is not touched; it is written by "Gem i arket" as always.
+   */
+  function applySuggestions(user, { date } = {}) {
+    return quick(() => busy === 'followup' && codeError('FINLAND_BUSY', sheetBusyText), async () => {
+      if (!date) throw codeError('FINLAND_INVALID_INPUT', 'Vælg en dag.')
+      const drafts = draftsOf(user)
+      const book = await currentWorkbook()
+      const own = forWorkbook(await drafts.all(), book)
+      const rows = followUpRows(own, [], conflictsOf(user), await timelinesForSheet())
+      let applied = 0
+      for (const r of rows) {
+        if (r.pickedUp !== date || !r.key || r.duplicate || !r.nshift?.delivered) continue
+        const existing = own.find(d => parcelKey(d.delivery, d.tracking) === r.key) || null
+        const touched = existing ? existing.fields : {}
+        const proposed = { expected: r.suggestedExpected, ...r.nshift.suggestion }
+        const wanted = {}
+        for (const field of FIELDS) {
+          if (proposed[field] && !String(r.effective[field] ?? '').trim() && !(field in touched)) wanted[field] = proposed[field]
+        }
+        if (!Object.keys(wanted).length) continue
+        // A suggested SLA follows the dates like an automatic one; a manual SLA the person set stays manual.
+        const slaManual = !!existing?.slaManual && !('sla' in wanted)
+        const next = mergeDraft({ existing, base: r.sheet, wanted, slaManual, delivery: r.delivery, tracking: r.tracking, pickedUp: r.pickedUp })
+        if (!next) continue
+        await drafts.set(r.key, { ...next, workbookUrl: book })
+        applied++
+      }
+      return { applied, ...(await snapshot(user)) }
+    })
+  }
+
+  /** What the window may know about the nShift key: { configured, clientIdEnding }. */
+  function nshiftStatus() {
+    return shared.nshift.status()
+  }
+
+  function setNshift(user, values) {
+    return shared.nshift.set(user, values)
+  }
+
+  /** Asks nShift for a new token with the stored key. Only a manager or creator. */
+  async function testNshift(user) {
+    if (!isManager(user)) throw codeError('MANAGER_ONLY', 'Kun managers kan teste forbindelsen til nShift')
+    if (!nshift) throw nshiftNotSetError()
+    await nshift.test()
+    return { ok: true, ...(await shared.nshift.status()) }
+  }
+
   // A row typed in by hand. "check" only validates against the sheet as last read; "add" reads it again and writes.
   function checkManual(user, input) {
     return checkManualRow(input, sheetRows, new Date(now()))
@@ -548,6 +675,7 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
   return {
     load, loadSheet, writeDay, fixReview, saveDraft, saveFollowUp, resolveConflict, checkManual, addManualRow,
     markNotSent, restoreNotSent, deleteNotSentRow, pending, current, snapshot,
+    fetchStatus, applySuggestions, nshiftStatus, setNshift, testNshift,
   }
 }
 

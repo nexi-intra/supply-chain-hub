@@ -74,7 +74,26 @@ function fakeExcel(rows) {
   }
 }
 
-function setup({ sheet = SHEET, parcels = SAP, admins = [] } = {}) {
+/** nShift as the service sees it: `answers[tracking]` is a timeline, null (unknown) or an Error to throw. */
+function fakeNshift(answers = {}) {
+  const calls = []
+  return {
+    calls,
+    tests: 0,
+    async lookup(tracking, pickedUp) {
+      calls.push([tracking, pickedUp])
+      const answer = answers[tracking]
+      if (answer instanceof Error) throw answer
+      return answer ? structuredClone(answer) : null
+    },
+    async test() {
+      this.tests++
+      return true
+    },
+  }
+}
+
+function setup({ sheet = SHEET, parcels = SAP, admins = [], nshift = fakeNshift() } = {}) {
   const dir = fs.mkdtempSync(path.join(ROOT, 'finlandsforsendelser-'))
   const store = createStore(dir)
   const clock = { now: NOW }
@@ -88,11 +107,12 @@ function setup({ sheet = SHEET, parcels = SAP, admins = [] } = {}) {
       excel,
       fetchParcels: async range => { ranges.push(range); return parcels.map(p => ({ ...p })) },
       isAdmin: async user => admins.includes(user.email),
+      nshift,
       now: () => clock.now,
     })
     return { excel, service }
   }
-  return { dir, store, clock, shared, ranges, pc, ...pc() }
+  return { dir, store, clock, shared, ranges, nshift, pc, ...pc() }
 }
 
 async function waitFor(check) {
@@ -610,4 +630,152 @@ test('after switching to the real sheet the test sheet\'s drafts are neither cou
   await mona.service.saveFollowUp(MONA, null)
   assert.deepEqual(mona.excel.writes()[0].list.map(w => [w.row, w.cells]), [[4, { comment: 'Rigtig' }]])
   assert.deepEqual((await shared.drafts(MONA.email).all()).map(d => d.workbookUrl), [TEST_WORKBOOK_URL], 'the test sheet\'s draft stays until a manager clears it')
+})
+
+// Made-up timelines: only times, status codes and place names.
+const AT_VANTAA = { at: '2026-11-21T08:00:00.000Z', statusId: 2003, status: 'Arrived', text: 'Arrived at terminal', place: 'VANTAA Vantaa FIN' }
+const DELIVERED = { at: '2026-11-23T10:00:00.000Z', statusId: 3000, status: 'Delivered', text: 'Delivered', place: 'HELSINKI Helsinki FIN' }
+const timelineOf = (tracking, events) => ({ tracking, carrier: 'Postnord API', events })
+const NSHIFT_ANSWERS = { [pn(1)]: timelineOf(pn(1), [AT_VANTAA, DELIVERED]), [pn(2)]: timelineOf(pn(2), [AT_VANTAA]) }
+const FETCHED_AT = new Date(NOW).toISOString()
+const codeErr = code => Object.assign(new Error(`${code}: test`), { code })
+
+test('fetching a day stores timelines and gives suggestions on the rows', async () => {
+  const nshift = fakeNshift(NSHIFT_ANSWERS)
+  const { service, shared, pc, excel } = setup({ sheet: FOLLOW_SHEET, nshift })
+  await service.loadSheet(MONA)
+  const before = excel.calls.length
+  const snap = await service.fetchStatus(MONA, { date: '2026-11-20' })
+  assert.deepEqual(nshift.calls, [[pn(1), '2026-11-20'], [pn(2), '2026-11-20']])
+  assert.deepEqual(snap.statusResult, { fetched: 2, notFound: 0, failed: 0 })
+  assert.equal(excel.calls.length, before, 'the sheet is neither read nor written')
+  assert.deepEqual(rowOf(snap, K1).nshift, {
+    fetchedAt: FETCHED_AT,
+    events: [AT_VANTAA, DELIVERED],
+    firstAttempt: '2026-11-23',
+    delivered: '2026-11-23',
+    suggestion: { received: '2026-11-23', sla: 'OK', terminal: 'Vantaa', comment: 'Delay Finland, Vanta term' },
+  })
+  assert.deepEqual(rowOf(snap, K2).nshift.suggestion, { received: null, sla: null, terminal: 'Vantaa', comment: null })
+  assert.equal(rowOf(snap, K2).nshift.delivered, null)
+  assert.equal(rowOf(snap, K3).nshift, null, 'another day is not fetched')
+  assert.deepEqual(await shared.statuses.get([pn(1)]), { [pn(1)]: { ...NSHIFT_ANSWERS[pn(1)], fetchedAt: FETCHED_AT } })
+  // A colleague sees the timelines without fetching.
+  const anna = pc()
+  const seen = await anna.service.loadSheet(ANNA)
+  assert.deepEqual(rowOf(seen, K1).nshift, rowOf(snap, K1).nshift)
+})
+
+test('a delivered timeline is not fetched again for the day but is for one parcel', async () => {
+  const nshift = fakeNshift(NSHIFT_ANSWERS)
+  const { service, clock } = setup({ sheet: FOLLOW_SHEET, nshift })
+  await service.loadSheet(MONA)
+  await service.fetchStatus(MONA, { date: '2026-11-20' })
+  clock.now = NOW + 60000
+  const again = await service.fetchStatus(MONA, { date: '2026-11-20' })
+  assert.deepEqual(nshift.calls.slice(2), [[pn(2), '2026-11-20']], 'only the parcel not delivered yet')
+  assert.deepEqual(again.statusResult, { fetched: 1, notFound: 0, failed: 0 })
+  assert.equal(rowOf(again, K1).nshift.fetchedAt, FETCHED_AT)
+  const one = await service.fetchStatus(MONA, { key: K1 })
+  assert.deepEqual(nshift.calls.slice(3), [[pn(1), '2026-11-20']])
+  assert.deepEqual(one.statusResult, { fetched: 1, notFound: 0, failed: 0 })
+  assert.equal(rowOf(one, K1).nshift.fetchedAt, new Date(NOW + 60000).toISOString())
+  await assert.rejects(service.fetchStatus(MONA, { key: parcelKey('1', pn(9)) }), { code: 'FINLAND_NOT_IN_SHEET' })
+})
+
+test('one failed parcel does not stop the day', async () => {
+  const sheet = [...FOLLOW_SHEET, sheetRow(5, '82100004', pn(4), '2026-11-20')]
+  const nshift = fakeNshift({ [pn(1)]: codeErr('FINLAND_NSHIFT_FAILED'), [pn(4)]: timelineOf(pn(4), [DELIVERED]) })
+  const { service, shared } = setup({ sheet, nshift })
+  await service.loadSheet(MONA)
+  const snap = await service.fetchStatus(MONA, { date: '2026-11-20' })
+  assert.equal(nshift.calls.length, 3)
+  assert.deepEqual(snap.statusResult, { fetched: 1, notFound: 1, failed: 1 })
+  assert.deepEqual(Object.keys(await shared.statuses.get([pn(1), pn(2), pn(4)])), [pn(4)])
+  assert.equal(rowOf(snap, K1).nshift, null)
+
+  // Without a key that works every parcel would fail the same way, so the first such error stops the day.
+  for (const code of ['FINLAND_NSHIFT_NOT_SET', 'FINLAND_NSHIFT_REFUSED']) {
+    const refusing = fakeNshift({ [pn(1)]: codeErr(code), [pn(2)]: codeErr(code) })
+    const other = setup({ sheet: FOLLOW_SHEET, nshift: refusing })
+    await other.service.loadSheet(MONA)
+    await assert.rejects(other.service.fetchStatus(MONA, { date: '2026-11-20' }), { code })
+    assert.equal(refusing.calls.length, 1)
+    await other.service.loadSheet(MONA)
+  }
+})
+
+test('apply suggestions never overwrites a filled field', async () => {
+  const sheet = [sheetRow(2, '82100001', pn(1), '2026-11-20', { comment: 'Kept' }), ...FOLLOW_SHEET.slice(1)]
+  const nshift = fakeNshift(NSHIFT_ANSWERS)
+  const { service } = setup({ sheet, nshift })
+  await service.loadSheet(MONA)
+  await service.saveDraft(MONA, K1, { terminal: 'Turku' }, false, { ...BLANK, comment: 'Kept' })
+  await service.fetchStatus(MONA, { date: '2026-11-20' })
+  const snap = await service.applySuggestions(MONA, { date: '2026-11-20' })
+  assert.equal(snap.applied, 1, 'the parcel not delivered yet gets nothing')
+  assert.deepEqual(rowOf(snap, K1).effective, { expected: '2026-11-24', received: '2026-11-23', sla: 'OK', comment: 'Kept', terminal: 'Turku' })
+  assert.equal(rowOf(snap, K1).slaManual, false, 'the SLA is the automatic one')
+  assert.equal(rowOf(snap, K2).pending, false)
+  const again = await service.applySuggestions(MONA, { date: '2026-11-20' })
+  assert.equal(again.applied, 0, 'nothing left to fill')
+})
+
+test('apply suggestions makes drafts, never sheet writes', async () => {
+  const nshift = fakeNshift(NSHIFT_ANSWERS)
+  const { service, excel, shared } = setup({ sheet: FOLLOW_SHEET, nshift })
+  await service.loadSheet(MONA)
+  await service.fetchStatus(MONA, { date: '2026-11-20' })
+  const before = excel.calls.length
+  const snap = await service.applySuggestions(MONA, { date: '2026-11-20' })
+  assert.equal(excel.calls.length, before, 'Excel is not touched')
+  assert.deepEqual(excel.writes(), [])
+  assert.equal(snap.applied, 1)
+  assert.equal(snap.followUp.pendingTotal, 1)
+  const [{ updatedAt, ...draft }] = await shared.drafts(MONA.email).all()
+  assert.equal(updatedAt, FETCHED_AT)
+  assert.deepEqual(draft, {
+    delivery: '82100001', tracking: pn(1), pickedUp: '2026-11-20', workbookUrl: TEST_WORKBOOK_URL, slaManual: false, original: BLANK,
+    fields: { expected: '2026-11-24', received: '2026-11-23', sla: 'OK', comment: 'Delay Finland, Vanta term', terminal: 'Vantaa' },
+  })
+  assert.deepEqual(await shared.drafts(ANNA.email).all(), [])
+  // Saving in the sheet is still its own step.
+  await service.saveFollowUp(MONA, '2026-11-20')
+  assert.deepEqual(excel.writes()[0].list.map(w => w.row), [2])
+})
+
+test('DSV parcels are not looked up', async () => {
+  const dsv = `00157145${'1'.padStart(12, '0')}`
+  const dhl = `JD${'1'.padStart(18, '0')}`
+  const sheet = [
+    sheetRow(2, '82100001', dsv, '2026-11-20'),
+    sheetRow(3, '82100002', dhl, '2026-11-20'),
+    sheetRow(4, '82100003', pn(3), '2026-11-20'),
+    sheetRow(5, '82100003', pn(3), '2026-11-20'),
+  ]
+  const nshift = fakeNshift()
+  const { service } = setup({ sheet, nshift })
+  await service.loadSheet(MONA)
+  const snap = await service.fetchStatus(MONA, { date: '2026-11-20' })
+  assert.deepEqual(nshift.calls, [[dhl, '2026-11-20']], 'DSV and a parcel twice in the sheet are skipped')
+  assert.deepEqual(snap.statusResult, { fetched: 0, notFound: 1, failed: 0 })
+  const one = await service.fetchStatus(MONA, { key: parcelKey('82100001', dsv) })
+  assert.equal(nshift.calls.length, 1)
+  assert.deepEqual(one.statusResult, { fetched: 0, notFound: 0, failed: 0 })
+})
+
+test('only managers set and test the nShift key, and the window never gets the secret', async () => {
+  const { service, nshift } = setup()
+  const MANAGER = { ...MONA, role: 'manager' }
+  assert.deepEqual(await service.nshiftStatus(), { configured: false, clientIdEnding: '' })
+  await assert.rejects(service.setNshift(MONA, { clientId: 'test-client-0001', clientSecret: 'fake-secret' }), { code: 'MANAGER_ONLY' })
+  const status = await service.setNshift(MANAGER, { clientId: 'test-client-0001', clientSecret: 'fake-secret' })
+  assert.deepEqual(status, { configured: true, clientIdEnding: '0001' })
+  assert.deepEqual(await service.nshiftStatus(), status)
+  await assert.rejects(service.testNshift(MONA), { code: 'MANAGER_ONLY' })
+  await assert.rejects(service.testNshift({ ...MANAGER, statusManager: true }), { code: 'MANAGER_ONLY' })
+  assert.equal(nshift.tests, 0)
+  const tested = await service.testNshift(MANAGER)
+  assert.equal(nshift.tests, 1)
+  assert.ok(!JSON.stringify(tested).includes('fake-secret'))
 })
