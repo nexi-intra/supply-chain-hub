@@ -108,6 +108,19 @@ export function applySuggestions(form: FollowUpForm, r: FinlandFollowUpRow): Fol
 }
 
 /**
+ * The SLA the list fills in once the dates in `fields` are filled, as Enter gives it (and as proposedSla in
+ * electron/warehouse/finland/service.cjs; change both): nShift's SLA while Received is nShift's and Expected the one
+ * the rules used, else the date rule.
+ */
+function proposedSla(r: FinlandFollowUpRow, fields: Partial<FinlandFollowUp>): string {
+  const expected = fields.expected || r.effective.expected || ''
+  const received = fields.received || r.effective.received || ''
+  const s = r.nshift?.suggestion
+  if (s?.sla && received === (s.received || '') && expected === (r.effective.expected || r.suggestedExpected || '')) return s.sla
+  return slaFor(expected, received)
+}
+
+/**
  * What "Brug forslagene for alle leverede kolli på dagen" fills in, by parcel, with the main process' rules: delivered
  * parcels on `day` that are not twice in the sheet, and only fields that are empty and not changed by the person (in a
  * draft or in the open `form`). Expected gets the suggested Expected, which nShift's SLA was worked out with.
@@ -120,7 +133,7 @@ export function suggestionList(rows: FinlandFollowUpRow[], day: string | null, f
     const proposed: Partial<Record<FinlandFollowUpField, string | null>> = { expected: r.suggestedExpected, ...r.nshift.suggestion }
     const fields: Partial<FinlandFollowUp> = {}
     for (const field of FIELDS) {
-      const value = proposed[field]
+      const value = field === 'sla' ? proposedSla(r, fields) : proposed[field]
       const empty = !String(r.effective[field] ?? '').trim()
       const changed = String(r.effective[field] ?? '') !== String(r.sheet[field] ?? '') || touchedNow.includes(field)
       if (value && empty && !changed) fields[field] = value

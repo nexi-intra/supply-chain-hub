@@ -9,7 +9,7 @@ const { compareParcels, REASONS } = require('./core/compare.cjs')
 const { toSheetRows } = require('./core/newRows.cjs')
 const { dayOverview, defaultDay } = require('./core/dayOverview.cjs')
 const { insertionPoint } = require('./core/placement.cjs')
-const { expectedSuggestion, receivedChoices, isFollowedUp, followUpDays, topComments, duplicateKeys } = require('./core/followUp.cjs')
+const { expectedSuggestion, receivedChoices, isFollowedUp, followUpDays, topComments, duplicateKeys, slaFor } = require('./core/followUp.cjs')
 const { planWrites, resolveDraft, mergeDraft, FIELDS } = require('./core/followUpSync.cjs')
 const { facts, suggest } = require('./core/nshiftRules.cjs')
 const { checkManualRow } = require('./core/manualRow.cjs')
@@ -62,6 +62,18 @@ function nshiftOf(timeline, { courier, pickedUp, effective, suggestedExpected })
     delivered: s.delivered,
     suggestion: { received: s.received, sla: s.sla, terminal: s.terminal, comment: s.comment },
   }
+}
+
+/**
+ * The SLA "Brug forslagene" fills in once the dates in `wanted` are filled, as Enter gives it (followUpLogic.ts'
+ * suggestionList): nShift's SLA while Received is nShift's and Expected the one the rules used, else the date rule.
+ */
+function proposedSla(r, wanted) {
+  const expected = wanted.expected || r.effective.expected || ''
+  const received = wanted.received || r.effective.received || ''
+  const s = r.nshift.suggestion
+  if (s.sla && received === (s.received || '') && expected === (r.effective.expected || r.suggestedExpected || '')) return s.sla
+  return slaFor(expected, received)
 }
 
 /**
@@ -560,7 +572,8 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, nshift = n
         const proposed = { expected: r.suggestedExpected, ...r.nshift.suggestion }
         const wanted = {}
         for (const field of FIELDS) {
-          if (proposed[field] && !String(r.effective[field] ?? '').trim() && !(field in touched) && !kept.includes(field)) wanted[field] = proposed[field]
+          const value = field === 'sla' ? proposedSla(r, wanted) : proposed[field]
+          if (value && !String(r.effective[field] ?? '').trim() && !(field in touched) && !kept.includes(field)) wanted[field] = value
         }
         if (!Object.keys(wanted).length) continue
         // A suggested SLA follows the dates like an automatic one; a manual SLA the person set stays manual.

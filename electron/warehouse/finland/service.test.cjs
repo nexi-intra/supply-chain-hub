@@ -761,6 +761,20 @@ test('apply suggestions leaves the fields touched in the open parcel alone', asy
   assert.equal(rowOf(other, K1).effective.terminal, 'Vantaa')
 })
 
+test('apply suggestions gives the SLA of the Received in the sheet, as Enter does', async () => {
+  // Expected 25-11, Received 27-11 in the sheet, nShift delivered 25-11: nShift's OK is not for these dates.
+  const sheet = [sheetRow(2, '82100001', pn(1), '2026-11-24', { expected: '2026-11-25', received: '2026-11-27' })]
+  const delivered = { ...DELIVERED, at: '2026-11-25T10:00:00.000Z' }
+  const nshift = fakeNshift({ [pn(1)]: timelineOf(pn(1), [delivered]) })
+  const { service } = setup({ sheet, nshift })
+  await service.loadSheet(MONA)
+  const fetched = await service.fetchStatus(MONA, { date: '2026-11-24' })
+  assert.equal(rowOf(fetched, K1).nshift.suggestion.sla, 'OK')
+  const snap = await service.applySuggestions(MONA, { date: '2026-11-24' })
+  assert.equal(snap.applied, 1)
+  assert.deepEqual(rowOf(snap, K1).effective, { expected: '2026-11-25', received: '2026-11-27', sla: 'NOK', comment: '', terminal: '' })
+})
+
 test('apply suggestions makes drafts, never sheet writes', async () => {
   const nshift = fakeNshift(NSHIFT_ANSWERS)
   const { service, excel, shared } = setup({ sheet: FOLLOW_SHEET, nshift })

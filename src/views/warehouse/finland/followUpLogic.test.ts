@@ -147,6 +147,17 @@ describe('Opfølgning: suggestions from nShift', () => {
     expect(suggestionText({ received: '2026-11-27', sla: 'OK' })).toBe('Received 27-11-2026, SLA OK')
   })
 
+  it('the list gives the SLA Enter gives for the Received in the sheet', () => {
+    // Expected 25-11, Received 27-11 in the sheet, nShift delivered 25-11: nShift's OK is not for these dates.
+    const values = { ...BLANK, expected: '2026-11-25', received: '2026-11-27' }
+    const r = row({ nshift: NSHIFT({ terminal: null, comment: null }, '2026-11-25'), sheet: values, effective: values })
+    expect(suggestionList([r], '2026-11-24')[0].fields).toEqual({ sla: 'NOK' })
+    expect(applySuggestions(openForm(r), r).values.sla).toBe('NOK')
+    // Without an Expected to fill in, no SLA.
+    const cleared = row({ nshift: NSHIFT({ terminal: null, comment: null }), sheet: { ...BLANK, expected: '2026-11-26' }, effective: { ...BLANK } })
+    expect(suggestionList([cleared], '2026-11-24')[0].fields).toEqual({ received: '2026-11-27' })
+  })
+
   it('says what a status fetch did and when', () => {
     expect(statusLines({ fetched: 5, notFound: 0, failed: 0 })).toBe('5 kolli hentet.')
     expect(statusLines({ fetched: 3, notFound: 1, failed: 2 })).toBe('3 kolli hentet. 1 ikke fundet i nShift. 2 fejlede.')
