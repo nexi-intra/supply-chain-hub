@@ -41,12 +41,13 @@ Bemærk: eslint 9 er markeret som ikke længere understøttet (eslint 10 findes)
 ## Fase 3 - nye tiltag
 
 - [x] Guides og Knowledge Library: zoom i en åben guide. Se `plans/guide-zoom-design.md` og `plans/guide-zoom-plan.md`.
-- [ ] Optælling (ønsket af TRR, også TCD): blocked for TRR, eksport af serienumre, fælles import af materialedokument og 24-cifrede serienumre. Se `plans/optaelling-trr-tilfoejelser-design.md` og `plans/optaelling-trr-tilfoejelser-plan.md`.
-- [ ] Registrer brugerrettede ændringer i `src/lib/changelog.ts` under en ny 1.6.9-post, kun for ting der faktisk er lavet.
+- [x] Finlandsforsendelser i Arbejdsværktøjer med status fra nShift, filter i Opfølgning og "Ikke sendt" fra Opfølgning. SharePoint-arket er standardarket. Se `plans/finlandsforsendelser-plan.md` og `plans/nshift-status-plan.md`.
+- [ ] Optælling (ønsket af TRR, også TCD): blocked for TRR, eksport af serienumre, fælles import af materialedokument og 24-cifrede serienumre. Bygget og med i buildet, mangler afprøvning med QS4. Se `plans/optaelling-trr-tilfoejelser-design.md` og `plans/optaelling-trr-tilfoejelser-plan.md`.
+- [x] Registrer brugerrettede ændringer i `src/lib/changelog.ts` under en ny 1.6.9-post, kun for ting der faktisk er lavet.
 
 ## Fase 4 - senere, kun efter godkendelse
 
-- [ ] Releasebuild 1.6.9.
+- [x] Releasebuild 1.6.9 (27.11.2026, godkendt af Jacob): `develop/1.6.9` ved `09f7565`, `npm.cmd run electron:build`, `release/Supply Chain Hub-1.6.9-win.zip` (242.809.075 bytes). Tests før build: tsc 0 fejl, test:warehouse 1117 bestået (1 skip), vitest 1883 bestået (1 skip). app.asar kontrolleret for version 1.6.9 og de nye dele.
 - [ ] GitHub-release og push af `develop/1.6.9`, `release/1.6.9` og tag `v1.6.9`.
 - [ ] Udgiv zip'en på opdateringsdrevet på M: (brugerens trin).
 
