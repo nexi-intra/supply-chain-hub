@@ -10,6 +10,7 @@ const { scopeStockTypes, scopeKinds, scopeOverlap, describeOverlap, TERMINAL_KIN
 const { normalizeSerial, matchSerial, activeEvents, aggregateCount, registeredSerials, foundElsewhere, applyApprovals, freezeRows, buildCountLists, computeProgress } = require('./core/countState.cjs')
 const { docLinesFromSnapshot, missingAtApproval, linesAtApproval, approvedWithLinesText, buildCountDoc, confirmedAll } = require('./core/countDoc.cjs')
 const { normalizeMatdoc } = require('./core/sapParsers.cjs')
+const { matdocTarget } = require('./core/matdocTarget.cjs')
 const { scannedSerial } = require('./core/serialInput.cjs')
 const { differenceTotals, archiveLines } = require('./core/archive.cjs')
 const { ACTIVE: ACTIVE_PIDOC, RESERVATION_MS, statusOf } = require('./core/piDocs.cjs')
@@ -1133,22 +1134,141 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const fetched = await fetcher.fetchMatdoc({ team: state.team, document })
     await refresh(state, true)
     const serials = [...new Set(fetched.rows.map(row => row.serial))]
-    const materials = new Map()
-    for (const row of fetched.rows) {
-      const entry = materials.get(row.material) || { material: row.material, description: row.description, count: 0 }
-      entry.count += 1
-      materials.set(row.material, entry)
-    }
     const previous = activeEvents(state.events || []).filter(event => event.type === 'import' && event.document === fetched.document).pop()
     const checked = checkSerials(state, serials)
     return {
       document: fetched.document,
       transaction: fetched.transaction,
       serials,
-      materials: [...materials.values()].sort((a, b) => b.count - a.count || a.material.localeCompare(b.material)),
+      materials: matdocMaterials(fetched.rows),
       check: { dryRun: true, ...checked.result, toImport: checked.accepted.length },
       alreadyImported: previous ? { byName: previous.byName, at: previous.at, place: previous.place } : null,
     }
+  }
+
+  function matdocMaterials(rows) {
+    const materials = new Map()
+    for (const row of rows) {
+      const entry = materials.get(row.material) || { material: row.material, description: row.description, count: 0 }
+      entry.count += 1
+      materials.set(row.material, entry)
+    }
+    return [...materials.values()].sort((a, b) => b.count - a.count || a.material.localeCompare(b.material))
+  }
+
+  // ---------- Material document for the whole team ----------
+  /** Per count: the serials of its SAP figures (indexSnapshot), kept while the snapshot is the same. */
+  const matdocIndexes = new Map()
+  /** Per count: its journal chunk cache for importsOfDocument (a full chunk never changes). */
+  const matdocChunks = new Map()
+
+  const openedState = (team, id) => [...opened.values()].find(state => state.team === team && state.id === id) || null
+
+  /**
+   * The team's open counts with the serials of their SAP figures, read from the snapshots only. No count is opened: that
+   * would start its journal and heartbeats, and this PC would look like it takes part in counts it never opened.
+   */
+  async function openCountSerials(team) {
+    const list = (await repo.listCounts(team)).filter(entry => entry.status === 'open' && !entry.creating)
+    const ids = new Set(list.map(entry => `${team}:${entry.id}`))
+    for (const cache of [matdocIndexes, matdocChunks]) for (const key of cache.keys()) if (key.startsWith(`${team}:`) && !ids.has(key)) cache.delete(key)
+    const counts = await Promise.all(list.map(async entry => {
+      const local = openedState(team, entry.id)
+      if (local) return { id: entry.id, name: entry.name, fetchedAt: local.snapshot.fetchedAt, serials: local.index.serials }
+      let snapshot
+      try {
+        snapshot = await repo.getSnapshot(team, entry.id)
+      } catch {
+        // A count left out could make a pallet look like it belongs to one count only.
+        throw codeError('STORAGE_UNAVAILABLE')
+      }
+      if (!snapshot) return null
+      const key = `${team}:${entry.id}`
+      let cached = matdocIndexes.get(key)
+      if (!cached || cached.fetchedAt !== snapshot.fetchedAt) matdocIndexes.set(key, (cached = { fetchedAt: snapshot.fetchedAt, serials: indexSnapshot(snapshot).serials }))
+      return { id: entry.id, name: entry.name, fetchedAt: snapshot.fetchedAt, serials: cached.serials }
+    }))
+    return counts.filter(Boolean)
+  }
+
+  /** Imports of `document` in the open counts other than `exceptId`, read from their journals without opening them. Never throws. */
+  async function importsOfDocument(team, counts, document, exceptId) {
+    const remote = storeFor(team)
+    let keys = null
+    const found = await Promise.all(counts.filter(count => count.id !== exceptId).map(async count => {
+      try {
+        const local = openedState(team, count.id)
+        let events
+        if (local && now() - local.refreshedAt < ELSEWHERE_MS) events = mergedEvents(local)
+        else {
+          keys ||= remote.keysAsync()
+          const key = `${team}:${count.id}`
+          if (!matdocChunks.has(key)) matdocChunks.set(key, new Map())
+          events = (await readJournals({ remote, countId: count.id, cache: matdocChunks.get(key), keys: await keys })).events
+        }
+        return activeEvents(events)
+          .filter(event => event.type === 'import' && event.document && normalizeMatdoc(event.document) === document)
+          .map(event => ({ countName: count.name, byName: event.byName, at: event.at, place: event.place }))
+      } catch (error) {
+        console.error('CountPoint: journals of another count unavailable', error.code || error.message)
+        return []
+      }
+    }))
+    return found.flat().sort((a, b) => b.at - a.at)
+  }
+
+  const cleanSerials = serials => {
+    if (!Array.isArray(serials)) throw codeError('IMPORT_INVALID', 'Der er ingen serienumre')
+    if (serials.length > IMPORT_MAX) throw codeError('IMPORT_TOO_LARGE', `Højst ${IMPORT_MAX} serienumre ad gangen`)
+    return serials.map(String)
+  }
+
+  /**
+   * A material document from SAP for the whole team: which open count it belongs to (matdocTarget) and, when that is one
+   * count, the same check as an import there. Only that count is opened.
+   */
+  async function lookupTeamMatdoc(user, { document } = {}) {
+    const team = teamOf(user)
+    const fetched = await fetcher.fetchMatdoc({ team, document })
+    const serials = [...new Set(fetched.rows.map(row => row.serial))]
+    const counts = await openCountSerials(team)
+    const target = matdocTarget({ serials, counts })
+    const result = { document: fetched.document, transaction: fetched.transaction, serials, materials: matdocMaterials(fetched.rows), target, canImport: false, reason: null, check: null, alreadyImported: null, importedElsewhere: [] }
+    if (target.outcome !== 'ok') return result
+    const matdoc = normalizeMatdoc(fetched.document)
+    const [state, importedElsewhere] = await Promise.all([
+      load(user, target.countId).then(state => refresh(state, true)),
+      matdoc ? importsOfDocument(team, counts, matdoc, target.countId) : [],
+    ])
+    const rights = await access(user, state)
+    const previous = matdoc ? activeEvents(state.events || []).filter(event => event.type === 'import' && event.document && normalizeMatdoc(event.document) === matdoc).pop() : null
+    const checked = checkSerials(state, serials)
+    return {
+      ...result,
+      canImport: rights.canWrite,
+      reason: rights.canWrite ? null : rights.locked ? 'locked' : state.meta.status !== 'open' ? 'closed' : 'not-member',
+      check: { dryRun: true, ...checked.result, toImport: checked.accepted.length },
+      alreadyImported: previous ? { byName: previous.byName, at: previous.at, place: previous.place } : null,
+      importedElsewhere,
+    }
+  }
+
+  /** Imports the document in the count of the lookup; the decision is made again, so a change since then never imports it in the wrong count. */
+  async function importTeamMatdoc(user, { document, place, serials, countId } = {}) {
+    const team = teamOf(user)
+    if (!normalizeMatdoc(document)) throw codeError('IMPORT_INVALID', 'Ugyldigt materialedokument')
+    const list = cleanSerials(serials)
+    const target = matdocTarget({ serials: list, counts: await openCountSerials(team) })
+    if (target.outcome !== 'ok' || target.countId !== countId) throw codeError('MATDOC_TARGET_CHANGED', 'Optællingerne har ændret sig siden opslaget. Slå dokumentet op igen')
+    const result = await importSerials(user, countId, { serials: list, place, document, dryRun: false })
+    return { ...result, countId, countName: target.countName }
+  }
+
+  /** Every serial of the document with its storage location, stock type and count, for the Excel sheet of a refused import. */
+  async function teamMatdocExport(user, { document, serials } = {}) {
+    const team = teamOf(user)
+    const target = matdocTarget({ serials: cleanSerials(serials), counts: await openCountSerials(team) })
+    return { document: clean(document, 40), rows: target.rows }
   }
 
   // ---------- Members and areas ----------
@@ -1934,7 +2054,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
 
   return {
     listCounts, statusOverview, activeProgress, startStatus, statusChecklist, lockStatus: changes(lockStatus, 'team'), statusArchive, unlockStatus: changes(unlockStatus, 'team'), deleteStatus: changes(deleteStatus, 'team'), preview, createCount, openCount, getState, listSerials, materialSerials, serialExport,
-    scan, undo, removeSerial, saveLine: changes(saveLine), deleteLine, importSerials, lookupMatdoc,
+    scan, undo, removeSerial, saveLine: changes(saveLine), deleteLine, importSerials, lookupMatdoc, lookupTeamMatdoc, importTeamMatdoc, teamMatdocExport,
     lockMaterial: changes(lockMaterial), requestMaterial: changes(requestMaterial), answerMaterialRequest: changes(answerMaterialRequest), releaseMaterial: changes(releaseMaterial), submitMaterial: changes(submitMaterial),
     requestJoin: changes(requestJoin), decideMember: changes(decideMember), claimArea: changes(claimArea), releaseArea: changes(releaseArea),
     closeCount: changes(closeCount), reopenCount: changes(reopenCount), deleteCount: changes(deleteCount), previewRefetch, applyRefetch,

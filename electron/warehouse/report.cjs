@@ -94,6 +94,12 @@ const REPORT_TEXT = {
       missingHeaders: ['Serienummer', 'Materiale', 'Storage location (SAP)', 'Lagertype'],
       name: (countName, material) => `${countName} ${material} serienumre`,
     },
+    matdocSplit: {
+      sheet: 'Serienumre',
+      headers: ['Serienummer', 'Materiale', 'Storage location (SAP)', 'Lagertype', 'Optælling'],
+      unknown: 'Ukendt i SAP-tallene',
+      name: document => `Materialedokument ${document}`,
+    },
   },
   en: {
     kinds: { new: 'New terminals', used: 'Used terminals', accessory: 'Accessories', other: 'Other' },
@@ -129,6 +135,12 @@ const REPORT_TEXT = {
       foundHeaders: ['Serial number', 'Material', 'Storage location (SAP)', 'Stock type', 'Found in', 'Found by', 'Time', 'Source'],
       missingHeaders: ['Serial number', 'Material', 'Storage location (SAP)', 'Stock type'],
       name: (countName, material) => `${countName} ${material} serial numbers`,
+    },
+    matdocSplit: {
+      sheet: 'Serial numbers',
+      headers: ['Serial number', 'Material', 'Storage location (SAP)', 'Stock type', 'Count'],
+      unknown: 'Unknown in the SAP figures',
+      name: document => `Material document ${document}`,
     },
   },
 }
@@ -264,6 +276,29 @@ function buildSerialExportWorkbook({ countName, material, description, found, mi
 async function writeSerialExport(data, dir, date = new Date()) {
   const name = reportFileName({ name: textFor(data.language).serialExport.name(data.countName, data.material) }, date)
   return writeWorkbook(buildSerialExportWorkbook(data), dir, name)
+}
+
+const STOCK_TYPE_ORDER = { unrestricted: 0, blocked: 1 }
+
+// A material document that cannot be imported in one count: where each serial is, by storage location and stock type,
+// serials unknown in the SAP figures last. The serial is in column A, so it can be pasted into SAP.
+function buildMatdocSplitWorkbook({ document, rows, language }) {
+  const text = textFor(language).matdocSplit
+  const workbook = new ExcelJS.Workbook()
+  workbook.creator = 'CountPoint'
+  workbook.created = new Date()
+  workbook.title = text.name(document)
+  const rank = row => (row.sloc ? 0 : 1)
+  const sorted = [...rows].sort((a, b) => rank(a) - rank(b)
+    || String(a.sloc || '').localeCompare(String(b.sloc || ''))
+    || (STOCK_TYPE_ORDER[a.stockType] ?? 2) - (STOCK_TYPE_ORDER[b.stockType] ?? 2)
+    || String(a.serial).localeCompare(String(b.serial)))
+  addTable(workbook.addWorksheet(text.sheet), text.headers, sorted.map(row => [row.serial, row.material || '', row.sloc || '', row.sloc ? STOCK_LABELS[row.stockType] || '' : text.unknown, row.countName || '']))
+  return workbook
+}
+
+async function writeMatdocSplitExport(data, dir, date = new Date()) {
+  return writeWorkbook(buildMatdocSplitWorkbook(data), dir, reportFileName({ name: textFor(data.language).matdocSplit.name(data.document) }, date))
 }
 
 async function writeWorkbook(workbook, dir, name) {
@@ -449,4 +484,4 @@ async function writeSapCheckReport(data, dir, date = new Date()) {
   return writeWorkbook(buildSapCheckWorkbook(data), dir, reportFileName({ name: `${text.file} ${data.team}` }, date))
 }
 
-module.exports = { writeReport, writeStatusReport, writeSapCheckReport, writeSerialExport, buildWorkbook, buildStatusWorkbook, buildSapCheckWorkbook, buildSerialExportWorkbook, reportFileName }
+module.exports = { writeReport, writeStatusReport, writeSapCheckReport, writeSerialExport, writeMatdocSplitExport, buildWorkbook, buildStatusWorkbook, buildSapCheckWorkbook, buildSerialExportWorkbook, buildMatdocSplitWorkbook, reportFileName }

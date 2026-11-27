@@ -7,7 +7,7 @@ const ExcelJS = require('exceljs')
 const { buildSnapshot, indexSnapshot } = require('./core/snapshot.cjs')
 const { storageRulesFor } = require('./core/classify.cjs')
 const { aggregateCount, computeProgress } = require('./core/countState.cjs')
-const { writeReport, reportFileName, writeStatusReport, writeSapCheckReport, buildSerialExportWorkbook, writeSerialExport } = require('./report.cjs')
+const { writeReport, reportFileName, writeStatusReport, writeSapCheckReport, buildSerialExportWorkbook, writeSerialExport, buildMatdocSplitWorkbook, writeMatdocSplitExport } = require('./report.cjs')
 
 const rulesByTeam = { TCD: storageRulesFor('TCD', {}), TRR: storageRulesFor('TRR', {}) }
 const stock = (material, sloc, unrestricted, blocked = 0, valueUnrestricted = 0, valueBlocked = 0) => ({ material, description: `${material} tekst`, plant: 'D301', sloc, unrestricted, blocked, valueUnrestricted, valueBlocked })
@@ -202,6 +202,40 @@ test('serial export has a Found and a Missing sheet with the serial in column A'
   assert.equal(path.basename(file), 'Status D000 INT4300-4921-0 serienumre 2026-10-16 0905.xlsx')
   const englishFile = await writeSerialExport({ ...data, language: 'en' }, dir, new Date(2026, 9, 16, 9, 5))
   assert.equal(path.basename(englishFile), 'Status D000 INT4300-4921-0 serial numbers 2026-10-16 0905.xlsx')
+})
+
+test('material document split sheet sorts by storage location and puts unknown last', async () => {
+  const row = (serial, sloc, stockType, countName = null) => ({ serial, material: sloc ? 'INT4300-4921-0' : null, sloc, stockType, countId: countName ? 'c1' : null, countName })
+  const data = {
+    document: '4900229137 2026',
+    rows: [row('Z9', null, null), row('S3', 'D002', 'unrestricted'), row('S2', 'D001', 'blocked', 'D001 blocked'), row('S5', 'D001', 'unrestricted', 'D001 terminaler'), row('A1', null, null), row('S1', 'D001', 'unrestricted', 'D001 terminaler')],
+  }
+  const workbook = buildMatdocSplitWorkbook(data)
+  assert.deepEqual(workbook.worksheets.map(sheet => sheet.name), ['Serienumre'])
+  const sheet = workbook.getWorksheet('Serienumre')
+  assert.deepEqual(sheet.getRow(1).values.slice(1), ['Serienummer', 'Materiale', 'Storage location (SAP)', 'Lagertype', 'Optælling'])
+  const rows = []
+  for (let index = 2; index <= sheet.rowCount; index++) rows.push([1, 2, 3, 4, 5].map(column => sheet.getRow(index).getCell(column).value))
+  assert.deepEqual(rows, [
+    ['S1', 'INT4300-4921-0', 'D001', 'Unblocked', 'D001 terminaler'],
+    ['S5', 'INT4300-4921-0', 'D001', 'Unblocked', 'D001 terminaler'],
+    ['S2', 'INT4300-4921-0', 'D001', 'Blocked', 'D001 blocked'],
+    ['S3', 'INT4300-4921-0', 'D002', 'Unblocked', ''],
+    ['A1', '', '', 'Ukendt i SAP-tallene', ''],
+    ['Z9', '', '', 'Ukendt i SAP-tallene', ''],
+  ])
+
+  const english = buildMatdocSplitWorkbook({ ...data, language: 'en' })
+  assert.deepEqual(english.worksheets.map(item => item.name), ['Serial numbers'])
+  const englishSheet = english.getWorksheet('Serial numbers')
+  assert.deepEqual(englishSheet.getRow(1).values.slice(1), ['Serial number', 'Material', 'Storage location (SAP)', 'Stock type', 'Count'])
+  assert.equal(englishSheet.getCell('D7').value, 'Unknown in the SAP figures')
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'countpoint-matdoc-split-'))
+  const file = await writeMatdocSplitExport(data, dir, new Date(2026, 9, 16, 9, 5))
+  assert.equal(path.basename(file), 'Materialedokument 4900229137 2026 2026-10-16 0905.xlsx')
+  const englishFile = await writeMatdocSplitExport({ ...data, language: 'en' }, dir, new Date(2026, 9, 16, 9, 5))
+  assert.equal(path.basename(englishFile), 'Material document 4900229137 2026 2026-10-16 0905.xlsx')
 })
 
 test('a report with a name already taken gets " (2)", without synchronous file calls (the folder is on M:)', async t => {

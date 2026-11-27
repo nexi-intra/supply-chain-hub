@@ -473,6 +473,96 @@ test('a material document typed with and without year is recognised as already i
   assert.deepEqual(focus.found.map(item => item.document), ['4900229137 2026'])
 })
 
+const MATDOC = '4900229137 2026'
+
+/** D000 unblocked terminals (Anna) and D000 blocked (Mona); SAP has the blocked serial B1. The document holds `doc.serials`. */
+async function teamMatdocSetup() {
+  const ctx = setup()
+  ctx.sap.serials.push(serial('B1', 'INT4300-4921-0', 'D000', 'blocked'))
+  const doc = { serials: ['N1', 'N2'] }
+  ctx.fetcher.fetchMatdoc = async () => ({ document: MATDOC, transaction: 'ZMS_REP', rows: doc.serials.map(serialNo => ({ serial: serialNo, material: 'INT4300-4921-0', description: 'SmartPOS', plant: 'D301', sloc: 'D000', userStatus: '' })) })
+  const scope = stockTypes => ({ type: 'slocs', slocs: ['D000'], stockTypes, kinds: ['new', 'used'] })
+  const anna = ctx.service('pc1')
+  const mona = ctx.service('pc3')
+  const annaCount = await anna.createCount(ANNA, { token: (await anna.preview(ANNA, { scope: scope(['unrestricted']) })).token, name: 'D000 terminaler' })
+  const monaCount = await mona.createCount(MONA, { token: (await mona.preview(MONA, { scope: scope(['blocked']) })).token, name: 'D000 blocked' })
+  return { ctx, doc, anna, mona, annaCount, monaCount }
+}
+
+test('team matdoc import puts a pallet in the one open count that counts it', async () => {
+  const { anna, annaCount } = await teamMatdocSetup()
+  const lookup = await anna.lookupTeamMatdoc(ANNA, { document: MATDOC })
+  assert.equal(lookup.document, MATDOC)
+  assert.deepEqual(lookup.serials, ['N1', 'N2'])
+  assert.equal(lookup.target.outcome, 'ok')
+  assert.equal(lookup.target.countId, annaCount.id)
+  assert.equal(lookup.target.countName, 'D000 terminaler')
+  assert.deepEqual([lookup.canImport, lookup.reason, lookup.check.found, lookup.alreadyImported], [true, null, 2, null])
+  assert.deepEqual(lookup.importedElsewhere, [])
+  const result = await anna.importTeamMatdoc(ANNA, { document: lookup.document, place: 'Palle 1', serials: lookup.serials, countId: annaCount.id })
+  assert.deepEqual([result.imported, result.countId, result.countName], [2, annaCount.id, 'D000 terminaler'])
+  const focus = await anna.materialSerials(ANNA, annaCount.id, { material: 'INT4300-4921-0' })
+  assert.deepEqual(focus.found.map(item => [item.serial, item.place, item.document]).sort(), [['N1', 'Palle 1', MATDOC], ['N2', 'Palle 1', MATDOC]])
+  const again = await anna.lookupTeamMatdoc(ANNA, { document: '4900229137' })
+  assert.deepEqual([again.alreadyImported?.byName, again.alreadyImported?.place], ['Anna', 'Palle 1'])
+})
+
+test('blocked and unblocked on one pallet is refused', async () => {
+  const { doc, anna, annaCount } = await teamMatdocSetup()
+  doc.serials = ['N1', 'B1', 'ZZ9']
+  const lookup = await anna.lookupTeamMatdoc(ANNA, { document: MATDOC })
+  assert.equal(lookup.target.outcome, 'mixed')
+  assert.deepEqual([lookup.canImport, lookup.check, lookup.alreadyImported], [false, null, null])
+  await assert.rejects(anna.importTeamMatdoc(ANNA, { document: MATDOC, place: 'Palle 1', serials: lookup.serials, countId: annaCount.id }), { code: 'MATDOC_TARGET_CHANGED', message: 'Optællingerne har ændret sig siden opslaget. Slå dokumentet op igen' })
+  const exported = await anna.teamMatdocExport(ANNA, { document: MATDOC, serials: lookup.serials })
+  assert.equal(exported.document, MATDOC)
+  assert.deepEqual(exported.rows.map(row => [row.serial, row.sloc, row.stockType, row.countName]), [['N1', 'D000', 'unrestricted', 'D000 terminaler'], ['B1', 'D000', 'blocked', 'D000 blocked'], ['ZZ9', null, null, null]])
+})
+
+test('someone outside the count cannot import', async () => {
+  const { ctx, annaCount } = await teamMatdocSetup()
+  const bo = ctx.service('pc2')
+  const lookup = await bo.lookupTeamMatdoc(BO, { document: MATDOC })
+  assert.equal(lookup.target.countId, annaCount.id)
+  assert.deepEqual([lookup.canImport, lookup.reason], [false, 'not-member'])
+  await assert.rejects(bo.importTeamMatdoc(BO, { document: MATDOC, place: 'Palle 1', serials: lookup.serials, countId: annaCount.id }), { code: 'COUNT_NOT_MEMBER' })
+})
+
+test('import refuses when the target changed since the lookup', async () => {
+  const { anna, annaCount } = await teamMatdocSetup()
+  const lookup = await anna.lookupTeamMatdoc(ANNA, { document: MATDOC })
+  assert.equal(lookup.target.outcome, 'ok')
+  await anna.deleteCount(ANNA, annaCount.id)
+  await assert.rejects(anna.importTeamMatdoc(ANNA, { document: MATDOC, place: 'Palle 1', serials: lookup.serials, countId: annaCount.id }), { code: 'MATDOC_TARGET_CHANGED' })
+})
+
+test('a document imported in another count is shown', async () => {
+  const { ctx, anna, mona, monaCount } = await teamMatdocSetup()
+  ctx.tick(1000)
+  await mona.importSerials(MONA, monaCount.id, { serials: ['N1', 'N2'], place: 'Palle 9', document: MATDOC, dryRun: false })
+  await mona.flush(MONA, monaCount.id)
+  const lookup = await anna.lookupTeamMatdoc(ANNA, { document: MATDOC })
+  assert.equal(lookup.target.outcome, 'ok')
+  assert.equal(lookup.alreadyImported, null)
+  assert.deepEqual(lookup.importedElsewhere, [{ countName: 'D000 blocked', byName: 'Mona', at: ctx.clock.now, place: 'Palle 9' }])
+})
+
+test('looking up a material document does not open the other counts, so this PC sends no heartbeat to them', async () => {
+  const { ctx, mona, monaCount } = await teamMatdocSetup()
+  await mona.importSerials(MONA, monaCount.id, { serials: ['N1'], place: 'Palle 9', dryRun: false })
+  await mona.flush(MONA, monaCount.id)
+  await mona.closeAll()
+  const before = await lastHeartbeat(ctx, monaCount.id)
+  assert.ok(before)
+  ctx.tick(60_000)
+  // The same PC again (same device, same local journal): opening Mona's count would send a heartbeat at once.
+  const again = ctx.service('pc3')
+  const lookup = await again.lookupTeamMatdoc(MONA, { document: MATDOC })
+  assert.equal(lookup.target.outcome, 'ok')
+  await new Promise(resolve => setTimeout(resolve, 50))
+  assert.equal(await lastHeartbeat(ctx, monaCount.id), before)
+})
+
 test('a manager starts a status; without one no count can be created', async () => {
   const ctx = setup({ status: false })
   const anna = ctx.service('pc1')

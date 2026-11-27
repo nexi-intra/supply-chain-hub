@@ -33,7 +33,7 @@ const { createLocationRepository } = require('./locations/repository.cjs')
 const { createLocationService } = require('./locations/service.cjs')
 const { createLayoutService } = require('./locations/layoutService.cjs')
 const { createOutbox, QUEUED_METHODS } = require('./locations/outbox.cjs')
-const { writeReport, writeStatusReport, writeSapCheckReport, writeSerialExport } = require('./report.cjs')
+const { writeReport, writeStatusReport, writeSapCheckReport, writeSerialExport, writeMatdocSplitExport } = require('./report.cjs')
 
 const DATA_FOLDER = 'lagerstyring'
 const SHARED_FOLDER = '_lagerstyring'
@@ -286,7 +286,7 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   const channels = []
   // SAP channels wait for SAP (and the user's F8) by design; everything else should answer within a few seconds.
   const SLOW_CALL_MS = 2000
-  const waitsForSap = channel => /^(sap|pidocs|sap-check):|^counts:(preview|matdoc-lookup|refetch-preview|refetch-apply|doc-fetch)$|^locations:(preview-import|lookup-document)$|^softwareload:(preview|finish|continue|pending-preview|kif-preview|kif-move)$/.test(channel)
+  const waitsForSap = channel => /^(sap|pidocs|sap-check):|^counts:(preview|matdoc-lookup|team-matdoc-lookup|refetch-preview|refetch-apply|doc-fetch)$|^locations:(preview-import|lookup-document)$|^softwareload:(preview|finish|continue|pending-preview|kif-preview|kif-move)$/.test(channel)
   const handle = (channel, fn) => {
     channels.push(channel)
     ipcMain.handle(`warehouse:${channel}`, async (event, payload) => {
@@ -351,6 +351,12 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   handle('counts:delete-line', (user, p) => counts.deleteLine(user, p.id, { lineId: p.lineId }))
   handle('counts:import', (user, p) => counts.importSerials(user, p.id, { text: p.text, serials: p.serials, place: p.place, document: p.document || null, dryRun: p.dryRun !== false }))
   handle('counts:matdoc-lookup', (user, p) => counts.lookupMatdoc(user, p.id, { document: p.document }))
+  handle('counts:team-matdoc-lookup', (user, p) => counts.lookupTeamMatdoc(user, { document: p.document }))
+  handle('counts:team-matdoc-import', (user, p) => counts.importTeamMatdoc(user, { document: p.document, place: p.place, serials: p.serials, countId: p.countId }))
+  handle('counts:team-matdoc-export', async (user, p) => {
+    const file = await writeMatdocSplitExport({ ...(await counts.teamMatdocExport(user, { document: p.document, serials: p.serials })), language: p.language === 'en' ? 'en' : 'da' }, reportsDir(user.team))
+    return { file, name: path.basename(file) }
+  })
   handle('counts:import-file', async (user, p, event) => {
     const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), { title: p.title || 'Vælg fil med serienumre', properties: ['openFile'], filters: [{ name: 'Excel, CSV, txt', extensions: ['xlsx', 'xlsm', 'csv', 'txt'] }] })
     if (result.canceled || !result.filePaths[0]) return null
