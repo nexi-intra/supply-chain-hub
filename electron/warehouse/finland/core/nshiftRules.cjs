@@ -15,7 +15,8 @@ const clean = (s) => String(s == null ? '' : s).trim()
 const sameNumber = (a, b) => clean(a).replace(/\s+/g, '').toUpperCase() === clean(b).replace(/\s+/g, '').toUpperCase()
 const time = (e) => Date.parse(e.at)
 const byTime = (a, b) => time(a) - time(b)
-const hoursBetween = (a, b) => Math.round((time(b) - time(a)) / 360000) / 10
+const HOUR_MS = 3600000
+const roundHours = (ms) => Math.round(ms / (HOUR_MS / 10)) / 10
 
 const dayIn = (at, timeZone) => new Date(at).toLocaleDateString('sv-SE', { timeZone })
 const helsinkiDay = (at) => dayIn(at, 'Europe/Helsinki')
@@ -69,13 +70,15 @@ function timelineFrom(element, tracking) {
   return { tracking: clean(tracking), carrier: clean(shipment.carrierName), events }
 }
 
-// Hours from the first event at a place to the first later event at another concrete place.
-function hoursAt(events, isHere) {
-  const start = events.findIndex((e) => isHere(e.place))
+// Milliseconds from the first event at a place that may start the stay to the first later event at another concrete place.
+function msAt(events, isHere, canStart = () => true) {
+  const start = events.findIndex((e) => isHere(e.place) && canStart(e))
   if (start < 0) return null
   const end = events.slice(start + 1).find((e) => isConcrete(e.place) && !isHere(e.place))
-  return end ? hoursBetween(events[start], end) : null
+  return end ? time(end) - time(events[start]) : null
 }
+
+const isScan = (e) => e.statusId !== BOOKING_CONFIRMED_ID
 
 function workdaysBetween(fromIso, toIso) {
   const d = new Date(`${fromIso}T00:00:00Z`)
@@ -88,7 +91,8 @@ function workdaysBetween(fromIso, toIso) {
   return n
 }
 
-function facts(timeline, pickedUp) {
+// Facts plus the exact stay lengths in milliseconds, so the limits are not compared on rounded hours.
+function measure(timeline, pickedUp) {
   const events = [...((timeline && timeline.events) || [])].sort(byTime)
   const first = (ids) => events.find((e) => ids.includes(e.statusId))
   const attempt = first(ATTEMPT_IDS)
@@ -96,31 +100,42 @@ function facts(timeline, pickedUp) {
   let terminal = null
   for (const e of events) {
     const hit = TERMINALS.find((t) => t.re.test(e.place))
-    if (hit) { terminal = hit; break }
+    if (hit) {
+      terminal = hit
+      break
+    }
   }
-  const firstScan = events.find((e) => isConcrete(e.place) && e.statusId !== BOOKING_CONFIRMED_ID)
+  const firstScan = events.find((e) => isConcrete(e.place) && isScan(e))
+  const koegeMs = msAt(events, (p) => KOEGE.test(p), isScan)
+  const terminalMs = terminal ? msAt(events, (p) => terminal.re.test(p)) : null
   return {
-    firstAttempt: attempt ? helsinkiDay(attempt.at) : null,
-    delivered: delivered ? helsinkiDay(delivered.at) : null,
-    terminal: terminal ? terminal.name : null,
-    koegeHours: hoursAt(events, (p) => KOEGE.test(p)),
-    viaBrondby: events.some((e) => BRONDBY.test(e.place)),
-    terminalHours: terminal ? hoursAt(events, (p) => terminal.re.test(p)) : null,
-    firstScanWorkdays: firstScan && pickedUp ? workdaysBetween(pickedUp, copenhagenDay(firstScan.at)) : null
+    koegeMs,
+    terminalMs,
+    facts: {
+      firstAttempt: attempt ? helsinkiDay(attempt.at) : null,
+      delivered: delivered ? helsinkiDay(delivered.at) : null,
+      terminal: terminal ? terminal.name : null,
+      koegeHours: koegeMs == null ? null : roundHours(koegeMs),
+      viaBrondby: events.some((e) => isScan(e) && BRONDBY.test(e.place)),
+      terminalHours: terminalMs == null ? null : roundHours(terminalMs),
+      firstScanWorkdays: firstScan && pickedUp ? workdaysBetween(pickedUp, copenhagenDay(firstScan.at)) : null
+    }
   }
 }
+
+const facts = (timeline, pickedUp) => measure(timeline, pickedUp).facts
 
 const ddmm = (iso) => `${iso.slice(8, 10)}-${iso.slice(5, 7)}`
 
 function suggest({ timeline, courier, pickedUp, expected }) {
-  const f = facts(timeline, pickedUp)
+  const { facts: f, koegeMs, terminalMs } = measure(timeline, pickedUp)
   const postnord = isPostnordCourier(courier)
   const comments = []
   const forgotten = postnord && f.firstScanWorkdays != null && f.firstScanWorkdays >= 2
   if (forgotten) comments.push('Forgotten in warehouse')
-  if (postnord && ((f.koegeHours != null && f.koegeHours > 66) || f.viaBrondby)) comments.push('stuck in Køge')
-  else if (postnord && f.koegeHours != null && f.koegeHours >= 45) comments.push('1 ekstra day in Køge')
-  if (postnord && f.terminal && f.terminalHours != null && f.terminalHours > 48) comments.push(TERMINAL_COMMENT[f.terminal])
+  if (postnord && ((koegeMs != null && koegeMs > 66 * HOUR_MS) || f.viaBrondby)) comments.push('stuck in Køge')
+  else if (postnord && koegeMs != null && koegeMs >= 45 * HOUR_MS) comments.push('1 ekstra day in Køge')
+  if (postnord && f.terminal && terminalMs != null && terminalMs > 48 * HOUR_MS) comments.push(TERMINAL_COMMENT[f.terminal])
   const attemptInTime = !!(expected && f.firstAttempt && f.firstAttempt <= expected)
   if (attemptInTime && f.delivered && f.delivered > expected) comments.push(`1st attempt within SLA (${ddmm(f.firstAttempt)})`)
 

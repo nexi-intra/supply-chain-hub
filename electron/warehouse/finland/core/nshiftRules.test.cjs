@@ -11,7 +11,7 @@ const LOCAL = 'KUUSANKOSKI Kuusankoski FIN'
 
 const ev = (at, statusId, place, text = 'TEXT', status = 'Status') => ({ at, statusId, status, text, place })
 const timeline = (events, carrier = 'Postnord API') => ({ tracking: 'TT1', carrier, events })
-const hoursAfter = (iso, hours) => new Date(Date.parse(iso) + hours * 3600000).toISOString().replace('.000Z', '+00:00')
+const hoursAfter = (iso, hours) => new Date(Date.parse(iso) + Math.round(hours * 3600000)).toISOString().replace('.000Z', '+00:00')
 
 // Picked up Monday 2026-11-23, expected Wednesday 2026-11-25.
 const base = { courier: 'Postnord', pickedUp: '2026-11-23', expected: '2026-11-25' }
@@ -76,7 +76,7 @@ test('no delivery gives no Received and no SLA', () => {
   assert.equal(suggest({ ...base, timeline: null }).sla, null)
 })
 
-test('48 hours or more in a Finnish terminal gives the delay comment', () => {
+test('more than 48 hours in a Finnish terminal gives the delay comment', () => {
   const t = timeline([
     ev('2026-11-23T20:00:00+00:00', 2003, KOEGE),
     ev('2026-11-24T10:00:00+00:00', 2003, VANTAA),
@@ -89,6 +89,17 @@ test('48 hours or more in a Finnish terminal gives the delay comment', () => {
   assert.equal(s.terminal, 'Vantaa')
   assert.equal(s.comment, 'Delay Finland, Vanta term')
   assert.equal(s.sla, 'NOK')
+  const terminal = (leftAt) => timeline([
+    ev('2026-11-23T20:00:00+00:00', 2003, KOEGE),
+    ev('2026-11-24T10:00:00+00:00', 2003, VANTAA),
+    ev(leftAt, 2001, LOCAL)
+  ])
+  // Exactly 48.0 hours is not over 48.
+  assert.equal(facts(terminal('2026-11-26T10:00:00+00:00'), base.pickedUp).terminalHours, 48)
+  assert.equal(suggest({ ...base, timeline: terminal('2026-11-26T10:00:00+00:00') }).comment, null)
+  // 48 hours and 1 minute rounds to 48.0 but is over 48.
+  assert.equal(facts(terminal('2026-11-26T10:01:00+00:00'), base.pickedUp).terminalHours, 48)
+  assert.equal(suggest({ ...base, timeline: terminal('2026-11-26T10:01:00+00:00') }).comment, 'Delay Finland, Vanta term')
 })
 
 const koege = (hours, extra = []) => timeline([
@@ -105,10 +116,25 @@ test('45 to 66 hours in Køge gives one extra day', () => {
     assert.equal(suggest({ ...base, timeline: koege(hours) }).comment, '1 ekstra day in Køge')
   }
   assert.equal(suggest({ ...base, timeline: koege(44) }).comment, null)
+  // The limits are compared on the exact time, not the rounded hours: 2 minutes short of 45 rounds to 45.0.
+  assert.equal(facts(koege(45 - 2 / 60), base.pickedUp).koegeHours, 45)
+  assert.equal(suggest({ ...base, timeline: koege(45 - 2 / 60) }).comment, null)
+})
+
+test('a booking confirmation does not start the Køge time or count as Brøndby', () => {
+  const booked = (place) => [ev('2026-11-21T12:00:00+00:00', 4004, place)]
+  // Booked at Køge two days before the first real Køge scan: the Køge time is still 10 hours.
+  assert.equal(facts(koege(10, booked(KOEGE)), base.pickedUp).koegeHours, 10)
+  assert.equal(suggest({ ...base, timeline: koege(10, booked(KOEGE)) }).comment, null)
+  assert.equal(facts(koege(10, booked(BRONDBY)), base.pickedUp).viaBrondby, false)
+  assert.equal(suggest({ ...base, timeline: koege(10, booked(BRONDBY)) }).comment, null)
 })
 
 test('more than 66 hours in Køge or via Brøndby gives stuck', () => {
   assert.equal(suggest({ ...base, timeline: koege(67) }).comment, 'stuck in Køge')
+  // 66 hours and 2 minutes rounds to 66.0 but is over 66.
+  assert.equal(facts(koege(66 + 2 / 60), base.pickedUp).koegeHours, 66)
+  assert.equal(suggest({ ...base, timeline: koege(66 + 2 / 60) }).comment, 'stuck in Køge')
   const brondby = [ev('2026-11-23T18:00:00+00:00', 2003, BRONDBY)]
   const viaBrondby = koege(10, brondby)
   assert.deepEqual([facts(viaBrondby, base.pickedUp).viaBrondby, facts(viaBrondby, base.pickedUp).koegeHours], [true, 10])
