@@ -8,7 +8,7 @@ export type NoticeTone = 'success' | 'error' | 'info'
 export interface Notice { tone: NoticeTone; lines: string[] }
 
 /** What the tool is doing; the buttons that would start something else wait meanwhile. */
-export type Working = null | 'load' | 'sheet' | 'write' | 'fix' | 'mark' | 'restore' | 'delete' | 'manual' | 'followup'
+export type Working = null | 'load' | 'sheet' | 'write' | 'fix' | 'mark' | 'restore' | 'delete' | 'manual' | 'followup' | 'nshift' | 'suggest'
 
 /**
  * The write's warnings (e.g. rows written but not logged on M:), then the Danish lines on how the sheet was opened after

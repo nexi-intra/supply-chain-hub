@@ -2,8 +2,8 @@ import { Button } from '@/components/ui/button'
 import { dayTitle } from '@/lib/warehouse/finlandDates'
 import { kolli } from '@/lib/warehouse/finlandText'
 import { t } from '@/lib/warehouse/text'
-import type { FinlandFollowUpRow } from '@/types/finland'
-import { changesText } from './followUpLogic'
+import type { FinlandFollowUp, FinlandFollowUpRow } from '@/types/finland'
+import { changesText, suggestionText } from './followUpLogic'
 
 function ChangeList({ rows }: { rows: FinlandFollowUpRow[] }) {
   return (
@@ -59,6 +59,48 @@ export function SyncBar({ day, pending, total, confirm, saving, busy, writeBlock
       </span>
       {pending.length > 0 && <Button size="sm" disabled={busy || writeBlocked} onClick={onAsk}>{t(`Gem ${pending.length} i arket`, `Save ${pending.length} in the sheet`)}</Button>}
       {total > pending.length && <Button size="sm" variant="outline" disabled={busy || writeBlocked} onClick={onAll}>{t(`Gem alle ${total}`, `Save all ${total}`)}</Button>}
+    </div>
+  )
+}
+
+export interface SuggestConfirmProps {
+  day: string
+  /** What each delivered parcel gets, from suggestionList. */
+  list: { row: FinlandFollowUpRow; fields: Partial<FinlandFollowUp> }[]
+  applying: boolean
+  /** Something else is running. */
+  busy: boolean
+  onApply: () => void
+  onCancel: () => void
+}
+
+/** "Brug forslagene for alle leverede kolli på dagen": the fields each parcel gets, before anything is changed. */
+export function SuggestConfirm({ day, list, applying, busy, onApply, onCancel }: SuggestConfirmProps) {
+  return (
+    <div className="flex flex-wrap items-start gap-3 rounded-lg border border-primary/25 bg-primary/5 px-4 py-3 text-sm" role="region" aria-label={t('Brug forslagene', 'Use the suggestions')}>
+      <div className="min-w-0 flex-1">
+        <b>
+          {list.length
+            ? t(`Disse felter bliver udfyldt for ${dayTitle(day).toLowerCase()} (${kolli(list.length)}):`, `These fields will be filled in for ${dayTitle(day)} (${kolli(list.length)}):`)
+            : t('Der er ingen forslag at bruge på denne dag.', 'There are no suggestions to use on this day.')}
+        </b>
+        {list.length > 0 && (
+          <ul className="mt-2 max-h-56 list-disc space-y-0.5 overflow-auto pl-5">
+            {list.map(({ row: r, fields }) => <li key={`${r.key}|${r.row}`}><span className="font-mono text-xs">{r.delivery}</span> {suggestionText(fields)}</li>)}
+          </ul>
+        )}
+        {list.length > 0 && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            {t('Felterne bliver ændringer i appen. Arket bliver først skrevet, når du trykker "Gem i arket".', 'The fields become changes in the app. The sheet is only written when you press "Save in the sheet".')}
+          </p>
+        )}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {list.length > 0 && (
+          <Button size="sm" disabled={busy} loading={applying} onClick={onApply}>{applying ? t('Bruger forslagene ...', 'Using the suggestions ...') : t('Ja, brug forslagene', 'Yes, use the suggestions')}</Button>
+        )}
+        <Button size="sm" variant="outline" disabled={applying} onClick={onCancel}>{list.length ? t('Fortryd', 'Cancel') : t('Luk', 'Close')}</Button>
+      </div>
     </div>
   )
 }

@@ -5,7 +5,7 @@ import type { FinlandFollowUpRow, FinlandFollowUpView } from '@/types/finland'
 import { FollowUpCalendar } from './FollowUpCalendar'
 import { FollowUpDetail, type FollowUpDetailProps } from './FollowUpDetail'
 import { openForm } from './followUpLogic'
-import { SaveAllConfirm, SyncBar, type SyncBarProps } from './SaveConfirm'
+import { SaveAllConfirm, SuggestConfirm, SyncBar, type SyncBarProps } from './SaveConfirm'
 
 const BLANK = { expected: '', received: '', sla: '', comment: '', terminal: '' }
 const row = (extra: Partial<FinlandFollowUpRow> = {}): FinlandFollowUpRow => ({
@@ -52,6 +52,28 @@ describe('Finlandsforsendelser: Opfølgning', () => {
     expect(button(html, 'Næste \\(Enter\\)')).not.toContain('disabled=""')
   })
 
+  it('a parcel shows nShift\'s timeline and suggestions, and "Opdater status" only where nShift can look it up', () => {
+    const nshift = {
+      fetchedAt: '2026-11-27T09:15:00.000Z',
+      events: [
+        { at: '2026-11-27T10:05:00.000Z', statusId: 3000, status: 'Delivered', text: 'Delivered', place: 'Espoo FI' },
+        { at: '2026-11-25T08:00:00.000Z', statusId: 5006, status: 'Failed delivery attempt', text: 'Recipient not home', place: 'Espoo FI' },
+      ],
+      firstAttempt: '2026-11-25',
+      delivered: '2026-11-27',
+      suggestion: { received: '2026-11-27', sla: 'OK' as const, terminal: 'Vantaa', comment: '1st attempt within SLA (25-11)' },
+    }
+    const html = detail(row({ nshift }), { onUpdateStatus: noop })
+    expect(html).toContain('Første forsøg 25-11')
+    expect(html).toContain('Afleveret 27-11')
+    expect(html.indexOf('Recipient not home')).toBeLessThan(html.indexOf('Delivered'))
+    expect(html).toContain('placeholder="27-11-2026"')
+    expect(html).toContain('placeholder="1st attempt within SLA (25-11)"')
+    expect(html).toContain('forslag fra nShift')
+    expect(button(html, 'Opdater status')).not.toContain('disabled=""')
+    expect(detail(row({ courier: 'DSV', nshift }), { onUpdateStatus: noop })).not.toContain('Opdater status')
+  })
+
   it('a conflict offers the sheet\'s value or the person\'s own', () => {
     const conflict = { key: '82100001|00073215000000000001', field: 'received' as const, original: '', current: '2026-11-25', wanted: '2026-11-26' }
     const html = detail(row({ conflicts: [conflict] }))
@@ -85,6 +107,15 @@ describe('Finlandsforsendelser: Opfølgning', () => {
     expect(button(confirm, 'Ja, gem i arket')).not.toContain('disabled=""')
     expect(button(bar({ confirm: true, writeBlocked: true }), 'Ja, gem i arket')).toContain('disabled=""')
     expect(renderToStaticMarkup(<SyncBar {...{ day: '2026-11-24', pending: [], total: 0, confirm: false, saving: false, busy: false, writeBlocked: false, onAsk: noop, onCancel: noop, onSave: noop, onAll: noop }} />)).toBe('')
+  })
+
+  it('"Brug forslagene" lists the fields per parcel before anything is changed', () => {
+    const list = [{ row: row(), fields: { expected: '2026-11-26', received: '2026-11-27', sla: 'OK' } }]
+    const html = renderToStaticMarkup(<SuggestConfirm day="2026-11-24" list={list} applying={false} busy={false} onApply={noop} onCancel={noop} />)
+    expect(html).toContain('Disse felter bliver udfyldt for tirsdag 24. november (1 kolli):')
+    expect(html).toContain('Expected 26-11-2026, Received 27-11-2026, SLA OK')
+    expect(button(html, 'Ja, brug forslagene')).not.toContain('disabled=""')
+    expect(html).toContain('Fortryd')
   })
 
   it('"Gem alle" shows every change by day, and what is no longer in the sheet', () => {

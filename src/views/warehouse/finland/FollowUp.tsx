@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Users } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { errorMessage } from '@/lib/warehouse/errors'
+import { errorCode, errorMessage } from '@/lib/warehouse/errors'
 import { dayTitle, formatDate } from '@/lib/warehouse/finlandDates'
 import { kolli } from '@/lib/warehouse/finlandText'
 import { t } from '@/lib/warehouse/text'
@@ -11,8 +11,8 @@ import { CourierTag, NoticeBox, sheetNotes, writtenAt, type Notice, type Working
 import { FollowUpCalendar } from './FollowUpCalendar'
 import { FollowUpDetail } from './FollowUpDetail'
 import { finlandPlace } from './place'
-import { applySuggestions, changeField, chooseDefaultDay, firstOpenRow, openForm, othersOnDay, othersOnParcel, rowId, rowsOfDay, savedLines, wantedOf, type FollowUpForm } from './followUpLogic'
-import { SaveAllConfirm, SyncBar } from './SaveConfirm'
+import { applySuggestions, changeField, chooseDefaultDay, fetchedText, firstOpenRow, newestFetch, openForm, othersOnDay, othersOnParcel, rowId, rowsOfDay, savedLines, statusLines, suggestionList, wantedOf, type FollowUpForm } from './followUpLogic'
+import { SaveAllConfirm, SuggestConfirm, SyncBar } from './SaveConfirm'
 
 export interface FollowUpProps {
   /** The Opfølgning tab is shown: only then do its keys work. */
@@ -43,6 +43,17 @@ function StatusDot({ r }: { r: FinlandFollowUpRow }) {
 
 const short = (iso: string) => formatDate(iso).slice(0, 5)
 
+/** A list cell: the value, or nShift's suggestion in grey, or "?". `text`: not a date. */
+function ListValue({ value, suggestion, text = false }: { value: string; suggestion?: string | null; text?: boolean }) {
+  const shown = (v: string) => (text ? v : short(v))
+  if (value) return <span className={cn(text && 'truncate')}>{shown(value)}</span>
+  return (
+    <span className={cn('text-muted-foreground', text && 'truncate')} title={suggestion ? t('Forslag fra nShift, ikke gemt endnu', 'Suggestion from nShift, not saved yet') : t('Ikke udfyldt', 'Not filled in')}>
+      {suggestion ? shown(suggestion) : '?'}
+    </span>
+  )
+}
+
 /**
  * Opfølgning, as Finland T&T's followup.js: a pick-up day's parcels one by one, filled in with Expected, Received,
  * SLA, Comment and Terminal. Every change is kept as the person's draft in the shared folder at once; only "Ja, gem i
@@ -56,6 +67,11 @@ export function FollowUp({ active, data, working, writeBlocked, confirmAll, onCo
   const [confirm, setConfirm] = useState(false)
   const [notice, setNotice] = useState<Notice | null>(null)
   const [focusTick, setFocusTick] = useState(0)
+  const [suggestOpen, setSuggestOpen] = useState(false)
+  // fetch-status answered FINLAND_NSHIFT_NOT_SET; the buttons stay usable so a later setup works at once.
+  const [nshiftNotSet, setNshiftNotSet] = useState(false)
+  /** What "Hent status" is fetching: 'day', or the parcel's key. */
+  const [fetching, setFetching] = useState<string | null>(null)
   // The keys and the awaited saves need the newest values, not the ones of the render they started in.
   const dayRef = useRef(day)
   const formRef = useRef(form)
@@ -197,6 +213,51 @@ export function FollowUp({ active, data, working, writeBlocked, confirmAll, onCo
     }
   }
 
+  /** "Hent status fra nShift" for the day, or "Opdater status" for one parcel. Reads neither SAP nor the sheet. */
+  const fetchStatus = async (request: { date: string } | { key: string }) => {
+    if (working) return
+    setNotice(null)
+    setSuggestOpen(false)
+    setFetching('key' in request ? request.key : 'day')
+    try {
+      const result = await exclusive('nshift', () => bridge.fetchStatus(request))
+      if (!result) return
+      setNshiftNotSet(false)
+      takeData(result)
+      const s = result.statusResult
+      setNotice({ tone: s.notFound || s.failed ? 'info' : 'success', lines: [statusLines(s)] })
+    } catch (error) {
+      if (errorCode(error) === 'FINLAND_NSHIFT_NOT_SET') setNshiftNotSet(true)
+      else showError(error)
+    } finally {
+      setFetching(null)
+    }
+  }
+
+  /** "Ja, brug forslagene": the day's suggestions become the person's drafts; the sheet is not written. */
+  const applyDaySuggestions = async () => {
+    const date = dayRef.current
+    if (working || !date) return
+    setNotice(null)
+    try {
+      // The open parcel's last change must be a draft first, so the main process skips the fields it touched.
+      await draftQueue.current
+      const result = await exclusive('suggest', () => bridge.applySuggestions({ date }))
+      if (!result) return
+      takeData(result)
+      setSuggestOpen(false)
+      setNotice({
+        tone: 'success',
+        lines: [result.applied
+          ? t(`Forslagene er brugt på ${kolli(result.applied)}. De er ikke gemt i arket endnu.`, `The suggestions were used on ${kolli(result.applied)}. They are not saved in the sheet yet.`)
+          : t('Der var ingen forslag at bruge.', 'There were no suggestions to use.')],
+      })
+      openRow(currentRow(result))
+    } catch (error) {
+      showError(error)
+    }
+  }
+
   const resolve = async (field: FinlandFollowUpField, choice: 'sheet' | 'mine') => {
     const r = currentRow()
     if (!r) return
@@ -212,6 +273,7 @@ export function FollowUp({ active, data, working, writeBlocked, confirmAll, onCo
   const selectDay = (date: string) => {
     setDay(date)
     setMonth(null)
+    setSuggestOpen(false)
     openRow(firstOpenRow(rowsOfDay(dataRef.current?.followUp.rows ?? [], date)))
     setNotice(null)
   }
@@ -273,6 +335,9 @@ export function FollowUp({ active, data, working, writeBlocked, confirmAll, onCo
   const row = currentRow(data)
   const lastWrite = day ? data.dayLog[day] : undefined
   const others = day ? othersOnDay(view.othersByDay[day]) : []
+  const suggestions = day ? suggestionList(view.rows, day, form) : []
+  const fetchedAt = newestFetch(rows)
+  const busy = working !== null
 
   return (
     <div ref={rootRef} className="grid gap-6 lg:grid-cols-[minmax(260px,300px)_minmax(0,1fr)] xl:grid-cols-[minmax(260px,300px)_minmax(0,1fr)_minmax(320px,380px)]">
@@ -319,6 +384,32 @@ export function FollowUp({ active, data, working, writeBlocked, confirmAll, onCo
               </div>
             )}
 
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <Button size="sm" variant="outline" disabled={busy} loading={fetching === 'day'} onClick={() => fetchStatus({ date: day })}>
+                  {fetching === 'day' ? t('Henter status ...', 'Fetching status ...') : t('Hent status fra nShift', 'Fetch status from nShift')}
+                </Button>
+                {suggestions.length > 0 && !suggestOpen && (
+                  <Button size="sm" variant="outline" disabled={busy} onClick={() => setSuggestOpen(true)}>
+                    {t('Brug forslagene for alle leverede kolli på dagen', 'Use the suggestions for every delivered parcel on the day')}
+                  </Button>
+                )}
+                {nshiftNotSet
+                  ? <span className="text-xs text-attention">{t('nShift er ikke sat op endnu.', 'nShift is not set up yet.')}</span>
+                  : fetchedAt && <span className="text-xs text-muted-foreground">{fetchedText(fetchedAt)}</span>}
+              </div>
+              {suggestOpen && (
+                <SuggestConfirm
+                  day={day}
+                  list={suggestions}
+                  applying={working === 'suggest'}
+                  busy={busy}
+                  onApply={applyDaySuggestions}
+                  onCancel={() => setSuggestOpen(false)}
+                />
+              )}
+            </div>
+
             <ul className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
               <Legend mark={<i className="inline-block size-2.5 rounded-full bg-ok" />}>{t('Fulgt op', 'Followed up')}</Legend>
               <Legend mark={<i className="inline-block size-2.5 rounded-full bg-primary/30" />}>{t('Mangler', 'Missing')}</Legend>
@@ -327,7 +418,7 @@ export function FollowUp({ active, data, working, writeBlocked, confirmAll, onCo
               <Legend mark={<b className="text-[11px] text-primary">●</b>}>{t('Ændret i appen, ikke gemt i arket', 'Changed in the app, not saved in the sheet')}</Legend>
               <Legend mark={<Users aria-hidden="true" className="size-3.5" />}>{t('En kollega har en ændring, der ikke er gemt', 'A colleague has a change that is not saved')}</Legend>
               <Legend mark={<b>?</b>}>{t('Ikke udfyldt', 'Not filled in')}</Legend>
-              <Legend mark={<b>24-11</b>}>{t('Grå Expected: forslag, bliver gemt når du går videre', 'Grey Expected: suggestion, saved when you move on')}</Legend>
+              <Legend mark={<b>24-11</b>}>{t('Grå: forslag, bliver gemt når du går videre', 'Grey: suggestion, saved when you move on')}</Legend>
             </ul>
 
             <div role="listbox" aria-label={t('Kolli', 'Parcels')} className="space-y-1">
@@ -356,8 +447,8 @@ export function FollowUp({ active, data, working, writeBlocked, confirmAll, onCo
                     {r.effective.expected
                       ? <span>{short(r.effective.expected)}</span>
                       : <span className="text-muted-foreground" title={r.suggestedExpected ? t('Forslag, ikke gemt endnu', 'Suggestion, not saved yet') : t('Ikke udfyldt', 'Not filled in')}>{r.suggestedExpected ? short(r.suggestedExpected) : '?'}</span>}
-                    <span className={cn(!r.effective.received && 'text-muted-foreground')}>{r.effective.received ? short(r.effective.received) : '?'}</span>
-                    <span className={cn('truncate', !r.effective.terminal && 'text-muted-foreground')}>{r.effective.terminal || '?'}</span>
+                    <ListValue value={r.effective.received} suggestion={r.duplicate ? null : r.nshift?.suggestion.received} />
+                    <ListValue value={r.effective.terminal} suggestion={r.duplicate ? null : r.nshift?.suggestion.terminal} text />
                     <span className="flex items-center gap-1">
                       {r.pending && <b className="text-[11px] text-primary" title={t('Ikke gemt i arket', 'Not saved in the sheet')}>●</b>}
                       {r.othersPending.length > 0 && <span title={othersOnParcel(r.othersPending) ?? ''}><Users aria-hidden="true" className="size-3.5 text-muted-foreground" /></span>}
@@ -396,6 +487,9 @@ export function FollowUp({ active, data, working, writeBlocked, confirmAll, onCo
           onTracking={openTracking}
           onPrevious={() => next(-1, false)}
           onNext={() => next(1)}
+          onUpdateStatus={row && row.key ? () => fetchStatus({ key: row.key }) : undefined}
+          busy={busy}
+          updating={!!row && fetching === row.key}
         />
       </section>
     </div>
