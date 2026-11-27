@@ -17,6 +17,7 @@ const DAYS_AFTER = 27
 const NOT_SET_TEXT = 'nShift er ikke sat op. En manager kan sætte det op under Administration.'
 const REFUSED_TEXT = 'nShift afviste nøglen. Tjek klient-id og hemmelighed under Administration.'
 const FAILED_TEXT = 'nShift svarer ikke lige nu. Prøv igen om lidt.'
+const STORAGE_TEXT = 'Finlandsforsendelsers fælles data kan ikke læses lige nu'
 
 function codeError(code, text) {
   return Object.assign(new Error(text ? `${code}: ${text}` : code), { code })
@@ -81,8 +82,9 @@ function createNshiftClient({ credentials, fetch = globalThis.fetch, now = Date.
     let value
     try {
       value = await Promise.race([Promise.resolve().then(credentials), timeout])
-    } catch {
-      // The store's own error is not passed on; it could carry anything.
+    } catch (error) {
+      // The store's own error is not passed on; it could carry anything. M: being away is said as such.
+      if (error && error.code === 'STORAGE_UNAVAILABLE') throw codeError('STORAGE_UNAVAILABLE', STORAGE_TEXT)
       throw failed()
     } finally {
       clearTimeout(timer)

@@ -24,8 +24,12 @@ const LOCK_MARGIN_MS = 60000
 const COURIERS = ['DHL', 'Postnord', 'DSV']
 // nShift knows the parcels booked with these; DSV is followed up by hand.
 const NSHIFT_COURIERS = ['Postnord', 'DHL']
-// A key that is missing or refused fails every parcel the same way, so the first such error stops the day.
-const NSHIFT_STOPS = new Set(['FINLAND_NSHIFT_NOT_SET', 'FINLAND_NSHIFT_REFUSED'])
+// A key that is missing or refused, or M: being away, fails every parcel the same way, so the first such error stops
+// the day.
+const NSHIFT_STOPS = new Set(['FINLAND_NSHIFT_NOT_SET', 'FINLAND_NSHIFT_REFUSED', 'STORAGE_UNAVAILABLE'])
+// nShift not answering this many parcels in a row is taken as nShift being down, so the day does not hold the busy
+// guard for minutes of timeouts.
+const NSHIFT_FAILED_IN_ROW = 3
 
 function codeError(code, text) {
   return Object.assign(new Error(text ? `${code}: ${text}` : code), { code })
@@ -46,7 +50,6 @@ const PARTLY_WRITTEN = new Set(['write-failed', 'write-timeout', 'save-failed'])
 const PARTLY_WRITTEN_TEXT = 'Kolli, der ikke nåede at komme i arket, kan først skrives igen om 30 minutter, så intet kommer to gange.'
 const NOT_LOGGED_TEXT = 'Arket er skrevet, men programmet kunne ikke notere det på M:. Bed kollegaer vente et par minutter, før de skriver samme dag.'
 const isManager = user => (user?.role === 'manager' || user?.role === 'creator') && !user.statusManager
-const notInSheetError = () => codeError('FINLAND_NOT_IN_SHEET', 'Kolliet findes ikke i arket. Tryk "Hent igen".')
 
 /** What a row shows from nShift: the timeline, the first attempt and delivery, and the suggestions from the rules. */
 function nshiftOf(timeline, { courier, pickedUp, effective, suggestedExpected }) {
@@ -481,30 +484,34 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, nshift = n
   }
 
   const nshiftNotSetError = () => codeError('FINLAND_NSHIFT_NOT_SET', 'nShift er ikke sat op. En manager kan sætte det op under Administration.')
+  const notTrackedError = () => codeError('FINLAND_NSHIFT_NOT_TRACKED', 'Kolliet kan ikke slås op i nShift.')
 
   /**
    * Looks up the day's PostNord and DHL parcels in nShift (`{ date }`), or one parcel (`{ key }`), and stores the
    * timelines for everyone. For a day, parcels whose stored timeline is delivered are not fetched again. A failed
-   * parcel is counted and the rest go on. Reads neither SAP nor the sheet.
+   * parcel is counted and the rest go on, until three in a row fail. One parcel that cannot be looked up (DSV, twice
+   * in the sheet, no T&T, not in the sheet) is refused. Reads neither SAP nor the sheet.
    */
   function fetchStatus(user, { date, key } = {}) {
     return exclusive('nshift', async () => {
       if (!date && !key) throw codeError('FINLAND_INVALID_INPUT', 'Vælg en dag eller et kolli.')
       const rows = followUpRows([], [], conflictsOf(user)).filter(r => (key ? r.key === key : r.pickedUp === date))
-      if (key && !rows.length) throw notInSheetError()
       const wanted = new Map()
       for (const r of rows) {
         if (NSHIFT_COURIERS.includes(r.courier) && r.tracking && !r.duplicate && !wanted.has(r.tracking)) wanted.set(r.tracking, r.pickedUp)
       }
+      if (key && !wanted.size) throw notTrackedError()
       const stored = key || !wanted.size ? {} : await shared.statuses.get([...wanted.keys()])
       const todo = [...wanted].filter(([tracking]) => !(stored[tracking] && facts(stored[tracking]).delivered))
       if (todo.length && !nshift) throw nshiftNotSetError()
       const statusResult = { fetched: 0, notFound: 0, failed: 0 }
       const found = []
       let stop = null
+      let failedInRow = 0
       for (const [tracking, pickedUp] of todo) {
         try {
           const timeline = await nshift.lookup(tracking, pickedUp)
+          failedInRow = 0
           if (timeline) {
             found.push({ ...timeline, tracking, fetchedAt: new Date(now()).toISOString() })
             statusResult.fetched++
@@ -517,6 +524,11 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, nshift = n
             break
           }
           statusResult.failed++
+          failedInRow = error?.code === 'FINLAND_NSHIFT_FAILED' ? failedInRow + 1 : 0
+          if (failedInRow >= NSHIFT_FAILED_IN_ROW) {
+            stop = error
+            break
+          }
         }
       }
       if (found.length) await shared.statuses.put(found)

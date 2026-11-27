@@ -378,14 +378,26 @@ function createFinlandShared({ store, now = Date.now }) {
     },
   }
 
+  // The status file is large (up to 4000 timelines) and read on every snapshot, so it is parsed again only when its
+  // modification time or size has changed. A missing file is always read, so a folder that is gone still refuses.
+  let statusesCopy = null
+
+  async function readStatuses() {
+    const stat = await store.statAsync(STATUSES_KEY).catch(() => undefined)
+    if (stat && statusesCopy && statusesCopy.mtimeMs === stat.mtimeMs && statusesCopy.size === stat.size) return statusesCopy.value
+    const value = await read(STATUSES_KEY)
+    statusesCopy = stat && isObject(value) ? { ...stat, value } : null
+    return value
+  }
+
   const statuses = {
     /** The stored timeline per T&T among `trackings`; T&T never fetched are left out. */
     async get(trackings = []) {
-      const value = await read(STATUSES_KEY)
+      const value = await readStatuses()
       const stored = isObject(value) ? value : {}
       const result = {}
       for (const tracking of Array.isArray(trackings) ? trackings : []) {
-        if (typeof tracking === 'string' && Object.hasOwn(stored, tracking) && isObject(stored[tracking])) result[tracking] = stored[tracking]
+        if (typeof tracking === 'string' && Object.hasOwn(stored, tracking) && isObject(stored[tracking])) result[tracking] = structuredClone(stored[tracking])
       }
       return result
     },
@@ -397,7 +409,7 @@ function createFinlandShared({ store, now = Date.now }) {
     async put(timelines = []) {
       const list = (Array.isArray(timelines) ? timelines : []).filter(entry => isObject(entry) && text(entry.tracking) && typeof entry.fetchedAt === 'string')
       if (!list.length) return
-      await store.mutateAsync(STATUSES_KEY, current => {
+      const written = await store.mutateAsync(STATUSES_KEY, current => {
         const next = { ...(isObject(current) ? current : {}) }
         for (const entry of list) {
           const tracking = text(entry.tracking)
@@ -410,6 +422,9 @@ function createFinlandShared({ store, now = Date.now }) {
         const kept = keys.sort((a, b) => String(next[b]?.fetchedAt || '').localeCompare(String(next[a]?.fetchedAt || ''))).slice(0, STATUSES_MAX)
         return Object.fromEntries(kept.map(tracking => [tracking, next[tracking]]))
       })
+      // The file as just written; another PC writing in the moment between is caught by its next change.
+      const stat = await store.statAsync(STATUSES_KEY).catch(() => undefined)
+      statusesCopy = stat && isObject(written) ? { ...stat, value: written } : null
     },
   }
 

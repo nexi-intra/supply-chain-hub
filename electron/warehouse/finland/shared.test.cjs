@@ -338,6 +338,31 @@ test('timelines are shared between two PCs', async () => {
   await assert.rejects(shared.nshift.status(), { code: 'STORAGE_UNAVAILABLE' })
 })
 
+test('the timeline file is read again only when it has changed', async () => {
+  const { shared, store, dir } = setup()
+  const reads = []
+  const getAsync = store.getAsync
+  store.getAsync = (key, options) => { reads.push(key); return getAsync(key, options) }
+  const first = timeline('JJD1', '2026-11-20T09:00:00.000Z')
+  await shared.statuses.put([first])
+  reads.length = 0
+  assert.deepEqual(await shared.statuses.get(['JJD1']), { JJD1: first })
+  assert.deepEqual(await shared.statuses.get(['JJD1']), { JJD1: first })
+  assert.equal(reads.filter(key => key === 'nshift-status').length, 0, 'our own put is remembered')
+  const got = await shared.statuses.get(['JJD1'])
+  got.JJD1.events.length = 0
+  assert.deepEqual(await shared.statuses.get(['JJD1']), { JJD1: first }, 'changing what get gave does not change the copy')
+
+  const other = createFinlandShared({ store: createStore(dir), now: () => Date.UTC(2026, 10, 19, 9) })
+  const second = timeline('JJD2', '2026-11-20T09:05:00.000Z', { carrier: 'DHL' })
+  await other.statuses.put([second])
+  assert.deepEqual(await shared.statuses.get(['JJD1', 'JJD2']), { JJD1: first, JJD2: second }, 'a put from another PC is seen')
+  assert.deepEqual(await shared.statuses.get(['JJD1', 'JJD2']), { JJD1: first, JJD2: second })
+  assert.equal(reads.filter(key => key === 'nshift-status').length, 1, 'read once after the change')
+  fs.rmSync(dir, { recursive: true, force: true })
+  await assert.rejects(shared.statuses.get(['JJD1']), { code: 'STORAGE_UNAVAILABLE' }, 'the copy is not used with the folder gone')
+})
+
 test('only the timeline fields are stored, never names or addresses', async () => {
   const { shared, store } = setup()
   const entry = timeline('JJD1', '2026-11-20T09:00:00.000Z', { name1: 'Matti Meikäläinen', addresses: [{ name1: 'Matti Meikäläinen', street1: 'Kotikatu 1' }] })

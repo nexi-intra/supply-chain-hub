@@ -680,7 +680,7 @@ test('a delivered timeline is not fetched again for the day but is for one parce
   assert.deepEqual(nshift.calls.slice(3), [[pn(1), '2026-11-20']])
   assert.deepEqual(one.statusResult, { fetched: 1, notFound: 0, failed: 0 })
   assert.equal(rowOf(one, K1).nshift.fetchedAt, new Date(NOW + 60000).toISOString())
-  await assert.rejects(service.fetchStatus(MONA, { key: parcelKey('1', pn(9)) }), { code: 'FINLAND_NOT_IN_SHEET' })
+  await assert.rejects(service.fetchStatus(MONA, { key: parcelKey('1', pn(9)) }), { code: 'FINLAND_NSHIFT_NOT_TRACKED' })
 })
 
 test('one failed parcel does not stop the day', async () => {
@@ -694,8 +694,8 @@ test('one failed parcel does not stop the day', async () => {
   assert.deepEqual(Object.keys(await shared.statuses.get([pn(1), pn(2), pn(4)])), [pn(4)])
   assert.equal(rowOf(snap, K1).nshift, null)
 
-  // Without a key that works every parcel would fail the same way, so the first such error stops the day.
-  for (const code of ['FINLAND_NSHIFT_NOT_SET', 'FINLAND_NSHIFT_REFUSED']) {
+  // Without a key that works, or with M: away, every parcel would fail the same way, so the first such error stops the day.
+  for (const code of ['FINLAND_NSHIFT_NOT_SET', 'FINLAND_NSHIFT_REFUSED', 'STORAGE_UNAVAILABLE']) {
     const refusing = fakeNshift({ [pn(1)]: codeErr(code), [pn(2)]: codeErr(code) })
     const other = setup({ sheet: FOLLOW_SHEET, nshift: refusing })
     await other.service.loadSheet(MONA)
@@ -703,6 +703,19 @@ test('one failed parcel does not stop the day', async () => {
     assert.equal(refusing.calls.length, 1)
     await other.service.loadSheet(MONA)
   }
+})
+
+test('three failed parcels in a row stop the day', async () => {
+  const days = (n, from) => Array.from({ length: n }, (_, i) => sheetRow(from + i, `8210010${from + i}`, pn(from + i), '2026-11-20'))
+  const sheet = [...FOLLOW_SHEET, ...days(5, 4)]
+  const failing = codeErr('FINLAND_NSHIFT_FAILED')
+  // pn(1) found, pn(2) failed, pn(4) found, then pn(5), pn(6), pn(7) fail: pn(8) is never asked.
+  const nshift = fakeNshift({ [pn(1)]: NSHIFT_ANSWERS[pn(1)], [pn(2)]: failing, [pn(4)]: timelineOf(pn(4), [DELIVERED]), [pn(5)]: failing, [pn(6)]: failing, [pn(7)]: failing })
+  const { service, shared } = setup({ sheet, nshift })
+  await service.loadSheet(MONA)
+  await assert.rejects(service.fetchStatus(MONA, { date: '2026-11-20' }), error => error === failing)
+  assert.deepEqual(nshift.calls.map(([tracking]) => tracking), [pn(1), pn(2), pn(4), pn(5), pn(6), pn(7)])
+  assert.deepEqual(Object.keys(await shared.statuses.get([pn(1), pn(4), pn(8)])).sort(), [pn(1), pn(4)], 'what was found is stored')
 })
 
 test('apply suggestions never overwrites a filled field', async () => {
@@ -759,9 +772,10 @@ test('DSV parcels are not looked up', async () => {
   const snap = await service.fetchStatus(MONA, { date: '2026-11-20' })
   assert.deepEqual(nshift.calls, [[dhl, '2026-11-20']], 'DSV and a parcel twice in the sheet are skipped')
   assert.deepEqual(snap.statusResult, { fetched: 0, notFound: 1, failed: 0 })
-  const one = await service.fetchStatus(MONA, { key: parcelKey('82100001', dsv) })
+  for (const key of [parcelKey('82100001', dsv), parcelKey('82100003', pn(3))]) {
+    await assert.rejects(service.fetchStatus(MONA, { key }), { code: 'FINLAND_NSHIFT_NOT_TRACKED', message: 'FINLAND_NSHIFT_NOT_TRACKED: Kolliet kan ikke slås op i nShift.' })
+  }
   assert.equal(nshift.calls.length, 1)
-  assert.deepEqual(one.statusResult, { fetched: 0, notFound: 0, failed: 0 })
 })
 
 test('only managers set and test the nShift key, and the window never gets the secret', async () => {

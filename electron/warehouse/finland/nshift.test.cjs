@@ -213,6 +213,23 @@ test('a key that cannot be read or hangs gives FINLAND_NSHIFT_FAILED without the
   assert.equal(nshift.calls.length, 0)
 })
 
+test('M: being away gives STORAGE_UNAVAILABLE, never the original error', async () => {
+  const UNAVAILABLE = 'STORAGE_UNAVAILABLE: Finlandsforsendelsers fælles data kan ikke læses lige nu'
+  const nshift = fakeNshift()
+  const original = Object.assign(new Error(`STORAGE_UNAVAILABLE: ${SECRET}`), { code: 'STORAGE_UNAVAILABLE', secret: SECRET })
+  const away = createNshiftClient({ credentials: async () => { throw original }, fetch: nshift.fetch, pauseMs: 0 })
+  for (const call of [() => away.lookup('TT1', '2026-11-23'), () => away.test()]) {
+    await assert.rejects(call(), (error) => {
+      assert.notEqual(error, original)
+      assert.equal(error.code, 'STORAGE_UNAVAILABLE')
+      assert.equal(error.message, UNAVAILABLE)
+      assertNoSecret(error)
+      return true
+    })
+  }
+  assert.equal(nshift.calls.length, 0)
+})
+
 test('an answer of an odd shape gives FINLAND_NSHIFT_FAILED', async () => {
   const odd = { shipment: { get events() { throw new TypeError(`odd ${SECRET}`) } } }
   const nshift = fakeNshift({ lookup: () => reply(200, [odd]) })
