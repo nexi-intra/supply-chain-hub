@@ -292,6 +292,12 @@ test('only managers set the nShift key', async () => {
   assert.deepEqual(await shared.nshift.credentials(), { clientId: 'other-id-1234', clientSecret: 'fake-other' })
 })
 
+test('a status manager from Optælling cannot set the nShift key', async () => {
+  const { shared } = setup()
+  await assert.rejects(shared.nshift.set({ ...ADA, statusManager: true }, FAKE_CLIENT), { code: 'MANAGER_ONLY' })
+  assert.equal(await shared.nshift.credentials(), null)
+})
+
 test('the status never returns the secret', async () => {
   const { shared, store } = setup()
   const returned = await shared.nshift.set(ADA, FAKE_CLIENT)
@@ -330,6 +336,17 @@ test('timelines are shared between two PCs', async () => {
   fs.rmSync(dir, { recursive: true, force: true })
   await assert.rejects(shared.statuses.get(['JJD1']), { code: 'STORAGE_UNAVAILABLE' })
   await assert.rejects(shared.nshift.status(), { code: 'STORAGE_UNAVAILABLE' })
+})
+
+test('only the timeline fields are stored, never names or addresses', async () => {
+  const { shared, store } = setup()
+  const entry = timeline('JJD1', '2026-11-20T09:00:00.000Z', { name1: 'Matti Meikäläinen', addresses: [{ name1: 'Matti Meikäläinen', street1: 'Kotikatu 1' }] })
+  entry.events[0] = { ...entry.events[0], addresses: [{ name1: 'Matti Meikäläinen' }], recipient: 'Matti' }
+  await shared.statuses.put([entry])
+  const got = await shared.statuses.get(['JJD1'])
+  assert.deepEqual(got, { JJD1: timeline('JJD1', '2026-11-20T09:00:00.000Z') })
+  store.invalidate()
+  assert.ok(!JSON.stringify(await shared.statuses.get(['JJD1'])).includes('Matti'))
 })
 
 test('the oldest timelines are dropped above 4000', async () => {

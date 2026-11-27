@@ -193,3 +193,32 @@ test('no credentials gives FINLAND_NSHIFT_NOT_SET', async () => {
     assert.equal(nshift.calls.length, 0)
   }
 })
+
+test('a key that cannot be read or hangs gives FINLAND_NSHIFT_FAILED without the original error', async () => {
+  const FAILED = 'FINLAND_NSHIFT_FAILED: nShift svarer ikke lige nu. Prøv igen om lidt.'
+  const nshift = fakeNshift()
+  const broken = createNshiftClient({ credentials: async () => { throw new Error(`store said ${SECRET}`) }, fetch: nshift.fetch, pauseMs: 0 })
+  for (const call of [() => broken.lookup('TT1', '2026-11-23'), () => broken.test()]) {
+    await assert.rejects(call(), (error) => {
+      assert.equal(error.code, 'FINLAND_NSHIFT_FAILED')
+      assert.equal(error.message, FAILED)
+      assertNoSecret(error)
+      return true
+    })
+  }
+  const hanging = createNshiftClient({ credentials: () => new Promise(() => {}), fetch: nshift.fetch, pauseMs: 0, credentialsTimeoutMs: 20 })
+  await assert.rejects(hanging.lookup('TT1', '2026-11-23'), (error) => error.code === 'FINLAND_NSHIFT_FAILED')
+  // The queue goes on after a hanging key.
+  await assert.rejects(hanging.test(), (error) => error.code === 'FINLAND_NSHIFT_FAILED')
+  assert.equal(nshift.calls.length, 0)
+})
+
+test('an answer of an odd shape gives FINLAND_NSHIFT_FAILED', async () => {
+  const odd = { shipment: { get events() { throw new TypeError(`odd ${SECRET}`) } } }
+  const nshift = fakeNshift({ lookup: () => reply(200, [odd]) })
+  await assert.rejects(client(nshift).lookup('TT1', '2026-11-23'), (error) => {
+    assert.equal(error.code, 'FINLAND_NSHIFT_FAILED')
+    assertNoSecret(error)
+    return true
+  })
+})

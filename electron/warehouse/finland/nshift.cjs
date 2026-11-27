@@ -8,6 +8,7 @@ const LOOKUP_URL = 'https://api.nshiftportal.com/track/shipmentdata/Operational/
 const TOKEN_MARGIN_MS = 60000
 const DEFAULT_TOKEN_SECONDS = 3600
 const TIMEOUT_MS = 30000
+const CREDENTIALS_TIMEOUT_MS = 10000
 const DAY_MS = 86400000
 // The API refuses more than 31 days between startDate and endDate.
 const DAYS_BEFORE = 3
@@ -40,7 +41,7 @@ function searchWindow(pickedUp) {
   }
 }
 
-function createNshiftClient({ credentials, fetch = globalThis.fetch, now = Date.now, pauseMs = 250 }) {
+function createNshiftClient({ credentials, fetch = globalThis.fetch, now = Date.now, pauseMs = 250, credentialsTimeoutMs = CREDENTIALS_TIMEOUT_MS }) {
   let token = null
   let operations = Promise.resolve()
   let paused = Promise.resolve()
@@ -75,7 +76,17 @@ function createNshiftClient({ credentials, fetch = globalThis.fetch, now = Date.
   }
 
   async function readCredentials() {
-    const value = await credentials()
+    let timer = null
+    const timeout = new Promise((resolve, reject) => { timer = setTimeout(() => reject(failed()), credentialsTimeoutMs) })
+    let value
+    try {
+      value = await Promise.race([Promise.resolve().then(credentials), timeout])
+    } catch {
+      // The store's own error is not passed on; it could carry anything.
+      throw failed()
+    } finally {
+      clearTimeout(timer)
+    }
     const clientId = clean(value && value.clientId)
     const clientSecret = clean(value && value.clientSecret)
     if (!clientId || !clientSecret) throw notSet()
@@ -128,7 +139,12 @@ function createNshiftClient({ credentials, fetch = globalThis.fetch, now = Date.
     if (!response.ok) throw failed()
     const answer = await readJson(response)
     if (!Array.isArray(answer)) throw failed()
-    return answer.length ? timelineFrom(answer[0], query) : null
+    if (!answer.length) return null
+    try {
+      return timelineFrom(answer[0], query)
+    } catch {
+      throw failed()
+    }
   }
 
   async function testNow() {

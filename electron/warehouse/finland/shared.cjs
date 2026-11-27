@@ -341,6 +341,16 @@ function createFinlandShared({ store, now = Date.now }) {
     : null)
   const credential = value => (typeof value === 'string' ? value.trim() : '')
 
+  // Only these fields are stored, so a recipient's name or address can never come along.
+  const storedTimeline = entry => ({
+    tracking: text(entry.tracking),
+    carrier: text(entry.carrier),
+    fetchedAt: entry.fetchedAt,
+    events: (Array.isArray(entry.events) ? entry.events : []).filter(isObject).map(e => ({
+      at: text(e.at), statusId: Number(e.statusId), status: text(e.status), text: text(e.text), place: text(e.place),
+    })),
+  })
+
   const nshift = {
     /** The client id and secret for the backend's calls to nShift, or null when not set up. Never for the window. */
     async credentials() {
@@ -355,7 +365,8 @@ function createFinlandShared({ store, now = Date.now }) {
 
     /** Sets the key everyone uses. Only a manager or creator. Returns the status, never the secret. */
     async set(user, values = {}) {
-      if (!isManager(user)) throw codeError('MANAGER_ONLY', 'Kun managers kan sætte nShift op')
+      // A status manager from Optælling is passed on as a manager, but may not set the key.
+      if (!isManager(user) || user.statusManager) throw codeError('MANAGER_ONLY', 'Kun managers kan sætte nShift op')
       const clientId = credential(values?.clientId)
       const clientSecret = credential(values?.clientSecret)
       if (!clientId || clientId.length > CREDENTIAL_MAX || !clientSecret || clientSecret.length > CREDENTIAL_MAX) {
@@ -380,8 +391,8 @@ function createFinlandShared({ store, now = Date.now }) {
     },
 
     /**
-     * Stores fetched timelines for everyone, one per T&T; an older fetch never replaces a newer one. Above 4000
-     * timelines the ones fetched longest ago are dropped.
+     * Stores fetched timelines for everyone, one per T&T, with only { tracking, carrier, fetchedAt, events }; an older
+     * fetch never replaces a newer one. Above 4000 timelines the ones fetched longest ago are dropped.
      */
     async put(timelines = []) {
       const list = (Array.isArray(timelines) ? timelines : []).filter(entry => isObject(entry) && text(entry.tracking) && typeof entry.fetchedAt === 'string')
@@ -392,7 +403,7 @@ function createFinlandShared({ store, now = Date.now }) {
           const tracking = text(entry.tracking)
           const before = next[tracking]
           if (isObject(before) && String(before.fetchedAt || '') > entry.fetchedAt) continue
-          next[tracking] = { ...entry, tracking }
+          next[tracking] = storedTimeline(entry)
         }
         const keys = Object.keys(next)
         if (keys.length <= STATUSES_MAX) return next
