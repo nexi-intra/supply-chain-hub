@@ -12,11 +12,22 @@ test('arbejdsdage springer weekenden over', () => {
 test('forslag til Expected for PostNord', () => {
   assert.equal(expectedSuggestion({ courier: 'Postnord', postalCode: 15540, country: 'FI', pickedUp: '2026-11-20' }), '2026-11-24');
   assert.equal(expectedSuggestion({ courier: 'Postnord', postalCode: 88200, country: 'FI', pickedUp: '2026-11-20' }), '2026-11-25');
+  assert.equal(expectedSuggestion({ courier: 'Postnord', postalCode: '96100', country: 'FI', pickedUp: '2026-11-23' }), '2026-11-27');
+});
+
+test('Åland får en dag mere efter aftalens tabel', () => {
+  assert.equal(expectedSuggestion({ courier: 'Postnord', postalCode: '22100', country: 'FI', pickedUp: '2026-11-23' }), '2026-11-26');
+  assert.equal(expectedSuggestion({ courier: 'DHL', postalCode: '22100', country: 'FI', pickedUp: '2026-11-23' }), '2026-11-25');
+});
+
+test('intet forslag for postnumre uden for tabellen', () => {
+  assert.equal(expectedSuggestion({ courier: 'Postnord', postalCode: 50, country: 'FI', pickedUp: '2026-11-23' }), null);
 });
 
 test('forslag til Expected for DHL, også med mistet nul foran', () => {
   assert.equal(expectedSuggestion({ courier: 'DHL', postalCode: 530, country: 'FI', pickedUp: '2026-11-20' }), '2026-11-23');
   assert.equal(expectedSuggestion({ courier: 'DHL', postalCode: '40320', country: 'FI', pickedUp: '2026-11-20' }), '2026-11-24');
+  assert.equal(expectedSuggestion({ courier: 'DHL', postalCode: '96100', country: 'FI', pickedUp: '2026-11-23' }), '2026-11-26');
 });
 
 test('intet forslag uden for Finland eller uden afhentning', () => {

@@ -1,5 +1,6 @@
 // Suggestions and status for following up a parcel: columns H (Expected), I (Received), J (SLA), L (Comment), M (Terminal).
 const { parcelKey, normalizeDelivery, trackingsInCell } = require('./sheetIndex.cjs');
+const { leadDays } = require('./leadTimes.cjs');
 
 const toDate = (iso) => new Date(`${iso}T00:00:00Z`);
 const toIso = (d) => d.toISOString().slice(0, 10);
@@ -15,15 +16,11 @@ function addWorkdays(iso, n) {
   return toIso(d);
 }
 
-// The pattern the sheet has followed since September 2026 (see design-opfoelgning.md).
+// The agreement's lead-time table (see leadTimes.cjs and plans/nshift-status-design.md).
 function expectedSuggestion({ courier, postalCode, country, pickedUp }) {
   if (!pickedUp || (country && String(country).toUpperCase() !== 'FI')) return null;
-  const code = String(postalCode ?? '').trim();
-  if (!/^\d{1,5}$/.test(code)) return null;
-  const first = code.padStart(5, '0')[0];
-  if (courier === 'Postnord') return addWorkdays(pickedUp, '789'.includes(first) ? 3 : 2);
-  if (courier === 'DHL') return addWorkdays(pickedUp, '0123'.includes(first) ? 1 : 2);
-  return null;
+  const days = leadDays(courier, postalCode);
+  return days == null ? null : addWorkdays(pickedUp, days);
 }
 
 function slaFor(expected, received) {
