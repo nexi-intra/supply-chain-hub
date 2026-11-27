@@ -272,3 +272,74 @@ test('drafts, not-sent marks and written keys are kept per sheet; without a shee
   assert.deepEqual(await shared.dayLog.days(REAL), { '2026-11-19': { byName: 'Bo Jensen', at: Date.UTC(2026, 10, 19, 9), count: 1, workbookUrl: REAL } }, 'the test sheet\'s count is not carried over')
   assert.deepEqual(await shared.dayLog.days(TEST_WORKBOOK_URL), {})
 })
+
+// A made-up secret: never a real one in tests.
+const FAKE_CLIENT = { clientId: 'test-client-0000-abcd', clientSecret: 'fake-secret-not-real-9f3c' }
+
+test('only managers set the nShift key', async () => {
+  const { shared } = setup()
+  assert.equal(await shared.nshift.credentials(), null, 'nothing set yet')
+  assert.deepEqual(await shared.nshift.status(), { configured: false, clientIdEnding: '' })
+  await assert.rejects(shared.nshift.set(ANNA, FAKE_CLIENT), { code: 'MANAGER_ONLY' })
+  assert.equal(await shared.nshift.credentials(), null)
+  await assert.rejects(shared.nshift.set(ADA, { clientId: '  ', clientSecret: 'x' }), { code: 'FINLAND_SETTINGS_INVALID' })
+  await assert.rejects(shared.nshift.set(ADA, { clientId: 'id', clientSecret: '' }), { code: 'FINLAND_SETTINGS_INVALID' })
+  await assert.rejects(shared.nshift.set(ADA, { clientId: 'id', clientSecret: 'x'.repeat(201) }), { code: 'FINLAND_SETTINGS_INVALID' })
+  await assert.rejects(shared.nshift.set(ADA, { clientId: 42, clientSecret: 'x' }), { code: 'FINLAND_SETTINGS_INVALID' })
+  await shared.nshift.set(ADA, { clientId: ` ${FAKE_CLIENT.clientId} `, clientSecret: FAKE_CLIENT.clientSecret })
+  assert.deepEqual(await shared.nshift.credentials(), FAKE_CLIENT, 'trimmed')
+  await shared.nshift.set(CARL, { clientId: 'other-id-1234', clientSecret: 'fake-other' })
+  assert.deepEqual(await shared.nshift.credentials(), { clientId: 'other-id-1234', clientSecret: 'fake-other' })
+})
+
+test('the status never returns the secret', async () => {
+  const { shared, store } = setup()
+  const returned = await shared.nshift.set(ADA, FAKE_CLIENT)
+  const status = await shared.nshift.status()
+  assert.deepEqual(status, { configured: true, clientIdEnding: 'abcd' })
+  for (const value of [returned, status]) {
+    assert.ok(!JSON.stringify(value === undefined ? null : value).includes(FAKE_CLIENT.clientSecret), 'no secret in what the window may get')
+    assert.ok(!JSON.stringify(value === undefined ? null : value).includes(FAKE_CLIENT.clientId), 'only the ending of the client id')
+  }
+  const onDisk = fs.readdirSync(store.dataDir).map(name => fs.readFileSync(path.join(store.dataDir, name), 'utf8')).join('\n')
+  assert.ok(!onDisk.includes(FAKE_CLIENT.clientSecret), 'the store encrypts it on disk')
+  await assert.rejects(shared.nshift.set(ANNA, FAKE_CLIENT), error => !String(error.message).includes(FAKE_CLIENT.clientSecret))
+  await assert.rejects(shared.nshift.set(ADA, { clientId: 'id', clientSecret: FAKE_CLIENT.clientSecret + 'x'.repeat(200) }), error => !String(error.message).includes(FAKE_CLIENT.clientSecret))
+})
+
+const timeline = (tracking, fetchedAt, extra = {}) => ({
+  tracking, carrier: 'PostNord', fetchedAt,
+  events: [{ at: '2026-11-20T08:00:00.000Z', statusId: 3000, status: 'Delivered', text: 'Utlämnad', place: 'Helsinki, FI' }],
+  ...extra,
+})
+
+test('timelines are shared between two PCs', async () => {
+  const { shared, dir } = setup()
+  const other = createFinlandShared({ store: createStore(dir), now: () => Date.UTC(2026, 10, 19, 9) })
+  assert.deepEqual(await shared.statuses.get(['JJD1']), {}, 'nothing fetched yet')
+  const first = timeline('JJD1', '2026-11-20T09:00:00.000Z')
+  await shared.statuses.put([first])
+  assert.deepEqual(await other.statuses.get(['JJD1', 'JJD2']), { JJD1: first }, 'the other PC sees it; unknown T&T are left out')
+  const second = timeline('JJD2', '2026-11-20T09:05:00.000Z', { carrier: 'DHL' })
+  const newer = timeline('JJD1', '2026-11-20T10:00:00.000Z', { events: [] })
+  await other.statuses.put([second, newer])
+  assert.deepEqual(await shared.statuses.get(['JJD1', 'JJD2']), { JJD1: newer, JJD2: second }, 'a newer fetch replaces the old one')
+  await shared.statuses.put([first])
+  assert.deepEqual(await other.statuses.get(['JJD1']), { JJD1: newer }, 'an older fetch never replaces a newer one')
+  assert.deepEqual(await shared.statuses.get([]), {})
+  fs.rmSync(dir, { recursive: true, force: true })
+  await assert.rejects(shared.statuses.get(['JJD1']), { code: 'STORAGE_UNAVAILABLE' })
+  await assert.rejects(shared.nshift.status(), { code: 'STORAGE_UNAVAILABLE' })
+})
+
+test('the oldest timelines are dropped above 4000', async () => {
+  const { shared } = setup()
+  const base = Date.UTC(2026, 10, 1)
+  const at = i => new Date(base + i * 60000).toISOString()
+  // Put newest first, so the order put in is not what decides.
+  const many = Array.from({ length: 4000 }, (_, i) => timeline(`T${4000 - i}`, at(4000 - i)))
+  await shared.statuses.put(many)
+  await shared.statuses.put([timeline('T0', at(0)), timeline('NEW', at(5000))])
+  const got = await shared.statuses.get(['T0', 'T1', 'T2', 'T4000', 'NEW'])
+  assert.deepEqual(Object.keys(got).sort(), ['NEW', 'T2', 'T4000'], 'the two oldest (T0, T1) are dropped')
+})

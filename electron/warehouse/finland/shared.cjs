@@ -1,7 +1,7 @@
 // Finlandsforsendelser data shared by everyone who writes the sheet (BPO and TCD), in one folder on M:: parcels marked
 // as not sent, the write lock on the sheet, a log of what was written per day, the sheet's address, and each person's
-// drafts (follow-up changes not in the sheet yet). Every change goes through mutateAsync, so two PCs never overwrite
-// each other.
+// drafts (follow-up changes not in the sheet yet), the nShift key and the timelines fetched from nShift. Every change
+// goes through mutateAsync, so two PCs never overwrite each other.
 const crypto = require('node:crypto')
 const fs = require('node:fs')
 const { parcelKey } = require('./core/sheetIndex.cjs')
@@ -14,6 +14,11 @@ const DRAFTS_PREFIX = 'kladder-'
 // Not under DRAFTS_PREFIX, so it is never read as someone's drafts.
 const CLEARED_LOG_KEY = 'slettede-kladder'
 const CLEARED_LOG_MAX = 200
+// The nShift client id and secret, and the timelines fetched from nShift per T&T.
+const NSHIFT_KEY = 'nshift'
+const STATUSES_KEY = 'nshift-status'
+const STATUSES_MAX = 4000
+const CREDENTIAL_MAX = 200
 const RECENT_MS = 30 * 60000
 const DAY_LOG_MAX_DAYS = 120
 const DEFAULT_LOCK_TTL_MS = 2 * 60000
@@ -330,7 +335,74 @@ function createFinlandShared({ store, now = Date.now }) {
     return (Array.isArray(value) ? value : []).slice().reverse()
   }
 
-  return { notSent, lock, dayLog, settings, drafts }
+  // Only the store's encryption on disk protects the key; the window only ever gets status().
+  const storedCredentials = value => (isObject(value) && typeof value.clientId === 'string' && value.clientId && typeof value.clientSecret === 'string' && value.clientSecret
+    ? { clientId: value.clientId, clientSecret: value.clientSecret }
+    : null)
+  const credential = value => (typeof value === 'string' ? value.trim() : '')
+
+  const nshift = {
+    /** The client id and secret for the backend's calls to nShift, or null when not set up. Never for the window. */
+    async credentials() {
+      return storedCredentials(await read(NSHIFT_KEY))
+    },
+
+    /** What the window may know: whether it is set up and the last four characters of the client id. */
+    async status() {
+      const stored = storedCredentials(await read(NSHIFT_KEY))
+      return { configured: Boolean(stored), clientIdEnding: stored ? stored.clientId.slice(-4) : '' }
+    },
+
+    /** Sets the key everyone uses. Only a manager or creator. Returns the status, never the secret. */
+    async set(user, values = {}) {
+      if (!isManager(user)) throw codeError('MANAGER_ONLY', 'Kun managers kan sætte nShift op')
+      const clientId = credential(values?.clientId)
+      const clientSecret = credential(values?.clientSecret)
+      if (!clientId || clientId.length > CREDENTIAL_MAX || !clientSecret || clientSecret.length > CREDENTIAL_MAX) {
+        throw codeError('FINLAND_SETTINGS_INVALID', 'Klient-id og hemmelighed skal udfyldes med højst 200 tegn')
+      }
+      const next = { clientId, clientSecret, by: lower(user.email), byName: nameOf(user), at: now() }
+      await store.mutateAsync(NSHIFT_KEY, current => isObject(current) && current.clientId === clientId && current.clientSecret === clientSecret ? undefined : next)
+      return { configured: true, clientIdEnding: clientId.slice(-4) }
+    },
+  }
+
+  const statuses = {
+    /** The stored timeline per T&T among `trackings`; T&T never fetched are left out. */
+    async get(trackings = []) {
+      const value = await read(STATUSES_KEY)
+      const stored = isObject(value) ? value : {}
+      const result = {}
+      for (const tracking of Array.isArray(trackings) ? trackings : []) {
+        if (typeof tracking === 'string' && Object.hasOwn(stored, tracking) && isObject(stored[tracking])) result[tracking] = stored[tracking]
+      }
+      return result
+    },
+
+    /**
+     * Stores fetched timelines for everyone, one per T&T; an older fetch never replaces a newer one. Above 4000
+     * timelines the ones fetched longest ago are dropped.
+     */
+    async put(timelines = []) {
+      const list = (Array.isArray(timelines) ? timelines : []).filter(entry => isObject(entry) && text(entry.tracking) && typeof entry.fetchedAt === 'string')
+      if (!list.length) return
+      await store.mutateAsync(STATUSES_KEY, current => {
+        const next = { ...(isObject(current) ? current : {}) }
+        for (const entry of list) {
+          const tracking = text(entry.tracking)
+          const before = next[tracking]
+          if (isObject(before) && String(before.fetchedAt || '') > entry.fetchedAt) continue
+          next[tracking] = { ...entry, tracking }
+        }
+        const keys = Object.keys(next)
+        if (keys.length <= STATUSES_MAX) return next
+        const kept = keys.sort((a, b) => String(next[b]?.fetchedAt || '').localeCompare(String(next[a]?.fetchedAt || ''))).slice(0, STATUSES_MAX)
+        return Object.fromEntries(kept.map(tracking => [tracking, next[tracking]]))
+      })
+    },
+  }
+
+  return { notSent, lock, dayLog, settings, drafts, nshift, statuses }
 }
 
 module.exports = { createFinlandShared, TEST_WORKBOOK_URL, draftsKeyOf, workbookOf }
