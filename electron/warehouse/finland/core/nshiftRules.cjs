@@ -152,7 +152,8 @@ function suggest({ timeline, courier, pickedUp, expected }) {
   return {
     received: f.delivered,
     sla,
-    terminal: postnord ? f.terminal : null,
+    // Terminal is the Finnish terminal for PostNord; DHL always has "DHL" there, as the sheet is filled by hand.
+    terminal: postnord ? f.terminal : /^dhl$/i.test(clean(courier)) ? 'DHL' : null,
     comment: comments.length ? comments.join(', ') : null,
     firstAttempt: f.firstAttempt,
     delivered: f.delivered

@@ -186,7 +186,7 @@ test('Køge rules do not apply to DHL', () => {
     ev('2026-12-02T10:00:00+00:00', 3000, LOCAL)
   ], 'MyDHL Express')
   const s = suggest({ courier: 'DHL', pickedUp: '2026-11-23', expected: '2026-11-30', timeline: t })
-  assert.equal(s.terminal, null)
+  assert.equal(s.terminal, 'DHL', 'DHL is always DHL in Terminal, whatever terminal the timeline passes')
   assert.equal(s.comment, '1st attempt within SLA (30-11)')
   assert.equal(s.sla, 'OK')
 })

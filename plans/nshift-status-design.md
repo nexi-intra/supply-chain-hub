@@ -78,7 +78,7 @@ Analysen bag: 238 kolli med kommentar og 160 uden, sammenlignet med nShifts forl
 |---|---|
 | Received | Afleveringsdagen. Uden aflevering intet forslag |
 | SLA | OK hvis første forsøg ≤ Expected. Ellers OK hvis Received ≤ Expected, ellers NOK. Uden Received og uden forsøg intet forslag. `Forgotten in warehouse` giver OK |
-| Terminal (PostNord) | Vantaa eller Turku ud fra forløbet. Uden en af dem intet forslag. DHL og DSV som i dag |
+| Terminal (PostNord) | Vantaa eller Turku ud fra forløbet. Uden en af dem intet forslag. DHL foreslås altid "DHL" (også i "Brug forslagene for alle"), DSV som i dag |
 | Comment | De regler nedenfor, der passer, adskilt med komma i denne rækkefølge |
 
 | Når | Comment |
