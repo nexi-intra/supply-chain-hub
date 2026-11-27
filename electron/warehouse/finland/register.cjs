@@ -172,7 +172,7 @@ function closeWarning(count) {
 function registerFinland({ handleTool, sap, runScript, opener, platformRoot, roles, copyForPerson, unpacked, scriptsDir, sapSystem, userDataDir, storageConnected = () => true, deps = {} }) {
   const now = deps.now || Date.now
   const store = opener.lazy(() => path.join(platformRoot(), '_lagerstyring', 'finlandsforsendelser'))
-  const shared = createFinlandShared({ store, now })
+  const shared = createFinlandShared({ store, now, workbookOverride: process.env.TCD_HUB_FINLAND_WORKBOOK })
   const excel = deps.excel || createFinlandExcel({
     scriptsDir: unpacked(path.join(scriptsDir, 'finland', 'excel')),
     tmpDir: path.join(os.tmpdir(), 'finlandsforsendelser'),

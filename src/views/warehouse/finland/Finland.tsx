@@ -53,7 +53,7 @@ export function lockText(lock: Pick<NonNullable<FinlandSnapshot['lock']>, 'byNam
 }
 
 /** The orange "N kolli er ikke gemt i arket" and the "Testark" badge, shown in the tool's title bar next to the SAP light. */
-export function FinlandMarks({ pending, isTest, onOpenPending }: { pending: number; isTest: boolean; onOpenPending?: () => void }) {
+export function FinlandMarks({ pending, isTest, localCopy = false, onOpenPending }: { pending: number; isTest: boolean; localCopy?: boolean; onOpenPending?: () => void }) {
   return (
     <>
       {pending > 0 && (
@@ -69,9 +69,11 @@ export function FinlandMarks({ pending, isTest, onOpenPending }: { pending: numb
       {isTest && (
         <span
           className="rounded-full border-2 border-amber-500 bg-amber-500/15 px-2.5 py-1 text-xs font-bold tracking-wide text-amber-700 dark:text-amber-300"
-          title={t('Værktøjet skriver i testarket. En manager vælger det rigtige ark under Administration.', 'The tool writes in the test sheet. A manager chooses the real sheet under Administration.')}
+          title={localCopy
+            ? t('Værktøjet skriver i en lokal kopi på denne pc, valgt da hubben blev startet. Det fælles ark røres ikke.', 'The tool writes in a local copy on this PC, chosen when the Hub was started. The shared sheet is not touched.')
+            : t('Værktøjet skriver i testarket. En manager vælger det rigtige ark under Administration.', 'The tool writes in the test sheet. A manager chooses the real sheet under Administration.')}
         >
-          {t('Testark', 'Test sheet')}
+          {localCopy ? t('Lokal kopi', 'Local copy') : t('Testark', 'Test sheet')}
         </span>
       )}
     </>
@@ -88,7 +90,7 @@ export function Finland({ headerSlot, onBusyChange }: { headerSlot: HTMLElement 
   const { status: sap } = useSapStatus()
   const [tab, setTab] = useState<Tab>(finlandPlace.tab)
   const [data, setData] = useState<FinlandSnapshot | null>(null)
-  const [isTestSetting, setIsTestSetting] = useState(false)
+  const [sheetSetting, setSheetSetting] = useState({ isTest: false, localCopy: false })
   const [working, setWorkingState] = useState<Working>(null)
   const workingRef = useRef<Working>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
@@ -109,7 +111,7 @@ export function Finland({ headerSlot, onBusyChange }: { headerSlot: HTMLElement 
 
   // Which sheet is used is a shared setting on M:, not the sheet itself, so "Testark" shows from the start.
   useEffect(() => {
-    bridge.settings().then(settings => setIsTestSetting(settings.isTest)).catch(() => {})
+    bridge.settings().then(settings => setSheetSetting({ isTest: settings.isTest, localCopy: !!settings.localCopy })).catch(() => {})
   }, [bridge])
 
   useEffect(() => { Object.assign(finlandPlace, { tab, selected, month }) }, [tab, selected, month])
@@ -126,7 +128,8 @@ export function Finland({ headerSlot, onBusyChange }: { headerSlot: HTMLElement 
   }, [bridge])
 
   const lockedBy = data?.lock && !data.lock.mine ? data.lock : null
-  const isTest = data?.sheet ? data.sheet.isTest : isTestSetting
+  const isTest = data?.sheet ? data.sheet.isTest : sheetSetting.isTest
+  const localCopy = data?.sheet ? !!data.sheet.localCopy : sheetSetting.localCopy
   // Before anything is read, the count comes from the shared drafts alone, so the marker shows from the start.
   const pending = data ? data.followUp.pendingTotal : polledPending
   const sapDescription = describeSapState(sap, 'finland')
@@ -336,7 +339,7 @@ export function Finland({ headerSlot, onBusyChange }: { headerSlot: HTMLElement 
 
   return (
     <div className="container mx-auto space-y-6 px-4 py-6 sm:px-6">
-      {headerSlot && createPortal(<FinlandMarks pending={pending} isTest={isTest} onOpenPending={openPending} />, headerSlot)}
+      {headerSlot && createPortal(<FinlandMarks pending={pending} isTest={isTest} localCopy={localCopy} onOpenPending={openPending} />, headerSlot)}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <Tabs<Tab> value={tab} onChange={setTab} items={[{ value: 'write', label: t('Skriv ind', 'Write in') }, { value: 'follow', label: t('Opfølgning', 'Follow-up') }]} className="flex-1" />
         <div className="flex flex-wrap items-center gap-2">

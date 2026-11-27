@@ -165,6 +165,18 @@ test('recent keys are forgotten after 30 minutes', async () => {
   assert.equal((await shared.dayLog.days())['2026-11-19'].count, 3, 'the day summary is kept')
 })
 
+test('a local copy given at start wins over the shared sheet, and nothing else is accepted as one', async () => {
+  const copy = 'C:\\Dev\\Kopi af ark.xlsx'
+  const real = { workbookUrl: 'https://christianiabpos.sharepoint.com/sites/NordicSupplyChain/Ordre.xlsx', sheetName: 'Ark1', tableName: 'Ordrer' }
+  const { shared, store } = setup()
+  await shared.settings.set(ADA, real)
+  const dev = createFinlandShared({ store, workbookOverride: copy })
+  assert.deepEqual(await dev.settings.get(), { workbookUrl: copy, sheetName: 'Ark1', tableName: 'Ordrer', isTest: true, localCopy: true })
+  for (const ignored of ['', '  ', 'https://christianiabpos.sharepoint.com/sites/NordicSupplyChain/Andet.xlsx', 'C:\\Dev\\ark.csv']) {
+    assert.deepEqual(await createFinlandShared({ store, workbookOverride: ignored }).settings.get(), { ...real, isTest: false })
+  }
+})
+
 test('settings default to the test sheet and only managers change them', async () => {
   const { shared } = setup()
   assert.equal(TEST_WORKBOOK_URL, 'https://christianiabpos.sharepoint.com/sites/NordicSupplyChain/Shared Documents/General/Testark - Ordre sendt til Finland fra Danmark.xlsx')

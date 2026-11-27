@@ -14,7 +14,7 @@ import { kolli } from '@/lib/warehouse/finlandText'
 import { t } from '@/lib/warehouse/text'
 import { FINLAND_TEST_SHEET, type FinlandDraftsCleared, type FinlandDraftsOverview, type FinlandDraftsPerson, type FinlandNshiftStatus, type FinlandSettings } from '@/types/finland'
 
-type SheetValues = Omit<FinlandSettings, 'isTest'>
+type SheetValues = Omit<FinlandSettings, 'isTest' | 'localCopy'>
 
 /** The pick-up days of someone's changes, oldest first, as "24.11, 25.11". */
 export function draftDays(byDay: Record<string, number>): string {
@@ -96,11 +96,13 @@ export function FinlandSheetSettings({ settings, leftBehind = null, onSaved }: {
       <div className="mb-5 space-y-1 rounded-md border p-4" data-active-sheet>
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium">{t('Værktøjet skriver i', 'The tool writes in')}</span>
-          {settings.isTest && <Badge variant="attention">{t('Testark', 'Test sheet')}</Badge>}
+          {settings.isTest && !settings.localCopy && <Badge variant="attention">{t('Testark', 'Test sheet')}</Badge>}
+          {settings.localCopy && <Badge variant="attention">{t('Lokal kopi', 'Local copy')}</Badge>}
         </div>
         <p className="break-all text-sm">{settings.workbookUrl}</p>
         <p className="text-sm text-muted-foreground">{t(`Fane ${settings.sheetName}, tabel ${settings.tableName}`, `Tab ${settings.sheetName}, table ${settings.tableName}`)}</p>
-        {settings.isTest && <p className="text-sm text-muted-foreground">{t('Det er testarket. Skriv det rigtige arks adresse nedenfor, når værktøjet skal tages i brug.', "This is the test sheet. Type the real sheet's address below when the tool is to be used.")}</p>}
+        {settings.localCopy && <p className="text-sm text-muted-foreground">{t('Hubben er startet med en lokal kopi, så denne pc skriver kun i kopien. Arket, der er gemt nedenfor, gælder for alle andre.', 'The Hub was started with a local copy, so this PC writes only in the copy. The sheet saved below applies to everyone else.')}</p>}
+        {settings.isTest && !settings.localCopy && <p className="text-sm text-muted-foreground">{t('Det er testarket. Skriv det rigtige arks adresse nedenfor, når værktøjet skal tages i brug.', "This is the test sheet. Type the real sheet's address below when the tool is to be used.")}</p>}
       </div>
       <form className="space-y-4" onSubmit={event => { event.preventDefault(); save() }}>
         <div className="space-y-1.5">

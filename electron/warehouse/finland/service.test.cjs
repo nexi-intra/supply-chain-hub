@@ -158,7 +158,7 @@ test('loading reads the sheet and fetches two months from SAP', async () => {
   assert.equal(snap.defaultDay, '2026-11-24')
   assert.equal(snap.loadedAt, new Date(NOW).toISOString())
   assert.equal(missingOn(snap, DAY).length, 3)
-  assert.deepEqual(snap.sheet, { wasOpen: true, filterRemoved: false, texts: ['Arket er åbent i Excel'], isTest: true })
+  assert.deepEqual(snap.sheet, { wasOpen: true, filterRemoved: false, texts: ['Arket er åbent i Excel'], isTest: true, localCopy: false })
   assert.deepEqual(snap.dayLog, {})
   assert.equal(snap.lock, null)
   assert.deepEqual(snap.followUp.othersByDay, {})

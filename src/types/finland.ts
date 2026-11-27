@@ -153,7 +153,7 @@ export interface FinlandSnapshot {
   /** ISO time of the last SAP fetch. */
   loadedAt: string | null
   /** `texts`: Danish lines on how the sheet was opened. */
-  sheet: { wasOpen: boolean; filterRemoved: boolean; texts: string[]; isTest: boolean } | null
+  sheet: { wasOpen: boolean; filterRemoved: boolean; texts: string[]; isTest: boolean; localCopy?: boolean } | null
   /** Who wrote each day last, when, and how many parcels in all. */
   dayLog: Record<string, { byName: string; at: number; count: number }>
   /** The shared write lock while someone holds it. `mine`: the person asking holds it (by e-mail, not name). */
@@ -215,6 +215,8 @@ export interface FinlandSettings {
   sheetName: string
   tableName: string
   isTest: boolean
+  /** A local .xlsx copy given when the Hub was started (TCD_HUB_FINLAND_WORKBOOK); it wins on this PC only. */
+  localCopy?: boolean
 }
 
 /** The test sheet, the default until a manager chooses another; the same as DEFAULT_SETTINGS in electron/warehouse/finland/shared.cjs. */

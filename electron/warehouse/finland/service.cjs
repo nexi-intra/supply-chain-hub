@@ -310,7 +310,7 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, nshift = n
       today: todayIso,
       defaultDay: defaultDay(days, todayIso),
       loadedAt,
-      sheet: sheet ? { ...sheet, isTest: !!settings.isTest } : null,
+      sheet: sheet ? { ...sheet, isTest: !!settings.isTest, localCopy: !!settings.localCopy } : null,
       dayLog,
       // The window shows the delete button only to admins; deleteNotSentRow checks again.
       isAdmin: !!admin,

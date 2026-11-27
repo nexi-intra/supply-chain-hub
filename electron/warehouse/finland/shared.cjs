@@ -63,7 +63,11 @@ function validWorkbookUrl(value) {
   return /^([a-z]:\\|\\\\)/i.test(value) && /\.xlsx$/i.test(value)
 }
 
-function createFinlandShared({ store, now = Date.now }) {
+function createFinlandShared({ store, now = Date.now, workbookOverride = '' }) {
+  // A local .xlsx copy given when the Hub is started (TCD_HUB_FINLAND_WORKBOOK, for testing); it wins over the sheet
+  // chosen in Administration on this PC only, and the shared choice on M: is left as it is.
+  const localCopy = /^([a-z]:\\|\\\\)/i.test(text(workbookOverride)) && validWorkbookUrl(text(workbookOverride)) ? text(workbookOverride) : ''
+
   async function folderExists() {
     return fs.promises.access(store.dataDir).then(() => true, () => false)
   }
@@ -234,6 +238,7 @@ function createFinlandShared({ store, now = Date.now }) {
         sheetName: stored.sheetName || DEFAULT_SETTINGS.sheetName,
         tableName: stored.tableName || DEFAULT_SETTINGS.tableName,
       }
+      if (localCopy) return { ...result, workbookUrl: localCopy, isTest: true, localCopy: true }
       return { ...result, isTest: result.workbookUrl === TEST_WORKBOOK_URL }
     },
 

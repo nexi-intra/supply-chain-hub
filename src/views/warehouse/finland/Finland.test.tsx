@@ -93,4 +93,10 @@ describe('Finlandsforsendelser: Skriv ind', () => {
     setWarehouseLanguage('en')
     expect(renderToStaticMarkup(<FinlandMarks pending={1} isTest={false} />)).toContain('1 parcel not saved in the sheet')
   })
+
+  it('the title bar says local copy when the Hub was started with one', () => {
+    const html = renderToStaticMarkup(<FinlandMarks pending={0} isTest localCopy />)
+    expect(html).toContain('Lokal kopi')
+    expect(html).not.toContain('>Testark<')
+  })
 })
