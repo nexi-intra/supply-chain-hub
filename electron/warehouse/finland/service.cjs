@@ -30,6 +30,10 @@ const NSHIFT_STOPS = new Set(['FINLAND_NSHIFT_NOT_SET', 'FINLAND_NSHIFT_REFUSED'
 // nShift not answering this many parcels in a row is taken as nShift being down, so the day does not hold the busy
 // guard for minutes of timeouts.
 const NSHIFT_FAILED_IN_ROW = 3
+// A day gives up after this long, so nShift answering slowly never holds the busy guard for long. What was found is
+// kept, and the parcels not reached count as failed.
+const NSHIFT_DAY_MS = 5 * 60000
+const DAY_TIMED_OUT = Symbol('day timed out')
 
 function codeError(code, text) {
   return Object.assign(new Error(text ? `${code}: ${text}` : code), { code })
@@ -508,10 +512,21 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, nshift = n
   const nshiftNotSetError = () => codeError('FINLAND_NSHIFT_NOT_SET', 'nShift er ikke sat op. En manager kan sætte det op under Administration.')
   const notTrackedError = () => codeError('FINLAND_NSHIFT_NOT_TRACKED', 'Kolliet kan ikke slås op i nShift.')
 
+  /** `lookup`, or DAY_TIMED_OUT thrown when `deadline` (from `now()`) comes first; a late answer is dropped. */
+  function beforeDeadline(lookup, deadline) {
+    if (deadline === Infinity) return lookup
+    const pending = Promise.resolve(lookup)
+    pending.catch(() => {})
+    let timer = null
+    const late = new Promise((resolve, reject) => { timer = setTimeout(() => reject(DAY_TIMED_OUT), Math.max(0, deadline - now())) })
+    return Promise.race([pending, late]).finally(() => clearTimeout(timer))
+  }
+
   /**
    * Looks up the day's PostNord and DHL parcels in nShift (`{ date }`), or one parcel (`{ key }`), and stores the
    * timelines for everyone. For a day, parcels whose stored timeline is delivered are not fetched again. A failed
-   * parcel is counted and the rest go on, until three in a row fail. One parcel that cannot be looked up (DSV, twice
+   * parcel is counted and the rest go on, until three in a row fail. A day stops after five minutes, keeping what was
+   * found and counting the rest as failed. One parcel that cannot be looked up (DSV, twice
    * in the sheet, no T&T, not in the sheet) is refused. Reads neither SAP nor the sheet.
    */
   function fetchStatus(user, { date, key } = {}) {
@@ -530,9 +545,14 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, nshift = n
       const found = []
       let stop = null
       let failedInRow = 0
-      for (const [tracking, pickedUp] of todo) {
+      const deadline = date ? now() + NSHIFT_DAY_MS : Infinity
+      for (const [index, [tracking, pickedUp]] of todo.entries()) {
+        if (now() >= deadline) {
+          statusResult.failed += todo.length - index
+          break
+        }
         try {
-          const timeline = await nshift.lookup(tracking, pickedUp)
+          const timeline = await beforeDeadline(nshift.lookup(tracking, pickedUp), deadline)
           failedInRow = 0
           if (timeline) {
             found.push({ ...timeline, tracking, fetchedAt: new Date(now()).toISOString() })
@@ -541,6 +561,10 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, nshift = n
             statusResult.notFound++
           }
         } catch (error) {
+          if (error === DAY_TIMED_OUT) {
+            statusResult.failed += todo.length - index
+            break
+          }
           if (NSHIFT_STOPS.has(error?.code)) {
             stop = error
             break

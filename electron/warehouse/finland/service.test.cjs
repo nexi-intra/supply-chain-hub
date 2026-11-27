@@ -755,6 +755,40 @@ test('a status file that cannot be read gives rows without timelines, but M: awa
   }
 })
 
+test('a day stops after five minutes, keeps what was found and counts the rest as failed', async () => {
+  const days = (n, from) => Array.from({ length: n }, (_, i) => sheetRow(from + i, `8210010${from + i}`, pn(from + i), '2026-11-20'))
+  const sheet = [...FOLLOW_SHEET, ...days(3, 4)]
+  // Every answer takes two minutes on the fake clock: the fourth parcel is never asked.
+  let clock = null
+  const slow = fakeNshift(Object.fromEntries([1, 2, 4, 5, 6].map(n => [pn(n), timelineOf(pn(n), [DELIVERED])])))
+  const answer = slow.lookup
+  slow.lookup = (tracking, pickedUp) => { clock.now += 2 * 60000; return answer(tracking, pickedUp) }
+  const one = setup({ sheet, nshift: slow })
+  clock = one.clock
+  await one.service.loadSheet(MONA)
+  const snap = await one.service.fetchStatus(MONA, { date: '2026-11-20' })
+  assert.deepEqual(slow.calls.map(([tracking]) => tracking), [pn(1), pn(2), pn(4)])
+  assert.deepEqual(snap.statusResult, { fetched: 3, notFound: 0, failed: 2 })
+  assert.deepEqual(Object.keys(await one.shared.statuses.get([pn(1), pn(2), pn(4), pn(5)])).sort(), [pn(1), pn(2), pn(4)])
+
+  // An answer that never comes is given up at the deadline.
+  const hanging = fakeNshift({ [pn(1)]: timelineOf(pn(1), [DELIVERED]) })
+  const first = hanging.lookup
+  hanging.lookup = (tracking, pickedUp) => {
+    if (tracking === pn(1)) return first(tracking, pickedUp)
+    hanging.calls.push([tracking, pickedUp])
+    clock.now = NOW + 5 * 60000 - 5
+    return new Promise(() => {})
+  }
+  const two = setup({ sheet, nshift: hanging })
+  clock = two.clock
+  await two.service.loadSheet(MONA)
+  const late = await two.service.fetchStatus(MONA, { date: '2026-11-20' })
+  assert.deepEqual(hanging.calls.map(([tracking]) => tracking), [pn(1), pn(2)])
+  assert.deepEqual(late.statusResult, { fetched: 1, notFound: 0, failed: 4 })
+  assert.deepEqual(Object.keys(await two.shared.statuses.get([pn(1), pn(2)])), [pn(1)])
+})
+
 test('apply suggestions never overwrites a filled field', async () => {
   const sheet = [sheetRow(2, '82100001', pn(1), '2026-11-20', { comment: 'Kept' }), ...FOLLOW_SHEET.slice(1)]
   const nshift = fakeNshift(NSHIFT_ANSWERS)
