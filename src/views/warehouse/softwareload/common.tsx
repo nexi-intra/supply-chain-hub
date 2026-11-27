@@ -10,7 +10,14 @@ import type { SoftwareloadCounts, SoftwareloadOutcome, SoftwareloadProgress, Sof
 
 /** As the main process cleans a serial: no spaces, capitals, then the same pattern. */
 export const SERIAL_PATTERN = /^[A-Z0-9][A-Z0-9._/-]{0,39}$/
-export const cleanSerial = (value: string) => value.replace(/\s+/g, '').toUpperCase()
+/**
+ * A serial a person scanned or typed, cleaned as the main process does. Exactly 24 digits (TRR's scanners) become the last
+ * 18, which SAP knows, as scannedSerial in electron/warehouse/core/serialInput.cjs, so the screen shows what is saved.
+ */
+export const cleanSerial = (value: string) => {
+  const serial = value.replace(/\s+/g, '').toUpperCase()
+  return /^\d{24}$/.test(serial) ? serial.slice(-18) : serial
+}
 
 /** Serial numbers scanned or pasted one per line (or separated by commas, semicolons or tabs), cleaned and without repeats. */
 export function parseSerials(text: string): { serials: string[]; invalid: string[] } {

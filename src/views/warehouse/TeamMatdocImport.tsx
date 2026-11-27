@@ -12,8 +12,11 @@ import { currentWarehouseLanguage, t } from '@/lib/warehouse/text'
 import type { MatdocTarget, TeamMatdocLookup, WarehouseUser } from '@/types/warehouse'
 import { CheckSummary } from './count/MatdocImport'
 
-/** Why a material document cannot be imported, with the distribution to fix in SAP; null when it belongs to one count. */
-export function targetProblem(target: MatdocTarget): { title: string; lines: string[] } | null {
+/**
+ * Why a material document cannot be imported, with the distribution to fix in SAP; null when it belongs to one count.
+ * `openCounts` is how many open counts the lookup saw: with none, that is the reason.
+ */
+export function targetProblem(target: MatdocTarget, openCounts?: number): { title: string; lines: string[] } | null {
   const countLines = target.byCount.map(entry => `'${entry.countName}': ${formatNumber(entry.count)}`)
   const unknownLines = target.unknown > 0 ? [t(`Ukendte i de åbne optællingers SAP-tal: ${formatNumber(target.unknown)}`, `Unknown in the SAP figures of the open counts: ${formatNumber(target.unknown)}`)] : []
   switch (target.outcome) {
@@ -38,6 +41,7 @@ export function targetProblem(target: MatdocTarget): { title: string; lines: str
       return { title: t(`Ingen åben optælling tæller ${where}`, `No open count counts ${where}`), lines: unknownLines }
     }
     case 'unknown':
+      if (openCounts === 0) return { title: t('Der er ingen åbne optællinger', 'There are no open counts'), lines: [] }
       return { title: t('Ingen af serienumrene findes i de åbne optællingers SAP-tal', 'None of the serial numbers are in the SAP figures of the open counts'), lines: [] }
   }
 }
@@ -73,6 +77,7 @@ export function TeamMatdocImport({ team, onClose, onImported }: TeamMatdocImport
   const transaction = team === 'TCD' ? 'ZMS_REP' : 'ZMS_PREP'
 
   const runLookup = async () => {
+    if (busy) return
     if (!document.trim()) return
     setBusy('lookup')
     setLookup(null)
@@ -115,7 +120,7 @@ export function TeamMatdocImport({ team, onClose, onImported }: TeamMatdocImport
   }
 
   const target = lookup?.target ?? null
-  const problem = target ? targetProblem(target) : null
+  const problem = target ? targetProblem(target, lookup?.openCounts) : null
   const reason = lookup && target ? reasonText(lookup.reason, target.countName) : null
   const toImport = lookup?.check?.toImport ?? 0
 

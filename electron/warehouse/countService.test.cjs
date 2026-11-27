@@ -53,8 +53,8 @@ function setup({ status = true } = {}) {
     if (!ownStores.has(id)) ownStores.set(id, createStore(path.join(root, 'data', team)))
     return ownStores.get(id)
   }
-  const service = (name, { ownStore = false } = {}) => createCountService({
-    repo: createCountRepository({ storeFor: ownStore ? storeOf(name) : storeFor, now: () => clock.now }),
+  const service = (name, { ownStore = false, wrapRepo = repo => repo } = {}) => createCountService({
+    repo: wrapRepo(createCountRepository({ storeFor: ownStore ? storeOf(name) : storeFor, now: () => clock.now })),
     storeFor: ownStore ? storeOf(name) : storeFor, fetcher, placementSource, reportWriter,
     journalsDir: path.join(root, `local-${name}`), deviceId: name,
     now: () => clock.now, newId: () => `${name}${++ids}`,
@@ -218,6 +218,23 @@ test('a scanned or pasted 24-digit serial counts as its last 18 digits', async (
   assert.deepEqual([dry.found, dry.invalid, dry.unknown], [1, 0, 0])
   const scanned = await anna.scan(ANNA, id, { serial: '251427303201349258058038', place: 'A1.1' })
   assert.deepEqual([scanned.outcome, scanned.serial], ['found', '303201349258058038'])
+})
+
+test('a scanned 24-digit serial is found by the search fields and can be removed again', async () => {
+  const ctx = setup()
+  ctx.sap.serials.push(serial('303201349258058038', 'INT4300-4921-0', 'D000'), serial('303201349258058039', 'INT4300-4921-0', 'D000'))
+  const anna = ctx.service('pc1')
+  const { id } = await newCount(ctx, anna)
+  await anna.scan(ANNA, id, { serial: '303201349258058038', place: 'A1.1' })
+  const focus = await anna.materialSerials(ANNA, id, { material: 'INT4300-4921-0', query: '251427303201349258058038' })
+  assert.deepEqual(focus.found.map(item => item.serial), ['303201349258058038'])
+  const missing = await anna.listSerials(ANNA, id, { kind: 'missing', query: '251427 303201349258058039' })
+  assert.deepEqual(missing.items.map(item => item.serial), ['303201349258058039'])
+  const removed = await anna.removeSerial(ANNA, id, { serial: '251427303201349258058038' })
+  assert.equal(removed.serial, '303201349258058038')
+  // Saved long by 1.6.8 (import of a list): the exact value is removed first.
+  await anna.importSerials(ANNA, id, { serials: ['251427303201349258058039'], place: 'P1', dryRun: false })
+  assert.equal((await anna.removeSerial(ANNA, id, { serial: '251427303201349258058039' })).serial, '251427303201349258058039')
 })
 
 test('area claims warn other counters and expire after 30 minutes', async () => {
@@ -561,6 +578,44 @@ test('looking up a material document does not open the other counts, so this PC 
   assert.equal(lookup.target.outcome, 'ok')
   await new Promise(resolve => setTimeout(resolve, 50))
   assert.equal(await lastHeartbeat(ctx, monaCount.id), before)
+})
+
+test('the team lookup reads a count\'s SAP figures again only when they changed', async () => {
+  const { ctx, doc, anna, mona, annaCount, monaCount } = await teamMatdocSetup()
+  const reads = []
+  const pc = ctx.service('pc5', { wrapRepo: repo => ({ ...repo, getSnapshot: (team, id, options) => { reads.push(id); return repo.getSnapshot(team, id, options) } }) })
+  const monaReads = () => reads.filter(id => id === monaCount.id).length
+  assert.equal((await pc.lookupTeamMatdoc(ANNA, { document: MATDOC })).target.countId, annaCount.id)
+  assert.equal(monaReads(), 1)
+  await pc.lookupTeamMatdoc(ANNA, { document: MATDOC })
+  assert.equal(monaReads(), 1, 'unchanged figures are not read again')
+  // "Hent SAP igen" on both counts from other PCs: the blocked B2 and the unblocked N3 are new in SAP.
+  ctx.sap.serials.push(serial('B2', 'INT4300-4921-0', 'D000', 'blocked'), serial('N3', 'INT4300-4921-0', 'D000'))
+  ctx.tick(60_000)
+  for (const [svc, user, id] of [[mona, MONA, monaCount.id], [anna, ANNA, annaCount.id]]) {
+    const { token } = await svc.previewRefetch(user, id)
+    await svc.applyRefetch(user, id, { token })
+  }
+  doc.serials = ['N3']
+  assert.equal((await pc.lookupTeamMatdoc(ANNA, { document: MATDOC })).target.countId, annaCount.id, 'the count open on this PC is not used with its old figures')
+  assert.equal(monaReads(), 2, 'changed figures are read again')
+  doc.serials = ['B2']
+  assert.equal((await pc.lookupTeamMatdoc(ANNA, { document: MATDOC })).target.countId, monaCount.id)
+})
+
+test('the team lookup fails rather than leave out an open count without SAP figures', async () => {
+  const { ctx, monaCount } = await teamMatdocSetup()
+  await ctx.storeFor('TCD').deleteAsync(`count-${monaCount.id}-expected`)
+  await assert.rejects(ctx.service('pc7').lookupTeamMatdoc(ANNA, { document: MATDOC }), { code: 'STORAGE_UNAVAILABLE' })
+})
+
+test('the team lookup tells how many counts are open', async () => {
+  const { anna } = await teamMatdocSetup()
+  assert.equal((await anna.lookupTeamMatdoc(ANNA, { document: MATDOC })).openCounts, 2)
+  const ctx = setup()
+  ctx.fetcher.fetchMatdoc = async () => ({ document: MATDOC, transaction: 'ZMS_REP', rows: [{ serial: 'N1', material: 'INT4300-4921-0', description: 'SmartPOS', plant: 'D301', sloc: 'D000', userStatus: '' }] })
+  const lookup = await ctx.service('pc1').lookupTeamMatdoc(ANNA, { document: MATDOC })
+  assert.deepEqual([lookup.openCounts, lookup.target.outcome, lookup.canImport], [0, 'unknown', false])
 })
 
 test('a manager starts a status; without one no count can be created', async () => {

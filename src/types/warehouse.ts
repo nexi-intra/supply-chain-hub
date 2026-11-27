@@ -773,6 +773,8 @@ export interface TeamMatdocLookup {
   serials: string[]
   materials: { material: string; description: string; count: number }[]
   target: MatdocTarget
+  /** How many open counts of the team the lookup saw; 0 means there are none. */
+  openCounts: number
   canImport: boolean
   reason: null | 'not-member' | 'closed' | 'locked'
   check: ImportCheck | null

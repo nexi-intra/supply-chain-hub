@@ -47,6 +47,11 @@ describe('targetProblem', () => {
     expect(targetProblem(target({ outcome: 'none', sloc: 'D002', stockType: 'blocked' }))?.title).toBe('No open count counts D002 Blocked')
     expect(targetProblem(target({ outcome: 'unknown', unknown: 4 }))).toEqual({ title: 'None of the serial numbers are in the SAP figures of the open counts', lines: [] })
   })
+
+  it('says there are no open counts when the team has none', () => {
+    expect(targetProblem(target({ outcome: 'unknown', unknown: 2 }), 0)).toEqual({ title: 'Der er ingen åbne optællinger', lines: [] })
+    expect(targetProblem(target({ outcome: 'unknown', unknown: 2 }), 1)?.title).toBe('Ingen af serienumrene findes i de åbne optællingers SAP-tal')
+  })
 })
 
 describe('reasonText', () => {

@@ -47,6 +47,7 @@ export function MatdocImport({ id, team, place, placeInput, refresh }: MatdocImp
   const transaction = team === 'TCD' ? 'ZMS_REP' : 'ZMS_PREP'
 
   const runLookup = async () => {
+    if (busy) return
     if (!document.trim()) return
     setBusy('lookup')
     setLookup(null)

@@ -41,7 +41,7 @@ Bemærk: eslint 9 er markeret som ikke længere understøttet (eslint 10 findes)
 ## Fase 3 - nye tiltag
 
 - [x] Guides og Knowledge Library: zoom i en åben guide. Se `plans/guide-zoom-design.md` og `plans/guide-zoom-plan.md`.
-- [x] Optælling (ønsket af TRR, også TCD): blocked for TRR, eksport af serienumre, fælles import af materialedokument og 24-cifrede serienumre. Se `plans/optaelling-trr-tilfoejelser-design.md` og `plans/optaelling-trr-tilfoejelser-plan.md`.
+- [ ] Optælling (ønsket af TRR, også TCD): blocked for TRR, eksport af serienumre, fælles import af materialedokument og 24-cifrede serienumre. Se `plans/optaelling-trr-tilfoejelser-design.md` og `plans/optaelling-trr-tilfoejelser-plan.md`.
 - [ ] Registrer brugerrettede ændringer i `src/lib/changelog.ts` under en ny 1.6.9-post, kun for ting der faktisk er lavet.
 
 ## Fase 4 - senere, kun efter godkendelse

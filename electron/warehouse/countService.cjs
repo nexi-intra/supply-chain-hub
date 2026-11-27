@@ -786,7 +786,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const state = await refresh(await load(user, id))
     const missingKind = kind !== 'extra' && kind !== 'duplicates'
     const source = kind === 'extra' ? state.aggregate.serials.extra : kind === 'duplicates' ? state.aggregate.duplicates : state.aggregate.serials.missing
-    const needle = String(query || '').trim().toUpperCase()
+    const needle = String(scannedSerial(query || '')).trim().toUpperCase()
     let filtered = needle ? source.filter(item => item.serial.includes(needle) || String(item.material || '').includes(needle) || String(item.sloc || '') === needle) : source
     const found = missingKind && filtered.length ? await foundElsewhereFor(state) : new Map()
     if (kind === 'found-elsewhere') filtered = filtered.filter(item => found.has(item.serial))
@@ -800,7 +800,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const code = normalizeMaterial(material)
     const entry = state.index.materials.get(code)
     if (!entry) throw codeError('MATERIAL_NOT_FOUND', 'Materialet er ikke i optællingen')
-    const needle = String(query || '').replace(/\s+/g, '').toUpperCase()
+    const needle = scannedSerial(String(query || '')).replace(/\s+/g, '').toUpperCase()
     const max = Math.min(Math.max(Number(limit) || 1000, 1), 5000)
     const found = []
     const missing = []
@@ -1009,7 +1009,9 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   async function removeSerial(user, id, { serial } = {}) {
     const { state, rights } = await requireWriter(user, id)
     await refresh(state, true)
-    const normalized = normalizeSerial(serial)
+    // The exact value first, so a serial saved long (1.6.8) can still be removed; then as scanned (24 digits → last 18).
+    let normalized = normalizeSerial(serial)
+    if (!(normalized && state.found.has(normalized))) normalized = normalizeSerial(scannedSerial(serial))
     const previous = normalized && state.found.get(normalized)
     if (!previous) throw codeError('SERIAL_NOT_FOUND', 'Serienummeret er ikke registreret som fundet')
     const material = state.index.serials.get(normalized)?.material
@@ -1167,28 +1169,30 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   /**
    * The team's open counts with the serials of their SAP figures, read from the snapshots only. No count is opened: that
    * would start its journal and heartbeats, and this PC would look like it takes part in counts it never opened.
+   * A snapshot is read only when the count list's fetchedAt (written with every "Hent SAP igen") differs from the one
+   * held here, or from the count open on this PC.
    */
   async function openCountSerials(team) {
     const list = (await repo.listCounts(team)).filter(entry => entry.status === 'open' && !entry.creating)
     const ids = new Set(list.map(entry => `${team}:${entry.id}`))
     for (const cache of [matdocIndexes, matdocChunks]) for (const key of cache.keys()) if (key.startsWith(`${team}:`) && !ids.has(key)) cache.delete(key)
-    const counts = await Promise.all(list.map(async entry => {
+    return Promise.all(list.map(async entry => {
       const local = openedState(team, entry.id)
-      if (local) return { id: entry.id, name: entry.name, fetchedAt: local.snapshot.fetchedAt, serials: local.index.serials }
+      if (local && entry.fetchedAt && local.snapshot.fetchedAt === entry.fetchedAt) return { id: entry.id, name: entry.name, fetchedAt: local.snapshot.fetchedAt, serials: local.index.serials }
+      const key = `${team}:${entry.id}`
+      let cached = matdocIndexes.get(key)
+      if (cached && entry.fetchedAt && cached.fetchedAt === entry.fetchedAt) return { id: entry.id, name: entry.name, fetchedAt: cached.fetchedAt, serials: cached.serials }
       let snapshot
       try {
         snapshot = await repo.getSnapshot(team, entry.id)
       } catch {
-        // A count left out could make a pallet look like it belongs to one count only.
-        throw codeError('STORAGE_UNAVAILABLE')
+        snapshot = null
       }
-      if (!snapshot) return null
-      const key = `${team}:${entry.id}`
-      let cached = matdocIndexes.get(key)
+      // A count left out could make a pallet look like it belongs to one count only.
+      if (!snapshot) throw codeError('STORAGE_UNAVAILABLE')
       if (!cached || cached.fetchedAt !== snapshot.fetchedAt) matdocIndexes.set(key, (cached = { fetchedAt: snapshot.fetchedAt, serials: indexSnapshot(snapshot).serials }))
       return { id: entry.id, name: entry.name, fetchedAt: snapshot.fetchedAt, serials: cached.serials }
     }))
-    return counts.filter(Boolean)
   }
 
   /** Imports of `document` in the open counts other than `exceptId`, read from their journals without opening them. Never throws. */
@@ -1233,7 +1237,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const serials = [...new Set(fetched.rows.map(row => row.serial))]
     const counts = await openCountSerials(team)
     const target = matdocTarget({ serials, counts })
-    const result = { document: fetched.document, transaction: fetched.transaction, serials, materials: matdocMaterials(fetched.rows), target, canImport: false, reason: null, check: null, alreadyImported: null, importedElsewhere: [] }
+    const result = { document: fetched.document, transaction: fetched.transaction, serials, materials: matdocMaterials(fetched.rows), target, openCounts: counts.length, canImport: false, reason: null, check: null, alreadyImported: null, importedElsewhere: [] }
     if (target.outcome !== 'ok') return result
     const matdoc = normalizeMatdoc(fetched.document)
     const [state, importedElsewhere] = await Promise.all([

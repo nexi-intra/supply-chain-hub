@@ -36,6 +36,12 @@ test('Excel files: the serial column is found by its header, otherwise the first
   assert.deepEqual((await readSerialFile(path.join(dir, 'b.xlsx'))).serials, ['P1', 'P2'])
 })
 
+test('a 24-digit serial in a file counts as its last 18 digits, as when it is scanned', async () => {
+  const dir = tempDir()
+  fs.writeFileSync(path.join(dir, 'a.txt'), '251427303201349258058038\n2514273032013492580580381\nN1\n')
+  assert.deepEqual((await readSerialFile(path.join(dir, 'a.txt'))).serials, ['303201349258058038', '2514273032013492580580381', 'N1'])
+})
+
 test('unsupported or too large files are refused', async () => {
   const dir = tempDir()
   fs.writeFileSync(path.join(dir, 'x.exe'), 'MZ')
