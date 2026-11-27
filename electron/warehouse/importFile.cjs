@@ -2,6 +2,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const ExcelJS = require('exceljs')
+const { scannedSerial } = require('./core/serialInput.cjs')
 
 const MAX_BYTES = 20 * 1024 * 1024
 const SERIAL_HEADER = /^(serial( ?(no\.?|number))?|serienummer|serienr\.?|sernr|serial no\.?)$/i
@@ -51,7 +52,8 @@ async function readSerialFile(file, { maxBytes = MAX_BYTES } = {}) {
     const delimiter = [';', '\t', ','].find(candidate => lines[0]?.includes(candidate))
     rows = lines.map(line => (delimiter ? line.split(delimiter) : [line]).map(cell => cell.replace(/^"|"$/g, '').trim()))
   }
-  return { fileName: path.basename(file), serials: fromRows(rows) }
+  // A file a person picked: a 24-digit serial from a scanner becomes its last 18 digits, as when it is scanned.
+  return { fileName: path.basename(file), serials: fromRows(rows).map(scannedSerial) }
 }
 
 module.exports = { readSerialFile }

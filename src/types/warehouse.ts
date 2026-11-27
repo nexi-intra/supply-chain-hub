@@ -764,6 +764,45 @@ export interface MatdocLookup {
   alreadyImported: { byName: string; at: number; place: string } | null
 }
 
+/** Where a material document's serials are: one row per serial, sloc/stockType null when no open count knows it. */
+export interface MatdocTargetRow {
+  serial: string
+  material: string | null
+  sloc: string | null
+  stockType: StockType | null
+  countId: string | null
+  countName: string | null
+}
+
+/** Which open count of the team a material document belongs to; only 'ok' can be imported. */
+export interface MatdocTarget {
+  outcome: 'ok' | 'mixed' | 'several' | 'outside' | 'none' | 'unknown'
+  countId: string | null
+  countName: string | null
+  sloc: string | null
+  stockType: StockType | null
+  groups: { sloc: string; stockType: StockType; count: number }[]
+  byCount: { countId: string; countName: string; count: number }[]
+  rows: MatdocTargetRow[]
+  unknown: number
+}
+
+/** "Importér materialedokument" from the counts overview: the document looked up against every open count of the team. */
+export interface TeamMatdocLookup {
+  document: string
+  transaction: 'ZMS_REP' | 'ZMS_PREP'
+  serials: string[]
+  materials: { material: string; description: string; count: number }[]
+  target: MatdocTarget
+  /** How many open counts of the team the lookup saw; 0 means there are none. */
+  openCounts: number
+  canImport: boolean
+  reason: null | 'not-member' | 'closed' | 'locked'
+  check: ImportCheck | null
+  alreadyImported: { byName: string; at: number; place: string } | null
+  importedElsewhere: { countName: string; byName: string; at: number; place: string }[]
+}
+
 /** Where another count of the same status registered a serial this count misses: "Fundet i '{countName}' på {place}". */
 export interface FoundElsewhere {
   countId: string
@@ -1228,6 +1267,9 @@ export interface WarehouseBridge {
     deleteLine(request: { id: string; lineId: string }): Promise<{ ok: true }>
     importSerials(request: { id: string; text?: string; serials?: string[]; place: string; document?: string; dryRun: boolean }): Promise<ImportCheck>
     lookupMatdoc(request: { id: string; document: string }): Promise<MatdocLookup>
+    teamMatdocLookup(document: string): Promise<TeamMatdocLookup>
+    teamMatdocImport(request: { document: string; place: string; serials: string[]; countId: string }): Promise<ImportCheck & { countId: string; countName: string }>
+    teamMatdocExport(document: string, serials: string[], language?: 'da' | 'en'): Promise<{ file: string; name: string }>
     importFile(title?: string): Promise<{ fileName: string; serials: string[] } | null>
     requestJoin(id: string): Promise<Member>
     decideMember(request: { id: string; email: string; approve: boolean }): Promise<Member>
@@ -1258,6 +1300,7 @@ export interface WarehouseBridge {
     fetchDoc(id: string, options?: { confirmMissing?: string[] }): Promise<CountDoc>
     flush(id: string): Promise<{ ok: boolean; pending: number }>
     report(id: string, language?: 'da' | 'en'): Promise<{ file: string; name: string }>
+    serialExport(id: string, material: string, language?: 'da' | 'en'): Promise<{ file: string; name: string }>
     openReport(file: string): Promise<{ ok: true }>
     showReport(file: string): Promise<{ ok: true }>
   }

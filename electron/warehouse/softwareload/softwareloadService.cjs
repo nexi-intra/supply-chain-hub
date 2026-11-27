@@ -12,6 +12,7 @@ const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
 const { normalizeSerial } = require('../core/countState.cjs')
+const { scannedSerial } = require('../core/serialInput.cjs')
 const { normalizeMatdoc } = require('../core/sapParsers.cjs')
 const { monthsBetween } = require('../core/period.cjs')
 const { MATERIAL_PATTERN } = require('../core/snapshot.cjs')
@@ -300,7 +301,7 @@ function createSoftwareloadService({
   }
 
   function serialOf(input) {
-    const serial = normalizeSerial(input?.serial)
+    const serial = normalizeSerial(scannedSerial(input?.serial))
     if (!serial) throw codeError('SOFTWARELOAD_INVALID', 'Ugyldigt serienummer')
     return serial
   }
@@ -1089,7 +1090,7 @@ function createSoftwareloadService({
    */
   async function kifSerials(user, { serials, document } = {}) {
     if (!String(document ?? '').trim()) {
-      const typed = serialsOf(serials)
+      const typed = serialsOf(Array.isArray(serials) ? serials.map(scannedSerial) : [])
       if (!typed.length) throw noSerials()
       return { serials: typed }
     }
@@ -1226,7 +1227,7 @@ function createSoftwareloadService({
    * files are read (one per year), and `unreadable` counts those that could not be read.
    */
   async function search(user, { serial } = {}) {
-    const wanted = normalizeSerial(serial)
+    const wanted = normalizeSerial(scannedSerial(serial))
     if (!wanted) return { lines: [], unreadable: 0 }
     const own = new RegExp(`^${INDEX_PREFIX}\\d{4}-${shardOf(wanted)}$`)
     const keys = (await indexStore.keysAsync()).filter(key => own.test(key))

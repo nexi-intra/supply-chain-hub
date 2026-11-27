@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ArrowRight, ClipboardText, Flag, HourglassMedium, Plus, UsersThree } from '@phosphor-icons/react'
+import { ArrowRight, ClipboardText, FileArrowDown, Flag, HourglassMedium, Plus, UsersThree } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -12,6 +12,7 @@ import { formatDateTime, formatMoney, formatNumber, scopeText } from '@/lib/ware
 import { cn } from '@/lib/utils'
 import type { CountListEntry, WarehouseUser, CountStatus, StatusOverview } from '@/types/warehouse'
 import { StartStatusDialog } from './StartStatusDialog'
+import { TeamMatdocImport } from './TeamMatdocImport'
 import { useWithoutDeleted } from './pendingDeletes'
 import { t } from '@/lib/warehouse/text'
 
@@ -31,6 +32,7 @@ export function Counts({ user, onNew, onOpen, onOpenStatus, onOpenSapCheck }: Co
   const overview = useWithoutDeleted(loaded)
   const [failed, setFailed] = useState<string | null>(null)
   const [starting, setStarting] = useState(false)
+  const [importing, setImporting] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -67,6 +69,10 @@ export function Counts({ user, onNew, onOpen, onOpenStatus, onOpenSapCheck }: Co
               {t('Start ny status', 'Start new status')}
             </Button>
           )}
+          <SapActionButton variant="outline" onAction={() => setImporting(true)}>
+            <FileArrowDown size={18} weight="bold" />
+            {t('Importér materialedokument', 'Import material document')}
+          </SapActionButton>
           <SapActionButton onAction={onNew} disabled={!active}>
             <Plus size={18} weight="bold" />
             {t('Ny optælling', 'New count')}
@@ -135,6 +141,7 @@ export function Counts({ user, onNew, onOpen, onOpenStatus, onOpenSapCheck }: Co
       {unassigned.length > 0 && <CountGrid title={t('Ældre optællinger (uden status)', 'Older counts (without status)')} counts={unassigned} onOpen={onOpen} />}
 
       {starting && <StartStatusDialog onClose={() => setStarting(false)} onStarted={() => { setStarting(false); void load() }} onOpenSapCheck={() => { setStarting(false); onOpenSapCheck() }} />}
+      {importing && <TeamMatdocImport team={user.team} onClose={() => setImporting(false)} onImported={() => { setImporting(false); void load() }} />}
     </div>
   )
 }

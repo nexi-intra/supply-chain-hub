@@ -67,10 +67,11 @@ export function NewCount({ user, onCancel, onCreated }: NewCountProps) {
 
   const types: StockType[] = [stockChoice]
   const kinds = GROUPS.find(item => item.value === group)!.kinds
-  const onlyD000 = stockChoice === 'blocked' || group === 'accessories'
+  const tcd = user.team === 'TCD'
+  const onlyD000 = (stockChoice === 'blocked' && tcd) || group === 'accessories'
   const allowed = (sloc: string) => !onlyD000 || sloc === BLOCKED_SLOC
   const hasD000 = user.storageLocations.includes(BLOCKED_SLOC)
-  const choices = STOCK_CHOICES.filter(choice => choice.value !== 'blocked' || hasD000)
+  const choices = STOCK_CHOICES.filter(choice => choice.value !== 'blocked' || hasD000 || user.team === 'TRR')
   const groups = GROUPS.filter(item => item.value !== 'accessories' || hasD000)
   const slocTaken = (sloc: string) => types.flatMap(type => {
     const item = takenBy(taken, sloc, type, kinds)
@@ -163,14 +164,16 @@ export function NewCount({ user, onCancel, onCreated }: NewCountProps) {
                   role="radio"
                   aria-checked={stockChoice === choice.value}
                   disabled={fetching}
-                  onClick={() => { setStockChoice(choice.value); setPreview(null); if (choice.value === 'blocked') setSlocs(current => current.filter(sloc => sloc === BLOCKED_SLOC)) }}
+                  onClick={() => { setStockChoice(choice.value); setPreview(null); if (choice.value === 'blocked' && tcd) setSlocs(current => current.filter(sloc => sloc === BLOCKED_SLOC)) }}
                   className={cn('rounded-md px-4 py-1.5 text-sm font-medium transition', stockChoice === choice.value ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')}
                 >
                   {choice.label}
                 </button>
               ))}
             </div>
-            <p className="text-xs text-muted-foreground">{t(`Blocked lager findes kun på ${BLOCKED_SLOC} og tælles i sin egen optælling, fordi det bogføres for sig i SAP.`, `Blocked stock only exists on ${BLOCKED_SLOC} and is counted in its own count, because it is posted separately in SAP.`)}</p>
+            <p className="text-xs text-muted-foreground">{tcd
+              ? t(`Blocked lager findes kun på ${BLOCKED_SLOC} og tælles i sin egen optælling, fordi det bogføres for sig i SAP.`, `Blocked stock only exists on ${BLOCKED_SLOC} and is counted in its own count, because it is posted separately in SAP.`)
+              : t('Blocked lager tælles i sin egen optælling, fordi det bogføres for sig i SAP.', 'Blocked stock is counted in its own count, because it is posted separately in SAP.')}</p>
           </div>
 
           <div className="space-y-3">

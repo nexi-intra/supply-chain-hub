@@ -18,6 +18,10 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Finlandsforsendelser: under "Opfølgning" retter du T&T og følger leveringen hos PostNord, DHL og DSV. Kun én kan skrive i arket ad gangen, og du kan se, hvem der skriver, og om kolleger har ændringer, som ikke er gemt i arket endnu',
       'Finlandsforsendelser: under "Opfølgning" kan du hente status fra nShift for PostNord og DHL. Ud fra forløbet foreslår appen Received, SLA, Terminal og Comment, og du godkender stadig forslagene, før de kommer i arket',
       'Finlandsforsendelser: Expected foreslås nu efter aftalens tabel over leveringstider pr. postnummer',
+      'Optælling: TRR kan nu tælle blocked lager på D001, D002 og D003',
+      'Optælling: ny fane "Eksport". Vælg et materiale og få dets serienumre i Excel, med en fane for fundne og en for manglende',
+      'Optælling: "Importér materialedokument" i optællingsoversigten lægger en palles serienumre i den optælling, der tæller dem. Ligger de forskellige steder i SAP, eller både blocked og unblocked, importeres intet, og du kan eksportere listen til Excel og rette det i SAP',
+      'Optælling og Softwareload: et serienummer på 24 cifre fra scanneren gemmes som de sidste 18 cifre, som SAP bruger',
     ],
   },
   {

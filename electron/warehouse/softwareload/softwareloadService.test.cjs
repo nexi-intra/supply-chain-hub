@@ -346,6 +346,21 @@ test('scan normalizes and refuses duplicates', async () => {
   assert.deepEqual((await svc.status(ANNA)).running.terminals.map(terminal => terminal.serial), ['XYZ9'])
 })
 
+test('a 24-digit terminal scan is kept as its last 18 digits', async () => {
+  const LONG = '251427303201349258058038'
+  const SHORT = '303201349258058038'
+  const sap = fakeSap({ [SHORT]: { material: 'M-R', sloc: 'D000' } })
+  const ctx = setup({ sap })
+  const svc = ctx.service()
+  await svc.start(ANNA, TASK)
+  assert.deepEqual(await svc.scan(ANNA, { serial: LONG, taskId: 't1' }), { serial: SHORT, count: 1 })
+  assert.deepEqual((await svc.status(ANNA)).running.terminals.map(terminal => terminal.serial), [SHORT])
+  assert.deepEqual((await svc.kifPreview(ANNA, { serials: [LONG] })).serials, [SHORT], 'a typed serial for Flyt ind i KIF too')
+  ctx.tick(30 * MIN)
+  await svc.finish(ANNA, await confirmed(ctx, ANNA))
+  assert.deepEqual((await svc.search(ANNA, { serial: LONG })).lines.map(line => [line.serial, line.kind]), [[SHORT, 'load']])
+})
+
 test('a scan or unscan for another task than the running one is refused and never lands in it', async () => {
   const ctx = setup()
   const svc = ctx.service()

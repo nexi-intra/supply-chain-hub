@@ -74,6 +74,7 @@ const COMPONENT_MAP = {
   'components/GuideRichText.tsx': INTERNAL,
   'components/GuideStepEditor.tsx': 'guides:create-guide',
   'components/GuideViewer.tsx': 'guides',
+  'components/GuideZoomControl.tsx': 'guides',
   'components/HomeOfficeDialog.tsx': 'calendar:home-office',
   'components/HubAssistant.tsx': 'topic:assistant',
   'components/HubertIcon.tsx': INTERNAL,
