@@ -252,10 +252,20 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, nshift = n
       })
   }
 
-  /** The stored nShift timelines for the first T&T of every row in the sheet as last read. */
-  function timelinesForSheet() {
+  /**
+   * The stored nShift timelines for the first T&T of every row in the sheet as last read. A status file that cannot be
+   * read gives no timelines rather than no snapshot; only M: being away stops.
+   */
+  async function timelinesForSheet() {
     const trackings = [...new Set(sheetRows.map(r => trackingsInCell(r.trackingText)[0]).filter(Boolean))]
-    return trackings.length ? shared.statuses.get(trackings) : {}
+    if (!trackings.length) return {}
+    try {
+      return await shared.statuses.get(trackings)
+    } catch (error) {
+      if (error?.code === 'STORAGE_UNAVAILABLE') throw error
+      console.warn('Finlandsforsendelser: nShift-status kunne ikke læses', error?.code || error?.name || 'ukendt fejl')
+      return {}
+    }
   }
 
   function othersByDay(others) {

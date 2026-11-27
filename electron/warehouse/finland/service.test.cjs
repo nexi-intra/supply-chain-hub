@@ -731,6 +731,30 @@ test('three failed parcels in a row stop the day', async () => {
   assert.deepEqual(Object.keys(await shared.statuses.get([pn(1), pn(4), pn(8)])).sort(), [pn(1), pn(4)], 'what was found is stored')
 })
 
+test('a status file that cannot be read gives rows without timelines, but M: away still stops', async () => {
+  const nshift = fakeNshift(NSHIFT_ANSWERS)
+  const { service, shared } = setup({ sheet: FOLLOW_SHEET, nshift })
+  await service.loadSheet(MONA)
+  await service.fetchStatus(MONA, { date: '2026-11-20' })
+  const get = shared.statuses.get
+  const warnings = []
+  const warn = console.warn
+  console.warn = (...args) => warnings.push(args)
+  try {
+    shared.statuses.get = async () => { throw new SyntaxError(`Unexpected token in ${pn(1)}`) }
+    const snap = await service.loadSheet(MONA)
+    assert.equal(rowOf(snap, K1).nshift, null)
+    assert.equal(snap.followUp.rows.length, 3)
+    assert.equal(warnings.length, 1)
+    assert.ok(!JSON.stringify(warnings).includes(pn(1)), 'the warning carries no data')
+    shared.statuses.get = async () => { throw codeErr('STORAGE_UNAVAILABLE') }
+    await assert.rejects(service.loadSheet(MONA), { code: 'STORAGE_UNAVAILABLE' })
+  } finally {
+    console.warn = warn
+    shared.statuses.get = get
+  }
+})
+
 test('apply suggestions never overwrites a filled field', async () => {
   const sheet = [sheetRow(2, '82100001', pn(1), '2026-11-20', { comment: 'Kept' }), ...FOLLOW_SHEET.slice(1)]
   const nshift = fakeNshift(NSHIFT_ANSWERS)
