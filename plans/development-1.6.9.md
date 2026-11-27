@@ -48,7 +48,7 @@ Bemærk: eslint 9 er markeret som ikke længere understøttet (eslint 10 findes)
 ## Fase 4 - senere, kun efter godkendelse
 
 - [x] Releasebuild 1.6.9 (27.11.2026, godkendt af Jacob): `develop/1.6.9` ved `09f7565`, `npm.cmd run electron:build`, `release/Supply Chain Hub-1.6.9-win.zip` (242.809.075 bytes). Tests før build: tsc 0 fejl, test:warehouse 1117 bestået (1 skip), vitest 1883 bestået (1 skip). app.asar kontrolleret for version 1.6.9 og de nye dele.
-- [ ] GitHub-release og push af `develop/1.6.9`, `release/1.6.9` og tag `v1.6.9`.
+- [x] GitHub-release og push af `develop/1.6.9`, `release/1.6.9` og tag `v1.6.9` (27.11.2026): releasen står som "Latest" med `Supply.Chain.Hub-1.6.9-win.zip`, SHA-256 `81cd14c4e46807124bda4a45dd9e7c00524758b1c4ae9d4d65b79270e7f8ca7b`. Tagget peger på `29d7369`. Før push blev 81 nye commits gennemsøgt for nøgler uden fund.
 - [ ] Udgiv zip'en på opdateringsdrevet på M: (brugerens trin).
 
 ## Backlog
