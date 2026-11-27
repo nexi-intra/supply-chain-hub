@@ -309,7 +309,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   }
 
   // ---------- New count: SAP fetch + preview, then create ----------
-  /** A new count is unblocked or blocked stock, and terminals or accessories; blocked stock and accessories belong in D000 only. */
+  /** A new count is unblocked or blocked stock, and terminals or accessories; accessories, and TCD's blocked stock, belong in D000 only. */
   function newCountScope(team, scope) {
     const stockTypes = scope?.stockTypes ?? ['unrestricted']
     if (!Array.isArray(stockTypes) || stockTypes.length !== 1) throw codeError('SCOPE_INVALID', 'Vælg unblocked eller blocked')
@@ -317,7 +317,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     if (kinds !== undefined && !(sameList(kinds, TERMINAL_KINDS) || sameList(kinds, ACCESSORY_KINDS))) throw codeError('SCOPE_INVALID', 'Vælg terminaler eller tilbehør')
     const normalized = normalizeScope(team, { ...scope, stockTypes })
     const onlyD000 = normalized.type === 'slocs' && normalized.slocs.join(',') === 'D000'
-    if (stockTypes[0] === 'blocked' && !onlyD000) throw codeError('SCOPE_INVALID', 'Blocked lager tælles kun i D000')
+    if (stockTypes[0] === 'blocked' && team === 'TCD' && !onlyD000) throw codeError('SCOPE_INVALID', 'Blocked lager tælles kun i D000')
     if (kinds && sameList(kinds, ACCESSORY_KINDS) && !onlyD000) throw codeError('SCOPE_INVALID', 'Tilbehør tælles kun i D000')
     return normalized
   }

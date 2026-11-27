@@ -795,6 +795,21 @@ test('a new count has exactly one stock type, and blocked stock is only counted 
   assert.deepEqual(meta.scope.stockTypes, ['unrestricted'], 'no stock type given = unblocked')
 })
 
+test('TRR counts blocked stock on D001, D002 and D003', async () => {
+  const ctx = setup()
+  ctx.storeFor('TRR').set('statusser', { st0trr01: { id: 'st0trr01', team: 'TRR', name: 'Status Q4 2026', year: 2026, quarter: 4, state: 'open', startedBy: { email: 'mona@example.test', name: 'Mona' }, startedAt: 1, history: [], reports: [] } })
+  ctx.sap.mb52.push(stock('INT4300-4921-0-R', 'D001', 0, 2), stock('INT4300-4921-0-R', 'D002', 0, 1))
+  ctx.sap.serials.push(serial('B7', 'INT4300-4921-0-R', 'D001', 'blocked'))
+  const trine = ctx.service('pc6')
+  const preview = await trine.preview(TRINE, { scope: { type: 'slocs', slocs: ['D001', 'D002'], stockTypes: ['blocked'] } })
+  assert.ok(preview.token)
+  const meta = await trine.createCount(TRINE, { token: preview.token, name: 'D001 D002 blocked' })
+  assert.deepEqual(meta.scope.stockTypes, ['blocked'])
+  assert.equal((await trine.scan(TRINE, meta.id, { serial: 'B7', place: 'A1.1' })).outcome, 'found')
+  const anna = ctx.service('pc1')
+  await assert.rejects(anna.preview(ANNA, { scope: { type: 'slocs', slocs: ['D000', 'D004'], stockTypes: ['blocked'] } }), error => error.code === 'SCOPE_INVALID' && /D000/.test(error.message), 'TCD keeps the D000 rule')
+})
+
 test('a new count is terminals or accessories; accessories only in D000, and accessories elsewhere show as an error', async () => {
   const ctx = setup()
   ctx.sap.mb52.push(stock('R162-0717', 'D004', 5, 0, 25))
