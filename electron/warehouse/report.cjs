@@ -88,6 +88,12 @@ const REPORT_TEXT = {
     statusHeader: ['Optælling', 'Udvalg', 'Lagertype', 'Ansvarlig', 'Afsluttet', 'Fremdrift', 'Difference unblocked (stk.)', 'Værdidifference unblocked (DKK)', 'Difference blocked (stk.)', 'Værdidifference blocked (DKK)', 'Værdidifference i alt (DKK)'],
     countColumn: 'Optælling',
     finalName: (name, version) => `${name} endelig v${version}`,
+    serialExport: {
+      sheets: { found: 'Fundet', missing: 'Mangler' },
+      foundHeaders: ['Serienummer', 'Materiale', 'Storage location (SAP)', 'Lagertype', 'Fundet sted', 'Fundet af', 'Tidspunkt', 'Kilde'],
+      missingHeaders: ['Serienummer', 'Materiale', 'Storage location (SAP)', 'Lagertype'],
+      name: (countName, material) => `${countName} ${material} serienumre`,
+    },
   },
   en: {
     kinds: { new: 'New terminals', used: 'Used terminals', accessory: 'Accessories', other: 'Other' },
@@ -118,6 +124,12 @@ const REPORT_TEXT = {
     statusHeader: ['Count', 'Selection', 'Stock type', 'Responsible', 'Closed', 'Progress', 'Difference unblocked (pcs)', 'Value difference unblocked (DKK)', 'Difference blocked (pcs)', 'Value difference blocked (DKK)', 'Value difference total (DKK)'],
     countColumn: 'Count',
     finalName: (name, version) => `${name} final v${version}`,
+    serialExport: {
+      sheets: { found: 'Found', missing: 'Missing' },
+      foundHeaders: ['Serial number', 'Material', 'Storage location (SAP)', 'Stock type', 'Found in', 'Found by', 'Time', 'Source'],
+      missingHeaders: ['Serial number', 'Material', 'Storage location (SAP)', 'Stock type'],
+      name: (countName, material) => `${countName} ${material} serial numbers`,
+    },
   },
 }
 const textFor = language => REPORT_TEXT[language === 'en' ? 'en' : 'da']
@@ -125,10 +137,12 @@ const textFor = language => REPORT_TEXT[language === 'en' ? 'en' : 'da']
 const rowFormats = text => ({ [text.rowHeaders[8]]: MONEY_FORMAT, [text.rowHeaders[9]]: MONEY_FORMAT, [text.rowHeaders[12]]: DATE_FORMAT, [text.rowHeaders[14]]: DATE_FORMAT })
 const timeFormat = headers => ({ [headers[headers.length - 1]]: DATE_FORMAT })
 
+const sourceText = (item, text) => (item.source === 'import' ? (item.document ? `${text.sources.matdoc} ${item.document}` : text.sources.imported) : text.sources.scanned)
+
 function serialRowsOf(aggregate, text) {
   return [
     ...aggregate.serials.missing.map(item => [item.serial, item.material, item.description, item.sloc, STOCK_LABELS[item.stockType], text.serialStatus.missing, '', '', null, '']),
-    ...aggregate.serials.extra.map(item => [item.serial, item.material || '', item.description || '', item.sloc || '', STOCK_LABELS[item.stockType] || '', item.otherCount ? `${text.serialStatus[item.outcome]}: ${item.otherCount}` : text.serialStatus[item.outcome] || item.outcome, item.place || '', item.byName || item.by || '', asDate(item.at), item.source === 'import' ? (item.document ? `${text.sources.matdoc} ${item.document}` : text.sources.imported) : text.sources.scanned]),
+    ...aggregate.serials.extra.map(item => [item.serial, item.material || '', item.description || '', item.sloc || '', STOCK_LABELS[item.stockType] || '', item.otherCount ? `${text.serialStatus[item.outcome]}: ${item.otherCount}` : text.serialStatus[item.outcome] || item.outcome, item.place || '', item.byName || item.by || '', asDate(item.at), sourceText(item, text)]),
   ]
 }
 
@@ -231,6 +245,25 @@ function buildWorkbook({ meta, snapshot, aggregate, members, approvals, progress
 
 async function writeReport(data, dir, date = new Date()) {
   return writeWorkbook(buildWorkbook(data), dir, reportFileName(data.meta, date))
+}
+
+// One material's serial numbers from a count ("Eksport"): the serial is always in column A, so it can be pasted into SAP.
+function buildSerialExportWorkbook({ countName, material, description, found, missing, language }) {
+  const text = textFor(language)
+  const { sheets, foundHeaders, missingHeaders } = text.serialExport
+  const workbook = new ExcelJS.Workbook()
+  workbook.creator = 'CountPoint'
+  workbook.created = new Date()
+  workbook.title = [countName, material, description].filter(Boolean).join(' ')
+  const foundRows = found.map(item => [item.serial, item.material, item.sloc || '', STOCK_LABELS[item.stockType] || '', item.place || '', item.byName || '', asDate(item.at), sourceText(item, text)])
+  addTable(workbook.addWorksheet(sheets.found), foundHeaders, foundRows, { [foundHeaders[6]]: DATE_FORMAT })
+  addTable(workbook.addWorksheet(sheets.missing), missingHeaders, missing.map(item => [item.serial, item.material, item.sloc || '', STOCK_LABELS[item.stockType] || '']))
+  return workbook
+}
+
+async function writeSerialExport(data, dir, date = new Date()) {
+  const name = reportFileName({ name: textFor(data.language).serialExport.name(data.countName, data.material) }, date)
+  return writeWorkbook(buildSerialExportWorkbook(data), dir, name)
 }
 
 async function writeWorkbook(workbook, dir, name) {
@@ -416,4 +449,4 @@ async function writeSapCheckReport(data, dir, date = new Date()) {
   return writeWorkbook(buildSapCheckWorkbook(data), dir, reportFileName({ name: `${text.file} ${data.team}` }, date))
 }
 
-module.exports = { writeReport, writeStatusReport, writeSapCheckReport, buildWorkbook, buildStatusWorkbook, buildSapCheckWorkbook, reportFileName }
+module.exports = { writeReport, writeStatusReport, writeSapCheckReport, writeSerialExport, buildWorkbook, buildStatusWorkbook, buildSapCheckWorkbook, buildSerialExportWorkbook, reportFileName }

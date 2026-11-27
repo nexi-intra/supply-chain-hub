@@ -405,6 +405,33 @@ test('one material in focus: all its serials, found (where and by whom) and miss
   await assert.rejects(anna.materialSerials(ANNA, id, { material: 'R999-0001' }), { code: 'MATERIAL_NOT_FOUND' })
 })
 
+test('export lists found and missing serials of one material', async () => {
+  const ctx = setup()
+  const anna = ctx.service('pc1')
+  const { id } = await newCount(ctx, anna)
+  await anna.scan(ANNA, id, { serial: 'N1', place: 'A1.1' })
+  const result = await anna.serialExport(ANNA, id, { material: 'INT4300-4921-0' })
+  assert.equal(result.countName, 'Status D000')
+  assert.equal(result.material, 'INT4300-4921-0')
+  assert.equal(result.description, 'INT4300-4921-0 tekst')
+  assert.deepEqual(result.found.map(s => s.serial), ['N1'])
+  assert.deepEqual(result.found.map(s => ({ material: s.material, sloc: s.sloc, stockType: s.stockType, place: s.place, byName: s.byName, source: s.source })), [{ material: 'INT4300-4921-0', sloc: 'D000', stockType: 'unrestricted', place: 'A1.1', byName: 'Anna', source: 'scan' }])
+  assert.deepEqual(result.missing.map(s => s.serial), ['N2'])
+  assert.deepEqual(result.missing[0], { serial: 'N2', material: 'INT4300-4921-0', sloc: 'D000', stockType: 'unrestricted' })
+  await assert.rejects(anna.serialExport(ANNA, id, { material: 'R162-0717' }), { code: 'MATERIAL_NOT_SERIAL' })
+  await assert.rejects(anna.serialExport(ANNA, id, { material: 'R999-0001' }), { code: 'MATERIAL_NOT_FOUND' })
+})
+
+test('export has every serial, not the first 1000', async () => {
+  const ctx = setup()
+  for (let n = 0; n < 1500; n++) ctx.sap.serials.push(serial(`S${String(n).padStart(4, '0')}`, 'INT4300-4921-0', 'D000'))
+  const anna = ctx.service('pc1')
+  const { id } = await newCount(ctx, anna)
+  const result = await anna.serialExport(ANNA, id, { material: 'INT4300-4921-0' })
+  assert.equal(result.missing.length, 1502)
+  assert.deepEqual([result.missing[0].serial, result.missing[1].serial, result.missing.at(-1).serial], ['N1', 'N2', 'S1499'], 'sorted by serial')
+})
+
 test('a material document is looked up in SAP, checked, imported with its number and flagged if imported twice', async () => {
   const ctx = setup()
   const row = (serial, material, description) => ({ serial, material, description, plant: 'D301', sloc: 'D000', userStatus: '' })

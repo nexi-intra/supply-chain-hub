@@ -122,6 +122,7 @@ contextBridge.exposeInMainWorld('electronWarehouse', {
     fetchDoc: (id, options) => warehouse('counts:doc-fetch', { id, confirmMissing: Array.isArray(options?.confirmMissing) ? options.confirmMissing : [] }),
     flush: id => warehouse('counts:flush', { id }),
     report: (id, language) => warehouse('counts:report', { id, language }),
+    serialExport: (id, material, language) => warehouse('counts:serial-export', { id, material, language }),
     openReport: file => warehouse('counts:open-report', { file }),
     showReport: file => warehouse('counts:show-report', { file }),
   },

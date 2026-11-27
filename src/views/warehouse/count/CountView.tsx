@@ -13,6 +13,7 @@ import type { CountState, OpenCount, Person, WarehouseUser } from '@/types/wareh
 import { ApprovalPanel } from './ApprovalPanel'
 import { DeleteCountDialog } from './DeleteCountDialog'
 import { DocPanel } from './DocPanel'
+import { ExportPanel } from './ExportPanel'
 import { ImportPanel } from './ImportPanel'
 import { LinesPanel } from './LinesPanel'
 import { MembersPanel } from './MembersPanel'
@@ -27,7 +28,7 @@ import { currentWarehouseLanguage, t } from '@/lib/warehouse/text'
 
 const POLL_MS = 5000
 
-export type CountTab = 'scan' | 'lines' | 'overview' | 'progress' | 'moves' | 'import' | 'members' | 'approval' | 'doc'
+export type CountTab = 'scan' | 'lines' | 'overview' | 'progress' | 'moves' | 'import' | 'export' | 'members' | 'approval' | 'doc'
 
 /**
  * Shows `patch` at once and runs `write` in the background (a write to M: takes 15–90 s). On failure the change is
@@ -314,6 +315,7 @@ export function CountView({ id, user, initialTab, onBack }: { id: string; user: 
         items={[
           { value: 'scan', label: t('Scan serienumre', 'Scan serial numbers'), hidden: !me.canWrite },
           { value: 'import', label: 'Import', hidden: !me.canWrite },
+          { value: 'export', label: t('Eksport', 'Export') },
           { value: 'lines', label: t('Tilbehør og tællelister', 'Accessories and count lists'), hidden: state.lines.length === 0 && (!me.canWrite || terminalsOnly) },
           { value: 'overview', label: t('Oversigt', 'Overview') },
           { value: 'progress', label: t('Fremdrift', 'Progress'), badge: <Badge variant="secondary" className="tabular-nums">{state.progress.overall.percent} %</Badge> },
@@ -330,6 +332,7 @@ export function CountView({ id, user, initialTab, onBack }: { id: string; user: 
       {tab === 'progress' && <ProgressPanel {...props} />}
       {tab === 'moves' && <MovesPanel {...props} />}
       {tab === 'import' && me.canWrite && <ImportPanel {...props} />}
+      {tab === 'export' && <ExportPanel {...props} />}
       {tab === 'members' && <MembersPanel {...props} />}
       {tab === 'approval' && <ApprovalPanel {...props} />}
       {tab === 'doc' && <DocPanel {...props} />}

@@ -33,7 +33,7 @@ const { createLocationRepository } = require('./locations/repository.cjs')
 const { createLocationService } = require('./locations/service.cjs')
 const { createLayoutService } = require('./locations/layoutService.cjs')
 const { createOutbox, QUEUED_METHODS } = require('./locations/outbox.cjs')
-const { writeReport, writeStatusReport, writeSapCheckReport } = require('./report.cjs')
+const { writeReport, writeStatusReport, writeSapCheckReport, writeSerialExport } = require('./report.cjs')
 
 const DATA_FOLDER = 'lagerstyring'
 const SHARED_FOLDER = '_lagerstyring'
@@ -377,6 +377,10 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   handle('counts:flush', (user, p) => counts.flush(user, p.id))
   handle('counts:report', async (user, p) => {
     const file = await writeReport({ ...(await counts.reportData(user, p.id)), language: p.language === 'en' ? 'en' : 'da' }, reportsDir(user.team))
+    return { file, name: path.basename(file) }
+  })
+  handle('counts:serial-export', async (user, p) => {
+    const file = await writeSerialExport({ ...(await counts.serialExport(user, p.id, { material: p.material })), language: p.language === 'en' ? 'en' : 'da' }, reportsDir(user.team))
     return { file, name: path.basename(file) }
   })
   handle('counts:open-report', async (user, p) => {

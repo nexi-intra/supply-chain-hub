@@ -826,6 +826,26 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
       elsewhere: pick(elsewhere.map(item => ({ serial: item.serial, sloc: item.sloc, stockType: item.stockType, place: item.place, byName: item.byName, at: item.at, source: item.source, outcome: item.outcome }))),
     }
   }
+  /** Every serial of one material in the count's scope, found and missing, sorted by serial: the "Eksport" tab's Excel file. */
+  async function serialExport(user, id, { material } = {}) {
+    const state = await refresh(await load(user, id))
+    const code = normalizeMaterial(material)
+    const entry = state.index.materials.get(code)
+    if (!entry) throw codeError('MATERIAL_NOT_FOUND', 'Materialet er ikke i optællingen')
+    if (!entry.serialManaged) throw codeError('MATERIAL_NOT_SERIAL', 'Materialet har ikke serienumre')
+    const found = []
+    const missing = []
+    for (const [serial, info] of state.index.serials) {
+      if (info.material !== code || !info.inScope) continue
+      const who = state.found.get(serial)
+      const item = { serial, material: code, sloc: info.sloc, stockType: info.stockType }
+      if (who) found.push({ ...item, place: who.place, byName: who.byName, at: who.at, source: who.source, document: who.document || '' })
+      else missing.push(item)
+    }
+    const bySerial = (a, b) => a.serial.localeCompare(b.serial)
+    return { countName: state.meta.name, material: code, description: entry.description, found: found.sort(bySerial), missing: missing.sort(bySerial) }
+  }
+
   function areaOfPlace(state, place, own = []) {
     const name = String(place || '').toLowerCase()
     if (!name) return ''
@@ -1913,7 +1933,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
   }
 
   return {
-    listCounts, statusOverview, activeProgress, startStatus, statusChecklist, lockStatus: changes(lockStatus, 'team'), statusArchive, unlockStatus: changes(unlockStatus, 'team'), deleteStatus: changes(deleteStatus, 'team'), preview, createCount, openCount, getState, listSerials, materialSerials,
+    listCounts, statusOverview, activeProgress, startStatus, statusChecklist, lockStatus: changes(lockStatus, 'team'), statusArchive, unlockStatus: changes(unlockStatus, 'team'), deleteStatus: changes(deleteStatus, 'team'), preview, createCount, openCount, getState, listSerials, materialSerials, serialExport,
     scan, undo, removeSerial, saveLine: changes(saveLine), deleteLine, importSerials, lookupMatdoc,
     lockMaterial: changes(lockMaterial), requestMaterial: changes(requestMaterial), answerMaterialRequest: changes(answerMaterialRequest), releaseMaterial: changes(releaseMaterial), submitMaterial: changes(submitMaterial),
     requestJoin: changes(requestJoin), decideMember: changes(decideMember), claimArea: changes(claimArea), releaseArea: changes(releaseArea),

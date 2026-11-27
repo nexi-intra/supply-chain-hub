@@ -7,7 +7,7 @@ const ExcelJS = require('exceljs')
 const { buildSnapshot, indexSnapshot } = require('./core/snapshot.cjs')
 const { storageRulesFor } = require('./core/classify.cjs')
 const { aggregateCount, computeProgress } = require('./core/countState.cjs')
-const { writeReport, reportFileName, writeStatusReport, writeSapCheckReport } = require('./report.cjs')
+const { writeReport, reportFileName, writeStatusReport, writeSapCheckReport, buildSerialExportWorkbook, writeSerialExport } = require('./report.cjs')
 
 const rulesByTeam = { TCD: storageRulesFor('TCD', {}), TRR: storageRulesFor('TRR', {}) }
 const stock = (material, sloc, unrestricted, blocked = 0, valueUnrestricted = 0, valueBlocked = 0) => ({ material, description: `${material} tekst`, plant: 'D301', sloc, unrestricted, blocked, valueUnrestricted, valueBlocked })
@@ -171,6 +171,37 @@ test('in English the count report and the final status report have English sheet
 test('reports are Danish unless English is asked for', async () => {
   const workbook = require('./report.cjs').buildWorkbook({ ...reportData(), language: 'sv' })
   assert.deepEqual(workbook.worksheets.map(sheet => sheet.name).slice(0, 2), ['Resumé', 'Differencer'])
+})
+
+test('serial export has a Found and a Missing sheet with the serial in column A', async () => {
+  const data = {
+    countName: 'Status D000', material: 'INT4300-4921-0', description: 'SmartPOS',
+    found: [{ serial: 'N1', material: 'INT4300-4921-0', sloc: 'D000', stockType: 'unrestricted', place: 'Palle 3', byName: 'Anna', at: Date.UTC(2026, 9, 16, 9, 5), source: 'import', document: '4900229137' }],
+    missing: [{ serial: 'N2', material: 'INT4300-4921-0', sloc: 'D000', stockType: 'blocked' }],
+  }
+  const workbook = buildSerialExportWorkbook(data)
+  assert.deepEqual(workbook.worksheets.map(sheet => sheet.name), ['Fundet', 'Mangler'])
+  const found = workbook.getWorksheet('Fundet')
+  const missing = workbook.getWorksheet('Mangler')
+  assert.deepEqual(found.getRow(1).values.slice(1), ['Serienummer', 'Materiale', 'Storage location (SAP)', 'Lagertype', 'Fundet sted', 'Fundet af', 'Tidspunkt', 'Kilde'])
+  assert.deepEqual(missing.getRow(1).values.slice(1), ['Serienummer', 'Materiale', 'Storage location (SAP)', 'Lagertype'])
+  assert.equal(found.getCell('A1').value, 'Serienummer')
+  assert.equal(missing.getCell('A1').value, 'Serienummer')
+  assert.equal(found.getCell('A2').value, 'N1')
+  assert.equal(missing.getCell('A2').value, 'N2')
+  assert.deepEqual(found.getRow(2).values.slice(1, 6), ['N1', 'INT4300-4921-0', 'D000', 'Unblocked', 'Palle 3'])
+  assert.equal(found.getCell('H2').value, 'Matdok 4900229137')
+  assert.deepEqual(missing.getRow(2).values.slice(1), ['N2', 'INT4300-4921-0', 'D000', 'Blocked'])
+
+  const english = buildSerialExportWorkbook({ ...data, language: 'en' })
+  assert.deepEqual(english.worksheets.map(sheet => sheet.name), ['Found', 'Missing'])
+  assert.equal(english.getWorksheet('Found').getCell('A1').value, 'Serial number')
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'countpoint-serial-export-'))
+  const file = await writeSerialExport(data, dir, new Date(2026, 9, 16, 9, 5))
+  assert.equal(path.basename(file), 'Status D000 INT4300-4921-0 serienumre 2026-10-16 0905.xlsx')
+  const englishFile = await writeSerialExport({ ...data, language: 'en' }, dir, new Date(2026, 9, 16, 9, 5))
+  assert.equal(path.basename(englishFile), 'Status D000 INT4300-4921-0 serial numbers 2026-10-16 0905.xlsx')
 })
 
 test('a report with a name already taken gets " (2)", without synchronous file calls (the folder is on M:)', async t => {

@@ -1237,6 +1237,7 @@ export interface WarehouseBridge {
     fetchDoc(id: string, options?: { confirmMissing?: string[] }): Promise<CountDoc>
     flush(id: string): Promise<{ ok: boolean; pending: number }>
     report(id: string, language?: 'da' | 'en'): Promise<{ file: string; name: string }>
+    serialExport(id: string, material: string, language?: 'da' | 'en'): Promise<{ file: string; name: string }>
     openReport(file: string): Promise<{ ok: true }>
     showReport(file: string): Promise<{ ok: true }>
   }
