@@ -127,8 +127,8 @@ Antal arbejdsdage fra afhentningsdagen. Fra aftalen med PostNord og DHL; rækker
 
 ### A. nShift-klient (backend)
 - Nyt modul `electron/warehouse/finland/nshift.cjs`: henter token (client credentials), genbruger det til kort før udløb, og slår et T&T op med vinduet afhentningsdag minus 3 til plus 27 dage.
-- Svaret omsættes straks til et lille forløb: `{ tracking, carrier, fetchedAt, events: [{ at, statusId, status, text, place }] }`. `place` er kun stedets navn, by og land fra hændelsen. Modtagerens navn og adresse bruges ikke.
-- Kald til nShift går ét ad gangen med en lille pause, så en hel dag (op til ca. 40 kolli) ikke rammer en grænse. Fejl for ét kolli stopper ikke resten.
+- Svaret omsættes straks til et lille forløb: `{ tracking, carrier, fetchedAt, events: [{ at, statusId, status, text, place }] }`. `place` er by og land fra hændelsen, og stedets navn kun på transport- og terminalhændelser (2000, 2003, 2004, 2008); på levering, forsøg og booking kan navnet være modtagerens. Modtagerens navn og adresse bruges ikke. Giver opslaget flere forsendelser, bruges den, hvis kolli har T&T'et som nummer (ellers den første).
+- Kald til nShift går ét ad gangen med en lille pause, så en hel dag (op til ca. 40 kolli) ikke rammer en grænse. Fejl for ét kolli stopper ikke resten. En dag har højst 5 minutter; det fundne gemmes, og resten tælles som fejlede.
 - Fejl bliver danske tekster: forkert nøgle, nShift svarer ikke, kolliet findes ikke i nShift.
 
 ### B. Hemmeligheden
@@ -151,7 +151,7 @@ Antal arbejdsdage fra afhentningsdagen. Fra aftalen med PostNord og DHL; rækker
 
 ### F. Skærmen
 - Opfølgning: knappen "Hent status fra nShift" for dagen og "Opdater status" på kolliet. Tidspunkt for seneste hentning.
-- På kolliet: forløbet som en kort liste (tid, sted, tekst), med "Første forsøg" og "Afleveret" fremhævet.
+- På kolliet: forløbet som en kort liste (tid i finsk tid, sted, tekst), med "Første forsøg" og "Afleveret" fremhævet.
 - Forslag vises grå i felterne som Expected i dag og bliver taget ved Enter/Næste.
 - "Brug forslagene for alle leverede kolli på dagen" viser en liste pr. kolli over de felter, der udfyldes, med "Ja, brug forslagene" og "Fortryd".
 - Administration: felter til klient-id og hemmelighed, "Gem" og "Test forbindelsen".
