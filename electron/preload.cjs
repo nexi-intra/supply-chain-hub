@@ -280,6 +280,11 @@ contextBridge.exposeInMainWorld('electronWarehouse', {
     setSettings: request => warehouse('finland:set-settings', request),
     draftsOverview: () => warehouse('finland:drafts-overview'),
     clearDrafts: request => warehouse('finland:clear-drafts', request),
+    fetchStatus: request => warehouse('finland:fetch-status', request),
+    applySuggestions: request => warehouse('finland:apply-suggestions', request),
+    nshiftSettings: () => warehouse('finland:nshift-settings'),
+    setNshiftSettings: request => warehouse('finland:set-nshift-settings', request),
+    testNshift: () => warehouse('finland:test-nshift'),
   },
 })
 contextBridge.exposeInMainWorld('electronMultiplayer', {

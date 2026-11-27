@@ -10,8 +10,12 @@ const { parcelKey } = require('./core/sheetIndex.cjs')
 const CHANNELS = [
   'load', 'load-sheet', 'pending', 'current', 'write-day', 'fix-review', 'save-draft', 'save-followup', 'resolve-conflict', 'check-manual',
   'add-manual-row', 'mark-not-sent', 'restore-not-sent', 'delete-not-sent-row', 'open-tracking', 'settings',
-  'set-settings', 'drafts-overview', 'clear-drafts',
+  'set-settings', 'drafts-overview', 'clear-drafts', 'fetch-status', 'apply-suggestions', 'nshift-settings',
+  'set-nshift-settings', 'test-nshift',
 ]
+const NSHIFT_CHANNELS = ['fetch-status', 'apply-suggestions', 'nshift-settings', 'set-nshift-settings', 'test-nshift']
+// Made up for the tests; never a real key.
+const FAKE_KEY = { clientId: 'test-client-0001WXYZ', clientSecret: 'FAKE-SECRET-not-real-42' }
 const BLANK = { expected: '', received: '', sla: '', comment: '', terminal: '' }
 const TRACKING = '00073215000000000001'
 const KEY = parcelKey('82100001', TRACKING)
@@ -35,7 +39,17 @@ function fakeExcel(rows = SHEET) {
   }
 }
 
-function setup({ storageConnected } = {}) {
+// A stand-in for nshift.cjs' client: every T&T is unknown to nShift, and the key is always accepted.
+function fakeNshift() {
+  const calls = []
+  return {
+    calls,
+    async lookup(tracking, pickedUp) { calls.push(['lookup', tracking, pickedUp]); return null },
+    async test() { calls.push(['test']); return true },
+  }
+}
+
+function setup({ storageConnected, nshift } = {}) {
   const root = fs.mkdtempSync(path.join(ROOT, 'hub-'))
   for (const team of ['TCD', 'TRR', 'PIM', 'BPO']) fs.mkdirSync(path.join(root, team))
   const handlers = new Map()
@@ -68,6 +82,7 @@ function setup({ storageConnected } = {}) {
       excel,
       fetchParcels: async () => { throw new Error('SAP is not used in these tests') },
       trackingWindows: { open: (...args) => opened.push(args), closeAll: () => {} },
+      ...(nshift ? { nshift } : {}),
     },
   })
   const call = (who, channel, payload) => handlers.get(`warehouse:finland:${channel}`)({ who, sender: { id: 1 } }, payload)
@@ -192,6 +207,9 @@ test('writes are refused while M: is away; reads still answer', async () => {
     ['delete-not-sent-row', { key: KEY, row: 2 }],
     ['set-settings', { workbookUrl: 'https://x.test/a.xlsx', sheetName: 'A', tableName: 'B' }],
     ['clear-drafts', { email: 'anna@nexi.test' }],
+    ['fetch-status', { date: '2026-11-20' }],
+    ['apply-suggestions', { date: '2026-11-20' }],
+    ['set-nshift-settings', FAKE_KEY],
   ]) await assert.rejects(call('bpoBoss', channel, payload), /^Error: STORAGE_UNAVAILABLE$/, channel)
   assert.equal(excel.calls.length, reads, 'Excel is not touched')
   assert.equal((await call('bpo', 'settings')).sheetName, 'Sheet1')
@@ -235,5 +253,102 @@ test('tracking only opens https addresses from the config', async () => {
     ['Postnord', TRACKING, `https://www.postnord.dk/varktojer/track-trace?shipmentId=${TRACKING}`],
     ['DSV', TRACKING, 'https://mydsv.dsv.com/app/tracking-public/'],
   ])
+  await registered.closeAll()
+})
+
+test('TRR is refused the nShift channels', async () => {
+  const nshift = fakeNshift()
+  const { call, registered } = setup({ nshift })
+  for (const channel of NSHIFT_CHANNELS) {
+    await assert.rejects(call('trrAnna', channel, { date: '2026-11-20', ...FAKE_KEY }), /^Error: WAREHOUSE_TOOL_NOT_ALLOWED$/, channel)
+  }
+  assert.deepEqual(nshift.calls, [])
+  assert.deepEqual(await call('bpoBoss', 'nshift-settings'), { configured: false, clientIdEnding: '' })
+  await registered.closeAll()
+})
+
+test('every Finland user fetches status and uses the suggestions', async () => {
+  const nshift = fakeNshift()
+  const { call, excel, registered } = setup({ nshift })
+  await call('bpo', 'load-sheet')
+  const reads = excel.calls.length
+  const day = await call('bpo', 'fetch-status', { date: '2026-11-20' })
+  assert.deepEqual(day.statusResult, { fetched: 0, notFound: 1, failed: 0 })
+  const one = await call('anna', 'fetch-status', { key: KEY })
+  assert.deepEqual(one.statusResult, { fetched: 0, notFound: 1, failed: 0 })
+  assert.deepEqual(nshift.calls, [['lookup', TRACKING, '2026-11-20'], ['lookup', TRACKING, '2026-11-20']])
+  assert.equal((await call('bpo', 'apply-suggestions', { date: '2026-11-20' })).applied, 0)
+  assert.equal(excel.calls.length, reads, 'Excel is not touched')
+  await registered.closeAll()
+})
+
+test('only managers set and test the nShift key', async () => {
+  const nshift = fakeNshift()
+  const { call, registered } = setup({ nshift })
+  await assert.rejects(call('bpo', 'nshift-settings'), /^Error: MANAGER_ONLY/)
+  await assert.rejects(call('bpo', 'set-nshift-settings', FAKE_KEY), /^Error: MANAGER_ONLY/)
+  await assert.rejects(call('anna', 'test-nshift'), /^Error: MANAGER_ONLY/)
+  assert.deepEqual(nshift.calls, [])
+  assert.deepEqual(await call('bpoBoss', 'nshift-settings'), { configured: false, clientIdEnding: '' }, 'nothing was set')
+  assert.deepEqual(await call('bpoBoss', 'set-nshift-settings', FAKE_KEY), { configured: true, clientIdEnding: 'WXYZ' })
+  assert.deepEqual(await call('bpoBoss', 'test-nshift'), { ok: true, configured: true, clientIdEnding: 'WXYZ' })
+  assert.deepEqual(nshift.calls, [['test']])
+  await registered.closeAll()
+})
+
+test('the nShift settings never carry the secret', async () => {
+  const nshift = fakeNshift()
+  const { call, registered } = setup({ nshift })
+  const answers = [
+    await call('bpoBoss', 'set-nshift-settings', { clientId: `  ${FAKE_KEY.clientId} `, clientSecret: FAKE_KEY.clientSecret }),
+    await call('bpoBoss', 'nshift-settings'),
+    await call('bpoBoss', 'test-nshift'),
+  ]
+  assert.deepEqual(answers[1], { configured: true, clientIdEnding: 'WXYZ' })
+  for (const answer of answers) assert.ok(!JSON.stringify(answer).includes(FAKE_KEY.clientSecret), JSON.stringify(answer))
+  await registered.closeAll()
+})
+
+test('the Hub\'s own nShift client reads the key everyone shares', async () => {
+  const { call, registered } = setup()
+  await call('bpo', 'load-sheet')
+  // No key yet: the client refuses before anything is sent to nShift.
+  await assert.rejects(call('bpo', 'fetch-status', { date: '2026-11-20' }), /^Error: FINLAND_NSHIFT_NOT_SET: \S/)
+  await assert.rejects(call('bpoBoss', 'test-nshift'), /^Error: FINLAND_NSHIFT_NOT_SET: \S/)
+  await registered.closeAll()
+})
+
+test('invalid dates and keys are refused before the service', async () => {
+  const nshift = fakeNshift()
+  const { call, registered } = setup({ nshift })
+  await call('bpo', 'load-sheet')
+  const cases = [
+    ['bpo', 'fetch-status', {}],
+    ['bpo', 'fetch-status', { date: '2026-13-01' }],
+    ['bpo', 'fetch-status', { date: '2026-02-30' }],
+    ['bpo', 'fetch-status', { date: null }],
+    ['bpo', 'fetch-status', { key: '82100001|ab' }],
+    ['bpo', 'fetch-status', { key: 42 }],
+    ['bpo', 'fetch-status', { date: '2026-11-20', key: KEY }],
+    ['bpo', 'apply-suggestions', {}],
+    ['bpo', 'apply-suggestions', { date: '20.11.2026' }],
+    ['bpo', 'apply-suggestions', { key: KEY }],
+    ['bpoBoss', 'set-nshift-settings', {}],
+    ['bpoBoss', 'set-nshift-settings', { clientId: FAKE_KEY.clientId }],
+    ['bpoBoss', 'set-nshift-settings', { clientId: '   ', clientSecret: FAKE_KEY.clientSecret }],
+    ['bpoBoss', 'set-nshift-settings', { clientId: 42, clientSecret: FAKE_KEY.clientSecret }],
+    ['bpoBoss', 'set-nshift-settings', { clientId: FAKE_KEY.clientId, clientSecret: 'x'.repeat(201) }],
+    ['bpoBoss', 'set-nshift-settings', { clientId: 'x'.repeat(201), clientSecret: FAKE_KEY.clientSecret }],
+  ]
+  for (const [who, channel, payload] of cases) {
+    await assert.rejects(call(who, channel, payload), error => {
+      assert.match(String(error), /^Error: FINLAND_INVALID_INPUT: \S/, `${channel} ${JSON.stringify(payload)}`)
+      assert.ok(!String(error).includes(FAKE_KEY.clientSecret), 'the secret is not in the error')
+      return true
+    })
+  }
+  assert.deepEqual(nshift.calls, [], 'nShift is not asked')
+  assert.deepEqual(await call('bpoBoss', 'nshift-settings'), { configured: false, clientIdEnding: '' })
+  assert.equal(await call('bpo', 'pending'), 0, 'no draft was made')
   await registered.closeAll()
 })

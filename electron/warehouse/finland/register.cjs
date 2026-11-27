@@ -9,6 +9,7 @@ const { createFinlandService } = require('./service.cjs')
 const { fetchParcels } = require('./sap.cjs')
 const { FIELDS } = require('./core/followUpSync.cjs')
 const { createTrackingWindows } = require('./tracking.cjs')
+const { createNshiftClient } = require('./nshift.cjs')
 
 const SALES_ORG = 'F300'
 const TRACKING_URLS = Object.freeze({
@@ -22,6 +23,7 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/
 const TEXT_MAX = 300
 const MANUAL_FIELD_MAX = 60
 const MANUAL_FIELDS = ['delivery', 'orderType', 'postalCode', 'courier', 'tracking', 'pickedUp']
+const CREDENTIAL_MAX = 200
 
 function codeError(code, text) {
   return Object.assign(new Error(text ? `${code}: ${text}` : code), { code })
@@ -32,7 +34,8 @@ const isManager = user => user.role === 'manager' || user.role === 'creator'
 // Channels that change the sheet or the shared data; refused while M: is away, as the other warehouse writes.
 const WRITES = new Set([
   'write-day', 'fix-review', 'save-draft', 'save-followup', 'resolve-conflict', 'add-manual-row', 'mark-not-sent',
-  'restore-not-sent', 'delete-not-sent-row', 'set-settings', 'clear-drafts',
+  'restore-not-sent', 'delete-not-sent-row', 'set-settings', 'clear-drafts', 'fetch-status', 'apply-suggestions',
+  'set-nshift-settings',
 ])
 
 /** A real calendar date as yyyy-mm-dd (2026-13-01 and 2026-02-30 are not). */
@@ -89,6 +92,25 @@ function checkManualInput(input) {
   return out
 }
 
+/** One parcel (`{ key }`) or one day (`{ date }`) to look up in nShift; exactly one of them. */
+function checkStatusTarget(p) {
+  const hasDate = p.date !== undefined
+  const hasKey = p.key !== undefined
+  if (hasDate === hasKey) throw invalid('Vælg en dag eller et kolli.')
+  return hasDate ? { date: checkDate(p.date) } : { key: checkKey(p.key) }
+}
+
+/** The nShift client id and secret as typed: text of 1 to 200 characters after trimming. Never echoed in the error. */
+function checkCredentials(p) {
+  const out = {}
+  for (const f of ['clientId', 'clientSecret']) {
+    const v = typeof p[f] === 'string' ? p[f].trim() : ''
+    if (!v || v.length > CREDENTIAL_MAX) throw invalid('Klient-id og hemmelighed skal udfyldes med højst 200 tegn.')
+    out[f] = v
+  }
+  return out
+}
+
 /** As the app: a review fix takes any T&T of letters and digits, a not-sent mark only a real one (5 to 40). */
 function checkParcel(delivery, tracking, minTracking = 5) {
   const pattern = new RegExp(`^[A-Z0-9]{${minTracking},40}$`)
@@ -126,8 +148,8 @@ function closeWarning(count) {
 
 /**
  * Registers the channels through register.cjs' `handleTool`. `storageConnected()` is false while M: is away; the writes
- * are refused then (STORAGE_UNAVAILABLE). `deps` (tests only) may replace `excel`, `fetchParcels`, `now` and
- * `trackingWindows`. Returns `pending(user)` for the close warning and `closeWindows()` for the tracking windows.
+ * are refused then (STORAGE_UNAVAILABLE). `deps` (tests only) may replace `excel`, `fetchParcels`, `now`,
+ * `trackingWindows` and `nshift`. Returns `pending(user)` for the close warning and `closeWindows()` for the tracking windows.
  */
 function registerFinland({ handleTool, sap, runScript, opener, platformRoot, roles, copyForPerson, unpacked, scriptsDir, sapSystem, userDataDir, storageConnected = () => true, deps = {} }) {
   const now = deps.now || Date.now
@@ -143,7 +165,9 @@ function registerFinland({ handleTool, sap, runScript, opener, platformRoot, rol
     if (!status.ready) throw codeError('FINLAND_SAP_NOT_READY', 'SAP er ikke klar. Log på PS4 på engelsk, og prøv igen.')
     return fetchParcels({ bridge: sap, runScript, system: sapSystem, salesOrg: SALES_ORG, range })
   })
-  const service = createFinlandService({ shared, excel, fetchParcels: fromSap, isAdmin: user => roles.isFinlandAdmin(user), now })
+  // One nShift client per Hub process, so its calls go one at a time; the key is read from the shared data on each call.
+  const nshift = deps.nshift || createNshiftClient({ credentials: () => shared.nshift.credentials() })
+  const service = createFinlandService({ shared, excel, fetchParcels: fromSap, isAdmin: user => roles.isFinlandAdmin(user), nshift, now })
   let tracking = deps.trackingWindows || null
   const trackingWindows = () => {
     if (!tracking) {
@@ -217,6 +241,23 @@ function registerFinland({ handleTool, sap, runScript, opener, platformRoot, rol
   handle('clear-drafts', (user, p) => {
     if (typeof p.email !== 'string' || !p.email.trim() || p.email.length > 200) throw invalid('Ugyldig e-mail.')
     return shared.drafts.clear(user, p.email)
+  })
+  // Status from nShift: every Finland user fetches it and turns the suggestions into their own drafts; nothing goes in
+  // the sheet before "Gem i arket".
+  handle('fetch-status', (user, p) => service.fetchStatus(user, checkStatusTarget(p)))
+  handle('apply-suggestions', (user, p) => service.applySuggestions(user, { date: checkDate(p.date) }))
+  // The key: only a manager or the creator sees whether it is set (never the secret), sets it and tests it.
+  handle('nshift-settings', user => {
+    if (!isManager(user)) throw codeError('MANAGER_ONLY')
+    return service.nshiftStatus()
+  })
+  handle('set-nshift-settings', (user, p) => {
+    if (!isManager(user)) throw codeError('MANAGER_ONLY')
+    return service.setNshift(user, checkCredentials(p))
+  })
+  handle('test-nshift', user => {
+    if (!isManager(user)) throw codeError('MANAGER_ONLY')
+    return service.testNshift(user)
   })
 
   return {

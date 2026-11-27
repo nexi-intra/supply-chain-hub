@@ -12,7 +12,7 @@ const row = (extra: Partial<FinlandFollowUpRow> = {}): FinlandFollowUpRow => ({
   key: '82100001|00073215000000000001', row: 5, delivery: '82100001', orderType: 'ZRO', postalCode: '00100', courier: 'Postnord',
   tracking: '00073215000000000001', pickedUp: '2026-11-24', sheet: { ...BLANK }, effective: { ...BLANK }, pending: false, slaManual: false,
   othersPending: [], suggestedExpected: '2026-11-26', receivedChoices: ['2026-11-25', '2026-11-26'], duplicate: false, noTracking: false,
-  conflicts: [], done: false, ...extra,
+  conflicts: [], done: false, nshift: null, ...extra,
 })
 
 const noop = () => {}

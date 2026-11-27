@@ -219,6 +219,10 @@ const MESSAGES: Record<string, string> = {
   FINLAND_ROW_SHARED: 'T&T-cellen i rækken har også andre kolli. Intet er slettet. Ret rækken i hånden.',
   FINLAND_ENTRY_INVALID: 'Forsendelsen mangler leverance eller T&T.',
   FINLAND_SETTINGS_INVALID: 'Arkets adresse, fane eller tabel er ikke gyldig.',
+  FINLAND_NSHIFT_NOT_SET: 'nShift er ikke sat op. En manager kan sætte det op under Administration.',
+  FINLAND_NSHIFT_REFUSED: 'nShift afviste nøglen. Tjek klient-id og hemmelighed under Administration.',
+  FINLAND_NSHIFT_FAILED: 'nShift svarer ikke lige nu. Prøv igen om lidt.',
+  FINLAND_NSHIFT_NOT_TRACKED: 'Kolliet kan ikke slås op i nShift.',
   // Login and the Hub's own checks before a warehouse call
   AUTH_FORBIDDEN: 'Du har ikke adgang til at gøre det.',
   AUTH_UNTRUSTED_WINDOW: 'Handlingen blev afvist, fordi den ikke kom fra Hubbens eget vindue.',
@@ -512,6 +516,10 @@ const MESSAGES_EN: Record<string, string> = {
   FINLAND_ROW_SHARED: "The row's T&T cell holds other parcels too. Nothing was deleted. Correct the row by hand.",
   FINLAND_ENTRY_INVALID: 'The shipment has no delivery or T&T.',
   FINLAND_SETTINGS_INVALID: "The sheet's address, tab or table is not valid.",
+  FINLAND_NSHIFT_NOT_SET: 'nShift is not set up. A manager can set it up under Administration.',
+  FINLAND_NSHIFT_REFUSED: 'nShift refused the key. Check the client id and secret under Administration.',
+  FINLAND_NSHIFT_FAILED: 'nShift is not answering right now. Try again shortly.',
+  FINLAND_NSHIFT_NOT_TRACKED: 'The parcel cannot be looked up in nShift.',
   // Login and the Hub's own checks before a warehouse call
   AUTH_FORBIDDEN: 'You do not have access to do that.',
   AUTH_UNTRUSTED_WINDOW: "The action was refused because it did not come from the Hub's own window.",

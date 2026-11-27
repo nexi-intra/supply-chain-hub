@@ -89,6 +89,50 @@ export interface FinlandFollowUpRow {
   noTracking: boolean
   conflicts: FinlandConflict[]
   done: boolean
+  /** The stored timeline from nShift and the rules' suggestions; null when the parcel was never fetched. */
+  nshift: FinlandNshiftRow | null
+}
+
+/** One event in nShift's timeline. `place`: the place's name, city and country from the event. */
+export interface FinlandTimelineEvent {
+  /** ISO time. */
+  at: string
+  statusId: number
+  status: string
+  text: string
+  place: string
+}
+
+/** One T&T's timeline as fetched from nShift (stored for everyone); never the recipient's name or address. */
+export interface FinlandTimeline {
+  tracking: string
+  carrier: string
+  /** ISO time of the fetch. */
+  fetchedAt: string
+  events: FinlandTimelineEvent[]
+}
+
+/** What a follow-up row shows from nShift. Dates as yyyy-mm-dd in Helsinki time, null when not known. */
+export interface FinlandNshiftRow {
+  fetchedAt: string
+  events: FinlandTimelineEvent[]
+  firstAttempt: string | null
+  delivered: string | null
+  /** Proposed values for empty fields; used only when the person accepts them. */
+  suggestion: { received: string | null; sla: 'OK' | 'NOK' | null; terminal: string | null; comment: string | null }
+}
+
+/** How a status fetch went: timelines found, T&T nShift does not know, and parcels that failed. */
+export interface FinlandStatusResult {
+  fetched: number
+  notFound: number
+  failed: number
+}
+
+/** What the window may know about the nShift key: whether it is set and the last four characters of the client id. */
+export interface FinlandNshiftStatus {
+  configured: boolean
+  clientIdEnding: string
 }
 
 export interface FinlandFollowUpView {
@@ -243,4 +287,14 @@ export interface FinlandBridge {
   draftsOverview(): Promise<FinlandDraftsOverview>
   /** Deletes the person's drafts in the app, never in the sheet. Managers and the creator only. */
   clearDrafts(request: { email: string }): Promise<{ email: string; cleared: number }>
+  /** Looks up one day's (`date`) or one parcel's (`key`) PostNord and DHL parcels in nShift; reads neither SAP nor the sheet. */
+  fetchStatus(request: { date: string } | { key: string }): Promise<FinlandSnapshot & { statusResult: FinlandStatusResult }>
+  /** Turns the day's suggestions for delivered parcels into the person's drafts; the sheet is written by saveFollowUp. */
+  applySuggestions(request: { date: string }): Promise<FinlandSnapshot & { applied: number }>
+  /** Managers and the creator only (MANAGER_ONLY). Never the secret. */
+  nshiftSettings(): Promise<FinlandNshiftStatus>
+  /** Managers and the creator only (MANAGER_ONLY). Each 1 to 200 characters. */
+  setNshiftSettings(request: { clientId: string; clientSecret: string }): Promise<FinlandNshiftStatus>
+  /** Asks nShift for a token with the stored key. Managers and the creator only (MANAGER_ONLY). */
+  testNshift(): Promise<FinlandNshiftStatus & { ok: true }>
 }

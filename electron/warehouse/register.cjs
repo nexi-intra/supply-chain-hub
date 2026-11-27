@@ -290,9 +290,9 @@ function registerWarehouse({ ipcMain, currentActor, teamUsers, teamDir, platform
   }
   const channels = []
   // SAP channels wait for SAP (and the user's F8) by design, and Finlandsforsendelser's sheet jobs wait for Excel (and
-  // SAP); everything else should answer within a few seconds.
+  // SAP) and its status jobs for nShift; everything else should answer within a few seconds.
   const SLOW_CALL_MS = 2000
-  const waitsForSap = channel => /^(sap|pidocs|sap-check):|^counts:(preview|matdoc-lookup|refetch-preview|refetch-apply|doc-fetch)$|^locations:(preview-import|lookup-document)$|^softwareload:(preview|finish|continue|pending-preview|kif-preview|kif-move)$|^finland:(load|load-sheet|write-day|fix-review|save-followup|add-manual-row|delete-not-sent-row)$/.test(channel)
+  const waitsForSap = channel => /^(sap|pidocs|sap-check):|^counts:(preview|matdoc-lookup|refetch-preview|refetch-apply|doc-fetch)$|^locations:(preview-import|lookup-document)$|^softwareload:(preview|finish|continue|pending-preview|kif-preview|kif-move)$|^finland:(load|load-sheet|write-day|fix-review|save-followup|add-manual-row|delete-not-sent-row|fetch-status|test-nshift)$/.test(channel)
   const handle = (channel, fn) => {
     channels.push(channel)
     ipcMain.handle(`warehouse:${channel}`, async (event, payload) => {
