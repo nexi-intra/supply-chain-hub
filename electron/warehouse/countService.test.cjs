@@ -209,6 +209,17 @@ test('lines, undo and imports', async () => {
   assert.equal((await anna.getState(ANNA, id)).serials.found, 0)
 })
 
+test('a scanned or pasted 24-digit serial counts as its last 18 digits', async () => {
+  const ctx = setup()
+  ctx.sap.serials.push(serial('303201349258058038', 'INT4300-4921-0', 'D000'))
+  const anna = ctx.service('pc1')
+  const { id } = await newCount(ctx, anna)
+  const dry = await anna.importSerials(ANNA, id, { text: '251427303201349258058038', place: 'P1', dryRun: true })
+  assert.deepEqual([dry.found, dry.invalid, dry.unknown], [1, 0, 0])
+  const scanned = await anna.scan(ANNA, id, { serial: '251427303201349258058038', place: 'A1.1' })
+  assert.deepEqual([scanned.outcome, scanned.serial], ['found', '303201349258058038'])
+})
+
 test('area claims warn other counters and expire after 30 minutes', async () => {
   const ctx = setup()
   const anna = ctx.service('pc1')

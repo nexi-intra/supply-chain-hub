@@ -10,6 +10,7 @@ const { scopeStockTypes, scopeKinds, scopeOverlap, describeOverlap, TERMINAL_KIN
 const { normalizeSerial, matchSerial, activeEvents, aggregateCount, registeredSerials, foundElsewhere, applyApprovals, freezeRows, buildCountLists, computeProgress } = require('./core/countState.cjs')
 const { docLinesFromSnapshot, missingAtApproval, linesAtApproval, approvedWithLinesText, buildCountDoc, confirmedAll } = require('./core/countDoc.cjs')
 const { normalizeMatdoc } = require('./core/sapParsers.cjs')
+const { scannedSerial } = require('./core/serialInput.cjs')
 const { differenceTotals, archiveLines } = require('./core/archive.cjs')
 const { ACTIVE: ACTIVE_PIDOC, RESERVATION_MS, statusOf } = require('./core/piDocs.cjs')
 /**
@@ -965,7 +966,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const state = await load(user, id)
     const context = await scanContext(user, state)
     requireScanWriter(user, state, context)
-    const normalized = normalizeSerial(serial)
+    const normalized = normalizeSerial(scannedSerial(serial))
     const cleanPlace = clean(place, 60)
     const result = matchSerial(normalized, state.index, state.found)
     if (result.outcome === 'invalid') return { ...result, saved: false }
@@ -1094,7 +1095,7 @@ function createCountService({ repo, storeFor, fetcher, placementSource = null, r
     const matdoc = document ? normalizeMatdoc(document) : null
     if (document && !matdoc) throw codeError('IMPORT_INVALID', 'Ugyldigt materialedokument')
     if (typeof text === 'string' && text.length > IMPORT_TEXT_MAX) throw codeError('IMPORT_TOO_LARGE', `Højst ${IMPORT_MAX} serienumre ad gangen`)
-    const raw = Array.isArray(serials) ? serials.map(String) : parseSerialList(text)
+    const raw = Array.isArray(serials) ? serials.map(String) : parseSerialList(text).map(scannedSerial)
     if (raw.length > IMPORT_MAX) throw codeError('IMPORT_TOO_LARGE', `Højst ${IMPORT_MAX} serienumre ad gangen`)
     await refresh(state, true)
     const { result, accepted } = checkSerials(state, raw)
