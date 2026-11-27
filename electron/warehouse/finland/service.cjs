@@ -286,6 +286,12 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
     return forWorkbook(all, book).length
   }
 
+  // What was fetched earlier in this Hub, so leaving the tool or switching hub keeps it; reads neither SAP nor the sheet.
+  async function current(user) {
+    if (!parcels && !sheet) return null
+    return snapshot(user)
+  }
+
   // Reads only the sheet, so Opfølgning works while SAP is not ready.
   function loadSheet(user) {
     return exclusive('sheet', async () => {
@@ -541,7 +547,7 @@ function createFinlandService({ shared, excel, fetchParcels, isAdmin, now = Date
 
   return {
     load, loadSheet, writeDay, fixReview, saveDraft, saveFollowUp, resolveConflict, checkManual, addManualRow,
-    markNotSent, restoreNotSent, deleteNotSentRow, pending, snapshot,
+    markNotSent, restoreNotSent, deleteNotSentRow, pending, current, snapshot,
   }
 }
 

@@ -10,6 +10,7 @@ import type { FinlandCourier, FinlandFollowUpField, FinlandFollowUpRow, FinlandS
 import { CourierTag, NoticeBox, sheetNotes, writtenAt, type Notice, type Working } from './common'
 import { FollowUpCalendar } from './FollowUpCalendar'
 import { FollowUpDetail } from './FollowUpDetail'
+import { finlandPlace } from './place'
 import { applySuggestions, changeField, chooseDefaultDay, firstOpenRow, openForm, othersOnDay, othersOnParcel, rowId, rowsOfDay, savedLines, wantedOf, type FollowUpForm } from './followUpLogic'
 import { SaveAllConfirm, SyncBar } from './SaveConfirm'
 
@@ -49,9 +50,9 @@ const short = (iso: string) => formatDate(iso).slice(0, 5)
  */
 export function FollowUp({ active, data, working, writeBlocked, confirmAll, onConfirmAll, onData, onLoadSheet, exclusive }: FollowUpProps) {
   const bridge = window.electronWarehouse!.finland
-  const [day, setDayState] = useState<string | null>(null)
+  const [day, setDayState] = useState<string | null>(finlandPlace.followDay)
   const [form, setFormState] = useState<FollowUpForm | null>(null)
-  const [month, setMonth] = useState<number | null>(null)
+  const [month, setMonth] = useState<number | null>(finlandPlace.followMonth)
   const [confirm, setConfirm] = useState(false)
   const [notice, setNotice] = useState<Notice | null>(null)
   const [focusTick, setFocusTick] = useState(0)
@@ -66,7 +67,7 @@ export function FollowUp({ active, data, working, writeBlocked, confirmAll, onCo
   const keyHandler = useRef<(event: KeyboardEvent) => void>(() => {})
   const saving = working === 'followup'
 
-  const setDay = (next: string | null) => { dayRef.current = next; setDayState(next) }
+  const setDay = (next: string | null) => { dayRef.current = next; finlandPlace.followDay = next; setDayState(next) }
   const setForm = (next: FollowUpForm | null) => { formRef.current = next; setFormState(next) }
   const takeData = (next: FinlandSnapshot) => { dataRef.current = next; onData(next) }
 
@@ -81,24 +82,26 @@ export function FollowUp({ active, data, working, writeBlocked, confirmAll, onCo
     setConfirm(false)
   }
 
-  // New data from the main process: choose a day the first time, and show a parcel the person has not touched with
-  // the new values, as followup.js' render().
+  // New data from the main process: choose a day the first time (or keep the remembered one), and show a parcel the
+  // person has not touched with the new values, as followup.js' render().
   useEffect(() => {
     dataRef.current = data
     if (!data?.sheet) return
     const rows = data.followUp.rows
-    if (!dayRef.current) {
-      const chosen = chooseDefaultDay(data.followUp.days, data.today)
-      setDay(chosen)
-      if (!formRef.current) openRow(firstOpenRow(rowsOfDay(rows, chosen)))
-    }
+    if (!dayRef.current || !data.followUp.days.some(d => d.date === dayRef.current)) setDay(chooseDefaultDay(data.followUp.days, data.today))
     const list = rowsOfDay(rows, dayRef.current)
     const f = formRef.current
-    const r = f ? list.find(x => rowId(x) === f.id) : null
-    if (f && !r) openRow(list[0] ?? null)
-    else if (r && f && !r.pending && f.touched.length === 0) setForm(openForm(r))
+    if (!f) {
+      openRow(firstOpenRow(list))
+      return
+    }
+    const r = list.find(x => rowId(x) === f.id)
+    if (!r) openRow(list[0] ?? null)
+    else if (!r.pending && f.touched.length === 0) setForm(openForm(r))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data])
+
+  useEffect(() => { finlandPlace.followMonth = month }, [month])
 
   useEffect(() => {
     if (!confirmAll) return

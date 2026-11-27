@@ -13,6 +13,7 @@ import { Calendar } from './Calendar'
 import { NoticeBox, sheetNotes, type Notice, type Working } from './common'
 import { FollowUp } from './FollowUp'
 import { ManualRow } from './ManualRow'
+import { finlandPlace } from './place'
 import { WriteDay } from './WriteDay'
 
 type Tab = 'write' | 'follow'
@@ -85,14 +86,14 @@ export function FinlandMarks({ pending, isTest, onOpenPending }: { pending: numb
 export function Finland({ headerSlot, onBusyChange }: { headerSlot: HTMLElement | null; onBusyChange?: (busy: boolean) => void }) {
   const bridge = window.electronWarehouse!.finland
   const { status: sap } = useSapStatus()
-  const [tab, setTab] = useState<Tab>('write')
+  const [tab, setTab] = useState<Tab>(finlandPlace.tab)
   const [data, setData] = useState<FinlandSnapshot | null>(null)
   const [isTestSetting, setIsTestSetting] = useState(false)
   const [working, setWorkingState] = useState<Working>(null)
   const workingRef = useRef<Working>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
-  const [selected, setSelected] = useState<string | null>(null)
-  const [month, setMonth] = useState<number | null>(null)
+  const [selected, setSelected] = useState<string | null>(finlandPlace.selected)
+  const [month, setMonth] = useState<number | null>(finlandPlace.month)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   const [manualOpen, setManualOpen] = useState(false)
   const [confirmAll, setConfirmAll] = useState(false)
@@ -109,6 +110,19 @@ export function Finland({ headerSlot, onBusyChange }: { headerSlot: HTMLElement 
   // Which sheet is used is a shared setting on M:, not the sheet itself, so "Testark" shows from the start.
   useEffect(() => {
     bridge.settings().then(settings => setIsTestSetting(settings.isTest)).catch(() => {})
+  }, [bridge])
+
+  useEffect(() => { Object.assign(finlandPlace, { tab, selected, month }) }, [tab, selected, month])
+
+  // What this Hub fetched earlier comes back at once; nothing is read from SAP or the sheet here.
+  useEffect(() => {
+    let stopped = false
+    bridge.current().then(found => {
+      if (stopped || !found) return
+      setData(current => current ?? found)
+      setSelected(current => (current && found.days.some(day => day.date === current) ? current : found.defaultDay))
+    }).catch(() => {})
+    return () => { stopped = true }
   }, [bridge])
 
   const lockedBy = data?.lock && !data.lock.mine ? data.lock : null

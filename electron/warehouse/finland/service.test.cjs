@@ -107,6 +107,28 @@ const missingOn = (snap, day) => snap.days.find(d => d.date === day).missing
 const keyOf = r => parcelKey(r.delivery, r.tracking)
 const appended = excel => excel.writes().filter(c => c.kind === 'append').flatMap(c => c.rows.map(keyOf))
 
+test('what was fetched earlier is given back without reading SAP or the sheet again', async () => {
+  const { service, excel, ranges } = setup()
+  assert.equal(await service.current(MONA), null, 'nothing fetched yet')
+  const loaded = await service.load(MONA)
+  const reads = excel.calls.filter(c => c.kind === 'read').length
+  const again = await service.current(ANNA)
+  assert.equal(ranges.length, 1)
+  assert.equal(excel.calls.filter(c => c.kind === 'read').length, reads)
+  assert.equal(again.loadedAt, loaded.loadedAt)
+  assert.deepEqual(again.days.map(d => d.date), loaded.days.map(d => d.date))
+})
+
+test('after only reading the sheet, it is given back too', async () => {
+  const { service, excel } = setup()
+  await service.loadSheet(MONA)
+  const reads = excel.calls.length
+  const again = await service.current(MONA)
+  assert.ok(again.sheet)
+  assert.equal(again.range, null)
+  assert.equal(excel.calls.length, reads)
+})
+
 test('loading reads the sheet and fetches two months from SAP', async () => {
   const { service, excel, ranges } = setup()
   const snap = await service.load(MONA)

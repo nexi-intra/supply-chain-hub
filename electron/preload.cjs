@@ -264,6 +264,7 @@ contextBridge.exposeInMainWorld('electronWarehouse', {
     load: () => warehouse('finland:load'),
     loadSheet: () => warehouse('finland:load-sheet'),
     pending: () => warehouse('finland:pending'),
+    current: () => warehouse('finland:current'),
     writeDay: request => warehouse('finland:write-day', request),
     fixReview: request => warehouse('finland:fix-review', request),
     saveDraft: request => warehouse('finland:save-draft', request),

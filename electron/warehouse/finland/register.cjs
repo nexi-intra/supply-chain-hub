@@ -165,6 +165,8 @@ function registerFinland({ handleTool, sap, runScript, opener, platformRoot, rol
   // The person's own changes not in the sheet yet, from the shared drafts store only (never Excel), so the window's
   // "N kolli er ikke gemt i arket" shows before the sheet is read.
   handle('pending', user => service.pending(user))
+  // What this Hub fetched earlier (null when nothing yet), so the tool picks up where it was; never SAP or Excel.
+  handle('current', user => service.current(user))
   handle('write-day', (user, p) => service.writeDay(user, checkDate(p.date)))
   handle('fix-review', (user, p) => service.fixReview(user, ...checkParcel(p.delivery, p.tracking, 1)))
   handle('save-draft', (user, p) => service.saveDraft(user, checkKey(p.key), checkWanted(p.wanted), p.slaManual === true, checkBase(p.base)))

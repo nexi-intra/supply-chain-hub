@@ -8,7 +8,7 @@ const { trackingUrl, TRACKING_URLS } = require('./register.cjs')
 const { parcelKey } = require('./core/sheetIndex.cjs')
 
 const CHANNELS = [
-  'load', 'load-sheet', 'pending', 'write-day', 'fix-review', 'save-draft', 'save-followup', 'resolve-conflict', 'check-manual',
+  'load', 'load-sheet', 'pending', 'current', 'write-day', 'fix-review', 'save-draft', 'save-followup', 'resolve-conflict', 'check-manual',
   'add-manual-row', 'mark-not-sent', 'restore-not-sent', 'delete-not-sent-row', 'open-tracking', 'settings',
   'set-settings', 'drafts-overview', 'clear-drafts',
 ]
